@@ -1,0 +1,61 @@
+# Purpose: delete stale CI branches from the Neon project. Only branches whose names match
+# ^ci-pr-[1-9][0-9]*-[1-9][0-9]*-[1-9][0-9]*$ are considered; the default branch and protected
+# branches are never touched. Scheduled runs delete. Manual runs default to a dry run.
+#
+# Secrets: NEON_API_KEY and NEON_PROJECT_ID (both repository secrets). A run without them fails.
+#
+# Timing invariant: a live run holds its branch for at most 40 minutes (30 for `integration` plus
+# 10 for `integration-cleanup`). The default minimum age (120 minutes) and the branch expiry
+# (4 hours, set in integration.yml) must both stay above that. Whoever raises a timeout in
+# integration.yml must raise these values too.
+name: neon-ci-cleanup
+
+on:
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: List what would be deleted without deleting
+        type: boolean
+        default: true
+      min_age_minutes:
+        description: Minimum branch age in minutes
+        type: number
+        default: 120
+
+permissions:
+  contents: read
+
+concurrency:
+  group: neon-ci-cleanup
+  cancel-in-progress: false
+
+jobs:
+  sweep:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - name: Sweep stale CI branches
+        env:
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+          NEON_PROJECT_ID: ${{ secrets.NEON_PROJECT_ID }}
+          EVENT_NAME: ${{ github.event_name }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          MIN_AGE_MINUTES: ${{ inputs.min_age_minutes }}
+        run: |
+          min_age=120
+          args=(sweep)
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            min_age="$MIN_AGE_MINUTES"
+            if [ "$DRY_RUN" = "true" ]; then args+=(--dry-run); fi
+          fi
+          node tools/neon-ci/src/cli.ts "${args[@]}" --min-age-minutes "$min_age"
