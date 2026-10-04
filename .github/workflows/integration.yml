@@ -124,6 +124,7 @@ jobs:
       - name: Integration tests
         env:
           DATABASE_URL: ${{ steps.create.outputs.db_url }}
+          PGSSLROOTCERT: system
         run: pnpm -r --if-present run test:integration
       - name: Delete Neon branch
         id: delete
