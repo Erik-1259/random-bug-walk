@@ -8,9 +8,9 @@
   },
   "scripts": {
     "build": "pnpm -r --if-present build",
-    "typecheck": "pnpm -r --if-present typecheck && uv run --frozen pyright",
-    "lint": "eslint . --max-warnings 0 && uv run --frozen ruff check && uv run --frozen ruff format --check",
-    "test": "vitest run --passWithNoTests && (uv run --frozen pytest || [ $? -eq 5 ])"
+    "typecheck": "pnpm -r --if-present typecheck && uv run --locked --all-packages pyright",
+    "lint": "eslint . --max-warnings 0 && uv run --locked ruff check && uv run --locked ruff format --check",
+    "test": "vitest run --passWithNoTests && (uv run --locked --all-packages pytest || [ $? -eq 5 ])"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
