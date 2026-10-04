@@ -106,11 +106,11 @@ const DENY_RULES: Record<string, readonly string[]> = {
     "Bash(docker system prune *)",
   ],
   "secret files and environment output": [
-    "Read(.env)",
-    "Read(.env.*)",
+    "Read(.env*)",
     "Read(*.env)",
     "Bash(printenv *)",
     "Bash(env)",
+    "Bash(env *)",
   ],
 };
 

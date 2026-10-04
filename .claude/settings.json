@@ -346,11 +346,11 @@
       "Bash(docker push *)",
       "Bash(docker image push *)",
       "Bash(docker system prune *)",
-      "Read(.env)",
-      "Read(.env.*)",
+      "Read(.env*)",
       "Read(*.env)",
       "Bash(printenv *)",
-      "Bash(env)"
+      "Bash(env)",
+      "Bash(env *)"
     ]
   },
   "attribution": {
