@@ -1,0 +1,479 @@
+# Required checks for main. Each job id is the check name that branch protection requires.
+# The same workflow is callable, so another repository can run identical checks: content always
+# comes from the triggering repository's checkout, and check scripts plus the scanner come from
+# the tools repository at a pinned commit. When not called, that is the same commit, except in the
+# two scan jobs, which take their tools from the pull request's base commit (see below).
+name: ci
+
+on:
+  pull_request:
+    branches: [main]
+    # "edited" re-runs the checks when a title or body changes.
+    types: [opened, synchronize, reopened, edited]
+  push:
+    branches: [main]
+  workflow_call:
+    inputs:
+      tools-repository:
+        description: The <owner>/<repo> that provides scripts/checks and the publication scanner.
+        type: string
+        required: true
+      tools-ref:
+        description: Full 40-character commit SHA of the tools repository to run the checks from.
+        type: string
+        required: true
+    secrets:
+      PUBLIC_SAFETY_PATTERNS:
+        description: Exact bytes of the private pattern list. When absent, the scan jobs fail as unavailable.
+        required: false
+
+permissions: {}
+
+# Pull request runs supersede earlier runs for the same pull request number. Push runs are keyed
+# on their commit, so none is cancelled or replaced: each is the only scan of its own range.
+# The literal prefix keeps this group distinct from any group a caller workflow could define.
+concurrency:
+  group: rbw-ci-${{ github.workflow_ref }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('push-{0}', github.sha) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    # GitHub runs "bash" as: bash --noprofile --norc -eo pipefail {0}
+    shell: bash
+    working-directory: content
+
+# The *_INPUT values are the raw inputs as JSON: null when not called, so a caller's empty or
+# malformed input fails validation instead of falling back to the caller's own commit.
+env:
+  TOOLS_REPOSITORY: ${{ inputs.tools-repository || github.repository }}
+  TOOLS_REF: ${{ inputs.tools-ref || github.sha }}
+  TOOLS_REPOSITORY_INPUT: ${{ toJSON(inputs.tools-repository) }}
+  TOOLS_REF_INPUT: ${{ toJSON(inputs.tools-ref) }}
+
+jobs:
+  changes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      docs-only: ${{ steps.classify.outputs.docs-only }}
+    steps:
+      - name: Validate tools reference
+        working-directory: ${{ runner.temp }}
+        run: |
+          [[ "$TOOLS_REF_INPUT" == null || "$TOOLS_REF_INPUT" =~ ^\"[0-9a-f]{40}\"$ ]] || { echo "::error::tools-ref must be a full 40-character commit SHA"; exit 1; }
+          [[ "$TOOLS_REPOSITORY_INPUT" == null || "$TOOLS_REPOSITORY_INPUT" =~ ^\"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\"$ ]] || { echo "::error::tools-repository must be <owner>/<repo>"; exit 1; }
+          [[ "$TOOLS_REF" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::tools-ref must be a full 40-character commit SHA"; exit 1; }
+          [[ "$TOOLS_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "::error::tools-repository must be <owner>/<repo>"; exit 1; }
+      - name: Check out content
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: content
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check out check tools
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ env.TOOLS_REPOSITORY }}
+          ref: ${{ env.TOOLS_REF }}
+          path: check-tools
+          persist-credentials: false
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: content/package.json
+          package-manager-cache: false
+      - name: Classify changed files
+        id: classify
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          PUSH_AFTER: ${{ github.event.after }}
+        run: |
+          case "$EVENT_NAME" in
+            pull_request) base="$PR_BASE_SHA"; head="$PR_HEAD_SHA" ;;
+            push) base="$PUSH_BEFORE"; head="$PUSH_AFTER" ;;
+            *) echo "::error::cannot classify this event; the expensive jobs will run"; exit 1 ;;
+          esac
+          if [[ "$base" =~ ^0{40}$ ]]; then
+            docs_only=false
+          else
+            git diff --name-only --no-renames "$base...$head" > "$RUNNER_TEMP/changed-paths.txt"
+            docs_only="$(node ../check-tools/scripts/checks/docs-only.ts < "$RUNNER_TEMP/changed-paths.txt")"
+          fi
+          echo "docs-only: $docs_only"
+          echo "docs-only=$docs_only" >> "$GITHUB_OUTPUT"
+
+  typecheck:
+    needs: changes
+    # Skips only on a successful docs-only classification; a failed or cancelled classifier runs it.
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.docs-only != 'true') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Validate tools reference
+        working-directory: ${{ runner.temp }}
+        run: |
+          [[ "$TOOLS_REF_INPUT" == null || "$TOOLS_REF_INPUT" =~ ^\"[0-9a-f]{40}\"$ ]] || { echo "::error::tools-ref must be a full 40-character commit SHA"; exit 1; }
+          [[ "$TOOLS_REPOSITORY_INPUT" == null || "$TOOLS_REPOSITORY_INPUT" =~ ^\"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\"$ ]] || { echo "::error::tools-repository must be <owner>/<repo>"; exit 1; }
+          [[ "$TOOLS_REF" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::tools-ref must be a full 40-character commit SHA"; exit 1; }
+          [[ "$TOOLS_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "::error::tools-repository must be <owner>/<repo>"; exit 1; }
+      - name: Check out content
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: content
+          persist-credentials: false
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: content/package.json
+          package-manager-cache: false
+      - name: Set up pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: content/package.json
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: 0.12.22
+          enable-cache: false
+      - name: Install Node dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Install Python dependencies
+        run: uv sync --locked --all-packages
+      - name: Typecheck
+        run: pnpm typecheck
+
+  lint:
+    needs: changes
+    # Skips only on a successful docs-only classification; a failed or cancelled classifier runs it.
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.docs-only != 'true') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Validate tools reference
+        working-directory: ${{ runner.temp }}
+        run: |
+          [[ "$TOOLS_REF_INPUT" == null || "$TOOLS_REF_INPUT" =~ ^\"[0-9a-f]{40}\"$ ]] || { echo "::error::tools-ref must be a full 40-character commit SHA"; exit 1; }
+          [[ "$TOOLS_REPOSITORY_INPUT" == null || "$TOOLS_REPOSITORY_INPUT" =~ ^\"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\"$ ]] || { echo "::error::tools-repository must be <owner>/<repo>"; exit 1; }
+          [[ "$TOOLS_REF" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::tools-ref must be a full 40-character commit SHA"; exit 1; }
+          [[ "$TOOLS_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "::error::tools-repository must be <owner>/<repo>"; exit 1; }
+      - name: Check out content
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: content
+          persist-credentials: false
+      - name: Check out check tools
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ env.TOOLS_REPOSITORY }}
+          ref: ${{ env.TOOLS_REF }}
+          path: check-tools
+          persist-credentials: false
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: content/package.json
+          package-manager-cache: false
+      - name: Set up pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: content/package.json
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: 0.12.22
+          enable-cache: false
+      - name: Install Node dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Install Python dependencies
+        run: uv sync --locked --all-packages
+      - name: Lint
+        run: pnpm lint
+      - name: Check pnpm lockfile drift
+        run: git diff --exit-code -- pnpm-lock.yaml
+      - name: Check uv lockfile drift
+        run: uv lock --check
+      - name: Audit npm dependencies
+        run: node ../check-tools/scripts/checks/audit.ts npm
+      - name: Audit Python dependencies
+        run: node ../check-tools/scripts/checks/audit.ts python
+
+  unit-tests:
+    needs: changes
+    # Skips only on a successful docs-only classification; a failed or cancelled classifier runs it.
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.docs-only != 'true') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Validate tools reference
+        working-directory: ${{ runner.temp }}
+        run: |
+          [[ "$TOOLS_REF_INPUT" == null || "$TOOLS_REF_INPUT" =~ ^\"[0-9a-f]{40}\"$ ]] || { echo "::error::tools-ref must be a full 40-character commit SHA"; exit 1; }
+          [[ "$TOOLS_REPOSITORY_INPUT" == null || "$TOOLS_REPOSITORY_INPUT" =~ ^\"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\"$ ]] || { echo "::error::tools-repository must be <owner>/<repo>"; exit 1; }
+          [[ "$TOOLS_REF" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::tools-ref must be a full 40-character commit SHA"; exit 1; }
+          [[ "$TOOLS_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "::error::tools-repository must be <owner>/<repo>"; exit 1; }
+      - name: Check out content
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: content
+          persist-credentials: false
+      - name: Check out check tools
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ env.TOOLS_REPOSITORY }}
+          ref: ${{ env.TOOLS_REF }}
+          path: check-tools
+          persist-credentials: false
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: content/package.json
+          package-manager-cache: false
+      - name: Set up pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: content/package.json
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: 0.12.22
+          enable-cache: false
+      - name: Install Node dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Install Python dependencies
+        run: uv sync --locked --all-packages
+      # The counted run is the real run: these variables switch on the reports that the floor check reads.
+      - name: Test
+        env:
+          RBW_VITEST_JSON_REPORT: ${{ runner.temp }}/vitest-report.json
+          PYTEST_ADDOPTS: --report-log=${{ runner.temp }}/pytest-report.jsonl
+        run: pnpm test
+      - name: Check test floors
+        run: node ../check-tools/scripts/checks/test-floor.ts --floors scripts/checks/test-floors.json --vitest "$RUNNER_TEMP/vitest-report.json" --pytest "$RUNNER_TEMP/pytest-report.jsonl"
+
+  build:
+    needs: changes
+    # Skips only on a successful docs-only classification; a failed or cancelled classifier runs it.
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.docs-only != 'true') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Validate tools reference
+        working-directory: ${{ runner.temp }}
+        run: |
+          [[ "$TOOLS_REF_INPUT" == null || "$TOOLS_REF_INPUT" =~ ^\"[0-9a-f]{40}\"$ ]] || { echo "::error::tools-ref must be a full 40-character commit SHA"; exit 1; }
+          [[ "$TOOLS_REPOSITORY_INPUT" == null || "$TOOLS_REPOSITORY_INPUT" =~ ^\"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\"$ ]] || { echo "::error::tools-repository must be <owner>/<repo>"; exit 1; }
+          [[ "$TOOLS_REF" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::tools-ref must be a full 40-character commit SHA"; exit 1; }
+          [[ "$TOOLS_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "::error::tools-repository must be <owner>/<repo>"; exit 1; }
+      - name: Check out content
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: content
+          persist-credentials: false
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: content/package.json
+          package-manager-cache: false
+      - name: Set up pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: content/package.json
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: 0.12.22
+          enable-cache: false
+      - name: Install Node dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Install Python dependencies
+        run: uv sync --locked --all-packages
+      - name: Build
+        run: pnpm build
+      - name: Build Python members
+        run: |
+          shopt -s nullglob
+          manifests=(python/*/pyproject.toml)
+          if (( ${#manifests[@]} == 0 )); then
+            echo "No Python members to build."
+            exit 0
+          fi
+          for manifest in "${manifests[@]}"; do
+            uv build "${manifest%/pyproject.toml}" --out-dir "$RUNNER_TEMP/python-dist"
+          done
+
+  prose:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Validate tools reference
+        working-directory: ${{ runner.temp }}
+        run: |
+          [[ "$TOOLS_REF_INPUT" == null || "$TOOLS_REF_INPUT" =~ ^\"[0-9a-f]{40}\"$ ]] || { echo "::error::tools-ref must be a full 40-character commit SHA"; exit 1; }
+          [[ "$TOOLS_REPOSITORY_INPUT" == null || "$TOOLS_REPOSITORY_INPUT" =~ ^\"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\"$ ]] || { echo "::error::tools-repository must be <owner>/<repo>"; exit 1; }
+          [[ "$TOOLS_REF" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::tools-ref must be a full 40-character commit SHA"; exit 1; }
+          [[ "$TOOLS_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "::error::tools-repository must be <owner>/<repo>"; exit 1; }
+      - name: Check out content
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: content
+          persist-credentials: false
+      - name: Check out check tools
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ env.TOOLS_REPOSITORY }}
+          ref: ${{ env.TOOLS_REF }}
+          path: check-tools
+          persist-credentials: false
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: content/package.json
+          package-manager-cache: false
+      - name: Check prose
+        run: node ../check-tools/scripts/checks/prose.ts
+
+  # The two scan jobs install no packages: only Node's standard library, git and the pinned
+  # gitleaks binary run while the pattern list exists on disk. Their check scripts, scanner and
+  # gitleaks checksum come from a trusted commit, never from the change under review: the pinned
+  # tools-ref when called, the pull request's base commit, or the pushed main commit. Node is
+  # pinned here for the same reason. The change itself is only data that git reads.
+  public-safety:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      SCAN_TOOLS_REF: ${{ inputs.tools-ref || github.event.pull_request.base.sha || github.sha }}
+    steps:
+      - name: Validate tools reference
+        working-directory: ${{ runner.temp }}
+        run: |
+          [[ "$TOOLS_REF_INPUT" == null || "$TOOLS_REF_INPUT" =~ ^\"[0-9a-f]{40}\"$ ]] || { echo "::error::tools-ref must be a full 40-character commit SHA"; exit 1; }
+          [[ "$TOOLS_REPOSITORY_INPUT" == null || "$TOOLS_REPOSITORY_INPUT" =~ ^\"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\"$ ]] || { echo "::error::tools-repository must be <owner>/<repo>"; exit 1; }
+          [[ "$SCAN_TOOLS_REF" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::tools-ref must be a full 40-character commit SHA"; exit 1; }
+          [[ "$TOOLS_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "::error::tools-repository must be <owner>/<repo>"; exit 1; }
+      - name: Check out content
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: content
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check out check tools
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ env.TOOLS_REPOSITORY }}
+          ref: ${{ env.SCAN_TOOLS_REF }}
+          path: check-tools
+          persist-credentials: false
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.21.0
+          package-manager-cache: false
+      - name: Download gitleaks
+        run: |
+          version="$(node ../check-tools/tools/publication/src/cli.ts gitleaks-version)"
+          version="${version#v}"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::scanner reported no usable gitleaks version"; exit 1; }
+          asset="gitleaks_${version}_linux_x64.tar.gz"
+          expected="$(awk -v asset="$asset" '$2 == asset { print $1 }' ../check-tools/scripts/checks/gitleaks.sha256)"
+          [[ "$expected" =~ ^[0-9a-f]{64}$ ]] || { echo "::error::no committed SHA-256 for $asset"; exit 1; }
+          mkdir -p "$RUNNER_TEMP/gitleaks"
+          curl --fail --silent --show-error --location --retry 3 --output "$RUNNER_TEMP/gitleaks/$asset" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${version}/${asset}"
+          echo "$expected  $RUNNER_TEMP/gitleaks/$asset" | sha256sum --check --strict
+          tar -xzf "$RUNNER_TEMP/gitleaks/$asset" -C "$RUNNER_TEMP/gitleaks" gitleaks
+      - name: Write pattern list
+        env:
+          PUBLIC_SAFETY_PATTERNS: ${{ secrets.PUBLIC_SAFETY_PATTERNS }}
+        run: |
+          if [[ -z "$PUBLIC_SAFETY_PATTERNS" ]]; then
+            echo "::error::pattern list unavailable"
+            exit 1
+          fi
+          umask 077
+          printf '%s' "$PUBLIC_SAFETY_PATTERNS" > "$RUNNER_TEMP/pattern-list.txt"
+      - name: Scan
+        run: node ../check-tools/scripts/checks/scan.ts --mode public-safety --scanner ../check-tools/tools/publication/src/cli.ts --patterns "$RUNNER_TEMP/pattern-list.txt" --gitleaks "$RUNNER_TEMP/gitleaks/gitleaks" --repository "$GITHUB_REPOSITORY"
+      - name: Remove pattern list
+        if: ${{ always() }}
+        working-directory: ${{ runner.temp }}
+        run: rm -f "$RUNNER_TEMP/pattern-list.txt"
+
+  names-attribution:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      SCAN_TOOLS_REF: ${{ inputs.tools-ref || github.event.pull_request.base.sha || github.sha }}
+    steps:
+      - name: Validate tools reference
+        working-directory: ${{ runner.temp }}
+        run: |
+          [[ "$TOOLS_REF_INPUT" == null || "$TOOLS_REF_INPUT" =~ ^\"[0-9a-f]{40}\"$ ]] || { echo "::error::tools-ref must be a full 40-character commit SHA"; exit 1; }
+          [[ "$TOOLS_REPOSITORY_INPUT" == null || "$TOOLS_REPOSITORY_INPUT" =~ ^\"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\"$ ]] || { echo "::error::tools-repository must be <owner>/<repo>"; exit 1; }
+          [[ "$SCAN_TOOLS_REF" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::tools-ref must be a full 40-character commit SHA"; exit 1; }
+          [[ "$TOOLS_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "::error::tools-repository must be <owner>/<repo>"; exit 1; }
+      - name: Check out content
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: content
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check out check tools
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ env.TOOLS_REPOSITORY }}
+          ref: ${{ env.SCAN_TOOLS_REF }}
+          path: check-tools
+          persist-credentials: false
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.21.0
+          package-manager-cache: false
+      - name: Download gitleaks
+        run: |
+          version="$(node ../check-tools/tools/publication/src/cli.ts gitleaks-version)"
+          version="${version#v}"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::scanner reported no usable gitleaks version"; exit 1; }
+          asset="gitleaks_${version}_linux_x64.tar.gz"
+          expected="$(awk -v asset="$asset" '$2 == asset { print $1 }' ../check-tools/scripts/checks/gitleaks.sha256)"
+          [[ "$expected" =~ ^[0-9a-f]{64}$ ]] || { echo "::error::no committed SHA-256 for $asset"; exit 1; }
+          mkdir -p "$RUNNER_TEMP/gitleaks"
+          curl --fail --silent --show-error --location --retry 3 --output "$RUNNER_TEMP/gitleaks/$asset" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${version}/${asset}"
+          echo "$expected  $RUNNER_TEMP/gitleaks/$asset" | sha256sum --check --strict
+          tar -xzf "$RUNNER_TEMP/gitleaks/$asset" -C "$RUNNER_TEMP/gitleaks" gitleaks
+      - name: Write pattern list
+        env:
+          PUBLIC_SAFETY_PATTERNS: ${{ secrets.PUBLIC_SAFETY_PATTERNS }}
+        run: |
+          if [[ -z "$PUBLIC_SAFETY_PATTERNS" ]]; then
+            echo "::error::pattern list unavailable"
+            exit 1
+          fi
+          umask 077
+          printf '%s' "$PUBLIC_SAFETY_PATTERNS" > "$RUNNER_TEMP/pattern-list.txt"
+      - name: Scan
+        run: node ../check-tools/scripts/checks/scan.ts --mode names-attribution --scanner ../check-tools/tools/publication/src/cli.ts --patterns "$RUNNER_TEMP/pattern-list.txt" --gitleaks "$RUNNER_TEMP/gitleaks/gitleaks" --repository "$GITHUB_REPOSITORY"
+      - name: Remove pattern list
+        if: ${{ always() }}
+        working-directory: ${{ runner.temp }}
+        run: rm -f "$RUNNER_TEMP/pattern-list.txt"

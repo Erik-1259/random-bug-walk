@@ -1,0 +1,4 @@
+{
+  "vitest": { "scripts/checks": 189, "tools/publication": 163 },
+  "pytest": {}
+}
