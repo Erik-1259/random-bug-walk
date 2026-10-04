@@ -1,0 +1,23 @@
+# Caller workflow for the private execution repository, installed there as .github/workflows/ci.yml.
+# Replace OWNER/IMPLEMENTATION-REPOSITORY and FULL_COMMIT_SHA (the same SHA in both places).
+# It defines no concurrency group: the called workflow's own group must stay the only one.
+name: ci
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, edited]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    uses: OWNER/IMPLEMENTATION-REPOSITORY/.github/workflows/ci.yml@FULL_COMMIT_SHA
+    with:
+      tools-repository: OWNER/IMPLEMENTATION-REPOSITORY
+      tools-ref: FULL_COMMIT_SHA
+    secrets:
+      PUBLIC_SAFETY_PATTERNS: ${{ secrets.PUBLIC_SAFETY_PATTERNS }}

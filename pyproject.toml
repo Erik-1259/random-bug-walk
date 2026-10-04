@@ -8,6 +8,7 @@ dependencies = []
 dev = [
   "pyright==1.1.414",
   "pytest==9.1.1",
+  "pytest-reportlog==1.0.0",
   "ruff==0.16.10",
 ]
 
