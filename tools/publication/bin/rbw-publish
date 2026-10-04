@@ -1,0 +1,6 @@
+#!/bin/sh
+# Container-side publication wrapper: writes one request to the inbox and waits for the
+# host helper's response. See tools/publication/README.md.
+set -eu
+script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P)
+exec node "$script_dir/../src/publish.ts" "$@"
