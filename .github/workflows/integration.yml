@@ -1,0 +1,176 @@
+# Purpose: run Postgres integration tests for each pull request against a throwaway Neon branch.
+# Each run creates one branch, exposes it as DATABASE_URL to the smoke check and the tests only,
+# and deletes it afterwards, including when the run is cancelled.
+#
+# Secrets: NEON_API_KEY and NEON_PROJECT_ID (both repository secrets). Fork and Dependabot pull
+# requests receive no repository secrets, so the job fails there with a message naming what is missing.
+#
+# Timing invariant: a live run holds its branch for at most 40 minutes (30 for `integration` plus
+# 10 for `integration-cleanup`). The sweep's default minimum age (120 minutes) and the branch expiry
+# (4 hours) must both stay above that. Whoever raises a timeout here must raise those values too.
+#
+# `integration` is a required check (C1). It reports on every pull request: docs-only changes show
+# it as skipped, which counts as success.
+name: integration
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions: {}
+
+concurrency:
+  group: integration-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  integration-scope:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      docs_only: ${{ steps.classify.outputs.docs_only }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - name: Classify changed paths
+        id: classify
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          git diff --name-only --no-renames "${BASE_SHA}...${HEAD_SHA}" > "$RUNNER_TEMP/changed-paths.txt"
+          docs_only=$(node scripts/checks/docs-only.ts < "$RUNNER_TEMP/changed-paths.txt")
+          case "$docs_only" in
+            true | false) ;;
+            *) echo "unexpected classification result" >&2; exit 1 ;;
+          esac
+          echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
+
+  integration:
+    name: integration
+    needs: integration-scope
+    if: ${{ !cancelled() && (needs.integration-scope.result != 'success' || needs.integration-scope.outputs.docs_only != 'true') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      cleanup_confirmed: ${{ steps.delete.outputs.cleanup_confirmed }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - name: Check Neon configuration
+        env:
+          HAS_NEON_API_KEY: ${{ secrets.NEON_API_KEY != '' }}
+          HAS_NEON_PROJECT_ID: ${{ secrets.NEON_PROJECT_ID != '' }}
+        run: |
+          missing=""
+          [ "$HAS_NEON_API_KEY" = "true" ] || missing="$missing NEON_API_KEY"
+          [ "$HAS_NEON_PROJECT_ID" = "true" ] || missing="$missing NEON_PROJECT_ID"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing repository secret(s):$missing. Fork and Dependabot pull requests receive no repository secrets."
+            exit 1
+          fi
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Name the branch
+        id: name
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          name=$(node tools/neon-ci/src/cli.ts branch-name --pr "$PR_NUMBER" --run-id "$RUN_ID" --run-attempt "$RUN_ATTEMPT")
+          echo "branch_name=$name" >> "$GITHUB_OUTPUT"
+      # `create` calls Neon's REST API itself and prints ::add-mask:: for the branch ID, role password,
+      # endpoint hosts and the full connection string before it writes any output, log line or summary.
+      # It fails when the branch name is already taken. Later steps find the branch by name, so no
+      # branch ID is passed through env, step outputs or job outputs.
+      - name: Create Neon branch
+        id: create
+        env:
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+          NEON_PROJECT_ID: ${{ secrets.NEON_PROJECT_ID }}
+          BRANCH_NAME: ${{ steps.name.outputs.branch_name }}
+        run: node tools/neon-ci/src/cli.ts create --name "$BRANCH_NAME"
+      - name: Smoke check
+        env:
+          DATABASE_URL: ${{ steps.create.outputs.db_url }}
+          PGSSLROOTCERT: system
+        run: |
+          for attempt in $(seq 1 12); do
+            if psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -tAc 'select 1' > /dev/null 2>&1; then
+              echo "database reachable after $attempt attempt(s)"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::Database not reachable within about 60 seconds"
+          exit 1
+      - name: Integration tests
+        env:
+          DATABASE_URL: ${{ steps.create.outputs.db_url }}
+        run: pnpm -r --if-present run test:integration
+      - name: Delete Neon branch
+        id: delete
+        if: always()
+        env:
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+          NEON_PROJECT_ID: ${{ secrets.NEON_PROJECT_ID }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          if [ -z "$NEON_API_KEY" ] || [ -z "$NEON_PROJECT_ID" ]; then
+            echo "No Neon configuration: no branch could have been created."
+            echo "cleanup_confirmed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          name=$(node tools/neon-ci/src/cli.ts branch-name --pr "$PR_NUMBER" --run-id "$RUN_ID" --run-attempt "$RUN_ATTEMPT")
+          status=0
+          node tools/neon-ci/src/cli.ts delete --name "$name" || status=$?
+          if [ "$status" -eq 0 ]; then echo "cleanup_confirmed=true" >> "$GITHUB_OUTPUT"; fi
+          exit "$status"
+
+  integration-cleanup:
+    needs: [integration-scope, integration]
+    if: ${{ always() && needs.integration.outputs.cleanup_confirmed != 'true' && (needs.integration-scope.result != 'success' || needs.integration-scope.outputs.docs_only != 'true') && github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - name: Delete Neon branch
+        env:
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+          NEON_PROJECT_ID: ${{ secrets.NEON_PROJECT_ID }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          if [ -z "$NEON_API_KEY" ] || [ -z "$NEON_PROJECT_ID" ]; then
+            echo "No Neon configuration: no branch could have been created."
+            exit 0
+          fi
+          name=$(node tools/neon-ci/src/cli.ts branch-name --pr "$PR_NUMBER" --run-id "$RUN_ID" --run-attempt "$RUN_ATTEMPT")
+          node tools/neon-ci/src/cli.ts delete --name "$name"

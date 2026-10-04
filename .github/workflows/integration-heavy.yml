@@ -1,0 +1,53 @@
+# Purpose: placeholder for a heavy integration suite that is planned for the next wave.
+# It is not a required check. It starts only on a manual run, or when the `heavy-integration`
+# label is added to a pull request from this repository. It uses no secrets and no Neon branch.
+#
+# There is deliberately no synchronize, opened, reopened, push or path trigger, so later pushes to
+# a labeled pull request start no heavy run. To get a status on a new head, remove and re-add the
+# label, or start a manual run. A label set when a pull request is created also fires `labeled`.
+#
+# Secrets: none (the Neon secrets NEON_API_KEY and NEON_PROJECT_ID are unused here).
+name: integration-heavy
+
+on:
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: Optional reason for the manual run
+        type: string
+        required: false
+  pull_request:
+    branches: [main]
+    types: [labeled]
+
+permissions: {}
+
+# Events that do not start the job get a group of their own, so they never cancel a heavy run.
+concurrency:
+  group: >-
+    ${{ (github.event_name == 'workflow_dispatch' || (github.event.label.name == 'heavy-integration' && github.event.pull_request.head.repo.full_name == github.repository))
+    && format('integration-heavy-{0}', github.event.pull_request.number || github.ref)
+    || format('integration-heavy-skipped-{0}', github.run_id) }}
+  cancel-in-progress: true
+
+jobs:
+  heavy-integration:
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event.label.name == 'heavy-integration' && github.event.pull_request.head.repo.full_name == github.repository) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Write placeholder summary
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REASON: ${{ inputs.reason }}
+        run: |
+          {
+            echo "### Heavy integration"
+            echo "No heavy suite exists yet; one is planned for the next wave."
+            if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+              echo "Trigger: manual run"
+              if [ -n "$REASON" ]; then echo "Reason: $REASON"; fi
+            else
+              echo "Trigger: label"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
