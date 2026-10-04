@@ -48,6 +48,40 @@ describe("PUB-02 scanner library", () => {
     });
   });
 
+  it("scans in-root files whose first segment begins with two dots and refuses paths outside the root", async () => {
+    const root = tempDir();
+    const files = join(root, "files");
+    writeFile(join(files, "..config"), "fine\n");
+    writeFile(join(files, "..data", "file.txt"), `ok\n${TERM}\n`);
+    writeFile(join(files, "a", "b.txt"), "fine\n");
+    writeFile(join(root, "outside.txt"), "fine\n");
+    const patterns = writePatterns(root, `${TERM}\n`);
+    const stub = writeStubGitleaks(root);
+    const result = await runModule(`
+      import { scan } from "@rbw/publication";
+      const base = { patternFile: ${JSON.stringify(patterns)}, gitleaksCommand: ${JSON.stringify(stub.command)} };
+      const root = ${JSON.stringify(files)};
+      const run = (paths) => scan({ ...base, files: { root, paths } });
+      console.log(JSON.stringify({
+        clean: await run(["..config"]),
+        blocked: await run(["..config", "..data/file.txt"]),
+        parent: await run(["../outside.txt"]),
+        dots: await run([".."]),
+        absolute: await run([${JSON.stringify(join(root, "outside.txt"))}]),
+        escape: await run(["a/../../x"]),
+      }));
+    `);
+    expect(result.stderr).toBe("");
+    expect(JSON.parse(result.stdout)).toEqual({
+      clean: { outcome: "clean" },
+      blocked: { outcome: "blocked", locations: ["..data/file.txt:2"] },
+      parent: { outcome: "unavailable" },
+      dots: { outcome: "unavailable" },
+      absolute: { outcome: "unavailable" },
+      escape: { outcome: "unavailable" },
+    });
+  });
+
   it("never throws for malformed requests", async () => {
     const result = await runModule(`
       import { scan } from "@rbw/publication";

@@ -242,7 +242,7 @@ export async function collectFileUnits(source: FilesScanSource): Promise<Collect
   for (const given of source.paths) {
     const absolute = resolve(root, given);
     const inside = relative(root, absolute);
-    if (inside === "" || inside.startsWith("..") || isAbsolute(inside)) throw new ScanUnavailable("input");
+    if (inside === "" || inside === ".." || inside.startsWith(`..${sep}`) || isAbsolute(inside)) throw new ScanUnavailable("input");
     const path = inside.split(sep).join("/");
     listed.push(path);
     let content: Uint8Array;

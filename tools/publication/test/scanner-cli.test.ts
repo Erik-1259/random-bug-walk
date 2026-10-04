@@ -167,6 +167,19 @@ describe("PUB-02 scanner CLI: invocation", () => {
     const outcome = await scanFiles({ "a.txt": "x\n" }, { paths: ["a.txt", join(root, "outside.txt")] });
     expectUnavailable(outcome.result);
   });
+
+  it("scans in-root paths whose first segment begins with two dots", async () => {
+    const clean = await scanFiles({ "..config": "fine\n", "..data/file.txt": "fine\n" });
+    expectClean(clean);
+    const blocked = await scanFiles({ "..config": "fine\n", "..data/file.txt": `ok\n${TERM}\n` });
+    expectBlocked(blocked, ["..data/file.txt:2"]);
+  });
+
+  it("refuses --files paths that resolve to or outside the root", async () => {
+    for (const path of ["../outside.txt", "..", "a/../../x", "a/../.."]) {
+      expectUnavailable((await scanFiles({ "a/b.txt": "x\n" }, { paths: ["a/b.txt", path] })).result);
+    }
+  });
 });
 
 describe("PUB-02 scanner CLI: private pattern list", () => {
