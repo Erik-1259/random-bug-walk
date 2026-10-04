@@ -85,31 +85,33 @@ describe("cli branch-name", () => {
 });
 
 describe("cli delete", () => {
-  it("exits 0 and sends one DELETE by ID", async () => {
-    const result = await cli(["delete", "--name", "ci-pr-1-2-3", "--id", "br-synthetic-1", "--api-base", fake.base]);
-    expect(result).toMatchObject({ code: 0, stdout: "outcome=deleted name=ci-pr-1-2-3 id=masked\n" });
-    expect(fake.requests).toEqual([`DELETE /api/v2/projects/${PROJECT}/branches/br-synthetic-1`]);
-  });
-
-  it("falls back to the name when no ID is given", async () => {
+  it("finds the branch by name, deletes it by the looked-up ID and confirms", async () => {
     fake.branches.push({ id: "br-by-name-1", name: "ci-pr-1-2-3", created_at: minutesAgo(1) });
     const result = await cli(["delete", "--name", "ci-pr-1-2-3", "--api-base", fake.base]);
-    expect(result.code).toBe(0);
+    expect(result).toMatchObject({ code: 0, stdout: "outcome=deleted name=ci-pr-1-2-3 id=masked\n" });
     expect(fake.requests.at(-1)).toBe(`DELETE /api/v2/projects/${PROJECT}/branches/br-by-name-1`);
+  });
+
+  it("exits 0 as absent without deleting when the name is not listed", async () => {
+    const result = await cli(["delete", "--name", "ci-pr-1-2-3", "--api-base", fake.base]);
+    expect(result).toMatchObject({ code: 0, stdout: "outcome=absent name=ci-pr-1-2-3 id=-\n" });
+    expect(fake.requests.some((request) => request.startsWith("DELETE"))).toBe(false);
+  });
+
+  it.each(["br-synthetic-1", "not-an-id", ""])("refuses --id %j with exit 2 and sends no request", async (id) => {
+    fake.branches.push({ id: "br-synthetic-1", name: "main" });
+    const result = await cli(["delete", "--name", "ci-pr-1-2-3", "--id", id, "--api-base", fake.base]);
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain("--id");
+    expect(fake.requests).toEqual([]);
   });
 
   it("exits 1 when the branch stays listed after a refused delete", async () => {
     fake.branches.push({ id: "br-synthetic-1", name: "ci-pr-1-2-3" });
     fake.deleteStatus = 403;
-    const result = await cli(["delete", "--name", "ci-pr-1-2-3", "--id", "br-synthetic-1", "--api-base", fake.base]);
+    const result = await cli(["delete", "--name", "ci-pr-1-2-3", "--api-base", fake.base]);
     expect(result.code).toBe(1);
     expect(result.stdout).toContain("outcome=leaked");
-  });
-
-  it("exits 2 for an invalid ID without sending a request", async () => {
-    const result = await cli(["delete", "--name", "ci-pr-1-2-3", "--id", "not-an-id", "--api-base", fake.base]);
-    expect(result.code).toBe(2);
-    expect(fake.requests).toEqual([]);
   });
 
   it("exits 2 for a name outside the CI pattern without sending a request", async () => {
@@ -119,7 +121,7 @@ describe("cli delete", () => {
   });
 
   it("never prints the API key", async () => {
-    const result = await cli(["delete", "--name", "ci-pr-1-2-3", "--id", "br-synthetic-1", "--api-base", fake.base]);
+    const result = await cli(["delete", "--name", "ci-pr-1-2-3", "--api-base", fake.base]);
     expect(result.stdout + result.stderr).not.toContain(KEY);
   });
 });
@@ -218,24 +220,9 @@ describe("cli create", () => {
   });
 });
 
-describe("cli mask", () => {
-  it("writes only add-mask lines on stdout and nothing on stderr", async () => {
-    const result = await cli(["mask", "--id", "br-synthetic-1", "--api-base", fake.base]);
-    expect(result.code).toBe(0);
-    expect(result.stdout).toBe("::add-mask::br-synthetic-1\n::add-mask::synthetic-pw\n::add-mask::ep.example.invalid\n");
-    expect(result.stderr).toBe("");
-  });
-
-  it("exits 2 for a missing ID without sending a request", async () => {
-    expect((await cli(["mask", "--api-base", fake.base])).code).toBe(2);
-    expect(fake.requests).toEqual([]);
-  });
-});
-
 describe("missing configuration", () => {
   it.each([
     ["create", "--name", "ci-pr-1-2-3"],
-    ["mask", "--id", "br-synthetic-1"],
     ["delete", "--name", "ci-pr-1-2-3"],
     ["sweep", "--min-age-minutes", "120"],
     ["list"],

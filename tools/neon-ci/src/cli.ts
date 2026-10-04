@@ -1,19 +1,17 @@
 import { appendFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { listBranches, realDeps } from "./api.ts";
-import { isBranchId, loadConfig } from "./config.ts";
+import { loadConfig } from "./config.ts";
 import type { Config } from "./config.ts";
 import { runCreate } from "./create.ts";
 import { deleteAndConfirm, exitCodeFor, formatResult } from "./delete.ts";
-import { runMask } from "./mask.ts";
 import { branchName, isCiBranchName } from "./naming.ts";
 import { runSweep } from "./sweep.ts";
 
 const USAGE = `usage: cli.ts <command> [options]
   branch-name --pr <n> --run-id <n> --run-attempt <n>
   create --name <ci branch name>   (writes created and db_url to $GITHUB_OUTPUT)
-  mask --id <branch id>
-  delete --name <fallback name> [--id <branch id>]
+  delete --name <ci branch name>
   sweep --min-age-minutes <n> [--dry-run]
   list
 Environment: NEON_API_KEY, NEON_PROJECT_ID. Test-only option: --api-base <url>.`;
@@ -39,27 +37,29 @@ function requireConfig(apiBase: string | undefined): Config {
   return loaded.config;
 }
 
-function requireBranchId(value: string | undefined): string {
-  if (value === undefined || !isBranchId(value)) throw new UsageError("invalid or missing --id: expected br-<letters, digits, hyphens>");
-  return value;
+function parseOptions(args: string[]) {
+  try {
+    return parseArgs({
+      args,
+      options: {
+        pr: { type: "string" },
+        "run-id": { type: "string" },
+        "run-attempt": { type: "string" },
+        name: { type: "string" },
+        "min-age-minutes": { type: "string" },
+        "dry-run": { type: "boolean" },
+        "api-base": { type: "string" },
+      },
+      allowPositionals: false,
+    }).values;
+  } catch (error) {
+    throw new UsageError(error instanceof Error ? error.message : "invalid options");
+  }
 }
 
 async function run(argv: string[]): Promise<number> {
   const [command, ...rest] = argv;
-  const { values } = parseArgs({
-    args: rest,
-    options: {
-      pr: { type: "string" },
-      "run-id": { type: "string" },
-      "run-attempt": { type: "string" },
-      id: { type: "string" },
-      name: { type: "string" },
-      "min-age-minutes": { type: "string" },
-      "dry-run": { type: "boolean" },
-      "api-base": { type: "string" },
-    },
-    allowPositionals: false,
-  });
+  const values = parseOptions(rest);
 
   switch (command) {
     case "branch-name": {
@@ -79,17 +79,11 @@ async function run(argv: string[]): Promise<number> {
         summary: appendSummary,
       });
     }
-    case "mask": {
-      const config = requireConfig(values["api-base"]);
-      const id = requireBranchId(values.id);
-      return runMask(realDeps, config, id, { stdout: out, stderr: err });
-    }
     case "delete": {
       const config = requireConfig(values["api-base"]);
       const name = values.name ?? "";
       if (!isCiBranchName(name)) throw new UsageError("invalid --name: expected ci-pr-<pr>-<run id>-<attempt>");
-      const id = values.id === undefined || values.id === "" ? undefined : requireBranchId(values.id);
-      const result = await deleteAndConfirm(realDeps, config, name, id);
+      const result = await deleteAndConfirm(realDeps, config, name);
       const line = formatResult(result);
       out(line);
       appendSummary(line);

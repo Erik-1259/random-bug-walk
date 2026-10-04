@@ -2,7 +2,20 @@ import { asRecord, describe, isSuccess, listBranches, parseJson, send } from "./
 import type { Deps } from "./api.ts";
 import { isBranchId } from "./config.ts";
 import type { Config } from "./config.ts";
-import { DEFAULT_ROLE, encodedPassword, usable } from "./mask.ts";
+
+const CONTROL_CHARACTERS = /[\p{Cc}\p{Zl}\p{Zp}]/u;
+const DEFAULT_ROLE = "neondb_owner";
+
+/** The password as the WHATWG URL `password` setter writes it into a connection string. */
+function encodedPassword(password: string): string {
+  const url = new URL("postgresql://user@host/");
+  url.password = password;
+  return url.password;
+}
+
+function usable(value: unknown): value is string {
+  return typeof value === "string" && value !== "" && !CONTROL_CHARACTERS.test(value);
+}
 
 const READ_BUDGET_MS = 60_000;
 const EXPIRY_HOURS = 4;

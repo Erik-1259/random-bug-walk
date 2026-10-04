@@ -1,7 +1,7 @@
 import { listBranches } from "./api.ts";
 import type { Branch, Deps } from "./api.ts";
 import type { Config } from "./config.ts";
-import { deleteAndConfirm } from "./delete.ts";
+import { deleteListedBranch } from "./delete.ts";
 import type { Outcome } from "./delete.ts";
 import { isCiBranchName } from "./naming.ts";
 
@@ -85,7 +85,7 @@ export async function runSweep(
   const counts: Record<SweepOutcome, number> = { deleted: 0, absent: 0, leaked: 0, unknown: 0, "would-delete": 0 };
   const lines: string[] = [];
   for (const { branch, ageMinutes } of selected) {
-    const outcome: SweepOutcome = dryRun ? "would-delete" : (await deleteAndConfirm(deps, config, branch.name, branch.id)).outcome;
+    const outcome: SweepOutcome = dryRun ? "would-delete" : (await deleteListedBranch(deps, config, branch.name, branch.id)).outcome;
     counts[outcome]++;
     lines.push(`name=${branch.name} age_minutes=${String(ageMinutes)} outcome=${outcome}`);
   }
