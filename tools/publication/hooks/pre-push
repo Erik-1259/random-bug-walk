@@ -1,0 +1,6 @@
+#!/bin/sh
+# Refuses every direct push. Agent clones enable this hook with
+#   git config core.hooksPath tools/publication/hooks
+echo "Direct git push is disabled in this clone." >&2
+echo "Publish through the checked wrapper instead: tools/publication/bin/rbw-publish push" >&2
+exit 1
