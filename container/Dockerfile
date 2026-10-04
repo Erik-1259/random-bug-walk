@@ -35,7 +35,7 @@ RUN npm install --global --no-audit --no-fund \
     && claude --version \
     && codex --version
 
-# System-level config, so it still applies when a state volume is mounted at /home/node.
+# System-level config, kept outside the agent's home directory.
 # The container is the sandbox: Codex's own Linux sandbox needs user namespaces or a
 # setuid bwrap, and Docker's default seccomp profile and no-new-privileges rule out both.
 RUN mkdir -p /etc/codex /workspace /inbox \

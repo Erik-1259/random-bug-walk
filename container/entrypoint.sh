@@ -1,7 +1,7 @@
 #!/bin/bash
 # Image entrypoint. When OPENAI_API_KEY is set, signs Codex in with it on every start
-# (Codex does not read the key from the environment by itself), replacing any earlier
-# sign-in kept in a state volume, then runs the command.
+# (Codex does not read the key from the environment by itself), then runs the command.
+# The sign-in file lives in the container's home and goes away with the container.
 set -euo pipefail
 
 if [ -n "${OPENAI_API_KEY:-}" ]; then

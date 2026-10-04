@@ -86,8 +86,7 @@ done
 usage() {
   cat <<'EOF'
 Usage: check-isolation.sh --worktree DIR --inbox DIR --probe FILE
-                          --private-remote OWNER/REPO [--image IMAGE]
-                          [--state-volume VOLUME] [--expose]
+                          --private-remote OWNER/REPO [--image IMAGE] [--expose]
 
 Starts a check container with run-agent.sh's docker arguments and verifies:
   a.  the probe file cannot be read and no file with its name is visible
@@ -110,7 +109,6 @@ Starts a check container with run-agent.sh's docker arguments and verifies:
   --probe FILE       absolute path of an existing file outside the worktree and
                      inbox that agents must not read; give it a distinctive name
   --private-remote   a private GitHub repository (reading it needs credentials)
-  --state-volume     also mount this named state volume, as run-agent.sh would
   --expose           control run: adds one read-only bind mount of the probe's
                      directory and exits 0 only if checks a and b1 then fail
 EOF
@@ -163,11 +161,6 @@ same_source() {
   [ "$1" = "$2" ] || [ "$1" = "/host_mnt$2" ]
 }
 
-# A local volume created with driver options can be backed by a host directory.
-plain_volume() {
-  [ "$(docker volume inspect --format '{{.Driver}} {{len .Options}}' "$1" </dev/null 2>/dev/null || true)" = "local 0" ]
-}
-
 # One printable line: no carriage returns, no repository name, at most 160 chars.
 clean() {
   local s=$1
@@ -200,12 +193,11 @@ inbox=""
 probe=""
 remote=""
 image="rbw-dev:local"
-state_volume=""
 expose=0
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --worktree | --inbox | --probe | --private-remote | --image | --state-volume)
+    --worktree | --inbox | --probe | --private-remote | --image)
       [ "$#" -ge 2 ] || die "$1 needs a value"
       case "$1" in
         --worktree) worktree=$2 ;;
@@ -213,7 +205,6 @@ while [ "$#" -gt 0 ]; do
         --probe) probe=$2 ;;
         --private-remote) remote=$2 ;;
         --image) image=$2 ;;
-        --state-volume) state_volume=$2 ;;
       esac
       shift 2
       ;;
@@ -279,9 +270,6 @@ docker image inspect "$image" >/dev/null 2>&1 ||
   die "image not found locally (build it first) or docker is not running"
 
 launcher_args=(--worktree "$worktree_dir" --inbox "$inbox_dir" --name "isolation-check-$$" --image "$image")
-if [ -n "$state_volume" ]; then
-  launcher_args+=(--state-volume "$state_volume")
-fi
 printed=$("$BASH" "$LAUNCHER" "${launcher_args[@]}" --print-args -- sleep 1800) ||
   die "run-agent.sh refused these inputs"
 
@@ -346,12 +334,12 @@ check_probe() {
 }
 
 check_mounts() {
-  local raw type vname src dst rw binds=0 have_workspace=0 have_inbox=0 have_publication=0 have_requests=0 unexpected=0 note=""
+  local raw type src dst rw binds=0 have_workspace=0 have_inbox=0 have_publication=0 have_requests=0 unexpected=0
   if ! raw=$(docker inspect --format "$MOUNTS_FORMAT" "$container" 2>/dev/null); then
     fail "b1. could not inspect the container's mounts"
     return
   fi
-  while IFS=$SEP read -r type vname src dst rw; do
+  while IFS=$SEP read -r type _ src dst rw; do
     [ -n "$type" ] || continue
     case "$type" in
       bind)
@@ -369,12 +357,7 @@ check_mounts() {
         fi
         ;;
       volume)
-        if [ -n "$state_volume" ] && [ "$vname" = "$state_volume" ] && [ "$dst" = /home/node ] &&
-          plain_volume "$vname"; then
-          note=", plain state volume at /home/node"
-        else
-          unexpected=$((unexpected + 1))
-        fi
+        unexpected=$((unexpected + 1))
         ;;
       *)
         unexpected=$((unexpected + 1))
@@ -385,7 +368,7 @@ $raw
 EOF
   if [ "$have_workspace" -eq 1 ] && [ "$have_inbox" -eq 1 ] && [ "$have_publication" -eq 1 ] && [ "$have_requests" -eq 1 ] &&
     [ "$binds" -eq 4 ] && [ "$unexpected" -eq 0 ]; then
-    pass "b1. host mounts: worktree at /workspace and inbox at /inbox, read-write; inbox/publication read-only with its requests/ read-write$note; nothing else"
+    pass "b1. host mounts: worktree at /workspace and inbox at /inbox, read-write; inbox/publication read-only with its requests/ read-write; nothing else"
   else
     fail "b1. host mounts: $binds bind mount(s), $unexpected unexpected mount(s), worktree ok=$have_workspace, inbox ok=$have_inbox, publication ok=$have_publication, requests ok=$have_requests"
   fi

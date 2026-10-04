@@ -13,7 +13,7 @@ readonly CR=$'\r'
 usage() {
   cat <<'EOF'
 Usage: run-agent.sh --worktree DIR --inbox DIR [--credentials FILE] [--name NAME]
-                    [--image IMAGE] [--state-volume VOLUME] [--print-args]
+                    [--image IMAGE] [--print-args]
                     [-- COMMAND [ARGS...]]
 
 Runs COMMAND (default: an interactive bash shell) in a container whose only
@@ -30,9 +30,6 @@ Options:
                          lie outside the worktree and the inbox
   --name NAME            container name suffix (default: worktree folder name)
   --image IMAGE          local image to run (default: rbw-dev:local)
-  --state-volume VOLUME  named Docker volume mounted at /home/node so agent
-                         sign-in state persists between runs; use one volume
-                         per worktree (default: none)
   --print-args           print the arguments that follow `docker`, one per
                          line, and exit without running anything
 
@@ -101,13 +98,12 @@ inbox=""
 credentials=""
 name=""
 image="$DEFAULT_IMAGE"
-state_volume=""
 print_args=0
 command_args=()
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --worktree | --inbox | --credentials | --name | --image | --state-volume)
+    --worktree | --inbox | --credentials | --name | --image)
       [ "$#" -ge 2 ] || die "$1 needs a value"
       case "$1" in
         --worktree) worktree=$2 ;;
@@ -115,7 +111,6 @@ while [ "$#" -gt 0 ]; do
         --credentials) credentials=$2 ;;
         --name) name=$2 ;;
         --image) image=$2 ;;
-        --state-volume) state_volume=$2 ;;
       esac
       shift 2
       ;;
@@ -189,27 +184,6 @@ fi
 case "$image" in
   "" | -* | *[!-[:alnum:]._/:@]*) die "--image is not a valid image reference" ;;
 esac
-
-if [ -n "$state_volume" ]; then
-  case "$state_volume" in
-    */*) die "--state-volume takes a Docker volume name, not a path" ;;
-    [![:alnum:]]* | *[!-[:alnum:]_.]*) die "--state-volume is not a valid Docker volume name" ;;
-  esac
-  if command -v docker >/dev/null 2>&1; then
-    # A local volume created with driver options can be backed by a host
-    # directory. A volume that does not exist yet is created plain.
-    if docker volume inspect "$state_volume" >/dev/null 2>&1; then
-      case "$(docker volume inspect --format '{{.Driver}} {{len .Options}}' "$state_volume" 2>/dev/null || true)" in
-        "local 0") ;;
-        *) die "--state-volume must be a plain local Docker volume" ;;
-      esac
-    fi
-    # Files in /home/node can run in the next container that mounts the volume.
-    if [ -n "$(docker ps --quiet --filter "volume=$state_volume" 2>/dev/null || true)" ]; then
-      die "--state-volume is in use by another container"
-    fi
-  fi
-fi
 
 [ -n "$name" ] || name=${worktree_dir##*/}
 safe_name=$(printf '%s' "$name" |
@@ -309,9 +283,6 @@ docker_args=(
 )
 if [ -t 0 ] && [ -t 1 ]; then
   docker_args+=(--tty)
-fi
-if [ -n "$state_volume" ]; then
-  docker_args+=(--mount "type=volume,source=$state_volume,target=/home/node")
 fi
 for var in ${env_names[@]+"${env_names[@]}"}; do
   docker_args+=(-e "$var")
