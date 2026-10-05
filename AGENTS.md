@@ -112,6 +112,7 @@ For automated pull request reviews, including Codex's:
 
 - Look for correctness bugs and real defects in the change: wrong behaviour, broken edge cases, data loss, wrong spend or admission logic, and secrets or private data reaching public output.
 - Do not suggest process, workflow-hardening or defence-in-depth changes unless they fix a concrete defect in the change. This is a short hackathon project.
+- Report only defects that ordinary use could trigger. Do not report findings that need a misbehaving or compromised outside service, an adversarial or malicious input, or an operator misconfiguration, and do not suggest hardening against them.
 - Accepted risk, not a finding: workflows on same-repository pull requests can reach repository secrets. Only the owner's account opens pull requests here, each after the checked publication step, and pull requests from forks get no secrets.
 
 ## Integration proof
