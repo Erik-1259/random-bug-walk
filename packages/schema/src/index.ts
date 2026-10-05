@@ -16,3 +16,14 @@ export {
   registerFamily,
 } from "./registry.ts";
 export type { Identity, RefusalCode } from "./registry.ts";
+export {
+  TRIAL_PROFILES,
+  buildExpectedTrials,
+  buildJobRequest,
+  jobOperationIdentity,
+  jobPayloadHash,
+  mutationId,
+  operationId,
+  taskRevision,
+} from "./jobs.ts";
+export type { BuiltExpectedTrials, BuiltJobRequest, ExpectedTrialsInput, JobRequestFields, MutationInput, ProfileTrial, TrialProfile } from "./jobs.ts";

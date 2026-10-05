@@ -1,0 +1,449 @@
+{
+  "schema_version": 1,
+  "execution_id": "00000000-0000-4000-8000-000000000203",
+  "task_revision": "65958046de999e625a8d3ed9806aa2856c34931ee2ff8ef477b5b30a423aa687",
+  "trials": [
+    {
+      "trial_id": "clean-01",
+      "code_state": "clean",
+      "patch_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "original_suite_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "original_test_ids": [
+        "0000000000000000aaaa-00000000000000000001",
+        "0000000000000000aaaa-00000000000000000002"
+      ],
+      "added_suite_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+      "added_repeat_count": 1,
+      "expected_checks": [
+        {
+          "check_id": "tzarg.utc-day-counts",
+          "expected": "pass",
+          "failure_code": null
+        },
+        {
+          "check_id": "tzarg.la-day-counts",
+          "expected": "pass",
+          "failure_code": null
+        },
+        {
+          "check_id": "tzarg.auckland-day-counts",
+          "expected": "pass",
+          "failure_code": null
+        },
+        {
+          "check_id": "tzarg.kolkata-day-counts",
+          "expected": "pass",
+          "failure_code": null
+        }
+      ]
+    },
+    {
+      "trial_id": "fixed-01",
+      "code_state": "fixed",
+      "patch_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "original_suite_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "original_test_ids": [
+        "0000000000000000aaaa-00000000000000000001",
+        "0000000000000000aaaa-00000000000000000002"
+      ],
+      "added_suite_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+      "added_repeat_count": 20,
+      "expected_checks": [
+        {
+          "check_id": "tzarg.utc-day-counts",
+          "expected": "pass",
+          "failure_code": null
+        },
+        {
+          "check_id": "tzarg.la-day-counts",
+          "expected": "pass",
+          "failure_code": null
+        },
+        {
+          "check_id": "tzarg.auckland-day-counts",
+          "expected": "pass",
+          "failure_code": null
+        },
+        {
+          "check_id": "tzarg.kolkata-day-counts",
+          "expected": "pass",
+          "failure_code": null
+        }
+      ]
+    },
+    {
+      "trial_id": "fixed-02",
+      "code_state": "fixed",
+      "patch_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "original_suite_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "original_test_ids": [
+        "0000000000000000aaaa-00000000000000000001",
+        "0000000000000000aaaa-00000000000000000002"
+      ],
+      "added_suite_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+      "added_repeat_count": 1,
+      "expected_checks": [
+        {
+          "check_id": "tzarg.utc-day-counts",
+          "expected": "pass",
+          "failure_code": null
+        },
+        {
+          "check_id": "tzarg.la-day-counts",
+          "expected": "pass",
+          "failure_code": null
+        },
+        {
+          "check_id": "tzarg.auckland-day-counts",
+          "expected": "pass",
+          "failure_code": null
+        },
+        {
+          "check_id": "tzarg.kolkata-day-counts",
+          "expected": "pass",
+          "failure_code": null
+        }
+      ]
+    },
+    {
+      "trial_id": "fixed-03",
+      "code_state": "fixed",
+      "patch_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "original_suite_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "original_test_ids": [
+        "0000000000000000aaaa-00000000000000000001",
+        "0000000000000000aaaa-00000000000000000002"
+      ],
+      "added_suite_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+      "added_repeat_count": 1,
+      "expected_checks": [
+        {
+          "check_id": "tzarg.utc-day-counts",
+          "expected": "pass",
+          "failure_code": null
+        },
+        {
+          "check_id": "tzarg.la-day-counts",
+          "expected": "pass",
+          "failure_code": null
+        },
+        {
+          "check_id": "tzarg.auckland-day-counts",
+          "expected": "pass",
+          "failure_code": null
+        },
+        {
+          "check_id": "tzarg.kolkata-day-counts",
+          "expected": "pass",
+          "failure_code": null
+        }
+      ]
+    },
+    {
+      "trial_id": "fixed-04",
+      "code_state": "fixed",
+      "patch_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "original_suite_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "original_test_ids": [
+        "0000000000000000aaaa-00000000000000000001",
+        "0000000000000000aaaa-00000000000000000002"
+      ],
+      "added_suite_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+      "added_repeat_count": 1,
+      "expected_checks": [
+        {
+          "check_id": "tzarg.utc-day-counts",
+          "expected": "pass",
+          "failure_code": null
+        },
+        {
+          "check_id": "tzarg.la-day-counts",
+          "expected": "pass",
+          "failure_code": null
+        },
+        {
+          "check_id": "tzarg.auckland-day-counts",
+          "expected": "pass",
+          "failure_code": null
+        },
+        {
+          "check_id": "tzarg.kolkata-day-counts",
+          "expected": "pass",
+          "failure_code": null
+        }
+      ]
+    },
+    {
+      "trial_id": "fixed-05",
+      "code_state": "fixed",
+      "patch_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "original_suite_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "original_test_ids": [
+        "0000000000000000aaaa-00000000000000000001",
+        "0000000000000000aaaa-00000000000000000002"
+      ],
+      "added_suite_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+      "added_repeat_count": 1,
+      "expected_checks": [
+        {
+          "check_id": "tzarg.utc-day-counts",
+          "expected": "pass",
+          "failure_code": null
+        },
+        {
+          "check_id": "tzarg.la-day-counts",
+          "expected": "pass",
+          "failure_code": null
+        },
+        {
+          "check_id": "tzarg.auckland-day-counts",
+          "expected": "pass",
+          "failure_code": null
+        },
+        {
+          "check_id": "tzarg.kolkata-day-counts",
+          "expected": "pass",
+          "failure_code": null
+        }
+      ]
+    },
+    {
+      "trial_id": "planted-01",
+      "code_state": "planted",
+      "patch_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "original_suite_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "original_test_ids": [
+        "0000000000000000aaaa-00000000000000000001",
+        "0000000000000000aaaa-00000000000000000002"
+      ],
+      "added_suite_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+      "added_repeat_count": 20,
+      "expected_checks": [
+        {
+          "check_id": "tzarg.utc-day-counts",
+          "expected": "pass",
+          "failure_code": null
+        },
+        {
+          "check_id": "tzarg.la-day-counts",
+          "expected": "assertion_fail",
+          "failure_code": "local_day_counts_mismatch"
+        },
+        {
+          "check_id": "tzarg.auckland-day-counts",
+          "expected": "assertion_fail",
+          "failure_code": "local_day_counts_mismatch"
+        },
+        {
+          "check_id": "tzarg.kolkata-day-counts",
+          "expected": "assertion_fail",
+          "failure_code": "local_day_counts_mismatch"
+        }
+      ]
+    },
+    {
+      "trial_id": "planted-02",
+      "code_state": "planted",
+      "patch_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "original_suite_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "original_test_ids": [
+        "0000000000000000aaaa-00000000000000000001",
+        "0000000000000000aaaa-00000000000000000002"
+      ],
+      "added_suite_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+      "added_repeat_count": 1,
+      "expected_checks": [
+        {
+          "check_id": "tzarg.utc-day-counts",
+          "expected": "pass",
+          "failure_code": null
+        },
+        {
+          "check_id": "tzarg.la-day-counts",
+          "expected": "assertion_fail",
+          "failure_code": "local_day_counts_mismatch"
+        },
+        {
+          "check_id": "tzarg.auckland-day-counts",
+          "expected": "assertion_fail",
+          "failure_code": "local_day_counts_mismatch"
+        },
+        {
+          "check_id": "tzarg.kolkata-day-counts",
+          "expected": "assertion_fail",
+          "failure_code": "local_day_counts_mismatch"
+        }
+      ]
+    },
+    {
+      "trial_id": "planted-03",
+      "code_state": "planted",
+      "patch_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "original_suite_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "original_test_ids": [
+        "0000000000000000aaaa-00000000000000000001",
+        "0000000000000000aaaa-00000000000000000002"
+      ],
+      "added_suite_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+      "added_repeat_count": 1,
+      "expected_checks": [
+        {
+          "check_id": "tzarg.utc-day-counts",
+          "expected": "pass",
+          "failure_code": null
+        },
+        {
+          "check_id": "tzarg.la-day-counts",
+          "expected": "assertion_fail",
+          "failure_code": "local_day_counts_mismatch"
+        },
+        {
+          "check_id": "tzarg.auckland-day-counts",
+          "expected": "assertion_fail",
+          "failure_code": "local_day_counts_mismatch"
+        },
+        {
+          "check_id": "tzarg.kolkata-day-counts",
+          "expected": "assertion_fail",
+          "failure_code": "local_day_counts_mismatch"
+        }
+      ]
+    },
+    {
+      "trial_id": "planted-04",
+      "code_state": "planted",
+      "patch_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "original_suite_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "original_test_ids": [
+        "0000000000000000aaaa-00000000000000000001",
+        "0000000000000000aaaa-00000000000000000002"
+      ],
+      "added_suite_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+      "added_repeat_count": 1,
+      "expected_checks": [
+        {
+          "check_id": "tzarg.utc-day-counts",
+          "expected": "pass",
+          "failure_code": null
+        },
+        {
+          "check_id": "tzarg.la-day-counts",
+          "expected": "assertion_fail",
+          "failure_code": "local_day_counts_mismatch"
+        },
+        {
+          "check_id": "tzarg.auckland-day-counts",
+          "expected": "assertion_fail",
+          "failure_code": "local_day_counts_mismatch"
+        },
+        {
+          "check_id": "tzarg.kolkata-day-counts",
+          "expected": "assertion_fail",
+          "failure_code": "local_day_counts_mismatch"
+        }
+      ]
+    },
+    {
+      "trial_id": "planted-05",
+      "code_state": "planted",
+      "patch_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "original_suite_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "original_test_ids": [
+        "0000000000000000aaaa-00000000000000000001",
+        "0000000000000000aaaa-00000000000000000002"
+      ],
+      "added_suite_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+      "added_repeat_count": 1,
+      "expected_checks": [
+        {
+          "check_id": "tzarg.utc-day-counts",
+          "expected": "pass",
+          "failure_code": null
+        },
+        {
+          "check_id": "tzarg.la-day-counts",
+          "expected": "assertion_fail",
+          "failure_code": "local_day_counts_mismatch"
+        },
+        {
+          "check_id": "tzarg.auckland-day-counts",
+          "expected": "assertion_fail",
+          "failure_code": "local_day_counts_mismatch"
+        },
+        {
+          "check_id": "tzarg.kolkata-day-counts",
+          "expected": "assertion_fail",
+          "failure_code": "local_day_counts_mismatch"
+        }
+      ]
+    },
+    {
+      "trial_id": "partial-01",
+      "code_state": "partial",
+      "patch_sha256": "7777777777777777777777777777777777777777777777777777777777777777",
+      "original_suite_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "original_test_ids": [
+        "0000000000000000aaaa-00000000000000000001",
+        "0000000000000000aaaa-00000000000000000002"
+      ],
+      "added_suite_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+      "added_repeat_count": 1,
+      "expected_checks": [
+        {
+          "check_id": "tzarg.utc-day-counts",
+          "expected": "pass",
+          "failure_code": null
+        },
+        {
+          "check_id": "tzarg.la-day-counts",
+          "expected": "assertion_fail",
+          "failure_code": "local_day_counts_mismatch"
+        },
+        {
+          "check_id": "tzarg.auckland-day-counts",
+          "expected": "pass",
+          "failure_code": null
+        },
+        {
+          "check_id": "tzarg.kolkata-day-counts",
+          "expected": "assertion_fail",
+          "failure_code": "local_day_counts_mismatch"
+        }
+      ]
+    },
+    {
+      "trial_id": "stub-01",
+      "code_state": "stub",
+      "patch_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+      "original_suite_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "original_test_ids": [
+        "0000000000000000aaaa-00000000000000000001",
+        "0000000000000000aaaa-00000000000000000002"
+      ],
+      "added_suite_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+      "added_repeat_count": 1,
+      "expected_checks": [
+        {
+          "check_id": "tzarg.utc-day-counts",
+          "expected": "pass",
+          "failure_code": null
+        },
+        {
+          "check_id": "tzarg.la-day-counts",
+          "expected": "assertion_fail",
+          "failure_code": "bucket_labels_mismatch"
+        },
+        {
+          "check_id": "tzarg.auckland-day-counts",
+          "expected": "assertion_fail",
+          "failure_code": "bucket_labels_mismatch"
+        },
+        {
+          "check_id": "tzarg.kolkata-day-counts",
+          "expected": "assertion_fail",
+          "failure_code": "bucket_labels_mismatch"
+        }
+      ]
+    }
+  ]
+}

@@ -591,6 +591,568 @@
         },
         "redactions": { "type": "array", "items": { "$ref": "#/$defs/RedactionDeclaration" } }
       }
+    },
+    "JobKind": {
+      "type": "string",
+      "enum": ["kit_check", "observe", "admission", "judge_verify"]
+    },
+    "CodeState": {
+      "type": "string",
+      "enum": ["clean", "planted", "fixed", "partial", "stub"]
+    },
+    "ExpectedOutcome": {
+      "type": "string",
+      "enum": ["pass", "assertion_fail"]
+    },
+    "ObservedOutcome": {
+      "type": "string",
+      "enum": ["pass", "assertion_fail", "setup_fail", "skipped", "not_run"]
+    },
+    "TrialStatus": {
+      "type": "string",
+      "enum": ["complete", "invalid", "incomplete"]
+    },
+    "TrialReason": {
+      "description": "One list for invalid and incomplete trial results, and for observations that did not produce a pass or an assertion failure.",
+      "type": "string",
+      "enum": [
+        "scope_violation",
+        "build_failed",
+        "startup_failed",
+        "auth_failed",
+        "seed_failed",
+        "timeout",
+        "artifact_missing",
+        "artifact_hash_mismatch",
+        "test_missing",
+        "test_skipped",
+        "unrelated_failure",
+        "provider_uncertain",
+        "limit_exceeded"
+      ]
+    },
+    "AssertionFailureCode": {
+      "description": "Codes of the first fixture; a later fixture adds values here.",
+      "type": "string",
+      "enum": ["local_day_counts_mismatch", "bucket_labels_mismatch"]
+    },
+    "CheckId": {
+      "description": "Lowercase slugs joined by dots, with at least one dot, such as tzarg.la-day-counts.",
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*(?:\\.[a-z0-9]+(?:-[a-z0-9]+)*)+$"
+    },
+    "TestId": {
+      "description": "An opaque test-runner ID, such as a Playwright spec id: printable ASCII without spaces.",
+      "type": "string",
+      "pattern": "^[!-~]+$"
+    },
+    "OperationKind": {
+      "description": "Lowercase words of letters, digits and '_' joined by dots, such as admission or writer.issue. Every JobKind value is one.",
+      "type": "string",
+      "pattern": "^[a-z0-9_]+(?:\\.[a-z0-9_]+)*$"
+    },
+    "CallName": {
+      "description": "Segments of lowercase letters, digits, '.', '_' and '-' joined by colons, such as writer.issue:cand-17:3.",
+      "type": "string",
+      "pattern": "^[a-z0-9._-]+(?::[a-z0-9._-]+)*$"
+    },
+    "FileMode": {
+      "description": "A regular file's git mode. Symlinks (120000) and submodules are not file modes here.",
+      "type": "string",
+      "enum": ["100644", "100755"]
+    },
+    "TaskRevisionKind": {
+      "type": "string",
+      "enum": ["kit", "provisional", "complete"]
+    },
+    "TimeZoneName": {
+      "description": "An IANA time zone name such as America/Los_Angeles or UTC. Only the shape is checked.",
+      "type": "string",
+      "pattern": "^[A-Za-z][A-Za-z0-9_+-]*(?:/[A-Za-z0-9][A-Za-z0-9_+-]*)*$"
+    },
+    "LocaleTag": {
+      "description": "A BCP 47 language tag such as en-US. Only the shape is checked.",
+      "type": "string",
+      "pattern": "^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$"
+    },
+    "EndpointPath": {
+      "description": "A public endpoint path: '/' followed by segments of letters, digits, '.', '_', '~' and '-' that never start with '.'; no query or fragment.",
+      "type": "string",
+      "pattern": "^/(?:[A-Za-z0-9_~-][A-Za-z0-9._~-]*(?:/[A-Za-z0-9_~-][A-Za-z0-9._~-]*)*/?)?$"
+    },
+    "JobRequest": {
+      "description": "parent_execution_id is null exactly when execution_id equals root_execution_id and never equals execution_id; operation_id and payload_hash equal the values computed from the request's own fields (checked in code).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "project_id",
+        "project_policy_sha256",
+        "batch_id",
+        "execution_id",
+        "root_execution_id",
+        "parent_execution_id",
+        "operation_id",
+        "attempt_ordinal",
+        "payload_hash",
+        "kind",
+        "task_revision",
+        "policy_id",
+        "runtime_profile_sha256",
+        "image_digest",
+        "expected_trials_key",
+        "expected_trials_sha256",
+        "baseline_evidence_key",
+        "baseline_evidence_sha256",
+        "deadline_at",
+        "reservation_microusd",
+        "release_id"
+      ],
+      "properties": {
+        "schema_version": { "$ref": "#/$defs/SchemaVersion" },
+        "project_id": { "$ref": "#/$defs/Uuid" },
+        "project_policy_sha256": { "$ref": "#/$defs/Sha256" },
+        "batch_id": { "$ref": "#/$defs/Uuid" },
+        "execution_id": { "$ref": "#/$defs/Uuid" },
+        "root_execution_id": { "$ref": "#/$defs/Uuid" },
+        "parent_execution_id": { "anyOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }] },
+        "operation_id": { "$ref": "#/$defs/Sha256" },
+        "attempt_ordinal": { "$ref": "#/$defs/PositiveInteger" },
+        "payload_hash": { "$ref": "#/$defs/Sha256" },
+        "kind": { "$ref": "#/$defs/JobKind" },
+        "task_revision": { "$ref": "#/$defs/Sha256" },
+        "policy_id": { "$ref": "#/$defs/Slug" },
+        "runtime_profile_sha256": { "$ref": "#/$defs/Sha256" },
+        "image_digest": { "$ref": "#/$defs/ImageDigest" },
+        "expected_trials_key": { "$ref": "#/$defs/RelativePath" },
+        "expected_trials_sha256": { "$ref": "#/$defs/Sha256" },
+        "baseline_evidence_key": { "anyOf": [{ "$ref": "#/$defs/RelativePath" }, { "type": "null" }] },
+        "baseline_evidence_sha256": { "anyOf": [{ "$ref": "#/$defs/Sha256" }, { "type": "null" }] },
+        "deadline_at": { "$ref": "#/$defs/UtcTime" },
+        "reservation_microusd": { "$ref": "#/$defs/MicroUsd", "type": "integer", "minimum": 1 },
+        "release_id": { "anyOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }] }
+      },
+      "allOf": [
+        {
+          "if": { "type": "object", "properties": { "kind": { "const": "observe" } } },
+          "then": {
+            "type": "object",
+            "properties": { "baseline_evidence_key": { "type": "string" }, "baseline_evidence_sha256": { "type": "string" } }
+          },
+          "else": {
+            "type": "object",
+            "properties": { "baseline_evidence_key": { "type": "null" }, "baseline_evidence_sha256": { "type": "null" } }
+          }
+        },
+        {
+          "if": { "type": "object", "properties": { "kind": { "const": "judge_verify" } } },
+          "then": { "type": "object", "properties": { "release_id": { "type": "string" } } },
+          "else": { "type": "object", "properties": { "release_id": { "type": "null" } } }
+        }
+      ]
+    },
+    "ExpectedCheck": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["check_id", "expected", "failure_code"],
+      "properties": {
+        "check_id": { "$ref": "#/$defs/CheckId" },
+        "expected": { "$ref": "#/$defs/ExpectedOutcome" },
+        "failure_code": { "anyOf": [{ "$ref": "#/$defs/AssertionFailureCode" }, { "type": "null" }] }
+      },
+      "if": { "type": "object", "properties": { "expected": { "const": "pass" } } },
+      "then": { "type": "object", "properties": { "failure_code": { "type": "null" } } },
+      "else": { "type": "object", "properties": { "failure_code": { "type": "string" } } }
+    },
+    "ExpectedTrial": {
+      "description": "expected_checks are unique by check_id (checked in code).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "trial_id",
+        "code_state",
+        "patch_sha256",
+        "original_suite_sha256",
+        "original_test_ids",
+        "added_suite_sha256",
+        "added_repeat_count",
+        "expected_checks"
+      ],
+      "properties": {
+        "trial_id": { "$ref": "#/$defs/TrialId" },
+        "code_state": { "$ref": "#/$defs/CodeState" },
+        "patch_sha256": { "anyOf": [{ "$ref": "#/$defs/Sha256" }, { "type": "null" }] },
+        "original_suite_sha256": { "anyOf": [{ "$ref": "#/$defs/Sha256" }, { "type": "null" }] },
+        "original_test_ids": { "type": "array", "items": { "$ref": "#/$defs/TestId" }, "uniqueItems": true },
+        "added_suite_sha256": { "$ref": "#/$defs/Sha256" },
+        "added_repeat_count": { "$ref": "#/$defs/PositiveInteger" },
+        "expected_checks": { "type": "array", "items": { "$ref": "#/$defs/ExpectedCheck" }, "minItems": 1 }
+      },
+      "allOf": [
+        {
+          "if": { "type": "object", "properties": { "code_state": { "const": "clean" } } },
+          "then": { "type": "object", "properties": { "patch_sha256": { "type": "null" } } },
+          "else": { "type": "object", "properties": { "patch_sha256": { "type": "string" } } }
+        },
+        {
+          "if": { "type": "object", "properties": { "original_suite_sha256": { "type": "null" } } },
+          "then": { "type": "object", "properties": { "original_test_ids": { "type": "array", "maxItems": 0 } } },
+          "else": { "type": "object", "properties": { "original_test_ids": { "type": "array", "minItems": 1 } } }
+        }
+      ]
+    },
+    "ExpectedTrials": {
+      "description": "Trial IDs are unique. Checked against its request, the manifest's SHA-256, execution_id and task_revision match the request, and the trials follow the request kind's profile (checked in code).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "execution_id", "task_revision", "trials"],
+      "properties": {
+        "schema_version": { "$ref": "#/$defs/SchemaVersion" },
+        "execution_id": { "$ref": "#/$defs/Uuid" },
+        "task_revision": { "$ref": "#/$defs/Sha256" },
+        "trials": { "type": "array", "items": { "$ref": "#/$defs/ExpectedTrial" }, "minItems": 1 }
+      }
+    },
+    "CheckObservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "check_id",
+        "repeat_index",
+        "observed",
+        "failure_code",
+        "duration_ms",
+        "response_artifact_key",
+        "response_artifact_sha256"
+      ],
+      "properties": {
+        "check_id": { "$ref": "#/$defs/CheckId" },
+        "repeat_index": { "$ref": "#/$defs/PositiveInteger" },
+        "observed": { "$ref": "#/$defs/ObservedOutcome" },
+        "failure_code": {
+          "anyOf": [{ "$ref": "#/$defs/AssertionFailureCode" }, { "$ref": "#/$defs/TrialReason" }, { "type": "null" }]
+        },
+        "duration_ms": { "$ref": "#/$defs/DurationMs" },
+        "response_artifact_key": { "anyOf": [{ "$ref": "#/$defs/RelativePath" }, { "type": "null" }] },
+        "response_artifact_sha256": { "anyOf": [{ "$ref": "#/$defs/Sha256" }, { "type": "null" }] }
+      },
+      "allOf": [
+        {
+          "if": { "type": "object", "properties": { "response_artifact_key": { "type": "null" } } },
+          "then": { "type": "object", "properties": { "response_artifact_sha256": { "type": "null" } } },
+          "else": { "type": "object", "properties": { "response_artifact_sha256": { "type": "string" } } }
+        },
+        {
+          "if": { "type": "object", "properties": { "observed": { "const": "pass" } } },
+          "then": { "type": "object", "properties": { "failure_code": { "type": "null" } } }
+        },
+        {
+          "if": { "type": "object", "properties": { "observed": { "const": "assertion_fail" } } },
+          "then": { "type": "object", "properties": { "failure_code": { "$ref": "#/$defs/AssertionFailureCode" } } }
+        },
+        {
+          "if": { "type": "object", "properties": { "observed": { "enum": ["setup_fail", "skipped", "not_run"] } } },
+          "then": { "type": "object", "properties": { "failure_code": { "$ref": "#/$defs/TrialReason" } } }
+        }
+      ]
+    },
+    "TrialObservations": {
+      "description": "observations are sorted by repeat_index, then check_id in code point order, and unique by that pair (checked in code).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "execution_id", "trial_id", "observations"],
+      "properties": {
+        "schema_version": { "$ref": "#/$defs/SchemaVersion" },
+        "execution_id": { "$ref": "#/$defs/Uuid" },
+        "trial_id": { "$ref": "#/$defs/TrialId" },
+        "observations": { "type": "array", "items": { "$ref": "#/$defs/CheckObservation" } }
+      }
+    },
+    "TrialResult": {
+      "description": "Evidence that a trial ran, not a verdict. ended_at is not before started_at, and checked against its request the identity fields match the request (checked in code).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "project_policy_sha256",
+        "root_execution_id",
+        "execution_id",
+        "task_revision",
+        "trial_id",
+        "code_state",
+        "status",
+        "expected_trials_sha256",
+        "observations_key",
+        "observations_sha256",
+        "artifacts_key",
+        "artifacts_sha256",
+        "invalid_reason",
+        "started_at",
+        "ended_at"
+      ],
+      "properties": {
+        "schema_version": { "$ref": "#/$defs/SchemaVersion" },
+        "project_policy_sha256": { "$ref": "#/$defs/Sha256" },
+        "root_execution_id": { "$ref": "#/$defs/Uuid" },
+        "execution_id": { "$ref": "#/$defs/Uuid" },
+        "task_revision": { "$ref": "#/$defs/Sha256" },
+        "trial_id": { "$ref": "#/$defs/TrialId" },
+        "code_state": { "$ref": "#/$defs/CodeState" },
+        "status": { "$ref": "#/$defs/TrialStatus" },
+        "expected_trials_sha256": { "$ref": "#/$defs/Sha256" },
+        "observations_key": { "anyOf": [{ "$ref": "#/$defs/RelativePath" }, { "type": "null" }] },
+        "observations_sha256": { "anyOf": [{ "$ref": "#/$defs/Sha256" }, { "type": "null" }] },
+        "artifacts_key": { "anyOf": [{ "$ref": "#/$defs/RelativePath" }, { "type": "null" }] },
+        "artifacts_sha256": { "anyOf": [{ "$ref": "#/$defs/Sha256" }, { "type": "null" }] },
+        "invalid_reason": { "anyOf": [{ "$ref": "#/$defs/TrialReason" }, { "type": "null" }] },
+        "started_at": { "$ref": "#/$defs/UtcTime" },
+        "ended_at": { "$ref": "#/$defs/UtcTime" }
+      },
+      "allOf": [
+        {
+          "if": { "type": "object", "properties": { "observations_key": { "type": "null" } } },
+          "then": { "type": "object", "properties": { "observations_sha256": { "type": "null" } } },
+          "else": { "type": "object", "properties": { "observations_sha256": { "type": "string" } } }
+        },
+        {
+          "if": { "type": "object", "properties": { "artifacts_key": { "type": "null" } } },
+          "then": { "type": "object", "properties": { "artifacts_sha256": { "type": "null" } } },
+          "else": { "type": "object", "properties": { "artifacts_sha256": { "type": "string" } } }
+        },
+        {
+          "if": { "type": "object", "properties": { "status": { "enum": ["complete", "invalid"] } } },
+          "then": {
+            "type": "object",
+            "properties": { "observations_key": { "type": "string" }, "artifacts_key": { "type": "string" } }
+          }
+        },
+        {
+          "if": { "type": "object", "properties": { "status": { "const": "complete" } } },
+          "then": { "type": "object", "properties": { "invalid_reason": { "type": "null" } } },
+          "else": { "type": "object", "properties": { "invalid_reason": { "type": "string" } } }
+        }
+      ]
+    },
+    "QueryParameters": {
+      "description": "Public query parameter names (ASCII letters, digits and '_') mapped to string values.",
+      "type": "object",
+      "propertyNames": { "pattern": "^[A-Za-z0-9_]+$" },
+      "additionalProperties": { "type": "string" }
+    },
+    "SymptomRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["method", "path", "query"],
+      "properties": {
+        "method": { "type": "string", "enum": ["GET", "POST"] },
+        "path": { "$ref": "#/$defs/EndpointPath" },
+        "query": { "$ref": "#/$defs/QueryParameters" }
+      }
+    },
+    "SymptomEvent": {
+      "description": "utc_instant is the UTC time of timestamp_seconds (checked in code).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["label", "timestamp_seconds", "utc_instant"],
+      "properties": {
+        "label": { "type": "string", "minLength": 1 },
+        "timestamp_seconds": { "$ref": "#/$defs/NonNegativeInteger" },
+        "utc_instant": {
+          "$ref": "#/$defs/UtcTime",
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+        }
+      }
+    },
+    "BucketCount": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["bucket_label", "count"],
+      "properties": {
+        "bucket_label": { "type": "string", "minLength": 1 },
+        "count": { "$ref": "#/$defs/NonNegativeInteger" }
+      }
+    },
+    "FollowUpExample": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["timezone", "expected", "observed"],
+      "properties": {
+        "timezone": { "$ref": "#/$defs/TimeZoneName" },
+        "expected": { "type": "array", "items": { "$ref": "#/$defs/BucketCount" } },
+        "observed": { "type": "array", "items": { "$ref": "#/$defs/BucketCount" } }
+      }
+    },
+    "DocExcerpt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["text", "source_url"],
+      "properties": {
+        "text": { "type": "string", "minLength": 1 },
+        "source_url": { "$ref": "#/$defs/HttpsObjectUri" }
+      }
+    },
+    "ObservedSymptom": {
+      "description": "The only input the issue writer accepts. It allows no other field, so it holds no stack trace, source path, function name, test or assertion title, check ID, patch, SQL or repair suggestion.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "user_action",
+        "request",
+        "timezone",
+        "locale",
+        "fixture_description",
+        "events",
+        "http_status",
+        "expected",
+        "observed",
+        "follow_up_examples",
+        "doc_excerpts"
+      ],
+      "properties": {
+        "schema_version": { "$ref": "#/$defs/SchemaVersion" },
+        "user_action": { "type": "string", "minLength": 1 },
+        "request": { "$ref": "#/$defs/SymptomRequest" },
+        "timezone": { "$ref": "#/$defs/TimeZoneName" },
+        "locale": { "anyOf": [{ "$ref": "#/$defs/LocaleTag" }, { "type": "null" }] },
+        "fixture_description": { "type": "string", "minLength": 1 },
+        "events": { "type": "array", "items": { "$ref": "#/$defs/SymptomEvent" } },
+        "http_status": { "type": "integer", "minimum": 100, "maximum": 599 },
+        "expected": { "type": "array", "items": { "$ref": "#/$defs/BucketCount" } },
+        "observed": { "type": "array", "items": { "$ref": "#/$defs/BucketCount" } },
+        "follow_up_examples": { "type": "array", "items": { "$ref": "#/$defs/FollowUpExample" } },
+        "doc_excerpts": { "type": "array", "items": { "$ref": "#/$defs/DocExcerpt" } }
+      }
+    },
+    "OperationIdentity": {
+      "description": "Its SHA-256 is the operation_id. A job request uses its own fields with call_name null; a provider call uses its call kind and call name.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "project_id",
+        "project_policy_sha256",
+        "root_execution_id",
+        "batch_id",
+        "task_revision",
+        "kind",
+        "runtime_profile_sha256",
+        "call_name",
+        "attempt_ordinal"
+      ],
+      "properties": {
+        "schema_version": { "$ref": "#/$defs/SchemaVersion" },
+        "project_id": { "$ref": "#/$defs/Uuid" },
+        "project_policy_sha256": { "$ref": "#/$defs/Sha256" },
+        "root_execution_id": { "$ref": "#/$defs/Uuid" },
+        "batch_id": { "$ref": "#/$defs/Uuid" },
+        "task_revision": { "$ref": "#/$defs/Sha256" },
+        "kind": { "$ref": "#/$defs/OperationKind" },
+        "runtime_profile_sha256": { "$ref": "#/$defs/Sha256" },
+        "call_name": { "anyOf": [{ "$ref": "#/$defs/CallName" }, { "type": "null" }] },
+        "attempt_ordinal": { "$ref": "#/$defs/PositiveInteger" }
+      }
+    },
+    "MutationChange": {
+      "description": "Hashes are SHA-256s of the full file bytes. An addition has a null original side and a deletion a null resulting side; never both. A change with the same hash and mode on both sides is refused (checked in code).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "original_sha256", "resulting_sha256", "original_mode", "resulting_mode"],
+      "properties": {
+        "path": { "$ref": "#/$defs/RelativePath" },
+        "original_sha256": { "anyOf": [{ "$ref": "#/$defs/Sha256" }, { "type": "null" }] },
+        "resulting_sha256": { "anyOf": [{ "$ref": "#/$defs/Sha256" }, { "type": "null" }] },
+        "original_mode": { "anyOf": [{ "$ref": "#/$defs/FileMode" }, { "type": "null" }] },
+        "resulting_mode": { "anyOf": [{ "$ref": "#/$defs/FileMode" }, { "type": "null" }] }
+      },
+      "allOf": [
+        {
+          "if": { "type": "object", "properties": { "original_sha256": { "type": "null" } } },
+          "then": { "type": "object", "properties": { "original_mode": { "type": "null" } } },
+          "else": { "type": "object", "properties": { "original_mode": { "type": "string" } } }
+        },
+        {
+          "if": { "type": "object", "properties": { "resulting_sha256": { "type": "null" } } },
+          "then": { "type": "object", "properties": { "resulting_mode": { "type": "null" } } },
+          "else": { "type": "object", "properties": { "resulting_mode": { "type": "string" } } }
+        },
+        {
+          "not": {
+            "type": "object",
+            "properties": { "original_sha256": { "type": "null" }, "resulting_sha256": { "type": "null" } }
+          }
+        }
+      ]
+    },
+    "MutationIdentity": {
+      "description": "Its SHA-256 is the mutation_id. changes are sorted by path with unique paths (checked in code).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "host_commit", "changes"],
+      "properties": {
+        "schema_version": { "$ref": "#/$defs/SchemaVersion" },
+        "host_commit": { "$ref": "#/$defs/GitCommitId" },
+        "changes": { "type": "array", "items": { "$ref": "#/$defs/MutationChange" }, "minItems": 1 }
+      }
+    },
+    "TaskRevisionIdentity": {
+      "description": "Its SHA-256 is the task_revision. It holds no price, rate sheet or execution profile.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "revision_kind",
+        "host_commit",
+        "image_digest",
+        "kit_sha256",
+        "fixture_sha256",
+        "original_suite_sha256",
+        "added_suite_sha256",
+        "grading_policy_id",
+        "environment_sha256",
+        "mutation_id",
+        "issue_sha256",
+        "issue_style"
+      ],
+      "properties": {
+        "schema_version": { "$ref": "#/$defs/SchemaVersion" },
+        "revision_kind": { "$ref": "#/$defs/TaskRevisionKind" },
+        "host_commit": { "$ref": "#/$defs/GitCommitId" },
+        "image_digest": { "$ref": "#/$defs/ImageDigest" },
+        "kit_sha256": { "$ref": "#/$defs/Sha256" },
+        "fixture_sha256": { "$ref": "#/$defs/Sha256" },
+        "original_suite_sha256": { "$ref": "#/$defs/Sha256" },
+        "added_suite_sha256": { "$ref": "#/$defs/Sha256" },
+        "grading_policy_id": { "$ref": "#/$defs/Slug" },
+        "environment_sha256": { "$ref": "#/$defs/Sha256" },
+        "mutation_id": { "anyOf": [{ "$ref": "#/$defs/Sha256" }, { "type": "null" }] },
+        "issue_sha256": { "anyOf": [{ "$ref": "#/$defs/Sha256" }, { "type": "null" }] },
+        "issue_style": { "anyOf": [{ "$ref": "#/$defs/Slug" }, { "type": "null" }] }
+      },
+      "allOf": [
+        {
+          "if": { "type": "object", "properties": { "revision_kind": { "const": "kit" } } },
+          "then": {
+            "type": "object",
+            "properties": { "mutation_id": { "type": "null" }, "issue_sha256": { "type": "null" }, "issue_style": { "type": "null" } }
+          }
+        },
+        {
+          "if": { "type": "object", "properties": { "revision_kind": { "const": "provisional" } } },
+          "then": {
+            "type": "object",
+            "properties": { "mutation_id": { "type": "string" }, "issue_sha256": { "type": "null" }, "issue_style": { "type": "null" } }
+          }
+        },
+        {
+          "if": { "type": "object", "properties": { "revision_kind": { "const": "complete" } } },
+          "then": {
+            "type": "object",
+            "properties": { "mutation_id": { "type": "string" }, "issue_sha256": { "type": "string" }, "issue_style": { "type": "string" } }
+          }
+        }
+      ]
     }
   }
 }
