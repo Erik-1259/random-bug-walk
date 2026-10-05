@@ -346,6 +346,8 @@ jobs:
           package-manager-cache: false
       - name: Check prose
         run: node ../check-tools/scripts/checks/prose.ts
+      - name: Check admission rule IDs
+        run: node ../check-tools/scripts/checks/admission-ids.ts
 
   # The two scan jobs install no packages: only Node's standard library, git and the pinned
   # gitleaks binary run while the pattern list exists on disk. Their check scripts, scanner and
