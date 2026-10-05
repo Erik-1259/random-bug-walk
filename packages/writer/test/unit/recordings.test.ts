@@ -125,6 +125,24 @@ describe("recording files", () => {
     expect(rec.usage).toEqual({ prompt_tokens: 3, completion_tokens: 4 });
   });
 
+  it("skip the summaries the record command writes beside its recordings", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "synthetic-recordings-"));
+    try {
+      const rec = makeRecording({
+        requestBody: "{}",
+        status: 200,
+        responseBody: "{}",
+        provenance: "synthetic",
+        recordedAt: "2026-10-05T00:00:00Z",
+      });
+      await writeFile(join(dir, "card-1.recording.json"), JSON.stringify(rec));
+      await writeFile(join(dir, "card-1.summary.json"), JSON.stringify({ status: "ok" }));
+      await expect(loadRecordings(dir)).resolves.toHaveLength(1);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it("refuse to load a file that carries headers", async () => {
     const dir = await mkdtemp(join(tmpdir(), "synthetic-recordings-"));
     try {

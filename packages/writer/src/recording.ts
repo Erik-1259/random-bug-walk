@@ -93,9 +93,12 @@ export function serializeRecording(recording: Recording): string {
   return `${JSON.stringify(recording, null, 2)}\n`;
 }
 
-/** Loads every `.json` recording in `dir`. A file that does not match the format names itself in the error. */
+/**
+ * Loads every `.json` recording in `dir`, skipping the `.summary.json` files `runRecord` writes beside
+ * them. A file that does not match the format names itself in the error.
+ */
 export async function loadRecordings(dir: string): Promise<Recording[]> {
-  const files = (await readdir(dir)).filter((file) => file.endsWith(".json")).sort();
+  const files = (await readdir(dir)).filter((file) => file.endsWith(".json") && !file.endsWith(".summary.json")).sort();
   const recordings: Recording[] = [];
   for (const file of files) {
     const parsed = RecordingSchema.safeParse(JSON.parse(await readFile(join(dir, file), "utf8")));
