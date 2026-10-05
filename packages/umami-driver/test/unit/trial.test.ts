@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { parseRecord, sha256Hex } from "@rbw/schema";
 import { RefusedInput } from "../../src/job.ts";
 import { CANNED_TESTS, EXPECTED_TRIALS_KEY, FakeTimers, hex, jobFiles, tempDir } from "../helpers.ts";
+import { exitCodeFor } from "../../src/trial.ts";
 import { BASE_URL, FIXTURE_DIR, trial } from "../trial-harness.ts";
 
 const SUITE_ARGS = ["test", "--config=rbw-api.config.ts", "--workers=1", "--retries=0", "--max-failures=0"];
@@ -211,12 +212,88 @@ describe("one trial", () => {
     expect(timings.phases.find((phase) => phase.name === "build")?.outcome).toBe("overrun");
   });
 
-  it("stops the app copy's processes when an unexpected error ends the trial", async () => {
+  it("after an unexpected error, still stops the app copy and writes an incomplete trial result with artifact_missing", async () => {
     const events: string[] = [];
     const timers = new FakeTimers();
-    await expect(trial(tempDir(), { stack: { startThrows: true }, events, timers })).rejects.toThrow(/synthetic unexpected error/);
+    const run = await trial(tempDir(), { stack: { startThrows: true }, events, timers });
     expect(events).toEqual(["build", "start", "stop"]);
     expect(timers.pending()).toBe(0);
+    expect(run.outcome.internal_error).toEqual({ phase: "readiness", error_class: "Error", code: "ECONNRESET" });
+    expect(exitCodeFor(run.outcome)).toBe(3);
+    expect(run.result).toMatchObject({ status: "incomplete", invalid_reason: "artifact_missing" });
+    expect(run.observations).toHaveLength(4);
+    expect(run.observations.every((item) => item.observed === "not_run" && item.failure_code === "artifact_missing")).toBe(true);
+    const keys = run.artifacts.entries.map((entry) => entry.key.replace(`results/${run.trialId}/artifacts/`, ""));
+    expect(keys).toEqual(expect.arrayContaining(["original/suite-manifest.json", "build/build.stdout.txt", "diagnostics.json", "phase-timings.json"]));
+    const diagnostics = run.artifact("diagnostics.json") as { internal_error: unknown };
+    expect(diagnostics.internal_error).toEqual({ phase: "readiness", error_class: "Error", code: "ECONNRESET" });
+    const timings = run.artifact("phase-timings.json") as { phases: { name: string; outcome: string }[] };
+    expect(timings.phases.map((phase) => [phase.name, phase.outcome])).toEqual([
+      ["build", "ok"],
+      ["readiness", "failed"],
+      ["stop", "ok"],
+    ]);
+  });
+
+  it("after an unexpected error in a late phase, writes the result with the artifacts collected so far", async () => {
+    const run = await trial(tempDir(), { job: { trialId: "clean-01" }, stack: { resetThrowsAt: 3 } });
+    expect(run.events.slice(-4)).toEqual(["reset 2", "round 2", "reset 3", "stop"]);
+    expect(run.events).toContain("suite");
+    expect(run.outcome.internal_error).toEqual({ phase: "tests", error_class: "Error", code: "ECONNRESET" });
+    expect(run.result).toMatchObject({ status: "incomplete", invalid_reason: "artifact_missing" });
+    expect(run.observations).toHaveLength(80);
+    const keys = run.artifacts.entries.map((entry) => entry.key.replace(`results/${run.trialId}/artifacts/`, ""));
+    expect(keys).toEqual(expect.arrayContaining(["original/report.json", "original/outcomes.json", "added/round-02/report.json"]));
+  });
+
+  it("keeps the problems, observations and round timings gathered before an unexpected error in a later round", async () => {
+    const run = await trial(tempDir(), { job: { trialId: "clean-01" }, stack: { resetFailsAt: 1, resetThrowsAt: 3 } });
+    expect(run.outcome.internal_error).toMatchObject({ phase: "tests" });
+    expect(run.result).toMatchObject({ status: "invalid", invalid_reason: "seed_failed" });
+    expect(run.observations).toHaveLength(80);
+    const observed = (repeatIndex: number) => run.observations.filter((item) => item.repeat_index === repeatIndex).map((item) => item.observed);
+    expect(observed(1)).toEqual(["not_run", "not_run", "not_run", "not_run"]);
+    expect(observed(2)).toEqual(["pass", "pass", "pass", "pass"]);
+    expect(observed(3)).toEqual(["not_run", "not_run", "not_run", "not_run"]);
+    const timings = run.artifact("phase-timings.json") as { phases: { name: string; repeat_index: number | null; outcome: string }[] };
+    expect(timings.phases.filter((phase) => phase.name === "round").map((phase) => [phase.repeat_index, phase.outcome])).toEqual([
+      [1, "failed"],
+      [2, "ok"],
+    ]);
+    const diagnostics = run.artifact("diagnostics.json") as { problems: { reason: string }[] };
+    expect(diagnostics.problems.map((problem) => problem.reason)).toEqual(["seed_failed", "artifact_missing"]);
+  });
+
+  it("keeps a timeout of the phase an unexpected error ends, ahead of the error", async () => {
+    const run = await trial(tempDir(), { job: { trialId: "clean-01" }, stack: { resetThrowsAt: 3, resetMs: 60000 } });
+    expect(run.result).toMatchObject({ status: "incomplete", invalid_reason: "timeout" });
+    const diagnostics = run.artifact("diagnostics.json") as { problems: { phase: string; reason: string }[] };
+    expect(diagnostics.problems.map((problem) => [problem.phase, problem.reason])).toEqual([
+      ["tests", "timeout"],
+      ["tests", "artifact_missing"],
+    ]);
+  });
+
+  it("writes the result when stopping the app copy throws, with the stop phase named", async () => {
+    const run = await trial(tempDir(), { stack: { stopThrows: true } });
+    expect(run.outcome.internal_error).toEqual({ phase: "stop", error_class: "TypeError", code: null });
+    expect(run.result).toMatchObject({ status: "incomplete", invalid_reason: "artifact_missing" });
+  });
+
+  it("records an internal error's class and phase but never its message", async () => {
+    const run = await trial(tempDir(), { job: { trialId: "clean-01" }, stack: { resetThrowsAt: 3 } });
+    for (const entry of run.artifacts.entries) {
+      const text = run.read(entry.key).toString("utf8");
+      expect(text).not.toContain("synthetic-secret");
+      expect(text).not.toContain("synthetic unexpected error");
+    }
+    expect(JSON.stringify(run.result)).not.toContain("synthetic");
+  });
+
+  it("exits 0 when the records were written without an internal error", async () => {
+    const run = await trial(tempDir());
+    expect(run.outcome.internal_error).toBeNull();
+    expect(exitCodeFor(run.outcome)).toBe(0);
   });
 
   it("records phase timings for every phase and round, with samples every 30 seconds", async () => {

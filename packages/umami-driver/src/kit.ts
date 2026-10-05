@@ -21,6 +21,10 @@ export const KIT = {
   pgdata: "/var/lib/rbw/pgdata",
   host: "127.0.0.1",
   appPort: 3000,
+  /** rbw-app's UID, as rbw-launch sets it. */
+  appUid: 2001,
+  /** Where rbw-start writes the launchers' PID files. */
+  runDir: "/run/rbw",
   cgroupDir: "/sys/fs/cgroup",
 } as const;
 
@@ -188,6 +192,8 @@ export class KitStack implements AppStack {
       expectedHost: KIT.host,
       expectedPort: KIT.appPort,
       startGroup: this.starter.pid,
+      appUid: KIT.appUid,
+      launcher: "umami",
       proc: this.proc,
     });
   }

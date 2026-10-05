@@ -21,7 +21,7 @@ node src/cli.ts run --job <dir> --trial <trial_id> --out <dir> [--verifier <dir>
 node src/cli.ts fetch-closure --list <closure.sha256> --verifier <dir>
 ```
 
-The verifier root defaults to `/opt/rbw/verifier`, and the frozen manifest to `<verifier>/original-suite.json`. `run` exits 0 once the records are written, whatever the trial's status. It exits 2, writing nothing, when it refuses the input or cannot run.
+The verifier root defaults to `/opt/rbw/verifier`, and the frozen manifest to `<verifier>/original-suite.json`. `run` exits 0 once the records are written, whatever the trial's status. It exits 2, writing nothing, when it refuses the input or cannot run. It exits 3 when an unexpected error ended the trial after it started; the app copy is still stopped and the records are still written, as `incomplete` with `artifact_missing`.
 
 Development options:
 
@@ -56,7 +56,7 @@ Artifacts, by kind:
 - `phase_timings`: each phase and round with start, end, duration and limit, and memory, CPU and disk samples every 30 seconds.
 - `diagnostics`: every problem in phase order, closure integrity, missing, skipped and unlisted tests, refused and truncated artifacts, and the stop records.
 
-The first problem, in phase order, decides the status: `invalid` for `scope_violation`, `build_failed`, `startup_failed`, `auth_failed`, `seed_failed` and `unrelated_failure`; `incomplete` for every other reason. A failing original test or a failing check is recorded as observed and leaves the trial `complete`.
+The first problem, in phase order, decides the status: `invalid` for `scope_violation`, `build_failed`, `startup_failed`, `auth_failed`, `seed_failed` and `unrelated_failure`; `incomplete` for every other reason. A failing original test or a failing check is recorded as observed and leaves the trial `complete`. An unexpected error in the driver after the trial started adds `artifact_missing` after the problems found so far: the evidence from the remaining phases is missing, and the error says nothing about the app copy, so it is not `unrelated_failure`. The phases still open end as `failed`, every check of a round that did not finish is `not_run`, and `diagnostics.json` records the error's phase, class and errno-style code in `internal_error`, never its message.
 
 ## The original suite
 
@@ -82,7 +82,7 @@ A real run is `playwright test --config=rbw-api.config.ts --workers=1 --retries=
 - `API_COVERAGE=report`;
 - `PLAYWRIGHT_BASE_URL` pointing at this copy only;
 - `API_SKIP_SEED` unset;
-- `API_ALLOW_DESTRUCTIVE=1`, added only after the identity check: the socket listening on 127.0.0.1:3000 must belong to a process group whose leader is a child of a process in the group the driver started for `rbw-start`, that is, Umami under the launcher `rbw-start` left running.
+- `API_ALLOW_DESTRUCTIVE=1`, added only after the identity check. It reads only files root can read without ptrace access to other users' processes (`/proc/net/tcp`, `/proc/<pid>/stat` and `status`, and `/run/rbw/umami.pid`), never `/proc/<pid>/fd`: every socket listening on port 3000 was created by `rbw-app`; the launcher named by `/run/rbw/umami.pid` is alive and in the group the driver started for `rbw-start`; a child of that launcher runs as `rbw-app` and leads its own group; and every live `rbw-app` process is in that group. So the listener belongs to Umami under the launcher `rbw-start` left running. The check does not tell which process in that group holds the socket.
 
 Every manifest test must execute. A test absent from the report gives `test_missing`, and a skip gives `test_skipped`. A failing original test is recorded as failed evidence.
 

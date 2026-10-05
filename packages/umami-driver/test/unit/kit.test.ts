@@ -32,19 +32,23 @@ class KitRunner implements ProcessRunner {
   }
 }
 
-/** The start group 500 holds the launcher 510, whose child 520 leads the Umami group and owns the listening socket. */
+/**
+ * The start group 500 holds the launcher 510, named by /run/rbw/umami.pid, whose child 520 runs as
+ * rbw-app and leads the Umami group; the socket on 127.0.0.1:3000 is rbw-app's. Process 610 is a
+ * root process outside the start group.
+ */
 const PROCESSES = [
-  { pid: 510, ppid: 1, pgrp: 500 },
-  { pid: 520, ppid: 510, pgrp: 520 },
-  { pid: 530, ppid: 520, pgrp: 520 },
-  { pid: 610, ppid: 1, pgrp: 610 },
+  { pid: 510, ppid: 1, pgrp: 500, uid: 0, alive: true },
+  { pid: 520, ppid: 510, pgrp: 520, uid: KIT.appUid, alive: true },
+  { pid: 530, ppid: 520, pgrp: 520, uid: KIT.appUid, alive: true },
+  { pid: 610, ppid: 1, pgrp: 610, uid: 0, alive: true },
 ];
 
 function proc(overrides: Partial<ProcView> = {}): ProcView {
   return {
-    listeningSockets: () => Promise.resolve([{ host: "127.0.0.1", port: 3000, inode: 5 }]),
+    listeningSockets: () => Promise.resolve([{ host: "127.0.0.1", port: 3000, inode: 5, uid: KIT.appUid }]),
     processes: () => Promise.resolve(PROCESSES),
-    socketInodes: (pid) => Promise.resolve(pid === 530 ? [5] : []),
+    pidFile: (name) => Promise.resolve(name === "umami" ? 510 : null),
     ...overrides,
   };
 }
@@ -101,6 +105,13 @@ describe("kit layout and interface", () => {
     for (const script of Object.values(KIT_SCRIPTS)) {
       expect(existsSync(new URL(`bin/${script.split("/").at(-1) ?? ""}`, KIT_DIR))).toBe(true);
     }
+  });
+
+  it("checks the listener against the app user's UID as the kit's launcher sets it", () => {
+    const launcher = readFileSync(new URL("bin/rbw-launch", KIT_DIR), "utf8");
+    expect(launcher).toContain(`app) uid=${String(KIT.appUid)};`);
+    expect(KIT.runDir).toBe("/run/rbw");
+    expect(readFileSync(new URL("bin/rbw-start", KIT_DIR), "utf8")).toContain('echo $! > "$RUN/umami.pid"');
   });
 
   it("uses the kit's owner connection string, over the socket and without a password", () => {
@@ -199,19 +210,21 @@ describe("kit stack", () => {
     const runner = new KitRunner();
     const { kit } = stack(runner);
     await kit.start(new AbortController().signal);
-    expect(await kit.verifyIdentity()).toEqual({ kind: "kit", base_url: "http://127.0.0.1:3000", host: "127.0.0.1", port: 3000, pid: 530 });
+    expect(await kit.verifyIdentity()).toEqual({ kind: "kit", base_url: "http://127.0.0.1:3000", host: "127.0.0.1", port: 3000, pid: 520 });
   });
 
-  it("refuses an identity whose listener is not in a group led by a child of the start group", async () => {
-    const runner = new KitRunner();
-    const view = proc({ socketInodes: (pid) => Promise.resolve(pid === 610 ? [5] : []) });
-    const { kit } = stack(runner, { view });
-    await kit.start(new AbortController().signal);
-    expect(await kit.verifyIdentity()).toBeNull();
+  it("refuses an identity whose launcher is outside the start group, or whose listener is not rbw-app's", async () => {
+    const outside = stack(new KitRunner(), { view: proc({ pidFile: () => Promise.resolve(610) }) }).kit;
+    await outside.start(new AbortController().signal);
+    expect(await outside.verifyIdentity()).toBeNull();
+    const rootListener = proc({ listeningSockets: () => Promise.resolve([{ host: "127.0.0.1", port: 3000, inode: 5, uid: 0 }]) });
+    const other = stack(new KitRunner(), { view: rootListener }).kit;
+    await other.start(new AbortController().signal);
+    expect(await other.verifyIdentity()).toBeNull();
   });
 
   it("refuses an identity when nothing listens on the expected port, or before the stack started", async () => {
-    const view = proc({ listeningSockets: () => Promise.resolve([{ host: "127.0.0.1", port: 3001, inode: 5 }]) });
+    const view = proc({ listeningSockets: () => Promise.resolve([{ host: "127.0.0.1", port: 3001, inode: 5, uid: KIT.appUid }]) });
     const { kit } = stack(new KitRunner(), { view });
     expect(await kit.verifyIdentity()).toBeNull();
     await kit.start(new AbortController().signal);

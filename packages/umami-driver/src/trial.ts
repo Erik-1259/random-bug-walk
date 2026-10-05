@@ -31,7 +31,7 @@ import type { ParsedReport } from "./playwright-report.ts";
 import { STREAM_LIMIT_BYTES } from "./process.ts";
 import type { CommandResult, ProcessRunner, StopRecord } from "./process.ts";
 import { notRun, runAddedRounds } from "./rounds.ts";
-import type { Problem } from "./rounds.ts";
+import type { Problem, RoundsResult } from "./rounds.ts";
 import { startSampler } from "./samples.ts";
 import type { SampleSources } from "./samples.ts";
 import { statusForReason } from "./status.ts";
@@ -119,10 +119,40 @@ export interface TrialDeps {
   stack: AppStack;
 }
 
+/** An unexpected error after the trial started: the phase and the error's class, never its message. */
+export interface InternalError {
+  phase: string;
+  error_class: string;
+  /** An error code such as an errno name, when the error carries one. */
+  code: string | null;
+}
+
 export interface TrialOutcome {
   result: TrialResult;
   observations: TrialObservations;
   artifacts: ArtifactManifest;
+  internal_error: InternalError | null;
+}
+
+/** 0 when the records were written without an internal error; 3 when they were written after one. */
+export function exitCodeFor(outcome: TrialOutcome): number {
+  return outcome.internal_error === null ? 0 : 3;
+}
+
+/** A message can carry paths or connection details, so only the class and a code-shaped code are kept. */
+function describeError(phase: string, error: unknown): InternalError {
+  const name = error instanceof Error ? error.name : typeof error;
+  const code = error instanceof Error && "code" in error && typeof error.code === "string" ? error.code : null;
+  return {
+    phase,
+    error_class: /^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(name) ? name : "unknown",
+    code: code !== null && /^[A-Za-z0-9_]{1,32}$/.test(code) ? code : null,
+  };
+}
+
+/** An internal error leaves expected evidence missing; it says nothing about the app copy. */
+function internalProblem(error: InternalError): Problem {
+  return { phase: error.phase, reason: "artifact_missing", detail: `the driver stopped on an internal error (${error.error_class})` };
 }
 
 function sameIds(a: readonly string[], b: readonly string[]): boolean {
@@ -283,12 +313,16 @@ async function storeLogs(store: ArtifactStore, phase: string, logs: StepResult["
   }
 }
 
-/** Every expected check in every round as not run, for a trial whose rounds never ran. */
-function allNotRun(options: TrialOptions): CheckObservation[] {
+/** The observations collected, plus every expected check of every round that has none, as not run. */
+function withNotRun(options: TrialOptions, collected: readonly CheckObservation[]): CheckObservation[] {
   const trial = options.job.trial;
-  return Array.from({ length: trial.added_repeat_count }, (_, index) =>
+  const seen = new Set(collected.map((item) => `${String(item.repeat_index)} ${item.check_id}`));
+  const missing = Array.from({ length: trial.added_repeat_count }, (_, index) =>
     trial.expected_checks.map((check) => notRun(check.check_id, index + 1)),
-  ).flat();
+  )
+    .flat()
+    .filter((item) => !seen.has(`${String(item.repeat_index)} ${item.check_id}`));
+  return [...collected, ...missing];
 }
 
 /** The shared record's order: by repeat_index, then check_id in code point order. */
@@ -306,16 +340,21 @@ function sortObservations(observations: CheckObservation[]): CheckObservation[] 
 function endPhase(handle: PhaseHandle, failed: boolean, timings: PhaseTiming[], problems: Problem[], phaseProblems: Problem[]): boolean {
   const timing = handle.end(failed ? "failed" : "ok");
   timings.push(timing);
-  if (timing.outcome === "timeout" || timing.outcome === "overrun") {
-    const how = timing.outcome === "timeout" ? "was stopped at" : "ran past";
-    problems.push({
+  problems.push(...timeoutProblems(timing), ...phaseProblems);
+  return phaseProblems.length > 0 || timing.outcome === "timeout";
+}
+
+/** A timeout or overrun, as the phase's problem. */
+function timeoutProblems(timing: PhaseTiming): Problem[] {
+  if (timing.outcome !== "timeout" && timing.outcome !== "overrun") return [];
+  const how = timing.outcome === "timeout" ? "was stopped at" : "ran past";
+  return [
+    {
       phase: timing.name,
       reason: "timeout",
       detail: `${timing.name} ${how} its deadline after ${String(timing.duration_ms)} ms (limit ${String(timing.limit_ms)} ms)`,
-    });
-  }
-  problems.push(...phaseProblems);
-  return phaseProblems.length > 0 || timing.outcome === "timeout";
+    },
+  ];
 }
 
 async function writeKey(outDir: string, key: string, bytes: Uint8Array): Promise<void> {
@@ -347,38 +386,57 @@ export async function runTrial(options: TrialOptions, deps: TrialDeps): Promise<
     unlisted_tests: [],
   };
   let observations: CheckObservation[] | null = null;
+  let internalError: InternalError | null = null;
+  // The phase an unexpected error is charged to, the phases still open, and the tests phase's problems so far.
+  let phase = "build";
+  const open = new Set<PhaseHandle>();
+  const begin = (name: string, limitMs: number | null): PhaseHandle => {
+    const handle = budget.begin(name, limitMs);
+    open.add(handle);
+    phase = name;
+    return handle;
+  };
+  const ended = (handle: PhaseHandle): PhaseHandle => {
+    open.delete(handle);
+    return handle;
+  };
+  let pending: Problem[] = [];
+  let partialRounds: RoundsResult | null = null;
 
   if (trial.original_suite_sha256 !== null) {
     await store.addBytes("suite_manifest", "original/suite-manifest.json", options.suite.bytes, "application/json");
   }
 
   try {
-    const build = budget.begin("build", limits.build_ms);
+    const build = begin("build", limits.build_ms);
     const built = await stack.build(build.signal);
+    let blocked = endPhase(ended(build), built.reason !== null, timings, problems, built.reason === null ? [] : [{ phase: "build", reason: built.reason, detail: built.detail }]);
     await storeLogs(store, "build", built.logs);
-    let blocked = endPhase(build, built.reason !== null, timings, problems, built.reason === null ? [] : [{ phase: "build", reason: built.reason, detail: built.detail }]);
 
     if (!blocked) {
-      const readiness = budget.begin("readiness", limits.readiness_ms);
+      const readiness = begin("readiness", limits.readiness_ms);
       const started = await stack.start(readiness.signal);
+      blocked = endPhase(ended(readiness), started.reason !== null, timings, problems, started.reason === null ? [] : [{ phase: "readiness", reason: started.reason, detail: started.detail }]);
       await storeLogs(store, "readiness", started.logs);
-      blocked = endPhase(readiness, started.reason !== null, timings, problems, started.reason === null ? [] : [{ phase: "readiness", reason: started.reason, detail: started.detail }]);
     }
 
     if (!blocked) {
-      const tests = budget.begin("tests", limits.tests_ms);
+      const tests = begin("tests", limits.tests_ms);
       const phaseProblems: Problem[] = [];
+      pending = phaseProblems;
       if (trial.original_suite_sha256 !== null) {
-        const suite = budget.begin("original_suite", null);
+        const suite = begin("original_suite", null);
         const suiteProblems = await runOriginalSuite(options, deps, { manifest, marker, workDir }, store, tests.signal, diagnostics);
-        timings.push(suite.end(suiteProblems.length === 0 ? "ok" : "failed"));
+        timings.push(ended(suite).end(suiteProblems.length === 0 ? "ok" : "failed"));
+        phase = "tests";
         phaseProblems.push(...suiteProblems);
       }
       const fixture = options.fixture;
       if (fixture === null) {
-        observations = allNotRun(options);
+        observations = withNotRun(options, []);
         phaseProblems.push({ phase: "tests", reason: "artifact_missing", detail: "the added checks were not run (development run without a fixture)" });
       } else {
+        partialRounds = { observations: [], problems: [], rounds: [] };
         const rounds = await runAddedRounds({
           checks: trial.expected_checks,
           repeatCount: trial.added_repeat_count,
@@ -406,32 +464,49 @@ export async function runTrial(options: TrialOptions, deps: TrialDeps): Promise<
               }),
               signal,
             }),
-        });
+        }, partialRounds);
+        partialRounds = null;
         observations = rounds.observations;
         timings.push(...rounds.rounds);
         phaseProblems.push(...rounds.problems);
       }
-      endPhase(tests, false, timings, problems, phaseProblems);
+      pending = [];
+      endPhase(ended(tests), false, timings, problems, phaseProblems);
     }
   } catch (error) {
-    // An unexpected error writes no records, but the app copy's processes must still be stopped.
-    await stack.stop();
-    await sampler.stop();
-    budget.close();
-    throw error;
+    // The trial has started, so its records are still written: the phases still open end as
+    // failed, the problems found so far keep their order, and the error itself is the next one.
+    internalError = describeError(phase, error);
+    if (partialRounds !== null) {
+      observations = partialRounds.observations;
+      timings.push(...partialRounds.rounds);
+      pending.push(...partialRounds.problems);
+    }
+    const closed = [...open].reverse().map((handle) => ended(handle).end("failed"));
+    timings.push(...closed);
+    problems.push(...closed.flatMap(timeoutProblems), ...pending, internalProblem(internalError));
   }
 
-  const stop = budget.begin("stop", limits.finish_ms);
-  const stopped = await stack.stop();
-  endPhase(stop, !stopped.ok, timings, problems, []);
-  await storeLogs(store, "stop", stopped.logs);
-  for (const log of stack.logFiles()) {
-    await store.addFile("log", `processes/${log.name}.log`, log.path, "text/plain", STREAM_LIMIT_BYTES);
+  const stop = begin("stop", limits.finish_ms);
+  let stopped: StopReport = { ok: false, records: [], logs: [] };
+  try {
+    stopped = await stack.stop();
+    endPhase(ended(stop), !stopped.ok, timings, problems, []);
+    await storeLogs(store, "stop", stopped.logs);
+    for (const log of stack.logFiles()) {
+      await store.addFile("log", `processes/${log.name}.log`, log.path, "text/plain", STREAM_LIMIT_BYTES);
+    }
+  } catch (error) {
+    const stopError = describeError("stop", error);
+    internalError ??= stopError;
+    if (open.has(stop)) timings.push(ended(stop).end("failed"));
+    problems.push(internalProblem(stopError));
   }
+  budget.close();
   const samples = await sampler.stop();
   await rm(join(outDir, "work"), { recursive: true, force: true });
 
-  observations ??= allNotRun(options);
+  observations = withNotRun(options, observations ?? []);
   if (store.limitExceeded() && !problems.some((problem) => problem.reason === "limit_exceeded")) {
     problems.push({ phase: "records", reason: "limit_exceeded", detail: "artifacts were refused by the per-trial size limit" });
   }
@@ -458,6 +533,7 @@ export async function runTrial(options: TrialOptions, deps: TrialDeps): Promise<
     "diagnostics.json",
     encodeCanonical({
       ...diagnostics,
+      internal_error: internalError,
       problems,
       refused_artifacts: store.refused(),
       stops: stopped.records,
@@ -515,5 +591,5 @@ export async function runTrial(options: TrialOptions, deps: TrialDeps): Promise<
   await writeKey(outDir, keys.observations, observationBytes);
   await writeKey(outDir, keys.artifacts, artifactBytes);
   await writeKey(outDir, keys.result, encodeCanonical(result));
-  return { result, observations: observationsRecord, artifacts };
+  return { result, observations: observationsRecord, artifacts, internal_error: internalError };
 }

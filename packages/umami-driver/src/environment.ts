@@ -1,6 +1,6 @@
 // The original suite's runner environment, and the identity check that must pass before the
 // destructive suite may target an app copy.
-import { readdir, readFile, readlink } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { WRAPPER_CONFIG_NAME } from "./harness.ts";
 import { PLAYWRIGHT_VERSION } from "./pinned.ts";
@@ -93,33 +93,52 @@ export interface ListeningSocket {
   host: string;
   port: number;
   inode: number;
+  /** The UID that created the socket, from /proc/net/tcp's uid column. */
+  uid: number;
 }
 
 export interface ProcessEntry {
   pid: number;
   ppid: number;
   pgrp: number;
+  /** The effective UID from /proc/<pid>/status; null when the file has no Uid line. */
+  uid: number | null;
+  /** False for a zombie or dead process, which holds no sockets. */
+  alive: boolean;
 }
 
-/** What the identity check reads from /proc. Injected so tests need no real processes. */
+/**
+ * What the identity check reads. Injected so tests need no real processes. Every source is readable
+ * by root without ptrace access to other users' processes, which Docker's default capabilities
+ * do not grant: /proc/<pid>/fd links are never followed.
+ */
 export interface ProcView {
   listeningSockets(): Promise<ListeningSocket[]>;
   processes(): Promise<ProcessEntry[]>;
-  socketInodes(pid: number): Promise<number[]>;
+  /** The PID in the kit's /run/rbw/<name>.pid, or null when there is none. */
+  pidFile(name: string): Promise<number | null>;
 }
 
 /**
  * Checks that the base URL names the expected loopback host and port, and that the socket
- * listening there belongs to the app the driver started. The kit's rbw-start runs in the group the
- * driver started (`startGroup`) and leaves Umami's launcher there; the launcher starts Umami in a
- * new process group of its own. So the listener's group leader must be a child of a process in
- * the start group.
+ * listening there belongs to the app this trial started. The kit's rbw-start runs in the group the
+ * driver started (`startGroup`), writes the Umami launcher's PID to /run/rbw/umami.pid and leaves
+ * the launcher in that group; the launcher starts Umami as rbw-app in a new process group whose
+ * leader is its child. So:
+ *  - every socket listening on the port was created by rbw-app;
+ *  - the launcher named by the PID file is alive and in the start group;
+ *  - a live child of the launcher runs as rbw-app and leads its own group;
+ *  - every live rbw-app process is in that group.
+ * Together these place the listener in the group this trial's rbw-start launched, without reading
+ * which process holds the socket's fd.
  */
 export async function verifyKitIdentity(options: {
   baseUrl: string;
   expectedHost: string;
   expectedPort: number;
   startGroup: number;
+  appUid: number;
+  launcher: string;
   proc: ProcView;
 }): Promise<VerifiedIdentity | null> {
   let url: URL;
@@ -133,31 +152,35 @@ export async function verifyKitIdentity(options: {
   const sockets = (await options.proc.listeningSockets()).filter(
     (socket) => socket.port === port && [options.expectedHost, "0.0.0.0", "::"].includes(socket.host),
   );
-  if (sockets.length === 0) return null;
-  const wanted = new Set(sockets.map((socket) => socket.inode));
-  const processes = await options.proc.processes();
-  const byPid = new Map(processes.map((entry) => [entry.pid, entry]));
-  for (const entry of processes) {
-    const leader = byPid.get(entry.pgrp);
-    const launcher = leader === undefined ? undefined : byPid.get(leader.ppid);
-    if (launcher?.pgrp !== options.startGroup) continue;
-    const inodes = await options.proc.socketInodes(entry.pid);
-    if (inodes.some((inode) => wanted.has(inode))) {
-      return { kind: "kit", base_url: options.baseUrl, host: url.hostname, port, pid: entry.pid };
-    }
-  }
-  return null;
+  if (sockets.length === 0 || sockets.some((socket) => socket.uid !== options.appUid)) return null;
+  const launcherPid = await options.proc.pidFile(options.launcher);
+  if (launcherPid === null) return null;
+  const live = (await options.proc.processes()).filter((entry) => entry.alive);
+  const launcher = live.find((entry) => entry.pid === launcherPid);
+  if (launcher?.pgrp !== options.startGroup) return null;
+  const app = live.find((entry) => entry.ppid === launcher.pid && entry.pgrp === entry.pid && entry.uid === options.appUid);
+  if (app === undefined) return null;
+  if (live.some((entry) => entry.uid === options.appUid && entry.pgrp !== app.pgrp)) return null;
+  return { kind: "kit", base_url: options.baseUrl, host: url.hostname, port, pid: app.pid };
 }
 
-/** Reads the parent and the process group from /proc/<pid>/stat; the command name may hold spaces and parentheses. */
-export function parseProcStat(pid: number, stat: string): ProcessEntry | null {
+/** Reads the parent, the process group and the state from /proc/<pid>/stat; the command name may hold spaces and parentheses. */
+export function parseProcStat(pid: number, stat: string): Omit<ProcessEntry, "uid"> | null {
   const close = stat.lastIndexOf(")");
   if (close < 0) return null;
   // Fields after the parenthesised command name: state, ppid, pgrp, ...
   const fields = stat.slice(close + 2).split(" ");
+  const state = fields[0] ?? "";
   const ppid = Number(fields[1]);
   const pgrp = Number(fields[2]);
-  return Number.isSafeInteger(ppid) && Number.isSafeInteger(pgrp) && fields.length > 2 ? { pid, ppid, pgrp } : null;
+  if (!Number.isSafeInteger(ppid) || !Number.isSafeInteger(pgrp) || fields.length <= 2) return null;
+  return { pid, ppid, pgrp, alive: state !== "Z" && state !== "X" };
+}
+
+/** The effective UID, the second value of /proc/<pid>/status's Uid line. */
+export function parseProcStatusUid(status: string): number | null {
+  const match = /^Uid:\s+\d+\s+(\d+)/m.exec(status);
+  return match?.[1] === undefined ? null : Number(match[1]);
 }
 
 /**
@@ -180,11 +203,12 @@ export function parseProcNetTcp(text: string, ipv6: boolean): ListeningSocket[] 
     const fields = line.trim().split(/\s+/);
     const local = fields[1];
     const state = fields[3];
+    const uid = fields[7];
     const inode = fields[9];
-    if (local === undefined || state !== "0A" || inode === undefined) continue;
+    if (local === undefined || state !== "0A" || uid === undefined || inode === undefined) continue;
     const [address, portHex] = local.split(":");
     if (address === undefined || portHex === undefined) continue;
-    sockets.push({ host: decodeAddress(address, ipv6), port: Number.parseInt(portHex, 16), inode: Number(inode) });
+    sockets.push({ host: decodeAddress(address, ipv6), port: Number.parseInt(portHex, 16), inode: Number(inode), uid: Number(uid) });
   }
   return sockets;
 }
@@ -209,32 +233,39 @@ function goneOr<T>(fallback: T): (error: unknown) => T {
   };
 }
 
-/** The real /proc. The driver runs as root in the kit, so it can read every process's fds. */
-export const realProc: ProcView = {
-  async listeningSockets() {
-    const v4 = await readFile("/proc/net/tcp", "utf8");
-    const v6 = await readFile("/proc/net/tcp6", "utf8").catch(goneOr(""));
-    return [...parseProcNetTcp(v4, false), ...parseProcNetTcp(v6, true)];
-  },
-  async processes() {
-    const entries: ProcessEntry[] = [];
-    for (const name of await readdir("/proc")) {
-      if (!/^\d+$/.test(name)) continue;
-      const stat = await readFile(join("/proc", name, "stat"), "utf8").catch(goneOr(null));
-      const entry = stat === null ? null : parseProcStat(Number(name), stat);
-      if (entry !== null) entries.push(entry);
-    }
-    return entries;
-  },
-  async socketInodes(pid) {
-    const dir = join("/proc", String(pid), "fd");
-    const entries = await readdir(dir).catch(goneOr<string[]>([]));
-    const inodes: number[] = [];
-    for (const entry of entries) {
-      const target = await readlink(join(dir, entry)).catch(goneOr(""));
-      const match = /^socket:\[(\d+)\]$/.exec(target);
-      if (match?.[1] !== undefined) inodes.push(Number(match[1]));
-    }
-    return inodes;
-  },
-};
+/** The files the /proc reader uses. Injected so tests can model another user's /proc entries. */
+export interface ProcFiles {
+  readFile(path: string): Promise<string>;
+  readdir(path: string): Promise<string[]>;
+}
+
+/** Reads /proc and the kit's PID files through `files`. */
+export function procView(files: ProcFiles, runDir: string): ProcView {
+  return {
+    async listeningSockets() {
+      const v4 = await files.readFile("/proc/net/tcp");
+      const v6 = await files.readFile("/proc/net/tcp6").catch(goneOr(""));
+      return [...parseProcNetTcp(v4, false), ...parseProcNetTcp(v6, true)];
+    },
+    async processes() {
+      const entries: ProcessEntry[] = [];
+      for (const name of await files.readdir("/proc")) {
+        if (!/^\d+$/.test(name)) continue;
+        const stat = await files.readFile(join("/proc", name, "stat")).catch(goneOr(null));
+        const status = await files.readFile(join("/proc", name, "status")).catch(goneOr(null));
+        const entry = stat === null || status === null ? null : parseProcStat(Number(name), stat);
+        if (entry !== null && status !== null) entries.push({ ...entry, uid: parseProcStatusUid(status) });
+      }
+      return entries;
+    },
+    async pidFile(name) {
+      const text = await files.readFile(join(runDir, `${name}.pid`)).catch(goneOr(null));
+      if (text === null) return null;
+      const pid = Number(text.trim());
+      return Number.isSafeInteger(pid) && pid > 0 ? pid : null;
+    },
+  };
+}
+
+/** The real files. */
+export const realProcFiles: ProcFiles = { readFile: (path) => readFile(path, "utf8"), readdir: (path) => readdir(path) };

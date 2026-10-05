@@ -8,7 +8,8 @@
 //   fetch-closure --list <closure.sha256> --verifier <dir>   (development: the kit stages the closure itself)
 //
 // Exit codes: 0 records written (whatever the trial's status) or the command succeeded;
-// 2 refused input, a usage error or an internal error, with nothing written.
+// 2 refused input, a usage error, or an internal error before the trial started, with nothing
+// written; 3 an internal error after the trial started, with the records written as incomplete.
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { copyFile, mkdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -16,7 +17,7 @@ import { dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { RecordError, sha256Hex } from "@rbw/schema";
 import { appDatabaseUrl, kitDatabase } from "./database.ts";
-import { realProc } from "./environment.ts";
+import { procView, realProcFiles } from "./environment.ts";
 import { ClosureFetchError, fetchClosure } from "./fetch-closure.ts";
 import { addedSuiteSha256, loadFixtureModule } from "./fixture.ts";
 import { FreezeError, freezeSuite } from "./freeze.ts";
@@ -27,7 +28,7 @@ import type { LimitsMode } from "./limits.ts";
 import { parseClosureList } from "./pinned.ts";
 import { createProcessRunner, realGroups } from "./process.ts";
 import { realSampleSources } from "./samples.ts";
-import { runTrial } from "./trial.ts";
+import { exitCodeFor, runTrial } from "./trial.ts";
 import type { AppStack, FixtureOptions } from "./trial.ts";
 
 class UsageError extends Error {}
@@ -69,7 +70,7 @@ async function run(args: string[]): Promise<number> {
       ownerUrl: OWNER_DATABASE_URL,
       appUrl: appDatabaseUrl(await readFile(APP_ENVIRONMENT_FILE, "utf8")),
     });
-    stack = new KitStack({ runner, timers: realTimers, proc: realProc, groups: realGroups, database });
+    stack = new KitStack({ runner, timers: realTimers, proc: procView(realProcFiles, KIT.runDir), groups: realGroups, database });
     fixture = { dir: verifier.fixture, configPath: join(verifier.fixture, "playwright.config.ts"), admin: KIT_ADMIN };
     addedSha = await addedSuiteSha256(verifier.fixture);
   } else {
@@ -99,7 +100,11 @@ async function run(args: string[]): Promise<number> {
   process.stdout.write(
     `trial=${result.trial_id} status=${result.status} reason=${result.invalid_reason ?? "-"} observations=${String(outcome.observations.observations.length)} artifacts=${String(outcome.artifacts.entries.length)}\n`,
   );
-  return 0;
+  const failure = outcome.internal_error;
+  if (failure !== null) {
+    process.stderr.write(`umami-driver: internal error in phase ${failure.phase} (${failure.error_class}${failure.code === null ? "" : ` ${failure.code}`}); records written\n`);
+  }
+  return exitCodeFor(outcome);
 }
 
 async function freeze(args: string[]): Promise<number> {

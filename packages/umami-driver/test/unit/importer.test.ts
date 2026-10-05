@@ -50,6 +50,17 @@ describe("the admission importer over the driver's record set", () => {
     expect(evidence?.added?.verdict).toBe("reject");
   });
 
+  it("reads the record set an internal error in a late phase leaves, past shape and identity, with the driver's status", async () => {
+    const { trial: evidence } = await imported({ job: { trialId: "clean-01" }, stack: { resetThrowsAt: 3 } });
+    expect(evidence).toMatchObject({ status: "incomplete", stage: "driver", reason: "artifact_missing", code: "import:driver_status", driver_status: "incomplete" });
+    expect(evidence?.code).not.toBe("import:result_missing");
+  });
+
+  it("reads the record set an internal error during readiness leaves, with the driver's status", async () => {
+    const { trial: evidence } = await imported({ stack: { startThrows: true } });
+    expect(evidence).toMatchObject({ status: "incomplete", stage: "driver", reason: "artifact_missing", driver_status: "incomplete" });
+  });
+
   it("reports the job's other trials as missing results, not as failures of this one", async () => {
     const { evidence } = await imported();
     const others = evidence.trials.filter((item) => item.trial_id !== "clean-02");

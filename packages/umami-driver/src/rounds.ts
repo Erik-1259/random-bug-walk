@@ -160,11 +160,13 @@ async function readRoundReport(outputDir: string, phase: string, store: Artifact
   }
 }
 
-export async function runAddedRounds(options: RoundsOptions): Promise<RoundsResult> {
+/** Collects into `into`, which the caller owns, so what finished before an unexpected error is kept. */
+export async function runAddedRounds(
+  options: RoundsOptions,
+  into: RoundsResult = { observations: [], problems: [], rounds: [] },
+): Promise<RoundsResult> {
   const { timers, store } = options;
-  const observations: CheckObservation[] = [];
-  const problems: Problem[] = [];
-  const rounds: PhaseTiming[] = [];
+  const { observations, problems, rounds } = into;
   for (let repeatIndex = 1; repeatIndex <= options.repeatCount; repeatIndex += 1) {
     const phase = roundName(repeatIndex);
     const start = timers.now();
@@ -211,5 +213,5 @@ export async function runAddedRounds(options: RoundsOptions): Promise<RoundsResu
     }
     rounds.push(timing(result.aborted ? "timeout" : "ok"));
   }
-  return { observations, problems, rounds };
+  return into;
 }

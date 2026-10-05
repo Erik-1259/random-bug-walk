@@ -67,6 +67,18 @@ export interface StackPlan {
   startThrows?: boolean;
   identity?: boolean;
   resetMs?: number;
+  /** The reset before this round fails with seed_failed. */
+  resetFailsAt?: number;
+  /** The reset before this round throws an unexpected error. */
+  resetThrowsAt?: number;
+  stopThrows?: boolean;
+}
+
+/** An unexpected error whose message carries a synthetic connection string, which must never reach the records. */
+export const SECRET_DETAIL = "postgresql://synthetic-owner:synthetic-secret@db.example.invalid/umami";
+
+export function unexpectedError(): Error {
+  return Object.assign(new Error(`synthetic unexpected error at ${SECRET_DETAIL}`), { code: "ECONNRESET" });
 }
 
 export class FakeStack implements AppStack {
@@ -92,7 +104,7 @@ export class FakeStack implements AppStack {
 
   start(): Promise<StepResult> {
     this.events.push("start");
-    if (this.plan.startThrows === true) return Promise.reject(new Error("synthetic unexpected error"));
+    if (this.plan.startThrows === true) return Promise.reject(unexpectedError());
     this.timers.advance(this.plan.startMs ?? 10000);
     return Promise.resolve({ reason: null, detail: "", logs: [] });
   }
@@ -105,11 +117,14 @@ export class FakeStack implements AppStack {
   resetFixture(repeatIndex: number): Promise<StepResult> {
     this.events.push(`reset ${String(repeatIndex)}`);
     this.timers.advance(this.plan.resetMs ?? 1000);
+    if (this.plan.resetThrowsAt === repeatIndex) return Promise.reject(unexpectedError());
+    if (this.plan.resetFailsAt === repeatIndex) return Promise.resolve({ reason: "seed_failed", detail: "", logs: [] });
     return Promise.resolve({ reason: null, detail: "", logs: [] });
   }
 
   stop(): Promise<StopReport> {
     this.events.push("stop");
+    if (this.plan.stopThrows === true) return Promise.reject(new TypeError(`synthetic stop failure at ${SECRET_DETAIL}`));
     this.timers.advance(2000);
     return Promise.resolve({
       ok: true,
