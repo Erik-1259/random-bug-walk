@@ -1,0 +1,79 @@
+{
+  "format_version": 1,
+  "provenance": "synthetic",
+  "model_id": "nvidia/Nemotron-3_5-Lightning",
+  "recorded_at": "2026-10-05T00:00:00Z",
+  "request": {
+    "body": {
+      "model": "nvidia/Nemotron-3_5-Lightning",
+      "max_tokens": 8192,
+      "response_format": {
+        "type": "json_schema",
+        "json_schema": {
+          "schema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "title": {
+                "type": "string",
+                "minLength": 1
+              },
+              "reproduction_steps": {
+                "minItems": 1,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "expected_result": {
+                "type": "string",
+                "minLength": 1
+              },
+              "actual_result": {
+                "type": "string",
+                "minLength": 1
+              },
+              "environment": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "title",
+              "reproduction_steps",
+              "expected_result",
+              "actual_result",
+              "environment"
+            ],
+            "additionalProperties": false
+          },
+          "strict": true,
+          "name": "response"
+        }
+      },
+      "messages": [
+        {
+          "role": "system",
+          "content": "You write a bug report the way a user of a web analytics product would file it.\nYou are given one observation as JSON: what the user did, the public request, the time zone, the recorded visits, the response status, the expected and observed counts for the primary time zone, follow-up examples in other time zones, and excerpts from the user documentation.\n\nRules:\n- Describe only what the user sees. You may name the public endpoint, its parameters and product settings.\n- Do not guess at an internal cause and do not suggest a fix. Write \"daily pageview counts do not follow the requested reporting timezone\", not how the code should change.\n- Use only numbers that appear in the observation. Do not compute totals, differences or new dates.\n- expected_result must list the expected counts of the primary time zone in bucket order. actual_result must list the observed counts of the primary time zone in bucket order.\n- reproduction_steps is a list of short steps a user can follow.\n- environment names the time zone, the locale and the response status.\nAnswer with JSON that matches the schema."
+        },
+        {
+          "role": "user",
+          "content": "Observation:\n{\n  \"schema_version\": 1,\n  \"user_action\": \"Opened the daily pageview report for a two-day range with the reporting timezone set to America/Los_Angeles (synthetic case missing-usage).\",\n  \"request\": {\n    \"method\": \"GET\",\n    \"path\": \"/api/websites/synthetic-website/pageviews\",\n    \"query\": {\n      \"unit\": \"day\",\n      \"timezone\": \"America/Los_Angeles\"\n    }\n  },\n  \"timezone\": \"America/Los_Angeles\",\n  \"locale\": \"en-US\",\n  \"fixture_description\": \"Eight synthetic pageviews: six on the evening of 1 January local time and two on 2 January.\",\n  \"events\": [\n    {\n      \"label\": \"first pageview\",\n      \"timestamp_seconds\": 1767322800,\n      \"utc_instant\": \"2026-01-02T03:00:00Z\"\n    },\n    {\n      \"label\": \"last pageview\",\n      \"timestamp_seconds\": 1767398400,\n      \"utc_instant\": \"2026-01-03T00:00:00Z\"\n    }\n  ],\n  \"http_status\": 200,\n  \"expected\": [\n    {\n      \"bucket_label\": \"2026-01-01\",\n      \"count\": 6\n    },\n    {\n      \"bucket_label\": \"2026-01-02\",\n      \"count\": 2\n    }\n  ],\n  \"observed\": [\n    {\n      \"bucket_label\": \"2026-01-01\",\n      \"count\": 0\n    },\n    {\n      \"bucket_label\": \"2026-01-02\",\n      \"count\": 8\n    }\n  ],\n  \"follow_up_examples\": [\n    {\n      \"timezone\": \"Pacific/Auckland\",\n      \"expected\": [\n        {\n          \"bucket_label\": \"2026-01-02\",\n          \"count\": 8\n        }\n      ],\n      \"observed\": [\n        {\n          \"bucket_label\": \"2026-01-02\",\n          \"count\": 8\n        }\n      ]\n    },\n    {\n      \"timezone\": \"Asia/Kolkata\",\n      \"expected\": [\n        {\n          \"bucket_label\": \"2026-01-02\",\n          \"count\": 8\n        }\n      ],\n      \"observed\": [\n        {\n          \"bucket_label\": \"2026-01-02\",\n          \"count\": 8\n        }\n      ]\n    }\n  ],\n  \"doc_excerpts\": [\n    {\n      \"text\": \"Synthetic excerpt: reports group pageviews by day in the timezone selected for the report.\",\n      \"source_url\": \"https://docs.example.invalid/reports\"\n    }\n  ]\n}"
+        }
+      ],
+      "chat_template_kwargs": {
+        "enable_thinking": false
+      }
+    }
+  },
+  "request_sha256": "1914107f5a2eb7978668002fc04804af8ea41dc6721b6ff091d2f8c9b5c0bf6e",
+  "response": {
+    "status": 200,
+    "body": "{\"id\":\"synthetic-completion\",\"object\":\"chat.completion\",\"created\":1767225600,\"model\":\"nvidia/Nemotron-3_5-Lightning\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"{\\\"title\\\":\\\"Daily pageview counts do not follow the requested reporting timezone\\\",\\\"reproduction_steps\\\":[\\\"Record eight pageviews: six on the evening of 2026-01-01 and two on 2026-01-02, America/Los_Angeles time.\\\",\\\"Open the daily pageview report for 2026-01-01 to 2026-01-02 with the timezone America/Los_Angeles.\\\"],\\\"expected_result\\\":\\\"2026-01-01 shows 6 pageviews and 2026-01-02 shows 2 pageviews.\\\",\\\"actual_result\\\":\\\"2026-01-01 shows 0 pageviews and 2026-01-02 shows 8 pageviews.\\\",\\\"environment\\\":\\\"Reporting timezone America/Los_Angeles, locale en-US, response status 200.\\\"}\"},\"finish_reason\":\"stop\"}]}"
+  },
+  "usage": {
+    "prompt_tokens": null,
+    "completion_tokens": null
+  }
+}
