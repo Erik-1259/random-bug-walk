@@ -1,4 +1,4 @@
 {
-  "vitest": { ".": 21, "packages/spend": 310, "scripts/checks": 189, "tools/neon-ci": 98, "tools/publication": 163 },
+  "vitest": { ".": 21, "packages/spend": 311, "scripts/checks": 189, "tools/neon-ci": 98, "tools/publication": 163 },
   "pytest": {}
 }

@@ -189,6 +189,24 @@ describe("child resources", () => {
     });
   });
 
+  it("refuses a repeat child record that differs and leaves the stored one unchanged", async () => {
+    expectOk(await acquire());
+    expectOk(await child("synthetic-r"));
+    const stored = () => h.sql("SELECT seq, slot_key, operation_id, execution_id, kind, actor_role FROM slot_children");
+    const original = await stored();
+    expect(original).toHaveLength(1);
+    const conflicts = [{ execution_id: uuid(51) }, { kind: "synthetic-other" }, { actor_role: "operator" }];
+    for (const change of conflicts) {
+      await expectNothingWritten(h, async () => {
+        expectRefused(await child("synthetic-r", change), "invalid_request");
+      });
+      expect(await stored()).toEqual(original);
+    }
+    await expectNothingWritten(h, async () => {
+      expect(expectOk(await child("synthetic-r")).replay).toBe(true);
+    });
+  });
+
   it("refuses a repeat confirmation that differs and leaves the stored one unchanged", async () => {
     expectOk(await acquire());
     expectOk(await child("synthetic-r"));

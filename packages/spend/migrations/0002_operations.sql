@@ -1185,7 +1185,8 @@ BEGIN
   IF FOUND THEN
     IF v_existing.slot_key = v_slot AND v_existing.kind = r ->> 'kind'
        AND v_existing.operation_id IS NOT DISTINCT FROM r ->> 'operation_id'
-       AND v_existing.execution_id IS NOT DISTINCT FROM r ->> 'execution_id' THEN
+       AND v_existing.execution_id IS NOT DISTINCT FROM r ->> 'execution_id'
+       AND v_existing.actor_role = r ->> 'actor_role' THEN
       RETURN jsonb_build_object('ok', true, 'replay', true, 'seq', v_existing.seq);
     END IF;
     RETURN spend_invalid('child resource already recorded with different details');
