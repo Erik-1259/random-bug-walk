@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "provenance": "synthetic",
+  "endpoint": "search",
+  "recorded_at": "2026-10-04T12:00:00.000Z",
+  "request_body": {
+    "search_depth": "basic",
+    "max_results": 5,
+    "auto_parameters": false,
+    "include_usage": true,
+    "query": "synthetic report filter empty table",
+    "include_domains": [
+      "github.com",
+      "stackoverflow.com"
+    ],
+    "include_domains_mode": "restrict",
+    "start_date": "2020-01-01",
+    "end_date": "2026-10-01"
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "results": "not-a-list"
+    }
+  }
+}

@@ -1,0 +1,68 @@
+{
+  "schema_version": 1,
+  "rate_sheet_version": 1,
+  "checked_at": "2026-10-05T13:44:45.529Z",
+  "account_confirmed": false,
+  "entries": [
+    {
+      "service": "vercel-sandbox",
+      "subject": "iad1",
+      "unit": "vcpu_second",
+      "price": {
+        "microusd": 128000,
+        "per_units": 3600
+      },
+      "source_url": "https://vercel.com/docs/sandbox/pricing"
+    },
+    {
+      "service": "vercel-sandbox",
+      "subject": "iad1",
+      "unit": "memory_gb_second",
+      "price": {
+        "microusd": 21200,
+        "per_units": 3600
+      },
+      "source_url": "https://vercel.com/docs/sandbox/pricing"
+    },
+    {
+      "service": "vercel-sandbox",
+      "subject": "iad1",
+      "unit": "creation",
+      "price": {
+        "microusd": 600000,
+        "per_units": 1000000
+      },
+      "source_url": "https://vercel.com/docs/sandbox/pricing"
+    },
+    {
+      "service": "token-factory",
+      "subject": "nvidia/Nemotron-3_5-Lightning",
+      "unit": "input_token",
+      "price": {
+        "microusd": 60000,
+        "per_units": 1000000
+      },
+      "source_url": "https://nebius.com/services/token-factory/models/nvidia-nemotron-models-inference"
+    },
+    {
+      "service": "token-factory",
+      "subject": "nvidia/Nemotron-3_5-Lightning",
+      "unit": "output_token",
+      "price": {
+        "microusd": 240000,
+        "per_units": 1000000
+      },
+      "source_url": "https://nebius.com/services/token-factory/models/nvidia-nemotron-models-inference"
+    },
+    {
+      "service": "tavily",
+      "subject": "api",
+      "unit": "credit",
+      "price": {
+        "microusd": 8000,
+        "per_units": 1
+      },
+      "source_url": "https://docs.tavily.com/documentation/api-credits"
+    }
+  ]
+}

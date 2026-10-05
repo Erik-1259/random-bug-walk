@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "provenance": "synthetic",
+  "endpoint": "search",
+  "recorded_at": "2026-10-04T12:00:00.000Z",
+  "request_body": {
+    "search_depth": "basic",
+    "max_results": 5,
+    "auto_parameters": false,
+    "include_usage": true,
+    "query": "\"synthetic phrase two\"",
+    "exact_match": true
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "images": [],
+      "results": [
+        {
+          "content": "no url here"
+        }
+      ],
+      "usage": {
+        "credits": 1
+      }
+    }
+  }
+}
