@@ -66,7 +66,7 @@ function child(resourceId: string, overrides: Record<string, unknown> = {}) {
   });
 }
 
-function confirm(resourceId: string, root = ROOT) {
+function confirm(resourceId: string, root = ROOT, overrides: Record<string, unknown> = {}) {
   return h.spend.confirmChild({
     slot_key: SLOT,
     root_execution_id: root,
@@ -75,6 +75,7 @@ function confirm(resourceId: string, root = ROOT) {
     terminal_status: "completed",
     evidence: { key: `synthetic/${resourceId}.json`, sha256: hex(9) },
     actor_role: "workflow",
+    ...overrides,
   });
 }
 
@@ -183,6 +184,30 @@ describe("child resources", () => {
       expect(expectOk(await child("synthetic-r")).replay).toBe(true);
     });
     expect(expectOk(await confirm("synthetic-r")).replay).toBe(false);
+    await expectNothingWritten(h, async () => {
+      expect(expectOk(await confirm("synthetic-r")).replay).toBe(true);
+    });
+  });
+
+  it("refuses a repeat confirmation that differs and leaves the stored one unchanged", async () => {
+    expectOk(await acquire());
+    expectOk(await child("synthetic-r"));
+    expectOk(await confirm("synthetic-r"));
+    const stored = () => h.sql("SELECT seq, terminal_status, evidence, actor_role FROM slot_child_confirmations");
+    const original = await stored();
+    expect(original).toHaveLength(1);
+    const conflicts = [
+      { terminal_status: "failed" },
+      { evidence: { key: "synthetic/other.json", sha256: hex(9) } },
+      { evidence: { key: "synthetic/synthetic-r.json", sha256: hex(8) } },
+      { actor_role: "operator" },
+    ];
+    for (const change of conflicts) {
+      await expectNothingWritten(h, async () => {
+        expectRefused(await confirm("synthetic-r", ROOT, change), "confirmation_conflict");
+      });
+      expect(await stored()).toEqual(original);
+    }
     await expectNothingWritten(h, async () => {
       expect(expectOk(await confirm("synthetic-r")).replay).toBe(true);
     });

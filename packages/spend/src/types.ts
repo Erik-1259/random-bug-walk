@@ -48,6 +48,7 @@ export const REFUSAL_CODES = [
   "insufficient_funds",
   "pool_halted",
   "operation_conflict",
+  "confirmation_conflict",
   "previous_attempt_unresolved",
   "invalid_transition",
   "already_settled",

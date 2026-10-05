@@ -270,7 +270,7 @@ Settlement, all other transitions, reconciliation, transfers, cap raises, child 
 - **Acquire.** Acquire succeeds when the slot is free. A repeat by the holder returns the existing hold (`replay: true`) and writes nothing. Any other root is refused at once with `slot_held`: no waiting, queueing or retry. Children act under their root and never acquire.
 - **Children.**
   - While holding the slot, the root records each child resource (provider, resource ID, owning operation or execution, kind), and later its confirmed terminal state with evidence.
-  - Repeating either record is harmless.
+  - Repeating either record with the same values is harmless and writes nothing. A repeated confirmation with a different terminal status, evidence or actor role is refused with `confirmation_conflict`, and the stored confirmation stays as it was.
   - Recording for a root that does not hold the slot is refused with `slot_not_held`.
 - **Release.** The holder can release the slot, or an owner or operator can, with evidence and a reason. Release is allowed only when every child resource of that root, under any slot key, has a confirmed terminal state, and no operation of that root is `prepared`, `launching`, `running` or `uncertain`. Otherwise it is refused with `slot_release_blocked`, listing the blocking resources (each with the slot key it is confirmed under) and operation IDs. Release is the only way the slot becomes free.
 
@@ -287,6 +287,7 @@ Settlement, all other transitions, reconciliation, transfers, cap raises, child 
 | `insufficient_funds` | The worst case exceeds the pool's or allocation's available amount |
 | `pool_halted` | New work is halted after an over-envelope observation |
 | `operation_conflict` | The operation ID exists with a different request |
+| `confirmation_conflict` | The child resource already has a confirmation with a different terminal status, evidence or actor role |
 | `previous_attempt_unresolved` | The previous attempt is not `terminal` or `reconciled` |
 | `invalid_transition` | The current state does not allow the action; the result names `current_state` |
 | `already_settled` | A different settlement was already recorded |

@@ -1210,6 +1210,7 @@ DECLARE
   v_root text := r ->> 'root_execution_id';
   v_child bigint;
   v_seq bigint;
+  v_prior slot_child_confirmations%ROWTYPE;
 BEGIN
   PERFORM spend_require_read_committed();
   IF v_now IS NULL THEN
@@ -1241,9 +1242,14 @@ BEGIN
   IF v_child IS NULL THEN
     RETURN spend_invalid('no such child resource is recorded for this root and slot');
   END IF;
-  SELECT seq INTO v_seq FROM slot_child_confirmations WHERE child_seq = v_child;
-  IF v_seq IS NOT NULL THEN
-    RETURN jsonb_build_object('ok', true, 'replay', true, 'seq', v_seq);
+  SELECT * INTO v_prior FROM slot_child_confirmations WHERE child_seq = v_child;
+  IF FOUND THEN
+    IF v_prior.terminal_status = r ->> 'terminal_status'
+      AND v_prior.evidence = jsonb_build_array(r -> 'evidence')
+      AND v_prior.actor_role = r ->> 'actor_role' THEN
+      RETURN jsonb_build_object('ok', true, 'replay', true, 'seq', v_prior.seq);
+    END IF;
+    RETURN spend_refusal('confirmation_conflict');
   END IF;
   INSERT INTO slot_child_confirmations (child_seq, terminal_status, evidence, source, actor_role, recorded_at)
   VALUES (v_child, r ->> 'terminal_status', jsonb_build_array(r -> 'evidence'), 'holder', r ->> 'actor_role', v_now)
