@@ -170,6 +170,58 @@ describe("record command wiring", () => {
   });
 });
 
+describe("recorded exchanges and provider request IDs", () => {
+  const withRequestId = (recording: Recording): Recording => ({
+    ...recording,
+    response: {
+      ...recording.response,
+      body: { ...(recording.response.body as Record<string, unknown>), request_id: "synthetic-provider-request-id" },
+    },
+  });
+
+  it("writes no request_id into any saved file and the saved exchange still replays", async () => {
+    const out = outDir();
+    world = await makeWorld({
+      recordings: ALL_OK,
+      store: createDirectoryRecordStore(out),
+      holdSlot: false,
+      mapRecording: withRequestId,
+    });
+    const tap = installWireTap();
+    const result = await runRecord({
+      searcher: world.searcher,
+      spend: world.spend,
+      context: CONTEXT,
+      input: SEARCH_INPUT,
+      slotKey: SLOT,
+      outDir: out,
+      tap,
+      write: () => undefined,
+    });
+    tap.remove();
+    expect(result.exitCode).toBe(0);
+    const files = readdirSync(out);
+    const everything = files.map((f) => readFileSync(join(out, f), "utf8")).join("\n");
+    expect(everything).not.toMatch(/request_?id|synthetic-provider-request-id/i);
+    const saved = files
+      .filter((f) => f.endsWith(".recording.json"))
+      .map((f) => JSON.parse(readFileSync(join(out, f), "utf8")) as Recording);
+    expect(saved).toHaveLength(6);
+    await world.close();
+
+    world = await makeWorld({ recordings: [], extraRecordings: saved });
+    const replay = await world.searcher.searchSource("source-1", SEARCH_INPUT);
+    expect(replay).toMatchObject({ status: "recorded", record: { outcome: "complete" } });
+  });
+
+  it("keeps request_id out of the committed synthetic recordings", () => {
+    const dir = join(PACKAGE_DIR, "recordings", "synthetic");
+    for (const f of readdirSync(dir)) {
+      expect(readFileSync(join(dir, f), "utf8")).not.toMatch(/request_?id/i);
+    }
+  });
+});
+
 describe("record command line", () => {
   function run(env: Record<string, string>, args: string[] = []): { status: number | null; stderr: string; stdout: string } {
     const result = spawnSync("node", ["src/record-cli.ts", ...args], {

@@ -40,6 +40,24 @@ export interface RecordResult {
   released: boolean;
 }
 
+/** The only per-request identifier the provider's search and extract responses carry. */
+const PROVIDER_REQUEST_ID_KEYS = new Set(["request_id", "requestId"]);
+
+/** Copies JSON with every provider request ID removed, at any depth, so a saved recording never holds one. */
+function withoutRequestIds(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(withoutRequestIds);
+  }
+  if (typeof value === "object" && value !== null) {
+    return Object.fromEntries(
+      Object.entries(value)
+        .filter(([key]) => !PROVIDER_REQUEST_ID_KEYS.has(key))
+        .map(([key, entry]) => [key, withoutRequestIds(entry)]),
+    );
+  }
+  return value;
+}
+
 function text(value: bigint | number | null): string {
   return value === null ? "none" : String(value);
 }
@@ -86,8 +104,8 @@ export async function runRecord(options: RecordOptions): Promise<RecordResult> {
             provenance: "live",
             endpoint: exchange.endpoint,
             recorded_at: result.record.completed_at,
-            request_body: exchange.request_body,
-            response: exchange.response,
+            request_body: withoutRequestIds(exchange.request_body),
+            response: { status: exchange.response.status, body: withoutRequestIds(exchange.response.body) },
           },
           null,
           2,

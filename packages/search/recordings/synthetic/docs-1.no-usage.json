@@ -24,8 +24,7 @@
         }
       ],
       "failed_results": [],
-      "response_time": 0.7,
-      "request_id": "synthetic-request-id"
+      "response_time": 0.7
     }
   }
 }

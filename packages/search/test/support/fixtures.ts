@@ -121,7 +121,6 @@ function searchBody(query: string, count: number, usage: { credits: number } | n
     results,
     response_time: 0.5,
     ...(usage === null ? {} : { usage }),
-    request_id: "synthetic-request-id",
   };
 }
 
@@ -144,7 +143,6 @@ function extractBody(options: { failed?: boolean; credits: number | null }): Rec
     failed_results: options.failed ? [{ url, error: "synthetic fetch failure" }] : [],
     response_time: 0.7,
     ...(options.credits === null ? {} : { usage: { credits: options.credits } }),
-    request_id: "synthetic-request-id",
   };
 }
 

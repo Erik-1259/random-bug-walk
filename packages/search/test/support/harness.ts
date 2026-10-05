@@ -4,7 +4,7 @@ import type { Spend } from "@rbw/spend";
 import { createTavilyClient, createSearcher, parseRateSheet } from "../../src/index.ts";
 import type { RecordStore, SearchSettings, Searcher } from "../../src/index.ts";
 import { startReplayServer } from "./replay-server.ts";
-import type { Fault, LoggedRequest, ReplayServer } from "./replay-server.ts";
+import type { Fault, LoggedRequest, Recording, ReplayServer } from "./replay-server.ts";
 import {
   CONTEXT,
   EXCLUDED_IDENTIFIERS,
@@ -42,6 +42,10 @@ export interface WorldOptions {
   store?: RecordStore;
   holdSlot?: boolean;
   apiKey?: string;
+  /** Rewrites each named recording before the replay server serves it. */
+  mapRecording?: (recording: Recording) => Recording;
+  /** Recordings served as they are, in addition to the named ones. */
+  extraRecordings?: Recording[];
 }
 
 export async function makeWorld(options: WorldOptions): Promise<World> {
@@ -87,7 +91,7 @@ export async function makeWorld(options: WorldOptions): Promise<World> {
     },
   };
   const server = await startReplayServer({
-    recordings: loadRecordings(options.recordings),
+    recordings: [...loadRecordings(options.recordings).map(options.mapRecording ?? ((r) => r)), ...(options.extraRecordings ?? [])],
     onRequest: (request) => log.push(`request:${request.endpoint}`),
     ...(options.fault === undefined ? {} : { fault: options.fault }),
   });
