@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { operationId as schemaOperationId, validateRecord } from "@rbw/schema";
+import type { OperationIdentity } from "@rbw/schema";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   SearchError,
@@ -58,6 +60,8 @@ describe("run context", () => {
     expect(() => parseRunContext({ ...CONTEXT, extra: 1 })).toThrow();
     expect(() => parseRunContext({ ...CONTEXT, project_id: "NOT-A-UUID" })).toThrow();
     expect(() => parseRunContext({ ...CONTEXT, task_revision: "abc" })).toThrow();
+    // An OperationIdentity requires a batch ID, so a context without one cannot identify a call.
+    expect(() => parseRunContext({ ...CONTEXT, batch_id: null })).toThrow();
     const { execution_id, ...rest } = CONTEXT;
     expect(execution_id).toBeDefined();
     expect(() => parseRunContext(rest)).toThrow();
@@ -102,8 +106,28 @@ describe("search profile and identity", () => {
     expect(a.operation_id).toBe(same.operation_id);
     expect(a.payload_hash).not.toBe(same.payload_hash);
     expect(a.operation_id).not.toBe(other.operation_id);
-    expect(a.call_name).toBe("search.source.synthetic-candidate-1.source-1");
+    expect(a.call_name).toBe("search.source:synthetic-candidate-1:source-1");
     expect(a.runtime_profile_sha256).toBe(profile.sha256);
     expect(hex(0)).toHaveLength(64);
+  });
+
+  it("is the schema's operation ID of the call's OperationIdentity", () => {
+    const profile = buildProfile(SETTINGS);
+    const identity: OperationIdentity = {
+      schema_version: 1,
+      project_id: CONTEXT.project_id,
+      project_policy_sha256: CONTEXT.project_policy_sha256,
+      root_execution_id: CONTEXT.root_execution_id,
+      batch_id: CONTEXT.batch_id,
+      task_revision: CONTEXT.task_revision,
+      kind: "search.phrase",
+      runtime_profile_sha256: profile.sha256,
+      call_name: "search.phrase:synthetic-candidate-1:phrase-2",
+      attempt_ordinal: 1,
+    };
+    const built = buildIdentity({ context: CONTEXT, profile, candidate: "synthetic-candidate-1", name: "phrase-2", kind: "search.phrase", options: { q: 1 } });
+    expect(built.call_name).toBe(identity.call_name);
+    expect(validateRecord("CallName", built.call_name)).toEqual([]);
+    expect(built.operation_id).toBe(schemaOperationId(identity).sha256);
   });
 });

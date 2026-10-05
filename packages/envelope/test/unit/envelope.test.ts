@@ -123,8 +123,16 @@ test("non-terminating exact USD omits decimal string", () => {
   expect(success(tavilyCallEnvelope(synthetic)).exact_microusd).toEqual({ numerator: 2n, denominator: 7n });
 });
 test("identity rejects invalid spend formats and inconsistent attempt predecessor", () => {
-  for (const fields of [{ pool_key: "x".repeat(65) }, { provider_replay_key: "synthetic\nkey" }, { provider_replay_key: "x".repeat(513) }, { attempt_ordinal: 2 }, { previous_operation_id: "a".repeat(64) }, { project_id: "SYNTHETIC" }]) {
+  for (const fields of [{ pool_key: "x".repeat(65) }, { provider_replay_key: "synthetic\nkey" }, { provider_replay_key: "x".repeat(513) }, { attempt_ordinal: 2 }, { previous_operation_id: "a".repeat(64) }, { project_id: "SYNTHETIC" },
+    { kind: "synthetic-operation" }, { kind: "Synthetic.operation" }, { kind: "x".repeat(65) },
+    { call_name: "synthetic.operation::1" }, { call_name: "Synthetic.operation:1" }, { call_name: `synthetic:${"x".repeat(119)}` }]) {
     expect(() => toReserveRequest(observeEnvelope(rates), { ...identity(), ...fields })).toThrow();
+  }
+});
+
+test("identity accepts the schema's colon-form call names up to the ledger's 128 characters", () => {
+  for (const callName of ["writer.issue:synthetic-candidate:3", "search.phrase:synthetic-candidate:phrase-2", `synthetic:${"x".repeat(118)}`]) {
+    expect(toReserveRequest(observeEnvelope(rates), { ...identity(), call_name: callName }).call_name).toBe(callName);
   }
 });
 

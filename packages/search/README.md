@@ -85,11 +85,11 @@ Protocol per call, following `@rbw/spend`:
 Identity fields:
 
 - `project_id`, `project_policy_sha256`, `batch_id`, `task_revision`, `root_execution_id`, `execution_id` and `parent_execution_id` come from the run context, which is validated strictly.
-- `kind` is `search.source`, `search.docs` or `search.phrase`. `call_name` is `<kind>.<candidate>.<name>`, for example `search.source.my-candidate.source-1`.
+- `kind` is `search.source`, `search.docs` or `search.phrase`. `call_name` is `<kind>:<candidate>:<name>`, for example `search.source:my-candidate:source-1`, built by `callName` of `@rbw/schema`.
 - `provider` is `tavily`, `provider_replay_key` is `null` and `attempt_ordinal` is 1.
 - `runtime_profile_sha256` is the SHA-256 of the canonical sorted-key JSON of the frozen search profile (options, limits, domain lists and settings).
 - `payload_hash` is the SHA-256 of the canonical request (endpoint, query or URL, options).
-- `operation_id` is the SHA-256 of canonical JSON over project, policy hash, root, batch, task revision, kind, profile digest, candidate, call name and attempt ordinal.
+- `operation_id` is `operationId` of `@rbw/schema` over the call's `OperationIdentity`: `schema_version` 1, project, policy hash, root, batch, task revision, kind, profile digest, call name and attempt ordinal.
 - `rate_sheet_sha256` is the SHA-256 of the rate sheet file's bytes.
 
 These live in `src/spend-identity.ts`. The shared schema package will supply them later.
@@ -156,13 +156,13 @@ The SDK folds every failure into a plain `Error` and drops the cause, so the rea
 
 `candidate` is lowercase letters, digits, `_` and `-`, at most 40 characters, because it is part of the spend call name. A phrase may not contain a double quote, because the query quotes it.
 
-The **run context** has the strict fields `project_id`, `project_policy_sha256`, `batch_id` (nullable), `task_revision`, `root_execution_id`, `execution_id` and `parent_execution_id` (nullable). IDs are lowercase UUIDs and hashes are 64 lowercase hex characters:
+The **run context** has the strict fields `project_id`, `project_policy_sha256`, `batch_id` (required, because the schema's `OperationIdentity` requires a batch ID), `task_revision`, `root_execution_id`, `execution_id` and `parent_execution_id` (nullable). IDs are lowercase UUIDs and hashes are 64 lowercase hex characters:
 
 ```json
 {
   "project_id": "00000000-0000-4000-8000-000000000064",
   "project_policy_sha256": "0000000000000000000000000000000000000000000000000000000000000003",
-  "batch_id": null,
+  "batch_id": "00000000-0000-4000-8000-000000000065",
   "task_revision": "0000000000000000000000000000000000000000000000000000000000000004",
   "root_execution_id": "00000000-0000-4000-8000-000000000001",
   "execution_id": "00000000-0000-4000-8000-000000000001",
