@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "entries": [
+    {
+      "outcome": "truncated",
+      "path": "logs/run.log",
+      "execution_id": "00000000-0000-4000-8000-000000000101",
+      "trial_id": null,
+      "reason": "size_limit"
+    },
+    {
+      "outcome": "not_produced",
+      "path": "results/00000000-0000-4000-8000-000000000201/planted-01/score.json",
+      "execution_id": "00000000-0000-4000-8000-000000000201",
+      "trial_id": "planted-01",
+      "reason": "stage_failed"
+    },
+    {
+      "outcome": "withheld_private",
+      "execution_id": "00000000-0000-4000-8000-000000000201",
+      "trial_id": "planted-01",
+      "reason": "private_material"
+    }
+  ],
+  "redactions": [
+    {
+      "path": "logs/run.log",
+      "category": "token",
+      "count": 1
+    }
+  ]
+}

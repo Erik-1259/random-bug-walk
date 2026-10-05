@@ -1,0 +1,1250 @@
+{
+  "schema_version": 1,
+  "canonical": [
+    {
+      "name": "key-order-nested",
+      "expect": "valid"
+    },
+    {
+      "name": "whitespace-crlf",
+      "expect": "valid"
+    },
+    {
+      "name": "escapes",
+      "expect": "valid"
+    },
+    {
+      "name": "unicode-preserved",
+      "expect": "valid"
+    },
+    {
+      "name": "surrogate-pair-emoji",
+      "expect": "valid"
+    },
+    {
+      "name": "integer-bounds",
+      "expect": "valid"
+    },
+    {
+      "name": "empty-values",
+      "expect": "valid"
+    },
+    {
+      "name": "literals",
+      "expect": "valid"
+    },
+    {
+      "name": "top-level-string",
+      "expect": "valid"
+    },
+    {
+      "name": "duplicate-key-top",
+      "expect": "invalid"
+    },
+    {
+      "name": "duplicate-key-nested",
+      "expect": "invalid"
+    },
+    {
+      "name": "duplicate-key-escaped",
+      "expect": "invalid"
+    },
+    {
+      "name": "fraction",
+      "expect": "invalid"
+    },
+    {
+      "name": "negative-zero-fraction",
+      "expect": "invalid"
+    },
+    {
+      "name": "exponent",
+      "expect": "invalid"
+    },
+    {
+      "name": "exponent-overflow",
+      "expect": "invalid"
+    },
+    {
+      "name": "nan",
+      "expect": "invalid"
+    },
+    {
+      "name": "infinity",
+      "expect": "invalid"
+    },
+    {
+      "name": "above-max-integer",
+      "expect": "invalid"
+    },
+    {
+      "name": "below-min-integer",
+      "expect": "invalid"
+    },
+    {
+      "name": "integer-many-digits",
+      "expect": "invalid"
+    },
+    {
+      "name": "leading-zero",
+      "expect": "invalid"
+    },
+    {
+      "name": "non-ascii-key",
+      "expect": "invalid"
+    },
+    {
+      "name": "non-ascii-key-escaped",
+      "expect": "invalid"
+    },
+    {
+      "name": "lone-high-surrogate",
+      "expect": "invalid"
+    },
+    {
+      "name": "lone-low-surrogate",
+      "expect": "invalid"
+    },
+    {
+      "name": "invalid-utf8",
+      "expect": "invalid"
+    },
+    {
+      "name": "encoded-surrogate-utf8",
+      "expect": "invalid"
+    },
+    {
+      "name": "bom",
+      "expect": "invalid"
+    },
+    {
+      "name": "trailing-content",
+      "expect": "invalid"
+    },
+    {
+      "name": "trailing-value",
+      "expect": "invalid"
+    },
+    {
+      "name": "raw-control-character",
+      "expect": "invalid"
+    },
+    {
+      "name": "empty-input",
+      "expect": "invalid"
+    }
+  ],
+  "records": [
+    {
+      "name": "uuid-valid",
+      "type": "Uuid",
+      "expect": "valid",
+      "rule": "uuid"
+    },
+    {
+      "name": "uuid-uppercase",
+      "type": "Uuid",
+      "expect": "invalid",
+      "rule": "uuid lowercase"
+    },
+    {
+      "name": "uuid-wrong-groups",
+      "type": "Uuid",
+      "expect": "invalid",
+      "rule": "uuid 8-4-4-4-12"
+    },
+    {
+      "name": "uuid-trailing-newline",
+      "type": "Uuid",
+      "expect": "invalid",
+      "rule": "whole-string match"
+    },
+    {
+      "name": "sha256-valid",
+      "type": "Sha256",
+      "expect": "valid",
+      "rule": "sha256"
+    },
+    {
+      "name": "sha256-short",
+      "type": "Sha256",
+      "expect": "invalid",
+      "rule": "sha256 length"
+    },
+    {
+      "name": "sha256-uppercase",
+      "type": "Sha256",
+      "expect": "invalid",
+      "rule": "sha256 lowercase"
+    },
+    {
+      "name": "sha256-trailing-newline",
+      "type": "Sha256",
+      "expect": "invalid",
+      "rule": "whole-string match"
+    },
+    {
+      "name": "image-digest-valid",
+      "type": "ImageDigest",
+      "expect": "valid",
+      "rule": "image digest"
+    },
+    {
+      "name": "image-digest-no-prefix",
+      "type": "ImageDigest",
+      "expect": "invalid",
+      "rule": "image digest prefix"
+    },
+    {
+      "name": "image-digest-trailing-newline",
+      "type": "ImageDigest",
+      "expect": "invalid",
+      "rule": "whole-string match"
+    },
+    {
+      "name": "git-commit-valid",
+      "type": "GitCommitId",
+      "expect": "valid",
+      "rule": "git commit"
+    },
+    {
+      "name": "git-commit-short",
+      "type": "GitCommitId",
+      "expect": "invalid",
+      "rule": "git commit length"
+    },
+    {
+      "name": "git-commit-uppercase",
+      "type": "GitCommitId",
+      "expect": "invalid",
+      "rule": "git commit lowercase"
+    },
+    {
+      "name": "time-valid",
+      "type": "UtcTime",
+      "expect": "valid",
+      "rule": "utc time"
+    },
+    {
+      "name": "time-valid-leap-day-fraction",
+      "type": "UtcTime",
+      "expect": "valid",
+      "rule": "utc time"
+    },
+    {
+      "name": "time-impossible-date",
+      "type": "UtcTime",
+      "expect": "invalid",
+      "rule": "impossible date"
+    },
+    {
+      "name": "time-non-leap-year",
+      "type": "UtcTime",
+      "expect": "invalid",
+      "rule": "impossible date"
+    },
+    {
+      "name": "time-month-13",
+      "type": "UtcTime",
+      "expect": "invalid",
+      "rule": "impossible date"
+    },
+    {
+      "name": "time-hour-24",
+      "type": "UtcTime",
+      "expect": "invalid",
+      "rule": "impossible time"
+    },
+    {
+      "name": "time-second-60",
+      "type": "UtcTime",
+      "expect": "invalid",
+      "rule": "impossible time"
+    },
+    {
+      "name": "time-offset",
+      "type": "UtcTime",
+      "expect": "invalid",
+      "rule": "ends in Z"
+    },
+    {
+      "name": "time-lowercase-z",
+      "type": "UtcTime",
+      "expect": "invalid",
+      "rule": "ends in Z"
+    },
+    {
+      "name": "time-trailing-newline",
+      "type": "UtcTime",
+      "expect": "invalid",
+      "rule": "whole-string match"
+    },
+    {
+      "name": "duration-valid",
+      "type": "DurationMs",
+      "expect": "valid",
+      "rule": "duration"
+    },
+    {
+      "name": "duration-negative",
+      "type": "DurationMs",
+      "expect": "invalid",
+      "rule": "duration nonnegative"
+    },
+    {
+      "name": "duration-fraction",
+      "type": "DurationMs",
+      "expect": "invalid",
+      "rule": "duration integer",
+      "error": "canonical"
+    },
+    {
+      "name": "duration-boolean",
+      "type": "DurationMs",
+      "expect": "invalid",
+      "rule": "boolean is not an integer"
+    },
+    {
+      "name": "bytes-negative",
+      "type": "ByteCount",
+      "expect": "invalid",
+      "rule": "bytes nonnegative"
+    },
+    {
+      "name": "tokens-negative",
+      "type": "TokenCount",
+      "expect": "invalid",
+      "rule": "tokens nonnegative"
+    },
+    {
+      "name": "tokens-null",
+      "type": "TokenCount",
+      "expect": "invalid",
+      "rule": "null never means zero"
+    },
+    {
+      "name": "money-valid",
+      "type": "MicroUsd",
+      "expect": "valid",
+      "rule": "micro-usd"
+    },
+    {
+      "name": "money-float-dollars",
+      "type": "MicroUsd",
+      "expect": "invalid",
+      "rule": "money integer micro-usd",
+      "error": "canonical"
+    },
+    {
+      "name": "integer-out-of-range",
+      "type": "ByteCount",
+      "expect": "invalid",
+      "rule": "integer range",
+      "error": "canonical"
+    },
+    {
+      "name": "policy-placeholder",
+      "type": "ProjectPolicy",
+      "expect": "valid",
+      "rule": "public_demo policy"
+    },
+    {
+      "name": "policy-evaluation",
+      "type": "ProjectPolicy",
+      "expect": "valid",
+      "rule": "evaluation policy"
+    },
+    {
+      "name": "policy-public-demo-private",
+      "type": "ProjectPolicy",
+      "expect": "invalid",
+      "rule": "combination"
+    },
+    {
+      "name": "policy-evaluation-public",
+      "type": "ProjectPolicy",
+      "expect": "invalid",
+      "rule": "combination"
+    },
+    {
+      "name": "policy-public-demo-null-repository",
+      "type": "ProjectPolicy",
+      "expect": "invalid",
+      "rule": "public_demo destinations set"
+    },
+    {
+      "name": "policy-public-demo-null-base",
+      "type": "ProjectPolicy",
+      "expect": "invalid",
+      "rule": "public_demo destinations set"
+    },
+    {
+      "name": "policy-evaluation-with-repository",
+      "type": "ProjectPolicy",
+      "expect": "invalid",
+      "rule": "evaluation destinations null"
+    },
+    {
+      "name": "policy-repository-userinfo",
+      "type": "ProjectPolicy",
+      "expect": "invalid",
+      "rule": "no userinfo"
+    },
+    {
+      "name": "policy-repository-http",
+      "type": "ProjectPolicy",
+      "expect": "invalid",
+      "rule": "https only"
+    },
+    {
+      "name": "policy-repository-dot-git",
+      "type": "ProjectPolicy",
+      "expect": "invalid",
+      "rule": "no .git"
+    },
+    {
+      "name": "policy-repository-trailing-slash",
+      "type": "ProjectPolicy",
+      "expect": "invalid",
+      "rule": "no trailing slash"
+    },
+    {
+      "name": "policy-repository-query",
+      "type": "ProjectPolicy",
+      "expect": "invalid",
+      "rule": "no query"
+    },
+    {
+      "name": "policy-repository-fragment",
+      "type": "ProjectPolicy",
+      "expect": "invalid",
+      "rule": "no fragment"
+    },
+    {
+      "name": "policy-repository-extra-segment",
+      "type": "ProjectPolicy",
+      "expect": "invalid",
+      "rule": "exactly owner and repo"
+    },
+    {
+      "name": "policy-repository-trailing-newline",
+      "type": "ProjectPolicy",
+      "expect": "invalid",
+      "rule": "whole-string match"
+    },
+    {
+      "name": "policy-base-no-trailing-slash",
+      "type": "ProjectPolicy",
+      "expect": "invalid",
+      "rule": "base ends with /"
+    },
+    {
+      "name": "policy-base-query",
+      "type": "ProjectPolicy",
+      "expect": "invalid",
+      "rule": "no query"
+    },
+    {
+      "name": "policy-base-userinfo",
+      "type": "ProjectPolicy",
+      "expect": "invalid",
+      "rule": "no userinfo"
+    },
+    {
+      "name": "policy-base-http",
+      "type": "ProjectPolicy",
+      "expect": "invalid",
+      "rule": "https only"
+    },
+    {
+      "name": "policy-version-zero",
+      "type": "ProjectPolicy",
+      "expect": "invalid",
+      "rule": "positive version"
+    },
+    {
+      "name": "policy-schema-version-2",
+      "type": "ProjectPolicy",
+      "expect": "invalid",
+      "rule": "schema_version 1"
+    },
+    {
+      "name": "policy-unknown-field",
+      "type": "ProjectPolicy",
+      "expect": "invalid",
+      "rule": "unknown field"
+    },
+    {
+      "name": "policy-missing-nullable-field",
+      "type": "ProjectPolicy",
+      "expect": "invalid",
+      "rule": "nullable never omitted"
+    },
+    {
+      "name": "policy-uppercase-project-id",
+      "type": "ProjectPolicy",
+      "expect": "invalid",
+      "rule": "uuid lowercase"
+    },
+    {
+      "name": "policy-successor",
+      "type": "ProjectPolicy",
+      "expect": "valid",
+      "rule": "new version",
+      "context": {
+        "previous": "policy-placeholder"
+      }
+    },
+    {
+      "name": "policy-successor-same-version",
+      "type": "ProjectPolicy",
+      "expect": "invalid",
+      "rule": "new configuration is a new version",
+      "context": {
+        "previous": "policy-placeholder"
+      },
+      "error": "policy:version_not_increased"
+    },
+    {
+      "name": "policy-successor-reverses-exposure",
+      "type": "ProjectPolicy",
+      "expect": "invalid",
+      "rule": "never reverses exposure",
+      "context": {
+        "previous": "policy-placeholder"
+      },
+      "error": "policy:exposure_reversed"
+    },
+    {
+      "name": "policy-successor-other-project",
+      "type": "ProjectPolicy",
+      "expect": "invalid",
+      "rule": "same project",
+      "context": {
+        "previous": "policy-placeholder"
+      },
+      "error": "policy:other_project"
+    },
+    {
+      "name": "registry-umami",
+      "type": "FamilyRegistry",
+      "expect": "valid",
+      "rule": "registry"
+    },
+    {
+      "name": "registry-two-families",
+      "type": "FamilyRegistry",
+      "expect": "valid",
+      "rule": "registry"
+    },
+    {
+      "name": "registry-exposure-held-out",
+      "type": "FamilyRegistry",
+      "expect": "invalid",
+      "rule": "exposure public only"
+    },
+    {
+      "name": "registry-eligible-true",
+      "type": "FamilyRegistry",
+      "expect": "invalid",
+      "rule": "held_out_eligible false only"
+    },
+    {
+      "name": "registry-short-commit",
+      "type": "FamilyRegistry",
+      "expect": "invalid",
+      "rule": "commit 40 hex"
+    },
+    {
+      "name": "registry-mutation-not-sha256",
+      "type": "FamilyRegistry",
+      "expect": "invalid",
+      "rule": "mutation sha256"
+    },
+    {
+      "name": "registry-missing-mutation-ids",
+      "type": "FamilyRegistry",
+      "expect": "invalid",
+      "rule": "required field"
+    },
+    {
+      "name": "registry-duplicate-family",
+      "type": "FamilyRegistry",
+      "expect": "invalid",
+      "rule": "unique family ids",
+      "error": "registry:duplicate_family"
+    },
+    {
+      "name": "registry-shared-source-fix",
+      "type": "FamilyRegistry",
+      "expect": "invalid",
+      "rule": "unique source fixes",
+      "error": "registry:duplicate_source_fix"
+    },
+    {
+      "name": "registry-shared-mutation",
+      "type": "FamilyRegistry",
+      "expect": "invalid",
+      "rule": "unique mutation ids",
+      "error": "registry:duplicate_mutation"
+    },
+    {
+      "name": "held-out-list-valid",
+      "type": "HeldOutIdentityList",
+      "expect": "valid",
+      "rule": "held-out list"
+    },
+    {
+      "name": "held-out-list-bad-commit",
+      "type": "HeldOutIdentityList",
+      "expect": "invalid",
+      "rule": "commit 40 hex"
+    },
+    {
+      "name": "root-run-terminal",
+      "type": "RootRun",
+      "expect": "valid",
+      "rule": "terminal root",
+      "context": {
+        "policy": "policy-placeholder"
+      }
+    },
+    {
+      "name": "root-run-running",
+      "type": "RootRun",
+      "expect": "valid",
+      "rule": "running root",
+      "context": {
+        "policy": "policy-placeholder"
+      }
+    },
+    {
+      "name": "root-run-standalone",
+      "type": "RootRun",
+      "expect": "valid",
+      "rule": "standalone root"
+    },
+    {
+      "name": "root-run-terminal-null-outcome",
+      "type": "RootRun",
+      "expect": "invalid",
+      "rule": "outcome set when terminal"
+    },
+    {
+      "name": "root-run-running-with-outcome",
+      "type": "RootRun",
+      "expect": "invalid",
+      "rule": "outcome null unless terminal"
+    },
+    {
+      "name": "root-run-reconciliation-with-outcome",
+      "type": "RootRun",
+      "expect": "invalid",
+      "rule": "outcome null unless terminal"
+    },
+    {
+      "name": "root-run-no-stages",
+      "type": "RootRun",
+      "expect": "invalid",
+      "rule": "stages non-empty"
+    },
+    {
+      "name": "root-run-duplicate-stage",
+      "type": "RootRun",
+      "expect": "invalid",
+      "rule": "stages unique"
+    },
+    {
+      "name": "root-run-stage-hyphen",
+      "type": "RootRun",
+      "expect": "invalid",
+      "rule": "stage characters"
+    },
+    {
+      "name": "root-run-stage-uppercase",
+      "type": "RootRun",
+      "expect": "invalid",
+      "rule": "stage characters"
+    },
+    {
+      "name": "root-run-child-is-root",
+      "type": "RootRun",
+      "expect": "invalid",
+      "rule": "child never the root",
+      "error": "root:child_is_root"
+    },
+    {
+      "name": "root-run-duplicate-child",
+      "type": "RootRun",
+      "expect": "invalid",
+      "rule": "children unique"
+    },
+    {
+      "name": "root-run-unknown-kind",
+      "type": "RootRun",
+      "expect": "invalid",
+      "rule": "kind enum"
+    },
+    {
+      "name": "root-run-unknown-status",
+      "type": "RootRun",
+      "expect": "invalid",
+      "rule": "status enum"
+    },
+    {
+      "name": "root-run-unknown-outcome",
+      "type": "RootRun",
+      "expect": "invalid",
+      "rule": "outcome enum"
+    },
+    {
+      "name": "root-run-project-mismatch",
+      "type": "RootRun",
+      "expect": "invalid",
+      "rule": "inherits project",
+      "context": {
+        "policy": "policy-placeholder"
+      },
+      "error": "inherit:project_id"
+    },
+    {
+      "name": "root-run-policy-hash-mismatch",
+      "type": "RootRun",
+      "expect": "invalid",
+      "rule": "inherits policy hash",
+      "context": {
+        "policy": "policy-placeholder"
+      },
+      "error": "inherit:project_policy_sha256"
+    },
+    {
+      "name": "artifact-manifest-valid",
+      "type": "ArtifactManifest",
+      "expect": "valid",
+      "rule": "artifact manifest",
+      "context": {
+        "root": "root-run-terminal"
+      }
+    },
+    {
+      "name": "artifact-manifest-duplicate-key",
+      "type": "ArtifactManifest",
+      "expect": "invalid",
+      "rule": "unique keys",
+      "error": "artifacts:duplicate_key"
+    },
+    {
+      "name": "artifact-manifest-url-key",
+      "type": "ArtifactManifest",
+      "expect": "invalid",
+      "rule": "key is a relative path"
+    },
+    {
+      "name": "artifact-manifest-absolute-key",
+      "type": "ArtifactManifest",
+      "expect": "invalid",
+      "rule": "key is a relative path"
+    },
+    {
+      "name": "artifact-manifest-dot-dot-key",
+      "type": "ArtifactManifest",
+      "expect": "invalid",
+      "rule": "key is a relative path"
+    },
+    {
+      "name": "artifact-manifest-trial-uppercase",
+      "type": "ArtifactManifest",
+      "expect": "invalid",
+      "rule": "trial id characters"
+    },
+    {
+      "name": "artifact-manifest-bad-task-revision",
+      "type": "ArtifactManifest",
+      "expect": "invalid",
+      "rule": "task revision sha256"
+    },
+    {
+      "name": "artifact-manifest-negative-size",
+      "type": "ArtifactManifest",
+      "expect": "invalid",
+      "rule": "bytes nonnegative"
+    },
+    {
+      "name": "artifact-manifest-policy-mismatch",
+      "type": "ArtifactManifest",
+      "expect": "invalid",
+      "rule": "inherits policy hash",
+      "context": {
+        "root": "root-run-terminal"
+      },
+      "error": "inherit:project_policy_sha256"
+    },
+    {
+      "name": "publication-published",
+      "type": "PublicationRecord",
+      "expect": "valid",
+      "rule": "published record",
+      "context": {
+        "root": "root-run-terminal"
+      }
+    },
+    {
+      "name": "publication-published-policy-context",
+      "type": "PublicationRecord",
+      "expect": "valid",
+      "rule": "a record without project_id checked against its policy",
+      "context": {
+        "policy": "policy-placeholder"
+      }
+    },
+    {
+      "name": "publication-blocked",
+      "type": "PublicationRecord",
+      "expect": "valid",
+      "rule": "blocked record"
+    },
+    {
+      "name": "publication-failed",
+      "type": "PublicationRecord",
+      "expect": "valid",
+      "rule": "failed record"
+    },
+    {
+      "name": "publication-prepared",
+      "type": "PublicationRecord",
+      "expect": "valid",
+      "rule": "prepared record"
+    },
+    {
+      "name": "publication-published-no-commit",
+      "type": "PublicationRecord",
+      "expect": "invalid",
+      "rule": "commit set when published"
+    },
+    {
+      "name": "publication-failed-with-commit",
+      "type": "PublicationRecord",
+      "expect": "invalid",
+      "rule": "commit only when published"
+    },
+    {
+      "name": "publication-blocked-with-artifacts",
+      "type": "PublicationRecord",
+      "expect": "invalid",
+      "rule": "blocked has no artifacts"
+    },
+    {
+      "name": "publication-blocked-no-reason",
+      "type": "PublicationRecord",
+      "expect": "invalid",
+      "rule": "reason set when blocked"
+    },
+    {
+      "name": "publication-failed-no-reason",
+      "type": "PublicationRecord",
+      "expect": "invalid",
+      "rule": "reason set when failed"
+    },
+    {
+      "name": "publication-failed-scan-blocked",
+      "type": "PublicationRecord",
+      "expect": "invalid",
+      "rule": "scan_blocked only when blocked"
+    },
+    {
+      "name": "publication-published-with-reason",
+      "type": "PublicationRecord",
+      "expect": "invalid",
+      "rule": "reason only when blocked or failed"
+    },
+    {
+      "name": "publication-free-text-reason",
+      "type": "PublicationRecord",
+      "expect": "invalid",
+      "rule": "reason from fixed list"
+    },
+    {
+      "name": "publication-artifacts-unsorted",
+      "type": "PublicationRecord",
+      "expect": "invalid",
+      "rule": "artifacts sorted by path",
+      "error": "publication:artifacts_sorted"
+    },
+    {
+      "name": "publication-omission-published",
+      "type": "PublicationRecord",
+      "expect": "invalid",
+      "rule": "omission category"
+    },
+    {
+      "name": "publication-unknown-status",
+      "type": "PublicationRecord",
+      "expect": "invalid",
+      "rule": "status enum"
+    },
+    {
+      "name": "publication-artifact-url-path",
+      "type": "PublicationRecord",
+      "expect": "invalid",
+      "rule": "relative path"
+    },
+    {
+      "name": "publication-policy-mismatch",
+      "type": "PublicationRecord",
+      "expect": "invalid",
+      "rule": "inherits policy hash",
+      "context": {
+        "root": "root-run-terminal"
+      },
+      "error": "inherit:project_policy_sha256"
+    },
+    {
+      "name": "publication-root-mismatch",
+      "type": "PublicationRecord",
+      "expect": "invalid",
+      "rule": "inherits root",
+      "context": {
+        "root": "root-run-terminal"
+      },
+      "error": "inherit:root_execution_id"
+    },
+    {
+      "name": "publication-execution-not-root",
+      "type": "PublicationRecord",
+      "expect": "invalid",
+      "rule": "execution_id is the root's own ID",
+      "context": {
+        "root": "root-run-terminal"
+      },
+      "error": "publication:execution_not_root"
+    },
+    {
+      "name": "run-manifest-valid",
+      "type": "RunManifest",
+      "expect": "valid",
+      "rule": "run manifest",
+      "context": {
+        "root": "root-run-terminal"
+      }
+    },
+    {
+      "name": "run-manifest-policy-context",
+      "type": "RunManifest",
+      "expect": "valid",
+      "rule": "run manifest checked against its policy",
+      "context": {
+        "root": "root-run-terminal",
+        "policy": "policy-placeholder"
+      }
+    },
+    {
+      "name": "run-manifest-published-null-sha",
+      "type": "RunManifest",
+      "expect": "invalid",
+      "rule": "published has bytes"
+    },
+    {
+      "name": "run-manifest-truncated-null-media-type",
+      "type": "RunManifest",
+      "expect": "invalid",
+      "rule": "truncated has bytes"
+    },
+    {
+      "name": "run-manifest-not-produced-with-sha",
+      "type": "RunManifest",
+      "expect": "invalid",
+      "rule": "not_produced has no bytes"
+    },
+    {
+      "name": "run-manifest-not-produced-with-uri",
+      "type": "RunManifest",
+      "expect": "invalid",
+      "rule": "public_uri null without bytes"
+    },
+    {
+      "name": "run-manifest-not-produced-redactions",
+      "type": "RunManifest",
+      "expect": "invalid",
+      "rule": "no redactions without bytes"
+    },
+    {
+      "name": "run-manifest-published-with-reason",
+      "type": "RunManifest",
+      "expect": "invalid",
+      "rule": "reason null only for published"
+    },
+    {
+      "name": "run-manifest-truncated-no-reason",
+      "type": "RunManifest",
+      "expect": "invalid",
+      "rule": "reason set unless published"
+    },
+    {
+      "name": "run-manifest-free-text-reason",
+      "type": "RunManifest",
+      "expect": "invalid",
+      "rule": "reason code"
+    },
+    {
+      "name": "run-manifest-withheld-private-path",
+      "type": "RunManifest",
+      "expect": "invalid",
+      "rule": "withheld path"
+    },
+    {
+      "name": "run-manifest-withheld-zero",
+      "type": "RunManifest",
+      "expect": "invalid",
+      "rule": "withheld counts from 1"
+    },
+    {
+      "name": "run-manifest-withheld-gap",
+      "type": "RunManifest",
+      "expect": "invalid",
+      "rule": "withheld paths count from 1 without gaps",
+      "error": "manifest:withheld_numbering"
+    },
+    {
+      "name": "run-manifest-published-withheld-path",
+      "type": "RunManifest",
+      "expect": "invalid",
+      "rule": "withheld path only for withheld"
+    },
+    {
+      "name": "run-manifest-redaction-zero",
+      "type": "RunManifest",
+      "expect": "invalid",
+      "rule": "redaction count positive"
+    },
+    {
+      "name": "run-manifest-redaction-unknown-category",
+      "type": "RunManifest",
+      "expect": "invalid",
+      "rule": "redaction category"
+    },
+    {
+      "name": "run-manifest-redactions-unsorted",
+      "type": "RunManifest",
+      "expect": "invalid",
+      "rule": "redactions sorted",
+      "error": "manifest:redactions_sorted"
+    },
+    {
+      "name": "run-manifest-redaction-duplicate-category",
+      "type": "RunManifest",
+      "expect": "invalid",
+      "rule": "one redaction per category",
+      "error": "manifest:redactions_sorted"
+    },
+    {
+      "name": "run-manifest-redaction-value",
+      "type": "RunManifest",
+      "expect": "invalid",
+      "rule": "no removed value"
+    },
+    {
+      "name": "run-manifest-entries-unsorted",
+      "type": "RunManifest",
+      "expect": "invalid",
+      "rule": "entries sorted",
+      "error": "manifest:entries_sorted"
+    },
+    {
+      "name": "run-manifest-duplicate-path",
+      "type": "RunManifest",
+      "expect": "invalid",
+      "rule": "entries unique",
+      "error": "manifest:entries_sorted"
+    },
+    {
+      "name": "run-manifest-root-not-first",
+      "type": "RunManifest",
+      "expect": "invalid",
+      "rule": "root first",
+      "error": "manifest:root_first"
+    },
+    {
+      "name": "run-manifest-root-parent-not-null",
+      "type": "RunManifest",
+      "expect": "invalid",
+      "rule": "the root has no parent",
+      "error": "manifest:root_first"
+    },
+    {
+      "name": "run-manifest-child-parent-wrong",
+      "type": "RunManifest",
+      "expect": "invalid",
+      "rule": "child parent is root",
+      "error": "manifest:child_parent"
+    },
+    {
+      "name": "run-manifest-public-uri-mismatch",
+      "type": "RunManifest",
+      "expect": "invalid",
+      "rule": "public_uri ends in its sha256",
+      "error": "manifest:public_uri"
+    },
+    {
+      "name": "run-manifest-public-uri-other-base",
+      "type": "RunManifest",
+      "expect": "invalid",
+      "rule": "public_uri is the policy's base URI plus the key",
+      "context": {
+        "root": "root-run-terminal",
+        "policy": "policy-placeholder"
+      },
+      "error": "manifest:public_uri"
+    },
+    {
+      "name": "run-manifest-unknown-outcome",
+      "type": "RunManifest",
+      "expect": "invalid",
+      "rule": "outcome enum"
+    },
+    {
+      "name": "run-manifest-null-outcome",
+      "type": "RunManifest",
+      "expect": "invalid",
+      "rule": "manifest outcome set"
+    },
+    {
+      "name": "run-manifest-project-mismatch",
+      "type": "RunManifest",
+      "expect": "invalid",
+      "rule": "inherits project",
+      "context": {
+        "root": "root-run-terminal"
+      },
+      "error": "inherit:project_id"
+    },
+    {
+      "name": "public-status-running",
+      "type": "PublicRunStatus",
+      "expect": "valid",
+      "rule": "status",
+      "context": {
+        "root": "root-run-running"
+      }
+    },
+    {
+      "name": "public-status-terminal",
+      "type": "PublicRunStatus",
+      "expect": "valid",
+      "rule": "status"
+    },
+    {
+      "name": "public-status-extra-field",
+      "type": "PublicRunStatus",
+      "expect": "invalid",
+      "rule": "only allowed fields"
+    },
+    {
+      "name": "public-status-child-ids",
+      "type": "PublicRunStatus",
+      "expect": "invalid",
+      "rule": "no child ids"
+    },
+    {
+      "name": "public-status-running-published",
+      "type": "PublicRunStatus",
+      "expect": "invalid",
+      "rule": "null before terminal attempt"
+    },
+    {
+      "name": "public-status-terminal-null-outcome",
+      "type": "PublicRunStatus",
+      "expect": "invalid",
+      "rule": "outcome set when terminal"
+    },
+    {
+      "name": "public-status-zero-stages",
+      "type": "PublicRunStatus",
+      "expect": "invalid",
+      "rule": "stage count positive"
+    },
+    {
+      "name": "public-status-policy-mismatch",
+      "type": "PublicRunStatus",
+      "expect": "invalid",
+      "rule": "inherits policy hash",
+      "context": {
+        "root": "root-run-running"
+      },
+      "error": "inherit:project_policy_sha256"
+    },
+    {
+      "name": "omissions-valid",
+      "type": "StagingOmissions",
+      "expect": "valid",
+      "rule": "staging omissions"
+    },
+    {
+      "name": "omissions-empty",
+      "type": "StagingOmissions",
+      "expect": "valid",
+      "rule": "staging omissions"
+    },
+    {
+      "name": "omissions-withheld-with-path",
+      "type": "StagingOmissions",
+      "expect": "invalid",
+      "rule": "withheld has no path"
+    },
+    {
+      "name": "omissions-truncated-without-path",
+      "type": "StagingOmissions",
+      "expect": "invalid",
+      "rule": "truncated has a path"
+    },
+    {
+      "name": "omissions-unknown-reason",
+      "type": "StagingOmissions",
+      "expect": "invalid",
+      "rule": "reason code"
+    },
+    {
+      "name": "omissions-published-outcome",
+      "type": "StagingOmissions",
+      "expect": "invalid",
+      "rule": "declared outcomes"
+    },
+    {
+      "name": "omissions-missing-trial",
+      "type": "StagingOmissions",
+      "expect": "invalid",
+      "rule": "nullable never omitted"
+    },
+    {
+      "name": "omissions-redaction-zero",
+      "type": "StagingOmissions",
+      "expect": "invalid",
+      "rule": "redaction count positive"
+    },
+    {
+      "name": "omissions-redaction-unknown-category",
+      "type": "StagingOmissions",
+      "expect": "invalid",
+      "rule": "redaction category"
+    },
+    {
+      "name": "omissions-duplicate-path",
+      "type": "StagingOmissions",
+      "expect": "invalid",
+      "rule": "paths unique",
+      "error": "omissions:duplicate_path"
+    },
+    {
+      "name": "omissions-duplicate-redaction",
+      "type": "StagingOmissions",
+      "expect": "invalid",
+      "rule": "one declaration per path and category",
+      "error": "omissions:duplicate_redaction"
+    },
+    {
+      "name": "omissions-dot-segment",
+      "type": "StagingOmissions",
+      "expect": "invalid",
+      "rule": "path segments"
+    }
+  ]
+}

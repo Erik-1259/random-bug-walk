@@ -1,0 +1,13 @@
+[project]
+name = "rbw-schema"
+version = "0.0.0"
+description = "Shared record schema, canonical JSON v1, project policy and family registry"
+license = "MIT"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "jsonschema==4.26.0",
+]
+
+[build-system]
+requires = ["uv_build==0.12.22"]
+build-backend = "uv_build"

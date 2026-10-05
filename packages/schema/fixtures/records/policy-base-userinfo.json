@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "project_id": "00000000-0000-4000-8000-000000000001",
+  "purpose": "public_demo",
+  "visibility": "public",
+  "output_repository": "https://example.invalid/synthetic-owner/synthetic-results",
+  "public_artifact_base_uri": "https://synthetic-user:synthetic-pass@example.invalid/synthetic-store/",
+  "policy_version": 1
+}
