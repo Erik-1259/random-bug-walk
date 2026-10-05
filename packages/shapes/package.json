@@ -1,0 +1,24 @@
+{
+  "name": "@rbw/shapes",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint . --max-warnings 0",
+    "test": "vitest run",
+    "test:upstream": "node test/upstream/run.ts"
+  },
+  "dependencies": {
+    "@ast-grep/napi": "0.45.3",
+    "diff": "9.0.0",
+    "yaml": "2.9.1"
+  },
+  "devDependencies": {
+    "@ast-grep/cli": "0.45.3"
+  }
+}

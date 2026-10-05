@@ -1,0 +1,18 @@
+id: dt-1.tz-arg.planted
+valid:
+  - |
+    async function relationalQuery(siteId: string, filters: SyntheticFilters) {
+      const { timezone, unit } = filters;
+      return run(`${getDateSQL('website_event.created_at', unit, timezone)} x`);
+    }
+  - |
+    async function clickhouseQuery(siteId: string, filters: SyntheticFilters) {
+      const { unit } = filters;
+      return run(`${getDateSQL('website_event.created_at', unit)} t`);
+    }
+invalid:
+  - |
+    async function relationalQuery(siteId: string, filters: SyntheticFilters) {
+      const { timezone, unit } = filters;
+      return run(`${getDateSQL('website_event.created_at', unit)} x`);
+    }

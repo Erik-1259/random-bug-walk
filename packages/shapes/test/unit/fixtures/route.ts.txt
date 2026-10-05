@@ -1,0 +1,14 @@
+import { getQueryFilters, parseRequest } from '@/lib/synthetic-request';
+import { json } from '@/lib/synthetic-response';
+import { getPageviewStats } from '@/queries/synthetic';
+
+export async function GET(request: Request, { params }: { params: Promise<{ websiteId: string }> }) {
+  const { query } = await parseRequest(request);
+  const { websiteId } = await params;
+
+  const filters = await getQueryFilters(query, websiteId);
+
+  const pageviews = await getPageviewStats(websiteId, filters);
+
+  return json({ pageviews });
+}

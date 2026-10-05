@@ -1,0 +1,60 @@
+{
+  "checks": ["tzarg.auckland-day-counts", "tzarg.kolkata-day-counts", "tzarg.la-day-counts", "tzarg.utc-day-counts"],
+  "clean_sha256": "1f679f7a666f2ca7888b9094fb85a69a31b546566f194e27ac6eef2e9aef9b1b",
+  "fixed_reference": {
+    "base_sha256": "7cb3219367fc73838d6ddc849e5d0b334fc6de4ad7a56bd3c593f35778d84b6c",
+    "method": "reverse_mutation_patch",
+    "note": "Restoring the third argument on the planted file gives bytes identical to the clean file.",
+    "result_sha256": "1f679f7a666f2ca7888b9094fb85a69a31b546566f194e27ac6eef2e9aef9b1b"
+  },
+  "host_commit": "ec0ff50388c264ed8ce46f00967e92f7e71476ae",
+  "invalid_outcomes": {
+    "note": "A probe copy that ends in any of these outcomes is an invalid run, never an effective negative probe.",
+    "outcomes": ["build_error", "crash", "missing_result", "setup_failure", "timeout"]
+  },
+  "planted_sha256": "7cb3219367fc73838d6ddc849e5d0b334fc6de4ad7a56bd3c593f35778d84b6c",
+  "probes": [
+    {
+      "base_sha256": "1f679f7a666f2ca7888b9094fb85a69a31b546566f194e27ac6eef2e9aef9b1b",
+      "description": "Clean to planted: line 28 drops the timezone argument.",
+      "expected": {
+        "tzarg.auckland-day-counts": { "outcome": "assertion_fail", "reason": "local_day_counts_mismatch" },
+        "tzarg.kolkata-day-counts": { "outcome": "assertion_fail", "reason": "local_day_counts_mismatch" },
+        "tzarg.la-day-counts": { "outcome": "assertion_fail", "reason": "local_day_counts_mismatch" },
+        "tzarg.utc-day-counts": { "outcome": "pass" }
+      },
+      "id": "mutation",
+      "patch": "mutation.patch",
+      "result_sha256": "7cb3219367fc73838d6ddc849e5d0b334fc6de4ad7a56bd3c593f35778d84b6c"
+    },
+    {
+      "base_sha256": "7cb3219367fc73838d6ddc849e5d0b334fc6de4ad7a56bd3c593f35778d84b6c",
+      "description": "Partial fix: line 28 passes the timezone only for Pacific/Auckland and UTC otherwise.",
+      "expected": {
+        "tzarg.auckland-day-counts": { "outcome": "pass" },
+        "tzarg.kolkata-day-counts": { "outcome": "assertion_fail", "reason": "local_day_counts_mismatch" },
+        "tzarg.la-day-counts": { "outcome": "assertion_fail", "reason": "local_day_counts_mismatch" },
+        "tzarg.utc-day-counts": { "outcome": "pass" }
+      },
+      "id": "partial",
+      "patch": "partial.patch",
+      "result_sha256": "3dfbe7db1608a5968bdc0f7856d18bbbab47d958b7036a5d4400a265b903898d"
+    },
+    {
+      "base_sha256": "7cb3219367fc73838d6ddc849e5d0b334fc6de4ad7a56bd3c593f35778d84b6c",
+      "description": "Stub fix: after line 17, any non-UTC timezone returns one fixed bucket.",
+      "expected": {
+        "tzarg.auckland-day-counts": { "outcome": "assertion_fail", "reason": "bucket_labels_mismatch" },
+        "tzarg.kolkata-day-counts": { "outcome": "assertion_fail", "reason": "bucket_labels_mismatch" },
+        "tzarg.la-day-counts": { "outcome": "assertion_fail", "reason": "bucket_labels_mismatch" },
+        "tzarg.utc-day-counts": { "outcome": "pass" }
+      },
+      "id": "stub",
+      "patch": "stub.patch",
+      "result_sha256": "977bcbccf4cb22bf815309b0cf7e62b5a48a60d94e64069dade02515b2ff6109"
+    }
+  ],
+  "scope": "Each probe changes only the target file's source, never tests or configuration.",
+  "shape_id": "DT-1.tz-arg",
+  "target_path": "src/queries/sql/pageviews/getPageviewStats.ts"
+}
