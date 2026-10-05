@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { LimitExceeded } from "./limits.ts";
 
 export type StoreFailure = "store_unavailable" | "store_mismatch";
 
@@ -18,8 +19,11 @@ export class StoreError extends Error {
 export interface PublicStore {
   /** The public URI of a key: the base URI plus the key. */
   uri(key: string): string;
-  /** Reads an object back without credentials; null when it does not exist. */
-  read(key: string): Promise<Uint8Array | null>;
+  /**
+   * Reads an object back without credentials; null when it does not exist. An object announced
+   * as larger than maxBytes is refused with LimitExceeded before its body is read.
+   */
+  read(key: string, maxBytes: number): Promise<Uint8Array | null>;
   /** Creates an object and never overwrites one. */
   create(key: string, bytes: Uint8Array, mediaType: string): Promise<void>;
   /** Writes the one mutable key, the status object, with the shortest cache lifetime. */
@@ -44,9 +48,11 @@ export class FilesystemStore implements PublicStore {
     return `${this.baseUri}${key}`;
   }
 
-  read(key: string): Promise<Uint8Array | null> {
+  read(key: string, maxBytes: number): Promise<Uint8Array | null> {
     try {
-      return Promise.resolve(readFileSync(join(this.dir, key)));
+      const path = join(this.dir, key);
+      if (statSync(path).size > maxBytes) return Promise.reject(new LimitExceeded("transferBytes"));
+      return Promise.resolve(readFileSync(path));
     } catch (error) {
       if (isMissing(error)) return Promise.resolve(null);
       return Promise.reject(new StoreError("store_unavailable"));
@@ -126,7 +132,7 @@ export class VercelBlobStore implements PublicStore {
     return `${new URL(this.baseUri).pathname.slice(1)}${key}`;
   }
 
-  async read(key: string): Promise<Uint8Array | null> {
+  async read(key: string, maxBytes: number): Promise<Uint8Array | null> {
     let response: Response;
     try {
       response = await this.fetch(this.uri(key), { cache: "no-store", headers: { "cache-control": "no-cache" } });
@@ -135,6 +141,12 @@ export class VercelBlobStore implements PublicStore {
     }
     if (response.status === 404) return null;
     if (!response.ok) throw new StoreError("store_unavailable");
+    const announced = Number(response.headers.get("content-length"));
+    if (response.headers.has("content-length") && announced > maxBytes) {
+      // The refusal below is the outcome; a failure to close the unread body adds nothing.
+      await response.body?.cancel().catch(() => undefined);
+      throw new LimitExceeded("transferBytes");
+    }
     try {
       return new Uint8Array(await response.arrayBuffer());
     } catch {

@@ -62,6 +62,19 @@ export class Budget {
     this.persist();
   }
 
+  /** Records usage up to what is left, then throws LimitExceeded if the amount did not fit. For bytes already received. */
+  charge(kind: keyof Limits, amount: number): void {
+    const room = this.remaining(kind);
+    this.used[kind] += Math.min(amount, room);
+    this.persist();
+    if (amount > room) throw new LimitExceeded(kind);
+  }
+
+  /** What is left of a limit. */
+  remaining(kind: keyof Limits): number {
+    return Math.max(0, this.limits[kind] - this.used[kind]);
+  }
+
   /** True when an amount with this tag has already been counted for the root. */
   hasCounted(tag: string): boolean {
     return this.counted.includes(tag);
