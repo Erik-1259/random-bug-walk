@@ -7,6 +7,7 @@ import {
   expectRefused,
   harness,
   hex,
+  loose,
   ONE_YEAR_MS,
   openDb,
   OTHER_ROOT,
@@ -332,6 +333,16 @@ describe("release", () => {
     expectOk(await acquire(OTHER_ROOT));
     await expectNothingWritten(h, async () => {
       expectRefused(await release(), "slot_not_held");
+    });
+  });
+
+  it.each([
+    ["an empty evidence object", [{}]],
+    ["a valid evidence element mixed with an empty object", [{ key: "synthetic/release.json", sha256: hex(3) }, {}]],
+  ])("refuses an operator release with %s", async (_name, evidence) => {
+    expectOk(await acquire());
+    await expectNothingWritten(h, async () => {
+      expectRefused(await release(loose({ actor_role: "operator", evidence, reason: "synthetic" })), "invalid_request");
     });
   });
 

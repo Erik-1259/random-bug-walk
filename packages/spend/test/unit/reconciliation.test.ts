@@ -298,6 +298,8 @@ describe("reconciliation input", () => {
 
   const malformed: [string, Record<string, unknown>][] = [
     ["empty evidence", { evidence: [] }],
+    ["an empty evidence object", { evidence: [{}] }],
+    ["a valid evidence element mixed with an empty object", { evidence: [{ key: "synthetic/e", sha256: hex(1) }, {}] }],
     ["evidence with a malformed hash", { evidence: [{ key: "synthetic/e", sha256: "abc" }] }],
     ["evidence with an empty key", { evidence: [{ key: "", sha256: hex(1) }] }],
     ["evidence with an unknown field", { evidence: [{ key: "synthetic/e", sha256: hex(1), note: "x" }] }],

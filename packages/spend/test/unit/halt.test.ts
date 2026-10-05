@@ -6,8 +6,10 @@ import {
   expectOk,
   expectRefused,
   haltWithOverrun,
+  hex,
   harness,
   line,
+  loose,
   openDb,
   POOL,
   reconciliation,
@@ -195,11 +197,13 @@ describe("over-envelope halt", () => {
   it.each([
     ["a component role", { actor_role: "workflow" }],
     ["empty evidence", { evidence: [] }],
+    ["an empty evidence object", { evidence: [{}] }],
+    ["a valid evidence element mixed with an empty object", { evidence: [{ key: "synthetic/ok", sha256: hex(1) }, {}] }],
     ["an empty reason", { reason: "" }],
   ])("refuses a resume with %s", async (_name, overrides) => {
     await haltWithOverrun(h, 1);
     await expectNothingWritten(h, async () => {
-      expectRefused(await h.spend.resume({ ...RESUME, ...overrides }), "invalid_request");
+      expectRefused(await h.spend.resume(loose({ ...RESUME, ...overrides })), "invalid_request");
     });
   });
 

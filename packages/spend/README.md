@@ -132,6 +132,28 @@ Each returns one JSON document: `{"ok": true, ...}` or `{"ok": false, "code": ".
 - **Insert-only.** Every table is insert-only: a trigger rejects UPDATE, DELETE and TRUNCATE. Current state is derived from the rows: an operation's state, the slot holder, pool totals and whether new work is halted. No current-state row is kept.
 - **Writes only through the functions.** Every table, `applied_migrations` included, has a BEFORE INSERT trigger that refuses the row unless the transaction-local setting `rbw.spend_api` is `on`. Only the writing entry points turn it on. Each one calls `set_config('rbw.spend_api', 'on', true)` on entry, runs its body (`spend_<name>_body`), and sets the previous value back before it returns, so a direct INSERT later in the same transaction is still refused. If the body raises an error, the transaction is aborted; rolling back to a savepoint taken before the call (or a PL/pgSQL exception handler around it) undoes the `set_config` with the rest of the call, so the guard is off again. Calling a `_body` function directly writes nothing, because the guard is off. A SET clause on the functions is not used: attaching a custom parameter such as `rbw.spend_api` to a function needs superuser privileges, and the owner role of a hosted database is usually not a superuser. A direct INSERT from a session that did not go through a function is refused with `table <name> accepts rows only through the spend database functions`. The rules that free money or the slot, and the halt, are checked inside the functions, so this guard is what stops a direct INSERT from bypassing them.
 - **Limits of the guards.** The tables, triggers and functions belong to the role that runs `migrate`; there is no separate owner role and no REVOKE. A role that owns the schema can still turn the setting on itself, set the event sequence, or alter, disable or drop the triggers and functions, so neither the insert-only rule nor the function-only rule holds against it. These guards stop direct writes by application code, not a deliberate change by the schema owner. A separate migration owner and a runtime role limited to EXECUTE on the entry points is not part of this package.
+- **Halt race (accepted, known limit).**
+  - *What can happen.* The halt check in reservations and in the `prepared → launching` transition does not take the lock that over-envelope observations and resumes take. A reservation or launch in one pool that runs at the same moment as an over-envelope settlement in another pool can therefore succeed just after the halt has committed.
+  - *Bound.* At most the reservations and launches already past their halt check when the halt commits. Each is still limited by its pool's cap and its own worst-case reservation. The race does not let spend exceed a pool's cap.
+  - *How to notice.* This read-only query lists operations reserved or launched after the event sequence of the first observation of the current halt (the first observation newer than the latest resume). It returns no rows when nothing is halted or nothing slipped through.
+
+    ```sql
+    WITH first_halt AS (
+      SELECT min(seq) AS seq
+      FROM halt_observations
+      WHERE seq > coalesce((SELECT max(seq) FROM halt_resumes), 0)
+    )
+    SELECT 'reserved' AS what, s.operation_id, s.seq
+    FROM spend s, first_halt f
+    WHERE s.kind = 'reserve' AND s.seq > f.seq
+    UNION ALL
+    SELECT 'launched', e.operation_id, e.seq
+    FROM operation_events e, first_halt f
+    WHERE e.to_state = 'launching' AND e.seq > f.seq
+    ORDER BY seq;
+    ```
+
+  - *What to do.* Settle those operations normally, or reconcile them, then resume as usual. If it ever matters, the fix is to have admissions take the same lock in shared mode.
 - **Nothing expires.** No lease, TTL, heartbeat, timer or schedule frees a reservation or the slot. Caps are cumulative and are never reset or replenished. A test advances the clock by a year and shows a held slot and an open reservation unchanged.
 - **Committed and available.** Committed = settled + open (open includes amounts retained for unknown usage), per pool and per allocation. Available = cap (or allocation limit) − committed. It can go negative after an overrun, and then every reservation is refused.
 - **Allocations.** Allocation limits always sum to the cap (a constraint trigger checked at commit).

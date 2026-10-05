@@ -193,3 +193,28 @@ describe("unknown read targets", () => {
     expect(op.ok ? "ok" : op.code).toBe("unknown_operation");
   });
 });
+
+describe("evidence validators", () => {
+  const good = `{"key": "synthetic/e.json", "sha256": "${hex(1)}"}`;
+  it.each([
+    ["{}", false],
+    ["[]", false],
+    ["null", false],
+    ['{"key": "synthetic/e.json"}', false],
+    [good, true],
+  ])("spend_is_evidence(%s) is a non-null boolean", async (value, expected) => {
+    const rows = await h.sql(`SELECT spend_is_evidence('${value}'::jsonb) AS ok`);
+    expect(rows).toEqual([{ ok: expected }]);
+  });
+
+  it.each([
+    ["[{}]", false],
+    [`[${good}, {}]`, false],
+    [`[{}, ${good}]`, false],
+    ["[]", false],
+    [`[${good}]`, true],
+  ])("spend_is_evidence_list(%s) is a non-null boolean", async (value, expected) => {
+    const rows = await h.sql(`SELECT spend_is_evidence_list('${value}'::jsonb) AS ok`);
+    expect(rows).toEqual([{ ok: expected }]);
+  });
+});

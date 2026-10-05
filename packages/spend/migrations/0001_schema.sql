@@ -35,29 +35,31 @@ RETURN coalesce(p ~ '^[^[:cntrl:]]+$' AND length(p) <= 512, false);
 CREATE FUNCTION spend_is_reason(p text) RETURNS boolean LANGUAGE sql IMMUTABLE
 RETURN coalesce(btrim(p) <> '' AND length(p) <= 2000, false);
 
--- One evidence reference: exactly {key, sha256}.
+-- One evidence reference: exactly {key, sha256}. Never NULL: every malformed value, `{}` included, is false.
 CREATE FUNCTION spend_is_evidence(p jsonb) RETURNS boolean
 LANGUAGE plpgsql IMMUTABLE SET search_path FROM CURRENT AS $$
 BEGIN
   IF jsonb_typeof(p) IS DISTINCT FROM 'object' THEN
     RETURN false;
   END IF;
-  IF (SELECT array_agg(k ORDER BY k) FROM jsonb_object_keys(p) k) <> ARRAY['key', 'sha256'] THEN
+  IF (SELECT array_agg(k ORDER BY k) FROM jsonb_object_keys(p) k) IS DISTINCT FROM ARRAY['key', 'sha256'] THEN
     RETURN false;
   END IF;
-  RETURN jsonb_typeof(p -> 'key') = 'string' AND jsonb_typeof(p -> 'sha256') = 'string'
-    AND spend_is_identifier(p ->> 'key') AND spend_is_hex64(p ->> 'sha256');
+  RETURN coalesce(
+    jsonb_typeof(p -> 'key') = 'string' AND jsonb_typeof(p -> 'sha256') = 'string'
+    AND spend_is_identifier(p ->> 'key') AND spend_is_hex64(p ->> 'sha256'),
+    false);
 END
 $$;
 
--- A non-empty JSON array of evidence references.
+-- A non-empty JSON array of evidence references; every element must be true.
 CREATE FUNCTION spend_is_evidence_list(p jsonb) RETURNS boolean
 LANGUAGE plpgsql IMMUTABLE SET search_path FROM CURRENT AS $$
 BEGIN
   IF jsonb_typeof(p) IS DISTINCT FROM 'array' OR jsonb_array_length(p) = 0 THEN
     RETURN false;
   END IF;
-  RETURN NOT EXISTS (SELECT 1 FROM jsonb_array_elements(p) e WHERE NOT spend_is_evidence(e));
+  RETURN NOT EXISTS (SELECT 1 FROM jsonb_array_elements(p) e WHERE spend_is_evidence(e) IS NOT TRUE);
 END
 $$;
 
