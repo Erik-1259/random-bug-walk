@@ -1,8 +1,8 @@
 // The pattern-card prompt and its input. The card writer reads public source-fix information only,
 // plus the caller's shape confirmation, which also supplies the code-owned card fields.
 import { z } from "zod";
-import { CODE_OWNED_FIELDS } from "./card-schema.ts";
-import type { Card } from "./card-schema.ts";
+import { CardSchema, CODE_OWNED_FIELDS } from "./card-schema.ts";
+import type { Card, ModelCard } from "./card-schema.ts";
 import type { PromptMessages } from "./prompt.ts";
 
 export const CardSourceSchema = z
@@ -49,8 +49,11 @@ export interface CodeOwnedField {
   overwritten: boolean;
 }
 
-/** Replaces id, provenance and shape with the caller's values, and records which ones differed. */
-export function applyCodeOwnedFields(card: Card, source: CardSource): { card: Card; fields: CodeOwnedField[] } {
+/**
+ * Replaces id, provenance and shape with the caller's values, records which ones differed, and
+ * validates the completed card against the full card schema.
+ */
+export function applyCodeOwnedFields(card: ModelCard, source: CardSource): { card: Card; fields: CodeOwnedField[] } {
   const owned: Pick<Card, "id" | "provenance" | "shape"> = {
     id: source.confirmation.card_id,
     provenance: {
@@ -69,5 +72,5 @@ export function applyCodeOwnedFields(card: Card, source: CardSource): { card: Ca
     field,
     overwritten: JSON.stringify(card[field]) !== JSON.stringify(owned[field]),
   }));
-  return { card: { ...card, ...owned }, fields };
+  return { card: CardSchema.parse({ ...card, ...owned }), fields };
 }

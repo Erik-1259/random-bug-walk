@@ -2,8 +2,8 @@
 // reserved against the spend pool, recorded as launching before the request, and settled after it.
 // The caller protocol of @rbw/spend is followed exactly; nothing retries.
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
-import { Output, generateText } from "ai";
-import type { LanguageModel } from "ai";
+import { Output, generateText, jsonSchema, zodSchema } from "ai";
+import type { FlexibleSchema, LanguageModel } from "ai";
 import { callName } from "@rbw/schema";
 import type {
   EnvelopeLine,
@@ -18,8 +18,8 @@ import type {
 import { z } from "zod";
 import { CardSourceSchema, applyCodeOwnedFields, buildCardPrompt } from "./card-prompt.ts";
 import type { CodeOwnedField } from "./card-prompt.ts";
-import { CardSchema } from "./card-schema.ts";
-import type { Card } from "./card-schema.ts";
+import { CardSchema, ModelCardSchema } from "./card-schema.ts";
+import type { Card, ModelCard } from "./card-schema.ts";
 import {
   ACTOR_ROLE,
   BASE_URL,
@@ -193,7 +193,16 @@ function refusal(code: WriterRefusalCode, detail: string | null, operationIdValu
   return { ok: false, code, detail, operation_id: operationIdValue };
 }
 
-type Rendered<T> = { ok: true; prompt: PromptMessages; schema: z.ZodType<T> } | WriterRefusal;
+type Rendered<T> = { ok: true; prompt: PromptMessages; schema: FlexibleSchema<T> } | WriterRefusal;
+
+// The model is asked for the full card, so the request is the same as with the full card schema,
+// but its answer is validated only in the fields it owns; code replaces the rest.
+const CARD_OUTPUT = jsonSchema<ModelCard>(() => zodSchema(CardSchema).jsonSchema, {
+  validate: (value) => {
+    const parsed = ModelCardSchema.safeParse(value);
+    return parsed.success ? { success: true, value: parsed.data } : { success: false, error: parsed.error };
+  },
+});
 
 type Metered<T> = WriterRefusal | { ok: true; call: CallRecord; output: T | null };
 
@@ -309,7 +318,7 @@ export function createWriter(options: WriterOptions): Writer {
     return run;
   }
 
-  function generate<T>(prompt: PromptMessages, schema: z.ZodType<T>) {
+  function generate<T>(prompt: PromptMessages, schema: FlexibleSchema<T>) {
     return generateText({
       model: provider.model,
       system: prompt.system,
@@ -555,12 +564,12 @@ export function createWriter(options: WriterOptions): Writer {
     return { ok: true, prompt: buildIssuePrompt(parsed.symptom), schema: IssueOutputSchema };
   }
 
-  function renderCard(source: unknown): Rendered<Card> {
+  function renderCard(source: unknown): Rendered<ModelCard> {
     const parsed = CardSourceSchema.safeParse(source);
     if (!parsed.success) {
       return refusal("invalid_input", `invalid card source: ${z.prettifyError(parsed.error)}`);
     }
-    return { ok: true, prompt: buildCardPrompt(parsed.data), schema: CardSchema };
+    return { ok: true, prompt: buildCardPrompt(parsed.data), schema: CARD_OUTPUT };
   }
 
   function checkCandidate(candidate: string): WriterRefusal | null {
@@ -615,7 +624,7 @@ export function createWriter(options: WriterOptions): Writer {
       const result = await meteredCall("writer.card", request.candidate, {
         ok: true,
         prompt: buildCardPrompt(parsed.data),
-        schema: CardSchema,
+        schema: CARD_OUTPUT,
       });
       if (!result.ok) {
         return result;

@@ -2,7 +2,16 @@ import { readFile } from "node:fs/promises";
 import type { PGlite } from "@electric-sql/pglite";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { BUG_CLASSES, CardSchema, RUNTIME_LEVERS } from "../../src/card-schema.ts";
-import { CANDIDATE, CARD_OUTPUTS, EXCLUDED_IDENTIFIERS, cardSource, symptom } from "../fixtures/cases.ts";
+import { makeRecording } from "../../src/recording.ts";
+import {
+  CANDIDATE,
+  CARD_OUTPUTS,
+  EXCLUDED_IDENTIFIERS,
+  SYNTHETIC_USAGE,
+  cardSource,
+  completion,
+  symptom,
+} from "../fixtures/cases.ts";
 import { openDb, rig } from "../support.ts";
 
 let db: PGlite;
@@ -105,6 +114,51 @@ describe("the card writer", () => {
     expect(outcome.call.status).toBe("failed");
     expect(outcome.call.failure).toBe("invalid_output");
     expect(outcome.card).toBeNull();
+  });
+
+  describe("with a model answer recorded for a dedicated source", () => {
+    async function writeWith(variant: string, output: Record<string, unknown>) {
+      const preview = await (await rig(db, { acquireSlot: false })).writer.previewCard(cardSource(variant));
+      if (!preview.ok) {
+        throw new Error(preview.code);
+      }
+      const recording = makeRecording({
+        requestBody: preview.request_body,
+        status: 200,
+        responseBody: completion(JSON.stringify(output), SYNTHETIC_USAGE),
+        provenance: "synthetic",
+        recordedAt: "2026-10-05T00:00:00Z",
+      });
+      const r = await rig(db, { extraRecordings: [recording] });
+      const outcome = await r.writer.writeCard({ candidate: CANDIDATE, source: cardSource(variant) });
+      if (!outcome.ok) {
+        throw new Error(outcome.code);
+      }
+      return outcome;
+    }
+
+    it.each([
+      ["an empty id", "empty-id", { id: "" }],
+      ["an invalid provenance URL", "bad-provenance-url", { provenance: { ...(VALID.provenance as object), source_links: ["not a url"] } }],
+      ["a shape with an empty shape_id", "empty-shape-id", { shape: { ...(VALID.shape as object), shape_id: "" } }],
+    ])("keeps a card whose model answer has %s in a code-owned field", async (_label, variant, change) => {
+      const outcome = await writeWith(variant, { ...VALID, ...change });
+      expect(outcome.call.status).toBe("completed");
+      expect(outcome.call.failure).toBeNull();
+      expect(outcome.card).not.toBeNull();
+      expect(CardSchema.safeParse(outcome.card).success).toBe(true);
+      expect(outcome.card?.id).toBe("synthetic-card-1");
+      expect(outcome.card?.provenance.source_links).toEqual(["https://code.example.invalid/synthetic-project/pull/1"]);
+      expect(outcome.card?.shape.shape_id).toBe("synthetic-shape-1");
+      expect(outcome.card?.mechanism).toBe(VALID.mechanism);
+    });
+
+    it("still fails the call on a malformed model-owned field", async () => {
+      const outcome = await writeWith("empty-mechanism", { ...VALID, mechanism: "" });
+      expect(outcome.call.status).toBe("failed");
+      expect(outcome.call.failure).toBe("invalid_output");
+      expect(outcome.card).toBeNull();
+    });
   });
 
   it("refuses card input with an unknown field before reserving", async () => {
