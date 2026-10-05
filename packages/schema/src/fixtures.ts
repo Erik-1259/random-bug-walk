@@ -1,7 +1,8 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { CanonicalError, canonicalDigest, parseCanonical, type JsonValue } from "./canonical.ts";
-import type { ProjectPolicy, RootRun } from "./generated.ts";
+import type { JobRequest, MutationIdentity, OperationIdentity, ProjectPolicy, RootRun, TaskRevisionIdentity } from "./generated.ts";
+import { jobOperationIdentity, jobPayloadHash, mutationId, operationId, taskRevision } from "./jobs.ts";
 import { isDefName, validateRecord, type RecordContext } from "./validate.ts";
 
 export interface Verdict {
@@ -67,6 +68,7 @@ export function recordErrors(dir: string, name: string, manifest: FixtureManifes
   if (names.policy !== undefined) context.policy = contextValue(dir, names.policy) as ProjectPolicy;
   if (names.root !== undefined) context.root = contextValue(dir, names.root) as RootRun;
   if (names.previous !== undefined) context.previous = contextValue(dir, names.previous) as ProjectPolicy;
+  if (names.request !== undefined) context.request = contextValue(dir, names.request) as JobRequest;
   return { parsed, errors: validateRecord(entry.type, parsed.value, context) };
 }
 
@@ -75,12 +77,43 @@ export function recordVerdict(dir: string, name: string, manifest: FixtureManife
   return parsed === null || errors.length > 0 ? invalid() : valid(parsed.value);
 }
 
-/** One line per fixture, `<name> <verdict> <sha256 or ->`, canonical cases first, in manifest order. */
+/** The IDs computed from a valid identity-bearing fixture, as `[name, value]` pairs. */
+function computedIds(type: string | undefined, value: unknown): [string, string][] {
+  switch (type) {
+    case "JobRequest": {
+      const request = value as JobRequest;
+      return [
+        ["operation_id", operationId(jobOperationIdentity(request)).sha256],
+        ["payload_hash", jobPayloadHash(request).sha256],
+      ];
+    }
+    case "OperationIdentity":
+      return [["operation_id", operationId(value as OperationIdentity).sha256]];
+    case "MutationIdentity": {
+      const identity = value as MutationIdentity;
+      return [["mutation_id", mutationId(identity, { allowedPaths: identity.changes.map((change) => change.path) }).sha256]];
+    }
+    case "TaskRevisionIdentity":
+      return [["task_revision", taskRevision(value as TaskRevisionIdentity).sha256]];
+    default:
+      return [];
+  }
+}
+
+/**
+ * One line per fixture, `<name> <verdict> <sha256 or ->`, canonical cases first, in manifest
+ * order; then `<name> <id> <value>` for each ID computed from a valid job request or identity record.
+ */
 export function fixtureReport(dir: string): string[] {
   const manifest = readManifest(dir);
   const line = (name: string, verdict: Verdict): string => `${name} ${verdict.verdict} ${verdict.sha256 ?? "-"}`;
-  return [
-    ...manifest.canonical.map((entry) => line(entry.name, canonicalVerdict(dir, entry.name))),
-    ...manifest.records.map((entry) => line(entry.name, recordVerdict(dir, entry.name, manifest))),
-  ];
+  const ids: string[] = [];
+  const records = manifest.records.map((entry) => {
+    const verdict = recordVerdict(dir, entry.name, manifest);
+    if (verdict.verdict === "valid") {
+      for (const [id, value] of computedIds(entry.type, contextValue(dir, entry.name))) ids.push(`${entry.name} ${id} ${value}`);
+    }
+    return line(entry.name, verdict);
+  });
+  return [...manifest.canonical.map((entry) => line(entry.name, canonicalVerdict(dir, entry.name))), ...records, ...ids];
 }

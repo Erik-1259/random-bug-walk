@@ -1,6 +1,6 @@
 // Derived from packages/schema/schema/records.schema.json; regenerate with pnpm --filter @rbw/schema run generate.
 
-export const DEF_NAMES = ["SafeInteger", "NonNegativeInteger", "PositiveInteger", "SchemaVersion", "Uuid", "Sha256", "ImageDigest", "GitCommitId", "UtcTime", "DurationMs", "ByteCount", "TokenCount", "MicroUsd", "StageName", "TrialId", "Slug", "ArtifactKind", "RelativePath", "MediaType", "HttpsRepositoryUrl", "HttpsBaseUri", "HttpsObjectUri", "PolicyPurpose", "Visibility", "RootRunKind", "RootRunStatus", "RootRunOutcome", "PublicationStatus", "FailureReason", "OmissionOutcome", "EntryOutcome", "OmissionReason", "RedactionCategory", "Exposure", "ProjectPolicy", "SourceFix", "Family", "FamilyRegistry", "HeldOutIdentityList", "RootRun", "ArtifactEntry", "ArtifactManifest", "PublishedArtifact", "Omission", "PublicationRecord", "Redaction", "ExecutionLink", "RunManifestEntry", "RunManifest", "PublicRunStatus", "PathOmissionDeclaration", "WithheldDeclaration", "RedactionDeclaration", "StagingOmissions"] as const;
+export const DEF_NAMES = ["SafeInteger", "NonNegativeInteger", "PositiveInteger", "SchemaVersion", "Uuid", "Sha256", "ImageDigest", "GitCommitId", "UtcTime", "DurationMs", "ByteCount", "TokenCount", "MicroUsd", "StageName", "TrialId", "Slug", "ArtifactKind", "RelativePath", "MediaType", "HttpsRepositoryUrl", "HttpsBaseUri", "HttpsObjectUri", "PolicyPurpose", "Visibility", "RootRunKind", "RootRunStatus", "RootRunOutcome", "PublicationStatus", "FailureReason", "OmissionOutcome", "EntryOutcome", "OmissionReason", "RedactionCategory", "Exposure", "ProjectPolicy", "SourceFix", "Family", "FamilyRegistry", "HeldOutIdentityList", "RootRun", "ArtifactEntry", "ArtifactManifest", "PublishedArtifact", "Omission", "PublicationRecord", "Redaction", "ExecutionLink", "RunManifestEntry", "RunManifest", "PublicRunStatus", "PathOmissionDeclaration", "WithheldDeclaration", "RedactionDeclaration", "StagingOmissions", "JobKind", "CodeState", "ExpectedOutcome", "ObservedOutcome", "TrialStatus", "TrialReason", "AssertionFailureCode", "CheckId", "TestId", "OperationKind", "CallName", "FileMode", "TaskRevisionKind", "TimeZoneName", "LocaleTag", "EndpointPath", "JobRequest", "ExpectedCheck", "ExpectedTrial", "ExpectedTrials", "CheckObservation", "TrialObservations", "TrialResult", "QueryParameters", "SymptomRequest", "SymptomEvent", "BucketCount", "FollowUpExample", "DocExcerpt", "ObservedSymptom", "OperationIdentity", "MutationChange", "MutationIdentity", "TaskRevisionIdentity"] as const;
 export type DefName = (typeof DEF_NAMES)[number];
 
 export type SafeInteger = number;
@@ -247,6 +247,220 @@ export interface StagingOmissions {
   redactions: RedactionDeclaration[];
 }
 
+export const JOB_KIND_VALUES = ["kit_check", "observe", "admission", "judge_verify"] as const;
+export type JobKind = (typeof JOB_KIND_VALUES)[number];
+
+export const CODE_STATE_VALUES = ["clean", "planted", "fixed", "partial", "stub"] as const;
+export type CodeState = (typeof CODE_STATE_VALUES)[number];
+
+export const EXPECTED_OUTCOME_VALUES = ["pass", "assertion_fail"] as const;
+export type ExpectedOutcome = (typeof EXPECTED_OUTCOME_VALUES)[number];
+
+export const OBSERVED_OUTCOME_VALUES = ["pass", "assertion_fail", "setup_fail", "skipped", "not_run"] as const;
+export type ObservedOutcome = (typeof OBSERVED_OUTCOME_VALUES)[number];
+
+export const TRIAL_STATUS_VALUES = ["complete", "invalid", "incomplete"] as const;
+export type TrialStatus = (typeof TRIAL_STATUS_VALUES)[number];
+
+export const TRIAL_REASON_VALUES = ["scope_violation", "build_failed", "startup_failed", "auth_failed", "seed_failed", "timeout", "artifact_missing", "artifact_hash_mismatch", "test_missing", "test_skipped", "unrelated_failure", "provider_uncertain", "limit_exceeded"] as const;
+export type TrialReason = (typeof TRIAL_REASON_VALUES)[number];
+
+export const ASSERTION_FAILURE_CODE_VALUES = ["local_day_counts_mismatch", "bucket_labels_mismatch"] as const;
+export type AssertionFailureCode = (typeof ASSERTION_FAILURE_CODE_VALUES)[number];
+
+export type CheckId = string;
+
+export type TestId = string;
+
+export type OperationKind = string;
+
+export type CallName = string;
+
+export const FILE_MODE_VALUES = ["100644", "100755"] as const;
+export type FileMode = (typeof FILE_MODE_VALUES)[number];
+
+export const TASK_REVISION_KIND_VALUES = ["kit", "provisional", "complete"] as const;
+export type TaskRevisionKind = (typeof TASK_REVISION_KIND_VALUES)[number];
+
+export type TimeZoneName = string;
+
+export type LocaleTag = string;
+
+export type EndpointPath = string;
+
+export interface JobRequest {
+  schema_version: SchemaVersion;
+  project_id: Uuid;
+  project_policy_sha256: Sha256;
+  batch_id: Uuid;
+  execution_id: Uuid;
+  root_execution_id: Uuid;
+  parent_execution_id: Uuid | null;
+  operation_id: Sha256;
+  attempt_ordinal: PositiveInteger;
+  payload_hash: Sha256;
+  kind: JobKind;
+  task_revision: Sha256;
+  policy_id: Slug;
+  runtime_profile_sha256: Sha256;
+  image_digest: ImageDigest;
+  expected_trials_key: RelativePath;
+  expected_trials_sha256: Sha256;
+  baseline_evidence_key: RelativePath | null;
+  baseline_evidence_sha256: Sha256 | null;
+  deadline_at: UtcTime;
+  reservation_microusd: MicroUsd;
+  release_id: Uuid | null;
+}
+
+export interface ExpectedCheck {
+  check_id: CheckId;
+  expected: ExpectedOutcome;
+  failure_code: AssertionFailureCode | null;
+}
+
+export interface ExpectedTrial {
+  trial_id: TrialId;
+  code_state: CodeState;
+  patch_sha256: Sha256 | null;
+  original_suite_sha256: Sha256 | null;
+  original_test_ids: TestId[];
+  added_suite_sha256: Sha256;
+  added_repeat_count: PositiveInteger;
+  expected_checks: ExpectedCheck[];
+}
+
+export interface ExpectedTrials {
+  schema_version: SchemaVersion;
+  execution_id: Uuid;
+  task_revision: Sha256;
+  trials: ExpectedTrial[];
+}
+
+export interface CheckObservation {
+  check_id: CheckId;
+  repeat_index: PositiveInteger;
+  observed: ObservedOutcome;
+  failure_code: AssertionFailureCode | TrialReason | null;
+  duration_ms: DurationMs;
+  response_artifact_key: RelativePath | null;
+  response_artifact_sha256: Sha256 | null;
+}
+
+export interface TrialObservations {
+  schema_version: SchemaVersion;
+  execution_id: Uuid;
+  trial_id: TrialId;
+  observations: CheckObservation[];
+}
+
+export interface TrialResult {
+  schema_version: SchemaVersion;
+  project_policy_sha256: Sha256;
+  root_execution_id: Uuid;
+  execution_id: Uuid;
+  task_revision: Sha256;
+  trial_id: TrialId;
+  code_state: CodeState;
+  status: TrialStatus;
+  expected_trials_sha256: Sha256;
+  observations_key: RelativePath | null;
+  observations_sha256: Sha256 | null;
+  artifacts_key: RelativePath | null;
+  artifacts_sha256: Sha256 | null;
+  invalid_reason: TrialReason | null;
+  started_at: UtcTime;
+  ended_at: UtcTime;
+}
+
+export type QueryParameters = Record<string, string>;
+
+export interface SymptomRequest {
+  method: "GET" | "POST";
+  path: EndpointPath;
+  query: QueryParameters;
+}
+
+export interface SymptomEvent {
+  label: string;
+  timestamp_seconds: NonNegativeInteger;
+  utc_instant: UtcTime;
+}
+
+export interface BucketCount {
+  bucket_label: string;
+  count: NonNegativeInteger;
+}
+
+export interface FollowUpExample {
+  timezone: TimeZoneName;
+  expected: BucketCount[];
+  observed: BucketCount[];
+}
+
+export interface DocExcerpt {
+  text: string;
+  source_url: HttpsObjectUri;
+}
+
+export interface ObservedSymptom {
+  schema_version: SchemaVersion;
+  user_action: string;
+  request: SymptomRequest;
+  timezone: TimeZoneName;
+  locale: LocaleTag | null;
+  fixture_description: string;
+  events: SymptomEvent[];
+  http_status: number;
+  expected: BucketCount[];
+  observed: BucketCount[];
+  follow_up_examples: FollowUpExample[];
+  doc_excerpts: DocExcerpt[];
+}
+
+export interface OperationIdentity {
+  schema_version: SchemaVersion;
+  project_id: Uuid;
+  project_policy_sha256: Sha256;
+  root_execution_id: Uuid;
+  batch_id: Uuid;
+  task_revision: Sha256;
+  kind: OperationKind;
+  runtime_profile_sha256: Sha256;
+  call_name: CallName | null;
+  attempt_ordinal: PositiveInteger;
+}
+
+export interface MutationChange {
+  path: RelativePath;
+  original_sha256: Sha256 | null;
+  resulting_sha256: Sha256 | null;
+  original_mode: FileMode | null;
+  resulting_mode: FileMode | null;
+}
+
+export interface MutationIdentity {
+  schema_version: SchemaVersion;
+  host_commit: GitCommitId;
+  changes: MutationChange[];
+}
+
+export interface TaskRevisionIdentity {
+  schema_version: SchemaVersion;
+  revision_kind: TaskRevisionKind;
+  host_commit: GitCommitId;
+  image_digest: ImageDigest;
+  kit_sha256: Sha256;
+  fixture_sha256: Sha256;
+  original_suite_sha256: Sha256;
+  added_suite_sha256: Sha256;
+  grading_policy_id: Slug;
+  environment_sha256: Sha256;
+  mutation_id: Sha256 | null;
+  issue_sha256: Sha256 | null;
+  issue_style: Slug | null;
+}
+
 /** Maps each definition name to its type. */
 export interface DefTypes {
   SafeInteger: SafeInteger;
@@ -303,4 +517,38 @@ export interface DefTypes {
   WithheldDeclaration: WithheldDeclaration;
   RedactionDeclaration: RedactionDeclaration;
   StagingOmissions: StagingOmissions;
+  JobKind: JobKind;
+  CodeState: CodeState;
+  ExpectedOutcome: ExpectedOutcome;
+  ObservedOutcome: ObservedOutcome;
+  TrialStatus: TrialStatus;
+  TrialReason: TrialReason;
+  AssertionFailureCode: AssertionFailureCode;
+  CheckId: CheckId;
+  TestId: TestId;
+  OperationKind: OperationKind;
+  CallName: CallName;
+  FileMode: FileMode;
+  TaskRevisionKind: TaskRevisionKind;
+  TimeZoneName: TimeZoneName;
+  LocaleTag: LocaleTag;
+  EndpointPath: EndpointPath;
+  JobRequest: JobRequest;
+  ExpectedCheck: ExpectedCheck;
+  ExpectedTrial: ExpectedTrial;
+  ExpectedTrials: ExpectedTrials;
+  CheckObservation: CheckObservation;
+  TrialObservations: TrialObservations;
+  TrialResult: TrialResult;
+  QueryParameters: QueryParameters;
+  SymptomRequest: SymptomRequest;
+  SymptomEvent: SymptomEvent;
+  BucketCount: BucketCount;
+  FollowUpExample: FollowUpExample;
+  DocExcerpt: DocExcerpt;
+  ObservedSymptom: ObservedSymptom;
+  OperationIdentity: OperationIdentity;
+  MutationChange: MutationChange;
+  MutationIdentity: MutationIdentity;
+  TaskRevisionIdentity: TaskRevisionIdentity;
 }

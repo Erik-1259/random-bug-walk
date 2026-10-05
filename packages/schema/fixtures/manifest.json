@@ -1252,6 +1252,1286 @@
       "type": "StagingOmissions",
       "expect": "invalid",
       "rule": "path segments"
+    },
+    {
+      "name": "job-kind-valid",
+      "type": "JobKind",
+      "expect": "valid",
+      "rule": "job kind"
+    },
+    {
+      "name": "job-kind-unknown",
+      "type": "JobKind",
+      "expect": "invalid",
+      "rule": "job kind list"
+    },
+    {
+      "name": "code-state-valid",
+      "type": "CodeState",
+      "expect": "valid",
+      "rule": "code state"
+    },
+    {
+      "name": "code-state-unknown",
+      "type": "CodeState",
+      "expect": "invalid",
+      "rule": "code state list"
+    },
+    {
+      "name": "expected-outcome-valid",
+      "type": "ExpectedOutcome",
+      "expect": "valid",
+      "rule": "expected outcome"
+    },
+    {
+      "name": "expected-outcome-setup-fail",
+      "type": "ExpectedOutcome",
+      "expect": "invalid",
+      "rule": "expected outcome list"
+    },
+    {
+      "name": "observed-outcome-valid",
+      "type": "ObservedOutcome",
+      "expect": "valid",
+      "rule": "observed outcome"
+    },
+    {
+      "name": "observed-outcome-unknown",
+      "type": "ObservedOutcome",
+      "expect": "invalid",
+      "rule": "observed outcome list"
+    },
+    {
+      "name": "trial-status-valid",
+      "type": "TrialStatus",
+      "expect": "valid",
+      "rule": "trial status"
+    },
+    {
+      "name": "trial-status-unknown",
+      "type": "TrialStatus",
+      "expect": "invalid",
+      "rule": "trial status list"
+    },
+    {
+      "name": "trial-reason-valid",
+      "type": "TrialReason",
+      "expect": "valid",
+      "rule": "trial reason"
+    },
+    {
+      "name": "trial-reason-unknown",
+      "type": "TrialReason",
+      "expect": "invalid",
+      "rule": "trial reason list"
+    },
+    {
+      "name": "assertion-failure-code-valid",
+      "type": "AssertionFailureCode",
+      "expect": "valid",
+      "rule": "assertion failure code"
+    },
+    {
+      "name": "assertion-failure-code-unknown",
+      "type": "AssertionFailureCode",
+      "expect": "invalid",
+      "rule": "assertion failure code list"
+    },
+    {
+      "name": "check-id-valid",
+      "type": "CheckId",
+      "expect": "valid",
+      "rule": "check id"
+    },
+    {
+      "name": "check-id-no-dot",
+      "type": "CheckId",
+      "expect": "invalid",
+      "rule": "check id needs a dot"
+    },
+    {
+      "name": "check-id-uppercase",
+      "type": "CheckId",
+      "expect": "invalid",
+      "rule": "check id lowercase"
+    },
+    {
+      "name": "check-id-empty-segment",
+      "type": "CheckId",
+      "expect": "invalid",
+      "rule": "check id segments"
+    },
+    {
+      "name": "test-id-valid",
+      "type": "TestId",
+      "expect": "valid",
+      "rule": "test id"
+    },
+    {
+      "name": "test-id-space",
+      "type": "TestId",
+      "expect": "invalid",
+      "rule": "test id no space"
+    },
+    {
+      "name": "test-id-empty",
+      "type": "TestId",
+      "expect": "invalid",
+      "rule": "test id non-empty"
+    },
+    {
+      "name": "test-id-non-ascii",
+      "type": "TestId",
+      "expect": "invalid",
+      "rule": "test id printable ascii"
+    },
+    {
+      "name": "operation-kind-valid",
+      "type": "OperationKind",
+      "expect": "valid",
+      "rule": "operation kind"
+    },
+    {
+      "name": "operation-kind-job",
+      "type": "OperationKind",
+      "expect": "valid",
+      "rule": "job kinds are operation kinds"
+    },
+    {
+      "name": "operation-kind-hyphen",
+      "type": "OperationKind",
+      "expect": "invalid",
+      "rule": "operation kind characters"
+    },
+    {
+      "name": "operation-kind-trailing-dot",
+      "type": "OperationKind",
+      "expect": "invalid",
+      "rule": "operation kind segments"
+    },
+    {
+      "name": "call-name-valid",
+      "type": "CallName",
+      "expect": "valid",
+      "rule": "call name"
+    },
+    {
+      "name": "call-name-uppercase",
+      "type": "CallName",
+      "expect": "invalid",
+      "rule": "call name lowercase"
+    },
+    {
+      "name": "call-name-empty-segment",
+      "type": "CallName",
+      "expect": "invalid",
+      "rule": "call name segments"
+    },
+    {
+      "name": "file-mode-valid",
+      "type": "FileMode",
+      "expect": "valid",
+      "rule": "file mode"
+    },
+    {
+      "name": "file-mode-symlink",
+      "type": "FileMode",
+      "expect": "invalid",
+      "rule": "no symlink mode"
+    },
+    {
+      "name": "file-mode-submodule",
+      "type": "FileMode",
+      "expect": "invalid",
+      "rule": "no submodule mode"
+    },
+    {
+      "name": "file-mode-integer",
+      "type": "FileMode",
+      "expect": "invalid",
+      "rule": "file mode is a string"
+    },
+    {
+      "name": "task-revision-kind-valid",
+      "type": "TaskRevisionKind",
+      "expect": "valid",
+      "rule": "task revision kind"
+    },
+    {
+      "name": "task-revision-kind-unknown",
+      "type": "TaskRevisionKind",
+      "expect": "invalid",
+      "rule": "task revision kind list"
+    },
+    {
+      "name": "time-zone-valid",
+      "type": "TimeZoneName",
+      "expect": "valid",
+      "rule": "time zone name"
+    },
+    {
+      "name": "time-zone-utc",
+      "type": "TimeZoneName",
+      "expect": "valid",
+      "rule": "time zone name"
+    },
+    {
+      "name": "time-zone-space",
+      "type": "TimeZoneName",
+      "expect": "invalid",
+      "rule": "time zone shape"
+    },
+    {
+      "name": "locale-valid",
+      "type": "LocaleTag",
+      "expect": "valid",
+      "rule": "locale tag"
+    },
+    {
+      "name": "locale-underscore",
+      "type": "LocaleTag",
+      "expect": "invalid",
+      "rule": "locale tag shape"
+    },
+    {
+      "name": "endpoint-path-valid",
+      "type": "EndpointPath",
+      "expect": "valid",
+      "rule": "endpoint path"
+    },
+    {
+      "name": "endpoint-path-relative",
+      "type": "EndpointPath",
+      "expect": "invalid",
+      "rule": "endpoint path starts with /"
+    },
+    {
+      "name": "endpoint-path-query",
+      "type": "EndpointPath",
+      "expect": "invalid",
+      "rule": "endpoint path has no query"
+    },
+    {
+      "name": "endpoint-path-dot-dot",
+      "type": "EndpointPath",
+      "expect": "invalid",
+      "rule": "endpoint path has no dot segments"
+    },
+    {
+      "name": "mutation-identity-valid",
+      "type": "MutationIdentity",
+      "expect": "valid",
+      "rule": "mutation identity: addition, deletion, modification"
+    },
+    {
+      "name": "mutation-identity-mode-only",
+      "type": "MutationIdentity",
+      "expect": "valid",
+      "rule": "a mode change is a change"
+    },
+    {
+      "name": "mutation-identity-unsorted",
+      "type": "MutationIdentity",
+      "expect": "invalid",
+      "rule": "changes sorted by path",
+      "error": "mutation:changes_sorted"
+    },
+    {
+      "name": "mutation-identity-duplicate-path",
+      "type": "MutationIdentity",
+      "expect": "invalid",
+      "rule": "change paths unique",
+      "error": "mutation:changes_sorted"
+    },
+    {
+      "name": "mutation-identity-unchanged",
+      "type": "MutationIdentity",
+      "expect": "invalid",
+      "rule": "a change changes something",
+      "error": "mutation:unchanged"
+    },
+    {
+      "name": "mutation-identity-both-null",
+      "type": "MutationIdentity",
+      "expect": "invalid",
+      "rule": "a change has at least one side"
+    },
+    {
+      "name": "mutation-identity-half-side",
+      "type": "MutationIdentity",
+      "expect": "invalid",
+      "rule": "hash and mode set together"
+    },
+    {
+      "name": "mutation-identity-symlink",
+      "type": "MutationIdentity",
+      "expect": "invalid",
+      "rule": "no symlink mode"
+    },
+    {
+      "name": "mutation-identity-dot-dot",
+      "type": "MutationIdentity",
+      "expect": "invalid",
+      "rule": "no traversal"
+    },
+    {
+      "name": "mutation-identity-absolute",
+      "type": "MutationIdentity",
+      "expect": "invalid",
+      "rule": "no absolute path"
+    },
+    {
+      "name": "mutation-identity-empty",
+      "type": "MutationIdentity",
+      "expect": "invalid",
+      "rule": "changes non-empty"
+    },
+    {
+      "name": "mutation-identity-card-field",
+      "type": "MutationIdentity",
+      "expect": "invalid",
+      "rule": "no source card field"
+    },
+    {
+      "name": "task-revision-kit",
+      "type": "TaskRevisionIdentity",
+      "expect": "valid",
+      "rule": "kit revision"
+    },
+    {
+      "name": "task-revision-provisional",
+      "type": "TaskRevisionIdentity",
+      "expect": "valid",
+      "rule": "provisional revision"
+    },
+    {
+      "name": "task-revision-complete",
+      "type": "TaskRevisionIdentity",
+      "expect": "valid",
+      "rule": "complete revision"
+    },
+    {
+      "name": "task-revision-kit-with-mutation",
+      "type": "TaskRevisionIdentity",
+      "expect": "invalid",
+      "rule": "kit has no mutation"
+    },
+    {
+      "name": "task-revision-provisional-with-issue",
+      "type": "TaskRevisionIdentity",
+      "expect": "invalid",
+      "rule": "provisional has no issue"
+    },
+    {
+      "name": "task-revision-provisional-no-mutation",
+      "type": "TaskRevisionIdentity",
+      "expect": "invalid",
+      "rule": "provisional has a mutation"
+    },
+    {
+      "name": "task-revision-complete-no-style",
+      "type": "TaskRevisionIdentity",
+      "expect": "invalid",
+      "rule": "complete has an issue style"
+    },
+    {
+      "name": "task-revision-with-price",
+      "type": "TaskRevisionIdentity",
+      "expect": "invalid",
+      "rule": "no price in a revision"
+    },
+    {
+      "name": "operation-identity-job",
+      "type": "OperationIdentity",
+      "expect": "valid",
+      "rule": "operation identity of a job"
+    },
+    {
+      "name": "operation-identity-call",
+      "type": "OperationIdentity",
+      "expect": "valid",
+      "rule": "operation identity of a provider call"
+    },
+    {
+      "name": "operation-identity-bad-call-name",
+      "type": "OperationIdentity",
+      "expect": "invalid",
+      "rule": "call name shape"
+    },
+    {
+      "name": "operation-identity-kind-uppercase",
+      "type": "OperationIdentity",
+      "expect": "invalid",
+      "rule": "operation kind shape"
+    },
+    {
+      "name": "operation-identity-attempt-zero",
+      "type": "OperationIdentity",
+      "expect": "invalid",
+      "rule": "attempt ordinal positive"
+    },
+    {
+      "name": "job-request-kit-check",
+      "type": "JobRequest",
+      "expect": "valid",
+      "rule": "kit_check request"
+    },
+    {
+      "name": "job-request-observe",
+      "type": "JobRequest",
+      "expect": "valid",
+      "rule": "observe request"
+    },
+    {
+      "name": "job-request-admission",
+      "type": "JobRequest",
+      "expect": "valid",
+      "rule": "admission request"
+    },
+    {
+      "name": "job-request-judge-verify",
+      "type": "JobRequest",
+      "expect": "valid",
+      "rule": "judge_verify request"
+    },
+    {
+      "name": "expected-trials-kit-check",
+      "type": "ExpectedTrials",
+      "expect": "valid",
+      "rule": "kit_check expected trials (5)",
+      "context": {
+        "request": "job-request-kit-check"
+      }
+    },
+    {
+      "name": "expected-trials-observe",
+      "type": "ExpectedTrials",
+      "expect": "valid",
+      "rule": "observe expected trials (1)",
+      "context": {
+        "request": "job-request-observe"
+      }
+    },
+    {
+      "name": "expected-trials-admission",
+      "type": "ExpectedTrials",
+      "expect": "valid",
+      "rule": "admission expected trials (13)",
+      "context": {
+        "request": "job-request-admission"
+      }
+    },
+    {
+      "name": "expected-trials-judge-verify",
+      "type": "ExpectedTrials",
+      "expect": "valid",
+      "rule": "judge_verify expected trials (3)",
+      "context": {
+        "request": "job-request-judge-verify"
+      }
+    },
+    {
+      "name": "job-request-observe-root",
+      "type": "JobRequest",
+      "expect": "valid",
+      "rule": "observe request at the root"
+    },
+    {
+      "name": "expected-trials-observe-root",
+      "type": "ExpectedTrials",
+      "expect": "valid",
+      "rule": "observe expected trials for a root request",
+      "context": {
+        "request": "job-request-observe-root"
+      }
+    },
+    {
+      "name": "job-request-admission-in-context",
+      "type": "JobRequest",
+      "expect": "valid",
+      "rule": "request inherits its policy and root",
+      "context": {
+        "policy": "policy-placeholder",
+        "root": "root-run-terminal"
+      }
+    },
+    {
+      "name": "job-request-root-with-parent",
+      "type": "JobRequest",
+      "expect": "invalid",
+      "rule": "a root request has no parent",
+      "error": "job:root_parent"
+    },
+    {
+      "name": "job-request-child-without-parent",
+      "type": "JobRequest",
+      "expect": "invalid",
+      "rule": "a child request has a parent",
+      "error": "job:root_parent"
+    },
+    {
+      "name": "job-request-own-parent",
+      "type": "JobRequest",
+      "expect": "invalid",
+      "rule": "a request is never its own parent",
+      "error": "job:own_parent"
+    },
+    {
+      "name": "job-request-observe-no-baseline",
+      "type": "JobRequest",
+      "expect": "invalid",
+      "rule": "observe has a baseline"
+    },
+    {
+      "name": "job-request-observe-half-baseline",
+      "type": "JobRequest",
+      "expect": "invalid",
+      "rule": "baseline key and hash together"
+    },
+    {
+      "name": "job-request-admission-with-baseline",
+      "type": "JobRequest",
+      "expect": "invalid",
+      "rule": "only observe has a baseline"
+    },
+    {
+      "name": "job-request-judge-no-release",
+      "type": "JobRequest",
+      "expect": "invalid",
+      "rule": "judge_verify has a release"
+    },
+    {
+      "name": "job-request-admission-with-release",
+      "type": "JobRequest",
+      "expect": "invalid",
+      "rule": "only judge_verify has a release"
+    },
+    {
+      "name": "job-request-wrong-operation-id",
+      "type": "JobRequest",
+      "expect": "invalid",
+      "rule": "operation id computed from the request",
+      "error": "job:operation_id"
+    },
+    {
+      "name": "job-request-call-operation-id",
+      "type": "JobRequest",
+      "expect": "invalid",
+      "rule": "a job's operation id has a null call name",
+      "error": "job:operation_id"
+    },
+    {
+      "name": "job-request-wrong-payload-hash",
+      "type": "JobRequest",
+      "expect": "invalid",
+      "rule": "payload hash computed from the request",
+      "error": "job:payload_hash"
+    },
+    {
+      "name": "job-request-zero-reservation",
+      "type": "JobRequest",
+      "expect": "invalid",
+      "rule": "reservation is positive"
+    },
+    {
+      "name": "job-request-url-trials-key",
+      "type": "JobRequest",
+      "expect": "invalid",
+      "rule": "expected trials key is an artifact key"
+    },
+    {
+      "name": "job-request-attempt-zero",
+      "type": "JobRequest",
+      "expect": "invalid",
+      "rule": "attempt ordinal positive"
+    },
+    {
+      "name": "job-request-unknown-kind",
+      "type": "JobRequest",
+      "expect": "invalid",
+      "rule": "job kind list"
+    },
+    {
+      "name": "job-request-missing-field",
+      "type": "JobRequest",
+      "expect": "invalid",
+      "rule": "nullable fields are never omitted"
+    },
+    {
+      "name": "job-request-unknown-field",
+      "type": "JobRequest",
+      "expect": "invalid",
+      "rule": "unknown fields rejected"
+    },
+    {
+      "name": "job-request-policy-mismatch",
+      "type": "JobRequest",
+      "expect": "invalid",
+      "rule": "request inherits its policy",
+      "context": {
+        "policy": "policy-placeholder"
+      },
+      "error": "inherit:project_policy_sha256"
+    },
+    {
+      "name": "job-request-root-mismatch",
+      "type": "JobRequest",
+      "expect": "invalid",
+      "rule": "request inherits its root",
+      "context": {
+        "root": "root-run-terminal"
+      },
+      "error": "inherit:root_execution_id"
+    },
+    {
+      "name": "job-request-for-expected-trials-admission-no-original-suite",
+      "type": "JobRequest",
+      "expect": "valid",
+      "rule": "request for expected-trials-admission-no-original-suite"
+    },
+    {
+      "name": "expected-trials-admission-no-original-suite",
+      "type": "ExpectedTrials",
+      "expect": "invalid",
+      "rule": "only observe runs without the original suite",
+      "context": {
+        "request": "job-request-for-expected-trials-admission-no-original-suite"
+      },
+      "error": "trials:original_suite_missing"
+    },
+    {
+      "name": "job-request-for-expected-trials-observe-with-original-suite",
+      "type": "JobRequest",
+      "expect": "valid",
+      "rule": "request for expected-trials-observe-with-original-suite"
+    },
+    {
+      "name": "expected-trials-observe-with-original-suite",
+      "type": "ExpectedTrials",
+      "expect": "invalid",
+      "rule": "observe runs no original suite",
+      "context": {
+        "request": "job-request-for-expected-trials-observe-with-original-suite"
+      },
+      "error": "trials:original_suite_present"
+    },
+    {
+      "name": "job-request-for-expected-trials-admission-missing-trial",
+      "type": "JobRequest",
+      "expect": "valid",
+      "rule": "request for expected-trials-admission-missing-trial"
+    },
+    {
+      "name": "expected-trials-admission-missing-trial",
+      "type": "ExpectedTrials",
+      "expect": "invalid",
+      "rule": "trial list matches the kind",
+      "context": {
+        "request": "job-request-for-expected-trials-admission-missing-trial"
+      },
+      "error": "trials:trial_list"
+    },
+    {
+      "name": "job-request-for-expected-trials-admission-reordered",
+      "type": "JobRequest",
+      "expect": "valid",
+      "rule": "request for expected-trials-admission-reordered"
+    },
+    {
+      "name": "expected-trials-admission-reordered",
+      "type": "ExpectedTrials",
+      "expect": "invalid",
+      "rule": "trial list order matches the kind",
+      "context": {
+        "request": "job-request-for-expected-trials-admission-reordered"
+      },
+      "error": "trials:trial_list"
+    },
+    {
+      "name": "job-request-for-expected-trials-kit-wrong-state",
+      "type": "JobRequest",
+      "expect": "valid",
+      "rule": "request for expected-trials-kit-wrong-state"
+    },
+    {
+      "name": "expected-trials-kit-wrong-state",
+      "type": "ExpectedTrials",
+      "expect": "invalid",
+      "rule": "code state follows the trial id",
+      "context": {
+        "request": "job-request-for-expected-trials-kit-wrong-state"
+      },
+      "error": "trials:trial_list"
+    },
+    {
+      "name": "job-request-for-expected-trials-judge-as-admission",
+      "type": "JobRequest",
+      "expect": "valid",
+      "rule": "request for expected-trials-judge-as-admission"
+    },
+    {
+      "name": "expected-trials-judge-as-admission",
+      "type": "ExpectedTrials",
+      "expect": "invalid",
+      "rule": "trial list matches the request kind",
+      "context": {
+        "request": "job-request-for-expected-trials-judge-as-admission"
+      },
+      "error": "trials:trial_list"
+    },
+    {
+      "name": "job-request-for-expected-trials-admission-wrong-repeat",
+      "type": "JobRequest",
+      "expect": "valid",
+      "rule": "request for expected-trials-admission-wrong-repeat"
+    },
+    {
+      "name": "expected-trials-admission-wrong-repeat",
+      "type": "ExpectedTrials",
+      "expect": "invalid",
+      "rule": "repeat count follows the kind",
+      "context": {
+        "request": "job-request-for-expected-trials-admission-wrong-repeat"
+      },
+      "error": "trials:repeat_count"
+    },
+    {
+      "name": "job-request-for-expected-trials-kit-wrong-repeat",
+      "type": "JobRequest",
+      "expect": "valid",
+      "rule": "request for expected-trials-kit-wrong-repeat"
+    },
+    {
+      "name": "expected-trials-kit-wrong-repeat",
+      "type": "ExpectedTrials",
+      "expect": "invalid",
+      "rule": "repeat count follows the kind",
+      "context": {
+        "request": "job-request-for-expected-trials-kit-wrong-repeat"
+      },
+      "error": "trials:repeat_count"
+    },
+    {
+      "name": "job-request-for-expected-trials-execution-mismatch",
+      "type": "JobRequest",
+      "expect": "valid",
+      "rule": "request for expected-trials-execution-mismatch"
+    },
+    {
+      "name": "expected-trials-execution-mismatch",
+      "type": "ExpectedTrials",
+      "expect": "invalid",
+      "rule": "manifest execution matches the request",
+      "context": {
+        "request": "job-request-for-expected-trials-execution-mismatch"
+      },
+      "error": "request:execution_id"
+    },
+    {
+      "name": "job-request-for-expected-trials-revision-mismatch",
+      "type": "JobRequest",
+      "expect": "valid",
+      "rule": "request for expected-trials-revision-mismatch"
+    },
+    {
+      "name": "expected-trials-revision-mismatch",
+      "type": "ExpectedTrials",
+      "expect": "invalid",
+      "rule": "manifest revision matches the request",
+      "context": {
+        "request": "job-request-for-expected-trials-revision-mismatch"
+      },
+      "error": "request:task_revision"
+    },
+    {
+      "name": "job-request-for-expected-trials-hash-mismatch",
+      "type": "JobRequest",
+      "expect": "valid",
+      "rule": "request whose hash differs from the manifest"
+    },
+    {
+      "name": "expected-trials-hash-mismatch",
+      "type": "ExpectedTrials",
+      "expect": "invalid",
+      "rule": "manifest hash matches the request",
+      "context": {
+        "request": "job-request-for-expected-trials-hash-mismatch"
+      },
+      "error": "request:expected_trials_sha256"
+    },
+    {
+      "name": "expected-trials-duplicate-trial",
+      "type": "ExpectedTrials",
+      "expect": "invalid",
+      "rule": "trial ids unique",
+      "error": "trials:duplicate_trial"
+    },
+    {
+      "name": "expected-trials-duplicate-check",
+      "type": "ExpectedTrials",
+      "expect": "invalid",
+      "rule": "check ids unique in a trial",
+      "error": "trials:duplicate_check"
+    },
+    {
+      "name": "expected-trials-clean-with-patch",
+      "type": "ExpectedTrials",
+      "expect": "invalid",
+      "rule": "clean has no patch"
+    },
+    {
+      "name": "expected-trials-planted-without-patch",
+      "type": "ExpectedTrials",
+      "expect": "invalid",
+      "rule": "planted has a patch"
+    },
+    {
+      "name": "expected-trials-null-suite-with-tests",
+      "type": "ExpectedTrials",
+      "expect": "invalid",
+      "rule": "null original suite has no tests"
+    },
+    {
+      "name": "expected-trials-suite-without-tests",
+      "type": "ExpectedTrials",
+      "expect": "invalid",
+      "rule": "original suite has tests"
+    },
+    {
+      "name": "expected-trials-duplicate-test-id",
+      "type": "ExpectedTrials",
+      "expect": "invalid",
+      "rule": "test ids unique"
+    },
+    {
+      "name": "expected-trials-test-id-space",
+      "type": "ExpectedTrials",
+      "expect": "invalid",
+      "rule": "test id shape"
+    },
+    {
+      "name": "expected-trials-empty",
+      "type": "ExpectedTrials",
+      "expect": "invalid",
+      "rule": "trials non-empty"
+    },
+    {
+      "name": "expected-trials-no-checks",
+      "type": "ExpectedTrials",
+      "expect": "invalid",
+      "rule": "expected checks non-empty"
+    },
+    {
+      "name": "expected-trials-pass-with-code",
+      "type": "ExpectedTrials",
+      "expect": "invalid",
+      "rule": "a pass has no failure code"
+    },
+    {
+      "name": "expected-trials-fail-without-code",
+      "type": "ExpectedTrials",
+      "expect": "invalid",
+      "rule": "an assertion failure has a code"
+    },
+    {
+      "name": "expected-trials-fail-with-reason",
+      "type": "ExpectedTrials",
+      "expect": "invalid",
+      "rule": "an expected failure is an assertion failure code"
+    },
+    {
+      "name": "expected-trials-repeat-zero",
+      "type": "ExpectedTrials",
+      "expect": "invalid",
+      "rule": "repeat count positive"
+    },
+    {
+      "name": "check-observation-complete",
+      "type": "CheckObservation",
+      "expect": "valid",
+      "rule": "observed assertion failure"
+    },
+    {
+      "name": "check-observation-incomplete",
+      "type": "CheckObservation",
+      "expect": "valid",
+      "rule": "check not run, artifact missing"
+    },
+    {
+      "name": "check-observation-skipped",
+      "type": "CheckObservation",
+      "expect": "valid",
+      "rule": "skipped with a trial reason"
+    },
+    {
+      "name": "check-observation-pass",
+      "type": "CheckObservation",
+      "expect": "valid",
+      "rule": "pass without a code"
+    },
+    {
+      "name": "check-observation-half-artifact",
+      "type": "CheckObservation",
+      "expect": "invalid",
+      "rule": "artifact key and hash together"
+    },
+    {
+      "name": "check-observation-hash-without-key",
+      "type": "CheckObservation",
+      "expect": "invalid",
+      "rule": "artifact key and hash together"
+    },
+    {
+      "name": "check-observation-pass-with-code",
+      "type": "CheckObservation",
+      "expect": "invalid",
+      "rule": "a pass has no code"
+    },
+    {
+      "name": "check-observation-fail-with-reason",
+      "type": "CheckObservation",
+      "expect": "invalid",
+      "rule": "an assertion failure has an assertion code"
+    },
+    {
+      "name": "check-observation-fail-without-code",
+      "type": "CheckObservation",
+      "expect": "invalid",
+      "rule": "an assertion failure has a code"
+    },
+    {
+      "name": "check-observation-not-run-assertion-code",
+      "type": "CheckObservation",
+      "expect": "invalid",
+      "rule": "not_run has a trial reason"
+    },
+    {
+      "name": "check-observation-setup-fail-no-code",
+      "type": "CheckObservation",
+      "expect": "invalid",
+      "rule": "setup_fail has a trial reason"
+    },
+    {
+      "name": "check-observation-repeat-zero",
+      "type": "CheckObservation",
+      "expect": "invalid",
+      "rule": "repeat index positive"
+    },
+    {
+      "name": "check-observation-with-version",
+      "type": "CheckObservation",
+      "expect": "invalid",
+      "rule": "an observation has no schema version"
+    },
+    {
+      "name": "trial-observations-complete",
+      "type": "TrialObservations",
+      "expect": "valid",
+      "rule": "observations of a complete trial"
+    },
+    {
+      "name": "trial-observations-incomplete",
+      "type": "TrialObservations",
+      "expect": "valid",
+      "rule": "observations of an incomplete trial"
+    },
+    {
+      "name": "trial-observations-sorted",
+      "type": "TrialObservations",
+      "expect": "valid",
+      "rule": "sorted by repeat, then check id"
+    },
+    {
+      "name": "trial-observations-check-unsorted",
+      "type": "TrialObservations",
+      "expect": "invalid",
+      "rule": "check ids sorted within a repeat",
+      "error": "observations:order"
+    },
+    {
+      "name": "trial-observations-repeat-unsorted",
+      "type": "TrialObservations",
+      "expect": "invalid",
+      "rule": "repeats sorted",
+      "error": "observations:order"
+    },
+    {
+      "name": "trial-observations-repeat-numeric-order",
+      "type": "TrialObservations",
+      "expect": "invalid",
+      "rule": "repeats sorted as numbers",
+      "error": "observations:order"
+    },
+    {
+      "name": "trial-observations-duplicate",
+      "type": "TrialObservations",
+      "expect": "invalid",
+      "rule": "unique by repeat and check",
+      "error": "observations:order"
+    },
+    {
+      "name": "trial-result-complete",
+      "type": "TrialResult",
+      "expect": "valid",
+      "rule": "complete trial result",
+      "context": {
+        "request": "job-request-admission"
+      }
+    },
+    {
+      "name": "trial-result-invalid",
+      "type": "TrialResult",
+      "expect": "valid",
+      "rule": "invalid trial result with both pairs",
+      "context": {
+        "request": "job-request-admission"
+      }
+    },
+    {
+      "name": "trial-result-incomplete",
+      "type": "TrialResult",
+      "expect": "valid",
+      "rule": "incomplete trial result with null pairs",
+      "context": {
+        "request": "job-request-admission"
+      }
+    },
+    {
+      "name": "trial-result-incomplete-one-pair",
+      "type": "TrialResult",
+      "expect": "valid",
+      "rule": "incomplete with observations only"
+    },
+    {
+      "name": "trial-result-equal-instants",
+      "type": "TrialResult",
+      "expect": "valid",
+      "rule": "times compared as instants"
+    },
+    {
+      "name": "trial-result-complete-null-pairs",
+      "type": "TrialResult",
+      "expect": "invalid",
+      "rule": "a complete result has both pairs"
+    },
+    {
+      "name": "trial-result-invalid-null-pairs",
+      "type": "TrialResult",
+      "expect": "invalid",
+      "rule": "an invalid result has both pairs"
+    },
+    {
+      "name": "trial-result-half-pair",
+      "type": "TrialResult",
+      "expect": "invalid",
+      "rule": "key and hash together"
+    },
+    {
+      "name": "trial-result-complete-with-reason",
+      "type": "TrialResult",
+      "expect": "invalid",
+      "rule": "a complete result has no reason"
+    },
+    {
+      "name": "trial-result-incomplete-no-reason",
+      "type": "TrialResult",
+      "expect": "invalid",
+      "rule": "an incomplete result has a reason"
+    },
+    {
+      "name": "trial-result-free-text-reason",
+      "type": "TrialResult",
+      "expect": "invalid",
+      "rule": "reason from the list"
+    },
+    {
+      "name": "trial-result-ended-before-started",
+      "type": "TrialResult",
+      "expect": "invalid",
+      "rule": "ended_at not before started_at",
+      "error": "result:ended_before_started"
+    },
+    {
+      "name": "trial-result-ended-day-before",
+      "type": "TrialResult",
+      "expect": "invalid",
+      "rule": "ended_at not before started_at",
+      "error": "result:ended_before_started"
+    },
+    {
+      "name": "trial-result-request-project-policy-sha256",
+      "type": "TrialResult",
+      "expect": "invalid",
+      "rule": "result project_policy_sha256 matches the request",
+      "context": {
+        "request": "job-request-admission"
+      },
+      "error": "request:project_policy_sha256"
+    },
+    {
+      "name": "trial-result-request-root-execution-id",
+      "type": "TrialResult",
+      "expect": "invalid",
+      "rule": "result root_execution_id matches the request",
+      "context": {
+        "request": "job-request-admission"
+      },
+      "error": "request:root_execution_id"
+    },
+    {
+      "name": "trial-result-request-execution-id",
+      "type": "TrialResult",
+      "expect": "invalid",
+      "rule": "result execution_id matches the request",
+      "context": {
+        "request": "job-request-admission"
+      },
+      "error": "request:execution_id"
+    },
+    {
+      "name": "trial-result-request-task-revision",
+      "type": "TrialResult",
+      "expect": "invalid",
+      "rule": "result task_revision matches the request",
+      "context": {
+        "request": "job-request-admission"
+      },
+      "error": "request:task_revision"
+    },
+    {
+      "name": "trial-result-request-expected-trials-sha256",
+      "type": "TrialResult",
+      "expect": "invalid",
+      "rule": "result expected_trials_sha256 matches the request",
+      "context": {
+        "request": "job-request-admission"
+      },
+      "error": "request:expected_trials_sha256"
+    },
+    {
+      "name": "trial-result-policy-mismatch",
+      "type": "TrialResult",
+      "expect": "invalid",
+      "rule": "result inherits its policy",
+      "context": {
+        "policy": "policy-placeholder"
+      },
+      "error": "inherit:project_policy_sha256"
+    },
+    {
+      "name": "observed-symptom-valid",
+      "type": "ObservedSymptom",
+      "expect": "valid",
+      "rule": "symptom-only writer input (synthetic counts)"
+    },
+    {
+      "name": "observed-symptom-no-locale",
+      "type": "ObservedSymptom",
+      "expect": "valid",
+      "rule": "locale may be null"
+    },
+    {
+      "name": "observed-symptom-extra-field",
+      "type": "ObservedSymptom",
+      "expect": "invalid",
+      "rule": "no other field"
+    },
+    {
+      "name": "observed-symptom-event-extra-field",
+      "type": "ObservedSymptom",
+      "expect": "invalid",
+      "rule": "no other field in an event"
+    },
+    {
+      "name": "observed-symptom-request-extra-field",
+      "type": "ObservedSymptom",
+      "expect": "invalid",
+      "rule": "no other field in the request"
+    },
+    {
+      "name": "observed-symptom-example-extra-field",
+      "type": "ObservedSymptom",
+      "expect": "invalid",
+      "rule": "no other field in an example"
+    },
+    {
+      "name": "observed-symptom-bucket-extra-field",
+      "type": "ObservedSymptom",
+      "expect": "invalid",
+      "rule": "no other field in a bucket"
+    },
+    {
+      "name": "observed-symptom-excerpt-extra-field",
+      "type": "ObservedSymptom",
+      "expect": "invalid",
+      "rule": "no other field in an excerpt"
+    },
+    {
+      "name": "observed-symptom-instant-mismatch",
+      "type": "ObservedSymptom",
+      "expect": "invalid",
+      "rule": "utc_instant equals timestamp_seconds",
+      "error": "symptom:event_instant"
+    },
+    {
+      "name": "observed-symptom-instant-fraction",
+      "type": "ObservedSymptom",
+      "expect": "invalid",
+      "rule": "utc_instant has no fraction"
+    },
+    {
+      "name": "observed-symptom-query-number",
+      "type": "ObservedSymptom",
+      "expect": "invalid",
+      "rule": "query values are strings"
+    },
+    {
+      "name": "observed-symptom-query-name",
+      "type": "ObservedSymptom",
+      "expect": "invalid",
+      "rule": "query names are public parameter names"
+    },
+    {
+      "name": "observed-symptom-method-put",
+      "type": "ObservedSymptom",
+      "expect": "invalid",
+      "rule": "method GET or POST"
+    },
+    {
+      "name": "observed-symptom-relative-path",
+      "type": "ObservedSymptom",
+      "expect": "invalid",
+      "rule": "path starts with /"
+    },
+    {
+      "name": "observed-symptom-status-600",
+      "type": "ObservedSymptom",
+      "expect": "invalid",
+      "rule": "http status 100 to 599"
+    },
+    {
+      "name": "observed-symptom-negative-count",
+      "type": "ObservedSymptom",
+      "expect": "invalid",
+      "rule": "counts nonnegative"
+    },
+    {
+      "name": "observed-symptom-empty-label",
+      "type": "ObservedSymptom",
+      "expect": "invalid",
+      "rule": "bucket label non-empty"
+    },
+    {
+      "name": "observed-symptom-http-doc",
+      "type": "ObservedSymptom",
+      "expect": "invalid",
+      "rule": "doc source is https"
+    },
+    {
+      "name": "observed-symptom-bad-timezone",
+      "type": "ObservedSymptom",
+      "expect": "invalid",
+      "rule": "time zone shape"
     }
   ]
 }

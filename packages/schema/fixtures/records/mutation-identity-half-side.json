@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "host_commit": "3333333333333333333333333333333333333333",
+  "changes": [
+    {
+      "path": "src/queries/sql/getPageviewStats.ts",
+      "original_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "resulting_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "original_mode": null,
+      "resulting_mode": "100644"
+    }
+  ]
+}

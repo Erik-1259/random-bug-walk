@@ -11,23 +11,39 @@ from itertools import pairwise
 from typing import TypedDict, cast
 
 from rbw_schema.canonical import JsonValue, canonical_digest
+from rbw_schema.derive import (
+    TRIAL_PROFILES,
+    job_operation_identity,
+    job_payload_digest,
+    utc_instant_key,
+    utc_seconds,
+)
 from rbw_schema.generated import (
     ArtifactManifest,
+    CheckObservation,
+    ExpectedTrials,
     FamilyRegistry,
+    JobRequest,
+    MutationIdentity,
+    ObservedSymptom,
     ProjectPolicy,
     PublicationRecord,
     RootRun,
     RunManifest,
     StagingOmissions,
+    TrialObservations,
+    TrialResult,
 )
 
 
 class RecordContext(TypedDict, total=False):
-    """Records a value may be checked against: its policy, its root, or the policy it succeeds."""
+    """Records a value may be checked against: its policy, its root, the policy it succeeds, or
+    its job request."""
 
     policy: ProjectPolicy
     root: RootRun
     previous: ProjectPolicy
+    request: JobRequest
 
 
 def _strictly_sorted(values: Sequence[str]) -> bool:
@@ -99,6 +115,69 @@ def _omissions_rules(omissions: StagingOmissions) -> list[str]:
     return errors
 
 
+def _job_request_rules(request: JobRequest) -> list[str]:
+    errors: list[str] = []
+    is_root = request["execution_id"] == request["root_execution_id"]
+    if (request["parent_execution_id"] is None) != is_root:
+        errors.append("job:root_parent")
+    if request["parent_execution_id"] == request["execution_id"]:
+        errors.append("job:own_parent")
+    if canonical_digest(job_operation_identity(request)).sha256 != request["operation_id"]:
+        errors.append("job:operation_id")
+    if job_payload_digest(request).sha256 != request["payload_hash"]:
+        errors.append("job:payload_hash")
+    return errors
+
+
+def _expected_trials_rules(manifest: ExpectedTrials, request: JobRequest | None) -> list[str]:
+    errors: list[str] = []
+    trials = manifest["trials"]
+    if _has_duplicates([trial["trial_id"] for trial in trials]):
+        errors.append("trials:duplicate_trial")
+    if any(
+        _has_duplicates([check["check_id"] for check in trial["expected_checks"]])
+        for trial in trials
+    ):
+        errors.append("trials:duplicate_check")
+    if request is None:
+        return errors
+    if canonical_digest(manifest).sha256 != request["expected_trials_sha256"]:
+        errors.append("request:expected_trials_sha256")
+    profile = TRIAL_PROFILES[request["kind"]]
+    if profile.original_suite:
+        if any(trial["original_suite_sha256"] is None for trial in trials):
+            errors.append("trials:original_suite_missing")
+    elif any(trial["original_suite_sha256"] is not None for trial in trials):
+        errors.append("trials:original_suite_present")
+    expected = [(t.trial_id, t.code_state) for t in profile.trials]
+    if [(trial["trial_id"], trial["code_state"]) for trial in trials] != expected:
+        errors.append("trials:trial_list")
+    elif [trial["added_repeat_count"] for trial in trials] != [
+        t.added_repeat_count for t in profile.trials
+    ]:
+        errors.append("trials:repeat_count")
+    return errors
+
+
+def _observations_in_order(observations: list[CheckObservation]) -> bool:
+    keys = [(item["repeat_index"], item["check_id"]) for item in observations]
+    return all(earlier < later for earlier, later in pairwise(keys))
+
+
+def _mutation_rules(identity: MutationIdentity) -> list[str]:
+    errors: list[str] = []
+    changes = identity["changes"]
+    if not _strictly_sorted([change["path"] for change in changes]):
+        errors.append("mutation:changes_sorted")
+    if any(
+        change["original_sha256"] == change["resulting_sha256"]
+        and change["original_mode"] == change["resulting_mode"]
+        for change in changes
+    ):
+        errors.append("mutation:unchanged")
+    return errors
+
+
 def policy_succession_errors(previous: ProjectPolicy, following: ProjectPolicy) -> list[str]:
     """Succession of frozen policies: same project, a higher version, and public exposure never
     reversed."""
@@ -130,6 +209,17 @@ def _context_rules(value: dict[str, JsonValue], context: RecordContext) -> list[
     previous = context.get("previous")
     if previous is not None:
         errors.extend(policy_succession_errors(previous, cast(ProjectPolicy, value)))
+    request = context.get("request")
+    if request is not None:
+        for key in (
+            "project_policy_sha256",
+            "root_execution_id",
+            "execution_id",
+            "task_revision",
+            "expected_trials_sha256",
+        ):
+            if key in value and value[key] != request[key]:
+                errors.append(f"request:{key}")
     return errors
 
 
@@ -158,6 +248,24 @@ def check_rules(type_name: str, value: JsonValue, context: RecordContext) -> lis
             errors.extend(_run_manifest_rules(cast(RunManifest, value), context.get("policy")))
         case "StagingOmissions":
             errors.extend(_omissions_rules(cast(StagingOmissions, value)))
+        case "JobRequest":
+            errors.extend(_job_request_rules(cast(JobRequest, value)))
+        case "ExpectedTrials":
+            manifest = cast(ExpectedTrials, value)
+            errors.extend(_expected_trials_rules(manifest, context.get("request")))
+        case "TrialObservations":
+            if not _observations_in_order(cast(TrialObservations, value)["observations"]):
+                errors.append("observations:order")
+        case "TrialResult":
+            result = cast(TrialResult, value)
+            if utc_instant_key(result["ended_at"]) < utc_instant_key(result["started_at"]):
+                errors.append("result:ended_before_started")
+        case "ObservedSymptom":
+            events = cast(ObservedSymptom, value)["events"]
+            if any(utc_seconds(e["utc_instant"]) != e["timestamp_seconds"] for e in events):
+                errors.append("symptom:event_instant")
+        case "MutationIdentity":
+            errors.extend(_mutation_rules(cast(MutationIdentity, value)))
         case _:
             pass
     if isinstance(value, dict):
