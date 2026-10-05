@@ -1,0 +1,34 @@
+#!/bin/sh
+# Prints every listening TCP socket in the container, one per line: "tcp <ipv4>:<port>" or
+# "tcp6 [<ipv6>]:<port>". IPv6 addresses other than :: and ::1 are printed as the raw hex from
+# /proc. Reads /proc/net directly, so it needs no extra tools; assumes a little-endian host
+# (amd64 and arm64).
+set -eu
+
+for family in tcp tcp6; do
+  [ -r "/proc/net/$family" ] || continue
+  awk -v family="$family" '
+    function hex(s,    i, n) {
+      n = 0
+      s = tolower(s)
+      for (i = 1; i <= length(s); i++) {
+        n = n * 16 + index("0123456789abcdef", substr(s, i, 1)) - 1
+      }
+      return n
+    }
+    NR == 1 || $4 != "0A" { next }
+    {
+      split($2, local, ":")
+      address = local[1]
+      port = hex(local[2])
+      if (family == "tcp") {
+        printf "tcp %d.%d.%d.%d:%d\n", hex(substr(address, 7, 2)), hex(substr(address, 5, 2)), hex(substr(address, 3, 2)), hex(substr(address, 1, 2)), port
+      } else if (address == "00000000000000000000000000000000") {
+        printf "tcp6 [::]:%d\n", port
+      } else if (address == "00000000000000000000000001000000") {
+        printf "tcp6 [::1]:%d\n", port
+      } else {
+        printf "tcp6 [%s]:%d\n", address, port
+      }
+    }' "/proc/net/$family"
+done | sort -u

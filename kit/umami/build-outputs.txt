@@ -1,0 +1,21 @@
+# Paths in /workspace/app that `pnpm build:docker` writes, and nothing else. The Dockerfile makes
+# exactly these writable by rbw-app; the manifest records them. Kinds:
+#   dir      empty directory owned by rbw-app
+#   file     empty file owned by rbw-app
+#   sticky   tracked directory, root:rbw-app 1775: rbw-app may add and remove its own files
+#            (tsup writes and deletes tsup.config.bundled_*.mjs here) but cannot change tracked ones
+#   tracked  tracked file that the build regenerates with the same content, owned by rbw-app
+dir .next
+dir generated
+dir packages/api-client/dist
+dir packages/mcp/dist
+dir src/generated
+file next-env.d.ts
+file public/openapi.json
+file public/recorder.js
+file public/script.js
+sticky packages/api-client
+sticky packages/mcp
+tracked packages/api-client/src/generated/operations.ts
+tracked packages/api-client/src/generated/types.ts
+tracked src/tracker/index.d.ts

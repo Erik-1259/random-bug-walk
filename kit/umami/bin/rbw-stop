@@ -1,0 +1,34 @@
+#!/bin/sh
+# Stops Umami, then Postgres (a fast shutdown through pg_ctl), and waits until both launchers,
+# and so both process groups, have ended. Run as root.
+set -u
+LAUNCH=/opt/rbw/bin/rbw-launch
+RUN=/run/rbw
+status=0
+
+# Sends TERM to the launcher named by $RUN/$1.pid, which stops its process group, and waits up
+# to 30 s for the launcher to exit.
+stop_launcher() {
+  [ -f "$RUN/$1.pid" ] || return 0
+  pid=$(cat "$RUN/$1.pid")
+  kill -s TERM "$pid" 2>/dev/null
+  tenths=0
+  while kill -0 "$pid" 2>/dev/null; do
+    if [ "$tenths" -ge 300 ]; then
+      echo "rbw-stop: $1 did not stop" >&2
+      status=1
+      return 1
+    fi
+    sleep 0.1
+    tenths=$((tenths + 1))
+  done
+  rm -f "$RUN/$1.pid"
+}
+
+stop_launcher umami
+if [ -f "$RUN/postgres.pid" ] && kill -0 "$(cat "$RUN/postgres.pid")" 2>/dev/null; then
+  "$LAUNCH" --as db --env-file /opt/rbw/etc/db.environment --timeout-ms 90000 -- \
+    pg_ctl -D /var/lib/rbw/pgdata -m fast -w -t 60 stop > /dev/null || status=1
+fi
+stop_launcher postgres
+exit "$status"

@@ -1,0 +1,10 @@
+{
+  "name": "rbw-umami-verifier",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@playwright/test": "1.63.0",
+    "otplib": "13.5.0",
+    "pg": "8.23.1"
+  }
+}

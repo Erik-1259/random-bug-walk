@@ -1,0 +1,282 @@
+#!/bin/sh
+# Runs one command as rbw-app or rbw-db: a fixed environment, no new privileges, a new process
+# group, output capped per stream, and an optional timeout. Run it as root.
+#
+#   rbw-launch --as app|db [--cwd <dir>] [--stdout <file>] [--stderr <file>]
+#              [--max-stream-bytes <n>] [--timeout-ms <n>] [--env-file <file>] -- <command> [args...]
+#
+# The environment starts empty, then gets PATH, HOME, TMPDIR, TMUX_TMPDIR, USER, LOGNAME, SHELL
+# and LANG, then the env file's KEY=VALUE lines. "unset KEY" lines remove a key; loader and
+# runtime overrides (LD_*, NODE_OPTIONS, NODE_PATH and the like) are always dropped.
+#
+# Each stream keeps its first <n> bytes (default 1 MiB); anything past that is drained and
+# replaced by a truncation marker. Without --stdout or --stderr, the capped stream is copied to
+# the launcher's own stdout or stderr when the command ends. Stdin is /dev/null.
+#
+# On timeout, or on TERM or INT to the launcher, the process group gets TERM, then KILL after
+# KILL_GRACE_SECONDS, and the launcher waits until no process is left in the group. The group
+# is also cleaned up when the command exits on its own.
+#
+# Exit status: the command's status; 124 after a timeout; 143 after TERM; 130 after INT; 125
+# for a usage error, a launch error or a group that would not end.
+set -u
+umask 077
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+
+KILL_GRACE_SECONDS=5
+CHILD_PATH=/usr/local/bin:/usr/bin:/bin
+
+usage() {
+  echo "usage: rbw-launch --as app|db [--cwd <dir>] [--stdout <file>] [--stderr <file>] [--max-stream-bytes <n>] [--timeout-ms <n>] [--env-file <file>] -- <command> [args...]" >&2
+  exit 125
+}
+
+fail() {
+  echo "rbw-launch: $1" >&2
+  exit 125
+}
+
+is_number() {
+  case $1 in
+    '' | *[!0-9]*) return 1 ;;
+  esac
+  return 0
+}
+
+valid_name() {
+  case $1 in
+    '' | [!A-Za-z_]* | *[!A-Za-z0-9_]*) return 1 ;;
+  esac
+  return 0
+}
+
+# Keys an env file may never set: loader and interpreter overrides, and the keys the launcher fixes.
+denied_name() {
+  case $1 in
+    LD_* | NODE_OPTIONS | NODE_PATH | NODE_PRESERVE_SYMLINKS | NODE_PRESERVE_SYMLINKS_MAIN | \
+      NODE_REPL_EXTERNAL_MODULE | NODE_EXTRA_CA_CERTS | BASH_ENV | ENV | CDPATH | IFS | PS4 | \
+      PYTHONPATH | PYTHONHOME | PYTHONSTARTUP | PERL5LIB | PERL5OPT | PERLLIB | RUBYOPT | RUBYLIB | \
+      GCONV_PATH | LOCPATH | MALLOC_* | PATH | HOME | TMPDIR | TMUX_TMPDIR | USER | LOGNAME | SHELL)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+as='' cwd='' stdout_file='' stderr_file='' max_bytes=1048576 timeout_ms='' env_file=''
+while [ $# -gt 0 ]; do
+  case $1 in
+    --) shift; break ;;
+    --as | --cwd | --stdout | --stderr | --max-stream-bytes | --timeout-ms | --env-file)
+      [ $# -ge 2 ] || usage
+      case $1 in
+        --as) as=$2 ;;
+        --cwd) cwd=$2 ;;
+        --stdout) stdout_file=$2 ;;
+        --stderr) stderr_file=$2 ;;
+        --max-stream-bytes) max_bytes=$2 ;;
+        --timeout-ms) timeout_ms=$2 ;;
+        --env-file) env_file=$2 ;;
+      esac
+      shift 2
+      ;;
+    *) usage ;;
+  esac
+done
+[ $# -gt 0 ] || usage
+
+case $as in
+  app) uid=2001; gid=2001; user=rbw-app ;;
+  db) uid=2002; gid=2002; user=rbw-db ;;
+  *) usage ;;
+esac
+if ! is_number "$max_bytes" || [ "$max_bytes" -eq 0 ]; then
+  fail "--max-stream-bytes must be a positive integer"
+fi
+if [ -n "$timeout_ms" ] && { ! is_number "$timeout_ms" || [ "$timeout_ms" -eq 0 ]; }; then
+  fail "--timeout-ms must be a positive integer"
+fi
+[ -z "$cwd" ] || [ -d "$cwd" ] || fail "--cwd is not a directory"
+[ -z "$stdout_file" ] || [ "$stdout_file" != "$stderr_file" ] || fail "--stdout and --stderr must differ"
+[ "$(id -u)" = 0 ] || fail "must run as root"
+case $1 in
+  *=*) fail "the command name must not contain '='" ;;
+esac
+home=/var/tmp/$user
+
+# Append the env file's assignments after the command, then rotate the command to the end, so
+# "$@" becomes: assignments... command args...
+command_count=$#
+if [ -n "$env_file" ]; then
+  if [ ! -f "$env_file" ] || [ ! -r "$env_file" ]; then
+    fail "cannot read the env file"
+  fi
+  unset_names=' '
+  while IFS= read -r line || [ -n "$line" ]; do
+    case $line in
+      'unset '*)
+        name=${line#unset }
+        valid_name "$name" || fail "malformed env file line: unset with an invalid name"
+        unset_names="$unset_names$name "
+        ;;
+    esac
+  done < "$env_file"
+  while IFS= read -r line || [ -n "$line" ]; do
+    case $line in
+      '' | '#'* | 'unset '*) continue ;;
+    esac
+    name=${line%%=*}
+    if [ "$name" = "$line" ] || ! valid_name "$name"; then
+      fail "malformed env file line: expected KEY=VALUE"
+    fi
+    denied_name "$name" && continue
+    case $unset_names in
+      *" $name "*) continue ;;
+    esac
+    set -- "$@" "$line"
+  done < "$env_file"
+fi
+i=0
+while [ "$i" -lt "$command_count" ]; do
+  set -- "$@" "$1"
+  shift
+  i=$((i + 1))
+done
+
+work=$(mktemp -d /run/rbw-launch.XXXXXX) || fail "cannot create a work directory"
+out_dest=${stdout_file:-$work/stdout}
+err_dest=${stderr_file:-$work/stderr}
+mkfifo "$work/out" "$work/err" || fail "cannot create the stream pipes"
+: > "$out_dest" || fail "cannot write $out_dest"
+: > "$err_dest" || fail "cannot write $err_dest"
+
+# Runs "$3..." after $2 tenths of a second unless the flag file $1 is removed first; sets $timer
+# to the timer's PID. Polling a flag avoids signalling the timer, whose trap could miss a signal.
+start_timer() {
+  flag=$1
+  tenths=$2
+  shift 2
+  : > "$flag"
+  (
+    n=0
+    while [ "$n" -lt "$tenths" ]; do
+      [ -e "$flag" ] || exit 0
+      sleep 0.1
+      n=$((n + 1))
+    done
+    [ -e "$flag" ] && "$@"
+  ) < /dev/null > /dev/null 2>&1 &
+  timer=$!
+}
+
+cancel_timer() {
+  rm -f "$1"
+  wait "$2"
+}
+
+# True while any process other than a zombie is in process group $1.
+group_alive() {
+  cat /proc/[0-9]*/stat 2>/dev/null |
+    awk -v group="$1" '{ sub(/^.*\) /, ""); if ($3 == group && $1 != "Z") { found = 1 } } END { exit !found }'
+}
+
+# Waits up to $2 tenths of a second for process group $1 to end.
+wait_group() {
+  waited=0
+  while group_alive "$1"; do
+    [ "$waited" -lt "$2" ] || return 1
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  return 0
+}
+
+# Stops process group $1: TERM, the grace period, KILL, then confirms the group has ended.
+stop_group() {
+  kill -s TERM "-$1" 2>/dev/null
+  wait_group "$1" $((KILL_GRACE_SECONDS * 10)) && return 0
+  kill -s KILL "-$1" 2>/dev/null
+  wait_group "$1" 50
+}
+
+# A reader keeps the first max+1 bytes of a pipe in a file and drains the rest, so the command never
+# blocks or gets SIGPIPE. Each reader gets its own process group so a stuck one can be stopped whole.
+# shellcheck disable=SC2016 # the reader shell expands these, not this one
+reader='{ head -c "$1" > "$2"; cat > /dev/null; } < "$3"'
+setsid sh -c "$reader" rbw-capture $((max_bytes + 1)) "$out_dest" "$work/out" &
+out_reader=$!
+setsid sh -c "$reader" rbw-capture $((max_bytes + 1)) "$err_dest" "$work/err" &
+err_reader=$!
+
+reason=''
+trap 'reason=timeout' USR1
+trap 'reason=term' TERM
+trap 'reason=int' INT
+
+(
+  if [ -n "$cwd" ]; then
+    cd "$cwd" || exit 125
+  fi
+  umask 022
+  exec setsid /bin/setpriv --reuid="$uid" --regid="$gid" --clear-groups --no-new-privs --inh-caps=-all \
+    env -i PATH="$CHILD_PATH" HOME="$home" TMPDIR="$home" TMUX_TMPDIR="$home" USER="$user" LOGNAME="$user" \
+    SHELL=/bin/sh LANG=C.UTF-8 "$@"
+) < /dev/null > "$work/out" 2> "$work/err" &
+child=$!
+
+watchdog=''
+if [ -n "$timeout_ms" ]; then
+  start_timer "$work/watchdog" $(((timeout_ms + 99) / 100)) kill -s USR1 "$$"
+  watchdog=$timer
+fi
+
+[ -n "$reason" ] || wait "$child"
+status=$?
+ended=0
+if [ -n "$reason" ]; then
+  if stop_group "$child"; then
+    ended=1
+    wait "$child"
+  fi
+else
+  # The command exited on its own; stop anything it left behind in its group.
+  if group_alive "$child"; then
+    stop_group "$child" && ended=1
+  else
+    ended=1
+  fi
+fi
+[ -z "$watchdog" ] || cancel_timer "$work/watchdog" "$watchdog"
+# The group has ended; the bounded reader drain below is not interrupted.
+trap '' TERM INT USR1
+
+start_timer "$work/readers" 50 kill -s KILL "-$out_reader" "-$err_reader"
+reader_timer=$timer
+wait "$out_reader" "$err_reader"
+cancel_timer "$work/readers" "$reader_timer"
+
+for dest in "$out_dest" "$err_dest"; do
+  size=$(wc -c < "$dest" | tr -d ' ')
+  if [ "$size" -gt "$max_bytes" ]; then
+    truncate -s "$max_bytes" "$dest"
+    printf '\n[rbw-launch: output truncated at %s bytes]\n' "$max_bytes" >> "$dest"
+  fi
+done
+[ -n "$stdout_file" ] || cat "$out_dest"
+[ -n "$stderr_file" ] || cat "$err_dest" >&2
+rm -r -f "$work"
+
+if [ "$ended" -ne 1 ]; then
+  echo "rbw-launch: process group $child did not end after KILL" >&2
+  exit 125
+fi
+case $reason in
+  timeout)
+    echo "rbw-launch: timed out after $timeout_ms ms" >&2
+    exit 124
+    ;;
+  term) exit 143 ;;
+  int) exit 130 ;;
+esac
+exit "$status"

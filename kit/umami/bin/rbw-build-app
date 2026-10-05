@@ -1,0 +1,61 @@
+#!/bin/sh
+# Cold build of the app copy: `pnpm build:docker` in /workspace/app as rbw-app, with the build
+# environment and no network needed, timed against the 240 s budget. It refuses to run when a
+# previous build left outputs or caches. Run as root.
+#
+# Google Fonts are the build's only network fetch. Next reads the mocked stylesheet named by
+# NEXT_FONT_GOOGLE_MOCKED_RESPONSES, and Turbopack downloads the font files it lists from a
+# loopback-only busybox httpd that serves the hash-checked copies in /opt/rbw/build/fonts.
+#
+# Prints the build log, then build_exit, build_wall_ms, budget_ms and within_budget. Exits with
+# the build's status, or 2 when the build could not start.
+set -u
+LAUNCH=/opt/rbw/bin/rbw-launch
+LOGS=/var/lib/rbw/logs
+BUDGET_MS=240000
+FONT_PORT=3901
+
+uptime_ms() {
+  awk '{ printf "%d", $1 * 1000 }' /proc/uptime
+}
+
+[ "$(id -u)" = 0 ] || { echo "rbw-build-app: must run as root" >&2; exit 2; }
+install -d -o root -g root -m 0700 "$LOGS" /run/rbw
+if ! /opt/rbw/bin/rbw-check-cold > "$LOGS/build-precheck.log"; then
+  echo "rbw-build-app: not a cold build:" >&2
+  cat "$LOGS/build-precheck.log" >&2
+  exit 2
+fi
+
+"$LAUNCH" --as app --stdout "$LOGS/font-server.stdout.log" --stderr "$LOGS/font-server.stderr.log" -- \
+  busybox-extras httpd -f -p "127.0.0.1:$FONT_PORT" -h /opt/rbw/build/fonts < /dev/null > /dev/null 2>&1 &
+font_server=$!
+probe=$(find /opt/rbw/build/fonts -name '*.woff2' | head -n 1)
+tries=0
+until curl -fsS -o /dev/null --max-time 2 "http://127.0.0.1:$FONT_PORT/${probe##*/}" 2>/dev/null; do
+  tries=$((tries + 1))
+  if [ "$tries" -gt 100 ]; then
+    echo "rbw-build-app: the font server did not start" >&2
+    cat "$LOGS/font-server.stderr.log" >&2
+    kill -s TERM "$font_server"
+    wait "$font_server"
+    exit 2
+  fi
+  sleep 0.1
+done
+
+start=$(uptime_ms)
+"$LAUNCH" --as app --cwd /workspace/app --env-file /opt/rbw/etc/build.environment --max-stream-bytes 8388608 \
+  --timeout-ms 1800000 --stdout "$LOGS/build.stdout.log" --stderr "$LOGS/build.stderr.log" -- pnpm build:docker
+build_exit=$?
+wall_ms=$(($(uptime_ms) - start))
+kill -s TERM "$font_server"
+wait "$font_server"
+
+echo "--- build stdout ($LOGS/build.stdout.log)"
+cat "$LOGS/build.stdout.log"
+echo "--- build stderr ($LOGS/build.stderr.log)"
+cat "$LOGS/build.stderr.log"
+echo "build_exit=$build_exit"
+echo "build_wall_ms=$wall_ms budget_ms=$BUDGET_MS within_budget=$([ "$wall_ms" -le "$BUDGET_MS" ] && echo yes || echo no)"
+exit "$build_exit"

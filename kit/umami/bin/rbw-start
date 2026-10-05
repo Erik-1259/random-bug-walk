@@ -1,0 +1,92 @@
+#!/bin/sh
+# Starts Postgres as rbw-db, then Umami's standalone server as rbw-app on 127.0.0.1:3000, each
+# under rbw-launch in its own process group, and waits for /api/heartbeat. Before the server it
+# runs Umami's start-up steps from scripts/start-docker.sh (check-db.js, which applies pending
+# migrations, and update-tracker.js) as rbw-app with the app environment. Run as root, after
+# rbw-build-app. rbw-stop stops both.
+#
+#   rbw-start [--db-only]
+#
+# Prints ready_ms (from the start of this script to the first heartbeat answer), the 60 s
+# budget, and the listening sockets.
+set -u
+LAUNCH=/opt/rbw/bin/rbw-launch
+ETC=/opt/rbw/etc
+APP=/workspace/app
+LOGS=/var/lib/rbw/logs
+RUN=/run/rbw
+READY_BUDGET_MS=60000
+LOG_BYTES=16777216
+
+uptime_ms() {
+  awk '{ printf "%d", $1 * 1000 }' /proc/uptime
+}
+
+# Prints the message and the last lines of each named log, then exits.
+fail() {
+  echo "rbw-start: $1" >&2
+  shift
+  for log in "$@"; do
+    echo "--- $log" >&2
+    tail -n 50 "$log" >&2
+  done
+  exit 1
+}
+
+running() {
+  [ -f "$RUN/$1.pid" ] && kill -0 "$(cat "$RUN/$1.pid")" 2>/dev/null
+}
+
+db_only=0
+case ${1-} in
+  --db-only) db_only=1 ;;
+  '') ;;
+  *) echo "usage: rbw-start [--db-only]" >&2; exit 2 ;;
+esac
+[ "$(id -u)" = 0 ] || fail "must run as root"
+start=$(uptime_ms)
+install -d -o root -g root -m 0700 "$RUN" "$LOGS"
+install -d -o root -g rbw-db -m 0770 /run/rbw-pg
+
+if ! running postgres; then
+  "$LAUNCH" --as db --env-file "$ETC/db.environment" --max-stream-bytes "$LOG_BYTES" \
+    --stdout "$LOGS/postgres.stdout.log" --stderr "$LOGS/postgres.stderr.log" -- \
+    postgres -D /var/lib/rbw/pgdata < /dev/null > /dev/null 2>> "$LOGS/postgres.launcher.log" &
+  echo $! > "$RUN/postgres.pid"
+fi
+tries=0
+until pg_isready -q -h /run/rbw-pg -p 5432; do
+  tries=$((tries + 1))
+  [ "$tries" -le 300 ] || fail "Postgres did not accept connections within 30 s" "$LOGS/postgres.stderr.log"
+  sleep 0.1
+done
+echo "postgres_ready_ms=$(($(uptime_ms) - start))"
+
+if [ "$db_only" -eq 0 ]; then
+  [ -f "$APP/.next/standalone/server.js" ] || fail "the app is not built; run rbw-build-app first"
+  # Mirrors scripts/start-docker.sh, which puts node_modules/.bin on PATH for check-db.js.
+  # shellcheck disable=SC2016 # expanded by the app's shell
+  "$LAUNCH" --as app --cwd "$APP" --env-file "$ETC/app.environment" --timeout-ms 120000 -- \
+    sh -c 'PATH="$PWD/node_modules/.bin:$PATH" exec node scripts/check-db.js' || fail "check-db.js failed"
+  "$LAUNCH" --as app --cwd "$APP" --env-file "$ETC/app.environment" --timeout-ms 60000 -- \
+    node scripts/update-tracker.js || fail "update-tracker.js failed"
+  # The standalone server serves public/ and .next/static from its own directory, as in Umami's image.
+  "$LAUNCH" --as app --cwd "$APP" --timeout-ms 60000 -- sh -c \
+    'rm -rf .next/standalone/public .next/standalone/.next/static && cp -R public .next/standalone/public && cp -R .next/static .next/standalone/.next/static' ||
+    fail "could not stage the standalone server's static files"
+  if ! running umami; then
+    "$LAUNCH" --as app --cwd "$APP/.next/standalone" --env-file "$ETC/app.environment" --max-stream-bytes "$LOG_BYTES" \
+      --stdout "$LOGS/umami.stdout.log" --stderr "$LOGS/umami.stderr.log" -- node server.js \
+      < /dev/null > /dev/null 2>> "$LOGS/umami.launcher.log" &
+    echo $! > "$RUN/umami.pid"
+  fi
+  until curl -fsS -o /dev/null --max-time 2 http://127.0.0.1:3000/api/heartbeat 2>/dev/null; do
+    running umami || fail "Umami exited before answering the heartbeat" "$LOGS/umami.stdout.log" "$LOGS/umami.stderr.log"
+    [ $(($(uptime_ms) - start)) -le "$READY_BUDGET_MS" ] ||
+      fail "no heartbeat within $READY_BUDGET_MS ms" "$LOGS/umami.stdout.log" "$LOGS/umami.stderr.log"
+    sleep 0.25
+  done
+  ready_ms=$(($(uptime_ms) - start))
+  echo "ready_ms=$ready_ms budget_ms=$READY_BUDGET_MS within_budget=$([ "$ready_ms" -le "$READY_BUDGET_MS" ] && echo yes || echo no)"
+fi
+/opt/rbw/bin/rbw-listening | sed 's/^/listening /'

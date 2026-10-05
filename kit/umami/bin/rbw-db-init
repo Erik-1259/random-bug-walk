@@ -1,0 +1,60 @@
+#!/bin/sh
+# Creates the database cluster in /var/lib/rbw/pgdata as rbw-db, the umami_owner and umami_app
+# roles and the umami database, applies Umami's migrations as umami_owner, and stops the server
+# cleanly. The Dockerfile runs it once, so the image ships a migrated database. Run as root.
+set -eu
+LAUNCH=/opt/rbw/bin/rbw-launch
+ETC=/opt/rbw/etc
+PGDATA=/var/lib/rbw/pgdata
+LOGS=/var/lib/rbw/logs
+
+if [ -n "$(ls -A "$PGDATA")" ]; then
+  echo "rbw-db-init: $PGDATA is not empty" >&2
+  exit 1
+fi
+
+"$LAUNCH" --as db --env-file "$ETC/db.environment" -- \
+  initdb -D "$PGDATA" -U postgres -E UTF8 --locale=C --auth-local=trust --auth-host=reject
+cat "$ETC/postgresql.rbw.conf" >> "$PGDATA/postgresql.conf"
+install -o rbw-db -g rbw-db -m 0600 "$ETC/pg_hba.conf" "$PGDATA/pg_hba.conf"
+
+"$LAUNCH" --as db --env-file "$ETC/db.environment" --stdout "$LOGS/postgres-init.stdout.log" \
+  --stderr "$LOGS/postgres-init.stderr.log" -- postgres -D "$PGDATA" < /dev/null > /dev/null 2>&1 &
+server=$!
+
+stop_server() {
+  "$LAUNCH" --as db --env-file "$ETC/db.environment" -- pg_ctl -D "$PGDATA" -m fast -w -t 60 stop || kill -s TERM "$server"
+  wait "$server" || true
+}
+
+tries=0
+until pg_isready -q -h /run/rbw-pg -p 5432; do
+  tries=$((tries + 1))
+  if [ "$tries" -gt 300 ]; then
+    echo "rbw-db-init: Postgres did not start" >&2
+    cat "$LOGS/postgres-init.stderr.log" >&2
+    stop_server
+    exit 1
+  fi
+  sleep 0.1
+done
+
+status=0
+"$LAUNCH" --as db --env-file "$ETC/db.environment" -- \
+  psql -X -q -v ON_ERROR_STOP=1 -h /run/rbw-pg -U postgres -d postgres -f "$ETC/bootstrap.sql" || status=$?
+if [ "$status" -eq 0 ]; then
+  "$LAUNCH" --as db --cwd /workspace/app --env-file "$ETC/owner.environment" -- \
+    /workspace/app/node_modules/.bin/prisma migrate deploy || status=$?
+fi
+if [ "$status" -eq 0 ]; then
+  "$LAUNCH" --as db --env-file "$ETC/db.environment" -- \
+    psql -X -q -v ON_ERROR_STOP=1 -h /run/rbw-pg -U postgres -d umami -f "$ETC/finalize.sql" || status=$?
+fi
+stop_server
+
+if [ "$status" -ne 0 ]; then
+  cat "$LOGS/postgres-init.stderr.log" >&2
+  exit "$status"
+fi
+rm -f "$LOGS/postgres-init.stdout.log" "$LOGS/postgres-init.stderr.log"
+find /var/tmp/rbw-db -mindepth 1 -delete
