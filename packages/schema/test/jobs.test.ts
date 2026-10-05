@@ -4,10 +4,12 @@ import type { CodeState, ExpectedCheck, ExpectedTrials, JobKind, JobRequest, Mut
 import {
   buildExpectedTrials,
   buildJobRequest,
+  callName,
   jobOperationIdentity,
   jobPayloadHash,
   mutationId,
   operationId,
+  providerCallIdentity,
   taskRevision,
   type ExpectedTrialsInput,
   type JobRequestFields,
@@ -208,6 +210,68 @@ describe("operationId", () => {
 
   it("refuses an invalid identity", () => {
     expect(refusal(() => operationId({ ...job, call_name: "Writer.Issue" })).length).toBeGreaterThan(0);
+  });
+});
+
+interface CallNameCase {
+  name: string;
+  kind: string;
+  segments: (string | number)[];
+  expect?: string;
+  error?: string;
+}
+
+const CALL_NAME_CASES = (JSON.parse(fixtureText("call-names.json")) as { cases: CallNameCase[] }).cases;
+
+describe("callName", () => {
+  it.each(CALL_NAME_CASES.filter((item) => item.expect !== undefined).map((item) => [item.name, item] as const))("builds %s", (_name, item) => {
+    const name = callName(item.kind, ...item.segments);
+    expect(name).toBe(item.expect);
+    expect(validateRecord("CallName", name)).toEqual([]);
+  });
+
+  it.each(CALL_NAME_CASES.filter((item) => item.error !== undefined).map((item) => [item.name, item] as const))("refuses %s", (_name, item) => {
+    expect(refusal(() => callName(item.kind, ...item.segments))).toEqual([item.error]);
+  });
+
+  it("builds the committed provider-call name", () => {
+    expect(callName("writer.issue", "cand-17", 3)).toBe(JSON.parse(fixtureText("records", "call-name-valid.json")));
+  });
+
+  it("refuses an ordinal that is not a safe non-negative integer", () => {
+    for (const ordinal of [1.5, Number.NaN, Number.MAX_SAFE_INTEGER + 1]) {
+      expect(refusal(() => callName("writer.issue", "cand-17", ordinal))).toEqual(["call_name:segment"]);
+    }
+  });
+});
+
+describe("providerCallIdentity", () => {
+  const call = record("operation-identity-call") as OperationIdentity;
+  const fields = {
+    project_id: call.project_id,
+    project_policy_sha256: call.project_policy_sha256,
+    root_execution_id: call.root_execution_id,
+    batch_id: call.batch_id,
+    task_revision: call.task_revision,
+    kind: call.kind,
+    runtime_profile_sha256: call.runtime_profile_sha256,
+    call_name: callName("writer.issue", "cand-17", 3),
+    attempt_ordinal: call.attempt_ordinal,
+  };
+
+  it("is the committed provider-call identity, with schema version 1", () => {
+    expect(providerCallIdentity(fields)).toEqual(call);
+    expect(operationId(providerCallIdentity(fields)).sha256).toBe(committedSha("operation-identity-call"));
+  });
+
+  it("keeps only the identity fields of a wider run context", () => {
+    const wider = { ...fields, execution_id: "00000000-0000-4000-8000-000000000102", parent_execution_id: null };
+    expect(providerCallIdentity(wider)).toEqual(call);
+  });
+
+  it("refuses an invalid field", () => {
+    expect(refusal(() => providerCallIdentity({ ...fields, call_name: "writer.issue::3" })).length).toBeGreaterThan(0);
+    expect(refusal(() => providerCallIdentity({ ...fields, attempt_ordinal: 0 })).length).toBeGreaterThan(0);
   });
 });
 

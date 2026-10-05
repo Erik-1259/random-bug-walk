@@ -1,0 +1,16 @@
+{
+  "cases": [
+    { "name": "writer-issue", "kind": "writer.issue", "segments": ["cand-17", 3], "expect": "writer.issue:cand-17:3" },
+    { "name": "search-phrase", "kind": "search.phrase", "segments": ["synthetic-candidate-1", "phrase-2"], "expect": "search.phrase:synthetic-candidate-1:phrase-2" },
+    { "name": "kind-only", "kind": "writer.card", "segments": [], "expect": "writer.card" },
+    { "name": "ordinal-zero", "kind": "writer.card", "segments": ["cand-17", 0], "expect": "writer.card:cand-17:0" },
+    { "name": "kind-uppercase", "kind": "Writer.issue", "segments": ["cand-17", 3], "error": "call_name:kind" },
+    { "name": "kind-hyphen", "kind": "writer-issue", "segments": ["cand-17", 3], "error": "call_name:kind" },
+    { "name": "kind-empty", "kind": "", "segments": ["cand-17", 3], "error": "call_name:kind" },
+    { "name": "segment-colon", "kind": "writer.issue", "segments": ["cand:17", 3], "error": "call_name:segment" },
+    { "name": "segment-empty", "kind": "writer.issue", "segments": ["", 3], "error": "call_name:segment" },
+    { "name": "segment-uppercase", "kind": "writer.issue", "segments": ["Cand-17", 3], "error": "call_name:segment" },
+    { "name": "segment-space", "kind": "writer.issue", "segments": ["cand 17", 3], "error": "call_name:segment" },
+    { "name": "segment-negative", "kind": "writer.issue", "segments": ["cand-17", -1], "error": "call_name:segment" }
+  ]
+}

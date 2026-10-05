@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { PGlite } from "@electric-sql/pglite";
+import { validateRecord } from "@rbw/schema";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MAX_CALLS_PER_CANDIDATE } from "../../src/config.ts";
 import type { Writer } from "../../src/writer.ts";
@@ -66,15 +67,18 @@ describe("the shared per-candidate call budget", () => {
     expect(r.events.filter((e) => e === "reserve").length).toBe(reservesBefore);
   });
 
-  it("names each call <kind>.<candidate>.<ordinal> and keeps candidates apart", async () => {
+  it("names each call <kind>:<candidate>:<ordinal>, a schema CallName the ledger accepts, and keeps candidates apart", async () => {
     const r = await rig(db);
     const first = await r.writer.writeCard({ candidate: CANDIDATE, source: cardSource("valid") });
     const other = await r.writer.writeCard({ candidate: "synthetic-candidate-2", source: cardSource("valid") });
     if (!first.ok || !other.ok) {
       throw new Error("expected both calls to run");
     }
-    expect(first.call.call_name).toBe(`writer.card.${CANDIDATE}.1`);
-    expect(other.call.call_name).toBe("writer.card.synthetic-candidate-2.1");
+    expect(first.call.call_name).toBe(`writer.card:${CANDIDATE}:1`);
+    expect(other.call.call_name).toBe("writer.card:synthetic-candidate-2:1");
+    expect(validateRecord("CallName", first.call.call_name)).toEqual([]);
+    const rows = await db.query(`SELECT call_name FROM ${r.schema}.operations WHERE operation_id = $1`, [first.call.operation_id]);
+    expect(rows.rows).toEqual([{ call_name: first.call.call_name }]);
     expect(first.call.operation_id).not.toBe(other.call.operation_id);
   });
 

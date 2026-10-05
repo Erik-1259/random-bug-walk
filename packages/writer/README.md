@@ -134,22 +134,24 @@ If `prepared → launching` is refused after a reservation, the refusal is retur
 
 ## Identity fields and the rate record
 
-All hashes and IDs are computed in `src/identity.ts`. The shared schema package will supply these hashes and the run context later.
+The writer's identity fields are assembled in `src/identity.ts`. The operation ID, the call name and the canonical encoding of the profile digest come from `@rbw/schema` (`operationId`, `providerCallIdentity`, `callName`, `canonicalDigest`); the writer keeps no identity format of its own.
 
 | Field | Value |
 | --- | --- |
 | `project_id`, `project_policy_sha256`, `batch_id`, `task_revision`, `root_execution_id`, `execution_id`, `parent_execution_id` | From the run context |
 | `kind` | `writer.card` or `writer.issue` |
-| `call_name` | `<kind>.<candidate>.<ordinal>`, for example `writer.issue.synthetic-candidate-1.3` |
+| `call_name` | `<kind>:<candidate>:<ordinal>`, for example `writer.issue:synthetic-candidate-1:3`, built by the schema's `callName` |
 | `provider` | `token-factory` |
 | `provider_replay_key` | `null` |
 | `attempt_ordinal`, `previous_operation_id` | `1`, `null` |
-| `runtime_profile_sha256` | SHA-256 of the canonical JSON (sorted keys, no whitespace) of the frozen writer profile: provider, model, base URL, limits, retries, thinking, tools, structured-output mode, the counting constants and the request timeout |
+| `runtime_profile_sha256` | SHA-256 of the canonical JSON v1 bytes (`canonicalDigest` of `@rbw/schema`) of the frozen writer profile: provider, model, base URL, limits, retries, thinking, tools, structured-output mode, the counting constants and the request timeout |
 | `payload_hash` | SHA-256 of the exact request body bytes sent |
-| `operation_id` | SHA-256 of the canonical JSON of project, policy hash, root execution, batch, task revision, kind, profile digest, candidate, call ordinal and attempt ordinal |
+| `operation_id` | The schema's `operationId` of the call's `OperationIdentity`: `schema_version` 1, project, policy hash, root execution, batch, task revision, kind, profile digest, call name and attempt ordinal |
 | `rate_sheet_sha256` | SHA-256 of the rate file's exact bytes |
 
-The spend ledger accepts call names of lowercase letters, digits, `.`, `_` and `-` only, so the parts of the call name are joined with `.`. A candidate name is therefore limited to lowercase letters, digits, `_` and `-`, at most 46 characters.
+A candidate name is one segment of the call name: lowercase letters, digits, `_` and `-`, at most 46 characters. The spend ledger's `call_name` column takes the schema's `CallName` form, up to 128 characters.
+
+The run context's `batch_id` is required, because the schema's `OperationIdentity` requires a batch ID.
 
 **Run context** (strict; every field required):
 
@@ -325,7 +327,7 @@ The intended live run is two calls, one card and one issue, from inputs the owne
   - *When it applies.* Today all writers for a candidate run in one process, so it cannot happen yet. It applies once writers run in separate processes, such as separate hosted workflow steps.
   - *How to notice it.* Run this on the spend ledger's schema. It counts the calls per candidate that were not replaced by a later attempt, and any row above 12 is a breach. A row is overcounted only when a candidate's last attempt at an ordinal was unsent, so check such a row with `operationStatus`.
     ```sql
-    SELECT regexp_replace(o.call_name, '^writer\.(card|issue)\.(.*)\.[0-9]+$', '\2') AS candidate,
+    SELECT split_part(o.call_name, ':', 2) AS candidate,
            o.root_execution_id,
            count(*) AS calls
     FROM operations o
