@@ -387,8 +387,7 @@ class Publisher {
   }
 
   private print(record: PublicationRecord): number {
-    this.deps.stdout(`${new TextDecoder().decode(encodeCanonical(record))}\n`);
-    return record.status === "published" ? EXIT.published : record.status === "blocked" ? EXIT.blocked : EXIT.failed;
+    return printRecord(this.deps, record);
   }
 
   private freezeCandidate(policy: ProjectPolicy, policySha256: string, values: readonly RedactionValue[]): ReturnType<typeof freeze> {
@@ -454,6 +453,11 @@ class Publisher {
   }
 }
 
+function printRecord(deps: PublishDeps, record: PublicationRecord): number {
+  deps.stdout(`${new TextDecoder().decode(encodeCanonical(record))}\n`);
+  return record.status === "published" ? EXIT.published : record.status === "blocked" ? EXIT.blocked : EXIT.failed;
+}
+
 /** The publish command. Every validation happens before anything is written. */
 export async function publishCommand(config: PublishConfig, deps: PublishDeps): Promise<number> {
   const { policy, sha256: policySha256 } = loadPolicy(config);
@@ -469,6 +473,12 @@ export async function publishCommand(config: PublishConfig, deps: PublishDeps): 
 
   const state = new StateDir(config.stateDir);
   if (root.status !== "terminal") {
+    // A root that has been through a terminal call keeps the status that call wrote.
+    const currentId = state.currentPublicationId(root.root_execution_id);
+    if (currentId !== null) {
+      deps.stderr("status not written: root already terminal\n");
+      return printRecord(deps, state.loadRecord(root.root_execution_id, currentId));
+    }
     // Staging is not read; only the status object is scanned and written, within the root's limits.
     const bytes = encodeCanonical(publicStatus(root, policySha256, null));
     const scan = await scanner.scanText("public-run-status", bytes);
