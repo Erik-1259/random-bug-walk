@@ -1,0 +1,28 @@
+{
+  "name": "@rbw/writer",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint . --max-warnings 0",
+    "test": "vitest run",
+    "test:integration": "node test/integration/run.ts",
+    "record": "node src/record-cli.ts"
+  },
+  "dependencies": {
+    "@ai-sdk/openai-compatible": "3.0.62",
+    "@rbw/spend": "workspace:*",
+    "ai": "7.0.127",
+    "pg": "8.23.1",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "0.5.8",
+    "@types/pg": "8.23.1"
+  }
+}
