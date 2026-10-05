@@ -113,6 +113,12 @@ export async function migrate(client: SqlClient, options: MigrateOptions = {}): 
     // Concurrent runners on one schema wait here, also before its first run, then see what the
     // first one applied.
     await client.query("SELECT pg_advisory_xact_lock(hashtext('spend_migrate'), hashtext($1))", [schema]);
+    // Postgres skips a search_path entry that names no schema, so without this check a typo
+    // would put everything in the session's temporary schema and lose it at disconnect.
+    const { rows: found } = await client.query("SELECT to_regnamespace($1) IS NOT NULL AS present", [schema]);
+    if (found[0]?.present !== true) {
+      throw new MigrationError(schema, "schema does not exist; create it first");
+    }
     // pg_temp last: a session's temp tables never shadow the schema's tables, here or inside the
     // functions, which capture this path.
     await client.query("SELECT set_config('search_path', $1, true)", [`${schema}, pg_temp`]);

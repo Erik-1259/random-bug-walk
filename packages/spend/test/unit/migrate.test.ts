@@ -65,6 +65,16 @@ describe("migrate", () => {
     expect(output).toEqual(["applied 0 migrations"]);
   });
 
+  it("refuses a schema that does not exist and creates nothing", async () => {
+    await expect(migrate(db, { schema: "synthetic_missing_schema", migrationsDir: scratch })).rejects.toThrow(
+      "synthetic_missing_schema: schema does not exist; create it first",
+    );
+    const leftover = await db.query<{ n: number }>(
+      "SELECT count(*)::int AS n FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname LIKE 'pg_temp%' AND c.relname = 'applied_migrations'",
+    );
+    expect(leftover.rows[0]?.n).toBe(0);
+  });
+
   it("returns the applied file names from the library function", async () => {
     const first = await migrate(db, { schema, migrationsDir: scratch });
     expect(first.applied).toEqual(await sqlFiles());
