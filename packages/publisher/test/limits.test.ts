@@ -1,5 +1,8 @@
 import { rmSync } from "node:fs";
 import { join } from "node:path";
+import { DEFAULT_LIMITS, type Limits } from "../src/config.ts";
+import { Budget, LimitExceeded } from "../src/limits.ts";
+import { StateDir } from "../src/state.ts";
 import { describe, expect, it } from "vitest";
 import { runProcess, type ProcessRunner } from "../src/process.ts";
 import {
@@ -169,5 +172,18 @@ describe("status-only calls", () => {
     expect(third.code).toBe(2);
     expect(third.stderr).toContain("status object not written: limit_exceeded");
     expect(statusObject(world)).toBeNull();
+  });
+});
+
+describe("persisted root limits", () => {
+  it("keeps a lowered limit for later runs that use the default configuration", () => {
+    const state = new StateDir(tempDir("rbw-limits-"));
+    const configured = (storeOperations: number): Limits => ({ ...DEFAULT_LIMITS, storeOperations });
+    expect(new Budget(state, "synthetic-root", configured(200)).remaining("storeOperations")).toBe(200);
+    expect(new Budget(state, "synthetic-root", configured(2)).remaining("storeOperations")).toBe(2);
+    const third = new Budget(state, "synthetic-root", DEFAULT_LIMITS);
+    expect(third.remaining("storeOperations")).toBe(2);
+    third.spend("storeOperations", 2);
+    expect(() => { third.spend("storeOperations", 1); }).toThrow(LimitExceeded);
   });
 });

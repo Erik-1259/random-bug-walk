@@ -12,12 +12,12 @@ const ZERO: Limits = { pushAttempts: 0, metadataRequests: 0, newPublicBytes: 0, 
 
 /**
  * Per-root limits, persisted in the state directory and checked before each operation. The
- * limits stored on first use can only be lowered by later configuration, never raised or reset.
+ * limits stored on first use can only be lowered by later configuration, never raised or reset;
+ * the lowered values are what is stored.
  */
 export class Budget {
   private readonly state: StateDir;
   private readonly root: string;
-  private readonly stored: Limits;
   private readonly limits: Limits;
   private readonly used: Limits;
   /** Tags of amounts that count once per root, such as the repository payload of a candidate. */
@@ -28,7 +28,6 @@ export class Budget {
     this.root = root;
     const stored = state.loadLimits(root);
     const base = stored?.limits ?? configured;
-    this.stored = base;
     this.limits = {
       pushAttempts: Math.min(base.pushAttempts, configured.pushAttempts),
       metadataRequests: Math.min(base.metadataRequests, configured.metadataRequests),
@@ -38,11 +37,12 @@ export class Budget {
     };
     this.used = { ...ZERO, ...stored?.used };
     this.counted = [...(stored?.counted ?? [])];
-    if (stored === null) this.persist();
+    const lowered = (Object.keys(base) as (keyof Limits)[]).some((kind) => this.limits[kind] !== base[kind]);
+    if (stored === null || lowered) this.persist();
   }
 
   private persist(): void {
-    this.state.saveLimits(this.root, { limits: this.stored, used: this.used, counted: this.counted });
+    this.state.saveLimits(this.root, { limits: this.limits, used: this.used, counted: this.counted });
   }
 
   /** Throws LimitExceeded when spending the amount would exceed the limit; records nothing. */
