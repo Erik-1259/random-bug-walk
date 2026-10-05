@@ -253,6 +253,27 @@ function classify(exchange: Exchange, error: unknown): { status: CallRecord["sta
   }
 }
 
+// Writers for one candidate may overlap and need not share a writer object or a provider. Claiming
+// the next ordinal is serialized per candidate across all of them in this process.
+const candidateClaims = new Map<string, Promise<unknown>>();
+
+async function withCandidateClaim<R>(candidate: string, task: () => Promise<R>): Promise<R> {
+  const previous = candidateClaims.get(candidate) ?? Promise.resolve();
+  const run = previous.then(task, task);
+  const tail = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  candidateClaims.set(candidate, tail);
+  try {
+    return await run;
+  } finally {
+    if (candidateClaims.get(candidate) === tail) {
+      candidateClaims.delete(candidate);
+    }
+  }
+}
+
 export function createWriter(options: WriterOptions): Writer {
   const context: RunContext = parseRunContext(options.context);
   const { spend, provider } = options;
@@ -364,43 +385,50 @@ export function createWriter(options: WriterOptions): Writer {
     if (slot.holder !== context.root_execution_id) {
       return refusal("slot_not_held", "the run context's root execution does not hold the slot");
     }
-    const ordinal = await nextOrdinal(candidate);
-    if (typeof ordinal !== "number") {
-      return ordinal;
-    }
-
-    const id = operationId({ context, kind, candidate, callOrdinal: ordinal });
     const rateSha = rateSheetSha256(options.rateSheet);
-    const request: ReserveRequest = {
-      operation_id: id,
-      payload_hash: payloadHash(body),
-      attempt_ordinal: 1,
-      previous_operation_id: null,
-      project_id: context.project_id,
-      project_policy_sha256: context.project_policy_sha256,
-      batch_id: context.batch_id,
-      task_revision: context.task_revision,
-      root_execution_id: context.root_execution_id,
-      execution_id: context.execution_id,
-      parent_execution_id: context.parent_execution_id,
-      kind,
-      call_name: callName(kind, candidate, ordinal),
-      provider: PROVIDER,
-      provider_replay_key: null,
-      pool_key: options.poolKey,
-      allocation_key: options.allocationKey,
-      runtime_profile_sha256: profileSha,
-      rate_sheet_sha256: rateSha,
-      envelope: priced.envelope,
-    };
-    onReserving(id);
-    const reservation = await spend.reserve(request);
-    if (!reservation.ok) {
-      return refusal(reservation.code, reservation.detail ?? null);
+    // Picking a free ordinal and reserving it is one step per candidate, shared by both kinds.
+    const claimed = await withCandidateClaim(candidate, async () => {
+      const ordinal = await nextOrdinal(candidate);
+      if (typeof ordinal !== "number") {
+        return ordinal;
+      }
+      const id = operationId({ context, kind, candidate, callOrdinal: ordinal });
+      const request: ReserveRequest = {
+        operation_id: id,
+        payload_hash: payloadHash(body),
+        attempt_ordinal: 1,
+        previous_operation_id: null,
+        project_id: context.project_id,
+        project_policy_sha256: context.project_policy_sha256,
+        batch_id: context.batch_id,
+        task_revision: context.task_revision,
+        root_execution_id: context.root_execution_id,
+        execution_id: context.execution_id,
+        parent_execution_id: context.parent_execution_id,
+        kind,
+        call_name: callName(kind, candidate, ordinal),
+        provider: PROVIDER,
+        provider_replay_key: null,
+        pool_key: options.poolKey,
+        allocation_key: options.allocationKey,
+        runtime_profile_sha256: profileSha,
+        rate_sheet_sha256: rateSha,
+        envelope: priced.envelope,
+      };
+      onReserving(id);
+      const reserved = await spend.reserve(request);
+      if (!reserved.ok) {
+        return refusal(reserved.code, reserved.detail ?? null);
+      }
+      if (reserved.replay) {
+        return refusal("operation_replayed", "another process reserved this call first", id);
+      }
+      return { ordinal, id, request, reservation: reserved };
+    });
+    if ("ok" in claimed) {
+      return claimed;
     }
-    if (reservation.replay) {
-      return refusal("operation_replayed", "another process reserved this call first", id);
-    }
+    const { ordinal, id, request, reservation } = claimed;
     const launched = await spend.transition({
       operation_id: id,
       from_state: "prepared",

@@ -32,7 +32,16 @@ export function requestBody(init: RequestInit | undefined): string {
   return init.body;
 }
 
-type Mode = { kind: "idle" } | { kind: "preview" } | { kind: "send"; body: string };
+interface SendState {
+  kind: "send";
+  body: string;
+  /** Set by the one request this call may make; any further request in the call is refused. */
+  used: boolean;
+  /** This call's own outcome, so it is never read by or written for another call. */
+  exchange: Exchange;
+}
+
+type Mode = { kind: "idle" } | { kind: "preview" } | SendState;
 
 /**
  * Wraps the injected fetch. Outside a call it refuses every request. In preview mode it captures the
@@ -42,7 +51,6 @@ type Mode = { kind: "idle" } | { kind: "preview" } | { kind: "send"; body: strin
 export class ObservedFetch {
   private mode: Mode = { kind: "idle" };
   private captured: string | null = null;
-  private exchange: Exchange = { kind: "none" };
   private readonly inner: FetchFunction;
 
   constructor(inner: FetchFunction) {
@@ -59,17 +67,21 @@ export class ObservedFetch {
       this.captured = body;
       throw new RequestNotSentError("preview", "preview only");
     }
-    // One request per call: any further request in this call is refused.
-    this.mode = { kind: "idle" };
+    // One request per call: any further request in this call is refused. The provider stays busy
+    // until the enclosing `send` returns.
+    if (mode.used) {
+      throw new RequestNotSentError("provider_busy", "one request per call");
+    }
+    mode.used = true;
     if (body !== mode.body) {
-      this.exchange = { kind: "not_sent", reason: "payload_mismatch" };
+      mode.exchange = { kind: "not_sent", reason: "payload_mismatch" };
       throw new RequestNotSentError("payload_mismatch", "the request body differs from the reserved payload");
     }
     let response: Response;
     try {
       response = await this.inner(input, init);
     } catch (error) {
-      this.exchange =
+      mode.exchange =
         error instanceof RequestNotSentError ? { kind: "not_sent", reason: error.code } : { kind: "lost" };
       throw error;
     }
@@ -77,10 +89,10 @@ export class ObservedFetch {
     try {
       text = await response.text();
     } catch (error) {
-      this.exchange = { kind: "lost" };
+      mode.exchange = { kind: "lost" };
       throw error;
     }
-    this.exchange = { kind: "response", status: response.status, body: text };
+    mode.exchange = { kind: "response", status: response.status, body: text };
     return new Response(text, { status: response.status, statusText: response.statusText, headers: response.headers });
   };
 
@@ -120,8 +132,8 @@ export class ObservedFetch {
         error: new Error("one writer provider runs one call at a time"),
       };
     }
-    this.enter({ kind: "send", body });
-    this.exchange = { kind: "none" };
+    const state: SendState = { kind: "send", body, used: false, exchange: { kind: "none" } };
+    this.enter(state);
     let error: unknown = null;
     try {
       await action();
@@ -130,7 +142,7 @@ export class ObservedFetch {
     } finally {
       this.mode = { kind: "idle" };
     }
-    return { exchange: this.exchange, error };
+    return { exchange: state.exchange, error };
   }
 
   private enter(mode: Mode): void {
