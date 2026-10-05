@@ -1,0 +1,3 @@
+# The image copies only its entrypoint from the build context, so send nothing else.
+*
+!entrypoint.sh
