@@ -394,7 +394,9 @@ fi
 # released while a container still holds a copy of the sign-in.
 docker "${docker_args[@]}" <&0 &
 docker_pid=$!
-trap 'docker stop --time 10 "$container_name" >/dev/null 2>&1 || true' TERM INT HUP
+# Signal the docker client too: it forwards the signal to the container, and it is
+# there even before docker has created the container, when stop would find nothing.
+trap 'kill -TERM "$docker_pid" 2>/dev/null || true; docker stop --time 10 "$container_name" >/dev/null 2>&1 || true' TERM INT HUP
 status=0
 wait "$docker_pid" || status=$?
 # A trapped signal interrupts the first wait; wait again for docker to finish.
