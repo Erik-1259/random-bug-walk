@@ -1,0 +1,6 @@
+# Compose override for the reset study only: publishes the fixture stack's Postgres on host
+# loopback. The pinned docker-compose.test.yml does not publish the database port.
+services:
+  db:
+    ports:
+      - "127.0.0.1:${RBW_FIXTURE_DB_PORT:?set RBW_FIXTURE_DB_PORT}:5432"
