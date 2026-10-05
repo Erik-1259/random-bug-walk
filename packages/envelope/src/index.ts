@@ -72,14 +72,25 @@ function compute(rates: Rates, operation: "observe" | "admission" | "judge", gen
   if (generation) quantities.push(...model(BigInt(FIXED_LIMITS.model.calls)), ...tavily(BigInt(FIXED_LIMITS.tavily.credits)));
   return build(rates, quantities, BigInt(FIXED_LIMITS.ceilings[operation]));
 }
+function generationEnvelope(rates: Rates): Envelope {
+  return build(rates, [...model(BigInt(FIXED_LIMITS.model.calls)), ...tavily(BigInt(FIXED_LIMITS.tavily.credits))], BigInt(FIXED_LIMITS.ceilings.candidate_generation));
+}
 export function observeEnvelope(rates: Rates): Envelope { return compute(rates, "observe"); }
 export function admissionEnvelope(rates: Rates, options: { includeGeneration: boolean }): Envelope {
   const validated = z.strictObject({ includeGeneration: z.boolean() }).parse(options);
-  return compute(rates, "admission", validated.includeGeneration);
+  const envelope = compute(rates, "admission", validated.includeGeneration);
+  if (!envelope.ok) return envelope;
+  const generation = generationEnvelope(rates);
+  return generation.ok ? envelope : generation;
 }
 export function judgeEnvelope(rates: Rates): Envelope { return compute(rates, "judge"); }
-export function modelCallEnvelope(rates: Rates): Envelope { return build(rates, model(1n), null); }
-export function tavilyCallEnvelope(rates: Rates): Envelope { return build(rates, tavily(BigInt(FIXED_LIMITS.tavily.credits_per_call)), null); }
+function generationCallEnvelope(rates: Rates, quantities: Quantity[]): Envelope {
+  const generation = generationEnvelope(rates);
+  if (!generation.ok) return generation;
+  return build(rates, quantities, BigInt(FIXED_LIMITS.ceilings.candidate_generation));
+}
+export function modelCallEnvelope(rates: Rates): Envelope { return generationCallEnvelope(rates, model(1n)); }
+export function tavilyCallEnvelope(rates: Rates): Envelope { return generationCallEnvelope(rates, tavily(BigInt(FIXED_LIMITS.tavily.credits_per_call))); }
 const hash = z.string().regex(/^[a-f0-9]{64}$/);
 const uuid = z.string().regex(/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/);
 const label = z.string().regex(/^[a-z0-9._-]{1,64}$/);

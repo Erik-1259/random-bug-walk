@@ -15,3 +15,11 @@ The guard-removal proof replaces only `const bound_microusd = ceil(exact_microus
 Other bounds and rounding-gap assertions also fail. `git apply -R` removes the patch, and the package unit command passes again.
 
 The root commands `pnpm install --frozen-lockfile`, `pnpm typecheck`, `pnpm lint`, `pnpm test` and `pnpm build` pass. Root tests include only unit tests. All root checks use the package through the existing workspace conventions.
+
+## Split generation ceiling regression
+
+The candidate-generation ceiling now checks the configured model calls and Tavily credits at the supplied rates before split reservations proceed. Per-call envelopes also carry that ceiling.
+
+Before implementation, `pnpm --filter @rbw/envelope test` exited 1 with 5 failures and 35 passes: aggregate model and Tavily rate increases, oversized individual calls, and the previous null per-call ceiling. After adding the PGlite proof, restoring the original implementation temporarily made the same command exit 1 with 6 failures and 35 passes. The implementation was restored afterwards.
+
+The PGlite proof runs the real spend migrations and reservation API. Inflated generation rates refuse before any operation is inserted; current rates reserve model, Tavily and split admission envelopes and insert three operations. The package test floor is 41. This proof uses no paid calls or network services.

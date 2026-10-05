@@ -110,13 +110,13 @@ test("reserve identity has no defaults or unknown fields", () => {
   expect(() => toReserveRequest({ ok: false, code: "ceiling_exceeded" }, identity())).toThrow();
 });
 
-test("single calls have exact totals and no operation ceiling", () => {
+test("single calls have exact totals and candidate-generation ceiling", () => {
   const m = success(modelCallEnvelope(rates));
   expect(m.exact_microusd).toEqual({ numerator: 98304n, denominator: 25n, decimal_usd: "0.00393216" });
-  expect(m.bound_microusd).toBe(3933n); expect(m.reserved_microusd).toBe(3934n); expect(m.ceiling_microusd).toBeNull();
+  expect(m.bound_microusd).toBe(3933n); expect(m.reserved_microusd).toBe(3934n); expect(m.ceiling_microusd).toBe(8000000n);
   const t = success(tavilyCallEnvelope(rates));
   expect(t.exact_microusd).toEqual({ numerator: 16000n, denominator: 1n, decimal_usd: "0.016" });
-  expect(t.bound_microusd).toBe(16000n); expect(t.reserved_microusd).toBe(16000n); expect(t.ceiling_microusd).toBeNull();
+  expect(t.bound_microusd).toBe(16000n); expect(t.reserved_microusd).toBe(16000n); expect(t.ceiling_microusd).toBe(8000000n);
 });
 test("non-terminating exact USD omits decimal string", () => {
   const synthetic = parseRateSheet(JSON.stringify({ ...rates.sheet, entries: rates.sheet.entries.map(e => ({ ...e, price: { microusd: 1, per_units: 7 } })) }));
@@ -126,4 +126,15 @@ test("identity rejects invalid spend formats and inconsistent attempt predecesso
   for (const fields of [{ pool_key: "x".repeat(65) }, { provider_replay_key: "synthetic\nkey" }, { provider_replay_key: "x".repeat(513) }, { attempt_ordinal: 2 }, { previous_operation_id: "a".repeat(64) }, { project_id: "SYNTHETIC" }]) {
     expect(() => toReserveRequest(observeEnvelope(rates), { ...identity(), ...fields })).toThrow();
   }
+});
+
+for (const unit of ["input_token", "credit"] as const) test(`split reservations refuse aggregate generation above ceiling from ${unit}`, () => {
+  const raised = parseRateSheet(JSON.stringify({ ...rates.sheet, entries: rates.sheet.entries.map(e => e.unit === unit ? { ...e, price: { microusd: unit === "input_token" ? 21 : 700000, per_units: 1 } } : e) }));
+  for (const build of [modelCallEnvelope, tavilyCallEnvelope, (r: typeof rates) => admissionEnvelope(r, { includeGeneration: false }), (r: typeof rates) => admissionEnvelope(r, { includeGeneration: true })]) {
+    expect(build(raised)).toEqual({ ok: false, code: "ceiling_exceeded" });
+  }
+});
+for (const [unit, build] of [["input_token", modelCallEnvelope], ["credit", tavilyCallEnvelope]] as const) test(`single ${unit} call above candidate-generation ceiling is refused`, () => {
+  const raised = parseRateSheet(JSON.stringify({ ...rates.sheet, entries: rates.sheet.entries.map(e => e.unit === unit ? { ...e, price: { microusd: 8000001, per_units: 1 } } : e) }));
+  expect(build(raised)).toEqual({ ok: false, code: "ceiling_exceeded" });
 });
