@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import type { ValidateFunction } from "ajv";
 import { CanonicalError, canonicalDigest, encodeCanonical, parseCanonical } from "./canonical.ts";
-import type { DefName, DefTypes, ProjectPolicy, RootRun } from "./generated.ts";
+import type { DefName, DefTypes, JobRequest, ProjectPolicy, RootRun } from "./generated.ts";
 import { DEF_NAMES } from "./generated.ts";
 import { checkRules } from "./rules.ts";
 
@@ -48,11 +48,12 @@ export function isDefName(value: string): value is DefName {
   return (DEF_NAMES as readonly string[]).includes(value);
 }
 
-/** Records a value may be checked against: its policy, its root, or the policy it succeeds. */
+/** Records a value may be checked against: its policy, its root, the policy it succeeds, or its job request. */
 export interface RecordContext {
   policy?: ProjectPolicy;
   root?: RootRun;
   previous?: ProjectPolicy;
+  request?: JobRequest;
 }
 
 /** Returns error codes; an empty list means the value is valid. */

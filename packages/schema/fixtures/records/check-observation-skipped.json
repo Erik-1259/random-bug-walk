@@ -1,0 +1,9 @@
+{
+  "check_id": "tzarg.la-day-counts",
+  "repeat_index": 1,
+  "observed": "skipped",
+  "failure_code": "test_skipped",
+  "duration_ms": 0,
+  "response_artifact_key": null,
+  "response_artifact_sha256": null
+}

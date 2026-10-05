@@ -1,0 +1,94 @@
+{
+  "schema_version": 1,
+  "user_action": "Opened the website dashboard for the last 7 days with the time zone set to America/Los_Angeles.",
+  "request": {
+    "method": "GET",
+    "path": "/api/websites/00000000-0000-4000-8000-000000000501/pageviews",
+    "query": {
+      "startAt": "1759561200000",
+      "endAt": "1760165999999",
+      "unit": "day",
+      "timezone": "America/Los_Angeles"
+    }
+  },
+  "timezone": "America/Los_Angeles",
+  "locale": "en-US",
+  "fixture_description": "Synthetic data: three recorded visits, one late in the evening Los Angeles time and two the next morning.",
+  "events": [
+    {
+      "label": "synthetic visit 1",
+      "timestamp_seconds": 1759633200,
+      "utc_instant": "2025-10-05T03:00:00Z"
+    },
+    {
+      "label": "synthetic visit 2",
+      "timestamp_seconds": 1759676400,
+      "utc_instant": "2025-10-05T15:00:00Z"
+    },
+    {
+      "label": "synthetic visit 3",
+      "timestamp_seconds": 1759680000,
+      "utc_instant": "2025-10-05T16:00:00Z"
+    }
+  ],
+  "http_status": 200,
+  "expected": [
+    {
+      "bucket_label": "2025-10-04",
+      "count": 1
+    },
+    {
+      "bucket_label": "2025-10-05",
+      "count": 2
+    }
+  ],
+  "observed": [
+    {
+      "bucket_label": "2025-10-05",
+      "count": 3
+    }
+  ],
+  "follow_up_examples": [
+    {
+      "timezone": "Pacific/Auckland",
+      "expected": [
+        {
+          "bucket_label": "2025-10-05",
+          "count": 1
+        },
+        {
+          "bucket_label": "2025-10-06",
+          "count": 2
+        }
+      ],
+      "observed": [
+        {
+          "bucket_label": "2025-10-05",
+          "count": 3
+        }
+      ]
+    },
+    {
+      "timezone": "UTC",
+      "expected": [
+        {
+          "bucket_label": "2025-10-05",
+          "count": 3
+        }
+      ],
+      "observed": [
+        {
+          "bucket_label": "2025-10-05",
+          "count": 3
+        }
+      ]
+    }
+  ],
+  "doc_excerpts": [
+    {
+      "text": "Synthetic excerpt: the timezone parameter sets the zone used to group results by day.",
+      "source_url": "https://example.invalid/docs/api/website-stats",
+      "suggestion": "synthetic"
+    }
+  ]
+}

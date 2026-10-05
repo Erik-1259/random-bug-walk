@@ -1,13 +1,20 @@
 import { canonicalDigest } from "./canonical.ts";
+import { TRIAL_PROFILES, jobOperationIdentity, jobPayloadDigest, utcInstantKey, utcSeconds } from "./derive.ts";
 import type {
   ArtifactManifest,
   DefName,
+  ExpectedTrials,
   FamilyRegistry,
+  JobRequest,
+  MutationIdentity,
+  ObservedSymptom,
   ProjectPolicy,
   PublicationRecord,
   RootRun,
   RunManifest,
   StagingOmissions,
+  TrialObservations,
+  TrialResult,
 } from "./generated.ts";
 
 /**
@@ -18,6 +25,7 @@ interface Context {
   policy?: ProjectPolicy;
   root?: RootRun;
   previous?: ProjectPolicy;
+  request?: JobRequest;
 }
 
 function strictlySorted(values: readonly string[]): boolean {
@@ -71,6 +79,54 @@ function omissionsRules(omissions: StagingOmissions): string[] {
   return errors;
 }
 
+function jobRequestRules(request: JobRequest): string[] {
+  const errors: string[] = [];
+  const isRoot = request.execution_id === request.root_execution_id;
+  if ((request.parent_execution_id === null) !== isRoot) errors.push("job:root_parent");
+  if (request.parent_execution_id === request.execution_id) errors.push("job:own_parent");
+  if (canonicalDigest(jobOperationIdentity(request)).sha256 !== request.operation_id) errors.push("job:operation_id");
+  if (jobPayloadDigest(request).sha256 !== request.payload_hash) errors.push("job:payload_hash");
+  return errors;
+}
+
+function expectedTrialsRules(manifest: ExpectedTrials, request: JobRequest | undefined): string[] {
+  const errors: string[] = [];
+  const trials = manifest.trials;
+  if (hasDuplicates(trials.map((trial) => trial.trial_id))) errors.push("trials:duplicate_trial");
+  if (trials.some((trial) => hasDuplicates(trial.expected_checks.map((check) => check.check_id)))) errors.push("trials:duplicate_check");
+  if (request === undefined) return errors;
+  if (canonicalDigest(manifest).sha256 !== request.expected_trials_sha256) errors.push("request:expected_trials_sha256");
+  const profile = TRIAL_PROFILES[request.kind];
+  if (profile.originalSuite) {
+    if (trials.some((trial) => trial.original_suite_sha256 === null)) errors.push("trials:original_suite_missing");
+  } else if (trials.some((trial) => trial.original_suite_sha256 !== null)) {
+    errors.push("trials:original_suite_present");
+  }
+  const listMatches =
+    trials.length === profile.trials.length &&
+    trials.every((trial, index) => trial.trial_id === profile.trials[index]?.trial_id && trial.code_state === profile.trials[index].code_state);
+  if (!listMatches) errors.push("trials:trial_list");
+  else if (trials.some((trial, index) => trial.added_repeat_count !== profile.trials[index]?.added_repeat_count)) errors.push("trials:repeat_count");
+  return errors;
+}
+
+function observationsInOrder(observations: TrialObservations["observations"]): boolean {
+  return observations.every((current, index) => {
+    const previous = observations[index - 1];
+    if (previous === undefined) return true;
+    if (previous.repeat_index !== current.repeat_index) return previous.repeat_index < current.repeat_index;
+    return previous.check_id < current.check_id;
+  });
+}
+
+function mutationRules(identity: MutationIdentity): string[] {
+  const errors: string[] = [];
+  if (!strictlySorted(identity.changes.map((change) => change.path))) errors.push("mutation:changes_sorted");
+  const unchanged = identity.changes.some((change) => change.original_sha256 === change.resulting_sha256 && change.original_mode === change.resulting_mode);
+  if (unchanged) errors.push("mutation:unchanged");
+  return errors;
+}
+
 /** Succession of frozen policies: same project, a higher version, and public exposure never reversed. */
 export function policySuccessionErrors(previous: ProjectPolicy, next: ProjectPolicy): string[] {
   const errors: string[] = [];
@@ -93,6 +149,11 @@ function contextRules(value: Record<string, unknown>, context: Context): string[
     }
   }
   if (context.previous !== undefined) errors.push(...policySuccessionErrors(context.previous, value as unknown as ProjectPolicy));
+  if (context.request !== undefined) {
+    for (const key of ["project_policy_sha256", "root_execution_id", "execution_id", "task_revision", "expected_trials_sha256"] as const) {
+      if (key in value && value[key] !== context.request[key]) errors.push(`request:${key}`);
+    }
+  }
   return errors;
 }
 
@@ -122,6 +183,26 @@ export function checkRules(type: DefName, value: unknown, context: Context): str
       break;
     case "StagingOmissions":
       errors.push(...omissionsRules(value as StagingOmissions));
+      break;
+    case "JobRequest":
+      errors.push(...jobRequestRules(value as JobRequest));
+      break;
+    case "ExpectedTrials":
+      errors.push(...expectedTrialsRules(value as ExpectedTrials, context.request));
+      break;
+    case "TrialObservations":
+      if (!observationsInOrder((value as TrialObservations).observations)) errors.push("observations:order");
+      break;
+    case "TrialResult": {
+      const result = value as TrialResult;
+      if (utcInstantKey(result.ended_at) < utcInstantKey(result.started_at)) errors.push("result:ended_before_started");
+      break;
+    }
+    case "ObservedSymptom":
+      if ((value as ObservedSymptom).events.some((event) => utcSeconds(event.utc_instant) !== event.timestamp_seconds)) errors.push("symptom:event_instant");
+      break;
+    case "MutationIdentity":
+      errors.push(...mutationRules(value as MutationIdentity));
       break;
     default:
       break;

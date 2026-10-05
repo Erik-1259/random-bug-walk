@@ -1,3 +1,5 @@
+import json
+
 import pytest
 from conftest import FIXTURES, RecordCase, read_manifest
 from rbw_schema.canonical import CanonicalError, encode_canonical, parse_canonical, sha256_hex
@@ -73,4 +75,19 @@ def test_report_lists_every_fixture_in_manifest_order() -> None:
             else "-"
         )
         expected.append(f"{record['name']} {record['expect']} {digest}")
+    ids = {
+        "OperationIdentity": "operation_id",
+        "MutationIdentity": "mutation_id",
+        "TaskRevisionIdentity": "task_revision",
+    }
+    for record in MANIFEST["records"]:
+        if record["expect"] != "valid":
+            continue
+        if record["type"] == "JobRequest":
+            request = json.loads((FIXTURES / "records" / f"{record['name']}.json").read_text())
+            expected.append(f"{record['name']} operation_id {request['operation_id']}")
+            expected.append(f"{record['name']} payload_hash {request['payload_hash']}")
+        elif record["type"] in ids:
+            digest = (FIXTURES / "records" / f"{record['name']}.sha256").read_text("ascii")
+            expected.append(f"{record['name']} {ids[record['type']]} {digest}")
     assert fixture_report(FIXTURES) == expected

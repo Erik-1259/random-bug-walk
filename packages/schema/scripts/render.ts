@@ -63,6 +63,7 @@ interface Language {
   literalUnion(values: readonly unknown[]): string;
   union(parts: readonly string[]): string;
   array(item: string): string;
+  map(value: string): string;
   primitive(type: string): string;
 }
 
@@ -71,6 +72,7 @@ const typescript: Language = {
   literalUnion: (values) => values.map(literal).join(" | "),
   union: (parts) => parts.join(" | "),
   array: (item) => (/^[A-Za-z0-9]+$/.test(item) ? `${item}[]` : `(${item})[]`),
+  map: (value) => `Record<string, ${value}>`,
   primitive: (type) => ({ string: "string", integer: "number", boolean: "boolean", null: "null" })[type] ?? fail(type),
 };
 
@@ -79,11 +81,17 @@ const python: Language = {
   literalUnion: (values) => `Literal[${values.map(pyLiteral).join(", ")}]`,
   union: (parts) => parts.join(" | "),
   array: (item) => `list[${item}]`,
+  map: (value) => `dict[str, ${value}]`,
   primitive: (type) => ({ string: "str", integer: "int", boolean: "bool", null: "None" })[type] ?? fail(type),
 };
 
 function fail(type: string): never {
   throw new Error(`unsupported type ${type}`);
+}
+
+/** An object schema with free keys and one value schema, such as a map of query parameters. */
+function isMap(node: SchemaNode): boolean {
+  return node.type === "object" && node.properties === undefined && isNode(node.additionalProperties);
 }
 
 /** Maps a property or alias schema to a type expression. Object schemas must be named definitions. */
@@ -98,6 +106,7 @@ function typeOf(node: SchemaNode, lang: Language): string {
     if (!isNode(node.items)) throw new Error("arrays need items");
     return lang.array(typeOf(node.items, lang));
   }
+  if (isMap(node) && isNode(node.additionalProperties)) return lang.map(typeOf(node.additionalProperties, lang));
   if (node.type === "object") throw new Error("inline objects are not supported; use a named definition");
   if (typeof node.type === "string") return lang.primitive(node.type);
   throw new Error("unsupported schema node");
@@ -138,7 +147,7 @@ function renderTypescript(schema: SchemaNode): string {
       const constant = constantName(name);
       lines.push(`export const ${constant} = [${values.map(literal).join(", ")}] as const;`);
       lines.push(`export type ${name} = (typeof ${constant})[number];`);
-    } else if (node.type === "object") {
+    } else if (node.type === "object" && !isMap(node)) {
       lines.push(`export interface ${name} {`);
       for (const [key, value] of properties(node)) lines.push(`  ${key}: ${typeOf(value, typescript)};`);
       lines.push("}");
@@ -180,7 +189,7 @@ function renderPython(schema: SchemaNode): string {
     if (values !== null) {
       lines.push("", `type ${name} = Literal${pyLiteralBlock(values)}`);
       lines.push(`${constantName(name)}: Final = ${pyTuple(values)}`);
-    } else if (node.type === "object") {
+    } else if (node.type === "object" && !isMap(node)) {
       lines.push("", "", `class ${name}(TypedDict):`);
       for (const [key, value] of properties(node)) lines.push(`    ${key}: ${typeOf(value, python)}`);
       lines.push("");
