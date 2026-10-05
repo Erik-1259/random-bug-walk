@@ -103,7 +103,7 @@ export interface BlobClient {
 /** Reads a body chunk by chunk and stops, cancelling the rest, once more than maxBytes have arrived. */
 async function readLimited(response: Response, maxBytes: number): Promise<Uint8Array> {
   if (response.body === null) return new Uint8Array();
-  const reader = response.body.getReader();
+  const reader: ReadableStreamDefaultReader<Uint8Array> = response.body.getReader();
   const chunks: Uint8Array[] = [];
   let received = 0;
   try {
