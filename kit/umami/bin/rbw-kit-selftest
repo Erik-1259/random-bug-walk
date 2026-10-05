@@ -1,0 +1,267 @@
+#!/bin/sh
+# In-image self-test of the kit's isolation and contents. Run it as root in a fresh container:
+#
+#   docker run --rm --network none --security-opt no-new-privileges <tag> /opt/rbw/bin/rbw-kit-selftest
+#
+# Run it once without --security-opt no-new-privileges as well: with that option the launcher's
+# own no-new-privileges setting cannot be observed, and the self-test prints a note saying so.
+#
+# Each check prints "pass <name>" or "fail <name>" (with its output indented below a failure).
+# The exit status is 1 if any check failed. It starts and stops Postgres, so run it before
+# rbw-start, and before any app build, because it also checks that the image is cold.
+# shellcheck disable=SC2329 # the check functions and cleanup run indirectly, through check and trap
+set -u
+LAUNCH=/opt/rbw/bin/rbw-launch
+VERIFIER=/opt/rbw/verifier
+APP=/workspace/app
+failures=0
+driver=''
+
+[ "$(id -u)" = 0 ] || { echo "rbw-kit-selftest: must run as root" >&2; exit 2; }
+scratch=$(mktemp -d /run/rbw-selftest.XXXXXX)
+
+cleanup() {
+  [ -z "$driver" ] || kill "$driver" 2>/dev/null
+  /opt/rbw/bin/rbw-stop > /dev/null 2>&1
+  rm -r -f "$scratch"
+}
+trap cleanup EXIT
+
+# check <name> <command...>: the check passes when the command succeeds.
+check() {
+  name=$1
+  shift
+  if "$@" > "$scratch/check.log" 2>&1; then
+    echo "pass $name"
+  else
+    echo "fail $name"
+    sed 's/^/    /' "$scratch/check.log" | head -n 40
+    failures=$((failures + 1))
+  fi
+}
+
+as_app() {
+  "$LAUNCH" --as app --timeout-ms 60000 "$@"
+}
+
+# Number of processes, zombies excluded, whose real UID is $1.
+processes_of() {
+  cat /proc/[0-9]*/status 2>/dev/null |
+    awk -v uid="$1" '/^State:/ { zombie = ($2 == "Z") } /^Uid:/ { if ($2 == uid && !zombie) n++ } END { print n + 0 }'
+}
+
+app_cannot_read_verifier() {
+  file=$VERIFIER/suite/playwright.api.config.ts
+  [ -s "$file" ] || { echo "missing $file"; return 1; }
+  ! as_app -- cat "$file"
+}
+
+app_cannot_list_verifier() {
+  ! as_app -- ls "$VERIFIER"
+}
+
+app_cannot_write_results() {
+  probe=/var/lib/rbw/results/rbw-selftest-probe
+  # shellcheck disable=SC2016 # expanded by the app's shell
+  if as_app -- sh -c ': > "$1"' sh "$probe"; then
+    rm -f "$probe"
+    return 1
+  fi
+  [ ! -e "$probe" ]
+}
+
+app_cannot_signal_driver() {
+  kill -0 "$driver" || { echo "the driver stand-in is not running"; return 1; }
+  ! as_app -- kill -0 "$driver"
+}
+
+app_cannot_read_driver_environ() {
+  grep -q synthetic-driver-value "/proc/$driver/environ" || { echo "the driver stand-in has no marker"; return 1; }
+  ! as_app -- cat "/proc/$driver/environ"
+}
+
+launcher_sets_no_new_privs() {
+  as_app -- grep '^NoNewPrivs:' /proc/self/status > "$scratch/status"
+  cat "$scratch/status"
+  grep -q '^NoNewPrivs:[[:space:]]*1$' "$scratch/status"
+}
+
+# With --security-opt no-new-privileges every process inherits NoNewPrivs 1, so the check above
+# cannot tell whether the launcher sets it; a run without that option can.
+inherited_no_new_privs=0
+if grep -q '^NoNewPrivs:[[:space:]]*1$' /proc/self/status; then
+  inherited_no_new_privs=1
+fi
+
+launcher_drops_to_app_identity() {
+  identity=$(as_app -- id -u):$(as_app -- id -g):$(as_app -- id -G)
+  echo "$identity"
+  [ "$identity" = 2001:2001:2001 ]
+}
+
+launcher_clears_loader_overrides() {
+  printf '%s\n' 'LD_PRELOAD=/nonexistent/rbw-selftest.so' 'LD_LIBRARY_PATH=/nonexistent' \
+    'NODE_OPTIONS=--require=/nonexistent/rbw-selftest.js' 'NODE_PATH=/nonexistent' \
+    'RBW_SELFTEST_MARKER=present' > "$scratch/overrides.environment"
+  # shellcheck disable=SC2016 # expanded by the app's shell
+  seen=$(as_app --env-file "$scratch/overrides.environment" -- \
+    sh -c 'echo "${LD_PRELOAD-unset}|${LD_LIBRARY_PATH-unset}|${NODE_OPTIONS-unset}|${NODE_PATH-unset}|${RBW_SELFTEST_MARKER-unset}"')
+  echo "$seen"
+  [ "$seen" = 'unset|unset|unset|unset|present' ]
+}
+
+launcher_truncates_output() {
+  out=$scratch/big.out
+  as_app --stdout "$out" -- head -c 2000000 /dev/zero || return 1
+  marker='[rbw-launch: output truncated at 1048576 bytes]'
+  size=$(wc -c < "$out" | tr -d ' ')
+  kept_non_zero=$(head -c 1048576 "$out" | tr -d '\000' | wc -c | tr -d ' ')
+  echo "size=$size non-zero bytes kept=$kept_non_zero last line=$(tail -n 1 "$out")"
+  [ "$size" -eq $((1048576 + ${#marker} + 2)) ] && [ "$kept_non_zero" -eq 0 ] && [ "$(tail -n 1 "$out")" = "$marker" ]
+}
+
+launcher_kills_term_ignoring_child() {
+  started=$(awk '{ printf "%d", $1 * 1000 }' /proc/uptime)
+  as_app --timeout-ms 1000 -- sh -c 'trap "" TERM; sleep 120 & wait; sleep 120'
+  status=$?
+  elapsed=$(($(awk '{ printf "%d", $1 * 1000 }' /proc/uptime) - started))
+  left=$(processes_of 2001)
+  echo "status=$status elapsed_ms=$elapsed rbw-app processes left=$left"
+  [ "$status" -eq 124 ] && [ "$elapsed" -ge 5000 ] && [ "$elapsed" -lt 30000 ] && [ "$left" -eq 0 ]
+}
+
+postgres_listens_on_loopback_only() {
+  /opt/rbw/bin/rbw-start --db-only || return 1
+  /opt/rbw/bin/rbw-listening > "$scratch/listening"
+  cat "$scratch/listening"
+  grep -qx 'tcp 127.0.0.1:5432' "$scratch/listening" || return 1
+  ! grep -v -e '^tcp 127\.' -e '^tcp6 \[::1\]' "$scratch/listening" | grep -q . || return 1
+  ! grep ':5432$' "$scratch/listening" | grep -qvx 'tcp 127.0.0.1:5432'
+}
+
+app_role_cannot_create_roles_or_databases() {
+  # shellcheck disable=SC2016 # expanded by the app's shell
+  run_sql='psql "$DATABASE_URL" -X -tA -v ON_ERROR_STOP=1 -c "$1"'
+  [ "$(as_app --env-file /opt/rbw/etc/app.environment -- sh -c "$run_sql" sh 'SELECT 1')" = 1 ] ||
+    { echo "the app role cannot connect"; return 1; }
+  ! as_app --env-file /opt/rbw/etc/app.environment -- sh -c "$run_sql" sh 'CREATE ROLE rbw_selftest_role' || return 1
+  ! as_app --env-file /opt/rbw/etc/app.environment -- sh -c "$run_sql" sh 'CREATE DATABASE rbw_selftest_db' || return 1
+  attributes=$(psql -X -tA -h /run/rbw-pg -U postgres -d postgres \
+    -c "SELECT rolsuper, rolcreaterole, rolcreatedb FROM pg_roles WHERE rolname = 'umami_app'")
+  echo "umami_app super|createrole|createdb: $attributes"
+  [ "$attributes" = 'f|f|f' ]
+}
+
+app_cannot_reach_db_socket() {
+  ! as_app -- psql -X -h /run/rbw-pg -U postgres -d postgres -c 'SELECT 1'
+}
+
+no_browser_binaries() {
+  found=$(find / -xdev \( -name 'ms-playwright*' -o \( -type f \( -name chrome -o -name chromium \
+    -o -name chromium-browser -o -name chrome-headless-shell -o -name headless_shell -o -name firefox \
+    -o -name firefox-bin -o -name MiniBrowser -o -name WebKitWebProcess -o -name pw_run.sh \) \) \) -print 2>/dev/null)
+  echo "$found"
+  [ -z "$found" ]
+}
+
+suite_closure_hashes_match() {
+  (cd "$VERIFIER/suite" && sha256sum -c "$VERIFIER/closure.sha256" > /dev/null) || return 1
+  (cd "$VERIFIER/suite" && find . -type f | sed 's|^\./||' | LC_ALL=C sort) > "$scratch/suite-files"
+  awk '{ print $2 }' "$VERIFIER/closure.sha256" | diff - "$scratch/suite-files"
+}
+
+verifier_tree_is_root_only() {
+  wrong=$(find "$VERIFIER" ! -user root -o ! -group root -o \( -type d ! -perm 0700 \) \
+    -o \( -type f ! -perm 0600 ! -perm 0700 \))
+  echo "$wrong" | head -n 20
+  [ -z "$wrong" ]
+}
+
+no_setuid_or_setgid_files() {
+  found=$(find / -xdev -type f \( -perm -4000 -o -perm -2000 \) -print 2>/dev/null)
+  echo "$found"
+  [ -z "$found" ]
+}
+
+app_tracked_files_match_pinned_commit() {
+  (cd "$APP" && sha256sum -c "$VERIFIER/app-tracked.sha256") > "$scratch/tracked.log" 2>&1
+  status=$?
+  grep -v ': OK$' "$scratch/tracked.log" | head -n 20
+  return "$status"
+}
+
+# can_write <path>: true when rbw-app can create (and so overwrite) the file at <path>.
+can_write() {
+  # shellcheck disable=SC2016 # expanded by the app's shell
+  as_app -- sh -c ': > "$1" && rm -f "$1"' sh "$1" 2> /dev/null
+}
+
+app_writes_only_declared_paths() {
+  ok=0
+  for path in /var/tmp/rbw-app/probe "$APP/.next/probe" "$APP/packages/mcp/probe.tmp"; do
+    can_write "$path" || { echo "cannot write $path"; ok=1; }
+  done
+  for path in /tmp/probe /var/tmp/probe "$APP/probe" "$APP/src/probe" "$APP/node_modules/probe" \
+    "$APP/package.json" "$APP/pnpm-workspace.yaml" "$APP/packages/mcp/package.json" /opt/rbw/bin/probe \
+    /opt/rbw/etc/app.environment /var/lib/rbw/pgdata/probe; do
+    ! can_write "$path" || { echo "can write $path"; ok=1; }
+  done
+  ! as_app -- rm -f "$APP/packages/mcp/package.json" || { echo "can remove a tracked file in a sticky directory"; ok=1; }
+  [ -f "$APP/packages/mcp/package.json" ] || ok=1
+  return "$ok"
+}
+
+runtimes_are_pinned() {
+  verifier_node=$("$VERIFIER/node/bin/node" --version)
+  app_node=$(as_app -- node --version)
+  app_pnpm=$(as_app --cwd "$APP" -- pnpm --version)
+  echo "verifier node $verifier_node, app node $app_node, app pnpm $app_pnpm"
+  case $verifier_node in v24.*) ;; *) return 1 ;; esac
+  case $app_node in v22.*) ;; *) return 1 ;; esac
+  /bin/setpriv --version | grep -q util-linux || { echo "/bin/setpriv is not util-linux's"; return 1; }
+  [ "$app_pnpm" = 12.3.4 ] && command -v tmux > /dev/null
+}
+
+verifier_imports_resolve_inside_verifier() {
+  resolved=$(cd "$VERIFIER/suite/tests/api" && env -i PATH=/usr/bin:/bin "$VERIFIER/node/bin/node" --input-type=module \
+    -e 'for (const name of ["@playwright/test", "otplib", "pg"]) console.log(import.meta.resolve(name));')
+  echo "$resolved"
+  [ -f "$VERIFIER/suite/src/lib/analytics-query.ts" ] || return 1
+  [ "$(echo "$resolved" | grep -c "^file://$VERIFIER/node_modules/")" -eq 3 ]
+}
+
+env RBW_DRIVER_MARKER=synthetic-driver-value sleep 600 &
+driver=$!
+
+check no-build-outputs-or-caches /opt/rbw/bin/rbw-check-cold
+check app-cannot-read-verifier app_cannot_read_verifier
+check app-cannot-list-verifier app_cannot_list_verifier
+check app-cannot-write-results app_cannot_write_results
+check app-cannot-signal-driver app_cannot_signal_driver
+check app-cannot-read-driver-environ app_cannot_read_driver_environ
+check launcher-sets-no-new-privs launcher_sets_no_new_privs
+check launcher-drops-to-app-identity launcher_drops_to_app_identity
+check launcher-clears-loader-overrides launcher_clears_loader_overrides
+check launcher-truncates-output launcher_truncates_output
+check launcher-kills-term-ignoring-child launcher_kills_term_ignoring_child
+check postgres-listens-on-loopback-only postgres_listens_on_loopback_only
+check app-role-cannot-create-roles-or-databases app_role_cannot_create_roles_or_databases
+check app-cannot-reach-db-socket app_cannot_reach_db_socket
+check no-browser-binaries no_browser_binaries
+check suite-closure-hashes-match suite_closure_hashes_match
+check verifier-tree-is-root-only verifier_tree_is_root_only
+check no-setuid-or-setgid-files no_setuid_or_setgid_files
+check app-tracked-files-match-pinned-commit app_tracked_files_match_pinned_commit
+check app-writes-only-declared-paths app_writes_only_declared_paths
+check runtimes-are-pinned runtimes_are_pinned
+check verifier-imports-resolve-inside-verifier verifier_imports_resolve_inside_verifier
+
+if [ "$inherited_no_new_privs" -eq 1 ]; then
+  echo "note: NoNewPrivs was already 1 for the self-test, so launcher-sets-no-new-privs shows only that it stays set; run once without --security-opt no-new-privileges to test the launcher's own setting"
+fi
+if [ "$failures" -eq 0 ]; then
+  echo "selftest: all checks passed"
+  exit 0
+fi
+echo "selftest: $failures check(s) failed"
+exit 1

@@ -1,0 +1,47 @@
+#!/bin/sh
+# Lists anything that would make the next app build warm: non-empty declared build outputs,
+# Next or turbo caches, app source maps, files in the users' temp directories, a pnpm store or
+# root's package caches. Prints one line per finding and exits 1 if there is any. A fresh
+# container of the image has none.
+set -u
+APP=/workspace/app
+found=0
+
+report() {
+  echo "$1"
+  found=1
+}
+
+while read -r kind path; do
+  case $kind in
+    dir)
+      if [ ! -d "$APP/$path" ]; then
+        report "missing build output directory: $path"
+      elif [ -n "$(ls -A "$APP/$path")" ]; then
+        report "build output directory is not empty: $path"
+      fi
+      ;;
+    file)
+      if [ ! -f "$APP/$path" ]; then
+        report "missing build output file: $path"
+      elif [ -s "$APP/$path" ]; then
+        report "build output file is not empty: $path"
+      fi
+      ;;
+  esac
+done < /opt/rbw/etc/build-outputs.txt
+
+for path in .turbo node_modules/.cache; do
+  [ ! -e "$APP/$path" ] || report "cache present: $path"
+done
+maps=$(find "$APP" -name node_modules -prune -o -type f -name '*.map' -print | head -n 5)
+[ -z "$maps" ] || report "app source maps present: $(echo "$maps" | tr '\n' ' ')"
+for dir in /var/tmp/rbw-app /var/tmp/rbw-db; do
+  [ -z "$(ls -A "$dir")" ] || report "temp directory is not empty: $dir"
+done
+stores=$(find / -xdev \( -name .pnpm-store -o -path '*/pnpm/store' \) -print 2>/dev/null | head -n 5)
+[ -z "$stores" ] || report "pnpm store present: $(echo "$stores" | tr '\n' ' ')"
+for dir in /root/.cache /root/.local/share/pnpm /root/.npm; do
+  [ ! -e "$dir" ] || report "cache present: $dir"
+done
+exit "$found"

@@ -1,0 +1,13 @@
+# Environment for `pnpm build:docker`, read by rbw-launch. It matches the builder stage of
+# Umami's Dockerfile (telemetry off, a dummy DATABASE_URL, SKIP_BUILD_GEO), plus the mocked
+# Google Fonts response that lets the build run without network.
+TZ=UTC
+NEXT_TELEMETRY_DISABLED=1
+DATABASE_URL=postgresql://user:pass@localhost:5432/dummy
+SKIP_BUILD_GEO=1
+CHECKPOINT_DISABLE=1
+NEXT_FONT_GOOGLE_MOCKED_RESPONSES=/opt/rbw/build/next-font-google-mocks.cjs
+unset CLICKHOUSE_URL
+unset REDIS_URL
+unset CLOUD_MODE
+unset DATABASE_REPLICA_URL

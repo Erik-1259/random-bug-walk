@@ -10,6 +10,7 @@ export default defineConfig({
     projects: [
       "packages/*",
       "tools/*",
+      "kit/*",
       { test: { name: "scripts-checks", include: ["scripts/checks/**/*.test.ts"] } },
       // Vitest fails when no project matches; this inline project keeps an empty workspace valid.
       { test: { name: "root", include: ["*.test.ts"] } },

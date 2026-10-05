@@ -1,0 +1,20 @@
+# Environment for Umami's start-up scripts and server, read by rbw-launch. All values are
+# synthetic test values. APP_SECRET is the public value from Umami's docker-compose.test.yml;
+# TWO_FACTOR_ENCRYPTION_KEY is a placeholder of 64 zeros, which Umami accepts as a 256-bit key.
+TZ=UTC
+NODE_ENV=production
+HOSTNAME=127.0.0.1
+PORT=3000
+DATABASE_URL=postgresql://umami_app:synthetic-umami-app-password@127.0.0.1:5432/umami
+APP_SECRET=umami-api-test-secret
+TWO_FACTOR_ENCRYPTION_KEY=0000000000000000000000000000000000000000000000000000000000000000
+DISABLE_BOT_CHECK=1
+DISABLE_TELEMETRY=1
+DISABLE_UPDATES=1
+MCP_ENABLED=1
+NEXT_TELEMETRY_DISABLED=1
+CHECKPOINT_DISABLE=1
+unset CLICKHOUSE_URL
+unset REDIS_URL
+unset CLOUD_MODE
+unset DATABASE_REPLICA_URL
