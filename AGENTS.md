@@ -5,9 +5,9 @@ These are the engineering rules for any coding agent or person working in this r
 ## Working environment
 
 - Coding agents work in a development container that the host starts with `container/run-agent.sh`; `container/check-isolation.sh` verifies its isolation.
-- The container mounts a standalone clone of this repository read-write at `/workspace` and the shared inbox at `/inbox`, and nothing else from the host. The inbox's `publication/` directory is mounted read-only, with its `requests/` directory read-write as a separate mount, so agents cannot change `responses/`.
+- The container mounts a standalone clone of this repository read-write at `/workspace` and the shared inbox at `/inbox`, and nothing else from the host except, for Codex runs, the private sign-in copy at `/run/codex-state`. The inbox's `publication/` directory is mounted read-only, with its `requests/` directory read-write as a separate mount, so agents cannot change `responses/`.
 - It runs as an unprivileged user without sudo, with all capabilities dropped.
-- It holds no GitHub, Vercel, Neon or Blob credentials. The only credentials passed in are the two model-provider API keys, read from an owner-only credentials file that the launcher is given at start. Git's author and committer identity comes from the clone's own git config.
+- It holds no GitHub, Vercel, Neon or Blob credentials. The only credentials passed in are the owner's model subscriptions: the Claude Code token from an owner-only credentials file that the launcher is given at start, and, for Codex runs, a private copy of the owner's ChatGPT sign-in that is written back if Codex refreshes it and then deleted. No API key is passed in. Git's author and committer identity comes from the clone's own git config.
 - It has no Docker, no database server and no GitHub CLI. It has network access for package registries and public documentation.
 - Tools: Node 24 (runs erasable-syntax `.ts` files directly), pnpm, uv (provisions Python 3.12), git, ripgrep, jq, curl, and the Claude Code and Codex CLIs at pinned versions with self-update off.
 - Codex's own sandbox is off in the image, because the container is the isolation boundary.

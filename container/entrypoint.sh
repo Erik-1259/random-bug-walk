@@ -1,13 +1,9 @@
 #!/bin/bash
-# Image entrypoint. When OPENAI_API_KEY is set, signs Codex in with it on every start
-# (Codex does not read the key from the environment by itself), then runs the command.
-# The sign-in file lives in the container's home and goes away with the container.
+# Image entrypoint. Runs the command. For a --codex-auth run, run-agent.sh mounts a
+# private writable copy of the owner's ChatGPT sign-in at /run/codex-state and sets
+# CODEX_HOME to it, so Codex reads and refreshes that copy; the launcher writes a
+# refreshed copy back afterwards. Claude Code reads CLAUDE_CODE_OAUTH_TOKEN from the
+# environment by itself.
 set -euo pipefail
-
-if [ -n "${OPENAI_API_KEY:-}" ]; then
-  if ! printenv OPENAI_API_KEY | codex login --with-api-key >/dev/null 2>&1; then
-    echo "entrypoint: Codex sign-in with OPENAI_API_KEY failed" >&2
-  fi
-fi
 
 exec "$@"
