@@ -1,0 +1,59 @@
+id: dt-1.tz-arg
+snapshots:
+  ? |
+    async function relationalQuery(siteId: string, filters: SyntheticFilters) {
+      const { timezone = 'utc', unit = 'day' } = filters;
+      const sql = `select ${getDateSQL('website_event.created_at', unit, timezone)} x`;
+      return run(sql);
+    }
+  : fixed: |
+      async function relationalQuery(siteId: string, filters: SyntheticFilters) {
+        const { timezone = 'utc', unit = 'day' } = filters;
+        const sql = `select ${getDateSQL('website_event.created_at', unit)} x`;
+        return run(sql);
+      }
+    labels:
+    - source: getDateSQL('website_event.created_at', unit, timezone)
+      style: primary
+      start: 154
+      end: 208
+    - source: relationalQuery
+      style: secondary
+      start: 15
+      end: 30
+    - source: |-
+        async function relationalQuery(siteId: string, filters: SyntheticFilters) {
+          const { timezone = 'utc', unit = 'day' } = filters;
+          const sql = `select ${getDateSQL('website_event.created_at', unit, timezone)} x`;
+          return run(sql);
+        }
+      style: secondary
+      start: 0
+      end: 234
+  ? |
+    async function relationalQuery(siteId: string, filters: SyntheticFilters) {
+      const { timezone, unit } = filters;
+      return run(`${getDateSQL('website_event.created_at', unit, timezone)} x`);
+    }
+  : fixed: |
+      async function relationalQuery(siteId: string, filters: SyntheticFilters) {
+        const { timezone, unit } = filters;
+        return run(`${getDateSQL('website_event.created_at', unit)} x`);
+      }
+    labels:
+    - source: getDateSQL('website_event.created_at', unit, timezone)
+      style: primary
+      start: 130
+      end: 184
+    - source: relationalQuery
+      style: secondary
+      start: 15
+      end: 30
+    - source: |-
+        async function relationalQuery(siteId: string, filters: SyntheticFilters) {
+          const { timezone, unit } = filters;
+          return run(`${getDateSQL('website_event.created_at', unit, timezone)} x`);
+        }
+      style: secondary
+      start: 0
+      end: 192

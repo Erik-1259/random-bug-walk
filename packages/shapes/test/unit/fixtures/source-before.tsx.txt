@@ -1,0 +1,11 @@
+'use client';
+import { Panel } from '@/synthetic/ui';
+import { useDateRange } from '@/synthetic/hooks';
+
+export function RevenuePage({ siteId }: { siteId: string }) {
+  const {
+    dateRange: { startDate, endDate },
+  } = useDateRange();
+
+  return <Panel siteId={siteId} startDate={startDate} endDate={endDate} />;
+}

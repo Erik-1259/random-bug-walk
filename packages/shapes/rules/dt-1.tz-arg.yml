@@ -1,0 +1,60 @@
+# Shape DT-1.tz-arg: a caller holds the selected timezone but does not pass it to a date
+# operation, which then silently uses its default. The first rule matches the fixed form
+# (with the timezone argument) and its fix plants the bug by dropping that argument. The
+# second rule matches the planted form. Both are scoped to the one target function.
+id: dt-1.tz-arg
+language: TypeScript
+severity: info
+message: getDateSQL receives the selected timezone in relationalQuery.
+note: Removing the third argument makes the date bucket fall back to the helper's default timezone.
+rule:
+  pattern: getDateSQL($FIELD, $UNIT, $TZ)
+  inside:
+    kind: function_declaration
+    stopBy: end
+    has:
+      field: name
+      regex: ^relationalQuery$
+constraints:
+  FIELD:
+    kind: string
+    regex: ^'website_event\.created_at'$
+  UNIT:
+    kind: identifier
+    regex: ^unit$
+  TZ:
+    kind: identifier
+    regex: ^timezone$
+fix: getDateSQL($FIELD, $UNIT)
+metadata:
+  shape_id: DT-1.tz-arg
+  form: fixed
+  keywords: [timezone, getDateSQL, date bucket, day counts, default timezone, utc]
+  cwe: CWE-628 Function Call with Incorrectly Specified Arguments
+  related_lint_rule: none
+---
+id: dt-1.tz-arg.planted
+language: TypeScript
+severity: info
+message: getDateSQL in relationalQuery does not receive the selected timezone.
+rule:
+  pattern: getDateSQL($FIELD, $UNIT)
+  inside:
+    kind: function_declaration
+    stopBy: end
+    has:
+      field: name
+      regex: ^relationalQuery$
+constraints:
+  FIELD:
+    kind: string
+    regex: ^'website_event\.created_at'$
+  UNIT:
+    kind: identifier
+    regex: ^unit$
+metadata:
+  shape_id: DT-1.tz-arg
+  form: planted
+  keywords: [timezone, getDateSQL, date bucket, day counts, default timezone, utc]
+  cwe: CWE-628 Function Call with Incorrectly Specified Arguments
+  related_lint_rule: none

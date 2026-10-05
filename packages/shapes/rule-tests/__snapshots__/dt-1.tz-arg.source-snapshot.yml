@@ -1,0 +1,48 @@
+id: dt-1.tz-arg.source
+snapshots:
+  ? |
+    export function RevenuePage() {
+      const { dateRange } = useDateRange();
+      return <div>{dateRange.unit}</div>;
+    }
+  : labels:
+    - source: useDateRange()
+      style: primary
+      start: 56
+      end: 70
+    - source: RevenuePage
+      style: secondary
+      start: 16
+      end: 27
+    - source: |-
+        function RevenuePage() {
+          const { dateRange } = useDateRange();
+          return <div>{dateRange.unit}</div>;
+        }
+      style: secondary
+      start: 7
+      end: 111
+  ? |
+    export function RevenuePage() {
+      const { timezone } = useTimezone();
+      const { dateRange } = useDateRange({ timezone });
+      return <div>{dateRange.unit}</div>;
+    }
+  : labels:
+    - source: useDateRange({ timezone })
+      style: primary
+      start: 94
+      end: 120
+    - source: RevenuePage
+      style: secondary
+      start: 16
+      end: 27
+    - source: |-
+        function RevenuePage() {
+          const { timezone } = useTimezone();
+          const { dateRange } = useDateRange({ timezone });
+          return <div>{dateRange.unit}</div>;
+        }
+      style: secondary
+      start: 7
+      end: 161
