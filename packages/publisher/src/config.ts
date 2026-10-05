@@ -122,15 +122,13 @@ export function resolveCommand(command: string): string[] {
   return splitCommand(command).map((token) => (!token.startsWith("-") && !isAbsolute(token) && token.includes("/") && existsSync(resolve(token)) ? resolve(token) : token));
 }
 
-/** A conservative subset of git's branch-name rules. */
+/** A conservative subset of git's branch-name rules, applied to the whole name and to each slash-separated component. */
 export function isBranchName(name: string): boolean {
   return (
     /^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(name) &&
     !name.includes("..") &&
-    !name.includes("//") &&
-    !name.endsWith("/") &&
-    !name.endsWith(".lock") &&
-    !name.endsWith(".")
+    !name.endsWith(".") &&
+    name.split("/").every((part) => part.length > 0 && !part.startsWith(".") && !part.endsWith(".lock"))
   );
 }
 
