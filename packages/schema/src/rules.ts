@@ -31,7 +31,8 @@ function hasDuplicates(values: readonly string[]): boolean {
 function registryRules(registry: FamilyRegistry): string[] {
   const errors: string[] = [];
   if (hasDuplicates(registry.families.map((family) => family.family_id))) errors.push("registry:duplicate_family");
-  const fixes = registry.families.flatMap((family) => family.source_fixes.map((fix) => `${fix.upstream}\n${fix.commit}`));
+  // The commit ID alone is the source-fix identity, so one commit sits in at most one family.
+  const fixes = registry.families.flatMap((family) => family.source_fixes.map((fix) => fix.commit));
   if (hasDuplicates(fixes)) errors.push("registry:duplicate_source_fix");
   if (hasDuplicates(registry.families.flatMap((family) => family.mutation_ids))) errors.push("registry:duplicate_mutation");
   return errors;

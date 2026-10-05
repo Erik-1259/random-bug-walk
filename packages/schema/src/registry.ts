@@ -27,10 +27,6 @@ export function loadRegistry(path: string): FamilyRegistry {
   return parseRecord("FamilyRegistry", readFileSync(path));
 }
 
-function sameFix(a: SourceFix, b: { upstream: string; commit: string }): boolean {
-  return a.upstream === b.upstream && a.commit === b.commit;
-}
-
 function familyIdentities(family: Family): Identity[] {
   return [
     { kind: "family", family_id: family.family_id },
@@ -56,7 +52,8 @@ function familyHas(family: Family, identity: Identity): boolean {
     case "family":
       return family.family_id === identity.family_id;
     case "source_fix":
-      return family.source_fixes.some((fix) => sameFix(fix, identity));
+      // The commit ID is the identity; the upstream label is not part of it.
+      return family.source_fixes.some((fix) => fix.commit === identity.commit);
     case "mutation":
       return family.mutation_ids.includes(identity.mutation_id);
   }
@@ -126,6 +123,7 @@ export function linkMutation(registry: FamilyRegistry, familyId: string, mutatio
  * input is refused when any identity of its family (family ID, source fixes, mutation IDs) is held out.
  */
 export function checkPublicDemoInput(registry: FamilyRegistry, identity: Identity, heldOut: HeldOutIdentityList): void {
+  checked(registry);
   refuseHeldOut([identity], heldOut);
   const owner = registry.families.find((family) => familyHas(family, identity));
   if (owner === undefined) throw new RegistryRefusal("unregistered");

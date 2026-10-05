@@ -144,6 +144,23 @@ describe("registry operations", () => {
     expect(refusal(() => registerFamily(base(), family({ source_fixes: [{ upstream: "synthetic-upstream", commit: "2".repeat(40) }] }), { ...EMPTY_HELD_OUT, source_fixes: [{ upstream: "other", commit: "2".repeat(40) }] }))).toBe("held_out_conflict");
   });
 
+  it("refuses a source fix linked to a held-out family whichever upstream label it is called with", () => {
+    const held: HeldOutIdentityList = { ...EMPTY_HELD_OUT, family_ids: ["umami-tz-arg-001"] };
+    for (const upstream of ["umami", "synthetic-other-label"]) {
+      expect(refusal(() => { checkPublicDemoInput(base(), { kind: "source_fix", upstream, commit: UMAMI_FIX.commit }, held); })).toBe("held_out_conflict");
+    }
+  });
+
+  it("refuses a registry that lists one commit under two labels", () => {
+    const split: FamilyRegistry = {
+      ...base(),
+      families: [...base().families, family({ source_fixes: [{ upstream: "synthetic-other-label", commit: UMAMI_FIX.commit }] })],
+    };
+    const held: HeldOutIdentityList = { ...EMPTY_HELD_OUT, family_ids: ["umami-tz-arg-001"] };
+    expect(refusal(() => { checkPublicDemoInput(split, { kind: "source_fix", upstream: "synthetic-other-label", commit: UMAMI_FIX.commit }, held); })).toBe("invalid");
+    expect(refusal(() => registerFamily(base(), family({ source_fixes: [{ upstream: "synthetic-other-label", commit: UMAMI_FIX.commit }] }), EMPTY_HELD_OUT))).toBe("duplicate");
+  });
+
   it("refuses an invalid held-out list", () => {
     const broken = { ...EMPTY_HELD_OUT, schema_version: 2 } as unknown as HeldOutIdentityList;
     expect(refusal(() => { checkPublicDemoInput(base(), { kind: "family", family_id: "umami-tz-arg-001" }, broken); })).toBe("invalid");

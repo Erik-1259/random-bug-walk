@@ -43,7 +43,8 @@ def _registry_rules(registry: FamilyRegistry) -> list[str]:
     families = registry["families"]
     if _has_duplicates([family["family_id"] for family in families]):
         errors.append("registry:duplicate_family")
-    fixes = [f"{fix['upstream']}\n{fix['commit']}" for f in families for fix in f["source_fixes"]]
+    # The commit ID alone is the source-fix identity, so one commit sits in at most one family.
+    fixes = [fix["commit"] for f in families for fix in f["source_fixes"]]
     if _has_duplicates(fixes):
         errors.append("registry:duplicate_source_fix")
     if _has_duplicates([mutation for f in families for mutation in f["mutation_ids"]]):

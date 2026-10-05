@@ -582,6 +582,13 @@
       "error": "registry:duplicate_source_fix"
     },
     {
+      "name": "registry-shared-source-fix-relabelled",
+      "type": "FamilyRegistry",
+      "expect": "invalid",
+      "rule": "unique source fix commits",
+      "error": "registry:duplicate_source_fix"
+    },
+    {
       "name": "registry-shared-mutation",
       "type": "FamilyRegistry",
       "expect": "invalid",

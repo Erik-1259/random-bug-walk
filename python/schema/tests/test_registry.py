@@ -1,4 +1,5 @@
 import copy
+from functools import partial
 from typing import cast
 
 import pytest
@@ -157,4 +158,31 @@ def test_held_out_source_fixes_compare_by_commit() -> None:
     assert (
         refusal_code(lambda: check_public_demo_input(registry, umami, relabelled))
         == "held_out_conflict"
+    )
+
+
+def test_source_fix_is_refused_for_a_held_out_family_whichever_label_is_used() -> None:
+    registry = load_registry(REGISTRY)
+    held: HeldOutIdentityList = {**EMPTY, "family_ids": ["umami-tz-arg-001"]}
+    for upstream in ("umami", "synthetic-other-label"):
+        fix: Identity = {"kind": "source_fix", "upstream": upstream, "commit": UMAMI_FIX["commit"]}
+        code = refusal_code(partial(check_public_demo_input, registry, fix, held))
+        assert code == "held_out_conflict"
+
+
+def test_registry_with_one_commit_under_two_labels_is_refused() -> None:
+    registry = load_registry(REGISTRY)
+    other_fix = {"upstream": "synthetic-other-label", "commit": UMAMI_FIX["commit"]}
+    split = copy.deepcopy(registry)
+    split["families"].append(family(source_fixes=[other_fix]))
+    held: HeldOutIdentityList = {**EMPTY, "family_ids": ["umami-tz-arg-001"]}
+    fix: Identity = {
+        "kind": "source_fix",
+        "upstream": "synthetic-other-label",
+        "commit": other_fix["commit"],
+    }
+    assert refusal_code(lambda: check_public_demo_input(split, fix, held)) == "invalid"
+    assert (
+        refusal_code(lambda: register_family(registry, family(source_fixes=[other_fix]), EMPTY))
+        == "duplicate"
     )

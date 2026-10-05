@@ -46,10 +46,6 @@ def load_registry(path: Path | str) -> FamilyRegistry:
     return cast(FamilyRegistry, parse_record("FamilyRegistry", Path(path).read_bytes()))
 
 
-def _same_fix(fix: SourceFix, identity: SourceFixIdentity) -> bool:
-    return fix["upstream"] == identity["upstream"] and fix["commit"] == identity["commit"]
-
-
 def _family_identities(family: Family) -> list[Identity]:
     identities: list[Identity] = [{"kind": "family", "family_id": family["family_id"]}]
     identities.extend(
@@ -79,7 +75,8 @@ def _family_has(family: Family, identity: Identity) -> bool:
         case "family":
             return family["family_id"] == identity["family_id"]
         case "source_fix":
-            return any(_same_fix(fix, identity) for fix in family["source_fixes"])
+            # The commit ID is the identity; the upstream label is not part of it.
+            return any(fix["commit"] == identity["commit"] for fix in family["source_fixes"])
         case "mutation":
             return identity["mutation_id"] in family["mutation_ids"]
 
@@ -184,6 +181,7 @@ def check_public_demo_input(
     """Refuses a public-demo input that is held out (checked first) or not registered. A
     registered input is refused when any identity of its family (family ID, source fixes,
     mutation IDs) is held out."""
+    _checked(registry)
     _refuse_held_out([identity], held_out)
     owner = next((f for f in registry["families"] if _family_has(f, identity)), None)
     if owner is None:
