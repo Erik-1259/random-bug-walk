@@ -120,7 +120,130 @@ Each returns one JSON document: `{"ok": true, ...}` or `{"ok": false, "code": ".
 - **Hashes:** `operation_id`, `payload_hash`, `task_revision`, `project_policy_sha256`, `runtime_profile_sha256`, `rate_sheet_sha256` and evidence hashes are 64 lowercase hexadecimal characters.
 - **IDs:** project, batch and execution IDs are lowercase UUID strings.
 - **Keys:** pool, allocation and slot keys are lowercase letters, digits and hyphens.
-- **Labels:** service, kind, call name and provider are lowercase letters, digits, `.`, `_` and `-`, at most 64 characters.
+- **Labels:** service, kind and provider are lowercase letters, digits, `.`, `_` and `-`, at most 64 characters.
+- **Call names** use the shared schema's `CallName` pattern, `^[a-z0-9._-]+(?::[a-z0-9._-]+)*# @rbw/spend
+
+Postgres tables and atomic operations that decide whether metered work may start.
+
+- Every metered call reserves its whole worst case against a do-not-exceed pool in one atomic database operation, and later records what it actually cost.
+- All execution runs under one serial slot per slot key. Only confirmed termination, or a manual reconciliation recorded with evidence, can free it.
+
+Every rule is enforced in the database. PL/pgSQL functions created by the migrations perform every operation and hold the rules that need context: settlement, reconciliation, the halt and resume, and slot release. Constraints and triggers hold the invariants listed below, and a trigger on every table refuses rows that do not come through those functions (see [Invariants](#invariants) for what that guard does not cover). The TypeScript API is a typed wrapper over the functions. It never writes the tables directly, and it does no logging.
+
+## Contents
+
+- [Setup](#setup)
+- [TypeScript API](#typescript-api)
+- [Calling the database operations from another language](#calling-the-database-operations-from-another-language)
+- [Money, identifiers and times](#money-identifiers-and-times)
+- [Invariants](#invariants)
+- [Pools, allocations and caps](#pools-allocations-and-caps)
+- [The priced envelope](#the-priced-envelope)
+- [Check-and-reserve](#check-and-reserve)
+- [Operation states](#operation-states)
+- [Settlement](#settlement)
+- [Over-envelope halt](#over-envelope-halt)
+- [Serial execution slot](#serial-execution-slot)
+- [Refusal codes](#refusal-codes)
+- [Caller protocol](#caller-protocol)
+- [Operator procedures](#operator-procedures)
+- [Tables](#tables)
+- [Tests](#tests)
+- [Not in this package (planned elsewhere)](#not-in-this-package-planned-elsewhere)
+
+## Setup
+
+Requires Postgres 17 or later. `migrate` needs a role that owns the target schema; it does not need superuser privileges. Unit tests use PGlite in process.
+
+| Script | What it does |
+| --- | --- |
+| `pnpm --filter @rbw/spend run migrate [--schema <name>]` | Applies pending migrations to the database in `DATABASE_URL` (schema `public` by default; the schema must exist). Prints each file it applies and a final count (`applied 0 migrations` on a re-run). Exits non-zero, naming the file and the reason, if an applied file has changed or is missing, if a new file sorts before an applied one, or if a file fails. With `DATABASE_URL` unset it exits non-zero with a message naming the variable. It never prints any part of the connection string. |
+| `pnpm --filter @rbw/spend run test` | Unit tests (PGlite, no network). |
+| `pnpm --filter @rbw/spend run test:integration` | Integration tests (I1–I5 and the others listed under [Tests](#tests)) against the Postgres in `DATABASE_URL`. Each run uses its own randomly named schema and drops it afterwards, also when setup fails. With `DATABASE_URL` unset, prints a skip message and exits 0. |
+| `build`, `typecheck`, `lint` | The workspace's standard scripts. |
+
+`migrate` and `test:integration` run from source with Node 24; neither needs a build step.
+
+Migrations are forward-only plain SQL files in `migrations/`.
+- They are applied in lexical order, each exactly once. A new file that sorts before an applied one is refused (exit non-zero, naming the file), so every database applies them in the same order.
+- A run applies all of them in one transaction. Deferred constraints are checked after each file, so a failure names the file that caused it.
+- Concurrent runs against one schema take a transaction-scoped advisory lock and run one after the other, also on the schema's first run.
+- Each applied file is recorded in `applied_migrations` with its SHA-256.
+- They name no schema: the runner sets `search_path` to `<schema>, pg_temp` for its transaction, and each function captures it (`SET search_path FROM CURRENT`). Naming `pg_temp` last means a session's temp tables never shadow the spend tables inside the functions.
+
+The migrations seed two pools and no slot key:
+
+| Pool | Cap (micro-USD) | Allocations |
+| --- | --- | --- |
+| `development` | 1,000,000,000 ($1,000) | none |
+| `judge-demo` | 200,000,000 ($200) | `public` 50,000,000 (anonymous use), `judge` 150,000,000 (protected for judges) |
+
+A deployment's slot key is created with `createSlotKey` when the package is first set up on a long-lived database. That setup is not done by the migrations.
+
+## TypeScript API
+
+```ts
+import pg from "pg";
+import { createSpend, fromPg, migrate } from "@rbw/spend";
+
+const client = new pg.Client({ connectionString });
+await client.connect();
+await migrate(fromPg(client), { schema: "public" });
+const spend = createSpend({ client: fromPg(client), schema: "public" });
+
+const result = await spend.reserve(request);
+if (!result.ok) {
+  // result.code is one of the refusal codes below. Stop; do not retry.
+}
+```
+
+- **Client.** The library takes a database client from its caller (`SqlClient`: `query(text, params)` and `exec(sql)`). Wrap a node-postgres `Client` or `PoolClient` with `fromPg`; a PGlite instance satisfies the interface directly. The library reads no environment variables.
+- **One statement per call.** Each call is one statement that runs one database function. It works over direct and pooled (transaction-mode) connections: no session state is used, names are schema-qualified, and only transaction-scoped locks are taken.
+- **Options.** `schema` (default `public`) and `clock` (default system time) are optional. The clock supplies every event time and can be replaced in tests.
+- **Results.** Every call returns `{ ok: true, ... }` or a typed refusal `{ ok: false, code, ... }`. Infrastructure failures (for example a dropped connection) are thrown and are never reported as success or refusal. Nothing retries.
+- **Amounts in results** are exact `bigint`s.
+
+| Function | Database operation | Purpose |
+| --- | --- | --- |
+| `migrate(client, { schema, migrationsDir })` | | Apply pending migrations; returns the applied file names. `runMigrate` is what the CLI runs and returns its exit code. |
+| `createPool` | `spend_create_pool` | Owner: create a pool with a cap and optional allocations. |
+| `createSlotKey` | `spend_create_slot_key` | Owner: create a slot key (starts free). |
+| `raiseCap` | `spend_raise_cap` | Owner: raise the cap of a pool without allocations. |
+| `transfer` | `spend_transfer` | Owner or operator: move an amount from `public` to `judge` in `judge-demo`. |
+| `resume` | `spend_resume` | Owner or operator: resume new work after an over-envelope halt. |
+| `reserve` | `spend_reserve` | Atomic check-and-reserve. |
+| `transition` | `spend_transition` | `prepared → launching`, `launching → running`, `launching/running → terminal`, `launching/running → uncertain`. |
+| `settle` | `spend_settle` | Record a `UsageSettlement` exactly once. |
+| `reconcile` | `spend_reconcile` | Owner or operator: record a `ManualReconciliation`. |
+| `acquireSlot` | `spend_slot_acquire` | Acquire the slot for a root execution. |
+| `recordChild` | `spend_slot_record_child` | Record a child resource under the held slot. |
+| `confirmChild` | `spend_slot_confirm_child` | Record a child resource's confirmed terminal state with evidence. |
+| `releaseSlot` | `spend_slot_release` | Release by the holder, or by an owner or operator with evidence and a reason. |
+| `haltStatus` | `spend_halt_status` | Halted or not, and the observations since the latest resume. |
+| `poolStatus` | `spend_pool_status` | Cap, allocation limits, settled, open, committed, available. |
+| `operationStatus` | `spend_operation_status` | State, reserved, settled, open, released. |
+| `slotStatus` | `spend_slot_status` | Holder, the holder's children, release blockers. |
+
+Request and result field names are the snake_case names in `src/types.ts`. They are the same JSON documents the database functions accept and return.
+
+## Calling the database operations from another language
+
+- **Write operations:** `SELECT <schema>.<function>($1::jsonb, $2::text)::text`. `$1` is the JSON request, and `$2` is the event time as a UTC RFC3339 string ending in `Z`.
+- **Read operations:** `SELECT <schema>.<function>($1::jsonb)::text`.
+
+Each returns one JSON document: `{"ok": true, ...}` or `{"ok": false, "code": "...", "detail": "..."}`. Amounts, and quantities in halt observations, are decimal strings, so they must be parsed exactly. Calls must run under READ COMMITTED (Postgres's default); every write operation raises an error under any other isolation level.
+
+## Money, identifiers and times
+
+- **Money** is integer micro-USD (1 USD = 1,000,000), stored as `bigint` and never negative.
+  - Every amount and quantity in a request is a JSON integer from 0 to 9,007,199,254,740,991.
+  - Fractions, negatives, NaN, Infinity, numeric strings, bigints and larger values are refused.
+  - Products and sums use `numeric` in the database.
+- **Prices** are `{ microusd, per_units }`, a non-negative integer per positive integer block of units. A line's worst case is `ceil(limit × microusd ÷ per_units)`, computed exactly as `div(limit × microusd + per_units − 1, per_units)`.
+- **Hashes:** `operation_id`, `payload_hash`, `task_revision`, `project_policy_sha256`, `runtime_profile_sha256`, `rate_sheet_sha256` and evidence hashes are 64 lowercase hexadecimal characters.
+- **IDs:** project, batch and execution IDs are lowercase UUID strings.
+- **Keys:** pool, allocation and slot keys are lowercase letters, digits and hyphens.
+ (segments joined by `:`, such as `writer.issue:cand-17:3`), at most 128 characters. Migration `0005_call_name.sql` gives the column its own domain, and a unit test checks that its pattern equals the one in `packages/schema/schema/records.schema.json`.
 - **Roles:** `actor_role` is a role label (`owner`, `operator`, or a component such as `workflow`), never a person's name, account or email.
 - The package validates all of these formats. It computes no hash or ID; callers supply them.
 - **Times** at the API boundary are UTC RFC3339 strings ending in `Z`. Events are ordered by one database sequence, never by time.

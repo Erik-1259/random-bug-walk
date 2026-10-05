@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@ai-sdk/openai-compatible": "3.0.62",
+    "@rbw/schema": "workspace:*",
     "@rbw/spend": "workspace:*",
     "ai": "7.0.127",
     "pg": "8.23.1",

@@ -35,6 +35,15 @@ describe("reserve, launch, settle", () => {
     ]);
   });
 
+  it("reserves under the schema's colon-form call name, which the ledger stores", async () => {
+    world = await makeWorld({ recordings: ALL_OK });
+    const result = recorded(await world.searcher.searchSource("source-1", SEARCH_INPUT));
+    const rows = await world.db.query(`SELECT kind, call_name FROM ${world.schema}.operations WHERE operation_id = $1`, [
+      result.record.operation_id,
+    ]);
+    expect(rows.rows).toEqual([{ kind: "search.source", call_name: "search.source:synthetic-candidate-1:source-1" }]);
+  });
+
   it("reserves the worst case of 2 credits at the injected price", async () => {
     world = await makeWorld({ recordings: ALL_OK });
     const result = recorded(await world.searcher.searchSource("source-1", SEARCH_INPUT));

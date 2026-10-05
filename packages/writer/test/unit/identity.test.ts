@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
 import type { PGlite } from "@electric-sql/pglite";
+import { canonicalDigest, operationId as schemaOperationId, validateRecord } from "@rbw/schema";
+import type { OperationIdentity } from "@rbw/schema";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { WRITER_PROFILE } from "../../src/config.ts";
 import {
-  callName,
   canonicalJson,
   operationId,
   parseRunContext,
@@ -33,7 +34,9 @@ describe("canonical JSON and hashes", () => {
   });
 
   it("digests the frozen writer profile", () => {
-    expect(runtimeProfileSha256()).toBe(sha(canonicalJson(WRITER_PROFILE)));
+    expect(runtimeProfileSha256()).toBe(canonicalDigest(WRITER_PROFILE).sha256);
+    // The digest before the schema's encoder replaced the local one: the bytes are the same.
+    expect(runtimeProfileSha256()).toBe("906c19065ead7ecc7717df72462faa4efd1d6cbc0b4be16d8c4c7c8f904f24fd");
     expect(WRITER_PROFILE).toMatchObject({
       model: "nvidia/Nemotron-3_5-Lightning",
       base_url: "https://api.tokenfactory.nebius.com/v1/",
@@ -51,40 +54,40 @@ describe("canonical JSON and hashes", () => {
     expect(payloadHash('{"a":1}')).not.toBe(payloadHash('{ "a":1}'));
   });
 
+  it("is the schema's operation ID of the call's OperationIdentity", () => {
+    const context = parseRunContext(CONTEXT);
+    const identity: OperationIdentity = {
+      schema_version: 1,
+      project_id: CONTEXT.project_id,
+      project_policy_sha256: CONTEXT.project_policy_sha256,
+      root_execution_id: CONTEXT.root_execution_id,
+      batch_id: CONTEXT.batch_id,
+      task_revision: CONTEXT.task_revision,
+      kind: "writer.issue",
+      runtime_profile_sha256: runtimeProfileSha256(),
+      call_name: `writer.issue:${CANDIDATE}:3`,
+      attempt_ordinal: 2,
+    };
+    expect(validateRecord("CallName", identity.call_name)).toEqual([]);
+    expect(operationId({ context, kind: "writer.issue", candidate: CANDIDATE, callOrdinal: 3, attemptOrdinal: 2 })).toBe(
+      schemaOperationId(identity).sha256,
+    );
+  });
+
   it("derives the operation ID from every identity field", () => {
     const context = parseRunContext(CONTEXT);
     const base = { context, kind: "writer.issue" as const, candidate: CANDIDATE, callOrdinal: 1, attemptOrdinal: 1 };
     const id = operationId(base);
-    expect(id).toBe(
-      sha(
-        canonicalJson({
-          attempt_ordinal: 1,
-          batch_id: CONTEXT.batch_id,
-          call_ordinal: 1,
-          candidate: CANDIDATE,
-          kind: "writer.issue",
-          project_id: CONTEXT.project_id,
-          project_policy_sha256: CONTEXT.project_policy_sha256,
-          root_execution_id: CONTEXT.root_execution_id,
-          runtime_profile_sha256: runtimeProfileSha256(),
-          task_revision: CONTEXT.task_revision,
-        }),
-      ),
-    );
     const variants = [
       operationId({ ...base, kind: "writer.card" }),
       operationId({ ...base, candidate: "synthetic-candidate-2" }),
       operationId({ ...base, callOrdinal: 2 }),
       operationId({ ...base, attemptOrdinal: 2 }),
-      operationId({ ...base, context: { ...context, batch_id: null } }),
+      operationId({ ...base, context: { ...context, batch_id: uuid(98) } }),
       operationId({ ...base, context: { ...context, project_id: uuid(99) } }),
     ];
     expect(new Set([id, ...variants]).size).toBe(7);
-  });
-
-  it("builds call names that fit the spend label format", () => {
-    expect(callName("writer.issue", CANDIDATE, 12)).toBe(`writer.issue.${CANDIDATE}.12`);
-    expect(callName("writer.issue", CANDIDATE, 12)).toMatch(/^[a-z0-9._-]{1,64}$/);
+    expect(operationId({ ...base, context: { ...context, execution_id: uuid(97) } })).toBe(id);
   });
 });
 
@@ -98,6 +101,7 @@ describe("the run context", () => {
     ["a missing field", { ...CONTEXT, execution_id: undefined }],
     ["an uppercase UUID", { ...CONTEXT, project_id: uuid(0xabc).toUpperCase() }],
     ["a short hash", { ...CONTEXT, task_revision: "abc" }],
+    ["a null batch ID, which an OperationIdentity cannot carry", { ...CONTEXT, batch_id: null }],
   ])("rejects %s", (_name, value) => {
     expect(() => parseRunContext(value)).toThrow(/run context/);
   });

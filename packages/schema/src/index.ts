@@ -20,10 +20,12 @@ export {
   TRIAL_PROFILES,
   buildExpectedTrials,
   buildJobRequest,
+  callName,
   jobOperationIdentity,
   jobPayloadHash,
   mutationId,
   operationId,
+  providerCallIdentity,
   taskRevision,
 } from "./jobs.ts";
-export type { BuiltExpectedTrials, BuiltJobRequest, ExpectedTrialsInput, JobRequestFields, MutationInput, ProfileTrial, TrialProfile } from "./jobs.ts";
+export type { BuiltExpectedTrials, BuiltJobRequest, ExpectedTrialsInput, JobRequestFields, MutationInput, ProfileTrial, ProviderCallFields, TrialProfile } from "./jobs.ts";
