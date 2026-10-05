@@ -356,7 +356,17 @@ command -v docker >/dev/null 2>&1 || die "docker is not on PATH"
 if [ -z "$codex_auth" ]; then
   exec docker "${docker_args[@]}"
 fi
-# Not exec: the sign-in copy and the lock are removed when docker returns.
+# Not exec: the sign-in copy and the lock are removed when docker returns. If this
+# script is told to stop, it stops the container first, so the lock is never
+# released while a container still holds a copy of the sign-in.
+docker "${docker_args[@]}" <&0 &
+docker_pid=$!
+trap 'docker stop --time 10 "$container_name" >/dev/null 2>&1 || true' TERM INT HUP
 status=0
-docker "${docker_args[@]}" || status=$?
+wait "$docker_pid" || status=$?
+# A trapped signal interrupts the first wait; wait again for docker to finish.
+while kill -0 "$docker_pid" 2>/dev/null; do
+  status=0
+  wait "$docker_pid" || status=$?
+done
 exit "$status"
