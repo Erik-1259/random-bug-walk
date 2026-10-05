@@ -462,12 +462,15 @@ export function expectedTreeId(files: ReadonlyMap<string, AuditedFile>, format: 
 }
 
 /**
- * ADM-01: an index, when present, is byte for byte what `git read-tree` of the commit writes, as
+ * ADM-01: the index is present, a regular file and byte for byte what `git read-tree` of the commit writes, as
  * commit-neutral leaves it, so it names no other file and carries no extension or other data.
  */
 function checkIndex(commit: string, options: { gitDir: string }, add: Add): void {
   const index = join(options.gitDir, "index");
-  if (lstatOrNull(index)?.isFile() !== true) return;
+  if (lstatOrNull(index)?.isFile() !== true) {
+    add("git_tree_mismatch", ".git/index");
+    return;
+  }
   const matches = withEmptyDirectory((directory) => {
     const fresh = join(directory, "index");
     try {

@@ -133,6 +133,16 @@ describe("malformed inputs", () => {
     }
   });
 
+  it("ADM-01 refuses a mutation declaration whose result hash equals its original hash", async () => {
+    const fixture = new Fixture();
+    await fixture.ready();
+    fixture.writeMutation((mutation) => {
+      const entry = first(mutation.files);
+      entry.result_sha256 = entry.original_sha256;
+    });
+    await expectUnavailable(fixture, "malformed_mutation");
+  });
+
   it("ADM-01 refuses a mutation with another host commit, mode or original hash", async () => {
     const fixture = new Fixture();
     await fixture.ready();

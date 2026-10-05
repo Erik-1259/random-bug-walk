@@ -336,6 +336,26 @@ describe("history checks", () => {
     expect(locations(result, "git_tree_mismatch")).toEqual([".git/index"]);
   });
 
+  it("ADM-01 refuses a copy whose index was deleted with git_tree_mismatch", async () => {
+    const fixture = new Fixture();
+    await fixture.ready();
+    unlinkSync(join(fixture.copy, ".git", "index"));
+    const result = await fixture.audit();
+    expect(reasons(result)).toEqual(["git_tree_mismatch"]);
+    expect(locations(result, "git_tree_mismatch")).toEqual([".git/index"]);
+  });
+
+  it("ADM-01 refuses a copy whose index was replaced by a directory with git_tree_mismatch", async () => {
+    const fixture = new Fixture();
+    await fixture.ready();
+    const index = join(fixture.copy, ".git", "index");
+    unlinkSync(index);
+    mkdirSync(index);
+    const result = await fixture.audit();
+    expect(reasons(result)).toContain("git_tree_mismatch");
+    expect(locations(result, "git_tree_mismatch")).toEqual([".git/index"]);
+  });
+
   it("ADM-01 refuses a copy whose only branch is not main, and still checks HEAD's commit", async () => {
     const fixture = new Fixture();
     await fixture.ready();

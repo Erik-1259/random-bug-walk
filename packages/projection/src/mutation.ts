@@ -33,7 +33,7 @@ export function parseMutation(text: string, manifest: Manifest, excluded: Readon
     const file = pinned.get(path);
     const patch = patches.get(path);
     if (file === undefined || excluded.has(path) || files.has(path) || patch === undefined) throw new InputError(MUTATION);
-    if (mode !== file.mode || !HEX64.test(original) || !HEX64.test(result) || original !== file.sha256) throw new InputError(MUTATION);
+    if (mode !== file.mode || !HEX64.test(original) || !HEX64.test(result) || original !== file.sha256 || result === original) throw new InputError(MUTATION);
     files.set(path, { path, mode: file.mode, original_sha256: original, result_sha256: result, patch });
   }
   if (files.size === 0 || files.size !== patches.size) throw new InputError(MUTATION);
