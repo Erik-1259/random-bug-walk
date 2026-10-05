@@ -1,0 +1,37 @@
+import synthetic from '@/lib/synthetic-db';
+import type { SyntheticFilters } from '@/lib/synthetic-types';
+
+export async function getSyntheticStats(...args: [siteId: string, filters: SyntheticFilters]) {
+  return runQuery({
+    relational: () => relationalQuery(...args),
+    columnar: () => clickhouseQuery(...args),
+  });
+}
+
+async function relationalQuery(siteId: string, filters: SyntheticFilters) {
+  const { timezone = 'utc', unit = 'day' } = filters;
+  const { getDateSQL, rawQuery } = synthetic;
+
+  return rawQuery(
+    `
+    select
+      ${getDateSQL('website_event.created_at', unit, timezone)} x,
+      count(*) y
+    from website_event
+    where website_event.site_id = {{siteId}}
+    group by 1
+    `,
+    { siteId },
+  );
+}
+
+async function clickhouseQuery(siteId: string, filters: SyntheticFilters) {
+  const { timezone = 'UTC', unit = 'day' } = filters;
+  const { getDateSQL, rawQuery } = synthetic;
+
+  if (unit === 'minute') {
+    return rawQuery(`select ${getDateSQL('website_event.created_at', unit, timezone)} as t from website_event`, { siteId });
+  }
+
+  return rawQuery(`select ${getDateSQL('website_event.created_at', unit, timezone)} as t from website_event_hourly`, { siteId });
+}

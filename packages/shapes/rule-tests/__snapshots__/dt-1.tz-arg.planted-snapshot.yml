@@ -1,0 +1,24 @@
+id: dt-1.tz-arg.planted
+snapshots:
+  ? |
+    async function relationalQuery(siteId: string, filters: SyntheticFilters) {
+      const { timezone, unit } = filters;
+      return run(`${getDateSQL('website_event.created_at', unit)} x`);
+    }
+  : labels:
+    - source: getDateSQL('website_event.created_at', unit)
+      style: primary
+      start: 130
+      end: 174
+    - source: relationalQuery
+      style: secondary
+      start: 15
+      end: 30
+    - source: |-
+        async function relationalQuery(siteId: string, filters: SyntheticFilters) {
+          const { timezone, unit } = filters;
+          return run(`${getDateSQL('website_event.created_at', unit)} x`);
+        }
+      style: secondary
+      start: 0
+      end: 182

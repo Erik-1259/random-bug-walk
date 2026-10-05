@@ -1,0 +1,21 @@
+# Source anchor for shape DT-1.tz-arg: the date-range hook call inside the page component that
+# the upstream fix changed. This rule only locates the call on each side of the fix; it is
+# separate from the target rule and says nothing about other date operations.
+id: dt-1.tz-arg.source
+language: Tsx
+severity: info
+message: useDateRange call inside RevenuePage.
+rule:
+  pattern: useDateRange($$$ARGS)
+  inside:
+    kind: function_declaration
+    stopBy: end
+    has:
+      field: name
+      regex: ^RevenuePage$
+metadata:
+  shape_id: DT-1.tz-arg
+  form: source_anchor
+  keywords: [timezone, useDateRange, useTimezone, date range]
+  cwe: CWE-628 Function Call with Incorrectly Specified Arguments
+  related_lint_rule: none
