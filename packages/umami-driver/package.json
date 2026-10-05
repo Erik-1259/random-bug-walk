@@ -1,0 +1,33 @@
+{
+  "name": "@rbw/umami-driver",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Protected driver that builds, starts and tests one Umami app copy and writes its trial records",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "engines": {
+    "node": ">=24.21 <25"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint . --max-warnings 0",
+    "test": "vitest run",
+    "driver": "node src/cli.ts"
+  },
+  "dependencies": {
+    "@rbw/schema": "workspace:*",
+    "pg": "8.23.1"
+  },
+  "devDependencies": {
+    "@rbw/admission": "workspace:*",
+    "@rbw/umami-fixture": "workspace:*",
+    "@types/node": "24.19.1",
+    "@types/pg": "8.23.1",
+    "typescript": "6.0.3",
+    "vitest": "5.0.3"
+  }
+}
