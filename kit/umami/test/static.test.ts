@@ -166,6 +166,8 @@ describe("postgres configuration", () => {
   it("gives the app role no superuser, role or database creation rights", () => {
     const bootstrap = readKitFile("etc/bootstrap.sql");
     expect(bootstrap).toMatch(/CREATE ROLE umami_app LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE/);
+    // The fixture reset recreates the database from a template as umami_owner.
+    expect(bootstrap).toMatch(/CREATE ROLE umami_owner LOGIN NOSUPERUSER CREATEDB NOCREATEROLE/);
     expect(bootstrap).toMatch(/CREATE DATABASE umami OWNER umami_owner/);
     expect(bootstrap).not.toMatch(/GRANT[^;]*umami_owner[^;]*TO umami_app/);
   });
