@@ -163,7 +163,15 @@ function formatLocation(path: string, line: number | null): string {
   return line === null ? shown : `${shown}:${String(line)}`;
 }
 
-function checkSymlink(entry: CopyEntry, policy: Policy, copyReal: string, collect: Collector): void {
+function checkSymlink(entry: CopyEntry, policy: Policy, copyReal: string, strict: readonly Term[], collect: Collector): void {
+  // ADM-07: the stored target text is readable with readlink, so it is scanned for strict terms like file content.
+  let stored: Buffer | null;
+  try {
+    stored = readlinkSync(entry.absolute, "buffer");
+  } catch {
+    stored = null;
+  }
+  if (stored !== null && matchSpans(stored, strict).length > 0) collect.add("strict_term", entry.path);
   const link = policy.dependency_links.find((candidate) => candidate.path === entry.path);
   const target = realOrNull(entry.absolute);
   if (link !== undefined) {
@@ -271,7 +279,7 @@ export function audit(paths: AuditPaths): AuditOutcome {
         artifactRoots.push(entry.path);
       }
     } else if (entry.kind === "symlink") {
-      checkSymlink(entry, inputs.policy, copyReal, collect);
+      checkSymlink(entry, inputs.policy, copyReal, inputs.terms.strict, collect);
     } else if (entry.kind === "special") {
       collect.add("special_file", entry.path);
     } else if (!entry.undecodable) {

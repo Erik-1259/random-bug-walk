@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { chmodSync, mkdirSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { EXCLUSIONS, Fixture, MUTATED_PATH, NEUTRAL, ORIGINAL_QUERY, RESULT_QUERY, locations, reasons, sha256, spawnCli, tempRoot } from "./support.ts";
+import { EXCLUSIONS, Fixture, MUTATED_PATH, NEUTRAL, ORIGINAL_QUERY, RESULT_QUERY, STRICT, expectNoTerm, locations, reasons, sha256, spawnCli, tempRoot } from "./support.ts";
 
 describe("audit pass case", () => {
   it("ADM-01 passes the pinned tree with exclusions, a declared one-line mutation and neutral history", async () => {
@@ -219,6 +219,26 @@ describe("audit reason codes", () => {
     unlinkSync(join(fixture.copy, "node_modules"));
     symlinkSync(join(deps, "root", "absent"), join(fixture.copy, "node_modules"));
     expect(reasons(await fixture.audit())).toEqual(["symlink"]);
+  });
+
+  it("ADM-07 refuses a declared dependency link whose stored target holds a strict term, and accepts one without", async () => {
+    const fixture = new Fixture();
+    await fixture.prepare();
+    const deps = tempRoot();
+    mkdirSync(join(deps, "root", STRICT, "node_modules"), { recursive: true });
+    mkdirSync(join(deps, "root", "clean", "node_modules"), { recursive: true });
+    const policy = { dependency_links: [{ path: "node_modules", root: join(deps, "root") }], exclusions: EXCLUSIONS, neutral_commit: NEUTRAL };
+    fixture.writePolicy(policy);
+    symlinkSync(join(deps, "root", "clean", "node_modules"), join(fixture.copy, "node_modules"));
+    await fixture.commitNeutral();
+    expect((await fixture.audit()).code).toBe(0);
+    unlinkSync(join(fixture.copy, "node_modules"));
+    symlinkSync(join(deps, "root", STRICT, "node_modules"), join(fixture.copy, "node_modules"));
+    const result = await fixture.audit();
+    expect(result.code).toBe(1);
+    expect(reasons(result)).toEqual(["strict_term"]);
+    expect(locations(result, "strict_term")).toEqual(["node_modules"]);
+    expectNoTerm(result);
   });
 
   it("ADM-01 refuses a file name with a backslash or a control character with path_traversal", async () => {
