@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "root_execution_id": "00000000-0000-4000-8000-000000000101",
+  "project_policy_sha256": "20801414e1417a9ab1dacc340aa2ea3e6a52bee70693ec1d2c69ef3c47c1bb77",
+  "publication_id": "00000000-0000-8000-8000-000000000301",
+  "manifest_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+  "execution_id": "00000000-0000-4000-8000-000000000101",
+  "status": "blocked",
+  "repository_commit": null,
+  "artifacts": [],
+  "omissions": [
+    {
+      "category": "not_produced",
+      "reason": "stage_skipped"
+    },
+    {
+      "category": "withheld_private",
+      "reason": "private_material"
+    }
+  ],
+  "failure_reason": "scan_blocked"
+}

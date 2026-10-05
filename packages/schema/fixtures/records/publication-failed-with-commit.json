@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "root_execution_id": "00000000-0000-4000-8000-000000000101",
+  "project_policy_sha256": "20801414e1417a9ab1dacc340aa2ea3e6a52bee70693ec1d2c69ef3c47c1bb77",
+  "publication_id": "00000000-0000-8000-8000-000000000301",
+  "manifest_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+  "execution_id": "00000000-0000-4000-8000-000000000101",
+  "status": "failed",
+  "repository_commit": "5555555555555555555555555555555555555555",
+  "artifacts": [
+    {
+      "path": "logs/run.log",
+      "sha256": "6666666666666666666666666666666666666666666666666666666666666666",
+      "size_bytes": 10,
+      "public_uri": null
+    },
+    {
+      "path": "manifest.json",
+      "sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+      "size_bytes": 900,
+      "public_uri": null
+    },
+    {
+      "path": "results/big.bin",
+      "sha256": "7777777777777777777777777777777777777777777777777777777777777777",
+      "size_bytes": 2000000,
+      "public_uri": "https://example.invalid/synthetic-store/test-prefix/sha256/7777777777777777777777777777777777777777777777777777777777777777"
+    }
+  ],
+  "omissions": [
+    {
+      "category": "not_produced",
+      "reason": "stage_skipped"
+    },
+    {
+      "category": "withheld_private",
+      "reason": "private_material"
+    }
+  ],
+  "failure_reason": "repository_unavailable"
+}

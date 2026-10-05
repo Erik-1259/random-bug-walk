@@ -1,0 +1,98 @@
+{
+  "schema_version": 1,
+  "project_id": "00000000-0000-4000-8000-000000000001",
+  "project_policy_sha256": "20801414e1417a9ab1dacc340aa2ea3e6a52bee70693ec1d2c69ef3c47c1bb77",
+  "root_execution_id": "00000000-0000-4000-8000-000000000101",
+  "kind": "factory",
+  "declared_stages": [
+    "prepare",
+    "plant_bug",
+    "judge_01"
+  ],
+  "outcome": "completed",
+  "executions": [
+    {
+      "execution_id": "00000000-0000-4000-8000-000000000101",
+      "parent_execution_id": null
+    },
+    {
+      "execution_id": "00000000-0000-4000-8000-000000000201",
+      "parent_execution_id": "00000000-0000-4000-8000-000000000101"
+    },
+    {
+      "execution_id": "00000000-0000-4000-8000-000000000202",
+      "parent_execution_id": "00000000-0000-4000-8000-000000000101"
+    }
+  ],
+  "entries": [
+    {
+      "path": "logs/run.log",
+      "execution_id": "00000000-0000-4000-8000-000000000101",
+      "trial_id": null,
+      "media_type": "text/plain",
+      "outcome": "truncated",
+      "sha256": "6666666666666666666666666666666666666666666666666666666666666666",
+      "size_bytes": 10,
+      "public_uri": null,
+      "reason": "size_limit",
+      "redactions": []
+    },
+    {
+      "path": "logs/00000000-0000-4000-8000-000000000201/planted-01/agent.log",
+      "execution_id": "00000000-0000-4000-8000-000000000201",
+      "trial_id": "planted-01",
+      "media_type": "text/plain",
+      "outcome": "published",
+      "sha256": "6666666666666666666666666666666666666666666666666666666666666666",
+      "size_bytes": 10,
+      "public_uri": null,
+      "reason": null,
+      "redactions": [
+        {
+          "category": "auth_header",
+          "count": 1
+        },
+        {
+          "category": "credential",
+          "count": 2
+        }
+      ]
+    },
+    {
+      "path": "report.md",
+      "execution_id": "00000000-0000-4000-8000-000000000101",
+      "trial_id": null,
+      "media_type": null,
+      "outcome": "not_produced",
+      "sha256": null,
+      "size_bytes": null,
+      "public_uri": null,
+      "reason": "report_missing",
+      "redactions": []
+    },
+    {
+      "path": "results/big.bin",
+      "execution_id": "00000000-0000-4000-8000-000000000101",
+      "trial_id": null,
+      "media_type": "application/octet-stream",
+      "outcome": "published",
+      "sha256": "7777777777777777777777777777777777777777777777777777777777777777",
+      "size_bytes": 2000000,
+      "public_uri": "https://example.invalid/synthetic-store/test-prefix/sha256/7777777777777777777777777777777777777777777777777777777777777777",
+      "reason": null,
+      "redactions": []
+    },
+    {
+      "path": "withheld/1",
+      "execution_id": "00000000-0000-4000-8000-000000000202",
+      "trial_id": null,
+      "media_type": null,
+      "outcome": "withheld_private",
+      "sha256": null,
+      "size_bytes": null,
+      "public_uri": null,
+      "reason": "private_material",
+      "redactions": []
+    }
+  ]
+}

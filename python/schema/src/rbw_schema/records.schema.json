@@ -1,0 +1,596 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/rbw/records.schema.json",
+  "title": "Random Bug Walk records, schema version 1",
+  "description": "Every pattern matches the whole string: it starts with ^ and ends with $, and both languages apply it as a full match.",
+  "$defs": {
+    "SafeInteger": {
+      "description": "An integer whose absolute value is at most 2^53 - 1.",
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
+    },
+    "NonNegativeInteger": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "PositiveInteger": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "SchemaVersion": {
+      "const": 1
+    },
+    "Uuid": {
+      "description": "Lowercase 8-4-4-4-12 hexadecimal.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "Sha256": {
+      "description": "Exactly 64 lowercase hexadecimal characters.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "ImageDigest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "GitCommitId": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "UtcTime": {
+      "description": "UTC RFC 3339 time ending in Z. The format adds the calendar check (no 2026-02-30, no second 60).",
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{1,9})?Z$",
+      "format": "rbw-utc-time"
+    },
+    "DurationMs": {
+      "$ref": "#/$defs/NonNegativeInteger"
+    },
+    "ByteCount": {
+      "$ref": "#/$defs/NonNegativeInteger"
+    },
+    "TokenCount": {
+      "$ref": "#/$defs/NonNegativeInteger"
+    },
+    "MicroUsd": {
+      "description": "Money in integer micro-USD.",
+      "$ref": "#/$defs/SafeInteger"
+    },
+    "StageName": {
+      "type": "string",
+      "pattern": "^[a-z0-9_]+$"
+    },
+    "TrialId": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+    },
+    "Slug": {
+      "description": "Lowercase words of letters and digits joined by single hyphens.",
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+    },
+    "ArtifactKind": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "RelativePath": {
+      "description": "A relative POSIX path. Segments use letters, digits, '.', '_' and '-', and never start with '.'.",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-][A-Za-z0-9._-]*(?:/[A-Za-z0-9_-][A-Za-z0-9._-]*)*$"
+    },
+    "MediaType": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+/[a-z0-9][a-z0-9.+-]*$"
+    },
+    "HttpsRepositoryUrl": {
+      "description": "https://<host>/<owner>/<repo>: no userinfo, port, query, fragment, .git suffix or trailing slash.",
+      "type": "string",
+      "pattern": "^https://[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*/[A-Za-z0-9_-][A-Za-z0-9._-]*/[A-Za-z0-9_-][A-Za-z0-9._-]*$",
+      "not": {
+        "pattern": "^.*\\.git$"
+      }
+    },
+    "HttpsBaseUri": {
+      "description": "An absolute https URL ending in '/', with no userinfo, port, query or fragment.",
+      "type": "string",
+      "pattern": "^https://[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*/(?:[A-Za-z0-9_-][A-Za-z0-9._-]*/)*$"
+    },
+    "HttpsObjectUri": {
+      "description": "An absolute https URL of one object: no userinfo, port, query, fragment or trailing slash.",
+      "type": "string",
+      "pattern": "^https://[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*/(?:[A-Za-z0-9_-][A-Za-z0-9._-]*/)*[A-Za-z0-9_-][A-Za-z0-9._-]*$"
+    },
+    "PolicyPurpose": {
+      "type": "string",
+      "enum": ["public_demo", "evaluation"]
+    },
+    "Visibility": {
+      "type": "string",
+      "enum": ["public", "private"]
+    },
+    "RootRunKind": {
+      "type": "string",
+      "enum": ["factory", "kit_check", "judge_replay"]
+    },
+    "RootRunStatus": {
+      "type": "string",
+      "enum": ["prepared", "running", "terminal", "needs_reconciliation"]
+    },
+    "RootRunOutcome": {
+      "type": "string",
+      "enum": ["completed", "failed", "incomplete", "cancelled"]
+    },
+    "PublicationStatus": {
+      "type": "string",
+      "enum": ["prepared", "published", "blocked", "failed"]
+    },
+    "FailureReason": {
+      "type": "string",
+      "enum": [
+        "scan_blocked",
+        "scan_unavailable",
+        "store_unavailable",
+        "store_mismatch",
+        "repository_unavailable",
+        "repository_conflict",
+        "limit_exceeded",
+        "candidate_corrupt"
+      ]
+    },
+    "OmissionOutcome": {
+      "description": "Outcome of a manifest entry whose bytes are not published as staged.",
+      "type": "string",
+      "enum": ["truncated", "not_produced", "withheld_private"]
+    },
+    "EntryOutcome": {
+      "anyOf": [{ "const": "published" }, { "$ref": "#/$defs/OmissionOutcome" }]
+    },
+    "OmissionReason": {
+      "type": "string",
+      "enum": [
+        "size_limit",
+        "time_limit",
+        "stage_failed",
+        "stage_skipped",
+        "run_cancelled",
+        "private_material",
+        "report_missing"
+      ]
+    },
+    "RedactionCategory": {
+      "type": "string",
+      "enum": ["credential", "auth_header", "provider_identifier", "private_material"]
+    },
+    "Exposure": {
+      "description": "Version 1 allows only public families.",
+      "type": "string",
+      "enum": ["public"]
+    },
+    "ProjectPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "project_id",
+        "purpose",
+        "visibility",
+        "output_repository",
+        "public_artifact_base_uri",
+        "policy_version"
+      ],
+      "properties": {
+        "schema_version": { "$ref": "#/$defs/SchemaVersion" },
+        "project_id": { "$ref": "#/$defs/Uuid" },
+        "purpose": { "$ref": "#/$defs/PolicyPurpose" },
+        "visibility": { "$ref": "#/$defs/Visibility" },
+        "output_repository": { "anyOf": [{ "$ref": "#/$defs/HttpsRepositoryUrl" }, { "type": "null" }] },
+        "public_artifact_base_uri": { "anyOf": [{ "$ref": "#/$defs/HttpsBaseUri" }, { "type": "null" }] },
+        "policy_version": { "$ref": "#/$defs/PositiveInteger" }
+      },
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "purpose": { "const": "public_demo" },
+            "visibility": { "const": "public" },
+            "output_repository": { "type": "string" },
+            "public_artifact_base_uri": { "type": "string" }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "purpose": { "const": "evaluation" },
+            "visibility": { "const": "private" },
+            "output_repository": { "type": "null" },
+            "public_artifact_base_uri": { "type": "null" }
+          }
+        }
+      ]
+    },
+    "SourceFix": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["upstream", "commit"],
+      "properties": {
+        "upstream": { "$ref": "#/$defs/Slug" },
+        "commit": { "$ref": "#/$defs/GitCommitId" }
+      }
+    },
+    "Family": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["family_id", "exposure", "held_out_eligible", "source_fixes", "mutation_ids"],
+      "properties": {
+        "family_id": { "$ref": "#/$defs/Slug" },
+        "exposure": { "$ref": "#/$defs/Exposure" },
+        "held_out_eligible": { "const": false },
+        "source_fixes": { "type": "array", "items": { "$ref": "#/$defs/SourceFix" }, "uniqueItems": true },
+        "mutation_ids": { "type": "array", "items": { "$ref": "#/$defs/Sha256" }, "uniqueItems": true }
+      }
+    },
+    "FamilyRegistry": {
+      "description": "Family IDs, source fixes and mutation IDs are each unique across the registry (checked in code).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "families"],
+      "properties": {
+        "schema_version": { "$ref": "#/$defs/SchemaVersion" },
+        "families": { "type": "array", "items": { "$ref": "#/$defs/Family" } }
+      }
+    },
+    "HeldOutIdentityList": {
+      "description": "Identities reserved for held-out use. Supplied at run time; private in real use.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "family_ids", "source_fixes", "mutation_ids"],
+      "properties": {
+        "schema_version": { "$ref": "#/$defs/SchemaVersion" },
+        "family_ids": { "type": "array", "items": { "$ref": "#/$defs/Slug" }, "uniqueItems": true },
+        "source_fixes": { "type": "array", "items": { "$ref": "#/$defs/SourceFix" }, "uniqueItems": true },
+        "mutation_ids": { "type": "array", "items": { "$ref": "#/$defs/Sha256" }, "uniqueItems": true }
+      }
+    },
+    "RootRun": {
+      "description": "child_execution_ids never contains root_execution_id (checked in code).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "project_id",
+        "root_execution_id",
+        "project_policy_sha256",
+        "kind",
+        "declared_stages",
+        "child_execution_ids",
+        "status",
+        "outcome"
+      ],
+      "properties": {
+        "schema_version": { "$ref": "#/$defs/SchemaVersion" },
+        "project_id": { "$ref": "#/$defs/Uuid" },
+        "root_execution_id": { "$ref": "#/$defs/Uuid" },
+        "project_policy_sha256": { "$ref": "#/$defs/Sha256" },
+        "kind": { "$ref": "#/$defs/RootRunKind" },
+        "declared_stages": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/StageName" },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "child_execution_ids": { "type": "array", "items": { "$ref": "#/$defs/Uuid" }, "uniqueItems": true },
+        "status": { "$ref": "#/$defs/RootRunStatus" },
+        "outcome": { "anyOf": [{ "$ref": "#/$defs/RootRunOutcome" }, { "type": "null" }] }
+      },
+      "if": { "type": "object", "properties": { "status": { "const": "terminal" } } },
+      "then": { "type": "object", "properties": { "outcome": { "type": "string" } } },
+      "else": { "type": "object", "properties": { "outcome": { "type": "null" } } }
+    },
+    "ArtifactEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "key", "sha256", "size_bytes", "media_type"],
+      "properties": {
+        "kind": { "$ref": "#/$defs/ArtifactKind" },
+        "key": { "$ref": "#/$defs/RelativePath" },
+        "sha256": { "$ref": "#/$defs/Sha256" },
+        "size_bytes": { "$ref": "#/$defs/ByteCount" },
+        "media_type": { "$ref": "#/$defs/MediaType" }
+      }
+    },
+    "ArtifactManifest": {
+      "description": "Entry keys are unique (checked in code).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "project_policy_sha256",
+        "root_execution_id",
+        "execution_id",
+        "task_revision",
+        "trial_id",
+        "entries"
+      ],
+      "properties": {
+        "schema_version": { "$ref": "#/$defs/SchemaVersion" },
+        "project_policy_sha256": { "$ref": "#/$defs/Sha256" },
+        "root_execution_id": { "$ref": "#/$defs/Uuid" },
+        "execution_id": { "$ref": "#/$defs/Uuid" },
+        "task_revision": { "$ref": "#/$defs/Sha256" },
+        "trial_id": { "$ref": "#/$defs/TrialId" },
+        "entries": { "type": "array", "items": { "$ref": "#/$defs/ArtifactEntry" } }
+      }
+    },
+    "PublishedArtifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "size_bytes", "public_uri"],
+      "properties": {
+        "path": { "$ref": "#/$defs/RelativePath" },
+        "sha256": { "$ref": "#/$defs/Sha256" },
+        "size_bytes": { "$ref": "#/$defs/ByteCount" },
+        "public_uri": { "anyOf": [{ "$ref": "#/$defs/HttpsObjectUri" }, { "type": "null" }] }
+      }
+    },
+    "Omission": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["category", "reason"],
+      "properties": {
+        "category": { "$ref": "#/$defs/OmissionOutcome" },
+        "reason": { "$ref": "#/$defs/OmissionReason" }
+      }
+    },
+    "PublicationRecord": {
+      "description": "execution_id is the root's own ID, and artifacts are sorted by path with unique paths (checked in code).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "root_execution_id",
+        "project_policy_sha256",
+        "publication_id",
+        "manifest_sha256",
+        "execution_id",
+        "status",
+        "repository_commit",
+        "artifacts",
+        "omissions",
+        "failure_reason"
+      ],
+      "properties": {
+        "schema_version": { "$ref": "#/$defs/SchemaVersion" },
+        "root_execution_id": { "$ref": "#/$defs/Uuid" },
+        "project_policy_sha256": { "$ref": "#/$defs/Sha256" },
+        "publication_id": { "$ref": "#/$defs/Uuid" },
+        "manifest_sha256": { "$ref": "#/$defs/Sha256" },
+        "execution_id": { "$ref": "#/$defs/Uuid" },
+        "status": { "$ref": "#/$defs/PublicationStatus" },
+        "repository_commit": { "anyOf": [{ "$ref": "#/$defs/GitCommitId" }, { "type": "null" }] },
+        "artifacts": { "type": "array", "items": { "$ref": "#/$defs/PublishedArtifact" } },
+        "omissions": { "type": "array", "items": { "$ref": "#/$defs/Omission" } },
+        "failure_reason": { "anyOf": [{ "$ref": "#/$defs/FailureReason" }, { "type": "null" }] }
+      },
+      "allOf": [
+        {
+          "if": { "type": "object", "properties": { "status": { "const": "published" } } },
+          "then": { "type": "object", "properties": { "repository_commit": { "type": "string" } } },
+          "else": { "type": "object", "properties": { "repository_commit": { "type": "null" } } }
+        },
+        {
+          "if": { "type": "object", "properties": { "status": { "const": "blocked" } } },
+          "then": {
+            "type": "object",
+            "properties": { "failure_reason": { "const": "scan_blocked" }, "artifacts": { "type": "array", "maxItems": 0 } }
+          }
+        },
+        {
+          "if": { "type": "object", "properties": { "status": { "const": "failed" } } },
+          "then": {
+            "type": "object",
+            "properties": { "failure_reason": { "type": "string", "not": { "const": "scan_blocked" } } }
+          }
+        },
+        {
+          "if": { "type": "object", "properties": { "status": { "enum": ["prepared", "published"] } } },
+          "then": { "type": "object", "properties": { "failure_reason": { "type": "null" } } }
+        }
+      ]
+    },
+    "Redaction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["category", "count"],
+      "properties": {
+        "category": { "$ref": "#/$defs/RedactionCategory" },
+        "count": { "$ref": "#/$defs/PositiveInteger" }
+      }
+    },
+    "ExecutionLink": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["execution_id", "parent_execution_id"],
+      "properties": {
+        "execution_id": { "$ref": "#/$defs/Uuid" },
+        "parent_execution_id": { "anyOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }] }
+      }
+    },
+    "RunManifestEntry": {
+      "description": "redactions are sorted by category with one item per category, and a public_uri ends in sha256/<sha256>, or equals the policy's base URI plus that key when checked against the policy (checked in code).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "execution_id",
+        "trial_id",
+        "media_type",
+        "outcome",
+        "sha256",
+        "size_bytes",
+        "public_uri",
+        "reason",
+        "redactions"
+      ],
+      "properties": {
+        "path": { "$ref": "#/$defs/RelativePath" },
+        "execution_id": { "$ref": "#/$defs/Uuid" },
+        "trial_id": { "anyOf": [{ "$ref": "#/$defs/TrialId" }, { "type": "null" }] },
+        "media_type": { "anyOf": [{ "$ref": "#/$defs/MediaType" }, { "type": "null" }] },
+        "outcome": { "$ref": "#/$defs/EntryOutcome" },
+        "sha256": { "anyOf": [{ "$ref": "#/$defs/Sha256" }, { "type": "null" }] },
+        "size_bytes": { "anyOf": [{ "$ref": "#/$defs/ByteCount" }, { "type": "null" }] },
+        "public_uri": { "anyOf": [{ "$ref": "#/$defs/HttpsObjectUri" }, { "type": "null" }] },
+        "reason": { "anyOf": [{ "$ref": "#/$defs/OmissionReason" }, { "type": "null" }] },
+        "redactions": { "type": "array", "items": { "$ref": "#/$defs/Redaction" } }
+      },
+      "allOf": [
+        {
+          "if": { "type": "object", "properties": { "outcome": { "enum": ["published", "truncated"] } } },
+          "then": {
+            "type": "object",
+            "properties": {
+              "media_type": { "type": "string" },
+              "sha256": { "type": "string" },
+              "size_bytes": { "type": "integer" }
+            }
+          },
+          "else": {
+            "type": "object",
+            "properties": {
+              "media_type": { "type": "null" },
+              "sha256": { "type": "null" },
+              "size_bytes": { "type": "null" },
+              "public_uri": { "type": "null" },
+              "redactions": { "type": "array", "maxItems": 0 }
+            }
+          }
+        },
+        {
+          "if": { "type": "object", "properties": { "outcome": { "const": "published" } } },
+          "then": { "type": "object", "properties": { "reason": { "type": "null" } } },
+          "else": { "type": "object", "properties": { "reason": { "type": "string" } } }
+        },
+        {
+          "if": { "type": "object", "properties": { "outcome": { "const": "withheld_private" } } },
+          "then": { "type": "object", "properties": { "path": { "type": "string", "pattern": "^withheld/[1-9][0-9]*$" } } },
+          "else": { "type": "object", "properties": { "path": { "type": "string", "not": { "pattern": "^withheld/.*$" } } } }
+        }
+      ]
+    },
+    "RunManifest": {
+      "description": "executions list the root first with a null parent, then each child with the root as parent; entries are sorted by path with unique paths; withheld entries are withheld/1 to withheld/<k> without gaps (checked in code).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "project_id",
+        "project_policy_sha256",
+        "root_execution_id",
+        "kind",
+        "declared_stages",
+        "outcome",
+        "executions",
+        "entries"
+      ],
+      "properties": {
+        "schema_version": { "$ref": "#/$defs/SchemaVersion" },
+        "project_id": { "$ref": "#/$defs/Uuid" },
+        "project_policy_sha256": { "$ref": "#/$defs/Sha256" },
+        "root_execution_id": { "$ref": "#/$defs/Uuid" },
+        "kind": { "$ref": "#/$defs/RootRunKind" },
+        "declared_stages": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/StageName" },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "outcome": { "$ref": "#/$defs/RootRunOutcome" },
+        "executions": { "type": "array", "items": { "$ref": "#/$defs/ExecutionLink" }, "minItems": 1 },
+        "entries": { "type": "array", "items": { "$ref": "#/$defs/RunManifestEntry" } }
+      }
+    },
+    "PublicRunStatus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "root_execution_id",
+        "project_policy_sha256",
+        "kind",
+        "status",
+        "outcome",
+        "declared_stage_count",
+        "child_execution_count",
+        "publication_status"
+      ],
+      "properties": {
+        "schema_version": { "$ref": "#/$defs/SchemaVersion" },
+        "root_execution_id": { "$ref": "#/$defs/Uuid" },
+        "project_policy_sha256": { "$ref": "#/$defs/Sha256" },
+        "kind": { "$ref": "#/$defs/RootRunKind" },
+        "status": { "$ref": "#/$defs/RootRunStatus" },
+        "outcome": { "anyOf": [{ "$ref": "#/$defs/RootRunOutcome" }, { "type": "null" }] },
+        "declared_stage_count": { "$ref": "#/$defs/PositiveInteger" },
+        "child_execution_count": { "$ref": "#/$defs/NonNegativeInteger" },
+        "publication_status": { "anyOf": [{ "$ref": "#/$defs/PublicationStatus" }, { "type": "null" }] }
+      },
+      "if": { "type": "object", "properties": { "status": { "const": "terminal" } } },
+      "then": { "type": "object", "properties": { "outcome": { "type": "string" } } },
+      "else": {
+        "type": "object",
+        "properties": { "outcome": { "type": "null" }, "publication_status": { "type": "null" } }
+      }
+    },
+    "PathOmissionDeclaration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["outcome", "path", "execution_id", "trial_id", "reason"],
+      "properties": {
+        "outcome": { "enum": ["truncated", "not_produced"] },
+        "path": { "$ref": "#/$defs/RelativePath" },
+        "execution_id": { "$ref": "#/$defs/Uuid" },
+        "trial_id": { "anyOf": [{ "$ref": "#/$defs/TrialId" }, { "type": "null" }] },
+        "reason": { "$ref": "#/$defs/OmissionReason" }
+      }
+    },
+    "WithheldDeclaration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["outcome", "execution_id", "trial_id", "reason"],
+      "properties": {
+        "outcome": { "const": "withheld_private" },
+        "execution_id": { "$ref": "#/$defs/Uuid" },
+        "trial_id": { "anyOf": [{ "$ref": "#/$defs/TrialId" }, { "type": "null" }] },
+        "reason": { "$ref": "#/$defs/OmissionReason" }
+      }
+    },
+    "RedactionDeclaration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "category", "count"],
+      "properties": {
+        "path": { "$ref": "#/$defs/RelativePath" },
+        "category": { "$ref": "#/$defs/RedactionCategory" },
+        "count": { "$ref": "#/$defs/PositiveInteger" }
+      }
+    },
+    "StagingOmissions": {
+      "description": "Private staging input, never published. Paths are unique across entries, and each (path, category) pair appears once in redactions (checked in code).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "entries", "redactions"],
+      "properties": {
+        "schema_version": { "$ref": "#/$defs/SchemaVersion" },
+        "entries": {
+          "type": "array",
+          "items": { "oneOf": [{ "$ref": "#/$defs/PathOmissionDeclaration" }, { "$ref": "#/$defs/WithheldDeclaration" }] }
+        },
+        "redactions": { "type": "array", "items": { "$ref": "#/$defs/RedactionDeclaration" } }
+      }
+    }
+  }
+}

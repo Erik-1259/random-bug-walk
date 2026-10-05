@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "project_id": "00000000-0000-4000-8000-000000000001",
+  "purpose": "public_demo",
+  "visibility": "public",
+  "output_repository": null,
+  "public_artifact_base_uri": "https://example.invalid/synthetic-store/test-prefix/",
+  "policy_version": 1
+}

@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "family_ids": [
+    "synthetic-held-out-001"
+  ],
+  "source_fixes": [
+    {
+      "upstream": "synthetic-upstream",
+      "commit": "2222222222222222222222222222222222222222"
+    }
+  ],
+  "mutation_ids": [
+    "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+  ]
+}

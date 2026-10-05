@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "families": [
+    {
+      "family_id": "umami-tz-arg-001",
+      "exposure": "public",
+      "held_out_eligible": false,
+      "source_fixes": [
+        {
+          "upstream": "umami",
+          "commit": "e6f3f3b4b40a490d5cb050471baa0999366dab2a"
+        }
+      ],
+      "mutation_ids": []
+    },
+    {
+      "family_id": "umami-tz-arg-001",
+      "exposure": "public",
+      "held_out_eligible": false,
+      "source_fixes": [
+        {
+          "upstream": "synthetic-upstream",
+          "commit": "1111111111111111111111111111111111111111"
+        }
+      ],
+      "mutation_ids": []
+    }
+  ]
+}

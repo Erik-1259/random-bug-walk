@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "project_policy_sha256": "20801414e1417a9ab1dacc340aa2ea3e6a52bee70693ec1d2c69ef3c47c1bb77",
+  "root_execution_id": "00000000-0000-4000-8000-000000000101",
+  "execution_id": "00000000-0000-4000-8000-000000000201",
+  "task_revision": "1111111111111111111111111111111111111111111111111111111111111111",
+  "trial_id": "planted-01",
+  "entries": [
+    {
+      "kind": "patch",
+      "key": "generated/fix.patch",
+      "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+      "size_bytes": -1,
+      "media_type": "text/x-diff"
+    }
+  ]
+}
