@@ -32,6 +32,9 @@ importers:
 
   packages/envelope:
     dependencies:
+      '@rbw/schema':
+        specifier: workspace:*
+        version: link:../schema
       '@rbw/spend':
         specifier: workspace:*
         version: link:../spend
@@ -104,6 +107,9 @@ importers:
 
   packages/search:
     dependencies:
+      '@rbw/schema':
+        specifier: workspace:*
+        version: link:../schema
       '@rbw/spend':
         specifier: workspace:*
         version: link:../spend
@@ -174,6 +180,9 @@ importers:
       '@ai-sdk/openai-compatible':
         specifier: 3.0.62
         version: 3.0.62(zod@4.6.5)
+      '@rbw/schema':
+        specifier: workspace:*
+        version: link:../schema
       '@rbw/spend':
         specifier: workspace:*
         version: link:../spend

@@ -41,10 +41,12 @@ __all__ = [
     "TrialProfile",
     "build_expected_trials",
     "build_job_request",
+    "call_name",
     "job_operation_identity",
     "job_payload_hash",
     "mutation_id",
     "operation_id",
+    "provider_call_identity",
     "task_revision",
 ]
 
@@ -83,12 +85,51 @@ class MutationInput(TypedDict):
 
 
 _PLACEHOLDER_SHA256 = "0" * 64
+_MAX_SAFE_INTEGER = 9_007_199_254_740_991
+_PROVIDER_CALL_FIELDS = (
+    "project_id",
+    "project_policy_sha256",
+    "root_execution_id",
+    "batch_id",
+    "task_revision",
+    "kind",
+    "runtime_profile_sha256",
+    "call_name",
+    "attempt_ordinal",
+)
 
 
 def operation_id(identity: OperationIdentity) -> CanonicalDigest:
     """operation_id: the SHA-256 of the identity record's canonical bytes. Raises RecordError
     when invalid."""
     return canonical_digest(assert_record("OperationIdentity", identity))
+
+
+def _is_call_name_segment(segment: str | int) -> bool:
+    if isinstance(segment, bool):
+        return False
+    if isinstance(segment, int):
+        return 0 <= segment <= _MAX_SAFE_INTEGER
+    return ":" not in segment and not validate_record("CallName", segment)
+
+
+def call_name(kind: str, *segments: str | int) -> str:
+    """A provider call's call name: the operation kind and the segments joined with ":", such
+    as writer.issue:cand-17:3. Raises RecordError with call_name:kind when the kind is not an
+    OperationKind, and call_name:segment for a segment that is not one CallName segment or an
+    integer that is not a safe non-negative integer (a bool is never one)."""
+    if validate_record("OperationKind", kind):
+        raise RecordError("CallName", ["call_name:kind"])
+    if not all(_is_call_name_segment(segment) for segment in segments):
+        raise RecordError("CallName", ["call_name:segment"])
+    return cast(str, assert_record("CallName", ":".join([kind, *map(str, segments)])))
+
+
+def provider_call_identity(fields: Mapping[str, object]) -> OperationIdentity:
+    """The OperationIdentity of a provider call, validated; other fields of a wider run context
+    are ignored. Raises RecordError when invalid."""
+    identity = {"schema_version": 1, **{key: fields[key] for key in _PROVIDER_CALL_FIELDS}}
+    return cast(OperationIdentity, assert_record("OperationIdentity", identity))
 
 
 def job_payload_hash(fields: Mapping[str, object]) -> CanonicalDigest:

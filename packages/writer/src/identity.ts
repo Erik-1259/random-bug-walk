@@ -1,25 +1,32 @@
-// Identity of a writer call in the spend ledger: the run context, canonical JSON, and the hashes
-// the reservation carries. The shared schema package will supply the run context, the operation-ID
-// and the payload-hash definitions later; until then they live here, in this one module.
+// Identity of a writer call in the spend ledger: the run context and the hashes the reservation
+// carries. The operation ID, the call name and the profile digest's encoding come from
+// @rbw/schema; the payload hash is of the exact request body this package sends.
 import { createHash } from "node:crypto";
+import { callName, canonicalDigest, operationId as schemaOperationId, providerCallIdentity, validateRecord } from "@rbw/schema";
+import type { JobRequest } from "@rbw/schema";
 import { z } from "zod";
 import { WRITER_PROFILE } from "./config.ts";
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-const SHA256 = /^[0-9a-f]{64}$/;
+/** A string that the shared schema accepts as `type`. */
+function schemaString(type: "Uuid" | "Sha256") {
+  return z.string().refine((value) => validateRecord(type, value).length === 0, { message: `must be a ${type}` });
+}
 
-export const RunContextSchema = z
-  .object({
-    project_id: z.string().regex(UUID),
-    project_policy_sha256: z.string().regex(SHA256),
-    batch_id: z.string().regex(UUID).nullable(),
-    task_revision: z.string().regex(SHA256),
-    root_execution_id: z.string().regex(UUID),
-    execution_id: z.string().regex(UUID),
-    parent_execution_id: z.string().regex(UUID).nullable(),
-  })
-  .strict();
-export type RunContext = z.infer<typeof RunContextSchema>;
+export const RunContextSchema = z.strictObject({
+  project_id: schemaString("Uuid"),
+  project_policy_sha256: schemaString("Sha256"),
+  batch_id: schemaString("Uuid"),
+  task_revision: schemaString("Sha256"),
+  root_execution_id: schemaString("Uuid"),
+  execution_id: schemaString("Uuid"),
+  parent_execution_id: schemaString("Uuid").nullable(),
+});
+
+/** The run fields of a job request; every writer call is part of one, so `batch_id` is required. */
+export type RunContext = Pick<
+  JobRequest,
+  "project_id" | "project_policy_sha256" | "batch_id" | "task_revision" | "root_execution_id" | "execution_id" | "parent_execution_id"
+>;
 
 /** Validates a caller-supplied run context; unknown fields are rejected. Throws on any problem. */
 export function parseRunContext(value: unknown): RunContext {
@@ -33,7 +40,7 @@ export function parseRunContext(value: unknown): RunContext {
 export type WriterKind = "writer.card" | "writer.issue";
 export const WRITER_KINDS: readonly WriterKind[] = ["writer.card", "writer.issue"];
 
-/** A candidate name: lowercase letters, digits, `_` and `-`, so the call name stays a spend label. */
+/** A candidate name: lowercase letters, digits, `_` and `-`, so it is one segment of a call name. */
 export const CANDIDATE_PATTERN = /^[a-z0-9][a-z0-9_-]{0,45}$/;
 
 /** JSON with object keys sorted at every level and no whitespace. */
@@ -58,8 +65,11 @@ export function sha256Hex(data: string | Uint8Array): string {
   return createHash("sha256").update(data).digest("hex");
 }
 
+const PROFILE_SHA256 = canonicalDigest(WRITER_PROFILE).sha256;
+
+/** SHA-256 of the canonical JSON v1 bytes of the frozen writer profile. */
 export function runtimeProfileSha256(): string {
-  return sha256Hex(canonicalJson(WRITER_PROFILE));
+  return PROFILE_SHA256;
 }
 
 /** SHA-256 of the exact request body bytes sent to the provider. */
@@ -67,7 +77,7 @@ export function payloadHash(body: string): string {
   return sha256Hex(body);
 }
 
-export interface OperationIdentity {
+export interface WriterCallIdentity {
   context: RunContext;
   kind: WriterKind;
   candidate: string;
@@ -76,29 +86,19 @@ export interface OperationIdentity {
   attemptOrdinal: number;
 }
 
-/** Deterministic, so a restarted process finds the ordinals already used in the ledger. */
-export function operationId(identity: OperationIdentity): string {
-  const { context } = identity;
-  return sha256Hex(
-    canonicalJson({
-      project_id: context.project_id,
-      project_policy_sha256: context.project_policy_sha256,
-      root_execution_id: context.root_execution_id,
-      batch_id: context.batch_id,
-      task_revision: context.task_revision,
+/**
+ * The schema's operation ID of the call's OperationIdentity, whose call name is
+ * `<kind>:<candidate>:<ordinal>`. Deterministic, so a restarted process finds the ordinals
+ * already used in the ledger.
+ */
+export function operationId(identity: WriterCallIdentity): string {
+  return schemaOperationId(
+    providerCallIdentity({
+      ...identity.context,
       kind: identity.kind,
-      runtime_profile_sha256: runtimeProfileSha256(),
-      candidate: identity.candidate,
-      call_ordinal: identity.callOrdinal,
+      runtime_profile_sha256: PROFILE_SHA256,
+      call_name: callName(identity.kind, identity.candidate, identity.callOrdinal),
       attempt_ordinal: identity.attemptOrdinal,
     }),
-  );
-}
-
-/**
- * `<kind>.<candidate>.<ordinal>`. The spend ledger accepts call names of lowercase letters, digits,
- * `.`, `_` and `-` only, so the parts are joined with `.` rather than `:`.
- */
-export function callName(kind: WriterKind, candidate: string, callOrdinal: number): string {
-  return `${kind}.${candidate}.${String(callOrdinal)}`;
+  ).sha256;
 }

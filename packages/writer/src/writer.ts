@@ -4,6 +4,7 @@
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { Output, generateText } from "ai";
 import type { LanguageModel } from "ai";
+import { callName } from "@rbw/schema";
 import type {
   EnvelopeLine,
   OperationStatus,
@@ -35,7 +36,6 @@ import type { Exchange, FetchFunction } from "./http.ts";
 import {
   CANDIDATE_PATTERN,
   WRITER_KINDS,
-  callName,
   operationId,
   parseRunContext,
   payloadHash,

@@ -6,7 +6,6 @@ export * from "./config.ts";
 export { RequestNotSentError } from "./http.ts";
 export type { FetchFunction } from "./http.ts";
 export {
-  callName,
   canonicalJson,
   operationId,
   parseRunContext,
@@ -14,7 +13,7 @@ export {
   runtimeProfileSha256,
   RunContextSchema,
 } from "./identity.ts";
-export type { RunContext, WriterKind } from "./identity.ts";
+export type { RunContext, WriterCallIdentity, WriterKind } from "./identity.ts";
 export { checkIssue } from "./issue-checks.ts";
 export type { HintWord, IdentifierViolation, IssueCheckCode, IssueCheckReport, NumericViolation } from "./issue-checks.ts";
 export { buildIssuePrompt } from "./issue-prompt.ts";
