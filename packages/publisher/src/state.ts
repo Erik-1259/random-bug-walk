@@ -26,6 +26,7 @@ export interface StoredLimits {
  *   roots/<root>/limits.json                  limits and usage, persisted across retries
  *   roots/<root>/candidates/<id>/manifest.json
  *   roots/<root>/candidates/<id>/files.json   frozen file list
+ *   roots/<root>/candidates/<id>/snapshot.sha256  canonical hash of the terminal RootRun it was frozen from
  *   roots/<root>/candidates/<id>/blobs/<sha256>
  *   roots/<root>/candidates/<id>/record.json  the latest PublicationRecord
  *   repository.git                            the publisher's own bare repository
@@ -72,6 +73,16 @@ export class StateDir {
     for (const [sha256, bytes] of blobs) this.write(join(dir, "blobs", sha256), bytes);
     this.write(join(dir, MANIFEST_FILE), candidate.manifestBytes);
     this.write(join(dir, "files.json"), encodeCanonical(candidate.files));
+  }
+
+  saveSnapshotHash(root: string, publicationId: string, sha256: string): void {
+    this.write(join(this.candidateDir(root, publicationId), "snapshot.sha256"), new TextEncoder().encode(sha256));
+  }
+
+  /** The hash stored with a frozen candidate, or null when none was stored. */
+  loadSnapshotHash(root: string, publicationId: string): string | null {
+    const path = join(this.candidateDir(root, publicationId), "snapshot.sha256");
+    return existsSync(path) ? readFileSync(path, "utf8") : null;
   }
 
   setCurrent(root: string, publicationId: string): void {

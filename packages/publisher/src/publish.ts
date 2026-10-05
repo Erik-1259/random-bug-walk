@@ -396,6 +396,10 @@ class Publisher {
     return printRecord(this.deps, record);
   }
 
+  private snapshotHash(): string {
+    return sha256Hex(encodeCanonical(this.root));
+  }
+
   private freezeCandidate(policy: ProjectPolicy, policySha256: string, values: readonly RedactionValue[]): ReturnType<typeof freeze> {
     const staged = readStaging(this.config.stagingDir, this.root, values);
     return freeze({
@@ -428,11 +432,14 @@ class Publisher {
       if (current !== null && candidate.publicationId === current.publication_id) throw new InvalidInput("replacement_identical");
       this.state.ensure();
       this.state.saveCandidate(this.rootId, frozen);
+      this.state.saveSnapshotHash(this.rootId, candidate.publicationId, this.snapshotHash());
       record = this.record(candidate, null);
       this.state.saveRecord(record);
       this.state.setCurrent(this.rootId, candidate.publicationId);
       this.deps.logger.event("frozen", { root: this.rootId, publication: candidate.publicationId, files: candidate.files.length });
     } else {
+      // A retry must supply the snapshot the candidate was frozen from; otherwise the manifest and the status would disagree.
+      if (this.state.loadSnapshotHash(this.rootId, current.publication_id) !== this.snapshotHash()) throw new InvalidInput("root_run_changed");
       const loaded = this.state.loadCandidate(this.rootId, current.publication_id);
       if (loaded?.publicationId !== current.publication_id || loaded.manifestSha256 !== current.manifest_sha256) {
         // The frozen candidate no longer matches its record: publish nothing and keep the record's IDs.

@@ -3,6 +3,8 @@ import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   BIG_FILE,
+  CHILD_ID,
+  allBytes,
   FORBIDDEN_TERM,
   commitCount,
   createWorld,
@@ -87,6 +89,43 @@ describe("forbidden terms", () => {
     const again = await publish(world, rootRun, ["--replace"]);
     expect(again.code).toBe(4);
     expect(commitCount(world.remote)).toBe(1);
+  });
+
+  describe("a retry with a changed terminal snapshot", () => {
+    const OTHER_CHILD = "00000000-0000-4000-8000-000000000202";
+    const changes: [string, Parameters<typeof writeRootRun>[1]][] = [
+      ["outcome", { outcome: "failed", name: "changed" }],
+      ["child count", { children: [CHILD_ID, OTHER_CHILD], name: "changed" }],
+    ];
+
+    for (const [label, change] of changes) {
+      it(`is refused when the ${label} differs, and writes nothing`, async () => {
+        const world = createWorld();
+        stage(world.staging, { extra: { "inputs/notes.md": `mentions ${FORBIDDEN_TERM}\n` } });
+        expect(printed(await publish(world, writeRootRun(world))).status).toBe("blocked");
+        const statusBefore = statusObject(world);
+        const stateFiles = listFiles(world.state);
+        const stateBytes = allBytes(world.state);
+
+        const retry = await publish(world, writeRootRun(world, change));
+        expect(retry.code).toBe(4);
+        expect(retry.stdout).toBe("");
+        expect(retry.stderr).toContain("root_run_changed");
+        expect(statusObject(world)).toEqual(statusBefore);
+        expect(listFiles(world.state)).toEqual(stateFiles);
+        expect(allBytes(world.state).equals(stateBytes)).toBe(true);
+        expectNothingPublished(world);
+      });
+    }
+
+    it("still resumes when the snapshot is identical", async () => {
+      const world = createWorld();
+      stage(world.staging, { extra: { "inputs/notes.md": `mentions ${FORBIDDEN_TERM}\n` } });
+      const rootRun = writeRootRun(world);
+      const blocked = printed(await publish(world, rootRun));
+      const retry = await publish(world, rootRun);
+      expect(printed(retry)).toMatchObject({ status: "blocked", publication_id: blocked.publication_id });
+    });
   });
 
   it("refuses a replacement while the candidate is not blocked", async () => {
