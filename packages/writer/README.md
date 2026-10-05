@@ -93,7 +93,7 @@ All of these are constants in `src/config.ts`. Nothing overrides them, and there
 | --- | --- | --- |
 | Input: 32,768 tokens per call | The counted bound (next section). Over the limit: `prompt_too_large`, nothing reserved, nothing sent. Envelope line `enforced_by: "client_counter"` | Before reserving |
 | Output: 8,192 tokens per call | `max_tokens` in the request. Envelope line `enforced_by: "request_parameter"` | In the request |
-| 12 billed calls per candidate, shared by card, issue and repairs | The next free ordinal is read from the ledger. With none left: `call_limit_reached` | Before reserving |
+| 12 billed calls per candidate, shared by card, issue and repairs | The next free ordinal is read from the ledger; a call that provably never reached the provider (settled at zero, `reconciled`) does not use its ordinal. With none left: `call_limit_reached` | Before reserving |
 | Money | `@rbw/spend` reserves the worst case of both lines against the pool; a refusal (`insufficient_funds` included) stops the call | Before launching |
 | One request per call, exact bytes | The fetch wrapper sends only the body that was hashed into `payload_hash`, once | At the request |
 
@@ -121,7 +121,7 @@ Each call follows the `@rbw/spend` caller protocol in this order. Steps 1 to 5 a
 2. Read the rate record and build the envelope (`unknown_price`).
 3. Render the request and count its bound (`prompt_too_large`).
 4. Check through `slotStatus` that the context's root execution holds the slot (`slot_not_held`, or `unknown_slot`).
-5. Find the next free ordinal: for ordinals 1, 2, … call `operationStatus` on the card and the issue operation IDs and take the first where both are `unknown_operation` (`call_limit_reached` after 12).
+5. Find the next free ordinal: for ordinals 1, 2, … call `operationStatus` on the card and the issue operation IDs and take the first where neither has a call that may have reached the provider (`call_limit_reached` after 12). An operation that was settled at zero with its whole reservation released never reached the provider; the next call at that ordinal is its next attempt (`attempt_ordinal` 2, 3, …, with `previous_operation_id` naming the unsent one).
 6. `reserve`. Any refusal is returned at once; nothing is sent and nothing retries.
 7. `transition` `prepared → launching` with the slot key, before the request.
 8. Send the request.
@@ -318,6 +318,23 @@ pnpm --filter @rbw/writer run record -- --context <run-context.json> --rate-shee
 ```
 
 The intended live run is two calls, one card and one issue, from inputs the owner supplies, with `--max-calls 2` and `--pool development`. It is development evidence for the client path, never a candidate's admitted issue.
+
+## Known limits
+
+- **Ordinals across processes.** The per-candidate ordinal claim (step 5 and the reserve that follows it) is serialized only inside one process. If a card writer and an issue writer for one candidate ran in different processes, both could read the same free ordinal before either reserved. The kinds use different operation IDs, so both reservations would be accepted, and the candidate could exceed 12 calls.
+  - *When it applies.* Today all writers for a candidate run in one process, so it cannot happen yet. It applies once writers run in separate processes, such as separate hosted workflow steps.
+  - *How to notice it.* Run this on the spend ledger's schema. It counts the calls per candidate that were not replaced by a later attempt, and any row above 12 is a breach. A row is overcounted only when a candidate's last attempt at an ordinal was unsent, so check such a row with `operationStatus`.
+    ```sql
+    SELECT regexp_replace(o.call_name, '^writer\.(card|issue)\.(.*)\.[0-9]+$', '\2') AS candidate,
+           o.root_execution_id,
+           count(*) AS calls
+    FROM operations o
+    WHERE o.kind IN ('writer.card', 'writer.issue')
+      AND NOT EXISTS (SELECT 1 FROM operations n WHERE n.previous_operation_id = o.operation_id)
+    GROUP BY 1, 2
+    HAVING count(*) > 12;
+    ```
+  - *What the fix would be.* Claim the candidate and the ordinal atomically in the shared ledger, so a second claim for the same ordinal is refused there.
 
 ## Tests
 

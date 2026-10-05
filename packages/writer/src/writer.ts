@@ -6,6 +6,7 @@ import { Output, generateText } from "ai";
 import type { LanguageModel } from "ai";
 import type {
   EnvelopeLine,
+  OperationStatus,
   RefusalCode,
   ReserveRequest,
   Settled,
@@ -233,6 +234,23 @@ function unsentLines(envelope: EnvelopeLine[]): UsageSettlementLine[] {
   }));
 }
 
+interface Slot {
+  ordinal: number;
+  attempt: number;
+  previous: string | null;
+}
+
+/** Settled at zero with the whole reservation released: the call's request was never sent. */
+function neverReachedProvider(status: OperationStatus): boolean {
+  return (
+    status.state === "reconciled" &&
+    status.settled_microusd === 0n &&
+    status.open_microusd === 0n &&
+    status.reserved_microusd > 0n &&
+    status.released_microusd === status.reserved_microusd
+  );
+}
+
 function usageState(lines: UsageSettlementLine[]): UsageSettlement["usage_state"] {
   const unknown = lines.filter((line) => line.actual_microusd === null).length;
   return unknown === 0 ? "known" : unknown === lines.length ? "unknown" : "partly_unknown";
@@ -311,24 +329,44 @@ export function createWriter(options: WriterOptions): Writer {
     return { ok: true, request_body: body, input_token_bound: countPromptBound(body) };
   }
 
-  /** The first ordinal that neither kind has used for this candidate, read from the ledger. */
-  async function nextOrdinal(candidate: string): Promise<number | WriterRefusal> {
+  /**
+   * The first ordinal that neither kind has used for this candidate, read from the ledger, and the
+   * attempt of `kind` to make at it. An operation that provably never reached the provider (settled
+   * at zero, its whole reservation released) does not use its ordinal: the next call there is the
+   * next attempt, chained to the unsent one.
+   */
+  async function nextSlot(kind: WriterKind, candidate: string): Promise<Slot | WriterRefusal> {
     for (let ordinal = 1; ordinal <= MAX_CALLS_PER_CANDIDATE; ordinal += 1) {
       let free = true;
-      for (const kind of WRITER_KINDS) {
-        const status = await spend.operationStatus({
-          operation_id: operationId({ context, kind, candidate, callOrdinal: ordinal }),
-        });
-        if (status.ok) {
-          free = false;
+      let own: { attempt: number; previous: string | null } = { attempt: 1, previous: null };
+      for (const other of WRITER_KINDS) {
+        let attempt = 1;
+        let previous: string | null = null;
+        for (;;) {
+          const id = operationId({ context, kind: other, candidate, callOrdinal: ordinal, attemptOrdinal: attempt });
+          const status = await spend.operationStatus({ operation_id: id });
+          if (!status.ok) {
+            if (status.code !== "unknown_operation") {
+              return refusal(status.code, status.detail ?? null);
+            }
+            break;
+          }
+          if (!neverReachedProvider(status)) {
+            free = false;
+            break;
+          }
+          previous = id;
+          attempt += 1;
+        }
+        if (!free) {
           break;
         }
-        if (status.code !== "unknown_operation") {
-          return refusal(status.code, status.detail ?? null);
+        if (other === kind) {
+          own = { attempt, previous };
         }
       }
       if (free) {
-        return ordinal;
+        return { ordinal, attempt: own.attempt, previous: own.previous };
       }
     }
     return refusal("call_limit_reached", `candidate ${candidate} has used all ${String(MAX_CALLS_PER_CANDIDATE)} calls`);
@@ -388,16 +426,17 @@ export function createWriter(options: WriterOptions): Writer {
     const rateSha = rateSheetSha256(options.rateSheet);
     // Picking a free ordinal and reserving it is one step per candidate, shared by both kinds.
     const claimed = await withCandidateClaim(candidate, async () => {
-      const ordinal = await nextOrdinal(candidate);
-      if (typeof ordinal !== "number") {
-        return ordinal;
+      const slotFound = await nextSlot(kind, candidate);
+      if ("ok" in slotFound) {
+        return slotFound;
       }
-      const id = operationId({ context, kind, candidate, callOrdinal: ordinal });
+      const { ordinal, attempt, previous } = slotFound;
+      const id = operationId({ context, kind, candidate, callOrdinal: ordinal, attemptOrdinal: attempt });
       const request: ReserveRequest = {
         operation_id: id,
         payload_hash: payloadHash(body),
-        attempt_ordinal: 1,
-        previous_operation_id: null,
+        attempt_ordinal: attempt,
+        previous_operation_id: previous,
         project_id: context.project_id,
         project_policy_sha256: context.project_policy_sha256,
         batch_id: context.batch_id,

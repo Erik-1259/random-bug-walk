@@ -94,3 +94,73 @@ describe("one provider runs one call at a time", () => {
     expect(c.exchange).toEqual({ kind: "response", status: 200, body: "echo:body-c" });
   });
 });
+
+describe("a second writer on a provider that is inside another writer's send", () => {
+  it("gets a request_not_sent call settled at zero, not an exception, even at preview", async () => {
+    const { spend } = await freshSpend(db);
+    await acquire(spend);
+    const replay = createReplayFetch(await committedRecordings());
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let sent = 0;
+    let entered: () => void = () => undefined;
+    const inFlight = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const provider = createWriterProvider({
+      fetch: async (input, init) => {
+        sent += 1;
+        entered();
+        await gate;
+        return replay(input, init);
+      },
+    });
+    const make = () =>
+      createWriter({
+        spend,
+        provider,
+        context: CONTEXT,
+        poolKey: POOL,
+        allocationKey: null,
+        slotKey: SLOT,
+        rateSheet: rateSheetBytes(),
+      });
+    const first = make().writeIssue({
+      candidate: CANDIDATE,
+      symptom: symptom("valid"),
+      excludedIdentifiers: EXCLUDED_IDENTIFIERS,
+    });
+    await inFlight;
+    const second = await make().writeCard({ candidate: "synthetic-candidate-2", source: cardSource("valid") });
+    expect(sent).toBe(1);
+    if (!second.ok) {
+      throw new Error(second.code);
+    }
+    expect(second.call).toMatchObject({ status: "failed", failure: "request_not_sent" });
+    expect(second.call.settlement).toMatchObject({ settled_microusd: 0n, retained_microusd: 0n, state: "reconciled" });
+    release();
+    expect(await first).toMatchObject({ ok: true });
+  });
+
+  it("can still render a preview while another call is in flight", async () => {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const observed = new ObservedFetch(async () => {
+      await gate;
+      return new Response("first", { status: 200 });
+    });
+    const first = observed.send("body-a", async () => {
+      await observed.fetch("https://example.invalid/", { method: "POST", body: "body-a" });
+    });
+    const body = await observed.preview(async () => {
+      await observed.fetch("https://example.invalid/", { method: "POST", body: "body-b" });
+    });
+    expect(body).toBe("body-b");
+    release();
+    expect((await first).exchange).toEqual({ kind: "response", status: 200, body: "first" });
+  });
+});

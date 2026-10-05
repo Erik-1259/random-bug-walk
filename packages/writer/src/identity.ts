@@ -72,6 +72,8 @@ export interface OperationIdentity {
   kind: WriterKind;
   candidate: string;
   callOrdinal: number;
+  /** 1 for the first operation at an ordinal; later attempts follow only an unsent one. */
+  attemptOrdinal: number;
 }
 
 /** Deterministic, so a restarted process finds the ordinals already used in the ledger. */
@@ -88,7 +90,7 @@ export function operationId(identity: OperationIdentity): string {
       runtime_profile_sha256: runtimeProfileSha256(),
       candidate: identity.candidate,
       call_ordinal: identity.callOrdinal,
-      attempt_ordinal: 1,
+      attempt_ordinal: identity.attemptOrdinal,
     }),
   );
 }

@@ -113,3 +113,61 @@ describe("the shared per-candidate call budget", () => {
     }
   });
 });
+
+describe("calls that never reached the provider do not use up the budget", () => {
+  const unsent = (writer: Writer) =>
+    writer.writeIssue({ candidate: CANDIDATE, symptom: symptom("no-such-case"), excludedIdentifiers: [] });
+
+  it("leaves twelve billed calls after repeated unsent attempts, in this writer and in a new one", async () => {
+    const r = await rig(db);
+    const ids = new Set<string>();
+    for (let n = 0; n < MAX_CALLS_PER_CANDIDATE + 3; n += 1) {
+      const outcome = await unsent(r.writer);
+      if (!outcome.ok) {
+        throw new Error(`unsent attempt ${String(n)} refused: ${outcome.code}`);
+      }
+      expect(outcome.call).toMatchObject({ failure: "request_not_sent", call_ordinal: 1 });
+      expect(outcome.call.settlement).toMatchObject({ settled_microusd: 0n, state: "reconciled" });
+      ids.add(outcome.call.operation_id);
+    }
+    expect(ids.size).toBe(MAX_CALLS_PER_CANDIDATE + 3);
+
+    const fresh = await rig(db, { existing: { spend: r.rawSpend, schema: r.schema }, acquireSlot: false });
+    expect(await twelveCalls(fresh.writer)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+    const thirteenth = await fresh.writer.writeCard({ candidate: CANDIDATE, source: cardSource("valid") });
+    expect(thirteenth).toMatchObject({ ok: false, code: "call_limit_reached" });
+  });
+
+  it("still counts a call whose response was lost", async () => {
+    const r = await rig(db, { fetch: () => Promise.reject(new TypeError("synthetic connection reset")) });
+    const ordinals: number[] = [];
+    for (let n = 0; n < MAX_CALLS_PER_CANDIDATE; n += 1) {
+      const outcome = await r.writer.writeCard({ candidate: CANDIDATE, source: cardSource("valid") });
+      if (!outcome.ok) {
+        throw new Error(outcome.code);
+      }
+      expect(outcome.call.status).toBe("uncertain");
+      ordinals.push(outcome.call.call_ordinal);
+    }
+    expect(ordinals).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+    expect(await r.writer.writeCard({ candidate: CANDIDATE, source: cardSource("valid") })).toMatchObject({
+      ok: false,
+      code: "call_limit_reached",
+    });
+  });
+
+  it("still counts a sent call that failed with an HTTP error", async () => {
+    const r = await rig(db, { fetch: () => Promise.resolve(new Response("{}", { status: 500 })) });
+    for (let n = 0; n < MAX_CALLS_PER_CANDIDATE; n += 1) {
+      const outcome = await r.writer.writeCard({ candidate: CANDIDATE, source: cardSource("valid") });
+      if (!outcome.ok) {
+        throw new Error(outcome.code);
+      }
+      expect(outcome.call.failure).toBe("http_status");
+    }
+    expect(await r.writer.writeCard({ candidate: CANDIDATE, source: cardSource("valid") })).toMatchObject({
+      ok: false,
+      code: "call_limit_reached",
+    });
+  });
+});

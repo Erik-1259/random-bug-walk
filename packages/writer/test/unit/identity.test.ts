@@ -53,7 +53,7 @@ describe("canonical JSON and hashes", () => {
 
   it("derives the operation ID from every identity field", () => {
     const context = parseRunContext(CONTEXT);
-    const base = { context, kind: "writer.issue" as const, candidate: CANDIDATE, callOrdinal: 1 };
+    const base = { context, kind: "writer.issue" as const, candidate: CANDIDATE, callOrdinal: 1, attemptOrdinal: 1 };
     const id = operationId(base);
     expect(id).toBe(
       sha(
@@ -75,10 +75,11 @@ describe("canonical JSON and hashes", () => {
       operationId({ ...base, kind: "writer.card" }),
       operationId({ ...base, candidate: "synthetic-candidate-2" }),
       operationId({ ...base, callOrdinal: 2 }),
+      operationId({ ...base, attemptOrdinal: 2 }),
       operationId({ ...base, context: { ...context, batch_id: null } }),
       operationId({ ...base, context: { ...context, project_id: uuid(99) } }),
     ];
-    expect(new Set([id, ...variants]).size).toBe(6);
+    expect(new Set([id, ...variants]).size).toBe(7);
   });
 
   it("builds call names that fit the spend label format", () => {
