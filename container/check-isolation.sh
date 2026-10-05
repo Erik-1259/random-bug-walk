@@ -282,11 +282,15 @@ docker image inspect "$image" >/dev/null 2>&1 ||
 launcher_args=(--worktree "$worktree_dir" --inbox "$inbox_dir" --name "isolation-check-$$" --image "$image")
 codex_state_dir=""
 if [ "$codex_auth" -eq 1 ]; then
+  [ "$expose" -eq 0 ] || die "--codex-auth and --expose cannot be combined; run them separately"
   # A synthetic sign-in, never the owner's: the check only needs the mount.
   codex_state_dir=$(mktemp -d "${TMPDIR:-/tmp}/rbw-check-codex.XXXXXX")
   printf '{"tokens":{"account_id":"synthetic-account","refresh_token":"synthetic"}}\n' >"$codex_state_dir/auth.json"
   chmod 600 "$codex_state_dir/auth.json"
   launcher_args+=(--codex-auth "$codex_state_dir/auth.json")
+  # run-agent.sh passes CODEX_HOME by name (-e CODEX_HOME); this check starts the
+  # container itself, so it sets the same value here.
+  export CODEX_HOME=/run/codex-state
 fi
 printed=$("$BASH" "$LAUNCHER" "${launcher_args[@]}" --print-args -- sleep 1800) ||
   die "run-agent.sh refused these inputs"
