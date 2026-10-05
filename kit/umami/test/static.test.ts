@@ -168,6 +168,8 @@ describe("postgres configuration", () => {
     expect(bootstrap).toMatch(/CREATE ROLE umami_app LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE/);
     // The fixture reset recreates the database from a template as umami_owner.
     expect(bootstrap).toMatch(/CREATE ROLE umami_owner LOGIN NOSUPERUSER CREATEDB NOCREATEROLE/);
+    // Its forced drop ends umami_app's sessions, which needs the signalling role.
+    expect(bootstrap).toMatch(/^GRANT pg_signal_backend TO umami_owner;$/m);
     expect(bootstrap).toMatch(/CREATE DATABASE umami OWNER umami_owner/);
     expect(bootstrap).not.toMatch(/GRANT[^;]*umami_owner[^;]*TO umami_app/);
   });
