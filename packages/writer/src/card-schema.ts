@@ -90,6 +90,13 @@ export type Card = z.infer<typeof CardSchema>;
 export const CODE_OWNED_FIELDS = ["id", "provenance", "shape"] as const;
 
 /**
+ * What the model's answer is validated against: the full card, except that any value passes in a
+ * code-owned field, since code replaces it before the card is validated in full.
+ */
+export const ModelCardSchema = CardSchema.extend({ id: z.unknown(), provenance: z.unknown(), shape: z.unknown() });
+export type ModelCard = z.infer<typeof ModelCardSchema>;
+
+/**
  * Card field names that read as identifiers rather than ordinary words. The issue identifier scan
  * rejects these; single-word field names such as `date`, `trigger` or `symptom` are ordinary words
  * a bug report needs, so they are not on this list.

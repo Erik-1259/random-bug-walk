@@ -47,6 +47,15 @@ function digitRuns(text: string): string[] {
   return text.match(DIGIT_RUN) ?? [];
 }
 
+// An ISO date with an optional time and offset, or a time of day on its own.
+const DATE_OR_TIME =
+  /(?<!\d)(?:\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?|\d{1,2}:\d{2}(?::\d{2}(?:\.\d+)?)?)(?!\d)/g;
+
+/** The digit runs a count could be stated in: those that are not part of a date or a time. */
+function countRuns(text: string): bigint[] {
+  return digitRuns(text.replace(DATE_OR_TIME, " ")).map(BigInt);
+}
+
 /** Every string and number value in the observation (never its keys). */
 function symptomValues(value: unknown): string[] {
   if (typeof value === "string") {
@@ -86,10 +95,10 @@ function checkNumbers(issue: IssueOutput, symptom: ObservedSymptom): NumericViol
     }
   }
   const counts = (buckets: { count: number }[]) => buckets.map((b) => BigInt(b.count));
-  if (!containsInOrder(digitRuns(issue.expected_result).map(BigInt), counts(symptom.expected))) {
+  if (!containsInOrder(countRuns(issue.expected_result), counts(symptom.expected))) {
     violations.push({ field: "expected_result", reason: "missing_expected_vector", number: null });
   }
-  if (!containsInOrder(digitRuns(issue.actual_result).map(BigInt), counts(symptom.observed))) {
+  if (!containsInOrder(countRuns(issue.actual_result), counts(symptom.observed))) {
     violations.push({ field: "actual_result", reason: "missing_observed_vector", number: null });
   }
   return violations;

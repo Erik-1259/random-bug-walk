@@ -97,6 +97,52 @@ describe("check 2: numeric statements", () => {
     ]);
   });
 
+  describe("with counts small enough to appear inside a date", () => {
+    function smallCounts(): ObservedSymptom {
+      const parsed = parseObservedSymptom({
+        ...symptom("valid"),
+        expected: [
+          { bucket_label: "2026-01-01", count: 1 },
+          { bucket_label: "2026-01-02", count: 2 },
+        ],
+        observed: [
+          { bucket_label: "2026-01-01", count: 1 },
+          { bucket_label: "2026-01-02", count: 2 },
+        ],
+      });
+      if (!parsed.ok) {
+        throw new Error(parsed.detail);
+      }
+      return parsed.symptom;
+    }
+    // Every digit run here is supported by the observation, so only the vector checks can fail.
+    const STATED = "2026-01-01 shows 1 pageview from 03:00 and 2026-01-02 shows 2 pageviews.";
+    const DATE_OR_TIME_ONLY = [
+      "Both 2026-01-01 and 2026-01-02 list pageviews.",
+      "Pageviews are listed from 01:02 local time.",
+      "Pageviews are listed from 2026-01-02T01:02:00Z.",
+    ];
+
+    it.each(DATE_OR_TIME_ONLY)("does not take the expected vector from %j", (text) => {
+      const report = checkIssue({ ...VALID, expected_result: text, actual_result: STATED }, smallCounts(), []);
+      expect(report.numeric?.violations).toEqual([
+        { field: "expected_result", reason: "missing_expected_vector", number: null },
+      ]);
+    });
+
+    it.each(DATE_OR_TIME_ONLY)("does not take the observed vector from %j", (text) => {
+      const report = checkIssue({ ...VALID, expected_result: STATED, actual_result: text }, smallCounts(), []);
+      expect(report.numeric?.violations).toEqual([
+        { field: "actual_result", reason: "missing_observed_vector", number: null },
+      ]);
+    });
+
+    it("passes counts stated next to dates", () => {
+      const report = checkIssue({ ...VALID, expected_result: STATED, actual_result: STATED }, smallCounts(), []);
+      expect(report.numeric).toEqual({ ok: true, violations: [] });
+    });
+  });
+
   it("rejects vectors placed in the wrong sections", () => {
     const report = check({ expected_result: VALID.actual_result, actual_result: VALID.expected_result });
     expect(report.status).toBe("rejected");
