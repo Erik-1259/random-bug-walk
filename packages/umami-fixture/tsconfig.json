@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["node"],
+    "allowImportingTsExtensions": true,
+    "rewriteRelativeImportExtensions": true,
+    "noEmit": true
+  },
+  "include": ["src", "checks", "test", "study", "playwright.config.ts", "vitest.config.ts"]
+}
