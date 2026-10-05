@@ -1,4 +1,4 @@
 {
-  "vitest": { ".": 21, "packages/envelope": 41, "packages/projection": 125, "packages/publisher": 143, "packages/schema": 435, "packages/search": 80, "packages/shapes": 61, "packages/spend": 328, "scripts/checks": 189, "tools/neon-ci": 98, "tools/publication": 163 },
+  "vitest": { ".": 21, "packages/envelope": 41, "packages/projection": 125, "packages/publisher": 143, "packages/schema": 435, "packages/search": 80, "packages/shapes": 61, "packages/spend": 328, "packages/umami-fixture": 109, "scripts/checks": 189, "tools/neon-ci": 98, "tools/publication": 163 },
   "pytest": { "python/schema": 401 }
 }

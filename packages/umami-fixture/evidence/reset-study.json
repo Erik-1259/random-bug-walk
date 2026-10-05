@@ -1,0 +1,1290 @@
+{
+  "budget": {
+    "original_suite_ms_measured": [
+      73708,
+      54233
+    ],
+    "projected_ms": {
+      "a_in_place": 23580,
+      "b_template": 24300,
+      "c_fresh_stack": 420000
+    },
+    "projection_note": "20 rounds at the slowest measured round, before adding the original suite. Candidate c alone exceeds the 240-second phase.",
+    "rounds_per_phase": 20,
+    "test_phase_seconds": 240
+  },
+  "candidates": {
+    "a_in_place": {
+      "method": "truncate every public table except _prisma_migrations and copy back a snapshot taken right after migration (study/in-place.ts); Umami keeps running",
+      "rounds": [
+        {
+          "exit_code": 0,
+          "outcomes": [
+            {
+              "check_id": "tzarg.utc-day-counts",
+              "counts": [
+                2,
+                8,
+                2
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "d603ac4a97a43509bda78a14ef0ff4b20b845723e36456277a2221443b22d230"
+            },
+            {
+              "check_id": "tzarg.la-day-counts",
+              "counts": [
+                3,
+                8,
+                1
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "7a70975923fdaf986f228760d10742407b4d6ef92705eb3ccdd8c136b7a646f1"
+            },
+            {
+              "check_id": "tzarg.auckland-day-counts",
+              "counts": [
+                1,
+                6,
+                5
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "17e5f79156997d9b89758383f56d07856972d9c530488b50e9b7df489ea927bf"
+            },
+            {
+              "check_id": "tzarg.kolkata-day-counts",
+              "counts": [
+                2,
+                7,
+                3
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "735765c7c65cf87412b7773d2c24b6e3fee1f7afc180756a6751601926f7c034"
+            }
+          ],
+          "reset_ms": 55,
+          "response_bodies_identical_to_fresh": true,
+          "round": 1,
+          "round_ms": 1053,
+          "starting_condition": "after a fixture round",
+          "wall_ms": 1108
+        },
+        {
+          "exit_code": 0,
+          "outcomes": [
+            {
+              "check_id": "tzarg.utc-day-counts",
+              "counts": [
+                2,
+                8,
+                2
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "d603ac4a97a43509bda78a14ef0ff4b20b845723e36456277a2221443b22d230"
+            },
+            {
+              "check_id": "tzarg.la-day-counts",
+              "counts": [
+                3,
+                8,
+                1
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "7a70975923fdaf986f228760d10742407b4d6ef92705eb3ccdd8c136b7a646f1"
+            },
+            {
+              "check_id": "tzarg.auckland-day-counts",
+              "counts": [
+                1,
+                6,
+                5
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "17e5f79156997d9b89758383f56d07856972d9c530488b50e9b7df489ea927bf"
+            },
+            {
+              "check_id": "tzarg.kolkata-day-counts",
+              "counts": [
+                2,
+                7,
+                3
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "735765c7c65cf87412b7773d2c24b6e3fee1f7afc180756a6751601926f7c034"
+            }
+          ],
+          "reset_ms": 66,
+          "response_bodies_identical_to_fresh": true,
+          "round": 2,
+          "round_ms": 1029,
+          "starting_condition": "after a fixture round",
+          "wall_ms": 1095
+        },
+        {
+          "exit_code": 0,
+          "outcomes": [
+            {
+              "check_id": "tzarg.utc-day-counts",
+              "counts": [
+                2,
+                8,
+                2
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "d603ac4a97a43509bda78a14ef0ff4b20b845723e36456277a2221443b22d230"
+            },
+            {
+              "check_id": "tzarg.la-day-counts",
+              "counts": [
+                3,
+                8,
+                1
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "7a70975923fdaf986f228760d10742407b4d6ef92705eb3ccdd8c136b7a646f1"
+            },
+            {
+              "check_id": "tzarg.auckland-day-counts",
+              "counts": [
+                1,
+                6,
+                5
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "17e5f79156997d9b89758383f56d07856972d9c530488b50e9b7df489ea927bf"
+            },
+            {
+              "check_id": "tzarg.kolkata-day-counts",
+              "counts": [
+                2,
+                7,
+                3
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "735765c7c65cf87412b7773d2c24b6e3fee1f7afc180756a6751601926f7c034"
+            }
+          ],
+          "reset_ms": 52,
+          "response_bodies_identical_to_fresh": true,
+          "round": 3,
+          "round_ms": 919,
+          "starting_condition": "after a fixture round",
+          "wall_ms": 971
+        },
+        {
+          "exit_code": 0,
+          "outcomes": [
+            {
+              "check_id": "tzarg.utc-day-counts",
+              "counts": [
+                2,
+                8,
+                2
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "d603ac4a97a43509bda78a14ef0ff4b20b845723e36456277a2221443b22d230"
+            },
+            {
+              "check_id": "tzarg.la-day-counts",
+              "counts": [
+                3,
+                8,
+                1
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "7a70975923fdaf986f228760d10742407b4d6ef92705eb3ccdd8c136b7a646f1"
+            },
+            {
+              "check_id": "tzarg.auckland-day-counts",
+              "counts": [
+                1,
+                6,
+                5
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "17e5f79156997d9b89758383f56d07856972d9c530488b50e9b7df489ea927bf"
+            },
+            {
+              "check_id": "tzarg.kolkata-day-counts",
+              "counts": [
+                2,
+                7,
+                3
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "735765c7c65cf87412b7773d2c24b6e3fee1f7afc180756a6751601926f7c034"
+            }
+          ],
+          "reset_ms": 55,
+          "response_bodies_identical_to_fresh": true,
+          "round": 4,
+          "round_ms": 1064,
+          "starting_condition": "after a fixture round",
+          "wall_ms": 1119
+        },
+        {
+          "exit_code": 0,
+          "outcomes": [
+            {
+              "check_id": "tzarg.utc-day-counts",
+              "counts": [
+                2,
+                8,
+                2
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "d603ac4a97a43509bda78a14ef0ff4b20b845723e36456277a2221443b22d230"
+            },
+            {
+              "check_id": "tzarg.la-day-counts",
+              "counts": [
+                3,
+                8,
+                1
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "7a70975923fdaf986f228760d10742407b4d6ef92705eb3ccdd8c136b7a646f1"
+            },
+            {
+              "check_id": "tzarg.auckland-day-counts",
+              "counts": [
+                1,
+                6,
+                5
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "17e5f79156997d9b89758383f56d07856972d9c530488b50e9b7df489ea927bf"
+            },
+            {
+              "check_id": "tzarg.kolkata-day-counts",
+              "counts": [
+                2,
+                7,
+                3
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "735765c7c65cf87412b7773d2c24b6e3fee1f7afc180756a6751601926f7c034"
+            }
+          ],
+          "reset_ms": 54,
+          "response_bodies_identical_to_fresh": true,
+          "round": 5,
+          "round_ms": 1004,
+          "starting_condition": "after a fixture round",
+          "wall_ms": 1058
+        },
+        {
+          "exit_code": 0,
+          "outcomes": [
+            {
+              "check_id": "tzarg.utc-day-counts",
+              "counts": [
+                2,
+                8,
+                2
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "d603ac4a97a43509bda78a14ef0ff4b20b845723e36456277a2221443b22d230"
+            },
+            {
+              "check_id": "tzarg.la-day-counts",
+              "counts": [
+                3,
+                8,
+                1
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "7a70975923fdaf986f228760d10742407b4d6ef92705eb3ccdd8c136b7a646f1"
+            },
+            {
+              "check_id": "tzarg.auckland-day-counts",
+              "counts": [
+                1,
+                6,
+                5
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "17e5f79156997d9b89758383f56d07856972d9c530488b50e9b7df489ea927bf"
+            },
+            {
+              "check_id": "tzarg.kolkata-day-counts",
+              "counts": [
+                2,
+                7,
+                3
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "735765c7c65cf87412b7773d2c24b6e3fee1f7afc180756a6751601926f7c034"
+            }
+          ],
+          "reset_ms": 55,
+          "response_bodies_identical_to_fresh": true,
+          "round": 1,
+          "round_ms": 1028,
+          "starting_condition": "after the original suite",
+          "wall_ms": 1083
+        },
+        {
+          "exit_code": 0,
+          "outcomes": [
+            {
+              "check_id": "tzarg.utc-day-counts",
+              "counts": [
+                2,
+                8,
+                2
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "d603ac4a97a43509bda78a14ef0ff4b20b845723e36456277a2221443b22d230"
+            },
+            {
+              "check_id": "tzarg.la-day-counts",
+              "counts": [
+                3,
+                8,
+                1
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "7a70975923fdaf986f228760d10742407b4d6ef92705eb3ccdd8c136b7a646f1"
+            },
+            {
+              "check_id": "tzarg.auckland-day-counts",
+              "counts": [
+                1,
+                6,
+                5
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "17e5f79156997d9b89758383f56d07856972d9c530488b50e9b7df489ea927bf"
+            },
+            {
+              "check_id": "tzarg.kolkata-day-counts",
+              "counts": [
+                2,
+                7,
+                3
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "735765c7c65cf87412b7773d2c24b6e3fee1f7afc180756a6751601926f7c034"
+            }
+          ],
+          "reset_ms": 52,
+          "response_bodies_identical_to_fresh": true,
+          "round": 2,
+          "round_ms": 1023,
+          "starting_condition": "after a fixture round",
+          "wall_ms": 1075
+        },
+        {
+          "exit_code": 0,
+          "outcomes": [
+            {
+              "check_id": "tzarg.utc-day-counts",
+              "counts": [
+                2,
+                8,
+                2
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "d603ac4a97a43509bda78a14ef0ff4b20b845723e36456277a2221443b22d230"
+            },
+            {
+              "check_id": "tzarg.la-day-counts",
+              "counts": [
+                3,
+                8,
+                1
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "7a70975923fdaf986f228760d10742407b4d6ef92705eb3ccdd8c136b7a646f1"
+            },
+            {
+              "check_id": "tzarg.auckland-day-counts",
+              "counts": [
+                1,
+                6,
+                5
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "17e5f79156997d9b89758383f56d07856972d9c530488b50e9b7df489ea927bf"
+            },
+            {
+              "check_id": "tzarg.kolkata-day-counts",
+              "counts": [
+                2,
+                7,
+                3
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "735765c7c65cf87412b7773d2c24b6e3fee1f7afc180756a6751601926f7c034"
+            }
+          ],
+          "reset_ms": 49,
+          "response_bodies_identical_to_fresh": true,
+          "round": 3,
+          "round_ms": 1130,
+          "starting_condition": "after a fixture round",
+          "wall_ms": 1179
+        },
+        {
+          "exit_code": 0,
+          "outcomes": [
+            {
+              "check_id": "tzarg.utc-day-counts",
+              "counts": [
+                2,
+                8,
+                2
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "d603ac4a97a43509bda78a14ef0ff4b20b845723e36456277a2221443b22d230"
+            },
+            {
+              "check_id": "tzarg.la-day-counts",
+              "counts": [
+                3,
+                8,
+                1
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "7a70975923fdaf986f228760d10742407b4d6ef92705eb3ccdd8c136b7a646f1"
+            },
+            {
+              "check_id": "tzarg.auckland-day-counts",
+              "counts": [
+                1,
+                6,
+                5
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "17e5f79156997d9b89758383f56d07856972d9c530488b50e9b7df489ea927bf"
+            },
+            {
+              "check_id": "tzarg.kolkata-day-counts",
+              "counts": [
+                2,
+                7,
+                3
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "735765c7c65cf87412b7773d2c24b6e3fee1f7afc180756a6751601926f7c034"
+            }
+          ],
+          "reset_ms": 55,
+          "response_bodies_identical_to_fresh": true,
+          "round": 4,
+          "round_ms": 945,
+          "starting_condition": "after a fixture round",
+          "wall_ms": 1000
+        },
+        {
+          "exit_code": 0,
+          "outcomes": [
+            {
+              "check_id": "tzarg.utc-day-counts",
+              "counts": [
+                2,
+                8,
+                2
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "d603ac4a97a43509bda78a14ef0ff4b20b845723e36456277a2221443b22d230"
+            },
+            {
+              "check_id": "tzarg.la-day-counts",
+              "counts": [
+                3,
+                8,
+                1
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "7a70975923fdaf986f228760d10742407b4d6ef92705eb3ccdd8c136b7a646f1"
+            },
+            {
+              "check_id": "tzarg.auckland-day-counts",
+              "counts": [
+                1,
+                6,
+                5
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "17e5f79156997d9b89758383f56d07856972d9c530488b50e9b7df489ea927bf"
+            },
+            {
+              "check_id": "tzarg.kolkata-day-counts",
+              "counts": [
+                2,
+                7,
+                3
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "735765c7c65cf87412b7773d2c24b6e3fee1f7afc180756a6751601926f7c034"
+            }
+          ],
+          "reset_ms": 47,
+          "response_bodies_identical_to_fresh": true,
+          "round": 5,
+          "round_ms": 813,
+          "starting_condition": "after a fixture round",
+          "wall_ms": 860
+        }
+      ],
+      "summary": {
+        "all_bodies_identical_to_fresh": true,
+        "all_pass": true,
+        "reset_ms_max": 66,
+        "rounds": 10,
+        "wall_ms_max": 1179,
+        "wall_ms_mean": 1055
+      },
+      "umami_restart": false
+    },
+    "b_template": {
+      "method": "drop the application database WITH (FORCE) and recreate it from a template copy taken right after migration (src/reset.ts resetFixture); Umami keeps running and its pool reconnects",
+      "rounds": [
+        {
+          "exit_code": 0,
+          "outcomes": [
+            {
+              "check_id": "tzarg.utc-day-counts",
+              "counts": [
+                2,
+                8,
+                2
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "d603ac4a97a43509bda78a14ef0ff4b20b845723e36456277a2221443b22d230"
+            },
+            {
+              "check_id": "tzarg.la-day-counts",
+              "counts": [
+                3,
+                8,
+                1
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "7a70975923fdaf986f228760d10742407b4d6ef92705eb3ccdd8c136b7a646f1"
+            },
+            {
+              "check_id": "tzarg.auckland-day-counts",
+              "counts": [
+                1,
+                6,
+                5
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "17e5f79156997d9b89758383f56d07856972d9c530488b50e9b7df489ea927bf"
+            },
+            {
+              "check_id": "tzarg.kolkata-day-counts",
+              "counts": [
+                2,
+                7,
+                3
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "735765c7c65cf87412b7773d2c24b6e3fee1f7afc180756a6751601926f7c034"
+            }
+          ],
+          "reset_ms": 144,
+          "response_bodies_identical_to_fresh": true,
+          "round": 1,
+          "round_ms": 870,
+          "starting_condition": "after a fixture round",
+          "wall_ms": 1014
+        },
+        {
+          "exit_code": 0,
+          "outcomes": [
+            {
+              "check_id": "tzarg.utc-day-counts",
+              "counts": [
+                2,
+                8,
+                2
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "d603ac4a97a43509bda78a14ef0ff4b20b845723e36456277a2221443b22d230"
+            },
+            {
+              "check_id": "tzarg.la-day-counts",
+              "counts": [
+                3,
+                8,
+                1
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "7a70975923fdaf986f228760d10742407b4d6ef92705eb3ccdd8c136b7a646f1"
+            },
+            {
+              "check_id": "tzarg.auckland-day-counts",
+              "counts": [
+                1,
+                6,
+                5
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "17e5f79156997d9b89758383f56d07856972d9c530488b50e9b7df489ea927bf"
+            },
+            {
+              "check_id": "tzarg.kolkata-day-counts",
+              "counts": [
+                2,
+                7,
+                3
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "735765c7c65cf87412b7773d2c24b6e3fee1f7afc180756a6751601926f7c034"
+            }
+          ],
+          "reset_ms": 144,
+          "response_bodies_identical_to_fresh": true,
+          "round": 2,
+          "round_ms": 949,
+          "starting_condition": "after a fixture round",
+          "wall_ms": 1093
+        },
+        {
+          "exit_code": 0,
+          "outcomes": [
+            {
+              "check_id": "tzarg.utc-day-counts",
+              "counts": [
+                2,
+                8,
+                2
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "d603ac4a97a43509bda78a14ef0ff4b20b845723e36456277a2221443b22d230"
+            },
+            {
+              "check_id": "tzarg.la-day-counts",
+              "counts": [
+                3,
+                8,
+                1
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "7a70975923fdaf986f228760d10742407b4d6ef92705eb3ccdd8c136b7a646f1"
+            },
+            {
+              "check_id": "tzarg.auckland-day-counts",
+              "counts": [
+                1,
+                6,
+                5
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "17e5f79156997d9b89758383f56d07856972d9c530488b50e9b7df489ea927bf"
+            },
+            {
+              "check_id": "tzarg.kolkata-day-counts",
+              "counts": [
+                2,
+                7,
+                3
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "735765c7c65cf87412b7773d2c24b6e3fee1f7afc180756a6751601926f7c034"
+            }
+          ],
+          "reset_ms": 136,
+          "response_bodies_identical_to_fresh": true,
+          "round": 3,
+          "round_ms": 923,
+          "starting_condition": "after a fixture round",
+          "wall_ms": 1059
+        },
+        {
+          "exit_code": 0,
+          "outcomes": [
+            {
+              "check_id": "tzarg.utc-day-counts",
+              "counts": [
+                2,
+                8,
+                2
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "d603ac4a97a43509bda78a14ef0ff4b20b845723e36456277a2221443b22d230"
+            },
+            {
+              "check_id": "tzarg.la-day-counts",
+              "counts": [
+                3,
+                8,
+                1
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "7a70975923fdaf986f228760d10742407b4d6ef92705eb3ccdd8c136b7a646f1"
+            },
+            {
+              "check_id": "tzarg.auckland-day-counts",
+              "counts": [
+                1,
+                6,
+                5
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "17e5f79156997d9b89758383f56d07856972d9c530488b50e9b7df489ea927bf"
+            },
+            {
+              "check_id": "tzarg.kolkata-day-counts",
+              "counts": [
+                2,
+                7,
+                3
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "735765c7c65cf87412b7773d2c24b6e3fee1f7afc180756a6751601926f7c034"
+            }
+          ],
+          "reset_ms": 138,
+          "response_bodies_identical_to_fresh": true,
+          "round": 4,
+          "round_ms": 964,
+          "starting_condition": "after a fixture round",
+          "wall_ms": 1102
+        },
+        {
+          "exit_code": 0,
+          "outcomes": [
+            {
+              "check_id": "tzarg.utc-day-counts",
+              "counts": [
+                2,
+                8,
+                2
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "d603ac4a97a43509bda78a14ef0ff4b20b845723e36456277a2221443b22d230"
+            },
+            {
+              "check_id": "tzarg.la-day-counts",
+              "counts": [
+                3,
+                8,
+                1
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "7a70975923fdaf986f228760d10742407b4d6ef92705eb3ccdd8c136b7a646f1"
+            },
+            {
+              "check_id": "tzarg.auckland-day-counts",
+              "counts": [
+                1,
+                6,
+                5
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "17e5f79156997d9b89758383f56d07856972d9c530488b50e9b7df489ea927bf"
+            },
+            {
+              "check_id": "tzarg.kolkata-day-counts",
+              "counts": [
+                2,
+                7,
+                3
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "735765c7c65cf87412b7773d2c24b6e3fee1f7afc180756a6751601926f7c034"
+            }
+          ],
+          "reset_ms": 136,
+          "response_bodies_identical_to_fresh": true,
+          "round": 5,
+          "round_ms": 1079,
+          "starting_condition": "after a fixture round",
+          "wall_ms": 1215
+        },
+        {
+          "exit_code": 0,
+          "outcomes": [
+            {
+              "check_id": "tzarg.utc-day-counts",
+              "counts": [
+                2,
+                8,
+                2
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "d603ac4a97a43509bda78a14ef0ff4b20b845723e36456277a2221443b22d230"
+            },
+            {
+              "check_id": "tzarg.la-day-counts",
+              "counts": [
+                3,
+                8,
+                1
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "7a70975923fdaf986f228760d10742407b4d6ef92705eb3ccdd8c136b7a646f1"
+            },
+            {
+              "check_id": "tzarg.auckland-day-counts",
+              "counts": [
+                1,
+                6,
+                5
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "17e5f79156997d9b89758383f56d07856972d9c530488b50e9b7df489ea927bf"
+            },
+            {
+              "check_id": "tzarg.kolkata-day-counts",
+              "counts": [
+                2,
+                7,
+                3
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "735765c7c65cf87412b7773d2c24b6e3fee1f7afc180756a6751601926f7c034"
+            }
+          ],
+          "reset_ms": 146,
+          "response_bodies_identical_to_fresh": true,
+          "round": 1,
+          "round_ms": 891,
+          "starting_condition": "after the original suite",
+          "wall_ms": 1037
+        },
+        {
+          "exit_code": 0,
+          "outcomes": [
+            {
+              "check_id": "tzarg.utc-day-counts",
+              "counts": [
+                2,
+                8,
+                2
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "d603ac4a97a43509bda78a14ef0ff4b20b845723e36456277a2221443b22d230"
+            },
+            {
+              "check_id": "tzarg.la-day-counts",
+              "counts": [
+                3,
+                8,
+                1
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "7a70975923fdaf986f228760d10742407b4d6ef92705eb3ccdd8c136b7a646f1"
+            },
+            {
+              "check_id": "tzarg.auckland-day-counts",
+              "counts": [
+                1,
+                6,
+                5
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "17e5f79156997d9b89758383f56d07856972d9c530488b50e9b7df489ea927bf"
+            },
+            {
+              "check_id": "tzarg.kolkata-day-counts",
+              "counts": [
+                2,
+                7,
+                3
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "735765c7c65cf87412b7773d2c24b6e3fee1f7afc180756a6751601926f7c034"
+            }
+          ],
+          "reset_ms": 131,
+          "response_bodies_identical_to_fresh": true,
+          "round": 2,
+          "round_ms": 852,
+          "starting_condition": "after a fixture round",
+          "wall_ms": 983
+        },
+        {
+          "exit_code": 0,
+          "outcomes": [
+            {
+              "check_id": "tzarg.utc-day-counts",
+              "counts": [
+                2,
+                8,
+                2
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "d603ac4a97a43509bda78a14ef0ff4b20b845723e36456277a2221443b22d230"
+            },
+            {
+              "check_id": "tzarg.la-day-counts",
+              "counts": [
+                3,
+                8,
+                1
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "7a70975923fdaf986f228760d10742407b4d6ef92705eb3ccdd8c136b7a646f1"
+            },
+            {
+              "check_id": "tzarg.auckland-day-counts",
+              "counts": [
+                1,
+                6,
+                5
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "17e5f79156997d9b89758383f56d07856972d9c530488b50e9b7df489ea927bf"
+            },
+            {
+              "check_id": "tzarg.kolkata-day-counts",
+              "counts": [
+                2,
+                7,
+                3
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "735765c7c65cf87412b7773d2c24b6e3fee1f7afc180756a6751601926f7c034"
+            }
+          ],
+          "reset_ms": 132,
+          "response_bodies_identical_to_fresh": true,
+          "round": 3,
+          "round_ms": 821,
+          "starting_condition": "after a fixture round",
+          "wall_ms": 953
+        },
+        {
+          "exit_code": 0,
+          "outcomes": [
+            {
+              "check_id": "tzarg.utc-day-counts",
+              "counts": [
+                2,
+                8,
+                2
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "d603ac4a97a43509bda78a14ef0ff4b20b845723e36456277a2221443b22d230"
+            },
+            {
+              "check_id": "tzarg.la-day-counts",
+              "counts": [
+                3,
+                8,
+                1
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "7a70975923fdaf986f228760d10742407b4d6ef92705eb3ccdd8c136b7a646f1"
+            },
+            {
+              "check_id": "tzarg.auckland-day-counts",
+              "counts": [
+                1,
+                6,
+                5
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "17e5f79156997d9b89758383f56d07856972d9c530488b50e9b7df489ea927bf"
+            },
+            {
+              "check_id": "tzarg.kolkata-day-counts",
+              "counts": [
+                2,
+                7,
+                3
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "735765c7c65cf87412b7773d2c24b6e3fee1f7afc180756a6751601926f7c034"
+            }
+          ],
+          "reset_ms": 129,
+          "response_bodies_identical_to_fresh": true,
+          "round": 4,
+          "round_ms": 835,
+          "starting_condition": "after a fixture round",
+          "wall_ms": 964
+        },
+        {
+          "exit_code": 0,
+          "outcomes": [
+            {
+              "check_id": "tzarg.utc-day-counts",
+              "counts": [
+                2,
+                8,
+                2
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "d603ac4a97a43509bda78a14ef0ff4b20b845723e36456277a2221443b22d230"
+            },
+            {
+              "check_id": "tzarg.la-day-counts",
+              "counts": [
+                3,
+                8,
+                1
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "7a70975923fdaf986f228760d10742407b4d6ef92705eb3ccdd8c136b7a646f1"
+            },
+            {
+              "check_id": "tzarg.auckland-day-counts",
+              "counts": [
+                1,
+                6,
+                5
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "17e5f79156997d9b89758383f56d07856972d9c530488b50e9b7df489ea927bf"
+            },
+            {
+              "check_id": "tzarg.kolkata-day-counts",
+              "counts": [
+                2,
+                7,
+                3
+              ],
+              "failure_code": null,
+              "observed": "pass",
+              "response_sha256": "735765c7c65cf87412b7773d2c24b6e3fee1f7afc180756a6751601926f7c034"
+            }
+          ],
+          "reset_ms": 130,
+          "response_bodies_identical_to_fresh": true,
+          "round": 5,
+          "round_ms": 834,
+          "starting_condition": "after a fixture round",
+          "wall_ms": 964
+        }
+      ],
+      "summary": {
+        "all_bodies_identical_to_fresh": true,
+        "all_pass": true,
+        "reset_ms_max": 146,
+        "rounds": 10,
+        "wall_ms_max": 1215,
+        "wall_ms_mean": 1038
+      },
+      "umami_restart": false
+    },
+    "c_fresh_stack": {
+      "method": "compose down -v and up --wait for every round: a fresh tmpfs database, a fresh migration and a restarted Umami (host/reset-study-fresh.sh)",
+      "response_bodies_compared": false,
+      "rounds": [
+        {
+          "exit_code": 0,
+          "round": 1,
+          "starting_condition": "fresh stack",
+          "wall_ms": 62000
+        },
+        {
+          "exit_code": 0,
+          "round": 2,
+          "starting_condition": "fresh stack",
+          "wall_ms": 20000
+        },
+        {
+          "exit_code": 0,
+          "round": 3,
+          "starting_condition": "fresh stack",
+          "wall_ms": 21000
+        },
+        {
+          "exit_code": 0,
+          "round": 4,
+          "starting_condition": "fresh stack",
+          "wall_ms": 21000
+        },
+        {
+          "exit_code": 0,
+          "round": 5,
+          "starting_condition": "fresh stack",
+          "wall_ms": 21000
+        }
+      ],
+      "source": "run by the conductor on the host; reported per-round exit codes and wall seconds",
+      "summary": {
+        "all_exit_zero": true,
+        "rounds": 5,
+        "wall_ms_max_after_first": 21000
+      },
+      "umami_restart": true,
+      "wall_note": "1-second resolution, reset included. Round 1 includes the first image start."
+    }
+  },
+  "chosen": {
+    "implementation": "createFixtureTemplate(connectionString) once right after migration, then resetFixture(connectionString) before every round",
+    "method": "b_template",
+    "reasons": [
+      "Every round of a and b, including the first after the original suite, returned response bytes identical to the freshly migrated database and four passes, so neither shows state carried over in Umami memory for these requests.",
+      "c restarts Umami and needs about 21 seconds per round, so 20 rounds take about 420 seconds, beyond the 240-second phase.",
+      "b restores the whole database at the Postgres level, sequences and every table included, from a copy taken right after migration; a depends on a snapshot schema inside the application database and on the table list it read.",
+      "b costs at most about 0.15 seconds per reset, about 0.1 seconds more than a; 20 rounds of b plus the slowest measured suite run stay within the phase."
+    ],
+    "requires": "a database role that may create and drop databases (the stack's own superuser role); the connection string is a parameter, never read from the environment"
+  },
+  "environment": {
+    "client_candidate_c": "the host, host/reset-study-fresh.sh, one round per throwaway node:24 container on the stack network",
+    "client_candidates_a_b": "the agent container, one round per command through study/reset-study.ts with --workers=1 --retries=0",
+    "database": "PostgreSQL 15.19 (postgres:15-alpine, Alpine tzdata package installed), session time zone UTC",
+    "stack": "Umami docker-compose.test.yml, postgres profile, clean copy from host/prepare-copy.sh, Postgres published on host loopback with host/compose.db-port.yml"
+  },
+  "fixture_id": "umami-tz-arg-001",
+  "host": {
+    "commit": "ec0ff50388c264ed8ce46f00967e92f7e71476ae",
+    "upstream": "umami"
+  },
+  "original_suite_note": "Umami's own API suite (playwright.api.config.ts) run from the agent container with API_ALLOW_DESTRUCTIVE=1. The same two revenue tests also failed when run alone right after a template reset, so they do not come from the fixture data. Whether they also fail on a newly started stack was not measured here; reported through the inbox. The suite still changes global state (seeded users and websites, the global two-factor setting), which is the starting condition under study.",
+  "original_suite_runs": [
+    {
+      "context": "run after an in-place reset, before the candidate a rounds",
+      "exit_code": 1,
+      "failed": [
+        "revenue.spec.ts › GET /api/websites/{websiteId}/revenue/sessions lists sessions with revenue",
+        "revenue.spec.ts › GET /api/websites/{websiteId}/revenue/stats returns revenue totals"
+      ],
+      "ms": 73708,
+      "passed": 269
+    },
+    {
+      "context": "run after a template reset, before the candidate b rounds",
+      "exit_code": 1,
+      "failed": [
+        "revenue.spec.ts › GET /api/websites/{websiteId}/revenue/sessions lists sessions with revenue",
+        "revenue.spec.ts › GET /api/websites/{websiteId}/revenue/stats returns revenue totals"
+      ],
+      "ms": 54233,
+      "passed": 269
+    }
+  ],
+  "reference": {
+    "label": "fresh",
+    "outcomes": [
+      {
+        "check_id": "tzarg.utc-day-counts",
+        "counts": [
+          2,
+          8,
+          2
+        ],
+        "failure_code": null,
+        "observed": "pass"
+      },
+      {
+        "check_id": "tzarg.la-day-counts",
+        "counts": [
+          3,
+          8,
+          1
+        ],
+        "failure_code": null,
+        "observed": "pass"
+      },
+      {
+        "check_id": "tzarg.auckland-day-counts",
+        "counts": [
+          1,
+          6,
+          5
+        ],
+        "failure_code": null,
+        "observed": "pass"
+      },
+      {
+        "check_id": "tzarg.kolkata-day-counts",
+        "counts": [
+          2,
+          7,
+          3
+        ],
+        "failure_code": null,
+        "observed": "pass"
+      }
+    ],
+    "response_sha256": {
+      "tzarg.auckland-day-counts": "17e5f79156997d9b89758383f56d07856972d9c530488b50e9b7df489ea927bf",
+      "tzarg.kolkata-day-counts": "735765c7c65cf87412b7773d2c24b6e3fee1f7afc180756a6751601926f7c034",
+      "tzarg.la-day-counts": "7a70975923fdaf986f228760d10742407b4d6ef92705eb3ccdd8c136b7a646f1",
+      "tzarg.utc-day-counts": "d603ac4a97a43509bda78a14ef0ff4b20b845723e36456277a2221443b22d230"
+    },
+    "round_ms": 1629,
+    "starting_condition": "freshly migrated database, first write after migration"
+  },
+  "schema_version": 1,
+  "timing_note": "reset_ms is the reset alone; round_ms is one whole fixture round as a child process, Playwright start-up included (login, website, twelve sends, four queries); wall_ms is their sum."
+}

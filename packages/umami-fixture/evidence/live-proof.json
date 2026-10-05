@@ -1,0 +1,199 @@
+{
+  "database": "PostgreSQL 15.19 in the stack db service (postgres:15-alpine) with the Alpine tzdata package installed",
+  "fixture_id": "umami-tz-arg-001",
+  "host": {
+    "commit": "ec0ff50388c264ed8ce46f00967e92f7e71476ae",
+    "upstream": "umami"
+  },
+  "live_round_with_chosen_reset": {
+    "command": "pnpm exec playwright test --config playwright.config.ts --workers=1 --retries=0",
+    "counts": {
+      "tzarg.auckland-day-counts": [
+        1,
+        6,
+        5
+      ],
+      "tzarg.kolkata-day-counts": [
+        2,
+        7,
+        3
+      ],
+      "tzarg.la-day-counts": [
+        3,
+        8,
+        1
+      ],
+      "tzarg.utc-day-counts": [
+        2,
+        8,
+        2
+      ]
+    },
+    "exit_code": 0,
+    "observed": [
+      {
+        "check_id": "tzarg.utc-day-counts",
+        "failure_code": null,
+        "observed": "pass"
+      },
+      {
+        "check_id": "tzarg.la-day-counts",
+        "failure_code": null,
+        "observed": "pass"
+      },
+      {
+        "check_id": "tzarg.auckland-day-counts",
+        "failure_code": null,
+        "observed": "pass"
+      },
+      {
+        "check_id": "tzarg.kolkata-day-counts",
+        "failure_code": null,
+        "observed": "pass"
+      }
+    ],
+    "reset": "resetFixture (template copy), 34 ms",
+    "response_sha256_equal_to_reset_study_reference": true,
+    "run_by": "agent container against the running clean stack"
+  },
+  "revert_run": {
+    "clean_equals_planted": true,
+    "observed": [
+      {
+        "check_id": "tzarg.utc-day-counts",
+        "failure_code": null,
+        "observed": "pass"
+      },
+      {
+        "check_id": "tzarg.la-day-counts",
+        "failure_code": "local_day_counts_mismatch",
+        "observed": "assertion_fail"
+      },
+      {
+        "check_id": "tzarg.auckland-day-counts",
+        "failure_code": "local_day_counts_mismatch",
+        "observed": "assertion_fail"
+      },
+      {
+        "check_id": "tzarg.kolkata-day-counts",
+        "failure_code": "local_day_counts_mismatch",
+        "observed": "assertion_fail"
+      }
+    ],
+    "patch": "the [\"timezone\", check.timezone] entry removed from src/requests.ts, never committed",
+    "result": "Without the timezone parameter, clean and planted give the same outcomes, so the planted copy is no longer told apart from clean and the per-state proof above fails.",
+    "states": [
+      "clean",
+      "planted"
+    ]
+  },
+  "schema_version": 1,
+  "source": "Run by the conductor on the host with host/prepare-copy.sh and host/stack.sh, one fresh stack per state, one round per state with --workers=1 --retries=0. The conductor reported the per-check outcomes; per-check counts were not reported, so none are recorded here.",
+  "states": {
+    "clean": {
+      "matches_outcome_vector": true,
+      "observed": [
+        {
+          "check_id": "tzarg.utc-day-counts",
+          "failure_code": null,
+          "observed": "pass"
+        },
+        {
+          "check_id": "tzarg.la-day-counts",
+          "failure_code": null,
+          "observed": "pass"
+        },
+        {
+          "check_id": "tzarg.auckland-day-counts",
+          "failure_code": null,
+          "observed": "pass"
+        },
+        {
+          "check_id": "tzarg.kolkata-day-counts",
+          "failure_code": null,
+          "observed": "pass"
+        }
+      ],
+      "target_file_sha256": "1f679f7a666f2ca7888b9094fb85a69a31b546566f194e27ac6eef2e9aef9b1b"
+    },
+    "partial": {
+      "matches_outcome_vector": true,
+      "observed": [
+        {
+          "check_id": "tzarg.utc-day-counts",
+          "failure_code": null,
+          "observed": "pass"
+        },
+        {
+          "check_id": "tzarg.la-day-counts",
+          "failure_code": "local_day_counts_mismatch",
+          "observed": "assertion_fail"
+        },
+        {
+          "check_id": "tzarg.auckland-day-counts",
+          "failure_code": null,
+          "observed": "pass"
+        },
+        {
+          "check_id": "tzarg.kolkata-day-counts",
+          "failure_code": "local_day_counts_mismatch",
+          "observed": "assertion_fail"
+        }
+      ],
+      "target_file_sha256": "3dfbe7db1608a5968bdc0f7856d18bbbab47d958b7036a5d4400a265b903898d"
+    },
+    "planted": {
+      "matches_outcome_vector": true,
+      "observed": [
+        {
+          "check_id": "tzarg.utc-day-counts",
+          "failure_code": null,
+          "observed": "pass"
+        },
+        {
+          "check_id": "tzarg.la-day-counts",
+          "failure_code": "local_day_counts_mismatch",
+          "observed": "assertion_fail"
+        },
+        {
+          "check_id": "tzarg.auckland-day-counts",
+          "failure_code": "local_day_counts_mismatch",
+          "observed": "assertion_fail"
+        },
+        {
+          "check_id": "tzarg.kolkata-day-counts",
+          "failure_code": "local_day_counts_mismatch",
+          "observed": "assertion_fail"
+        }
+      ],
+      "target_file_sha256": "7cb3219367fc73838d6ddc849e5d0b334fc6de4ad7a56bd3c593f35778d84b6c"
+    },
+    "stub": {
+      "matches_outcome_vector": true,
+      "observed": [
+        {
+          "check_id": "tzarg.utc-day-counts",
+          "failure_code": null,
+          "observed": "pass"
+        },
+        {
+          "check_id": "tzarg.la-day-counts",
+          "failure_code": "bucket_labels_mismatch",
+          "observed": "assertion_fail"
+        },
+        {
+          "check_id": "tzarg.auckland-day-counts",
+          "failure_code": "bucket_labels_mismatch",
+          "observed": "assertion_fail"
+        },
+        {
+          "check_id": "tzarg.kolkata-day-counts",
+          "failure_code": "bucket_labels_mismatch",
+          "observed": "assertion_fail"
+        }
+      ],
+      "target_file_sha256": "422eb5684d84ee873b3e1a2c1109508e944da9b6e17ce1127aacba68e00dc620"
+    }
+  },
+  "target_file": "src/queries/sql/pageviews/getPageviewStats.ts"
+}
