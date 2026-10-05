@@ -30,7 +30,7 @@ Every rule is enforced in the database. PL/pgSQL functions created by the migrat
 
 ## Setup
 
-Requires Postgres 17 or later. Unit tests use PGlite in process.
+Requires Postgres 17 or later. `migrate` needs a role that owns the target schema; it does not need superuser privileges. Unit tests use PGlite in process.
 
 | Script | What it does |
 | --- | --- |
@@ -130,7 +130,7 @@ Each returns one JSON document: `{"ok": true, ...}` or `{"ok": false, "code": ".
 ## Invariants
 
 - **Insert-only.** Every table is insert-only: a trigger rejects UPDATE, DELETE and TRUNCATE. Current state is derived from the rows: an operation's state, the slot holder, pool totals and whether new work is halted. No current-state row is kept.
-- **Writes only through the functions.** Every table, `applied_migrations` included, has a BEFORE INSERT trigger that refuses the row unless the transaction-local setting `rbw.spend_api` is `on`. Only the writing entry points turn it on: a SET clause on each function sets it for the duration of the call and restores the previous value when the call returns or fails. A direct INSERT from a session that did not go through a function is refused with `table <name> accepts rows only through the spend database functions`. The rules that free money or the slot, and the halt, are checked inside the functions, so this guard is what stops a direct INSERT from bypassing them.
+- **Writes only through the functions.** Every table, `applied_migrations` included, has a BEFORE INSERT trigger that refuses the row unless the transaction-local setting `rbw.spend_api` is `on`. Only the writing entry points turn it on. Each one calls `set_config('rbw.spend_api', 'on', true)` on entry, runs its body (`spend_<name>_body`), and sets the previous value back before it returns, so a direct INSERT later in the same transaction is still refused. If the body raises an error, the transaction is aborted; rolling back to a savepoint taken before the call (or a PL/pgSQL exception handler around it) undoes the `set_config` with the rest of the call, so the guard is off again. Calling a `_body` function directly writes nothing, because the guard is off. A SET clause on the functions is not used: attaching a custom parameter such as `rbw.spend_api` to a function needs superuser privileges, and the owner role of a hosted database is usually not a superuser. A direct INSERT from a session that did not go through a function is refused with `table <name> accepts rows only through the spend database functions`. The rules that free money or the slot, and the halt, are checked inside the functions, so this guard is what stops a direct INSERT from bypassing them.
 - **Limits of the guards.** The tables, triggers and functions belong to the role that runs `migrate`; there is no separate owner role and no REVOKE. A role that owns the schema can still turn the setting on itself, set the event sequence, or alter, disable or drop the triggers and functions, so neither the insert-only rule nor the function-only rule holds against it. These guards stop direct writes by application code, not a deliberate change by the schema owner. A separate migration owner and a runtime role limited to EXECUTE on the entry points is not part of this package.
 - **Nothing expires.** No lease, TTL, heartbeat, timer or schedule frees a reservation or the slot. Caps are cumulative and are never reset or replenished. A test advances the clock by a year and shows a held slot and an open reservation unchanged.
 - **Committed and available.** Committed = settled + open (open includes amounts retained for unknown usage), per pool and per allocation. Available = cap (or allocation limit) − committed. It can go negative after an overrun, and then every reservation is refused.
@@ -373,9 +373,13 @@ In `reconciliations`, `recorded_at` is the time given in the record, and `logged
   - I5: forced-overlap slot acquisition;
   - forced-overlap reuse of one operation ID on two pools;
   - concurrent first runs of `migrate` on one schema;
+  - the insert guard: a direct INSERT after an entry function in the same transaction, an entry function that raises an error, and a rollback to a savepoint before it;
+  - that the connection's role is not a superuser, as the hosted owner role is not, so a statement that needs superuser privileges fails here too;
   - a failed setup that drops its schema.
 
   Setup errors name only `DATABASE_URL` and a driver error code, never the host, port, user, database or password.
+
+  To run them against a local Postgres, connect as a role created with `LOGIN` and without `SUPERUSER` that owns the test database (`CREATE DATABASE <name> OWNER <role>`). Connected as a superuser, the role test fails.
 
   I1, I5 and the operation ID test hold the first call's transaction open until the second call is observed waiting on a lock in `pg_stat_activity`.
 

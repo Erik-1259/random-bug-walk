@@ -154,6 +154,16 @@ describe("direct INSERT outside the spend functions", () => {
     expect(await h.counts()).toEqual(before);
   });
 
+  it("is refused after a spend function that reserved money returned in the same transaction", async () => {
+    const before = await h.counts();
+    await expect(
+      direct(`
+        SELECT spend_reserve('${JSON.stringify(reserveRequest(10))}', '2026-10-04T00:00:00Z');
+        ${DIRECT_INSERTS.units?.() ?? ""}`),
+    ).rejects.toThrow(GUARD);
+    expect(await h.counts()).toEqual(before);
+  });
+
   it("leaves the spend functions working", async () => {
     expectOk(await h.spend.createSlotKey({ slot_key: "synthetic-after", actor_role: "owner", reason: "synthetic" }));
     expect((await h.spend.haltStatus()).ok).toBe(true);
@@ -173,5 +183,70 @@ describe("session temp tables", () => {
     } finally {
       await own.close();
     }
+  });
+});
+
+describe("the rbw.spend_api guard inside the entry functions", () => {
+  const CALL = `SELECT spend_create_slot_key('{"slot_key": "synthetic-guard-slot", "actor_role": "owner", "reason": "synthetic"}', '2026-10-04T00:00:00Z')`;
+  const DIRECT = "INSERT INTO units (unit, description) VALUES ('synthetic_guard_unit', 'synthetic')";
+
+  /** Runs `body` inside a transaction opened with `begin`, and rolls it back afterwards. */
+  async function inTransaction<T>(begin: string, body: () => Promise<T>): Promise<T> {
+    await h.db.exec(`SET search_path TO ${h.schema}`);
+    await h.db.exec(begin);
+    try {
+      return await body();
+    } finally {
+      await h.db.exec("ROLLBACK");
+    }
+  }
+
+  async function setting(): Promise<string | null | undefined> {
+    return (await h.db.query<{ v: string | null }>("SELECT current_setting('rbw.spend_api', true) AS v")).rows[0]?.v;
+  }
+
+  // A non-superuser owner may not attach a custom parameter to a function (SQLSTATE 42501).
+  it("is never attached to a function with a SET clause", async () => {
+    const rows = await h.sql(
+      `SELECT p.proname FROM pg_proc p
+       WHERE p.pronamespace = $1::regnamespace
+         AND EXISTS (SELECT 1 FROM unnest(p.proconfig) c WHERE c LIKE 'rbw.%')`,
+      [h.schema],
+    );
+    expect(rows).toEqual([]);
+  });
+
+  it("restores the value the setting had before the call", async () => {
+    const after = await inTransaction("BEGIN", async () => {
+      await h.db.query("SELECT set_config('rbw.spend_api', 'synthetic-prior', true)");
+      await h.db.query(CALL);
+      return setting();
+    });
+    expect(after).toBe("synthetic-prior");
+  });
+
+  // The error aborts the transaction, so no later statement in it can insert a row.
+  it("aborts the transaction when an entry function raises an error", async () => {
+    const before = await h.counts();
+    await inTransaction("BEGIN ISOLATION LEVEL REPEATABLE READ", async () => {
+      await expect(h.db.query(CALL)).rejects.toThrow(/require READ COMMITTED/);
+      await expect(h.db.query(DIRECT)).rejects.toThrow(/current transaction is aborted/);
+    });
+    expect(await h.counts()).toEqual(before);
+  });
+
+  // Rolling back to a savepoint undoes the failed call's set_config with the rest of its work.
+  it("is off after a rollback to a savepoint taken before an entry function that raised an error", async () => {
+    const before = await h.counts();
+    const after = await inTransaction("BEGIN ISOLATION LEVEL REPEATABLE READ", async () => {
+      await h.db.query("SAVEPOINT synthetic_before_call");
+      await expect(h.db.query(CALL)).rejects.toThrow(/require READ COMMITTED/);
+      await h.db.query("ROLLBACK TO SAVEPOINT synthetic_before_call");
+      const value = await setting();
+      await expect(h.db.query(DIRECT)).rejects.toThrow(GUARD);
+      return value;
+    });
+    expect(after).not.toBe("on");
+    expect(await h.counts()).toEqual(before);
   });
 });

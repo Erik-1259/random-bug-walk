@@ -33,7 +33,9 @@ export class MigrationError extends Error {
 const DEFAULT_MIGRATIONS_DIR = fileURLToPath(new URL("../migrations/", import.meta.url));
 
 // The record of applied migrations is insert-only, like every other table in the schema, and
-// takes rows only through applied_migrations_record, which turns on rbw.spend_api for its call.
+// takes rows only through applied_migrations_record, which turns on rbw.spend_api with set_config
+// for its insert and then restores the previous value. A SET clause on the function would need
+// superuser privileges, because rbw.spend_api is a custom parameter.
 // Each part is created when missing, so a database bootstrapped by an earlier runner gains it.
 const BOOTSTRAP = `
 DO $bootstrap$
@@ -70,10 +72,15 @@ BEGIN
     CREATE TRIGGER applied_migrations_api_only BEFORE INSERT ON applied_migrations
       FOR EACH ROW EXECUTE FUNCTION applied_migrations_require_function();
     CREATE FUNCTION applied_migrations_record(p_file text, p_checksum text) RETURNS void
-    LANGUAGE sql SET search_path FROM CURRENT SET rbw.spend_api = 'on'
-    BEGIN ATOMIC
+    LANGUAGE plpgsql SET search_path FROM CURRENT AS $fn$
+    DECLARE
+      v_previous text := current_setting('rbw.spend_api', true);
+    BEGIN
+      PERFORM set_config('rbw.spend_api', 'on', true);
       INSERT INTO applied_migrations (file_name, checksum) VALUES (p_file, p_checksum);
-    END;
+      PERFORM set_config('rbw.spend_api', coalesce(v_previous, ''), true);
+    END
+    $fn$;
   END IF;
 END
 $bootstrap$;

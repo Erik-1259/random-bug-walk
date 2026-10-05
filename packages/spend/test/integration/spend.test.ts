@@ -211,3 +211,69 @@ describe("spend against a real Postgres", () => {
     expect(expectOk(await admin.slotStatus({ slot_key: slotKey })).holder).toBe(uuid(501));
   });
 });
+
+describe("the insert guard against a real Postgres", () => {
+  const GUARD = /accepts rows only through the spend database functions/;
+
+  /** Opens a connection on this run's schema, runs `body` in a transaction opened with `begin`, and rolls it back. */
+  async function inTransaction(begin: string, body: (client: pg.Client) => Promise<void>): Promise<void> {
+    const { client } = await database.connect();
+    await client.query(`SET search_path TO ${database.schema}`);
+    await client.query(begin);
+    try {
+      await body(client);
+    } finally {
+      await client.query("ROLLBACK");
+    }
+  }
+
+  function direct(): string {
+    return `INSERT INTO units (unit, description) VALUES ('synthetic_${suffix()}', 'synthetic')`;
+  }
+
+  /** Attempts a direct INSERT on `client` and expects the guard's restrict_violation (23001). */
+  async function expectGuardRefusal(client: pg.Client): Promise<void> {
+    const error = await client.query(direct()).then(
+      () => undefined,
+      (refusal: unknown) => refusal,
+    );
+    expect(error).toMatchObject({ code: "23001" });
+    expect(String(error)).toMatch(GUARD);
+  }
+
+  function createSlotCall(): string {
+    return `SELECT spend_create_slot_key('{"slot_key": "synthetic-slot-${suffix()}", "actor_role": "owner", "reason": "synthetic"}', '2026-10-04T00:00:00Z')`;
+  }
+
+  it("refuses a direct INSERT after an entry function returned in the same transaction", async () => {
+    const poolKey = await createPool(1_000_000);
+    await inTransaction("BEGIN", async (client) => {
+      const reserved = await client.query<{ r: { ok: boolean } }>("SELECT spend_reserve($1, $2) AS r", [
+        JSON.stringify(request(poolKey, 1_000)),
+        "2026-10-04T00:00:00Z",
+      ]);
+      expect(reserved.rows[0]?.r.ok).toBe(true);
+      await expectGuardRefusal(client);
+    });
+  });
+
+  // The error aborts the transaction (25P02), so no later statement in it can insert a row.
+  it("aborts the transaction when an entry function raises an error", async () => {
+    await inTransaction("BEGIN ISOLATION LEVEL REPEATABLE READ", async (client) => {
+      await expect(client.query(createSlotCall())).rejects.toMatchObject({ code: "25000" });
+      await expect(client.query(direct())).rejects.toMatchObject({ code: "25P02" });
+    });
+  });
+
+  // Rolling back to a savepoint undoes the failed call's set_config with the rest of its work.
+  it("leaves the guard off after a rollback to a savepoint taken before a failed entry function", async () => {
+    await inTransaction("BEGIN ISOLATION LEVEL REPEATABLE READ", async (client) => {
+      await client.query("SAVEPOINT synthetic_before_call");
+      await expect(client.query(createSlotCall())).rejects.toMatchObject({ code: "25000" });
+      await client.query("ROLLBACK TO SAVEPOINT synthetic_before_call");
+      const setting = await client.query<{ v: string | null }>("SELECT current_setting('rbw.spend_api', true) AS v");
+      expect(setting.rows[0]?.v).not.toBe("on");
+      await expectGuardRefusal(client);
+    });
+  });
+});

@@ -29,6 +29,15 @@ describe("integration setup and the migration runner against a real Postgres", (
     }
   });
 
+  // The hosted database's owner role is not a superuser, and superuser-only statements fail there.
+  it("connects as a role that is not a superuser, as the hosted owner role is", async () => {
+    const superuser = await withConnection(async (client) => {
+      const rows = await client.query<{ s: boolean }>("SELECT rolsuper AS s FROM pg_roles WHERE rolname = current_user");
+      return rows.rows[0]?.s;
+    });
+    expect(superuser).toBe(false);
+  });
+
   it("serializes two first runs against the same empty schema", async () => {
     const schema = `synthetic_it_migrate_${String(process.pid)}_${String(Date.now())}`;
     await withConnection((client) => client.query(`CREATE SCHEMA ${schema}`));

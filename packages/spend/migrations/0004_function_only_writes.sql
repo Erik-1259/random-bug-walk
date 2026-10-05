@@ -1,11 +1,13 @@
 -- Rows enter the spend tables only through the spend database functions.
 --
 -- Each writing entry point turns on the transaction-local setting rbw.spend_api for the duration
--- of its call: a SET clause on the function sets it on entry, as set_config(..., true) does, and
--- restores the previous value on every exit. A BEFORE INSERT trigger on every table refuses rows
--- while the setting is off, so a session that did not go through a function cannot write. The
--- setting is a guard against direct writes by the application's own roles, not a privilege
--- boundary: a role that owns the schema can still alter its triggers and functions.
+-- of its call: it calls set_config(..., true) on entry and restores the previous value before it
+-- returns. A SET clause on the function would need superuser privileges, because rbw.spend_api is
+-- a custom parameter, and the database's owner role need not be a superuser. A BEFORE INSERT
+-- trigger on every table refuses rows while the setting is off, so a session that did not go
+-- through a function cannot write. The setting is a guard against direct writes by the
+-- application's own roles, not a privilege boundary: a role that owns the schema can still alter
+-- its triggers and functions.
 --
 -- Also: a slot release is blocked by every unconfirmed child resource of the root, under any slot
 -- key; reservations of one operation ID serialize; and every function's captured search_path
@@ -204,20 +206,40 @@ BEGIN
 END
 $$;
 
--- The writing entry points. Read-only status functions and internal helpers stay without it.
-ALTER FUNCTION spend_create_pool(jsonb, text) SET rbw.spend_api = 'on';
-ALTER FUNCTION spend_create_slot_key(jsonb, text) SET rbw.spend_api = 'on';
-ALTER FUNCTION spend_raise_cap(jsonb, text) SET rbw.spend_api = 'on';
-ALTER FUNCTION spend_transfer(jsonb, text) SET rbw.spend_api = 'on';
-ALTER FUNCTION spend_resume(jsonb, text) SET rbw.spend_api = 'on';
-ALTER FUNCTION spend_reserve(jsonb, text) SET rbw.spend_api = 'on';
-ALTER FUNCTION spend_transition(jsonb, text) SET rbw.spend_api = 'on';
-ALTER FUNCTION spend_settle(jsonb, text) SET rbw.spend_api = 'on';
-ALTER FUNCTION spend_reconcile(jsonb, text) SET rbw.spend_api = 'on';
-ALTER FUNCTION spend_slot_acquire(jsonb, text) SET rbw.spend_api = 'on';
-ALTER FUNCTION spend_slot_record_child(jsonb, text) SET rbw.spend_api = 'on';
-ALTER FUNCTION spend_slot_confirm_child(jsonb, text) SET rbw.spend_api = 'on';
-ALTER FUNCTION spend_slot_release(jsonb, text) SET rbw.spend_api = 'on';
+-- The writing entry points. Each function above is renamed to spend_<name>_body, and a function
+-- with the original name and signature turns the guard on, calls the body, and restores the
+-- previous value before it returns. An error in the body aborts the transaction, or the enclosing
+-- subtransaction, and that undoes the set_config with the rest of the call's work. Read-only status
+-- functions and internal helpers stay without it.
+DO $$
+DECLARE
+  v_name text;
+BEGIN
+  FOREACH v_name IN ARRAY ARRAY[
+    'create_pool', 'create_slot_key', 'raise_cap', 'transfer', 'resume', 'reserve', 'transition',
+    'settle', 'reconcile', 'slot_acquire', 'slot_record_child', 'slot_confirm_child', 'slot_release'
+  ] LOOP
+    EXECUTE format('ALTER FUNCTION %I(jsonb, text) RENAME TO %I', 'spend_' || v_name, 'spend_' || v_name || '_body');
+    EXECUTE format(
+      $create$
+      CREATE FUNCTION %I(p_request jsonb, p_now text) RETURNS jsonb
+      LANGUAGE plpgsql VOLATILE SET search_path FROM CURRENT AS $fn$
+      DECLARE
+        v_previous text := current_setting('rbw.spend_api', true);
+        v_result jsonb;
+      BEGIN
+        PERFORM set_config('rbw.spend_api', 'on', true);
+        v_result := %I(p_request, p_now);
+        PERFORM set_config('rbw.spend_api', coalesce(v_previous, ''), true);
+        RETURN v_result;
+      END
+      $fn$
+      $create$,
+      'spend_' || v_name, 'spend_' || v_name || '_body'
+    );
+  END LOOP;
+END
+$$;
 
 -- Recapture search_path in every function of this schema that pins it. The runner now sets
 -- '<schema>, pg_temp', so the session's temp schema is searched last instead of first.
