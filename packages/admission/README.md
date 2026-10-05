@@ -103,13 +103,15 @@ A trial's added-check verdict combines its observations: any `reject`, else any 
 
 | Rule | Reads | Decision |
 |---|---|---|
-| ADM-02 | all 13 trials | `invalid` or `incomplete` when a trial fails stages 1–4 or the driver failed it, an observation is `setup_fail`, `skipped` or `not_run`, or `results/` holds an unexpected trial; otherwise `pass` |
-| ADM-03 | added checks of `fixed-01`…`fixed-05`; original suite of `clean-01` and the fixed copies | `reject` on a valid added-check or original-test failure; otherwise the status of a broken trial; otherwise `pass` |
+| ADM-02 | all 13 trials | `invalid` when an expected original test or added check did not execute (absent, skipped or `not_run`, codes `import:test_missing`, `import:test_skipped`, `import:check_missing` and `import:outcome_not_run`), an observation is `setup_fail`, or `results/` holds an unexpected trial; otherwise, for any other trial that fails stages 1–4 or that the driver failed (a missing result included), that trial's status; otherwise `pass` |
+| ADM-03 | added checks of `fixed-01`…`fixed-05`; original suite of `clean-01` and the fixed copies | `reject` on a valid added-check or original-test failure; otherwise `invalid` for a fixed copy whose added check is missing, skipped or `not_run`, or the status of any other broken trial; otherwise `pass` |
 | ADM-04 | added checks of `planted-01`…`planted-05` | `reject` on a valid mismatch (unexpected pass, failing control); otherwise the status of a broken trial (an unrelated code or setup failure is `invalid`); otherwise `pass` |
 | ADM-05 | added checks of `fixed-01` and `planted-01`, all 20 repetitions | `reject` on one valid inconsistent repetition; `incomplete` for a missing repetition |
 | ADM-06 | added checks of `partial-01` and `stub-01` | `reject` on a valid mismatch with the probe's own vector; a probe trial that is `invalid` or `incomplete` is a broken required probe and leaves the rule `incomplete` |
 
 A trial counts as broken for a rule when it is not `complete` and the rule reads its added checks, or it stopped before the outcomes stage. So a setup failure in `clean-01`'s added checks does not affect ADM-03, which reads only its original suite.
+
+The trial's own status in the evidence does not change: a trial with an absent or skipped test stays `incomplete` there, and ADM-02 and ADM-03 report it as `invalid`, with basis `execution`. ADM-04 and ADM-05 keep the trial's status, and ADM-06 stays `incomplete` for any broken probe.
 
 `outcome_verdict`: any `reject` among ADM-02 to ADM-06 gives `reject` (a valid rejection is conclusive); otherwise any `invalid` gives `invalid`; otherwise any `incomplete` gives `incomplete`; otherwise `pass`. The ADM-08 classification is reported next to it and does not enter it. ADM-01, ADM-07, ADM-09 and ADM-10 are decided elsewhere and are listed in `not_evaluated_here`.
 
@@ -127,7 +129,7 @@ The comparison, for admission jobs, first match wins:
 4. any planted or probe copy not matching its declared vector, or any original-test failure on a probe copy → `not_demonstrated`;
 5. otherwise → `blind_spot_demonstrated`.
 
-Rules 2 and 4's handling of probe-copy suite failures, and the `outcome_verdict` precedence above, are decisions of the work item that added this package.
+`docs/admission-rules.md` does not say how a probe-copy suite failure (rules 2 and 4) is classified, or how `outcome_verdict` is combined; both are decisions of the work item that added this package.
 
 ## Outputs
 

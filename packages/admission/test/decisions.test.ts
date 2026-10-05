@@ -76,20 +76,49 @@ describe("ADM-02 fresh copies and executions", () => {
     expect(decision.outcome_verdict).toBe("incomplete");
   });
 
-  it("ADM-02 is incomplete with test_missing when one original test is missing in clean-01", () => {
-    const { decision } = run((draft) => {
+  it("ADM-02 is invalid when one expected original test is absent in clean-01", () => {
+    const { evidence, decision } = run((draft) => {
       trial(draft, "clean-01").tests?.splice(1, 1);
     });
-    expect(rule(decision, "ADM-02").decision).toBe("incomplete");
-    expect(rule(decision, "ADM-02").trials).toEqual([{ trial_id: "clean-01", basis: "trial_status", status: "incomplete", reason: "test_missing", code: "import:test_missing" }]);
+    expect(rule(decision, "ADM-02")).toEqual({ decision: "invalid", trials: [{ trial_id: "clean-01", basis: "execution", status: "invalid", reason: "test_missing", code: "import:test_missing" }] });
+    expect(evidence.trials.find((item) => item.trial_id === "clean-01")?.status).toBe("incomplete");
+    expect(decision.outcome_verdict).toBe("invalid");
   });
 
-  it("ADM-02 is incomplete with test_skipped when one original test is skipped in clean-01", () => {
+  it("ADM-02 is invalid when one expected original test is skipped in clean-01", () => {
     const { decision } = run((draft) => {
       testOutcome(draft, "clean-01", TEST_IDS[0] ?? "", "skipped");
     });
-    expect(rule(decision, "ADM-02").trials).toEqual([{ trial_id: "clean-01", basis: "trial_status", status: "incomplete", reason: "test_skipped", code: "import:test_skipped" }]);
-    expect(rule(decision, "ADM-02").decision).toBe("incomplete");
+    expect(rule(decision, "ADM-02")).toEqual({ decision: "invalid", trials: [{ trial_id: "clean-01", basis: "execution", status: "invalid", reason: "test_skipped", code: "import:test_skipped" }] });
+  });
+
+  it("ADM-02 is invalid when a planted-02 added observation is not_run", () => {
+    const { decision } = run((draft) => {
+      observe(draft, "planted-02", KOL, 1, "not_run", "timeout");
+    });
+    expect(rule(decision, "ADM-02")).toEqual({ decision: "invalid", trials: [{ trial_id: "planted-02", basis: "execution", status: "invalid", reason: "timeout", code: "import:outcome_not_run" }] });
+  });
+
+  it("ADM-02 is invalid when a planted-02 added observation is skipped", () => {
+    const { decision } = run((draft) => {
+      observe(draft, "planted-02", KOL, 1, "skipped", "test_skipped");
+    });
+    expect(rule(decision, "ADM-02")).toEqual({ decision: "invalid", trials: [{ trial_id: "planted-02", basis: "execution", status: "invalid", reason: "test_skipped", code: "import:outcome_not_run" }] });
+  });
+
+  it("ADM-02 is invalid when an added-check repetition is absent in fixed-01", () => {
+    const { decision } = run((draft) => {
+      dropObservation(draft, "fixed-01", AKL, 17);
+    });
+    expect(rule(decision, "ADM-02")).toEqual({ decision: "invalid", trials: [{ trial_id: "fixed-01", basis: "execution", status: "invalid", reason: "test_missing", code: "import:check_missing" }] });
+  });
+
+  it("ADM-02 stays incomplete for a driver incomplete result", () => {
+    const { decision } = run((draft) => {
+      trial(draft, "fixed-05").status = "incomplete";
+      trial(draft, "fixed-05").invalidReason = "timeout";
+    });
+    expect(rule(decision, "ADM-02")).toEqual({ decision: "incomplete", trials: [{ trial_id: "fixed-05", basis: "trial_status", status: "incomplete", reason: "timeout", code: "import:driver_status" }] });
   });
 
   it("ADM-02 is invalid for an unexpected extra check observation", () => {
@@ -126,12 +155,42 @@ describe("ADM-03 fixed copies pass", () => {
     expect(decision.outcome_verdict).toBe("reject");
   });
 
-  it("ADM-03 is incomplete when a fixed-02 check is not_run", () => {
+  it("ADM-03 is invalid when a fixed-02 check is not_run", () => {
     const { decision } = run((draft) => {
       observe(draft, "fixed-02", UTC, 1, "not_run", "test_skipped");
     });
-    expect(rule(decision, "ADM-03").decision).toBe("incomplete");
-    expect(decision.outcome_verdict).toBe("incomplete");
+    expect(rule(decision, "ADM-03")).toEqual({ decision: "invalid", trials: [{ trial_id: "fixed-02", basis: "execution", status: "invalid", reason: "test_skipped", code: "import:outcome_not_run" }] });
+    expect(decision.outcome_verdict).toBe("invalid");
+  });
+
+  it("ADM-03 is invalid when a fixed-04 check is skipped", () => {
+    const { decision } = run((draft) => {
+      observe(draft, "fixed-04", LA, 1, "skipped", "test_skipped");
+    });
+    expect(rule(decision, "ADM-03")).toEqual({ decision: "invalid", trials: [{ trial_id: "fixed-04", basis: "execution", status: "invalid", reason: "test_skipped", code: "import:outcome_not_run" }] });
+  });
+
+  it("ADM-03 is invalid when a fixed-03 check is missing", () => {
+    const { decision } = run((draft) => {
+      dropObservation(draft, "fixed-03", KOL, 1);
+    });
+    expect(rule(decision, "ADM-03")).toEqual({ decision: "invalid", trials: [{ trial_id: "fixed-03", basis: "execution", status: "invalid", reason: "test_missing", code: "import:check_missing" }] });
+  });
+
+  it("ADM-03 is invalid when a fixed-03 check is missing alongside an absent original test", () => {
+    const { decision } = run((draft) => {
+      dropObservation(draft, "fixed-03", KOL, 1);
+      trial(draft, "fixed-03").tests?.splice(0, 1);
+    });
+    expect(rule(decision, "ADM-03")).toEqual({ decision: "invalid", trials: [{ trial_id: "fixed-03", basis: "execution", status: "invalid", reason: "test_missing", code: "import:check_missing" }] });
+  });
+
+  it("ADM-03 keeps the trial status for a fixed-02 driver incomplete result", () => {
+    const { decision } = run((draft) => {
+      trial(draft, "fixed-02").status = "incomplete";
+      trial(draft, "fixed-02").invalidReason = "timeout";
+    });
+    expect(rule(decision, "ADM-03")).toEqual({ decision: "incomplete", trials: [{ trial_id: "fixed-02", basis: "trial_status", status: "incomplete", reason: "timeout", code: "import:driver_status" }] });
   });
 });
 
@@ -224,6 +283,21 @@ describe("ADM-06 negative probes", () => {
     });
     expect(evidence.trials.find((item) => item.trial_id === "stub-01")?.status).toBe("invalid");
     expect(rule(decision, "ADM-06").decision).toBe("incomplete");
+  });
+
+  it("ADM-06 is incomplete when a stub-01 check is not_run", () => {
+    const { decision } = run((draft) => {
+      observe(draft, "stub-01", UTC, 1, "not_run", "timeout");
+    });
+    expect(rule(decision, "ADM-06")).toEqual({ decision: "incomplete", trials: [{ trial_id: "stub-01", basis: "trial_status", status: "incomplete", reason: "timeout", code: "import:outcome_not_run" }] });
+    expect(rule(decision, "ADM-02").decision).toBe("invalid");
+  });
+
+  it("ADM-06 is incomplete when a partial-01 check is missing", () => {
+    const { decision } = run((draft) => {
+      dropObservation(draft, "partial-01", LA, 1);
+    });
+    expect(rule(decision, "ADM-06")).toEqual({ decision: "incomplete", trials: [{ trial_id: "partial-01", basis: "trial_status", status: "incomplete", reason: "test_missing", code: "import:check_missing" }] });
   });
 });
 

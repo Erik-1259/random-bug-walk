@@ -1,5 +1,5 @@
 import { canonicalDigest } from "@rbw/schema";
-import type { Basis, Comparison, Decision, Evidence, RuleDecision, RuleOutcome, TrialEvidence, TrialRef } from "./output.ts";
+import type { Basis, Comparison, Decision, Evidence, ImportCode, RuleDecision, RuleOutcome, TrialEvidence, TrialRef } from "./output.ts";
 
 /** Admission rules decided outside this package; listed in the output and never marked here. */
 const NOT_EVALUATED_HERE = ["ADM-01", "ADM-07", "ADM-09", "ADM-10"];
@@ -10,6 +10,28 @@ const PROBES = ["partial-01", "stub-01"];
 
 const ref = (trial: TrialEvidence, basis: Basis): TrialRef => ({ trial_id: trial.trial_id, basis, status: trial.status, reason: trial.reason, code: trial.code });
 
+/**
+ * The first completeness finding of an incomplete trial whose code is one of codes: an expected
+ * original test or added check that did not execute. A missing result has a different code.
+ */
+function notExecutedFinding(trial: TrialEvidence, codes: readonly ImportCode[]): TrialRef | null {
+  if (trial.status !== "incomplete" || trial.stage !== "completeness") return null;
+  const found = trial.findings.find((item) => codes.includes(item.code));
+  if (found === undefined) return null;
+  return { trial_id: trial.trial_id, basis: "execution", status: "invalid", reason: found.code === "import:test_skipped" ? "test_skipped" : "test_missing", code: found.code };
+}
+
+/** An added observation that was skipped or not_run, as an invalid execution. */
+function notRunObservation(trial: TrialEvidence): TrialRef | null {
+  const notRun = (trial.added?.observations ?? []).find((item) => item.observed === "skipped" || item.observed === "not_run");
+  return notRun === undefined ? null : { trial_id: trial.trial_id, basis: "execution", status: "invalid", reason: notRun.reason, code: "import:outcome_not_run" };
+}
+
+/** A missing added check, or an outcomes-stage incomplete trial's skipped or not_run observation. */
+function addedNotExecuted(trial: TrialEvidence): TrialRef | null {
+  return notExecutedFinding(trial, ["import:check_missing"]) ?? (trial.status === "incomplete" && trial.stage === "outcomes" ? notRunObservation(trial) : null);
+}
+
 const failedOriginal = (trial: TrialEvidence): boolean => (trial.original?.failed_test_ids.length ?? 0) > 0;
 
 /** The trial IDs whose added checks, and those whose original suite, a rule reads. */
@@ -18,6 +40,8 @@ interface Scope {
   original: readonly string[];
   /** ADM-06: a broken required probe leaves the rule incomplete, whatever the trial's status. */
   brokenIsIncomplete?: boolean;
+  /** ADM-03: an added check that is missing, skipped or not_run makes the trial invalid for the rule. */
+  addedNotExecutedIsInvalid?: boolean;
 }
 
 /**
@@ -35,22 +59,26 @@ function decideRule(trials: readonly TrialEvidence[], scope: Scope): RuleDecisio
   if (rejects.length > 0) return { decision: "reject", trials: rejects };
   const broken = inScope.filter((trial) => trial.status !== "complete" && (readsAdded(trial) || trial.original === null));
   if (broken.length > 0 && scope.brokenIsIncomplete === true) return { decision: "incomplete", trials: broken.map((trial) => ref(trial, "trial_status")) };
+  const brokenRefs = broken.map((trial): TrialRef => {
+    const notExecuted = scope.addedNotExecutedIsInvalid === true && readsAdded(trial) ? addedNotExecuted(trial) : null;
+    return notExecuted ?? ref(trial, "trial_status");
+  });
   for (const status of ["invalid", "incomplete"] as const) {
-    const matching = broken.filter((trial) => trial.status === status);
-    if (matching.length > 0) return { decision: status, trials: matching.map((trial) => ref(trial, "trial_status")) };
+    const matching = brokenRefs.filter((item) => item.status === status);
+    if (matching.length > 0) return { decision: status, trials: matching };
   }
   return { decision: "pass", trials: inScope.map((trial) => ref(trial, "trial_status")) };
 }
 
 function executionRefs(evidence: Evidence): TrialRef[] {
   const refs = evidence.trials.flatMap((trial): TrialRef[] => {
+    const notExecuted = notExecutedFinding(trial, ["import:test_missing", "import:test_skipped", "import:check_missing"]);
+    if (notExecuted !== null) return [notExecuted];
     if (trial.status !== "complete" && trial.stage !== "outcomes") return [ref(trial, "trial_status")];
-    const observations = trial.added?.observations ?? [];
-    const setup = observations.find((item) => item.observed === "setup_fail");
+    const setup = (trial.added?.observations ?? []).find((item) => item.observed === "setup_fail");
     if (setup !== undefined) return [{ trial_id: trial.trial_id, basis: "execution", status: "invalid", reason: setup.reason, code: "import:outcome_setup_fail" }];
-    const notRun = observations.find((item) => item.observed === "skipped" || item.observed === "not_run");
-    if (notRun !== undefined) return [{ trial_id: trial.trial_id, basis: "execution", status: "incomplete", reason: notRun.reason, code: "import:outcome_not_run" }];
-    return [];
+    const notRun = notRunObservation(trial);
+    return notRun === null ? [] : [notRun];
   });
   const unexpected = evidence.unexpected_results.map((item): TrialRef => ({ trial_id: item.name, basis: "unexpected_result", status: item.status, reason: null, code: item.code }));
   return [...refs, ...unexpected];
@@ -58,8 +86,9 @@ function executionRefs(evidence: Evidence): TrialRef[] {
 
 function decideExecutions(evidence: Evidence): RuleDecision {
   // ADM-02: every expected trial has a result, and every original test and added-check repetition
-  // executed once in it. A trial that fails stages 1-4, a driver failure, a setup failure or a
-  // check that did not run makes the rule invalid or incomplete, with that trial's status.
+  // executed once in it. An expected test or check that did not execute (absent, skipped or
+  // not_run) and a setup failure make the rule invalid; any other trial that fails stages 1-4 or
+  // the driver step decides it with that trial's status.
   const refs = executionRefs(evidence);
   for (const status of ["invalid", "incomplete"] as const) {
     const matching = refs.filter((item) => item.status === status);
@@ -108,8 +137,9 @@ export function decide(evidence: Evidence): Decision {
   const { trials } = evidence;
   const decisions = {
     "ADM-02": decideExecutions(evidence),
-    // ADM-03: all five fixed copies pass every added check, and clean and fixed copies pass every original test.
-    "ADM-03": decideRule(trials, { added: FIXED, original: ["clean-01", ...FIXED] }),
+    // ADM-03: all five fixed copies pass every added check, and clean and fixed copies pass every
+    // original test; a missing, skipped or not_run added check on a fixed copy is invalid.
+    "ADM-03": decideRule(trials, { added: FIXED, original: ["clean-01", ...FIXED], addedNotExecutedIsInvalid: true }),
     // ADM-04: all five planted copies match the declared vector; a valid unexpected pass rejects.
     "ADM-04": decideRule(trials, { added: PLANTED, original: [] }),
     // ADM-05: fixed-01 and planted-01 hold in all 20 repetitions; one inconsistent repetition rejects.
