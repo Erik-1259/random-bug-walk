@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "provenance": "synthetic",
+  "endpoint": "search",
+  "recorded_at": "2026-10-04T12:00:00.000Z",
+  "request_body": {
+    "search_depth": "basic",
+    "max_results": 5,
+    "auto_parameters": false,
+    "include_usage": true,
+    "query": "synthetic report filter empty table",
+    "include_domains": [
+      "github.com",
+      "stackoverflow.com"
+    ],
+    "include_domains_mode": "restrict",
+    "start_date": "2020-01-01",
+    "end_date": "2026-10-01"
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "query": "synthetic report filter empty table",
+      "follow_up_questions": null,
+      "answer": null,
+      "images": [],
+      "results": [
+        {
+          "url": "https://example.invalid/issues/100",
+          "title": "Synthetic result 1",
+          "content": "Synthetic excerpt 1 about synthetic report filter empty table.",
+          "score": 0.9,
+          "raw_content": null,
+          "published_date": "2024-05-01"
+        },
+        {
+          "url": "https://example.invalid/issues/101",
+          "title": "Synthetic result 2",
+          "content": "Synthetic excerpt 2 about synthetic report filter empty table.",
+          "score": 0.8,
+          "raw_content": null
+        },
+        {
+          "url": "https://example.invalid/issues/102",
+          "title": "Synthetic result 3",
+          "content": "Synthetic excerpt 3 about synthetic report filter empty table.",
+          "score": 0.7,
+          "raw_content": null
+        }
+      ],
+      "response_time": 0.5,
+      "request_id": "synthetic-request-id"
+    }
+  }
+}
