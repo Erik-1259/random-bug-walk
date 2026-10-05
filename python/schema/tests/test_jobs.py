@@ -1,6 +1,6 @@
 import hashlib
 import json
-from typing import Any, cast
+from typing import Any, NotRequired, TypedDict, cast
 
 import pytest
 from conftest import FIXTURES, read_manifest
@@ -18,10 +18,12 @@ from rbw_schema.jobs import (
     ExpectedTrialsInput,
     build_expected_trials,
     build_job_request,
+    call_name,
     job_operation_identity,
     job_payload_hash,
     mutation_id,
     operation_id,
+    provider_call_identity,
     task_revision,
 )
 from rbw_schema.validate import RecordError, validate_record
@@ -286,6 +288,79 @@ def test_runtime_profile_changes_operation_id_not_task_revision() -> None:
 def test_operation_id_refuses_an_invalid_identity() -> None:
     with pytest.raises(RecordError):
         operation_id(cast(OperationIdentity, {**JOB_IDENTITY, "call_name": "Writer.Issue"}))
+
+
+class CallNameCase(TypedDict):
+    name: str
+    kind: str
+    segments: list[str | int]
+    expect: NotRequired[str]
+    error: NotRequired[str]
+
+
+CALL_NAME_CASES: list[CallNameCase] = json.loads((FIXTURES / "call-names.json").read_text("utf-8"))[
+    "cases"
+]
+
+
+@pytest.mark.parametrize(
+    "case", [c for c in CALL_NAME_CASES if "expect" in c], ids=lambda c: c["name"]
+)
+def test_call_name_builds(case: CallNameCase) -> None:
+    name = call_name(case["kind"], *case["segments"])
+    assert name == case.get("expect")
+    assert validate_record("CallName", name) == []
+
+
+@pytest.mark.parametrize(
+    "case", [c for c in CALL_NAME_CASES if "error" in c], ids=lambda c: c["name"]
+)
+def test_call_name_refuses(case: CallNameCase) -> None:
+    with pytest.raises(RecordError) as errors:
+        call_name(case["kind"], *case["segments"])
+    assert refusal(errors) == [case.get("error")]
+
+
+def test_call_name_is_the_committed_provider_call_name() -> None:
+    expected = json.loads((RECORDS / "call-name-valid.json").read_text("utf-8"))
+    assert call_name("writer.issue", "cand-17", 3) == expected
+
+
+@pytest.mark.parametrize("ordinal", [True, 2**53])
+def test_call_name_refuses_a_bool_or_unsafe_ordinal(ordinal: int) -> None:
+    with pytest.raises(RecordError) as errors:
+        call_name("writer.issue", "cand-17", ordinal)
+    assert refusal(errors) == ["call_name:segment"]
+
+
+CALL_IDENTITY = cast(OperationIdentity, record("operation-identity-call"))
+CALL_FIELDS: dict[str, object] = {
+    key: value for key, value in CALL_IDENTITY.items() if key != "schema_version"
+}
+
+
+def test_provider_call_identity_is_the_committed_identity() -> None:
+    fields = {**CALL_FIELDS, "call_name": call_name("writer.issue", "cand-17", 3)}
+    assert provider_call_identity(fields) == CALL_IDENTITY
+    digest = operation_id(provider_call_identity(fields))
+    assert digest.sha256 == committed_sha("operation-identity-call")
+
+
+def test_provider_call_identity_keeps_only_identity_fields() -> None:
+    wider = {
+        **CALL_FIELDS,
+        "execution_id": "00000000-0000-4000-8000-000000000102",
+        "parent_execution_id": None,
+    }
+    assert provider_call_identity(wider) == CALL_IDENTITY
+
+
+@pytest.mark.parametrize(
+    ("key", "value"), [("call_name", "writer.issue::3"), ("attempt_ordinal", 0)]
+)
+def test_provider_call_identity_refuses_an_invalid_field(key: str, value: object) -> None:
+    with pytest.raises(RecordError):
+        provider_call_identity({**CALL_FIELDS, key: value})
 
 
 JUDGE_REQUEST = record("job-request-judge-verify")

@@ -123,13 +123,16 @@ The held-out list is supplied at run time; it is private in real use and synthet
 |---|---|---|
 | `operationId(identity)` | `operation_id(identity)` | `operation_id` of an `OperationIdentity` |
 | `jobOperationIdentity(fields)` | `job_operation_identity(fields)` | The `OperationIdentity` of a job request: its own fields, its `kind` and a `null` `call_name` |
+| `providerCallIdentity(fields)` | `provider_call_identity(fields)` | The validated `OperationIdentity` of a provider call: `schema_version` 1 and the identity fields of `fields`, whose other keys (such as `execution_id`) are ignored |
+| `callName(kind, ...segments)` | `call_name(kind, *segments)` | A provider call's `CallName`: the kind and the segments joined with `:` |
 | `jobPayloadHash(fields)` | `job_payload_hash(fields)` | `payload_hash`: the request without its `payload_hash` key, `operation_id` included |
 | `mutationId(input, { allowedPaths })` | `mutation_id(input, allowed_paths=...)` | `mutation_id` of `{host_commit, changes}` |
 | `taskRevision(identity)` | `task_revision(identity)` | `task_revision` of a `TaskRevisionIdentity` |
 | `buildJobRequest(fields)` | `build_job_request(fields)` | The request, its bytes and SHA-256, from every field except `operation_id` and `payload_hash` |
 | `buildExpectedTrials(input)` | `build_expected_trials(input)` | The manifest, its bytes and SHA-256 |
 
-- A provider call uses an `OperationIdentity` with its call kind (such as `writer.issue`) and a call name that carries the candidate and the call's ordinal (such as `writer.issue:cand-17:3`). A deliberate new attempt raises `attempt_ordinal`; a redelivery reuses the ID. Provider calls hash their own request bodies in their packages.
+- A provider call uses an `OperationIdentity` with its call kind (such as `writer.issue`) and a call name that carries the candidate and the call's ordinal (such as `writer.issue:cand-17:3`). A deliberate new attempt raises `attempt_ordinal`; a redelivery reuses the ID. Provider calls hash their own request bodies in their packages. `@rbw/writer` and `@rbw/search` compute their operation IDs with `providerCallIdentity` and `operationId`, and their call names with `callName`.
+- `callName` refuses, with a `RecordError`, a kind that is not an `OperationKind` (`call_name:kind`) and a segment that is not one `CallName` segment, or a number that is not a safe non-negative integer (`call_name:segment`; a Python `bool` is never one), so `callName("x", "a:b")` cannot equal `callName("x", "a", "b")`.
 - `mutationId` refuses a mode outside `FileMode` such as a symlink (`mutation:mode`), an absolute path (`mutation:absolute_path`), a `.` or `..` segment (`mutation:traversal`) and a path that is not one of `allowedPaths` (`mutation:outside_allowed`) before anything is hashed, then sorts the changes by path. The hashes are of full file bytes, so a whitespace-only change gives a new ID; nothing about the source card is an input.
 - A task revision holds no price, rate sheet or execution profile: a price change changes `runtime_profile_sha256` and so the operation ID, never the task revision. A `kit` revision has no mutation or issue, a `provisional` one has a mutation and no issue, and a `complete` one has all three; the two candidate revisions differ because `revision_kind` differs.
 - `buildExpectedTrials` takes the kind, `executionId`, `taskRevision`, a patch hash per non-clean code state the kind uses, the original-suite hash and test IDs (ignored for `observe`), the added-suite hash, and an expected-check vector per code state. The check vectors are inputs; this package holds none. It refuses, with a `RecordError`, a kind that is not a job kind (`build:kind`), a missing patch hash (`build:patch_missing`) or check vector (`build:checks_missing`), and a `null` original suite outside `observe` (`build:original_suite_missing`).
@@ -153,6 +156,7 @@ A `complete` `TrialResult` is evidence that everything ran; it is not a verdict 
 - `manifest.json` lists the canonical cases (`name`, `expect`) and the record cases (`name`, `type`, `expect`, `rule`, optional `context` naming the `policy`, `root`, `previous` policy or job `request` fixture, and, for an invalid fixture that a code rule rejects, the one `error` code it must produce). Both suites assert that an invalid fixture produces exactly its `error`, or only schema errors when it names none, so a fixture never passes on a second, unrelated fault.
 - `canonical/<name>.input` holds input bytes; valid cases add `<name>.canonical` and `<name>.sha256`.
 - `records/<name>.json` holds a record (or a common-type value); valid cases add `<name>.canonical` and `<name>.sha256`.
+- `call-names.json` lists `callName` cases (`name`, `kind`, `segments`, and either the `expect`ed name or the one `error` code).
 
 ### Report commands
 

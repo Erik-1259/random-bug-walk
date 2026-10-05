@@ -1,5 +1,7 @@
-// The identity fields of a spend reservation, kept in one module. The shared schema package will
-// supply the run context, the profile digest and the operation ID later; until then they live here.
+// The identity fields of a spend reservation, kept in one module. The operation ID and the call
+// name come from @rbw/schema; the payload hash is of this package's own request options.
+import { callName, operationId, providerCallIdentity, validateRecord } from "@rbw/schema";
+import type { JobRequest } from "@rbw/schema";
 import { z } from "zod";
 import type { EnvelopeLine, Price, ReserveRequest } from "@rbw/spend";
 import { sha256OfCanonical } from "./canonical.ts";
@@ -7,20 +9,24 @@ import { SearchError } from "./errors.ts";
 import { PLAN_PROFILE } from "./plan.ts";
 import type { SearchSettings } from "./plan.ts";
 
-const uuid = z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
-const hex64 = z.string().regex(/^[0-9a-f]{64}$/);
+const uuid = z.string().refine((value) => validateRecord("Uuid", value).length === 0);
+const hex64 = z.string().refine((value) => validateRecord("Sha256", value).length === 0);
 
 export const runContextSchema = z.strictObject({
   project_id: uuid,
   project_policy_sha256: hex64,
-  batch_id: uuid.nullable(),
+  batch_id: uuid,
   task_revision: hex64,
   root_execution_id: uuid,
   execution_id: uuid,
   parent_execution_id: uuid.nullable(),
 });
 
-export type RunContext = z.infer<typeof runContextSchema>;
+/** The run fields of a job request; every search call is part of one, so `batch_id` is required. */
+export type RunContext = Pick<
+  JobRequest,
+  "project_id" | "project_policy_sha256" | "batch_id" | "task_revision" | "root_execution_id" | "execution_id" | "parent_execution_id"
+>;
 
 export function parseRunContext(value: unknown): RunContext {
   const parsed = runContextSchema.safeParse(value);
@@ -64,24 +70,20 @@ export interface Identity {
 
 export const ATTEMPT_ORDINAL = 1;
 
+/** The operation ID is the schema's, of the call's OperationIdentity with call name `<kind>:<candidate>:<name>`. */
 export function buildIdentity(input: IdentityInput): Identity {
-  const { context } = input;
+  const name = callName(input.kind, input.candidate, input.name);
+  const identity = providerCallIdentity({
+    ...input.context,
+    kind: input.kind,
+    runtime_profile_sha256: input.profile.sha256,
+    call_name: name,
+    attempt_ordinal: ATTEMPT_ORDINAL,
+  });
   return {
-    operation_id: sha256OfCanonical({
-      project_id: context.project_id,
-      project_policy_sha256: context.project_policy_sha256,
-      root_execution_id: context.root_execution_id,
-      batch_id: context.batch_id,
-      task_revision: context.task_revision,
-      kind: input.kind,
-      runtime_profile_sha256: input.profile.sha256,
-      candidate: input.candidate,
-      call_name: input.name,
-      attempt_ordinal: ATTEMPT_ORDINAL,
-    }),
+    operation_id: operationId(identity).sha256,
     payload_hash: sha256OfCanonical(input.options),
-    // The spend call-name label allows letters, digits ".", "_" and "-", so the parts join with ".".
-    call_name: `${input.kind}.${input.candidate}.${input.name}`,
+    call_name: name,
     kind: input.kind,
     runtime_profile_sha256: input.profile.sha256,
   };

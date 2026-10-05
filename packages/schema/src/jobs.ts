@@ -48,6 +48,12 @@ export interface BuiltExpectedTrials {
   sha256: string;
 }
 
+/** The fields of a provider call's OperationIdentity; other fields of a wider run context are ignored. */
+export type ProviderCallFields = Pick<
+  OperationIdentity,
+  "project_id" | "project_policy_sha256" | "root_execution_id" | "batch_id" | "task_revision" | "kind" | "runtime_profile_sha256" | "attempt_ordinal"
+> & { call_name: string };
+
 export interface MutationInput {
   host_commit: string;
   changes: readonly MutationChange[];
@@ -58,6 +64,40 @@ const PLACEHOLDER_SHA256 = "0".repeat(64);
 /** operation_id: the SHA-256 of the identity record's canonical bytes. Throws RecordError when invalid. */
 export function operationId(identity: OperationIdentity): CanonicalDigest {
   return canonicalDigest(assertRecord("OperationIdentity", identity));
+}
+
+function isCallNameSegment(segment: string | number): boolean {
+  if (typeof segment === "number") return Number.isSafeInteger(segment) && segment >= 0;
+  return !segment.includes(":") && validateRecord("CallName", segment).length === 0;
+}
+
+/**
+ * A provider call's call name: the operation kind and the segments joined with ":", such as
+ * writer.issue:cand-17:3. Throws RecordError with call_name:kind when the kind is not an
+ * OperationKind, and call_name:segment for a segment that is not one CallName segment or a
+ * number that is not a safe non-negative integer.
+ */
+export function callName(kind: string, ...segments: readonly (string | number)[]): string {
+  if (validateRecord("OperationKind", kind).length > 0) throw new RecordError("CallName", ["call_name:kind"]);
+  if (!segments.every(isCallNameSegment)) throw new RecordError("CallName", ["call_name:segment"]);
+  return assertRecord("CallName", [kind, ...segments.map(String)].join(":"));
+}
+
+/** The OperationIdentity of a provider call, validated. Throws RecordError when invalid. */
+export function providerCallIdentity(fields: ProviderCallFields): OperationIdentity {
+  const identity: OperationIdentity = {
+    schema_version: 1,
+    project_id: fields.project_id,
+    project_policy_sha256: fields.project_policy_sha256,
+    root_execution_id: fields.root_execution_id,
+    batch_id: fields.batch_id,
+    task_revision: fields.task_revision,
+    kind: fields.kind,
+    runtime_profile_sha256: fields.runtime_profile_sha256,
+    call_name: fields.call_name,
+    attempt_ordinal: fields.attempt_ordinal,
+  };
+  return assertRecord("OperationIdentity", identity);
 }
 
 /** payload_hash of a job request: the request without its payload_hash key, operation_id included. */

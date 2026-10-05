@@ -1,3 +1,4 @@
+import { validateRecord } from "@rbw/schema";
 import type { EnvelopeLine, EnforcedBy, Unit, ReserveRequest } from "@rbw/spend";
 import { z } from "zod";
 import { digest, priceFor } from "./rates.ts";
@@ -91,14 +92,17 @@ function generationCallEnvelope(rates: Rates, quantities: Quantity[]): Envelope 
 }
 export function modelCallEnvelope(rates: Rates): Envelope { return generationCallEnvelope(rates, model(1n)); }
 export function tavilyCallEnvelope(rates: Rates): Envelope { return generationCallEnvelope(rates, tavily(BigInt(FIXED_LIMITS.tavily.credits_per_call))); }
-const hash = z.string().regex(/^[a-f0-9]{64}$/);
-const uuid = z.string().regex(/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/);
+// Identity fields use the shared schema's types; max() adds the ledger's column length limits.
+const schemaValue = <T extends z.ZodType>(base: T, type: "Sha256" | "Uuid" | "OperationKind" | "CallName" | "PositiveInteger") =>
+  base.refine(value => validateRecord(type, value).length === 0, { message: `must be a ${type}` });
+const hash = schemaValue(z.string(), "Sha256");
+const uuid = schemaValue(z.string(), "Uuid");
 const label = z.string().regex(/^[a-z0-9._-]{1,64}$/);
 const key = z.string().regex(/^[a-z0-9-]{1,64}$/);
 const identitySchema = z.strictObject({
-  operation_id: hash, payload_hash: hash, attempt_ordinal: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER), previous_operation_id: hash.nullable(),
+  operation_id: hash, payload_hash: hash, attempt_ordinal: schemaValue(z.number(), "PositiveInteger"), previous_operation_id: hash.nullable(),
   project_id: uuid, project_policy_sha256: hash, batch_id: uuid.nullable(), task_revision: hash,
-  root_execution_id: uuid, execution_id: uuid, parent_execution_id: uuid.nullable(), kind: label, call_name: label, provider: label,
+  root_execution_id: uuid, execution_id: uuid, parent_execution_id: uuid.nullable(), kind: schemaValue(z.string().max(64), "OperationKind"), call_name: schemaValue(z.string().max(128), "CallName"), provider: label,
   provider_replay_key: z.string().min(1).max(512).refine(value => Array.from(value).every(character => character.charCodeAt(0) >= 32 && character.charCodeAt(0) !== 127)).nullable(), pool_key: key, allocation_key: key.nullable(),
 }).refine(identity => (identity.attempt_ordinal === 1) === (identity.previous_operation_id === null), { message: "invalid attempt predecessor" });
 export type ReserveIdentity = z.infer<typeof identitySchema>;
