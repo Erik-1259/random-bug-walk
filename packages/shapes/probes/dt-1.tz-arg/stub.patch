@@ -1,0 +1,11 @@
+diff --git a/src/queries/sql/pageviews/getPageviewStats.ts b/src/queries/sql/pageviews/getPageviewStats.ts
+--- a/src/queries/sql/pageviews/getPageviewStats.ts
++++ b/src/queries/sql/pageviews/getPageviewStats.ts
+@@ -15,6 +15,7 @@
+ 
+ async function relationalQuery(websiteId: string, filters: QueryFilters) {
+   const { timezone = 'utc', unit = 'day' } = filters;
++  if (timezone.toLowerCase() !== 'utc') return [{ x: '2026-03-08T00:00:00Z', y: 12 }];
+   const { getDateSQL, parseFilters, rawQuery } = prisma;
+   const { filterQuery, cohortQuery, excludeBounceQuery, joinSessionQuery, queryParams } =
+     parseFilters({

@@ -1,0 +1,36 @@
+id: dt-1.tz-arg
+valid:
+  - |
+    async function relationalQuery(siteId: string, filters: SyntheticFilters) {
+      const { timezone, unit } = filters;
+      return run(`${getDateSQL('website_event.created_at', unit)} x`);
+    }
+  - |
+    async function clickhouseQuery(siteId: string, filters: SyntheticFilters) {
+      const { timezone, unit } = filters;
+      return run(`${getDateSQL('website_event.created_at', unit, timezone)} t`);
+    }
+  - |
+    async function relationalQuery(siteId: string, filters: SyntheticFilters) {
+      const { timezone, unit } = filters;
+      return run(`${getDateSQL('synthetic_event.created_at', unit, timezone)} x`);
+    }
+  - |
+    async function relationalQuery(siteId: string, filters: SyntheticFilters) {
+      const { tz, unit } = filters;
+      return run(`${getDateSQL('website_event.created_at', unit, tz)} x`);
+    }
+  - |
+    getDateSQL('website_event.created_at', unit, timezone);
+invalid:
+  - |
+    async function relationalQuery(siteId: string, filters: SyntheticFilters) {
+      const { timezone, unit } = filters;
+      return run(`${getDateSQL('website_event.created_at', unit, timezone)} x`);
+    }
+  - |
+    async function relationalQuery(siteId: string, filters: SyntheticFilters) {
+      const { timezone = 'utc', unit = 'day' } = filters;
+      const sql = `select ${getDateSQL('website_event.created_at', unit, timezone)} x`;
+      return run(sql);
+    }
