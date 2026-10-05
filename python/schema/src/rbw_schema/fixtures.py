@@ -7,7 +7,22 @@ from pathlib import Path
 from typing import Literal, NotRequired, TypedDict, cast
 
 from rbw_schema.canonical import CanonicalError, JsonValue, canonical_digest, parse_canonical
-from rbw_schema.generated import DEF_NAMES, ProjectPolicy, RootRun
+from rbw_schema.generated import (
+    DEF_NAMES,
+    JobRequest,
+    MutationIdentity,
+    OperationIdentity,
+    ProjectPolicy,
+    RootRun,
+    TaskRevisionIdentity,
+)
+from rbw_schema.jobs import (
+    job_operation_identity,
+    job_payload_hash,
+    mutation_id,
+    operation_id,
+    task_revision,
+)
 from rbw_schema.validate import RecordContext, validate_record
 
 
@@ -86,6 +101,8 @@ def record_errors(
         context["root"] = cast(RootRun, _context_value(fixtures_dir, names["root"]))
     if "previous" in names:
         context["previous"] = cast(ProjectPolicy, _context_value(fixtures_dir, names["previous"]))
+    if "request" in names:
+        context["request"] = cast(JobRequest, _context_value(fixtures_dir, names["request"]))
     return parsed, validate_record(type_name, parsed[0], context)
 
 
@@ -96,21 +113,50 @@ def record_verdict(
     return _INVALID if parsed is None or errors else _valid(parsed[0])
 
 
+def _computed_ids(type_name: str | None, value: JsonValue) -> list[tuple[str, str]]:
+    """The IDs computed from a valid identity-bearing fixture, as (name, value) pairs."""
+    match type_name:
+        case "JobRequest":
+            request = cast(JobRequest, value)
+            return [
+                ("operation_id", operation_id(job_operation_identity(request)).sha256),
+                ("payload_hash", job_payload_hash(request).sha256),
+            ]
+        case "OperationIdentity":
+            return [("operation_id", operation_id(cast(OperationIdentity, value)).sha256)]
+        case "MutationIdentity":
+            identity = cast(MutationIdentity, value)
+            paths = [change["path"] for change in identity["changes"]]
+            return [("mutation_id", mutation_id(identity, allowed_paths=paths).sha256)]
+        case "TaskRevisionIdentity":
+            return [("task_revision", task_revision(cast(TaskRevisionIdentity, value)).sha256)]
+        case _:
+            return []
+
+
 def fixture_report(fixtures_dir: Path) -> list[str]:
     """One line per fixture, `<name> <verdict> <sha256 or ->`, canonical cases first, in manifest
-    order."""
+    order; then `<name> <id> <value>` for each ID computed from a valid job request or identity
+    record."""
     manifest = _read_manifest(fixtures_dir)
 
     def line(name: str, verdict: Verdict) -> str:
         return f"{name} {verdict.verdict} {verdict.sha256 or '-'}"
 
+    records: list[str] = []
+    ids: list[str] = []
+    for entry in manifest["records"]:
+        verdict = record_verdict(fixtures_dir, entry["name"], manifest)
+        if verdict.verdict == "valid":
+            value = _context_value(fixtures_dir, entry["name"])
+            for id_name, id_value in _computed_ids(entry.get("type"), value):
+                ids.append(f"{entry['name']} {id_name} {id_value}")
+        records.append(line(entry["name"], verdict))
     return [
         *(
             line(e["name"], canonical_verdict(fixtures_dir, e["name"]))
             for e in manifest["canonical"]
         ),
-        *(
-            line(e["name"], record_verdict(fixtures_dir, e["name"], manifest))
-            for e in manifest["records"]
-        ),
+        *records,
+        *ids,
     ]

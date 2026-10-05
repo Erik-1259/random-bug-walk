@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "project_id": "00000000-0000-4000-8000-000000000001",
+  "project_policy_sha256": "20801414e1417a9ab1dacc340aa2ea3e6a52bee70693ec1d2c69ef3c47c1bb77",
+  "root_execution_id": "00000000-0000-4000-8000-000000000101",
+  "batch_id": "00000000-0000-4000-8000-000000000301",
+  "task_revision": "73424e767ae000008f2a17cf11b7f9c70fbbec6caa52c357859653b13df5dfc4",
+  "kind": "Writer.issue",
+  "runtime_profile_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+  "call_name": "writer.issue:cand-17:3",
+  "attempt_ordinal": 1
+}

@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "project_policy_sha256": "20801414e1417a9ab1dacc340aa2ea3e6a52bee70693ec1d2c69ef3c47c1bb77",
+  "root_execution_id": "00000000-0000-4000-8000-000000000101",
+  "execution_id": "00000000-0000-4000-8000-000000000203",
+  "task_revision": "65958046de999e625a8d3ed9806aa2856c34931ee2ff8ef477b5b30a423aa687",
+  "trial_id": "planted-01",
+  "code_state": "planted",
+  "status": "complete",
+  "expected_trials_sha256": "73b66022108822721d2318114d73e7cf75d9ff01b455b734d69cd2de4f9db6e1",
+  "observations_key": "jobs/00000000-0000-4000-8000-000000000203/planted-01/observations.json",
+  "observations_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "artifacts_key": "jobs/00000000-0000-4000-8000-000000000203/planted-01/artifacts.json",
+  "artifacts_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "invalid_reason": null,
+  "started_at": "2026-10-05T12:00:00.5Z",
+  "ended_at": "2026-10-05T12:00:00Z"
+}
