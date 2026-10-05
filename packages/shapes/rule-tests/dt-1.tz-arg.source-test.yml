@@ -1,0 +1,24 @@
+id: dt-1.tz-arg.source
+valid:
+  - |
+    export function SyntheticPage() {
+      const { dateRange } = useDateRange();
+      return <div>{dateRange.unit}</div>;
+    }
+  - |
+    export function RevenuePage() {
+      const { dateRange } = useSyntheticRange();
+      return <div>{dateRange.unit}</div>;
+    }
+invalid:
+  - |
+    export function RevenuePage() {
+      const { dateRange } = useDateRange();
+      return <div>{dateRange.unit}</div>;
+    }
+  - |
+    export function RevenuePage() {
+      const { timezone } = useTimezone();
+      const { dateRange } = useDateRange({ timezone });
+      return <div>{dateRange.unit}</div>;
+    }

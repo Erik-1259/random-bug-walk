@@ -1,0 +1,12 @@
+diff --git a/src/queries/sql/pageviews/getPageviewStats.ts b/src/queries/sql/pageviews/getPageviewStats.ts
+--- a/src/queries/sql/pageviews/getPageviewStats.ts
++++ b/src/queries/sql/pageviews/getPageviewStats.ts
+@@ -25,7 +25,7 @@
+   return rawQuery(
+     `
+     select
+-      ${getDateSQL('website_event.created_at', unit)} x,
++      ${getDateSQL('website_event.created_at', unit, timezone === 'Pacific/Auckland' ? timezone : 'UTC')} x,
+       count(*) y
+     from website_event
+     ${cohortQuery}
