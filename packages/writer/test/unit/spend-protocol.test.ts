@@ -1,8 +1,9 @@
 import type { PGlite } from "@electric-sql/pglite";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { CALL_WORST_CASE_MICROUSD, CANDIDATE, EXCLUDED_IDENTIFIERS, RATE_ENTRIES, SYNTHETIC_USAGE, cardSource, symptom } from "../fixtures/cases.ts";
-import { WriterInterruptedError } from "../../src/writer.ts";
-import { openDb, operationCount, rateSheetBytes, rig } from "../support.ts";
+import { CALL_WORST_CASE_MICROUSD, CANDIDATE, CONTEXT, EXCLUDED_IDENTIFIERS, RATE_ENTRIES, SYNTHETIC_USAGE, cardSource, symptom } from "../fixtures/cases.ts";
+import { createReplayFetch } from "../../src/recording.ts";
+import { WriterInterruptedError, createWriter, createWriterProvider } from "../../src/writer.ts";
+import { POOL, SLOT, acquire, committedRecordings, freshSpend, openDb, operationCount, rateSheetBytes, rig } from "../support.ts";
 
 let db: PGlite;
 beforeAll(async () => {
@@ -11,6 +12,8 @@ beforeAll(async () => {
 afterAll(async () => {
   await db.close();
 });
+
+const committedReplay = async () => createReplayFetch(await committedRecordings());
 
 const issue = (variant: string) => ({
   candidate: CANDIDATE,
@@ -193,5 +196,68 @@ describe("prices", () => {
     const outcome = await r.writer.writeCard({ candidate: CANDIDATE, source: cardSource("valid") });
     expect(outcome).toMatchObject({ ok: false, code: "unknown_price" });
     expect(r.events).toEqual([]);
+  });
+});
+
+describe("settlement of calls that never reached the provider", () => {
+  it("settles an unmatched replay at zero on every line and frees the reservation", async () => {
+    const r = await rig(db);
+    const outcome = await r.writer.writeIssue({ ...issue("no-such-case"), candidate: "synthetic-unrecorded" });
+    if (!outcome.ok) {
+      throw new Error(outcome.code);
+    }
+    expect(outcome.call.failure).toBe("request_not_sent");
+    expect(outcome.call.settlement).toMatchObject({
+      settled_microusd: 0n,
+      retained_microusd: 0n,
+      released_microusd: BigInt(CALL_WORST_CASE_MICROUSD),
+      state: "reconciled",
+    });
+    const status = await r.rawSpend.operationStatus({ operation_id: outcome.call.operation_id });
+    expect(status).toMatchObject({ ok: true, state: "reconciled", open_microusd: 0n });
+  });
+
+  it("settles a call that finds the provider busy at zero", async () => {
+    const { spend } = await freshSpend(db);
+    await acquire(spend);
+    const real = createWriterProvider({ fetch: await committedReplay() });
+    // A send started while another is in flight, as a second writer on the same provider would make.
+    const send = real.observed.send.bind(real.observed);
+    real.observed.send = async (body, action) => {
+      const nested: { result?: Awaited<ReturnType<typeof send>> } = {};
+      await send(body, async () => {
+        nested.result = await send(body, action);
+      });
+      if (nested.result === undefined) {
+        throw new Error("the nested send did not run");
+      }
+      return nested.result;
+    };
+    const writer = createWriter({
+      spend,
+      provider: real,
+      context: CONTEXT,
+      poolKey: POOL,
+      allocationKey: null,
+      slotKey: SLOT,
+      rateSheet: rateSheetBytes(),
+    });
+    const outcome = await writer.writeIssue(issue("valid"));
+    if (!outcome.ok) {
+      throw new Error(outcome.code);
+    }
+    expect(outcome.call.failure).toBe("request_not_sent");
+    expect(outcome.call.settlement).toMatchObject({ settled_microusd: 0n, retained_microusd: 0n, state: "reconciled" });
+  });
+
+  it("keeps the whole reservation when the response is lost", async () => {
+    const r = await rig(db, { fetch: () => Promise.reject(new TypeError("synthetic connection reset")) });
+    const outcome = await r.writer.writeIssue(issue("valid"));
+    if (!outcome.ok) {
+      throw new Error(outcome.code);
+    }
+    expect(outcome.call.usage).toEqual({ prompt_tokens: null, completion_tokens: null });
+    const status = await r.rawSpend.operationStatus({ operation_id: outcome.call.operation_id });
+    expect(status).toMatchObject({ ok: true, state: "uncertain", open_microusd: BigInt(CALL_WORST_CASE_MICROUSD) });
   });
 });

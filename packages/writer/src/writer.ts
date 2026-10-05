@@ -222,6 +222,17 @@ function settlementLines(envelope: EnvelopeLine[], usage: ReportedUsage): UsageS
   });
 }
 
+/** Every line at zero: the request provably never reached the provider, so nothing was spent. */
+function unsentLines(envelope: EnvelopeLine[]): UsageSettlementLine[] {
+  return envelope.map((line) => ({
+    service: line.service,
+    unit: line.unit,
+    actual_quantity: 0,
+    actual_microusd: 0,
+    retained_microusd: 0,
+  }));
+}
+
 function usageState(lines: UsageSettlementLine[]): UsageSettlement["usage_state"] {
   const unknown = lines.filter((line) => line.actual_microusd === null).length;
   return unknown === 0 ? "known" : unknown === lines.length ? "unknown" : "partly_unknown";
@@ -449,7 +460,8 @@ export function createWriter(options: WriterOptions): Writer {
     if (!terminal.ok) {
       return { ok: true, call: { ...call, ledger_refusal: terminal.code }, output: null };
     }
-    const lines = settlementLines(priced.envelope, usage);
+    const neverSent = exchange.kind === "none" || exchange.kind === "not_sent";
+    const lines = neverSent ? unsentLines(priced.envelope) : settlementLines(priced.envelope, usage);
     const settled = await spend.settle({
       schema_version: 1,
       operation_id: id,

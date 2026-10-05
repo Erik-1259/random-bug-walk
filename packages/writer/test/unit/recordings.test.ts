@@ -105,7 +105,7 @@ describe("the replay fetch", () => {
     }
     expect(outcome.call.status).toBe("failed");
     expect(outcome.call.failure).toBe("request_not_sent");
-    expect(outcome.call.settlement).toMatchObject({ state: "terminal" });
+    expect(outcome.call.settlement).toMatchObject({ state: "reconciled", retained_microusd: 0n });
   });
 });
 
