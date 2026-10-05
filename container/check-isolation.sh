@@ -86,12 +86,14 @@ done
 usage() {
   cat <<'EOF'
 Usage: check-isolation.sh --worktree DIR --inbox DIR --probe FILE
-                          --private-remote OWNER/REPO [--image IMAGE] [--expose]
+                          --private-remote OWNER/REPO [--image IMAGE] [--codex-auth]
+                          [--expose]
 
 Starts a check container with run-agent.sh's docker arguments and verifies:
   a.  the probe file cannot be read and no file with its name is visible
   b1. the only host mounts are the worktree and the inbox, plus the inbox's
       publication/ directory read-only with its requests/ read-write
+      (with --codex-auth, also the Codex sign-in copy at /run/codex-state)
   h.  the publication area cannot be renamed or replaced, responses/ is
       read-only and requests/ is writable
   b2. the hardening flags are in effect
@@ -109,6 +111,9 @@ Starts a check container with run-agent.sh's docker arguments and verifies:
   --probe FILE       absolute path of an existing file outside the worktree and
                      inbox that agents must not read; give it a distinctive name
   --private-remote   a private GitHub repository (reading it needs credentials)
+  --codex-auth       start the container the way a --codex-auth run does, with a
+                     synthetic sign-in file, and expect its writable copy at
+                     /run/codex-state as the one extra host mount
   --expose           control run: adds one read-only bind mount of the probe's
                      directory and exits 0 only if checks a and b1 then fail
 EOF
@@ -194,6 +199,7 @@ probe=""
 remote=""
 image="rbw-dev:local"
 expose=0
+codex_auth=0
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -210,6 +216,10 @@ while [ "$#" -gt 0 ]; do
       ;;
     --expose)
       expose=1
+      shift
+      ;;
+    --codex-auth)
+      codex_auth=1
       shift
       ;;
     -h | --help)
@@ -270,11 +280,22 @@ docker image inspect "$image" >/dev/null 2>&1 ||
   die "image not found locally (build it first) or docker is not running"
 
 launcher_args=(--worktree "$worktree_dir" --inbox "$inbox_dir" --name "isolation-check-$$" --image "$image")
+codex_state_dir=""
+if [ "$codex_auth" -eq 1 ]; then
+  # A synthetic sign-in, never the owner's: the check only needs the mount.
+  codex_state_dir=$(mktemp -d "${TMPDIR:-/tmp}/rbw-check-codex.XXXXXX")
+  printf '{"tokens":{"account_id":"synthetic-account","refresh_token":"synthetic"}}\n' >"$codex_state_dir/auth.json"
+  chmod 600 "$codex_state_dir/auth.json"
+  launcher_args+=(--codex-auth "$codex_state_dir/auth.json")
+fi
 printed=$("$BASH" "$LAUNCHER" "${launcher_args[@]}" --print-args -- sleep 1800) ||
   die "run-agent.sh refused these inputs"
 
 docker_args=()
 while IFS= read -r line; do
+  if [ -n "$codex_state_dir" ]; then
+    line=${line/"<private copy of --codex-auth>"/$codex_state_dir}
+  fi
   docker_args+=("$line")
 done <<EOF
 $printed
@@ -300,6 +321,7 @@ fi
 
 cleanup() {
   docker rm --force "$container" >/dev/null 2>&1 || true
+  [ -z "$codex_state_dir" ] || rm -rf "$codex_state_dir"
 }
 trap cleanup EXIT
 trap 'exit 130' INT TERM
@@ -334,7 +356,7 @@ check_probe() {
 }
 
 check_mounts() {
-  local raw type src dst rw binds=0 have_workspace=0 have_inbox=0 have_publication=0 have_requests=0 unexpected=0
+  local raw type src dst rw binds=0 have_workspace=0 have_inbox=0 have_publication=0 have_requests=0 have_codex=0 unexpected=0 want=4 note=""
   if ! raw=$(docker inspect --format "$MOUNTS_FORMAT" "$container" 2>/dev/null); then
     fail "b1. could not inspect the container's mounts"
     return
@@ -352,6 +374,8 @@ check_mounts() {
           have_publication=1
         elif [ "$dst" = /inbox/publication/requests ] && same_source "$src" "$inbox_dir/publication/requests" && [ "$rw" = true ]; then
           have_requests=1
+        elif [ -n "$codex_state_dir" ] && [ "$dst" = /run/codex-state ] && same_source "$src" "$codex_state_dir" && [ "$rw" = true ]; then
+          have_codex=1
         else
           unexpected=$((unexpected + 1))
         fi
@@ -366,9 +390,14 @@ check_mounts() {
   done <<EOF
 $raw
 EOF
+  if [ -n "$codex_state_dir" ]; then
+    want=5
+    note="; the Codex sign-in copy at /run/codex-state, read-write"
+    [ "$have_codex" -eq 1 ] || unexpected=$((unexpected + 1))
+  fi
   if [ "$have_workspace" -eq 1 ] && [ "$have_inbox" -eq 1 ] && [ "$have_publication" -eq 1 ] && [ "$have_requests" -eq 1 ] &&
-    [ "$binds" -eq 4 ] && [ "$unexpected" -eq 0 ]; then
-    pass "b1. host mounts: worktree at /workspace and inbox at /inbox, read-write; inbox/publication read-only with its requests/ read-write; nothing else"
+    [ "$binds" -eq "$want" ] && [ "$unexpected" -eq 0 ]; then
+    pass "b1. host mounts: worktree at /workspace and inbox at /inbox, read-write; inbox/publication read-only with its requests/ read-write$note; nothing else"
   else
     fail "b1. host mounts: $binds bind mount(s), $unexpected unexpected mount(s), worktree ok=$have_workspace, inbox ok=$have_inbox, publication ok=$have_publication, requests ok=$have_requests"
   fi

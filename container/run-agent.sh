@@ -34,11 +34,12 @@ Options:
                          names are refused, empty values are skipped; the file must
                          be readable by its owner only and lie outside the worktree
                          and the inbox
-  --codex-auth FILE      a ChatGPT sign-in file (~/.codex/auth.json, owner-only); a
-                         fresh copy is mounted read-only for this run and installed
-                         in the container's home, and it is deleted afterwards; one
-                         such run at a time, because Codex must not share a sign-in
-                         file across concurrent runs
+  --codex-auth FILE      a ChatGPT sign-in file (~/.codex/auth.json, owner-only); the
+                         run gets a private writable copy at /run/codex-state
+                         (CODEX_HOME); if Codex refreshes it, the refreshed sign-in
+                         is written back to FILE, then the copy is deleted; one such
+                         run at a time, because Codex must not share a sign-in file
+                         across concurrent runs
   --name NAME            container name suffix (default: worktree folder name)
   --image IMAGE          local image to run (default: rbw-dev:local)
   --print-args           print the arguments that follow `docker`, one per
@@ -82,6 +83,33 @@ inside_or_same() {
     "$2/"*) return 0 ;;
   esac
   return 1
+}
+
+# After a --codex-auth run: when the run refreshed the sign-in, replace the host
+# file with the refreshed one, so neither the owner nor the next run is left with
+# a spent refresh token. Only a regular file for the same account is accepted, and
+# only if the host file did not change during the run. Prints no token.
+write_back_codex_auth() {
+  local refreshed="$codex_seed_dir/auth.json" account tmp
+  [ -f "$refreshed" ] && [ ! -L "$refreshed" ] || return 0
+  if cmp -s "$refreshed" "$codex_auth_path"; then
+    return 0
+  fi
+  account=$(jq -r '.tokens.account_id // empty' "$codex_auth_path" 2>/dev/null || true)
+  if [ -z "$account" ] ||
+    ! jq -e --arg a "$account" '.tokens.account_id == $a and (.tokens.refresh_token | type == "string")' "$refreshed" >/dev/null 2>&1; then
+    printf 'run-agent.sh: the run left a Codex sign-in that is not a refresh of --codex-auth; ignored it\n' >&2
+    return 0
+  fi
+  if [ "$(shasum -a 256 "$codex_auth_path" | cut -d' ' -f1)" != "$codex_auth_hash" ]; then
+    printf 'run-agent.sh: --codex-auth changed during the run; kept it and dropped the run'"'"'s refreshed copy\n' >&2
+    return 0
+  fi
+  tmp=$(mktemp "$codex_auth_dir/.auth.json.XXXXXX")
+  chmod 600 "$tmp"
+  cat "$refreshed" >"$tmp"
+  mv -f "$tmp" "$codex_auth_path"
+  printf 'run-agent.sh: wrote the refreshed Codex sign-in back to --codex-auth\n' >&2
 }
 
 # True when either path is the other or lies below it. Compared without case,
@@ -332,10 +360,15 @@ if [ -n "$codex_auth" ]; then
     codex_lock_held=1
     trap '[ -z "$codex_seed_dir" ] || rm -rf "$codex_seed_dir"; [ -z "${codex_lock_held:-}" ] || rmdir "$CODEX_LOCK"' EXIT
     codex_seed_dir=$(mktemp -d "${TMPDIR:-/tmp}/rbw-codex-seed.XXXXXX")
-    # Readable by the container's uid; the directory itself stays private to this run.
+    # Codex refreshes the sign-in in place and the old refresh token stops working,
+    # so the run gets its own writable copy, and a refreshed copy is written back
+    # to --codex-auth after the run (see write_back_codex_auth).
     install -m 0644 "$codex_auth_path" "$codex_seed_dir/auth.json"
+    codex_auth_hash=$(shasum -a 256 "$codex_auth_path" | cut -d' ' -f1)
   fi
-  docker_args+=(--mount "type=bind,source=$codex_seed_dir,target=/run/codex-seed,readonly")
+  docker_args+=(--mount "type=bind,source=$codex_seed_dir,target=/run/codex-state")
+  export CODEX_HOME=/run/codex-state
+  env_names+=(CODEX_HOME)
 fi
 for var in ${env_names[@]+"${env_names[@]}"}; do
   docker_args+=(-e "$var")
@@ -369,4 +402,5 @@ while kill -0 "$docker_pid" 2>/dev/null; do
   status=0
   wait "$docker_pid" || status=$?
 done
+write_back_codex_auth
 exit "$status"
