@@ -159,8 +159,10 @@ A POSIX `sh` script, run as root, around `setsid`, `setpriv` (util-linux) and `e
 - Exit status: the command's status; 124 after a timeout; 143 after TERM; 130 after INT; 125 for
   a usage or launch error, or a group that did not end.
 
-It never runs package lifecycle scripts. Package installs happen in build stages as the
-unprivileged `node` user, never as root.
+The launcher never runs package lifecycle scripts. At image build, the verifier's install runs
+with `--ignore-scripts`, while the app's frozen install runs only the install scripts that the pinned
+Umami workspace configuration approves (`prisma` and `@prisma/engines`). Package installs happen in
+build stages as the unprivileged `node` user, never as root.
 
 ## Database
 
