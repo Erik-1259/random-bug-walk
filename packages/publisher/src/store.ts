@@ -51,7 +51,8 @@ export class FilesystemStore implements PublicStore {
   read(key: string, maxBytes: number): Promise<Uint8Array | null> {
     try {
       const path = join(this.dir, key);
-      if (statSync(path).size > maxBytes) return Promise.reject(new LimitExceeded("transferBytes"));
+      const size = statSync(path).size;
+      if (size > maxBytes) return Promise.reject(new LimitExceeded("transferBytes", size));
       return Promise.resolve(readFileSync(path));
     } catch (error) {
       if (isMissing(error)) return Promise.resolve(null);
@@ -97,6 +98,31 @@ export interface BlobPutOptions {
 /** The part of the Vercel Blob SDK the publisher uses. Tests inject a fake. */
 export interface BlobClient {
   put(pathname: string, body: Uint8Array, options: BlobPutOptions): Promise<{ url: string }>;
+}
+
+/** Reads a body chunk by chunk and stops, cancelling the rest, once more than maxBytes have arrived. */
+async function readLimited(response: Response, maxBytes: number): Promise<Uint8Array> {
+  if (response.body === null) return new Uint8Array();
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let received = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      received += value.length;
+      if (received > maxBytes) {
+        // The refusal below is the outcome; a failure to close the unread body adds nothing.
+        await reader.cancel().catch(() => undefined);
+        throw new LimitExceeded("transferBytes", received);
+      }
+      chunks.push(value);
+    }
+  } catch (error) {
+    if (error instanceof LimitExceeded) throw error;
+    throw new StoreError("store_unavailable");
+  }
+  return Buffer.concat(chunks);
 }
 
 export type FetchFunction = (url: string, init?: RequestInit) => Promise<Response>;
@@ -147,11 +173,7 @@ export class VercelBlobStore implements PublicStore {
       await response.body?.cancel().catch(() => undefined);
       throw new LimitExceeded("transferBytes");
     }
-    try {
-      return new Uint8Array(await response.arrayBuffer());
-    } catch {
-      throw new StoreError("store_unavailable");
-    }
+    return readLimited(response, maxBytes);
   }
 
   private async put(key: string, bytes: Uint8Array, options: { contentType: string; allowOverwrite: boolean; cacheControlMaxAge?: number }): Promise<void> {

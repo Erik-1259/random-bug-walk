@@ -256,7 +256,13 @@ class Publisher {
     budget.checkAll({ storeOperations: 1, transferBytes: file.size_bytes });
     budget.spend("storeOperations", 1);
     this.deps.logger.event("store_read", { key });
-    const bytes = await this.store.read(key, budget.remaining("transferBytes"));
+    let bytes: Uint8Array | null;
+    try {
+      bytes = await this.store.read(key, budget.remaining("transferBytes"));
+    } catch (error) {
+      if (error instanceof LimitExceeded) budget.charge("transferBytes", error.received);
+      throw error;
+    }
     if (bytes === null) return "missing";
     budget.charge("transferBytes", bytes.length);
     if (bytes.length !== file.size_bytes || sha256Hex(bytes) !== file.sha256) throw new StoreError("store_mismatch");

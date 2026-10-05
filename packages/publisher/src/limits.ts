@@ -2,9 +2,13 @@ import type { Limits } from "./config.ts";
 import type { StateDir } from "./state.ts";
 
 export class LimitExceeded extends Error {
-  constructor(kind: keyof Limits) {
+  /** Bytes already received when a read was cut off; zero when nothing was read. */
+  readonly received: number;
+
+  constructor(kind: keyof Limits, received = 0) {
     super(`limit exceeded: ${kind}`);
     this.name = "LimitExceeded";
+    this.received = received;
   }
 }
 
