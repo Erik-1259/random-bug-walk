@@ -1,0 +1,6 @@
+# Environment for migrations as the database owner, read by rbw-launch. The owner role has no
+# password; it can log in only through the Unix socket in /run/rbw-pg, which only root and
+# rbw-db can reach.
+TZ=UTC
+DATABASE_URL=postgresql://umami_owner@localhost/umami?host=/run/rbw-pg
+CHECKPOINT_DISABLE=1
