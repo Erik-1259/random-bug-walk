@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "host_commit": "3333333333333333333333333333333333333333",
+  "changes": [
+    {
+      "path": "src/lib/date-buckets.ts",
+      "original_sha256": null,
+      "resulting_sha256": "8888888888888888888888888888888888888888888888888888888888888888",
+      "original_mode": null,
+      "resulting_mode": "100644"
+    },
+    {
+      "path": "src/lib/legacy-tz.ts",
+      "original_sha256": "9999999999999999999999999999999999999999999999999999999999999999",
+      "resulting_sha256": null,
+      "original_mode": "100644",
+      "resulting_mode": null
+    },
+    {
+      "path": "src/queries/sql/getPageviewStats.ts",
+      "original_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "resulting_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "original_mode": "100644",
+      "resulting_mode": "100644"
+    }
+  ]
+}

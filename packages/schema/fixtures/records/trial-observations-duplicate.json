@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "execution_id": "00000000-0000-4000-8000-000000000202",
+  "trial_id": "planted-01",
+  "observations": [
+    {
+      "check_id": "tzarg.la-day-counts",
+      "repeat_index": 1,
+      "observed": "assertion_fail",
+      "failure_code": "local_day_counts_mismatch",
+      "duration_ms": 83,
+      "response_artifact_key": "examples/planted-la-response.json",
+      "response_artifact_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "check_id": "tzarg.la-day-counts",
+      "repeat_index": 1,
+      "observed": "assertion_fail",
+      "failure_code": "local_day_counts_mismatch",
+      "duration_ms": 83,
+      "response_artifact_key": "examples/planted-la-response.json",
+      "response_artifact_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  ]
+}

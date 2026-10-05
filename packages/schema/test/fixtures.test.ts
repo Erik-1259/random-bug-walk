@@ -71,7 +71,26 @@ describe("record fixtures", () => {
   }
 
   it("has at least one valid fixture per record type", () => {
-    const records = ["ProjectPolicy", "FamilyRegistry", "HeldOutIdentityList", "RootRun", "ArtifactManifest", "PublicationRecord", "RunManifest", "PublicRunStatus", "StagingOmissions"];
+    const records = [
+      "ProjectPolicy",
+      "FamilyRegistry",
+      "HeldOutIdentityList",
+      "RootRun",
+      "ArtifactManifest",
+      "PublicationRecord",
+      "RunManifest",
+      "PublicRunStatus",
+      "StagingOmissions",
+      "JobRequest",
+      "ExpectedTrials",
+      "CheckObservation",
+      "TrialObservations",
+      "TrialResult",
+      "ObservedSymptom",
+      "OperationIdentity",
+      "MutationIdentity",
+      "TaskRevisionIdentity",
+    ];
     for (const type of records) {
       expect(manifest.records.some((item) => item.type === type && item.expect === "valid")).toBe(true);
     }
@@ -79,13 +98,22 @@ describe("record fixtures", () => {
 });
 
 describe("fixture report", () => {
-  it("prints one line per fixture in manifest order", () => {
+  it("prints one line per fixture in manifest order, then the IDs of the valid identity fixtures", () => {
     const lines = fixtureReport(fixturesDir);
     const expected = [...manifest.canonical, ...manifest.records].map((item) => {
       const folder = "type" in item ? "records" : "canonical";
       const hash = item.expect === "valid" ? fixtureText(folder, `${item.name}.sha256`) : "-";
       return `${item.name} ${item.expect} ${hash}`;
     });
+    const ids = { OperationIdentity: "operation_id", MutationIdentity: "mutation_id", TaskRevisionIdentity: "task_revision" } as Record<string, string>;
+    for (const item of manifest.records.filter((entry) => entry.expect === "valid")) {
+      if (item.type === "JobRequest") {
+        const request = JSON.parse(fixtureText("records", `${item.name}.json`)) as { operation_id: string; payload_hash: string };
+        expected.push(`${item.name} operation_id ${request.operation_id}`, `${item.name} payload_hash ${request.payload_hash}`);
+      } else if (ids[item.type] !== undefined) {
+        expected.push(`${item.name} ${ids[item.type] ?? ""} ${fixtureText("records", `${item.name}.sha256`)}`);
+      }
+    }
     expect(lines).toEqual(expected);
   });
 });

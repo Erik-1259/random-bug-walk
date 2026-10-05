@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "execution_id": "00000000-0000-4000-8000-000000000202",
+  "task_revision": "73424e767ae000008f2a17cf11b7f9c70fbbec6caa52c357859653b13df5dfc4",
+  "trials": [
+    {
+      "trial_id": "planted-01",
+      "code_state": "planted",
+      "patch_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "original_suite_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "original_test_ids": [
+        "0000000000000000aaaa-00000000000000000001",
+        "0000000000000000aaaa-00000000000000000002"
+      ],
+      "added_suite_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+      "added_repeat_count": 1,
+      "expected_checks": [
+        {
+          "check_id": "tzarg.utc-day-counts",
+          "expected": "pass",
+          "failure_code": null
+        },
+        {
+          "check_id": "tzarg.la-day-counts",
+          "expected": "assertion_fail",
+          "failure_code": "local_day_counts_mismatch"
+        },
+        {
+          "check_id": "tzarg.auckland-day-counts",
+          "expected": "assertion_fail",
+          "failure_code": "local_day_counts_mismatch"
+        },
+        {
+          "check_id": "tzarg.kolkata-day-counts",
+          "expected": "assertion_fail",
+          "failure_code": "local_day_counts_mismatch"
+        }
+      ]
+    }
+  ]
+}

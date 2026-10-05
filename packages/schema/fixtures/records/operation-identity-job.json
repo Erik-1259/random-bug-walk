@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "project_id": "00000000-0000-4000-8000-000000000001",
+  "project_policy_sha256": "20801414e1417a9ab1dacc340aa2ea3e6a52bee70693ec1d2c69ef3c47c1bb77",
+  "root_execution_id": "00000000-0000-4000-8000-000000000101",
+  "batch_id": "00000000-0000-4000-8000-000000000301",
+  "task_revision": "65958046de999e625a8d3ed9806aa2856c34931ee2ff8ef477b5b30a423aa687",
+  "kind": "admission",
+  "runtime_profile_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+  "call_name": null,
+  "attempt_ordinal": 1
+}
