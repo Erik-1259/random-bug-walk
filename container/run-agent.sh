@@ -6,14 +6,18 @@ set -euo pipefail
 readonly DEFAULT_IMAGE="rbw-dev:local"
 readonly AGENT_HOSTNAME="rbw-agent"
 readonly NAME_PREFIX="rbw-agent-"
-readonly CREDENTIAL_NAMES="ANTHROPIC_API_KEY OPENAI_API_KEY"
+# Local agents run on the owner's subscriptions. The API keys may sit in the same
+# file for other uses; they are read past and never passed into a container.
+readonly CREDENTIAL_NAMES="CLAUDE_CODE_OAUTH_TOKEN"
+readonly IGNORED_CREDENTIAL_NAMES="ANTHROPIC_API_KEY OPENAI_API_KEY"
+readonly CODEX_LOCK="${TMPDIR:-/tmp}/rbw-codex-auth.lock"
 readonly NL=$'\n'
 readonly CR=$'\r'
 
 usage() {
   cat <<'EOF'
-Usage: run-agent.sh --worktree DIR --inbox DIR [--credentials FILE] [--name NAME]
-                    [--image IMAGE] [--print-args]
+Usage: run-agent.sh --worktree DIR --inbox DIR [--credentials FILE] [--codex-auth FILE]
+                    [--name NAME] [--image IMAGE] [--print-args]
                     [-- COMMAND [ARGS...]]
 
 Runs COMMAND (default: an interactive bash shell) in a container whose only
@@ -24,10 +28,17 @@ read-only, with its requests/ directory read-write:
   --inbox DIR            the shared inbox directory, read-write at /inbox
 
 Options:
-  --credentials FILE     NAME=value lines for ANTHROPIC_API_KEY and OPENAI_API_KEY,
-                         one per line; other names are refused, empty values are
-                         skipped; the file must be readable by its owner only and
-                         lie outside the worktree and the inbox
+  --credentials FILE     NAME=value lines; CLAUDE_CODE_OAUTH_TOKEN (from
+                         `claude setup-token`) is passed in; ANTHROPIC_API_KEY and
+                         OPENAI_API_KEY lines are skipped and never passed in; other
+                         names are refused, empty values are skipped; the file must
+                         be readable by its owner only and lie outside the worktree
+                         and the inbox
+  --codex-auth FILE      a ChatGPT sign-in file (~/.codex/auth.json, owner-only); a
+                         fresh copy is mounted read-only for this run and installed
+                         in the container's home, and it is deleted afterwards; one
+                         such run at a time, because Codex must not share a sign-in
+                         file across concurrent runs
   --name NAME            container name suffix (default: worktree folder name)
   --image IMAGE          local image to run (default: rbw-dev:local)
   --print-args           print the arguments that follow `docker`, one per
@@ -35,8 +46,8 @@ Options:
 
 Environment passed in: GIT_AUTHOR_NAME, GIT_AUTHOR_EMAIL, GIT_COMMITTER_NAME
 and GIT_COMMITTER_EMAIL from the worktree's own .git/config (required), plus
-the non-empty keys from --credentials. Nothing else, and nothing from the
-caller's environment.
+CLAUDE_CODE_OAUTH_TOKEN from --credentials. No API key, nothing else, and
+nothing from the caller's environment.
 
 The container can reach services listening on this machine through
 host.docker.internal; stop local databases or require passwords on them
@@ -96,6 +107,7 @@ check_mount_dir() {
 worktree=""
 inbox=""
 credentials=""
+codex_auth=""
 name=""
 image="$DEFAULT_IMAGE"
 print_args=0
@@ -103,12 +115,13 @@ command_args=()
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --worktree | --inbox | --credentials | --name | --image)
+    --worktree | --inbox | --credentials | --codex-auth | --name | --image)
       [ "$#" -ge 2 ] || die "$1 needs a value"
       case "$1" in
         --worktree) worktree=$2 ;;
         --inbox) inbox=$2 ;;
         --credentials) credentials=$2 ;;
+        --codex-auth) codex_auth=$2 ;;
         --name) name=$2 ;;
         --image) image=$2 ;;
       esac
@@ -210,7 +223,7 @@ export GIT_AUTHOR_EMAIL="$git_email" GIT_COMMITTER_EMAIL="$git_email"
 env_names+=(GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL)
 
 # Keys come only from --credentials, never from the caller's environment.
-for var in $CREDENTIAL_NAMES; do
+for var in $CREDENTIAL_NAMES $IGNORED_CREDENTIAL_NAMES; do
   unset "$var"
 done
 if [ -n "$credentials" ]; then
@@ -240,6 +253,9 @@ if [ -n "$credentials" ]; then
     esac
     key=${line%%=*}
     [ "$key" != "$line" ] || die "--credentials line $line_no is not NAME=value"
+    case " $IGNORED_CREDENTIAL_NAMES " in
+      *" $key "*) continue ;;
+    esac
     case " $CREDENTIAL_NAMES " in
       *" $key "*) ;;
       *) die "--credentials line $line_no names a variable that is not accepted" ;;
@@ -249,6 +265,29 @@ if [ -n "$credentials" ]; then
     export "$key=$value"
     env_names+=("$key")
   done <"$credentials_path"
+fi
+
+# The Codex sign-in is copied, not mounted: Codex refreshes the file in place, and
+# concurrent runs must not share one. The copy lives in a private directory outside
+# the worktree and inbox, is mounted read-only, and is removed when the run ends.
+codex_seed_dir=""
+if [ -n "$codex_auth" ]; then
+  if [ ! -f "$codex_auth" ] || [ -L "$codex_auth" ]; then
+    die "--codex-auth must be an existing regular file, not a symlink"
+  fi
+  codex_auth_dir=$(physical_dir "$(dirname -- "$codex_auth")") || die "cannot resolve --codex-auth"
+  codex_auth_path="$codex_auth_dir/${codex_auth##*/}"
+  for dir in "$worktree_dir" "$inbox_dir"; do
+    if inside_or_same "$(lowercase "$codex_auth_path")" "$(lowercase "$dir")"; then
+      die "--codex-auth must lie outside the worktree and the inbox"
+    fi
+  done
+  mode=$(stat -f '%Lp' "$codex_auth_path" 2>/dev/null || stat -c '%a' "$codex_auth_path" 2>/dev/null) ||
+    die "cannot read the permissions of --codex-auth"
+  case "$mode" in
+    600 | 400) ;;
+    *) die "--codex-auth must be readable by its owner only (chmod 600)" ;;
+  esac
 fi
 
 # The publication request area is mounted separately: inbox/publication read-only
@@ -284,6 +323,20 @@ docker_args=(
 if [ -t 0 ] && [ -t 1 ]; then
   docker_args+=(--tty)
 fi
+if [ -n "$codex_auth" ]; then
+  if [ "$print_args" -eq 1 ]; then
+    codex_seed_dir="<private copy of --codex-auth>"
+  else
+    mkdir "$CODEX_LOCK" 2>/dev/null ||
+      die "another --codex-auth run is active; if none is, remove $CODEX_LOCK"
+    codex_lock_held=1
+    trap '[ -z "$codex_seed_dir" ] || rm -rf "$codex_seed_dir"; [ -z "${codex_lock_held:-}" ] || rmdir "$CODEX_LOCK"' EXIT
+    codex_seed_dir=$(mktemp -d "${TMPDIR:-/tmp}/rbw-codex-seed.XXXXXX")
+    # Readable by the container's uid; the directory itself stays private to this run.
+    install -m 0644 "$codex_auth_path" "$codex_seed_dir/auth.json"
+  fi
+  docker_args+=(--mount "type=bind,source=$codex_seed_dir,target=/run/codex-seed,readonly")
+fi
 for var in ${env_names[@]+"${env_names[@]}"}; do
   docker_args+=(-e "$var")
 done
@@ -300,4 +353,10 @@ if [ "$print_args" -eq 1 ]; then
 fi
 
 command -v docker >/dev/null 2>&1 || die "docker is not on PATH"
-exec docker "${docker_args[@]}"
+if [ -z "$codex_auth" ]; then
+  exec docker "${docker_args[@]}"
+fi
+# Not exec: the sign-in copy and the lock are removed when docker returns.
+status=0
+docker "${docker_args[@]}" || status=$?
+exit "$status"

@@ -7,7 +7,7 @@ set -euo pipefail
 
 SCRIPT_DIR=$(CDPATH='' cd -P -- "$(dirname -- "$0")" && pwd -P)
 readonly LAUNCHER="$SCRIPT_DIR/run-agent.sh"
-readonly ALLOWED_ENV=" ANTHROPIC_API_KEY OPENAI_API_KEY GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL "
+readonly ALLOWED_ENV=" CLAUDE_CODE_OAUTH_TOKEN GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL "
 # Throwaway host-key settings for this test only, so an SSH attempt reaches
 # GitHub's authentication step instead of stopping at host-key verification.
 readonly SSH_TEST_COMMAND="ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes -o ConnectTimeout=20"
