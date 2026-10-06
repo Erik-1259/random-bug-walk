@@ -1,0 +1,70 @@
+# Candidate source rule for shape DT-1.tz-arg. The shape's own source rule (dt-1.tz-arg.source in
+# @rbw/shapes) is pinned to one upstream component and commit, so harvested candidates are matched
+# with this rule instead: a call whose callee reads like a date operation and that passes a
+# time-zone value directly (an identifier, a member such as filters.timezone, or an options object
+# with a time-zone key). The two documents differ only in id and parser language.
+id: tz-arg.candidate.ts
+language: TypeScript
+severity: info
+message: A date operation call that passes a time-zone value as a direct argument.
+rule:
+  kind: call_expression
+  all:
+    - has:
+        field: function
+        regex: (?i)(date|time|format|range|day|week|month|year|zone|moment|interval|period|calendar|parse|locale)
+    - has:
+        field: arguments
+        has:
+          any:
+            - kind: identifier
+              regex: (?i)(time_?zone|^tz$|^zone$)
+            - kind: member_expression
+              has:
+                field: property
+                regex: (?i)(time_?zone|^tz$|^zone$)
+            - kind: object
+              has:
+                any:
+                  - kind: shorthand_property_identifier
+                    regex: (?i)(time_?zone|^tz$|^zone$)
+                  - kind: pair
+                    has:
+                      field: key
+                      regex: (?i)(time_?zone|^tz$|^zone$)
+metadata:
+  shape_id: DT-1.tz-arg
+  form: candidate_source
+---
+id: tz-arg.candidate.tsx
+language: Tsx
+severity: info
+message: A date operation call that passes a time-zone value as a direct argument.
+rule:
+  kind: call_expression
+  all:
+    - has:
+        field: function
+        regex: (?i)(date|time|format|range|day|week|month|year|zone|moment|interval|period|calendar|parse|locale)
+    - has:
+        field: arguments
+        has:
+          any:
+            - kind: identifier
+              regex: (?i)(time_?zone|^tz$|^zone$)
+            - kind: member_expression
+              has:
+                field: property
+                regex: (?i)(time_?zone|^tz$|^zone$)
+            - kind: object
+              has:
+                any:
+                  - kind: shorthand_property_identifier
+                    regex: (?i)(time_?zone|^tz$|^zone$)
+                  - kind: pair
+                    has:
+                      field: key
+                      regex: (?i)(time_?zone|^tz$|^zone$)
+metadata:
+  shape_id: DT-1.tz-arg
+  form: candidate_source

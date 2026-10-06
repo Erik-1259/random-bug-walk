@@ -1,0 +1,22 @@
+{
+  "name": "@rbw/harvest",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint . --max-warnings 0",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@ast-grep/napi": "0.45.3",
+    "@octokit/core": "7.0.8",
+    "@octokit/request-error": "7.1.2",
+    "@rbw/shapes": "workspace:*",
+    "zod": "4.6.5"
+  }
+}
