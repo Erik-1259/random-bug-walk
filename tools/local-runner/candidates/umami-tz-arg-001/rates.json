@@ -1,0 +1,20 @@
+[
+  {
+    "service": "token-factory",
+    "unit": "input_token",
+    "price": {
+      "microusd": 60000,
+      "per_units": 1000000
+    },
+    "source_url": "https://nebius.com/services/token-factory/models/nvidia-nemotron-models-inference"
+  },
+  {
+    "service": "token-factory",
+    "unit": "output_token",
+    "price": {
+      "microusd": 240000,
+      "per_units": 1000000
+    },
+    "source_url": "https://nebius.com/services/token-factory/models/nvidia-nemotron-models-inference"
+  }
+]
