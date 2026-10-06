@@ -168,8 +168,8 @@ const SCENARIOS: Scenario[] = [
     licence: "MIT",
     files: simple(
       "src/a.ts",
-      `export function label(d: Date, timezone: string) {\n  return formatInTimeZone(d, timezone, "yyyy");\n}\n`,
-      `export function label(d: Date, timezone: string) {\n  return formatInTimeZone(d, timezone, "yyyy-MM");\n}\n`,
+      `export function label(d: Date, zone: string, timezone: string) {\n  return formatInTimeZone(d, zone, "yyyy");\n}\n`,
+      `export function label(d: Date, zone: string, timezone: string) {\n  return formatInTimeZone(d, timezone, "yyyy");\n}\n`,
     ),
   },
   {

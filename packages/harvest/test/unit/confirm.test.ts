@@ -1,5 +1,6 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { addedLines, candidateRule, examineFile } from "../../src/confirm.ts";
+import { addedLines, CANDIDATE_RULE_FILE, candidateRule, examineFile, TIMEZONE_NAME, TIMEZONE_TEXT } from "../../src/confirm.ts";
 
 function examine(path: string, before: string, after: string, added?: number[]): ReturnType<typeof examineFile> {
   const lines = added ?? after.split("\n").flatMap((line, index) => (before.split("\n").includes(line) ? [] : [index + 1]));
@@ -102,9 +103,78 @@ describe("candidate source rule and structural confirmation", () => {
   });
 
   it("rejects a call that already passed a time zone (before_has_timezone_argument)", () => {
-    const before = "function f(d, timezone) {\n  return formatInTimeZone(d, timezone, 'y');\n}\n";
-    const after = "function f(d, timezone) {\n  return formatInTimeZone(d, timezone, 'yy');\n}\n";
+    const before = "function f(d, zone, timezone) {\n  return formatInTimeZone(d, zone, 'y');\n}\n";
+    const after = "function f(d, zone, timezone) {\n  return formatInTimeZone(d, timezone, 'y');\n}\n";
     expect(examine("src/a.ts", before, after)[0]?.outcome).toMatchObject({ status: "rejected", reason: "before_has_timezone_argument" });
+  });
+
+  it("does not match a callee that only contains a date word inside another word", () => {
+    for (const callee of ["updatePreferences", "user.updatePreferences", "mandated", "setTimeout"]) {
+      const after = `function f(user, timezone) {\n  ${callee}(user, timezone);\n}\n`;
+      expect(examine("src/a.ts", `function f(user, timezone) {\n  ${callee}(user);\n}\n`, after), callee).toEqual([]);
+    }
+  });
+
+  it("matches known date functions and callees with a whole date word", () => {
+    for (const callee of ["format", "formatInTimeZone", "toZonedTime", "startOfMonth", "dayjs(d).tz", "formatDate", "getDateRange", "get_date_range", "ui.renderDays"]) {
+      const after = `function f(d, timezone) {\n  return ${callee}(d, timezone);\n}\n`;
+      expect(examine("src/a.ts", `function f(d, timezone) {\n  return ${callee}(d);\n}\n`, after)[0]?.outcome, callee).toMatchObject({ status: "confirmed" });
+    }
+  });
+
+  it("does not match a time-zone word followed by a further word", () => {
+    for (const value of ["timezoneOffset", "myTimezoneValue", "user.timezoneOffset", "{ tzName: name }"]) {
+      const before = "function f(d, user, name, timezoneOffset, myTimezoneValue) {\n  return formatDate(d);\n}\n";
+      const after = before.replace("formatDate(d)", `formatDate(d, ${value})`);
+      expect(examine("src/a.ts", before, after), value).toEqual([]);
+    }
+  });
+
+  it("matches a whole time-zone name or one that ends in a time-zone word", () => {
+    for (const value of ["timezone", "userTimezone", "user.timezone", "user_time_zone", "selectedTZ", "{ timeZone: userTz }"]) {
+      const before = "function f(d, user, timezone, userTimezone, user_time_zone, selectedTZ, userTz) {\n  return formatDate(d);\n}\n";
+      const after = before.replace("formatDate(d)", `formatDate(d, ${value})`);
+      expect(examine("src/a.ts", before, after)[0]?.outcome, value).toMatchObject({ status: "confirmed" });
+    }
+  });
+
+  it("uses the confirmation's time-zone name pattern at every time-zone check in the rule file", () => {
+    const rules = readFileSync(CANDIDATE_RULE_FILE, "utf8");
+    expect(rules.split(TIMEZONE_NAME.source).length - 1).toBe(8);
+  });
+
+  it("rejects a parent call with different other arguments as call_added", () => {
+    const before = "function f(a, b, timezone) {\n  return formatDate(a);\n}\n";
+    const after = "function f(a, b, timezone) {\n  return formatDate(b, timezone);\n}\n";
+    expect(examine("src/a.ts", before, after)[0]?.outcome).toMatchObject({ status: "rejected", reason: "call_added" });
+  });
+
+  it("pairs a call by its other arguments, ignoring whitespace and the new time-zone property", () => {
+    const before = "function f(a, b, timezone) {\n  formatDate(a,  { format: 'x' });\n  return formatDate(b);\n}\n";
+    const after = "function f(a, b, timezone) {\n  formatDate(b);\n  return formatDate(a, {\n    format: 'x',\n    timeZone: timezone,\n  });\n}\n";
+    expect(examine("src/a.ts", before, after, [5])[0]?.outcome).toMatchObject({
+      status: "confirmed",
+      before_call: "formatDate(a,  { format: 'x' })",
+      before_line: 2,
+    });
+  });
+
+  it("does not pair with a parent call that another call of the commit keeps unchanged", () => {
+    const before = "function f(start, end, timezone) {\n  const a = formatDate(start);\n  const b = formatDate(end);\n}\n";
+    const after = "function f(start, end, timezone) {\n  const a = formatDate(start);\n  const b = formatDate(start, timezone);\n}\n";
+    expect(examine("src/a.ts", before, after)[0]?.outcome).toMatchObject({ status: "rejected", reason: "call_added" });
+  });
+
+  it("pairs one of two identical parent calls when the other stays unchanged", () => {
+    const before = "function f(d, timezone) {\n  formatDate(d);\n  return formatDate(d);\n}\n";
+    const after = "function f(d, timezone) {\n  formatDate(d);\n  return formatDate(d, timezone);\n}\n";
+    expect(examine("src/a.ts", before, after)[0]?.outcome).toMatchObject({ status: "confirmed", before_line: 3 });
+  });
+
+  it("keeps added text with a name ending in a time-zone word in the cheap text filter", () => {
+    for (const text of ["+  formatDate(d, USER_TZ);", "+  formatDate(d, userTz);", "+  formatDate(d, userZone);", "+  formatDate(d, user_tz);"]) {
+      expect(TIMEZONE_TEXT.test(text), text).toBe(true);
+    }
   });
 
   it("rejects a literal time zone (timezone_is_constant)", () => {

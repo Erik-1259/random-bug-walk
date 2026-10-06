@@ -1,8 +1,12 @@
 # Candidate source rule for shape DT-1.tz-arg. The shape's own source rule (dt-1.tz-arg.source in
 # @rbw/shapes) is pinned to one upstream component and commit, so harvested candidates are matched
-# with this rule instead: a call whose callee reads like a date operation and that passes a
-# time-zone value directly (an identifier, a member such as filters.timezone, or an options object
-# with a time-zone key). The two documents differ only in id and parser language.
+# with this rule instead: a call that passes a time-zone value directly (an identifier, a member
+# such as filters.timezone, or an options object with a time-zone key) to a date operation.
+# - A date operation is a known date function, or a callee whose camel-case or snake-case words
+#   include a date word as a whole word (formatDate, get_date_range, but not updatePreferences).
+# - A time-zone name is timezone, time zone, tz or zone, as the whole identifier or its final word
+#   or words (userTimezone, user_tz, but not timezoneOffset). src/confirm.ts uses the same pattern.
+# The two documents differ only in id and parser language.
 id: tz-arg.candidate.ts
 language: TypeScript
 severity: info
@@ -12,26 +16,34 @@ rule:
   all:
     - has:
         field: function
-        regex: (?i)(date|time|format|range|day|week|month|year|zone|moment|interval|period|calendar|parse|locale)
+        any:
+          - kind: identifier
+            any: &date-name
+              - regex: '^(format|formatInTimeZone|formatISO|toZonedTime|fromZonedTime|utcToZonedTime|zonedTimeToUtc|startOfDay|endOfDay|startOfWeek|endOfWeek|startOfMonth|endOfMonth|startOfYear|endOfYear|useDateRange|getDateRange|toLocaleString|toLocaleDateString|toLocaleTimeString|DateTimeFormat|tz|dayjs|moment)$'
+              - regex: '(^|_)(date|dates|datetime|time|times|timestamp|timezone|zone|day|days|week|weeks|month|months|year|years|hour|hours|period|interval|calendar)([A-Z0-9_$]|$)|(Date|Dates|Datetime|Time|Times|Timestamp|Timezone|Zone|Day|Days|Week|Weeks|Month|Months|Year|Years|Hour|Hours|Period|Interval|Calendar)([A-Z0-9_$]|$)'
+          - kind: member_expression
+            has:
+              field: property
+              any: *date-name
     - has:
         field: arguments
         has:
           any:
             - kind: identifier
-              regex: (?i)(time_?zone|^tz$|^zone$)
+              regex: '(^|_)(time_?[Zz]one|tz|zone|TIME_?ZONE|TZ|ZONE)$|(Time_?[Zz]one|Tz|TZ|Zone)$'
             - kind: member_expression
               has:
                 field: property
-                regex: (?i)(time_?zone|^tz$|^zone$)
+                regex: '(^|_)(time_?[Zz]one|tz|zone|TIME_?ZONE|TZ|ZONE)$|(Time_?[Zz]one|Tz|TZ|Zone)$'
             - kind: object
               has:
                 any:
                   - kind: shorthand_property_identifier
-                    regex: (?i)(time_?zone|^tz$|^zone$)
+                    regex: '(^|_)(time_?[Zz]one|tz|zone|TIME_?ZONE|TZ|ZONE)$|(Time_?[Zz]one|Tz|TZ|Zone)$'
                   - kind: pair
                     has:
                       field: key
-                      regex: (?i)(time_?zone|^tz$|^zone$)
+                      regex: '(^|_)(time_?[Zz]one|tz|zone|TIME_?ZONE|TZ|ZONE)$|(Time_?[Zz]one|Tz|TZ|Zone)$'
 metadata:
   shape_id: DT-1.tz-arg
   form: candidate_source
@@ -45,26 +57,34 @@ rule:
   all:
     - has:
         field: function
-        regex: (?i)(date|time|format|range|day|week|month|year|zone|moment|interval|period|calendar|parse|locale)
+        any:
+          - kind: identifier
+            any: &date-name
+              - regex: '^(format|formatInTimeZone|formatISO|toZonedTime|fromZonedTime|utcToZonedTime|zonedTimeToUtc|startOfDay|endOfDay|startOfWeek|endOfWeek|startOfMonth|endOfMonth|startOfYear|endOfYear|useDateRange|getDateRange|toLocaleString|toLocaleDateString|toLocaleTimeString|DateTimeFormat|tz|dayjs|moment)$'
+              - regex: '(^|_)(date|dates|datetime|time|times|timestamp|timezone|zone|day|days|week|weeks|month|months|year|years|hour|hours|period|interval|calendar)([A-Z0-9_$]|$)|(Date|Dates|Datetime|Time|Times|Timestamp|Timezone|Zone|Day|Days|Week|Weeks|Month|Months|Year|Years|Hour|Hours|Period|Interval|Calendar)([A-Z0-9_$]|$)'
+          - kind: member_expression
+            has:
+              field: property
+              any: *date-name
     - has:
         field: arguments
         has:
           any:
             - kind: identifier
-              regex: (?i)(time_?zone|^tz$|^zone$)
+              regex: '(^|_)(time_?[Zz]one|tz|zone|TIME_?ZONE|TZ|ZONE)$|(Time_?[Zz]one|Tz|TZ|Zone)$'
             - kind: member_expression
               has:
                 field: property
-                regex: (?i)(time_?zone|^tz$|^zone$)
+                regex: '(^|_)(time_?[Zz]one|tz|zone|TIME_?ZONE|TZ|ZONE)$|(Time_?[Zz]one|Tz|TZ|Zone)$'
             - kind: object
               has:
                 any:
                   - kind: shorthand_property_identifier
-                    regex: (?i)(time_?zone|^tz$|^zone$)
+                    regex: '(^|_)(time_?[Zz]one|tz|zone|TIME_?ZONE|TZ|ZONE)$|(Time_?[Zz]one|Tz|TZ|Zone)$'
                   - kind: pair
                     has:
                       field: key
-                      regex: (?i)(time_?zone|^tz$|^zone$)
+                      regex: '(^|_)(time_?[Zz]one|tz|zone|TIME_?ZONE|TZ|ZONE)$|(Time_?[Zz]one|Tz|TZ|Zone)$'
 metadata:
   shape_id: DT-1.tz-arg
   form: candidate_source

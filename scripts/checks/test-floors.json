@@ -1,4 +1,4 @@
 {
-  "vitest": { ".": 21, "kit/umami": 57, "packages/admission": 125, "packages/envelope": 42, "packages/harvest": 81, "packages/projection": 126, "packages/publisher": 143, "packages/schema": 879, "packages/search": 83, "packages/shapes": 61, "packages/spend": 344, "packages/umami-driver": 223, "packages/umami-fixture": 109, "packages/web": 50, "packages/writer": 158, "scripts/checks": 189, "tools/local-runner": 132, "tools/neon-ci": 98, "tools/publication": 163 },
+  "vitest": { ".": 21, "kit/umami": 57, "packages/admission": 125, "packages/envelope": 42, "packages/harvest": 91, "packages/projection": 126, "packages/publisher": 143, "packages/schema": 879, "packages/search": 83, "packages/shapes": 61, "packages/spend": 344, "packages/umami-driver": 223, "packages/umami-fixture": 109, "packages/web": 50, "packages/writer": 158, "scripts/checks": 189, "tools/local-runner": 132, "tools/neon-ci": 98, "tools/publication": 163 },
   "pytest": { "python/schema": 849 }
 }

@@ -57,10 +57,12 @@ The candidate kept is the one with the earliest committer date, and earlier in h
 
 The shape's own source rule, `dt-1.tz-arg.source` in `@rbw/shapes`, and its `confirmSource` are pinned to one upstream component and commit. Every other commit would fail with `unsupported_commit`. So this package matches candidates with its own rule for the candidate's call, `rules/tz-arg.candidate.yml`, loaded with `@rbw/shapes`' rule loader and run with `@ast-grep/napi`. The funnel records this choice, with the rule file's SHA-256, under `source_rule`.
 
-The rule matches a call whose callee text reads like a date operation (`date`, `time`, `format`, `range`, `day`, `week`, `month`, `year`, `zone`, `moment`, `interval`, `period`, `calendar`, `parse` or `locale`, case-insensitive) and that passes a time-zone value as a direct argument:
+The rule matches a call to a date operation that passes a time-zone value as a direct argument. The callee's name (the property of a member callee such as `dayjs(d).tz`) is a date operation when it is one of the known date functions listed in the rule file, such as `format`, `formatInTimeZone`, `toZonedTime` or `startOfMonth`, or when its camel-case or snake-case words include a date word (`date`, `time`, `day`, `week`, `month`, `year`, `zone`, `period`, `calendar` and the others the rule file lists) as a whole word: `formatDate` and `get_date_range` match, `updatePreferences` does not.
 
-- a name such as `timezone`, `timeZone`, `tz` or `zone`;
-- a member such as `filters.timezone`;
+The time-zone value is:
+
+- a name whose whole identifier, or whose final word or words, is `timezone`, `timeZone`, `time_zone`, `tz` or `zone`, such as `timezone`, `userTimezone` or `USER_TZ`, but not `timezoneOffset`;
+- a member whose property is such a name, such as `filters.timezone`;
 - or an options object with such a key, as in `{ timezone }` or `{ timeZone: zone }`.
 
 `.ts`, `.mts` and `.cts` files parse as TypeScript; `.tsx` and every JavaScript form parse as TSX.
@@ -70,7 +72,7 @@ The rule matches a call whose callee text reads like a date operation (`date`, `
 For a rule match whose time-zone argument is on an added line, in the commit's version of the file:
 
 1. The parent version has a function at the same nesting path, by name (`function_missing_before`).
-2. That function calls the same callee the same number of times in both versions, so the fix changed a call rather than adding one (`call_added`). The parent's call at the same position passes no time-zone value (`before_has_timezone_argument`).
+2. That function calls the same callee the same number of times in both versions, and one of the parent's calls that no other call in the commit's version keeps unchanged has the same other arguments: identical as text after whitespace is normalized, leaving out the time-zone argument or property and trailing empty objects. So the fix changed this call rather than adding or replacing one (`call_added`). When several parent calls qualify, the one at the same position is preferred. The paired call passes no time-zone value (`before_has_timezone_argument`).
 3. The time-zone value is not a literal such as `"UTC"`, and does not read the runtime's own zone through a `guess()` or `resolvedOptions()` call, as in `dayjs.tz.guess()` (`timezone_is_constant`).
 4. The name the value is read from is declared in the call's function, an enclosing function or the module, for example as a parameter, a destructured `const` or an import (`timezone_unbound`). The name is the leftmost name of a member chain or call, as in `user?.settings.timezone` or `getZone()`, read through casts, `await`, and the left side of `??` and `||`, so `user.timezone ?? "UTC"` is read from `user`. A value with no such name, such as a template with substitutions, is also `timezone_unbound`. This is the shape's precondition: the caller had the time zone.
 

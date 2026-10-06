@@ -7,9 +7,11 @@
 // A rule match whose time-zone argument sits on a line the commit added is confirmed when,
 // structurally:
 // - the parent has a function at the same nesting path (`function_missing_before` otherwise);
-// - that function calls the same callee the same number of times on both sides, so the fix changed
-//   a call rather than adding one (`call_added`), and the paired parent call, by position, passes no
-//   time-zone value (`before_has_timezone_argument`);
+// - that function calls the same callee the same number of times on both sides, and one of the
+//   parent's calls that no other call of the commit keeps unchanged has the same other arguments,
+//   as text with whitespace normalized and apart from the time-zone argument, so the fix changed
+//   this call rather than adding or replacing one (`call_added`), and that paired parent call
+//   passes no time-zone value (`before_has_timezone_argument`);
 // - the time-zone value is not a literal or the runtime's own zone (`timezone_is_constant`), and the name it is read from
 //   is bound in the call's own function, an enclosing one, or the module (`timezone_unbound`, also
 //   for a value with no name): the caller had the time zone.
@@ -41,9 +43,14 @@ export function candidateRule(path: string): LoadedRule {
   return rule;
 }
 
-/** Text that names a time zone, as the cheap filter before any blob is fetched. */
-export const TIMEZONE_TEXT = /time_?zone|\btz\b|\bzone\b/i;
-const TIMEZONE_NAME = /time_?zone|^tz$|^zone$/i;
+/** Text with a word ending in a time-zone word, as the cheap filter before any blob is fetched. */
+export const TIMEZONE_TEXT = /time_?zone|tz\b|zone\b/i;
+/**
+ * A name that is a time zone: the whole identifier, or its final camel-case or snake-case word or
+ * words, is timezone, time zone, tz or zone (`userTimezone`, `user_tz`), with no word after it
+ * (not `timezoneOffset`). The candidate rule file uses the same pattern.
+ */
+export const TIMEZONE_NAME = /(^|_)(time_?[Zz]one|tz|zone|TIME_?ZONE|TZ|ZONE)$|(Time_?[Zz]one|Tz|TZ|Zone)$/;
 
 /** The 1-based line numbers, on the new side, of the lines a GitHub `patch` adds. */
 export function addedLines(patch: string): Set<number> {
@@ -286,6 +293,31 @@ function isBound(root: SgNode, call: SgNode, name: string): boolean {
   });
 }
 
+const squash = (text: string): string => text.replace(/\s+/g, " ").trim();
+
+/**
+ * A call's arguments as text with whitespace normalized, leaving out its time-zone argument (a whole
+ * argument or an object property) and any trailing empty objects, so that `f(d)`, `f(d, {})` and
+ * `f(d, { timeZone: tz })` have the same other arguments.
+ */
+function otherArguments(call: SgNode): string {
+  const skipped = timezoneArgument(call)?.node.id();
+  const texts = argumentsOf(call).flatMap((argument) => {
+    if (argument.id() === skipped) {
+      return [];
+    }
+    if (kindOf(argument) !== "object") {
+      return [squash(argument.text())];
+    }
+    const properties = argument.namedChildren().filter((property) => kindOf(property) !== "comment" && property.id() !== skipped);
+    return [`{${properties.map((property) => squash(property.text())).join(", ")}}`];
+  });
+  while (texts.at(-1) === "{}") {
+    texts.pop();
+  }
+  return texts.join("\n");
+}
+
 function callsIn(root: SgNode, callee: string, path: string): SgNode[] {
   return root.findAll({ rule: { kind: "call_expression" } }).filter((call) => calleeOf(call) === callee && functionPath(call) === path);
 }
@@ -313,9 +345,23 @@ function judge(beforeRoot: SgNode, afterRoot: SgNode, call: SgNode): MatchOutcom
       detail: `${path} calls ${callee} ${String(beforeCalls.length)} times before and ${String(afterCalls.length)} after`,
     };
   }
-  const paired = beforeCalls[afterCalls.findIndex((candidate) => candidate.id() === call.id())];
+  // A parent call that another call of the commit keeps unchanged is not a partner. The parent call
+  // at the same position is preferred when several have the same other arguments.
+  const unchanged = afterCalls.filter((candidate) => candidate.id() !== call.id()).map((candidate) => squash(candidate.text()));
+  const free = beforeCalls.filter((candidate) => {
+    const kept = unchanged.indexOf(squash(candidate.text()));
+    if (kept === -1) {
+      return true;
+    }
+    unchanged.splice(kept, 1);
+    return false;
+  });
+  const others = otherArguments(call);
+  const partners = free.filter((candidate) => otherArguments(candidate) === others);
+  const positional = beforeCalls[afterCalls.findIndex((candidate) => candidate.id() === call.id())];
+  const paired = partners.find((candidate) => candidate.id() === positional?.id()) ?? partners[0];
   if (paired === undefined) {
-    return { status: "rejected", reason: "call_added", detail: `no parent call pairs with ${callee} in ${path}` };
+    return { status: "rejected", reason: "call_added", detail: `no call to ${callee} in the parent's ${path} has the other arguments of ${squash(call.text())}` };
   }
   if (timezoneArgument(paired) !== undefined) {
     return { status: "rejected", reason: "before_has_timezone_argument", detail: `the parent call ${paired.text()} already passes a time zone` };
