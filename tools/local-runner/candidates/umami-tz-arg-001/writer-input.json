@@ -1,0 +1,237 @@
+{
+  "candidate": "umami-tz-arg-001",
+  "card": {
+    "source_links": [
+      "https://github.com/umami-software/umami/pull/4112",
+      "https://github.com/umami-software/umami/commit/e6f3f3b4b40a490d5cb050471baa0999366dab2a"
+    ],
+    "repository": "https://github.com/umami-software/umami",
+    "date": "2026-03-25",
+    "license": "MIT",
+    "diff_excerpt": "diff --git a/src/app/(main)/websites/[websiteId]/(reports)/revenue/RevenuePage.tsx b/src/app/(main)/websites/[websiteId]/(reports)/revenue/RevenuePage.tsx\nindex 3e429c1..4dc19e0 100644\n--- a/src/app/(main)/websites/[websiteId]/(reports)/revenue/RevenuePage.tsx\n+++ b/src/app/(main)/websites/[websiteId]/(reports)/revenue/RevenuePage.tsx\n@@ -1,13 +1,14 @@\n 'use client';\n import { Column } from '@umami/react-zen';\n import { WebsiteControls } from '@/app/(main)/websites/[websiteId]/WebsiteControls';\n-import { useDateRange } from '@/components/hooks';\n+import { useDateRange, useTimezone } from '@/components/hooks';\n import { Revenue } from './Revenue';\n \n export function RevenuePage({ websiteId }: { websiteId: string }) {\n+  const { timezone } = useTimezone();\n   const {\n     dateRange: { startDate, endDate, unit },\n-  } = useDateRange();\n+  } = useDateRange({ timezone });\n \n   return (\n     <Column gap>",
+    "issue_text": "Pull request title: \"fix: use settings timezone in revenue chart date range\"\n\nPull request description, quoted:\n## Summary\n\nFixes #4107\n\nThe revenue chart was using the browser's **local timezone** instead of the timezone configured in Umami settings. This caused:\n- Chart X-axis to display timestamps based on local PC time\n- Header stats (total, average, transactions) to use the settings timezone  \n- A visible mismatch: header showed 2 transactions while chart showed only 1 data point (as described in the issue)\n\n## Root Cause\n\n`RevenuePage` called `useDateRange()` without a timezone argument, so `parseDateRange()` fell back to the browser's local time when computing `startDate`/`endDate`:\n\n```ts\n// Before (no timezone → uses browser local TZ)\nconst { dateRange: { startDate, endDate, unit } } = useDateRange();\n```\n\nCompare with `EventsChart`, which correctly passes the configured timezone:\n\n```ts\nconst { timezone } = useTimezone();\nconst { dateRange: { startDate, endDate, unit } } = useDateRange({ timezone });\n```\n\n## Fix\n\nMirror the `EventsChart` pattern in `RevenuePage`:\n\n```ts\nconst { timezone } = useTimezone();\nconst { dateRange: { startDate, endDate, unit } } = useDateRange({ timezone });\n```\n\nThis ensures the date range boundaries are computed in the user's configured timezone, matching the server-side timezone used for the stats.\n\n## Changed Files\n\n- `src/app/(main)/websites/[websiteId]/(reports)/revenue/RevenuePage.tsx` — 3-line change",
+    "confirmation": {
+      "card_id": "card-dt-1.tz-arg-umami-4112",
+      "shape_id": "DT-1.tz-arg",
+      "rules_matched": [
+        "dt-1.tz-arg.source"
+      ],
+      "matched_lines": [
+        "-  } = useDateRange();",
+        "+  } = useDateRange({ timezone });"
+      ]
+    }
+  },
+  "issue": {
+    "symptom": {
+      "schema_version": 1,
+      "user_action": "Requested the daily pageview counts for one website from March 7 to March 9, 2026, with the time zone set to America/Los_Angeles, and compared each day's count with the visits recorded for that local day.",
+      "request": {
+        "method": "GET",
+        "path": "/api/websites/11111111-1111-4111-8111-111111111111/pageviews",
+        "query": {
+          "startAt": "1772841600000",
+          "endAt": "1773100799999",
+          "unit": "day",
+          "timezone": "America/Los_Angeles"
+        }
+      },
+      "timezone": "America/Los_Angeles",
+      "locale": null,
+      "fixture_description": "Twelve pageviews were recorded for one website at the UTC instants listed below. Several fall just before or just after local midnight in Los Angeles, Auckland and Kolkata, and one pair falls on either side of the Los Angeles daylight-saving change on March 8, 2026, so each local day's count depends on the selected time zone.",
+      "events": [
+        {
+          "label": "pageview 1",
+          "timestamp_seconds": 1772881140,
+          "utc_instant": "2026-03-07T10:59:00Z"
+        },
+        {
+          "label": "pageview 2",
+          "timestamp_seconds": 1772881260,
+          "utc_instant": "2026-03-07T11:01:00Z"
+        },
+        {
+          "label": "pageview 3",
+          "timestamp_seconds": 1772956740,
+          "utc_instant": "2026-03-08T07:59:00Z"
+        },
+        {
+          "label": "pageview 4",
+          "timestamp_seconds": 1772956860,
+          "utc_instant": "2026-03-08T08:01:00Z"
+        },
+        {
+          "label": "pageview 5",
+          "timestamp_seconds": 1772963940,
+          "utc_instant": "2026-03-08T09:59:00Z"
+        },
+        {
+          "label": "pageview 6",
+          "timestamp_seconds": 1772964060,
+          "utc_instant": "2026-03-08T10:01:00Z"
+        },
+        {
+          "label": "pageview 7",
+          "timestamp_seconds": 1772967540,
+          "utc_instant": "2026-03-08T10:59:00Z"
+        },
+        {
+          "label": "pageview 8",
+          "timestamp_seconds": 1772967660,
+          "utc_instant": "2026-03-08T11:01:00Z"
+        },
+        {
+          "label": "pageview 9",
+          "timestamp_seconds": 1772994540,
+          "utc_instant": "2026-03-08T18:29:00Z"
+        },
+        {
+          "label": "pageview 10",
+          "timestamp_seconds": 1772994660,
+          "utc_instant": "2026-03-08T18:31:00Z"
+        },
+        {
+          "label": "pageview 11",
+          "timestamp_seconds": 1773039540,
+          "utc_instant": "2026-03-09T06:59:00Z"
+        },
+        {
+          "label": "pageview 12",
+          "timestamp_seconds": 1773039660,
+          "utc_instant": "2026-03-09T07:01:00Z"
+        }
+      ],
+      "http_status": 200,
+      "expected": [
+        {
+          "bucket_label": "2026-03-07T00:00:00Z",
+          "count": 3
+        },
+        {
+          "bucket_label": "2026-03-08T00:00:00Z",
+          "count": 8
+        },
+        {
+          "bucket_label": "2026-03-09T00:00:00Z",
+          "count": 1
+        }
+      ],
+      "observed": [
+        {
+          "bucket_label": "2026-03-07T00:00:00Z",
+          "count": 2
+        },
+        {
+          "bucket_label": "2026-03-08T00:00:00Z",
+          "count": 8
+        },
+        {
+          "bucket_label": "2026-03-09T00:00:00Z",
+          "count": 2
+        }
+      ],
+      "follow_up_examples": [
+        {
+          "timezone": "Pacific/Auckland",
+          "expected": [
+            {
+              "bucket_label": "2026-03-07T00:00:00Z",
+              "count": 1
+            },
+            {
+              "bucket_label": "2026-03-08T00:00:00Z",
+              "count": 6
+            },
+            {
+              "bucket_label": "2026-03-09T00:00:00Z",
+              "count": 5
+            }
+          ],
+          "observed": [
+            {
+              "bucket_label": "2026-03-07T00:00:00Z",
+              "count": 2
+            },
+            {
+              "bucket_label": "2026-03-08T00:00:00Z",
+              "count": 8
+            },
+            {
+              "bucket_label": "2026-03-09T00:00:00Z",
+              "count": 2
+            }
+          ]
+        },
+        {
+          "timezone": "Asia/Kolkata",
+          "expected": [
+            {
+              "bucket_label": "2026-03-07T00:00:00Z",
+              "count": 2
+            },
+            {
+              "bucket_label": "2026-03-08T00:00:00Z",
+              "count": 7
+            },
+            {
+              "bucket_label": "2026-03-09T00:00:00Z",
+              "count": 3
+            }
+          ],
+          "observed": [
+            {
+              "bucket_label": "2026-03-07T00:00:00Z",
+              "count": 2
+            },
+            {
+              "bucket_label": "2026-03-08T00:00:00Z",
+              "count": 8
+            },
+            {
+              "bucket_label": "2026-03-09T00:00:00Z",
+              "count": 2
+            }
+          ]
+        }
+      ],
+      "doc_excerpts": [
+        {
+          "text": "Returns pageviews and sessions grouped by the requested time interval and timezone, including a comparison period when requested.",
+          "source_url": "https://docs.umami.is/docs/api-reference/get-website-pageviews"
+        },
+        {
+          "text": "IANA time zone used to interpret dates and group results, for example America/New_York.",
+          "source_url": "https://docs.umami.is/docs/api-reference/get-website-pageviews"
+        }
+      ]
+    },
+    "excluded_identifiers": [
+      "umami-tz-arg-001",
+      "DT-1.tz-arg",
+      "dt-1.tz-arg",
+      "dt-1.tz-arg.planted",
+      "dt-1.tz-arg.source",
+      "tzarg.utc-day-counts",
+      "tzarg.la-day-counts",
+      "tzarg.auckland-day-counts",
+      "tzarg.kolkata-day-counts",
+      "src/queries/sql/pageviews/getPageviewStats.ts",
+      "getPageviewStats.ts",
+      "getPageviewStats",
+      "relationalQuery",
+      "getDateSQL",
+      "rawQuery",
+      "cohortQuery",
+      "website_event.created_at",
+      "website_event",
+      "created_at",
+      "getQueryFilters",
+      "src/app/api/websites/[websiteId]/pageviews/route.ts",
+      "e6f3f3b4b40a490d5cb050471baa0999366dab2a",
+      "RevenuePage",
+      "useDateRange",
+      "useTimezone",
+      "parseDateRange"
+    ]
+  }
+}

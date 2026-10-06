@@ -1,0 +1,77 @@
+{
+  "input": {
+    "schema_version": 1,
+    "candidate": "umami-tz-arg-001",
+    "source": {
+      "shape_keywords": [
+        "timezone",
+        "day counts",
+        "utc"
+      ],
+      "symptom_words": [
+        "umami",
+        "daily pageviews",
+        "wrong day"
+      ],
+      "include_domains": [
+        "github.com",
+        "stackoverflow.com"
+      ],
+      "start_date": "2020-01-01",
+      "end_date": "2026-10-06"
+    },
+    "docs": {
+      "url": "https://docs.umami.is/docs/api-reference/get-website-pageviews",
+      "query": "pageviews grouped by day in the selected time zone"
+    },
+    "phrases": [
+      "daily pageview counts for one website",
+      "just before or just after local midnight",
+      "each local day's count depends on the selected time zone"
+    ],
+    "docs_policy": {
+      "allowed_domains": [
+        "docs.umami.is"
+      ],
+      "excluded_domains": [
+        "date-fns.org"
+      ]
+    }
+  },
+  "settings": {
+    "timeout_seconds": 30,
+    "max_results": 5,
+    "excerpt_max_chars": 300,
+    "passage_max_chars": 2000,
+    "max_passages": 6,
+    "project_docs_domains": []
+  },
+  "excluded_identifiers": [
+    "umami-tz-arg-001",
+    "DT-1.tz-arg",
+    "dt-1.tz-arg",
+    "dt-1.tz-arg.planted",
+    "dt-1.tz-arg.source",
+    "tzarg.utc-day-counts",
+    "tzarg.la-day-counts",
+    "tzarg.auckland-day-counts",
+    "tzarg.kolkata-day-counts",
+    "src/queries/sql/pageviews/getPageviewStats.ts",
+    "getPageviewStats.ts",
+    "getPageviewStats",
+    "relationalQuery",
+    "getDateSQL",
+    "rawQuery",
+    "cohortQuery",
+    "website_event.created_at",
+    "website_event",
+    "created_at",
+    "getQueryFilters",
+    "src/app/api/websites/[websiteId]/pageviews/route.ts",
+    "e6f3f3b4b40a490d5cb050471baa0999366dab2a",
+    "RevenuePage",
+    "useDateRange",
+    "useTimezone",
+    "parseDateRange"
+  ]
+}
