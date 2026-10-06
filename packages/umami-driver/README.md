@@ -135,4 +135,13 @@ It holds `umami-driver/`, `umami-fixture/` and `schema/`, with `node_modules/@rb
 
 - It does not apply source patches or audit the source projection.
 - It does not decide admission, grade outcomes or call the importer.
-- It has not yet run in the kit image; the in-image proof runs on a host with Docker.
+- It does not run Docker itself; the in-image proof runs on a host with Docker.
+
+## Known limits
+
+**Two upstream revenue tests fail early in each month.** Umami derives session IDs with a salt that changes at the start of each calendar month (`getSalt` in `src/lib/crypto.ts`), and its API suite seeds each identified visitor's purchases 1, 3 and 5 days before the run (`tests/api/seed/dataset.ts`). When those days span the first of a month, each seeded visitor's purchases fall into two sessions. Two tests in `tests/api/revenue.spec.ts` then fail on a clean copy: `revenue/sessions` (count 6, expected 3) and `revenue/stats` (`unique_count` 6, expected 3). Neither the driver nor Umami's application code is wrong; the upstream tests assume the window stays inside one month.
+
+- **When:** a run on the 2nd to the 5th of a month. The seed puts purchases 1, 3 and 5 days before the run, near midday UTC, so only those runs place some purchases before the 1st and some after.
+- **Effect:** the clean copy's original suite has 2 failures out of 271, so ADM-03 rejects the candidate. The driver records the failures correctly as original-suite evidence.
+- **How to detect it:** in a trial's `artifacts/original/outcomes.json`, the only failed tests are those two, and the run date is in the first week of a month. For example: `jq -r '.tests[] | select(.outcome == "failed") | .test_id' artifacts/original/outcomes.json`.
+- **What to do:** don't run admission on the 2nd to the 5th of a month. Confirmation is tracked in issue #27.
