@@ -145,6 +145,7 @@ export function cardSource(variant: string): Record<string, unknown> {
   };
 }
 
+/** The card as the model is asked for it: one state per runtime lever instead of the three lists. */
 const VALID_CARD = {
   id: "synthetic-model-chosen-id",
   provenance: {
@@ -163,9 +164,15 @@ const VALID_CARD = {
   runtime_dependence: {
     value: "yes",
     reason: "Synthetic-card reason: the shift is visible only with recorded events near midnight.",
-    levers_apply: ["hidden_runtime_state", "magnitude_visible_only_at_runtime"],
-    levers_absent: ["ordering_or_concurrency", "external_side_effect_semantics"],
-    levers_unverified: ["distance_between_symptom_and_cause", "plausible_wrong_static_fix", "path_ambiguity"],
+    levers: {
+      hidden_runtime_state: "apply",
+      distance_between_symptom_and_cause: "unverified",
+      plausible_wrong_static_fix: "unverified",
+      path_ambiguity: "unverified",
+      ordering_or_concurrency: "absent",
+      magnitude_visible_only_at_runtime: "apply",
+      external_side_effect_semantics: "absent",
+    },
   },
   fidelity_tier: "B",
   references: {

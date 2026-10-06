@@ -18,7 +18,7 @@ import type {
 import { z } from "zod";
 import { CardSourceSchema, applyCodeOwnedFields, buildCardPrompt } from "./card-prompt.ts";
 import type { CodeOwnedField } from "./card-prompt.ts";
-import { CardSchema, ModelCardSchema } from "./card-schema.ts";
+import { ModelCardSchema, ModelRequestCardSchema } from "./card-schema.ts";
 import type { Card, ModelCard } from "./card-schema.ts";
 import {
   ACTOR_ROLE,
@@ -195,9 +195,9 @@ function refusal(code: WriterRefusalCode, detail: string | null, operationIdValu
 
 type Rendered<T> = { ok: true; prompt: PromptMessages; schema: FlexibleSchema<T> } | WriterRefusal;
 
-// The model is asked for the full card, so the request is the same as with the full card schema,
-// but its answer is validated only in the fields it owns; code replaces the rest.
-const CARD_OUTPUT = jsonSchema<ModelCard>(() => zodSchema(CardSchema).jsonSchema, {
+// The model is asked for the full card with one state per runtime lever, but its answer is validated
+// only in the fields it owns; code replaces the rest and derives the three lever lists.
+const CARD_OUTPUT = jsonSchema<ModelCard>(() => zodSchema(ModelRequestCardSchema).jsonSchema, {
   validate: (value) => {
     const parsed = ModelCardSchema.safeParse(value);
     return parsed.success ? { success: true, value: parsed.data } : { success: false, error: parsed.error };
