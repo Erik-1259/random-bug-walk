@@ -3,7 +3,10 @@
 //   run      --image <tag|digest> --kit-stage <dir> --manifest <file> --terms <file> --work <dir>
 //            [--recorded <dir>] [--policy <file>] [--concurrency <n>] [--dry-run]
 //   run-copy --job <dir> --trial <trial_id> --image <tag|digest> --manifest <file> --terms <file> --work <dir>
-//            [--root <run dir>] [--policy <file>]
+//            [--root <run dir>] [--policy <file>] [--backend docker|sandbox] [--sandbox-image <vcr ref>]
+//
+// The sandbox backend reads VERCEL_TOKEN, VERCEL_TEAM_ID and VERCEL_PROJECT_ID from the environment
+// here and nowhere else, and passes them to the SDK as options.
 //
 // Exit codes: 0 every copy completed and every step ran (the summary says what the evidence shows);
 // 1 the summary was written, but a copy did not complete or a step was refused; 2 a usage or
@@ -19,11 +22,14 @@ import { InputsError } from "./inputs.ts";
 import { JobRefusal } from "./jobs.ts";
 import { RECORDED_SYNTHETIC_DIR, RecordedModeError } from "./recorded.ts";
 import { runCopyCommand } from "./run-copy.ts";
+import type { RunCopyDeps } from "./run-copy.ts";
+import { createSandboxSdk } from "./sandbox-sdk.ts";
 import { runSequence } from "./sequence.ts";
 
 const USAGE = `usage:
   node src/cli.ts run --image <tag|digest> --kit-stage <dir> --manifest <file> --terms <file> --work <dir> [--recorded <dir>] [--policy <file>] [--concurrency <n>] [--dry-run]
   node src/cli.ts run-copy --job <dir> --trial <trial_id> --image <tag|digest> --manifest <file> --terms <file> --work <dir> [--root <run dir>] [--policy <file>]
+                           [--backend docker|sandbox] [--sandbox-image <repository>@sha256:<digest>]
 `;
 
 class UsageError extends Error {}
@@ -83,6 +89,15 @@ async function run(args: string[]): Promise<number> {
   return result.exitCode;
 }
 
+const SANDBOX_CREDENTIALS = ["VERCEL_TOKEN", "VERCEL_TEAM_ID", "VERCEL_PROJECT_ID"] as const;
+
+/** The sandbox credentials from the environment; a missing one is named, and no value is ever shown. */
+function sandboxCredentials(): { token: string; teamId: string; projectId: string } {
+  const missing = SANDBOX_CREDENTIALS.filter((name) => (process.env[name] ?? "") === "");
+  if (missing.length > 0) throw new UsageError(`the sandbox backend needs ${missing.join(", ")} in the environment`);
+  return { token: process.env.VERCEL_TOKEN ?? "", teamId: process.env.VERCEL_TEAM_ID ?? "", projectId: process.env.VERCEL_PROJECT_ID ?? "" };
+}
+
 async function runCopyCli(args: string[]): Promise<number> {
   const { values } = parseArgs({
     args,
@@ -97,9 +112,17 @@ async function runCopyCli(args: string[]): Promise<number> {
       work: { type: "string" },
       root: { type: "string" },
       policy: { type: "string" },
+      backend: { type: "string" },
+      "sandbox-image": { type: "string" },
     },
   });
   if (values.trial === undefined || values.image === undefined) throw new UsageError("--trial and --image are required");
+  const backend = values.backend ?? "docker";
+  if (backend !== "docker" && backend !== "sandbox") throw new UsageError("--backend must be docker or sandbox");
+  const sandboxImage = values["sandbox-image"] ?? null;
+  if ((backend === "sandbox") !== (sandboxImage !== null)) throw new UsageError("--sandbox-image is required with --backend sandbox, and only with it");
+  const deps: RunCopyDeps = { docker: createDocker(), clock: realClock };
+  if (backend === "sandbox") deps.sandbox = createSandboxSdk(sandboxCredentials());
   const outcome = await runCopyCommand(
     {
       job: required(values, "job"),
@@ -110,8 +133,10 @@ async function runCopyCli(args: string[]): Promise<number> {
       work: required(values, "work"),
       root: optional(values, "root"),
       policy: optional(values, "policy"),
+      backend,
+      sandboxImage,
     },
-    { docker: createDocker(), clock: realClock },
+    deps,
   );
   if (outcome.refusal !== null) log(`refused ${outcome.refusal.reason}: ${outcome.refusal.detail}`);
   if (outcome.copy !== null) process.stdout.write(`trial=${outcome.copy.trial_id} status=${outcome.copy.status} reason=${outcome.copy.reason ?? "-"} records=${outcome.recordsDir ?? "-"}\n`);

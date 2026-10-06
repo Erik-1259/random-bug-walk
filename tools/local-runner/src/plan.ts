@@ -45,6 +45,19 @@ export async function inspectImage(docker: Docker, reference: string): Promise<s
   return digest;
 }
 
+/** The image's repository digests (`docker image inspect`): a pushed image lists its registry digest here. */
+export async function inspectRepoDigests(docker: Docker, reference: string): Promise<string[]> {
+  const result = await docker.run(["image", "inspect", "--format", "{{json .RepoDigests}}", reference], { timeoutMs: 60_000 });
+  let parsed: unknown = null;
+  try {
+    parsed = JSON.parse(result.stdout.toString("utf8"));
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
+  }
+  if (result.code !== 0 || !Array.isArray(parsed) || !parsed.every((item) => typeof item === "string")) throw new PlanError(`docker cannot list the repository digests of ${reference}`);
+  return parsed;
+}
+
 export interface TrialRef {
   trial_id: string;
   code_state: CodeState;

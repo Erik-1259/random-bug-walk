@@ -148,7 +148,7 @@ function exitStatus(text: string | null): number | null {
   return /^\d{1,3}$/.test(trimmed) ? Number(trimmed) : null;
 }
 
-function readExit(path: string): number | null {
+export function readExit(path: string): number | null {
   return existsSync(path) ? exitStatus(readFileSync(path, "utf8")) : null;
 }
 
@@ -173,13 +173,14 @@ async function waitWithLimit(plan: CopyPlan, deps: CopyDeps): Promise<{ exit: nu
   return { exit: exitStatus(final.stdout.toString("utf8")), timedOut: true };
 }
 
-interface Interpreted {
+export interface Interpreted {
   status: CopyStatus;
   reason: string | null;
   records: boolean;
 }
 
-function interpret(mode: CopyPlan["mode"], collected: string | null, freezeExit: number | null, driverExit: number | null, timedOut: boolean): Interpreted {
+/** What a copy's collected files say, the same for every backend. */
+export function interpret(mode: CopyPlan["mode"], collected: string | null, freezeExit: number | null, driverExit: number | null, timedOut: boolean): Interpreted {
   if (mode === "freeze") {
     if (freezeExit === 0 && collected !== null && existsSync(join(collected, "original-suite.json"))) return { status: "complete", reason: null, records: false };
     return timedOut ? { status: "incomplete", reason: "timeout", records: false } : { status: "failed", reason: "freeze_failed", records: false };

@@ -5,6 +5,7 @@ import type { CodeState } from "@rbw/schema";
 import type { StateKey } from "./code-states.ts";
 import type { AuditResult, CopyStatus } from "./copy.ts";
 import type { PhaseSummary } from "./records.ts";
+import type { SandboxReport } from "./sandbox.ts";
 
 export const SUMMARY_NOTE =
   "Development evidence from a local run on Docker. It makes no admission claim, is not published, and the planted bug is synthetic.";
@@ -43,6 +44,8 @@ export interface CopySummary {
   driver_phases: PhaseSummary[];
   tests_phase: { duration_ms: number; limit_ms: number; within_limit: boolean } | null;
   artifact_bytes: { total: number; limit: number; within_limit: boolean } | null;
+  /** Only for a copy on Vercel Sandbox: its name, the stop confirmation and the SDK call counts. */
+  sandbox?: SandboxReport;
 }
 
 export interface TrialSummary {

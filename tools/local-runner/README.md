@@ -87,7 +87,22 @@ The card call, the issue call and the three phrase searches (`phrase-1` to `phra
 
 `--concurrency <n>` (default 1) runs up to `n` copies of a job at once; the alternative-fix copy shares admission's queue. The documented proof uses 1, so its timings are clean.
 
-`run-copy` runs exactly one copy from a job directory and a trial ID, for a later hosted or cloud matrix to call: it reads the job with the driver's own reader, checks an observation's baseline against `--root` (the run directory that holds it) before any docker command, refuses an image whose digest is not the job's, then exports, derives, audits and runs the copy, and writes `copy-summary.json` in its work directory. Cloud execution is not part of this item.
+`run-copy` runs exactly one copy from a job directory and a trial ID, for a later hosted or cloud matrix to call: it reads the job with the driver's own reader, checks an observation's baseline against `--root` (the run directory that holds it) before any docker command, refuses an image whose digest is not the job's, then exports, derives, audits and runs the copy, and writes `copy-summary.json` in its work directory. With `--backend sandbox` the copy itself runs on Vercel Sandbox (next section).
+
+## Vercel Sandbox backend
+
+`run-copy --backend sandbox --sandbox-image <repository>@sha256:<digest>` runs the copy in a Vercel Sandbox microVM created from the kit image in Vercel Container Registry (VCR), instead of a Docker container. Everything before the copy is the same as with Docker, on the host: the job, the baseline, the image check, the export, the code state and the audit. The `run` command still uses Docker only. The controller that will call this is planned.
+
+- **Image:** `--image` is still the local image, which must match the job's `image_digest`; `--sandbox-image` is the same image in VCR, pinned by digest, and must be one of the local image's repository digests (`docker image inspect --format '{{json .RepoDigests}}'`), which `docker push` records. VCR runs `linux/amd64` images only, so the image is built for that platform. When the platform reports the created sandbox's image, its digest must be the requested one, or the sandbox is stopped and nothing runs in it.
+- **Create:** `persistent: false`, `networkPolicy: 'deny-all'`, `resources: { vcpus: 4 }` (spec §9.4; the platform gives 2 GB per vCPU, so 8 GB), and `timeout` equal to the outer limit, 720 000 ms. The name is the Docker container name, `rbw-<run tag>-<job>-<trial_id>`, where the run tag comes from the run's root execution ID. Each create also carries the tag `attempt`, a random UUID of that `run-copy` call. When a create call fails, the runner fetches the name with `Sandbox.get`: a pending or running sandbox with this call's tag is the one that call made, and the copy continues in it; no sandbox fails the copy (`sandbox_create_failed`); any other sandbox under the name, running or not, was left by an earlier attempt and is refused (`sandbox_name_in_use`) and left alone, so a retried `run-copy` never runs a second driver in it. A create is never retried, so no second sandbox is made.
+- **Place:** one `writeFiles` call writes the verified target file (the same bytes the Docker backend places, also kept under `placed/`) to `/workspace/app/<target path>` and every file of the job directory under `/var/lib/rbw/job/`, all with mode 0644. A clean copy gets no target file.
+- **Run:** the sandbox does not run the image's `ENTRYPOINT`, so there is no `tini` as PID 1, and the kit's `rbw-start` and `rbw-stop` do not reap their launchers themselves: `rbw-launch` and `rbw-stop` wait with `kill -0`, which a zombie still answers. The runner therefore runs the copy script as `/sbin/tini -s -- /bin/sh -c <copy script> rbw-copy <mode> <trial_id>`, as root (an image sandbox's default user, so without `sudo`, which the image does not have), with `cwd` `/workspace/app` and the `PATH` and `HOME` that a Docker container of the image has. With `-s`, tini is a child subreaper, so orphaned launchers are reparented to it and reaped.
+- **Once per sandbox:** the SDK retries a request after a network or 5xx error, so a command whose start succeeded but whose response was lost can start a second time. The copy script is therefore `SANDBOX_COPY_SCRIPT`: `COPY_SCRIPT`, unchanged, in a subshell behind a lock. Its first step is `mkdir /var/lib/rbw/copy.lock`, which only one instance can win; that instance runs the copy, packs the record set (next item), and only then writes its exit status and the pack status to `/var/lib/rbw/copy.done`. Any other instance runs nothing, waits (`sleep 1`) until the marker holds a status, and exits with it. This is the only command the runner starts in the sandbox. The runner never uses the exit status of the handle it waited on: once that handle returns, it reads the marker (an artifact read), and while the marker is missing it reads again after 1 s, 2 s, 4 s and so on, up to the outer limit. `container_exit` is the marker's status, and the outcome comes from the marker and the exit files, as before.
+- **Collect:** after the copy, the copy script packs `/var/lib/rbw/results/rbw-runner` into `/var/lib/rbw/collect.tar`. An archive over 72 MiB (the driver's 64 MiB artifact limit plus 8 MiB for the exit files, the driver's output and the frozen manifest) is recorded as such in the marker, and the runner refuses it before anything is read. One `readFile` reads it back, stopping at the same limit, and the runner extracts its files and directories into `collected/`; any other entry, or one outside that directory, fails the copy (`collected_unreadable`). An archive over the limit fails the copy (`collected_over_limit`). The summary then measures the driver's artifact bytes against 64 MiB as for Docker, and the driver's exit codes are read and treated exactly as for Docker.
+- **Outer limit:** 720 s from the create call, the same as the sandbox's own timeout. The run, the collection and every SDK call end by 710 s; at that point the sandbox is stopped and the copy is recorded `incomplete` with reason `timeout`. Nothing is read back from it, so none of its partial files is imported. Unlike Docker, a driver that finished just before the limit loses its records too.
+- **Stop:** `stop()` is called once in every case where a sandbox was made, then `Sandbox.get` is checked up to 5 times, 2 s apart (each wait cut short at the outer limit, and no check made at or after it), until the status is `stopped`, `failed` or `aborted` (or the sandbox is gone), all within the 10 s left before the outer limit. The summary records `stop_confirmed` and the last status. A copy whose stop is not confirmed makes `run-copy` exit 1.
+- **Calls:** each copy makes at most 3 mutating SDK calls (create, write, run), 1 stop, and 2 artifact reads when the marker is there on the first read (the doublings reach the outer limit within 11 marker reads, so with the archive at most 12), against spec §9.4's 8, 12 and 1; the runner refuses a call past those limits. `copy-summary.json` has a `sandbox` object with the name, the image, whether the sandbox was recovered by name, the stop confirmation, and the counts (plus the status reads) with the limits.
+- **Credentials:** the CLI reads `VERCEL_TOKEN`, `VERCEL_TEAM_ID` and `VERCEL_PROJECT_ID` from its environment and passes them to the SDK as options. They never appear in arguments, output or files. A missing one is named, without any value, and the command exits 2.
 
 ## Summary
 
@@ -147,6 +162,28 @@ Run from the repository root on a host with Docker. `<stage>`, `<umami>`, `<mani
 
    This prints `refused baseline_mismatch: the request names <hash> but jobs/kit-check/evidence.json hashes to <hash>` and exits 1.
 
+5. Run one clean and one planted copy on Vercel Sandbox. The job directories come from an earlier `run` (step 3) with the same image, so the image must be the `linux/amd64` build: add `--platform linux/amd64` to step 1's `docker build` on a host of another platform. `<vcr repository>` is the image's repository in VCR (`<team>/<project>/<repository>`, under VCR's registry host), and pushing needs a Docker login to VCR as Vercel's documentation describes.
+
+   ```sh
+   docker tag rbw-umami-kit:local <registry host>/<vcr repository>:<tag>
+   docker push <registry host>/<vcr repository>:<tag>
+   docker image inspect --format '{{json .RepoDigests}}' rbw-umami-kit:local
+   ```
+
+   The last command lists the pushed digest, `sha256:<digest>`. Set `VERCEL_TOKEN`, `VERCEL_TEAM_ID` and `VERCEL_PROJECT_ID` in the shell from the owner's secret store, without putting the values on a command line (for example `read -rs VERCEL_TOKEN && export VERCEL_TOKEN`), then:
+
+   ```sh
+   node tools/local-runner/src/cli.ts run-copy --job <work>/jobs/admission/job --trial clean-01 \
+     --image rbw-umami-kit:local --manifest <manifest> --terms <terms> --work <sandbox-clean> \
+     --backend sandbox --sandbox-image <vcr repository>@sha256:<digest>
+   node tools/local-runner/src/cli.ts run-copy --job <work>/jobs/admission/job --trial planted-02 \
+     --image rbw-umami-kit:local --manifest <manifest> --terms <terms> --work <sandbox-planted> \
+     --backend sandbox --sandbox-image <vcr repository>@sha256:<digest>
+   jq '{status, reason, freeze_exit, driver_exit, timed_out, sandbox}' <sandbox-clean>/copy-summary.json <sandbox-planted>/copy-summary.json
+   ```
+
+   Each prints `trial=<trial_id> status=... records=<dir>` and exits 0 when its copy completed and its sandbox's stop was confirmed. Not run here: this container has no Vercel credentials.
+
 Exit codes of `run` and `run-copy`: 0, every copy completed and every step ran (the summary says what the evidence shows); 1, the summary was written but a copy did not complete or a step was refused; 2, a usage or input error, with nothing run.
 
 ### Expected results
@@ -167,6 +204,7 @@ Not measured here. From the driver's phase limits and the fixture's reset study 
 - **Kit:** `/workspace/app` holds the pinned source, root-owned and read-only to `rbw-app`, and `rbw-build-app` builds whatever is there; the app file it builds can be replaced in a created container with `docker cp` before `docker start`; `/var/lib/rbw/` is writable by root; the image manifest is at `/opt/rbw/verifier/image-manifest.json`; the image's entrypoint is `tini`.
 - **Driver:** it is at `/opt/rbw/verifier/kit/umami-driver/src/cli.ts`, run with `/opt/rbw/verifier/node/bin/node`; `freeze` without `--out` writes the manifest that `run` reads; `run`'s exit codes are 0, 2 and 3 as above; its record set has `results/<trial_id>/` with `artifacts.json` listing a `phase_timings` artifact whose phases include `tests`.
 - **Projection:** `audit` takes a copy with a `.git` from `commitNeutral` and a declared mutation of at least one file; a copy with no change cannot be audited (see above).
+- **Vercel Sandbox:** as Vercel's documentation describes it: an image sandbox does not run the image's `ENTRYPOINT` or `CMD`; commands in an image sandbox run as root; `writeFiles` extracts at `/` as the sandbox's default user, which is root for an image sandbox; `networkPolicy: 'deny-all'` at create blocks all egress, DNS included; `Sandbox.get` reports the current session's status. The kit's `/sbin/tini` supports `-s`, and its BusyBox provides `tar`, `wc`, `mkdir` and `sleep`.
 - **Shapes:** `probes.json` records the clean, planted and each probe's base and result hashes, and its probe patches each change only the target file.
 
 ## Tests
@@ -175,11 +213,11 @@ Not measured here. From the driver's phase limits and the fixture's reset study 
 pnpm --filter @rbw/local-runner test
 ```
 
-The unit tests drive a fake Docker command layer and a fake clock, and start no container. `test/unit/sequence.test.ts` runs the whole sequence against a simulated kit image whose copies run the real driver's `runTrial` (with the driver's own test fakes for the app stack), so the merged record sets are the ones the real driver code writes, and the real importer decides admission from them. `test/unit/docker.test.ts` runs the real command layer against a stand-in `docker` script. The recorded-mode tests use the committed synthetic recordings and PGlite.
+The unit tests drive a fake Docker command layer and a fake clock, and start no container. `test/unit/sequence.test.ts` runs the whole sequence against a simulated kit image whose copies run the real driver's `runTrial` (with the driver's own test fakes for the app stack), so the merged record sets are the ones the real driver code writes, and the real importer decides admission from them. `test/unit/docker.test.ts` runs the real command layer against a stand-in `docker` script. `test/unit/sandbox.test.ts` drives the sandbox backend with a fake SDK (`test/support/fake-sandbox.ts`) and makes no live call. The recorded-mode tests use the committed synthetic recordings and PGlite.
 
 ## What it does not do
 
-- It does not run copies in the cloud or on a hosted service, and it publishes nothing.
+- It runs single copies on Vercel Sandbox through `run-copy` only; the full `run` uses Docker, and the controller that would run a job's copies in the cloud is planned. It publishes nothing.
 - It makes no live model or search call.
 - It does not calibrate anything, and its `outcome_verdict` is not an admission.
 - It does not change the kit or the driver.
