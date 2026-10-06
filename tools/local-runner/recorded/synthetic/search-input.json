@@ -1,0 +1,54 @@
+{
+  "input": {
+    "schema_version": 1,
+    "candidate": "synthetic-candidate-1",
+    "source": {
+      "shape_keywords": [
+        "synthetic",
+        "report",
+        "filter"
+      ],
+      "symptom_words": [
+        "empty",
+        "table"
+      ],
+      "include_domains": [
+        "github.com",
+        "stackoverflow.com"
+      ],
+      "start_date": "2020-01-01",
+      "end_date": "2026-10-01"
+    },
+    "docs": {
+      "url": "https://docs.example.invalid/guide/reports",
+      "query": "report filter shows empty table"
+    },
+    "phrases": [
+      "synthetic phrase one",
+      "synthetic phrase two",
+      "synthetic phrase three"
+    ],
+    "docs_policy": {
+      "allowed_domains": [
+        "docs.example.invalid"
+      ],
+      "excluded_domains": [
+        "datelib.example.invalid"
+      ]
+    }
+  },
+  "settings": {
+    "timeout_seconds": 30,
+    "max_results": 5,
+    "excerpt_max_chars": 300,
+    "passage_max_chars": 2000,
+    "max_passages": 6,
+    "project_docs_domains": [
+      "docs.example.invalid"
+    ]
+  },
+  "excluded_identifiers": [
+    "synthetic_internal_fn",
+    "synthetic/internal/path.ts"
+  ]
+}

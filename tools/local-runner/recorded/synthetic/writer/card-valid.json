@@ -1,0 +1,261 @@
+{
+  "format_version": 1,
+  "provenance": "synthetic",
+  "model_id": "nvidia/Nemotron-3_5-Lightning",
+  "recorded_at": "2026-10-05T00:00:00Z",
+  "request": {
+    "body": {
+      "model": "nvidia/Nemotron-3_5-Lightning",
+      "max_tokens": 8192,
+      "response_format": {
+        "type": "json_schema",
+        "json_schema": {
+          "schema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "provenance": {
+                "type": "object",
+                "properties": {
+                  "source_links": {
+                    "minItems": 1,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "format": "uri"
+                    }
+                  },
+                  "repository": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "date": {
+                    "type": "string",
+                    "format": "date",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                  },
+                  "license": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "source_links",
+                  "repository",
+                  "date",
+                  "license"
+                ],
+                "additionalProperties": false
+              },
+              "bug_class": {
+                "type": "string",
+                "enum": [
+                  "time_and_date",
+                  "data_validation",
+                  "permissions",
+                  "async_ordering_and_races",
+                  "caching_and_stale_state",
+                  "configuration_and_environment",
+                  "ui_state_and_hydration",
+                  "api_contract"
+                ]
+              },
+              "mechanism": {
+                "type": "string",
+                "minLength": 1
+              },
+              "shape": {
+                "type": "object",
+                "properties": {
+                  "shape_id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "rules_matched": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "matched_lines": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "shape_id",
+                  "rules_matched",
+                  "matched_lines"
+                ],
+                "additionalProperties": false
+              },
+              "fault_shape": {
+                "type": "string",
+                "minLength": 1
+              },
+              "trigger": {
+                "type": "string",
+                "minLength": 1
+              },
+              "symptom": {
+                "type": "string",
+                "minLength": 1
+              },
+              "apis": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "runtime_dependence": {
+                "type": "object",
+                "properties": {
+                  "value": {
+                    "type": "string",
+                    "enum": [
+                      "yes",
+                      "no",
+                      "unknown"
+                    ]
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "levers_apply": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "hidden_runtime_state",
+                        "distance_between_symptom_and_cause",
+                        "plausible_wrong_static_fix",
+                        "path_ambiguity",
+                        "ordering_or_concurrency",
+                        "magnitude_visible_only_at_runtime",
+                        "external_side_effect_semantics"
+                      ]
+                    }
+                  },
+                  "levers_absent": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "hidden_runtime_state",
+                        "distance_between_symptom_and_cause",
+                        "plausible_wrong_static_fix",
+                        "path_ambiguity",
+                        "ordering_or_concurrency",
+                        "magnitude_visible_only_at_runtime",
+                        "external_side_effect_semantics"
+                      ]
+                    }
+                  },
+                  "levers_unverified": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "hidden_runtime_state",
+                        "distance_between_symptom_and_cause",
+                        "plausible_wrong_static_fix",
+                        "path_ambiguity",
+                        "ordering_or_concurrency",
+                        "magnitude_visible_only_at_runtime",
+                        "external_side_effect_semantics"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "value",
+                  "reason",
+                  "levers_apply",
+                  "levers_absent",
+                  "levers_unverified"
+                ],
+                "additionalProperties": false
+              },
+              "fidelity_tier": {
+                "type": "string",
+                "enum": [
+                  "A",
+                  "B",
+                  "C"
+                ]
+              },
+              "references": {
+                "type": "object",
+                "properties": {
+                  "diff_excerpt": {
+                    "type": "string"
+                  },
+                  "failing_tests": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  }
+                },
+                "required": [
+                  "diff_excerpt",
+                  "failing_tests"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "id",
+              "provenance",
+              "bug_class",
+              "mechanism",
+              "shape",
+              "fault_shape",
+              "trigger",
+              "symptom",
+              "apis",
+              "runtime_dependence",
+              "fidelity_tier",
+              "references"
+            ],
+            "additionalProperties": false
+          },
+          "strict": true,
+          "name": "response"
+        }
+      },
+      "messages": [
+        {
+          "role": "system",
+          "content": "You write a pattern card that describes one fixed bug from public source-fix information.\nYou are given the source links, repository, date, licence, a short diff excerpt, the source issue text and a shape confirmation.\n\nRules:\n- bug_class is exactly one of the listed values.\n- mechanism is one sentence and names no library or framework.\n- runtime_dependence.reason says which of the seven levers apply, which are absent and which are unverified, and each lever appears in exactly one of levers_apply, levers_absent and levers_unverified.\n- Copy id, provenance and shape from the input; they are checked by code.\n- Do not invent tests, links or APIs that the input does not show.\nAnswer with JSON that matches the schema."
+        },
+        {
+          "role": "user",
+          "content": "Source-fix information:\n{\n  \"source_links\": [\n    \"https://code.example.invalid/synthetic-project/pull/1\"\n  ],\n  \"repository\": \"https://code.example.invalid/synthetic-project\",\n  \"date\": \"2026-01-15\",\n  \"license\": \"MIT\",\n  \"diff_excerpt\": \"- const range = synthetic(start, end);\\n+ const range = synthetic(start, end, zone); // synthetic case valid\",\n  \"issue_text\": \"Synthetic source issue: daily totals shift by a day for some timezones.\",\n  \"confirmation\": {\n    \"card_id\": \"synthetic-card-1\",\n    \"shape_id\": \"synthetic-shape-1\",\n    \"rules_matched\": [\n      \"synthetic-rule-a\",\n      \"synthetic-rule-b\"\n    ],\n    \"matched_lines\": [\n      \"+ const range = synthetic(start, end, zone);\"\n    ]\n  }\n}"
+        }
+      ],
+      "chat_template_kwargs": {
+        "enable_thinking": false
+      }
+    }
+  },
+  "request_sha256": "6bd1c3bdef06047b13983877fa91cc1d998b55cc168a2329177274292e27191f",
+  "response": {
+    "status": 200,
+    "body": "{\"id\":\"synthetic-completion\",\"object\":\"chat.completion\",\"created\":1767225600,\"model\":\"nvidia/Nemotron-3_5-Lightning\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"{\\\"id\\\":\\\"synthetic-model-chosen-id\\\",\\\"provenance\\\":{\\\"source_links\\\":[\\\"https://model.example.invalid/wrong-link\\\"],\\\"repository\\\":\\\"https://model.example.invalid/wrong-repository\\\",\\\"date\\\":\\\"1999-12-31\\\",\\\"license\\\":\\\"synthetic-model-licence\\\"},\\\"bug_class\\\":\\\"time_and_date\\\",\\\"mechanism\\\":\\\"Synthetic-card mechanism: a date range is computed without the caller-selected timezone.\\\",\\\"shape\\\":{\\\"shape_id\\\":\\\"synthetic-model-shape\\\",\\\"rules_matched\\\":[\\\"synthetic-model-rule\\\"],\\\"matched_lines\\\":[\\\"synthetic-model-line\\\"]},\\\"fault_shape\\\":\\\"Synthetic-card fault shape: a dropped zone argument on a range helper.\\\",\\\"trigger\\\":\\\"Synthetic-card trigger: a report requested in a timezone far from UTC.\\\",\\\"symptom\\\":\\\"Synthetic-card symptom: daily buckets shift by one day.\\\",\\\"apis\\\":[\\\"synthetic-card-api-range\\\"],\\\"runtime_dependence\\\":{\\\"value\\\":\\\"yes\\\",\\\"reason\\\":\\\"Synthetic-card reason: the shift is visible only with recorded events near midnight.\\\",\\\"levers_apply\\\":[\\\"hidden_runtime_state\\\",\\\"magnitude_visible_only_at_runtime\\\"],\\\"levers_absent\\\":[\\\"ordering_or_concurrency\\\",\\\"external_side_effect_semantics\\\"],\\\"levers_unverified\\\":[\\\"distance_between_symptom_and_cause\\\",\\\"plausible_wrong_static_fix\\\",\\\"path_ambiguity\\\"]},\\\"fidelity_tier\\\":\\\"B\\\",\\\"references\\\":{\\\"diff_excerpt\\\":\\\"Synthetic-card diff excerpt reference\\\",\\\"failing_tests\\\":[\\\"synthetic-card-failing-test\\\"]}}\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":1200,\"completion_tokens\":300,\"total_tokens\":1500}}"
+  },
+  "usage": {
+    "prompt_tokens": 1200,
+    "completion_tokens": 300
+  }
+}
