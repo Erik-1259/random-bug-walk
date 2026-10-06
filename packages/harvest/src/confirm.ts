@@ -12,9 +12,11 @@
 //   as text with whitespace normalized and apart from the time-zone argument, so the fix changed
 //   this call rather than adding or replacing one (`call_added`), and that paired parent call
 //   passes no time-zone value (`before_has_timezone_argument`);
-// - the time-zone value is not a literal or the runtime's own zone (`timezone_is_constant`), and the name it is read from
-//   is bound in the call's own function, an enclosing one, or the module (`timezone_unbound`, also
-//   for a value with no name): the caller had the time zone.
+// - the time-zone value is not a literal or the runtime's own zone, nor a plain name whose
+//   declaration in the innermost scope that declares it is initialized with one, one hop only
+//   (`timezone_is_constant`), and the name it is read from is bound in the call's own function,
+//   an enclosing one, or the module (`timezone_unbound`, also for a value with no name): the
+//   caller had the time zone.
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { Lang, parse, type SgNode } from "@ast-grep/napi";
@@ -211,27 +213,30 @@ function isLiteral(node: SgNode): boolean {
   return LITERALS.has(kind) || (kind === "identifier" && node.text() === "undefined");
 }
 
+/** A literal or the runtime's own zone: a value the caller never selected. */
+function isConstant(value: SgNode): boolean {
+  return readsEnvironmentZone(value) || (rootName(value) === undefined && isLiteral(value));
+}
+
+// `plain` marks a value that is the name itself, as in `f(d, tz)` or `{ timeZone: tz }`.
 type TimezoneValue =
-  | { readonly node: SgNode; readonly kind: "name"; readonly name: string }
+  | { readonly node: SgNode; readonly kind: "name"; readonly name: string; readonly plain: boolean }
   | { readonly node: SgNode; readonly kind: "constant"; readonly text: string }
   | { readonly node: SgNode; readonly kind: "unresolved"; readonly text: string };
 
 /** The time-zone value a call passes directly, read the same way the candidate rule matches it. */
 function timezoneArgument(call: SgNode): TimezoneValue | undefined {
   const valueOf = (node: SgNode, value: SgNode): TimezoneValue => {
-    if (readsEnvironmentZone(value)) {
+    if (isConstant(value)) {
       return { node, kind: "constant", text: value.text() };
     }
     const name = rootName(value);
-    if (name !== undefined) {
-      return { node, kind: "name", name };
-    }
-    return isLiteral(value) ? { node, kind: "constant", text: value.text() } : { node, kind: "unresolved", text: value.text() };
+    return name === undefined ? { node, kind: "unresolved", text: value.text() } : { node, kind: "name", name, plain: kindOf(value) === "identifier" };
   };
   for (const argument of argumentsOf(call)) {
     const kind = kindOf(argument);
     if (kind === "identifier" && TIMEZONE_NAME.test(argument.text())) {
-      return { node: argument, kind: "name", name: argument.text() };
+      return { node: argument, kind: "name", name: argument.text(), plain: true };
     }
     if (kind === "member_expression" && TIMEZONE_NAME.test(fieldOf(argument, "property")?.text() ?? "")) {
       return valueOf(argument, argument);
@@ -239,7 +244,7 @@ function timezoneArgument(call: SgNode): TimezoneValue | undefined {
     if (kind === "object") {
       for (const property of argument.namedChildren()) {
         if (kindOf(property) === "shorthand_property_identifier" && TIMEZONE_NAME.test(property.text())) {
-          return { node: property, kind: "name", name: property.text() };
+          return { node: property, kind: "name", name: property.text(), plain: true };
         }
         const value = fieldOf(property, "value");
         if (kindOf(property) === "pair" && TIMEZONE_NAME.test(fieldOf(property, "key")?.text() ?? "") && value !== null) {
@@ -274,23 +279,59 @@ function declaresName(node: SgNode): boolean {
   return (BINDING_FIELDS[kind] ?? []).some((field) => fieldOf(parent, field)?.id() === node.id());
 }
 
-/** Whether `name` is declared in the call's function, an enclosing function or at module level. */
-function isBound(root: SgNode, call: SgNode, name: string): boolean {
-  if (name === "this") {
+const BLOCK_SCOPES = new Set(["statement_block", "switch_case", "switch_default", "for_statement"]);
+
+/**
+ * Whether a declaration is visible at the call: a `const` or `let` in a block, `switch` body or
+ * loop only inside it. A `declare global` block declares for the whole program.
+ */
+function visibleAt(site: SgNode, call: SgNode): boolean {
+  const declaration = site.ancestors().find((ancestor) => kindOf(ancestor) === "lexical_declaration" || FUNCTION_KINDS.has(kindOf(ancestor)));
+  const holder = kindOf(declaration) === "lexical_declaration" ? declaration?.parent() : null;
+  if (!BLOCK_SCOPES.has(kindOf(holder)) || kindOf(holder?.parent()) === "ambient_declaration") {
     return true;
   }
-  const scopes = new Set(enclosingFunctions(call).map((fn) => fn.id()));
+  const scope = kindOf(holder) === "switch_case" || kindOf(holder) === "switch_default" ? holder?.parent() : holder;
+  return call.ancestors().some((ancestor) => ancestor.id() === scope?.id());
+}
+
+/**
+ * The declarations of `name` in the innermost of the call's function, its enclosing functions and
+ * the module that declares it, so that a parameter shadows a module constant. Empty when none does.
+ */
+function bindingSites(root: SgNode, call: SgNode, name: string): SgNode[] {
+  const scopes = enclosingFunctions(call).map((fn) => fn.id());
   const escaped = name.replace(/[$]/g, "\\$");
   const sites = [
     ...root.findAll({ rule: { kind: "shorthand_property_identifier_pattern", regex: `^${escaped}$` } }),
     ...root.findAll({ rule: { kind: "identifier", regex: `^${escaped}$` } }).filter(declaresName),
   ];
-  return sites.some((site) => {
+  // A scope's rank: 0 for the call's own function, rising outward, with the module last.
+  const ranked = sites.flatMap((site) => {
     const [owner] = enclosingFunctions(site);
     // A function's own name is declared in the scope around it, and its parameters inside it.
     const declaredBy = owner !== undefined && fieldOf(owner, "name")?.id() === site.id() ? enclosingFunctions(owner)[0] : owner;
-    return declaredBy === undefined || scopes.has(declaredBy.id());
+    const rank = declaredBy === undefined ? scopes.length : scopes.indexOf(declaredBy.id());
+    return rank === -1 || !visibleAt(site, call) ? [] : [{ site, rank }];
   });
+  const innermost = Math.min(...ranked.map(({ rank }) => rank));
+  return ranked.filter(({ rank }) => rank === innermost).map(({ site }) => site);
+}
+
+/**
+ * Whether a declaration gives its name a literal or the runtime's own zone, as in
+ * `const tz = "UTC"` or `const { timeZone } = Intl.DateTimeFormat().resolvedOptions()`.
+ */
+function initializedConstant(site: SgNode): boolean {
+  const parent = site.parent();
+  const pattern = kindOf(parent) === "pair_pattern" ? parent?.parent() : parent;
+  if (kindOf(pattern) === "object_pattern") {
+    const declarator = pattern?.parent();
+    const value = fieldOf(declarator, "value");
+    return kindOf(declarator) === "variable_declarator" && fieldOf(declarator, "name")?.id() === pattern?.id() && value !== null && readsEnvironmentZone(value);
+  }
+  const value = fieldOf(parent, "value");
+  return kindOf(parent) === "variable_declarator" && fieldOf(parent, "name")?.id() === site.id() && value !== null && isConstant(value);
 }
 
 const squash = (text: string): string => text.replace(/\s+/g, " ").trim();
@@ -373,8 +414,13 @@ function judge(beforeRoot: SgNode, afterRoot: SgNode, call: SgNode): MatchOutcom
   if (value.kind === "unresolved") {
     return { status: "rejected", reason: "timezone_unbound", detail: `no name supplies the time-zone value ${value.text}` };
   }
-  if (!isBound(afterRoot, call, value.name)) {
+  const sites = value.name === "this" ? [] : bindingSites(afterRoot, call, value.name);
+  if (value.name !== "this" && sites.length === 0) {
     return { status: "rejected", reason: "timezone_unbound", detail: `${value.name} is not bound in ${path} or around it` };
+  }
+  // One hop only: a plain name declared with a literal or the runtime zone is that constant.
+  if (value.plain && sites.length > 0 && sites.every(initializedConstant)) {
+    return { status: "rejected", reason: "timezone_is_constant", detail: `${value.name} is declared as the literal or runtime zone ${sites[0]?.parent()?.text() ?? ""}` };
   }
   return { status: "confirmed", before_call: paired.text(), before_line: paired.range().start.line + 1, timezone: value.name };
 }

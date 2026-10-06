@@ -183,6 +183,61 @@ describe("candidate source rule and structural confirmation", () => {
     expect(examine("src/a.ts", before, after)[0]?.outcome).toMatchObject({ status: "rejected", reason: "timezone_is_constant" });
   });
 
+  it("rejects a plain name whose declaration is initialized with a literal or the runtime zone", () => {
+    for (const value of ['"UTC"', "Intl.DateTimeFormat().resolvedOptions().timeZone"]) {
+      const before = `function f(d) {\n  const timezone = ${value};\n  return formatDate(d);\n}\n`;
+      const after = before.replace("formatDate(d)", "formatDate(d, timezone)");
+      expect(examine("src/a.js", before, after)[0]?.outcome, value).toMatchObject({ status: "rejected", reason: "timezone_is_constant" });
+    }
+  });
+
+  it("rejects a plain name destructured from the runtime's resolved options", () => {
+    const before = "function f(d) {\n  const { timeZone } = Intl.DateTimeFormat().resolvedOptions();\n  return formatDate(d, {});\n}\n";
+    const after = before.replace("formatDate(d, {})", "formatDate(d, { timeZone })");
+    expect(examine("src/a.js", before, after)[0]?.outcome).toMatchObject({ status: "rejected", reason: "timezone_is_constant" });
+  });
+
+  it("rejects a module-level constant time zone passed through an object property", () => {
+    for (const before of ['const TZ = "UTC";\nexport function f(d) {\n  return formatDate(d, {});\n}\n', 'export const TZ = "UTC";\nexport function f(d) {\n  return formatDate(d, {});\n}\n']) {
+      const after = before.replace("formatDate(d, {})", "formatDate(d, { timeZone: TZ })");
+      expect(examine("src/a.ts", before, after)[0]?.outcome, before).toMatchObject({ status: "rejected", reason: "timezone_is_constant" });
+    }
+  });
+
+  it("accepts a plain name from a parameter, a property read or a declaration with no initializer", () => {
+    const sources = [
+      "function f(d, timezone) {\n  return formatDate(d);\n}\n",
+      "function f(d, user) {\n  const timezone = user.timezone;\n  return formatDate(d);\n}\n",
+      "function f(d) {\n  let timezone;\n  timezone = pick();\n  return formatDate(d);\n}\n",
+      'const timezone = "UTC";\nfunction f(d, timezone) {\n  return formatDate(d);\n}\n',
+      "export const timezone = pick();\nexport function f(d) {\n  return formatDate(d);\n}\n",
+    ];
+    for (const before of sources) {
+      const after = before.replace("formatDate(d)", "formatDate(d, timezone)");
+      expect(examine("src/a.js", before, after)[0]?.outcome, before).toMatchObject({ status: "confirmed", timezone: "timezone" });
+    }
+  });
+
+  it("accepts a time zone from an ambient module or global declaration", () => {
+    for (const declaration of ["declare const timezone: string;", "declare global {\n  const timezone: string;\n}"]) {
+      const before = `${declaration}\nexport function f(d: Date) {\n  return formatDate(d);\n}\n`;
+      const after = before.replace("formatDate(d)", "formatDate(d, timezone)");
+      expect(examine("src/a.ts", before, after)[0]?.outcome, declaration).toMatchObject({ status: "confirmed", timezone: "timezone" });
+    }
+  });
+
+  it("does not let a constant declared in a block, case or loop the call is outside of hide the binding it reads", () => {
+    const sources = [
+      'const timezone = pick();\nfunction f(d, x) {\n  if (x) {\n    const timezone = "UTC";\n    log(timezone);\n  }\n  return formatDate(d);\n}\n',
+      'const timezone = pick();\nfunction f(d, k) {\n  switch (k) {\n    case 1:\n      const timezone = "UTC";\n      log(timezone);\n  }\n  return formatDate(d);\n}\n',
+      "const timezone = pick();\nfunction f(d) {\n  for (let timezone = 0; timezone < 1; timezone++) {}\n  return formatDate(d);\n}\n",
+    ];
+    for (const before of sources) {
+      const after = before.replace("formatDate(d)", "formatDate(d, timezone)");
+      expect(examine("src/a.js", before, after)[0]?.outcome, before).toMatchObject({ status: "confirmed", timezone: "timezone" });
+    }
+  });
+
   it("rejects a time zone with no binding in scope (timezone_unbound)", () => {
     const before = "function f(d) {\n  return formatDate(d);\n}\n";
     const after = "function f(d) {\n  return formatDate(d, timezone);\n}\n";
