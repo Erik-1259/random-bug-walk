@@ -178,6 +178,34 @@ importers:
         specifier: 8.23.1
         version: 8.23.1
 
+  packages/umami-driver:
+    dependencies:
+      '@rbw/schema':
+        specifier: workspace:*
+        version: link:../schema
+      pg:
+        specifier: 8.23.1
+        version: 8.23.1
+    devDependencies:
+      '@rbw/admission':
+        specifier: workspace:*
+        version: link:../admission
+      '@rbw/umami-fixture':
+        specifier: workspace:*
+        version: link:../umami-fixture
+      '@types/node':
+        specifier: 24.19.1
+        version: 24.19.1
+      '@types/pg':
+        specifier: 8.23.1
+        version: 8.23.1
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
+      vitest:
+        specifier: 5.0.3
+        version: 5.0.3(@types/node@24.19.1)(vite@8.3.2(@types/node@24.19.1)(yaml@2.9.1))
+
   packages/umami-fixture:
     dependencies:
       '@playwright/test':
