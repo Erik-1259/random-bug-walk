@@ -30,6 +30,8 @@ export interface FakeSandboxOptions {
   create?: "ok" | "lost" | "refused";
   /** The copy command's exit status; null means it never exits. */
   copyExit?: number | null;
+  /** The copy command's runCommand rejects with this message, as the SDK does for a 4xx. */
+  copyThrows?: string;
   collected?: FakeCollected | null;
   /** The pack command's exit status (3 is the in-sandbox size refusal). */
   packExit?: number;
@@ -66,6 +68,7 @@ class FakeInstance implements SandboxInstance {
     this.sdk.calls.push({ op: "runCommand", name: this.name, params });
     const options = this.sdk.options;
     if (params.cmd === "/sbin/tini") {
+      if (options.copyThrows !== undefined) throw new Error(options.copyThrows);
       const exit = options.copyExit === undefined ? (options.collected?.runExit ?? 0) : options.copyExit;
       if (exit === null) {
         const never = deferred<{ exitCode: number }>();

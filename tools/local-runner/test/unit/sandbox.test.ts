@@ -69,6 +69,16 @@ describe("sandbox copy: create", () => {
     expect(result.sandbox.calls.mutating).toBe(4);
   });
 
+  it("runs the copy command without sudo, and records the provider's error code when the command is refused", async () => {
+    const { sdk, result } = await run({ copyThrows: "Status code 400 is not ok: [invalid_argument] executable file not found in $PATH: sudo" });
+    const command = sdk.calls.find((call) => call.op === "runCommand");
+    expect(command).toBeDefined();
+    expect(JSON.stringify(command)).not.toContain("sudo");
+    expect(result).toMatchObject({ status: "failed", reason: "sandbox_run_failed", records_dir: null });
+    expect(result.sandbox.error_code).toBe("invalid_argument");
+    expect(result.sandbox.stop_confirmed).toBe(true);
+  });
+
   it("fails the copy when the create is refused and no sandbox holds the name, and stops nothing", async () => {
     const { sdk, result } = await run({ create: "refused" });
     expect(sdk.ops()).toEqual(["create", "get"]);
@@ -142,10 +152,9 @@ describe("sandbox copy: placement and commands", () => {
       args: ["-s", "--", "/bin/sh", "-c", COPY_SCRIPT, "rbw-copy", "trial", "planted-02"],
       cwd: "/workspace/app",
       env: { PATH: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", HOME: "/root" },
-      sudo: true,
       detached: true,
     });
-    expect(commands[1]).toEqual({ cmd: "/bin/sh", args: ["-c", PACK_SCRIPT], sudo: true, detached: true });
+    expect(commands[1]).toEqual({ cmd: "/bin/sh", args: ["-c", PACK_SCRIPT], detached: true });
     expect(PACK_SCRIPT).toContain(String(COLLECT_LIMIT_BYTES));
     expect(sdk.calls.find((call) => call.op === "readFile")).toEqual({ op: "readFile", name: NAME, path: COLLECT_ARCHIVE });
   });

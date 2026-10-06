@@ -36,7 +36,6 @@ export interface SandboxCommandParams {
   args: string[];
   cwd?: string;
   env?: Record<string, string>;
-  sudo: true;
   detached: true;
 }
 
@@ -103,6 +102,8 @@ export interface SandboxReport {
   calls: { mutating: number; artifact_reads: number; stops: number; status_reads: number };
   limits: typeof SANDBOX_CALL_LIMITS;
   within_limits: boolean;
+  /** The provider's error code when a call failed, or null. */
+  error_code: string | null;
 }
 
 export type SandboxCopyResult = CopyResult & { sandbox: SandboxReport };
@@ -119,10 +120,13 @@ export interface SandboxDeps {
 /** A step that failed; the copy is recorded `failed` with this reason. */
 class SandboxFailure extends Error {
   readonly reason: string;
+  /** The provider's bracketed error code, such as `invalid_argument`; never the message text. */
+  readonly code: string | null;
 
-  constructor(reason: string) {
+  constructor(reason: string, code: string | null = null) {
     super(reason);
     this.reason = reason;
+    this.code = code;
   }
 }
 
@@ -149,10 +153,16 @@ async function until<T>(clock: Clock, deadline: number, run: (signal: AbortSigna
   return outcome;
 }
 
+/** The provider's bracketed error code (`[invalid_argument]`), which carries no secret, or null. */
+function providerCode(error: unknown): string | null {
+  const message = error instanceof Error ? error.message : "";
+  return /\[([a-z_]{1,64})\]/.exec(message)?.[1] ?? null;
+}
+
 function need<T>(outcome: Bounded<T>, reason: string): T {
   if (outcome.kind === "done") return outcome.value;
   if (outcome.kind === "limit") throw new SandboxTimedOut();
-  throw new SandboxFailure(reason);
+  throw new SandboxFailure(reason, providerCode(outcome.error));
 }
 
 class Budget {
@@ -179,7 +189,6 @@ export function sandboxCopyCommand(plan: Pick<CopyPlan, "mode" | "trial_id">): S
     args: ["-s", "--", "/bin/sh", "-c", COPY_SCRIPT, "rbw-copy", plan.mode, plan.trial_id],
     cwd: APP_DIR,
     env: COPY_ENV,
-    sudo: true,
     detached: true,
   };
 }
@@ -310,7 +319,7 @@ type Collected = { kind: "dir"; dir: string } | { kind: "none" } | { kind: "over
 async function collect(r: Run, sandbox: SandboxInstance): Promise<Collected> {
   const { clock } = r.deps;
   r.budget.take("mutating");
-  const pack = need(await until(clock, r.deadline, () => sandbox.runCommand({ cmd: "/bin/sh", args: ["-c", PACK_SCRIPT], sudo: true, detached: true })), "sandbox_collect_failed");
+  const pack = need(await until(clock, r.deadline, () => sandbox.runCommand({ cmd: "/bin/sh", args: ["-c", PACK_SCRIPT], detached: true })), "sandbox_collect_failed");
   const packed = need(await until(clock, r.deadline, (signal) => pack.wait({ signal })), "sandbox_collect_failed");
   if (packed.exitCode === PACK_OVER_LIMIT) return { kind: "over_limit" };
   if (packed.exitCode !== 0) return { kind: "none" };
@@ -367,6 +376,7 @@ export async function runSandboxCopy(plan: CopyPlan, deps: SandboxDeps): Promise
     calls: budget.calls,
     limits: SANDBOX_CALL_LIMITS,
     within_limits: true,
+    error_code: null,
   };
   const result: SandboxCopyResult = {
     job: plan.job,
@@ -433,6 +443,7 @@ export async function runSandboxCopy(plan: CopyPlan, deps: SandboxDeps): Promise
     } else if (error instanceof SandboxFailure) {
       result.status = "failed";
       result.reason = error.reason;
+      report.error_code = error.code;
     } else {
       throw error;
     }
