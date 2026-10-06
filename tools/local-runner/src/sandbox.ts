@@ -1,7 +1,8 @@
 // One copy on Vercel Sandbox: one microVM created from the kit image in Vercel Container Registry,
 // with no persistence, no network and the copy's outer limit as its timeout. The code state's file
 // and the job are written into it as data; the same copy script as the Docker backend's runs the
-// driver as root under the image's tini; the runner directory comes back as one archive; and the
+// driver as root under the image's tini, at most once per sandbox; the copy is judged from its
+// completion marker and exit files; the runner directory comes back as one archive; and the
 // sandbox is stopped and its stop confirmed by status. The SDK is injected, so tests use a fake.
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join, posix } from "node:path";
@@ -72,6 +73,38 @@ export const STATUS_CHECKS = 5;
 export const STATUS_INTERVAL_MS = 2000;
 /** The environment a Docker container of the image runs with; the sandbox does not apply the image's. */
 export const COPY_ENV = { PATH: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", HOME: "/root" };
+
+export const COPY_LOCK = "/var/lib/rbw/copy.lock";
+/** The copy script's exit status, written by the instance that ran it once it has finished. */
+export const COPY_DONE = "/var/lib/rbw/copy.done";
+/** The first wait for a missing marker; each later wait doubles, so the reads end at the outer limit well inside the read budget. */
+export const MARKER_FIRST_INTERVAL_MS = 1000;
+const MARKER_LIMIT_BYTES = 64;
+
+/**
+ * The copy script, run at most once per sandbox. The SDK retries a command whose response was
+ * lost, which can start this script a second time; `mkdir` of the lock lets only the first
+ * instance run the copy, and any other waits for its marker and exits with the status it records.
+ * Only the shell, `mkdir` and `sleep` are used, which the kit's BusyBox has.
+ */
+export const SANDBOX_COPY_SCRIPT = [
+  "set -u",
+  `lock=${COPY_LOCK}`,
+  `done=${COPY_DONE}`,
+  'mkdir -p "${lock%/*}" || exit 90',
+  'if ! mkdir "$lock" 2> /dev/null; then',
+  '  [ -d "$lock" ] || exit 90',
+  '  while [ ! -s "$done" ]; do sleep 1; done',
+  '  read -r status < "$done"',
+  '  exit "$status"',
+  "fi",
+  "(",
+  COPY_SCRIPT,
+  ")",
+  "status=$?",
+  'echo "$status" > "$done"',
+  'exit "$status"',
+].join("\n");
 
 export const COLLECT_ARCHIVE = "/var/lib/rbw/collect.tar";
 /** The driver's 64 MiB artifact limit plus room for the exit files, the driver's output and the frozen manifest. */
@@ -182,11 +215,11 @@ export function sandboxCreateParams(plan: Pick<CopyPlan, "container">, image: st
   return { image, name: plan.container, persistent: false, networkPolicy: "deny-all", resources: { vcpus: SANDBOX_VCPUS }, timeout: COPY_OUTER_LIMIT_MS, tags: { attempt } };
 }
 
-/** The copy script, as root under the image's tini as a child subreaper: there is no init to reap the kit's launchers. */
+/** The single-run copy script, as root under the image's tini as a child subreaper: there is no init to reap the kit's launchers. */
 export function sandboxCopyCommand(plan: Pick<CopyPlan, "mode" | "trial_id">): SandboxCommandParams {
   return {
     cmd: "/sbin/tini",
-    args: ["-s", "--", "/bin/sh", "-c", COPY_SCRIPT, "rbw-copy", plan.mode, plan.trial_id],
+    args: ["-s", "--", "/bin/sh", "-c", SANDBOX_COPY_SCRIPT, "rbw-copy", plan.mode, plan.trial_id],
     cwd: APP_DIR,
     env: COPY_ENV,
     detached: true,
@@ -242,12 +275,34 @@ async function place(r: Run, sandbox: SandboxInstance): Promise<void> {
   need(await until(r.deps.clock, r.deadline, (signal) => sandbox.writeFiles(files, { signal })), "sandbox_place_failed");
 }
 
-async function runDriver(r: Run, sandbox: SandboxInstance): Promise<{ exit: number | null; timedOut: boolean }> {
+/** The status in the completion marker, or null while it is missing or not yet a whole status. */
+async function readMarker(r: Run, sandbox: SandboxInstance): Promise<number | null> {
+  const { clock } = r.deps;
+  r.budget.take("artifact_reads");
+  const stream = need(await until(clock, r.deadline, (signal) => sandbox.readFile({ path: COPY_DONE }, { signal })), "sandbox_marker_failed");
+  if (stream === null) return null;
+  const bytes = need(await until(clock, r.deadline, (signal) => readCapped(stream, MARKER_LIMIT_BYTES, signal)), "sandbox_marker_failed");
+  const status = bytes === null ? undefined : /^(\d{1,3})\n$/.exec(bytes.toString("utf8"))?.[1];
+  return status === undefined ? null : Number(status);
+}
+
+/**
+ * Runs the copy script and returns the status its completion marker records. The handle may be a
+ * second launch's, so its own exit status is not used, and a marker still missing when it returns
+ * is polled for until the outer limit.
+ */
+async function runDriver(r: Run, sandbox: SandboxInstance): Promise<number> {
+  const { clock } = r.deps;
   r.budget.take("mutating");
-  const command = need(await until(r.deps.clock, r.deadline, () => sandbox.runCommand(sandboxCopyCommand(r.plan))), "sandbox_run_failed");
-  const waited = await until(r.deps.clock, r.deadline, (signal) => command.wait({ signal }));
-  if (waited.kind === "limit") return { exit: null, timedOut: true };
-  return { exit: need(waited, "sandbox_wait_failed").exitCode, timedOut: false };
+  const command = need(await until(clock, r.deadline, () => sandbox.runCommand(sandboxCopyCommand(r.plan))), "sandbox_run_failed");
+  need(await until(clock, r.deadline, (signal) => command.wait({ signal })), "sandbox_wait_failed");
+  for (let interval = MARKER_FIRST_INTERVAL_MS; ; interval *= 2) {
+    const status = await readMarker(r, sandbox);
+    if (status !== null) return status;
+    const left = r.deadline - clock.now();
+    if (left <= 0) throw new SandboxTimedOut();
+    await clock.sleep(Math.min(interval, left));
+  }
 }
 
 async function readCapped(stream: NodeJS.ReadableStream, limit: number, signal: AbortSignal): Promise<Buffer | null> {
@@ -414,9 +469,7 @@ export async function runSandboxCopy(plan: CopyPlan, deps: SandboxDeps): Promise
     if (sandbox.image !== undefined && reported !== digest) throw new SandboxFailure("sandbox_image_mismatch");
     const created = sandbox;
     await timed("place", () => place(r, created));
-    const ran = await timed("run", () => runDriver(r, created));
-    result.container_exit = ran.exit;
-    if (ran.timedOut) throw new SandboxTimedOut();
+    result.container_exit = await timed("run", () => runDriver(r, created));
     const collected = await timed("collect", () => collect(r, created));
     let outcome: Interpreted;
     if (collected.kind === "over_limit") outcome = { status: "failed", reason: "collected_over_limit", records: false };

@@ -1,12 +1,24 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { COPY_OUTER_LIMIT_MS, COPY_SCRIPT, KILL_GRACE_MS } from "../../src/copy.ts";
 import type { AuditResult, CopyPlan } from "../../src/copy.ts";
 import { ARTIFACT_LIMIT_BYTES } from "../../src/records.ts";
-import { COLLECT_ARCHIVE, COLLECT_LIMIT_BYTES, PACK_SCRIPT, SANDBOX_CALL_LIMITS, STATUS_CHECKS, STATUS_INTERVAL_MS, runSandboxCopy } from "../../src/sandbox.ts";
+import {
+  COLLECT_ARCHIVE,
+  COLLECT_LIMIT_BYTES,
+  COPY_DONE,
+  COPY_LOCK,
+  MARKER_FIRST_INTERVAL_MS,
+  PACK_SCRIPT,
+  SANDBOX_CALL_LIMITS,
+  SANDBOX_COPY_SCRIPT,
+  STATUS_CHECKS,
+  STATUS_INTERVAL_MS,
+  runSandboxCopy,
+} from "../../src/sandbox.ts";
 import { FakeClock } from "../support/fakes.ts";
-import { FakeSandboxSdk } from "../support/fake-sandbox.ts";
+import { FakeSandboxSdk, ShellKit } from "../support/fake-sandbox.ts";
 import type { FakeSandboxOptions } from "../support/fake-sandbox.ts";
 import { PLANTED, TARGET, sha256, tempDir } from "../support/synthetic.ts";
 
@@ -139,24 +151,30 @@ describe("sandbox copy: placement and commands", () => {
     const cleanFiles = clean.sdk.calls.find((call) => call.op === "writeFiles");
     expect(cleanFiles?.op === "writeFiles" ? cleanFiles.files.map((file) => file.path) : []).toEqual(["/var/lib/rbw/job/expected/trials.json", "/var/lib/rbw/job/request.json"]);
     const freeze = await run({ collected: { extra: [{ name: "./original-suite.json", content: "{}" }] } }, { placement: null, state: "clean", mode: "freeze", job_dir: null });
-    expect(freeze.sdk.ops()).toEqual(["create", "runCommand", "runCommand", "readFile", "stop", "get"]);
+    expect(freeze.sdk.ops()).toEqual(["create", "runCommand", "readFile", "runCommand", "readFile", "stop", "get"]);
     expect(freeze.result.status).toBe("complete");
   });
 
-  it("runs the copy script as root under tini as a subreaper, then packs and reads the record set, then stops", async () => {
+  it("runs the single-run copy script as root under tini as a subreaper, reads its completion marker, then packs and reads the record set, then stops", async () => {
     const { sdk } = await run();
-    expect(sdk.ops()).toEqual(["create", "writeFiles", "runCommand", "runCommand", "readFile", "stop", "get"]);
+    expect(sdk.ops()).toEqual(["create", "writeFiles", "runCommand", "readFile", "runCommand", "readFile", "stop", "get"]);
     const commands = sdk.calls.flatMap((call) => (call.op === "runCommand" ? [call.params] : []));
     expect(commands[0]).toEqual({
       cmd: "/sbin/tini",
-      args: ["-s", "--", "/bin/sh", "-c", COPY_SCRIPT, "rbw-copy", "trial", "planted-02"],
+      args: ["-s", "--", "/bin/sh", "-c", SANDBOX_COPY_SCRIPT, "rbw-copy", "trial", "planted-02"],
       cwd: "/workspace/app",
       env: { PATH: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", HOME: "/root" },
       detached: true,
     });
     expect(commands[1]).toEqual({ cmd: "/bin/sh", args: ["-c", PACK_SCRIPT], detached: true });
     expect(PACK_SCRIPT).toContain(String(COLLECT_LIMIT_BYTES));
-    expect(sdk.calls.find((call) => call.op === "readFile")).toEqual({ op: "readFile", name: NAME, path: COLLECT_ARCHIVE });
+    expect(sdk.calls.filter((call) => call.op === "readFile")).toEqual([
+      { op: "readFile", name: NAME, path: COPY_DONE },
+      { op: "readFile", name: NAME, path: COLLECT_ARCHIVE },
+    ]);
+    expect(SANDBOX_COPY_SCRIPT).toContain(`mkdir "$lock"`);
+    expect(SANDBOX_COPY_SCRIPT).toContain(`lock=${COPY_LOCK}`);
+    expect(SANDBOX_COPY_SCRIPT).toContain(COPY_SCRIPT);
   });
 });
 
@@ -186,8 +204,8 @@ describe("sandbox copy: driver exit codes", () => {
 
   it("records nothing collected when the runner directory is missing", async () => {
     const { sdk, result } = await run({ collected: null, copyExit: 90 });
-    expect(sdk.ops()).toEqual(["create", "writeFiles", "runCommand", "runCommand", "stop", "get"]);
-    expect(result).toMatchObject({ status: "failed", reason: "nothing_collected", collected_dir: null });
+    expect(sdk.ops()).toEqual(["create", "writeFiles", "runCommand", "readFile", "runCommand", "stop", "get"]);
+    expect(result).toMatchObject({ status: "failed", reason: "nothing_collected", collected_dir: null, container_exit: 90 });
   });
 });
 
@@ -205,7 +223,7 @@ describe("sandbox copy: limits", () => {
 
   it("refuses a record set the pack command finds over the limit, without reading it", async () => {
     const { sdk, result } = await run({ packExit: 3 });
-    expect(sdk.ops()).not.toContain("readFile");
+    expect(sdk.calls.some((call) => call.op === "readFile" && call.path === COLLECT_ARCHIVE)).toBe(false);
     expect(result).toMatchObject({ status: "failed", reason: "collected_over_limit", records_dir: null, collected_dir: null });
   });
 
@@ -238,13 +256,107 @@ describe("sandbox copy: limits", () => {
 
   it("keeps every copy within spec §9.4's call counts and reports them", async () => {
     expect(SANDBOX_CALL_LIMITS).toEqual({ mutating: 8, artifact_reads: 12, stops: 1 });
-    const scenarios: FakeSandboxOptions[] = [{}, { create: "lost" }, { copyExit: null }, { packExit: 3 }, { collected: { runExit: 3 } }, { afterStop: ["stopping"] }];
+    const scenarios: FakeSandboxOptions[] = [
+      {},
+      { create: "lost" },
+      { copyExit: null },
+      { packExit: 3 },
+      { collected: { runExit: 3 } },
+      { afterStop: ["stopping"] },
+      { markerAfter: 5 },
+      { markerAfter: null },
+    ];
     for (const options of scenarios) {
       const { result } = await run(options);
       withinLimits(result.sandbox.calls);
       expect(result.sandbox.within_limits).toBe(true);
     }
     const { result } = await run();
-    expect(result.sandbox.calls).toEqual({ mutating: 4, artifact_reads: 1, stops: 1, status_reads: 1 });
+    expect(result.sandbox.calls).toEqual({ mutating: 4, artifact_reads: 2, stops: 1, status_reads: 1 });
+  });
+});
+
+describe("sandbox copy: completion marker", () => {
+  it("takes the copy's exit status from the completion marker, not from the handle it waited on", async () => {
+    const { result } = await run({ copyExit: 0, markerExit: 3, collected: { runExit: 3 } });
+    expect(result).toMatchObject({ status: "incomplete", reason: "driver_internal_error", driver_exit: 3, container_exit: 3 });
+  });
+
+  it("keeps polling for a marker that is missing when the handle returns, and collects only once it appears", async () => {
+    const clock = new FakeClock();
+    const { sdk, result } = await run({ markerAfter: 3 }, {}, clock);
+    expect(sdk.ops()).toEqual(["create", "writeFiles", "runCommand", "readFile", "readFile", "readFile", "readFile", "runCommand", "readFile", "stop", "get"]);
+    expect(clock.sleeps.slice(0, 3)).toEqual([MARKER_FIRST_INTERVAL_MS, 2 * MARKER_FIRST_INTERVAL_MS, 4 * MARKER_FIRST_INTERVAL_MS]);
+    expect(result).toMatchObject({ status: "complete", container_exit: 0 });
+    expect(result.sandbox.calls.artifact_reads).toBe(5);
+  });
+
+  it("records a timeout and reads nothing back when the marker never appears before the outer limit", async () => {
+    const clock = new FakeClock();
+    const started = clock.now();
+    const { sdk, result } = await run({ markerAfter: null }, {}, clock);
+    expect(sdk.calls.filter((call) => call.op === "runCommand")).toHaveLength(1);
+    expect(sdk.calls.some((call) => call.op === "readFile" && call.path === COLLECT_ARCHIVE)).toBe(false);
+    expect(result).toMatchObject({ status: "incomplete", reason: "timeout", timed_out: true, records_dir: null, collected_dir: null });
+    expect(result.sandbox.stop_confirmed).toBe(true);
+    expect(result.sandbox.calls.artifact_reads).toBeLessThan(SANDBOX_CALL_LIMITS.artifact_reads);
+    expect(clock.now() - started).toBeLessThanOrEqual(COPY_OUTER_LIMIT_MS);
+  });
+});
+
+function listed(dir: string | null): string[] {
+  return dir === null ? [] : readdirSync(dir, { recursive: true, encoding: "utf8" }).sort();
+}
+
+async function realTime(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Real processes answer later than a fake sleep fires, so the clock moves only when released. */
+function shellRun(kit: ShellKit) {
+  return run({ shell: kit }, {}, new FakeClock({ manual: true }));
+}
+
+describe("sandbox copy: the copy script runs once per sandbox", () => {
+  it("imports the same result from one launch and from a retried launch, with one driver run, whichever handle the runner holds", async () => {
+    const single = new ShellKit({ runExit: 3 });
+    const one = await shellRun(single);
+    expect(single.driverCalls()).toEqual(["freeze", "run"]);
+    expect(one.result).toMatchObject({ status: "incomplete", reason: "driver_internal_error", freeze_exit: 0, driver_exit: 3, container_exit: 3 });
+    expect(existsSync(join(one.result.records_dir ?? "", "results", "planted-02", "trial-result.json"))).toBe(true);
+    for (const handle of ["first", "last"] as const) {
+      const kit = new ShellKit({ runExit: 3, launches: 2, handle });
+      const twice = await shellRun(kit);
+      expect(kit.runs).toHaveLength(3);
+      const copies = kit.runs.slice(0, 2);
+      expect(await Promise.all(copies.map((copy) => copy.exit))).toEqual([3, 3]);
+      expect(kit.driverCalls()).toEqual(["freeze", "run"]);
+      const pick = (result: typeof one.result) => ({ status: result.status, reason: result.reason, freeze_exit: result.freeze_exit, driver_exit: result.driver_exit, container_exit: result.container_exit });
+      expect(pick(twice.result)).toEqual(pick(one.result));
+      expect(listed(twice.result.collected_dir)).toEqual(listed(one.result.collected_dir));
+    }
+  });
+
+  it("makes a second instance that starts mid-run wait for the first, run nothing, and exit with the first's status", async () => {
+    const kit = new ShellKit({ runExit: 2, runSeconds: 2 });
+    const first = kit.start(SANDBOX_COPY_SCRIPT, ["rbw-copy", "trial", "planted-02"]);
+    while (!kit.driverCalls().includes("run")) await realTime(20);
+    const second = kit.start(SANDBOX_COPY_SCRIPT, ["rbw-copy", "trial", "planted-02"]);
+    await realTime(500);
+    expect(second.exited()).toBe(false);
+    expect(first.exited()).toBe(false);
+    expect(await first.exit).toBe(2);
+    expect(await second.exit).toBe(2);
+    expect(kit.driverCalls()).toEqual(["freeze", "run"]);
+    expect(readFileSync(kit.local(COPY_DONE), "utf8")).toBe("2\n");
+    expect(readFileSync(kit.local("/var/lib/rbw/results/rbw-runner/run.exit"), "utf8")).toBe("2\n");
+  });
+
+  it("gives a waiting instance the first's status when the freeze fails", async () => {
+    const kit = new ShellKit({ freezeExit: 1, launches: 2 });
+    const { result } = await shellRun(kit);
+    expect(await Promise.all(kit.runs.slice(0, 2).map((copy) => copy.exit))).toEqual([90, 90]);
+    expect(kit.driverCalls()).toEqual(["freeze"]);
+    expect(result).toMatchObject({ status: "failed", reason: "freeze_failed", container_exit: 90, records_dir: null });
   });
 });
