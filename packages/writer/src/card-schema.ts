@@ -89,12 +89,55 @@ export type Card = z.infer<typeof CardSchema>;
 /** Fields that code fills from the caller's confirmation input; the model's values are never kept. */
 export const CODE_OWNED_FIELDS = ["id", "provenance", "shape"] as const;
 
+/** The state the model gives each runtime lever; each names one of the card's three lever lists. */
+export const LEVER_STATES = ["apply", "absent", "unverified"] as const;
+
+const LeverState = z.enum(LEVER_STATES);
+
+// One required key per lever and no others, so structured output enforces "each lever exactly once"
+// while generating, which a refinement across three free lists cannot.
+const leverShape = Object.fromEntries(RUNTIME_LEVERS.map((lever) => [lever, LeverState])) as Record<
+  (typeof RUNTIME_LEVERS)[number],
+  typeof LeverState
+>;
+
+const ModelRuntimeDependenceSchema = z
+  .object({
+    value: z.enum(["yes", "no", "unknown"]),
+    reason: z.string().min(1),
+    levers: z.object(leverShape).strict(),
+  })
+  .strict();
+
 /**
- * What the model's answer is validated against: the full card, except that any value passes in a
- * code-owned field, since code replaces it before the card is validated in full.
+ * The card as the model is asked for it: the full card, except that runtime_dependence carries one
+ * state per lever in place of the three lists, which code derives.
  */
-export const ModelCardSchema = CardSchema.extend({ id: z.unknown(), provenance: z.unknown(), shape: z.unknown() });
+export const ModelRequestCardSchema = CardSchema.extend({ runtime_dependence: ModelRuntimeDependenceSchema });
+
+/**
+ * What the model's answer is validated against: the requested card, except that any value passes in
+ * a code-owned field, since code replaces it before the card is validated in full.
+ */
+export const ModelCardSchema = ModelRequestCardSchema.extend({
+  id: z.unknown(),
+  provenance: z.unknown(),
+  shape: z.unknown(),
+});
 export type ModelCard = z.infer<typeof ModelCardSchema>;
+
+/** The published runtime_dependence: each lever goes in the list its state names, in RUNTIME_LEVERS order. */
+export function deriveRuntimeDependence(dependence: ModelCard["runtime_dependence"]): Card["runtime_dependence"] {
+  const listed = (state: (typeof LEVER_STATES)[number]) =>
+    RUNTIME_LEVERS.filter((lever) => dependence.levers[lever] === state);
+  return {
+    value: dependence.value,
+    reason: dependence.reason,
+    levers_apply: listed("apply"),
+    levers_absent: listed("absent"),
+    levers_unverified: listed("unverified"),
+  };
+}
 
 /**
  * Card field names that read as identifiers rather than ordinary words. The issue identifier scan

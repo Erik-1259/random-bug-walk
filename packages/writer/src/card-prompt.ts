@@ -1,7 +1,7 @@
 // The pattern-card prompt and its input. The card writer reads public source-fix information only,
 // plus the caller's shape confirmation, which also supplies the code-owned card fields.
 import { z } from "zod";
-import { CardSchema, CODE_OWNED_FIELDS } from "./card-schema.ts";
+import { CardSchema, CODE_OWNED_FIELDS, RUNTIME_LEVERS, deriveRuntimeDependence } from "./card-schema.ts";
 import type { Card, ModelCard } from "./card-schema.ts";
 import type { PromptMessages } from "./prompt.ts";
 
@@ -25,13 +25,28 @@ export const CardSourceSchema = z
   .strict();
 export type CardSource = z.infer<typeof CardSourceSchema>;
 
+/** What each runtime lever means, as the prompt states it. */
+const LEVER_MEANINGS: Record<(typeof RUNTIME_LEVERS)[number], string> = {
+  hidden_runtime_state: "the bug depends on state that exists only while the code runs",
+  distance_between_symptom_and_cause: "the symptom shows up far from the code that causes it",
+  plausible_wrong_static_fix: "reading the code alone suggests a fix that looks right but is wrong",
+  path_ambiguity: "several code paths could produce the symptom, and only running it shows which one does",
+  ordering_or_concurrency: "the bug depends on the order or timing of events",
+  magnitude_visible_only_at_runtime: "how wrong the result is shows only when the code runs",
+  external_side_effect_semantics: "the bug depends on how an outside system behaves when it is called",
+};
+
+const LEVER_LINES = RUNTIME_LEVERS.map((lever) => `  - ${lever}: ${LEVER_MEANINGS[lever]}.`).join("\n");
+
 const SYSTEM = `You write a pattern card that describes one fixed bug from public source-fix information.
 You are given the source links, repository, date, licence, a short diff excerpt, the source issue text and a shape confirmation.
 
 Rules:
 - bug_class is exactly one of the listed values.
 - mechanism is one sentence and names no library or framework.
-- runtime_dependence.reason says which of the seven levers apply, which are absent and which are unverified, and each lever appears in exactly one of levers_apply, levers_absent and levers_unverified.
+- runtime_dependence.reason says which of the seven levers apply, which are absent and which are unverified.
+- runtime_dependence.levers gives each of the seven levers one state: apply, absent or unverified (the input does not show whether it applies). The levers:
+${LEVER_LINES}
 - Copy id, provenance and shape from the input; they are checked by code.
 - Do not invent tests, links or APIs that the input does not show.
 Answer with JSON that matches the schema.`;
@@ -50,8 +65,9 @@ export interface CodeOwnedField {
 }
 
 /**
- * Replaces id, provenance and shape with the caller's values, records which ones differed, and
- * validates the completed card against the full card schema.
+ * Replaces id, provenance and shape with the caller's values, records which ones differed, derives
+ * the three lever lists from the model's lever states, and validates the completed card against the
+ * full card schema.
  */
 export function applyCodeOwnedFields(card: ModelCard, source: CardSource): { card: Card; fields: CodeOwnedField[] } {
   const owned: Pick<Card, "id" | "provenance" | "shape"> = {
@@ -72,5 +88,6 @@ export function applyCodeOwnedFields(card: ModelCard, source: CardSource): { car
     field,
     overwritten: JSON.stringify(card[field]) !== JSON.stringify(owned[field]),
   }));
-  return { card: CardSchema.parse({ ...card, ...owned }), fields };
+  const runtime_dependence = deriveRuntimeDependence(card.runtime_dependence);
+  return { card: CardSchema.parse({ ...card, ...owned, runtime_dependence }), fields };
 }
