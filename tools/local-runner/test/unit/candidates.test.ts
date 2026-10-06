@@ -331,14 +331,17 @@ describe("context.json and max-calls", () => {
     expect(ctx.project_policy_sha256).toBe(buildPolicy({ projectId: ctx.project_id, outputRepository: null, publicArtifactBaseUri: null, policyVersion: 1 }).sha256);
   });
 
-  it("gives writer operation IDs equal to the schema's operationId over the same fields", () => {
+  it("gives writer operation IDs equal to the schema's operationId, for the card at ordinal 1 and the issue at ordinal 2", () => {
+    // `record --max-calls 2` writes the card first; ordinals are shared across both writer kinds.
     const ctx = context();
     const { candidate } = writerInput();
-    for (const kind of ["writer.card", "writer.issue"] as const) {
+    const readme = bytes("README.md").toString("utf8");
+    for (const [kind, ordinal] of [["writer.card", 1], ["writer.issue", 2]] as const) {
       const expected = schemaOperationId(
-        providerCallIdentity({ ...ctx, kind, runtime_profile_sha256: runtimeProfileSha256(), call_name: callName(kind, candidate, 1), attempt_ordinal: 1 }),
+        providerCallIdentity({ ...ctx, kind, runtime_profile_sha256: runtimeProfileSha256(), call_name: callName(kind, candidate, ordinal), attempt_ordinal: 1 }),
       ).sha256;
-      expect(writerOperationId({ context: ctx, kind, candidate, callOrdinal: 1, attemptOrdinal: 1 })).toBe(expected);
+      expect(writerOperationId({ context: ctx, kind, candidate, callOrdinal: ordinal, attemptOrdinal: 1 })).toBe(expected);
+      expect(readme).toContain(`\`${expected.slice(0, 8)}…${expected.slice(-7)}\` for \`${kind}:${candidate}:${String(ordinal)}\``);
     }
   });
 

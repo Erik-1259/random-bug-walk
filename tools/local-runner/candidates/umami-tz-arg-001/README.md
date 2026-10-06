@@ -156,7 +156,7 @@ These are reservations against pool `development`. Each call settles from the us
 | `execution_id` | `00000000-0000-4000-8000-000000000173` | **chosen**: a fixed development UUID |
 | `parent_execution_id` | `00000000-0000-4000-8000-000000000172` | **chosen**: the root, as in the writer README's example |
 
-The writer's operation IDs follow from these fields by `operationId` and `providerCallIdentity` of `@rbw/schema`. At this commit they are `46d365de…cccaa` for `writer.card:umami-tz-arg-001:1` and `ca8bb57f…a6e8b59` for `writer.issue:umami-tz-arg-001:1`. They change when the writer profile changes.
+The writer's operation IDs follow from these fields by `operationId` and `providerCallIdentity` of `@rbw/schema`. `record --max-calls 2` writes the card first, and the writer shares ordinals across both kinds, so the card is ordinal 1 and the issue ordinal 2. At this commit they are `46d365de…f8cccaa` for `writer.card:umami-tz-arg-001:1` and `7886668a…23dbbd6` for `writer.issue:umami-tz-arg-001:2`. They change when the writer profile changes.
 
 Pool `development` and slot key `development` are passed on the command line. The pool is seeded by the `@rbw/spend` migrations. The slot key is not, so it must be created once with `createSlotKey`.
 
