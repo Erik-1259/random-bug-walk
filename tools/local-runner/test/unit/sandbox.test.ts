@@ -81,6 +81,13 @@ describe("sandbox copy: create", () => {
     expect(result.sandbox.calls.mutating).toBe(4);
   });
 
+  it("passes the deadline signal to both command starts, so the SDK's request and its retries stop at the outer limit", async () => {
+    const { sdk } = await run();
+    const starts = sdk.calls.flatMap((call) => (call.op === "runCommand" ? [call.params] : []));
+    expect(starts.length).toBeGreaterThanOrEqual(2);
+    for (const params of starts) expect(params.signal).toBeInstanceOf(AbortSignal);
+  });
+
   it("runs the copy command without sudo, and records the provider's error code when the command is refused", async () => {
     const { sdk, result } = await run({ copyThrows: "Status code 400 is not ok: [invalid_argument] executable file not found in $PATH: sudo" });
     const command = sdk.calls.find((call) => call.op === "runCommand");
@@ -165,8 +172,9 @@ describe("sandbox copy: placement and commands", () => {
       cwd: "/workspace/app",
       env: { PATH: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", HOME: "/root" },
       detached: true,
+      signal: commands[0]?.signal,
     });
-    expect(commands[1]).toEqual({ cmd: "/bin/sh", args: ["-c", PACK_SCRIPT], detached: true });
+    expect(commands[1]).toEqual({ cmd: "/bin/sh", args: ["-c", PACK_SCRIPT], detached: true, signal: commands[1]?.signal });
     expect(PACK_SCRIPT).toContain(String(COLLECT_LIMIT_BYTES));
     expect(sdk.calls.filter((call) => call.op === "readFile")).toEqual([
       { op: "readFile", name: NAME, path: COPY_DONE },

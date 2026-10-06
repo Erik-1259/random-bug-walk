@@ -38,6 +38,8 @@ export interface SandboxCommandParams {
   cwd?: string;
   env?: Record<string, string>;
   detached: true;
+  /** Cancels the command-start request, and the SDK's retries of it, at the copy's deadline. */
+  signal?: AbortSignal;
 }
 
 export interface SandboxCommand {
@@ -294,7 +296,7 @@ async function readMarker(r: Run, sandbox: SandboxInstance): Promise<number | nu
 async function runDriver(r: Run, sandbox: SandboxInstance): Promise<number> {
   const { clock } = r.deps;
   r.budget.take("mutating");
-  const command = need(await until(clock, r.deadline, () => sandbox.runCommand(sandboxCopyCommand(r.plan))), "sandbox_run_failed");
+  const command = need(await until(clock, r.deadline, (signal) => sandbox.runCommand({ ...sandboxCopyCommand(r.plan), signal })), "sandbox_run_failed");
   need(await until(clock, r.deadline, (signal) => command.wait({ signal })), "sandbox_wait_failed");
   for (let interval = MARKER_FIRST_INTERVAL_MS; ; interval *= 2) {
     const status = await readMarker(r, sandbox);
@@ -374,7 +376,7 @@ type Collected = { kind: "dir"; dir: string } | { kind: "none" } | { kind: "over
 async function collect(r: Run, sandbox: SandboxInstance): Promise<Collected> {
   const { clock } = r.deps;
   r.budget.take("mutating");
-  const pack = need(await until(clock, r.deadline, () => sandbox.runCommand({ cmd: "/bin/sh", args: ["-c", PACK_SCRIPT], detached: true })), "sandbox_collect_failed");
+  const pack = need(await until(clock, r.deadline, (signal) => sandbox.runCommand({ cmd: "/bin/sh", args: ["-c", PACK_SCRIPT], detached: true, signal })), "sandbox_collect_failed");
   const packed = need(await until(clock, r.deadline, (signal) => pack.wait({ signal })), "sandbox_collect_failed");
   if (packed.exitCode === PACK_OVER_LIMIT) return { kind: "over_limit" };
   if (packed.exitCode !== 0) return { kind: "none" };
