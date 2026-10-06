@@ -1,0 +1,8 @@
+{
+  "root_execution_id": "00000000-0000-4000-8000-000000002003",
+  "kind": "factory",
+  "declared_stages": ["kit_check", "observe", "admission"],
+  "child_execution_ids": ["00000000-0000-4000-8000-000000002004"],
+  "status": "terminal",
+  "outcome": "incomplete"
+}

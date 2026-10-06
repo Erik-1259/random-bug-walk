@@ -1,0 +1,33 @@
+{
+  "name": "@rbw/web",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Results site: the case evidence page and the diagnostic catalog, prerendered from published records",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=24.21 <25"
+  },
+  "scripts": {
+    "build": "NEXT_TELEMETRY_DISABLED=1 next build",
+    "dev": "next dev",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p scripts/tsconfig.json --noEmit",
+    "lint": "eslint . --max-warnings 0",
+    "test": "vitest run",
+    "publish-fixture": "node scripts/publish-fixture.ts"
+  },
+  "dependencies": {
+    "@rbw/admission": "workspace:*",
+    "@rbw/schema": "workspace:*",
+    "next": "16.3.8",
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.1",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "typescript": "6.0.3",
+    "vitest": "5.0.3"
+  }
+}

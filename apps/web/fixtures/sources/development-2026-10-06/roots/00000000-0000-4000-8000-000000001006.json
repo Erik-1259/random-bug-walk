@@ -1,0 +1,8 @@
+{
+  "root_execution_id": "00000000-0000-4000-8000-000000001006",
+  "kind": "factory",
+  "declared_stages": ["observe"],
+  "child_execution_ids": ["00000000-0000-4000-8000-000000001007"],
+  "status": "terminal",
+  "outcome": "completed"
+}
