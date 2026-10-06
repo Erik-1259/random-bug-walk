@@ -33,7 +33,7 @@ At most 6 calls and 12 credits per candidate. The six names are a closed list. A
 
 The caller sequences the calls: source searches, then the extract, then (after the issue text is written and frozen) the phrase checks.
 
-The frozen issue text and its phrases stay out of this public repository until the phrase checks have run. Once the text is public here, the checks can match it (blocking the candidate) or run before it is indexed and wrongly report no public match. They are kept in the private repository, and the private `record` workflow reads them from there.
+The frozen issue text and its phrases never enter this public repository, before or after the phrase checks. Text committed here can be matched by the checks (blocking the candidate) or be searched before it is indexed (wrongly reporting no public match), and a held-out issue must never be public at all. They are kept in the private repository, and the private `record` workflow reads them from there. When a candidate's family allows publication, its issue is published only through the release path, never by committing it here.
 
 The call name is part of the operation identity. A restarted process that runs a used name again gets the existing operation back from the spend database (`replay`) or `operation_conflict`, and makes no request: the result is an `incomplete` record with reason `spend_refused:operation_replay` or `spend_refused:operation_conflict`.
 
