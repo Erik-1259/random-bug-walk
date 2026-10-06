@@ -277,9 +277,9 @@ describe("run-copy", () => {
       { docker, clock: new FakeClock(), sandbox: sdk },
     );
     expect(outcome.refusal).toBeNull();
-    expect(outcome.copy).toMatchObject({ trial_id: "planted-01", status: "complete", placed_sha256: sha256(PLANTED), sandbox: { stop_confirmed: true, calls: { mutating: 4, artifact_reads: 2, stops: 1 } } });
+    expect(outcome.copy).toMatchObject({ trial_id: "planted-01", status: "complete", placed_sha256: sha256(PLANTED), sandbox: { stop_confirmed: true, calls: { mutating: 3, artifact_reads: 2, stops: 1 } } });
     expect(kit.created.filter((name) => !name.endsWith("-export"))).toEqual([]);
-    expect(sdk.ops()).toEqual(["create", "writeFiles", "runCommand", "readFile", "runCommand", "readFile", "stop", "get"]);
+    expect(sdk.ops()).toEqual(["create", "writeFiles", "runCommand", "readFile", "readFile", "stop", "get"]);
     const written = parseCanonical(readFileSync(join(dir, "work", "copy-summary.json"))) as { sandbox?: { name: string } };
     expect(written.sandbox?.name).toMatch(/-observe-planted-01$/);
     expect(outcome.exitCode).toBe(0);

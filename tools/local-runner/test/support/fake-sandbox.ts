@@ -1,10 +1,10 @@
 // A fake of the Vercel Sandbox SDK's surface that the sandbox backend uses. It records every call
 // in order, keeps its sandboxes by name (so a lost create response can be recovered with `get`),
-// and answers the copy command, the pack command and the reads as each test configures. In shell
-// mode it runs the real copy and pack scripts with /bin/sh under a temporary root, with a stub in
-// place of the verifier's Node, so the copy script's own lock and completion marker are exercised.
+// and answers the copy command and the reads as each test configures. In shell mode it runs the
+// real copy script with /bin/sh under a temporary root, with a stub in place of the verifier's Node
+// and a `tar` that logs each call, so the copy script's own lock, pack and completion marker are exercised.
 import { spawn } from "node:child_process";
-import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 import { COPY_DONE } from "../../src/sandbox.ts";
@@ -43,9 +43,9 @@ export interface FakeSandboxOptions {
   markerAfter?: number | null;
   /** The status the completion marker records; by default the copy command's exit status. */
   markerExit?: number;
-  /** Runs the real copy and pack scripts under a temporary root instead of answering from the options above. */
+  /** Runs the real copy script under a temporary root instead of answering from the options above. */
   shell?: ShellKit;
-  /** The pack command's exit status (3 is the in-sandbox size refusal). */
+  /** The pack status the copy script records in its marker (3 is the in-sandbox size refusal). */
   packExit?: number;
   /** Replaces the archive that readFile returns. */
   archive?: Buffer;
@@ -53,10 +53,14 @@ export interface FakeSandboxOptions {
   afterStop?: SandboxStatus[];
   /** The digest-pinned image the platform reports for a created sandbox. */
   reportedImage?: (requested: string) => string | undefined;
+  /** Called on each stop and on each `get`, so a test can move its clock or note the time. */
+  onStop?: () => void;
+  onGet?: () => void;
 }
 
 const STATE_ROOT = "/var/lib/rbw";
 const VERIFIER_NODE = "/opt/rbw/verifier/node/bin/node";
+const SYSTEM_PATH = "/usr/local/bin:/usr/bin:/bin";
 
 export interface ShellKitOptions {
   freezeExit?: number;
@@ -74,13 +78,14 @@ export interface ShellRun {
   exited: () => boolean;
 }
 
-/** A temporary root that stands in for the sandbox's file system, and a stub driver that logs each call. */
+/** A temporary root that stands in for the sandbox's file system, a stub driver and a `tar` that log each call. */
 export class ShellKit {
   readonly root = tempDir("rbw-fake-sandbox-");
   readonly options: ShellKitOptions;
   readonly runs: ShellRun[] = [];
   private readonly stub: string;
   private readonly log: string;
+  private readonly tarLog: string;
 
   constructor(options: ShellKitOptions = {}) {
     this.options = options;
@@ -99,6 +104,10 @@ export class ShellKit {
       ].join("\n"),
     );
     chmodSync(this.stub, 0o755);
+    this.tarLog = join(this.root, "tar.log");
+    mkdirSync(join(this.root, "bin"));
+    writeFileSync(join(this.root, "bin", "tar"), ["#!/bin/sh", `echo tar >> ${this.tarLog}`, `PATH=${SYSTEM_PATH} exec tar "$@"`, ""].join("\n"));
+    chmodSync(join(this.root, "bin", "tar"), 0o755);
   }
 
   /** The script with the sandbox's state paths moved under the root and the verifier's Node replaced by the stub. */
@@ -113,7 +122,7 @@ export class ShellKit {
 
   /** Starts `/bin/sh -c <rewritten script> ...args`. */
   start(script: string, args: readonly string[]): ShellRun {
-    const child = spawn("/bin/sh", ["-c", this.rewrite(script), ...args], { cwd: this.root, stdio: "ignore", env: { PATH: "/usr/local/bin:/usr/bin:/bin" } });
+    const child = spawn("/bin/sh", ["-c", this.rewrite(script), ...args], { cwd: this.root, stdio: "ignore", env: { PATH: `${join(this.root, "bin")}:${SYSTEM_PATH}` } });
     const state = { exited: false };
     const exit = new Promise<number>((resolve, reject) => {
       child.on("error", reject);
@@ -129,8 +138,17 @@ export class ShellKit {
 
   /** The stub driver's calls, in order. */
   driverCalls(): string[] {
-    return existsSync(this.log) ? readFileSync(this.log, "utf8").split("\n").filter((line) => line !== "") : [];
+    return lines(this.log);
   }
+
+  /** How many times the copy script ran `tar`. */
+  tarCalls(): number {
+    return lines(this.tarLog).length;
+  }
+}
+
+function lines(file: string): string[] {
+  return existsSync(file) ? readFileSync(file, "utf8").split("\n").filter((line) => line !== "") : [];
 }
 
 interface Handle {
@@ -143,8 +161,9 @@ class FakeInstance implements SandboxInstance {
   readonly tags: Record<string, string> | undefined;
   status: SandboxStatus;
   archive: Buffer | null = null;
-  /** The copy command's exit status once it has exited, which the completion marker records. */
+  /** The copy command's exit status and pack status once it has exited, which the completion marker records. */
   copyExit: number | null = null;
+  packExit = 0;
   markerReads = 0;
   private readonly sdk: FakeSandboxSdk;
 
@@ -164,35 +183,27 @@ class FakeInstance implements SandboxInstance {
   async runCommand(params: SandboxCommandParams): Promise<Handle> {
     this.sdk.calls.push({ op: "runCommand", name: this.name, params });
     const options = this.sdk.options;
+    if (params.cmd !== "/sbin/tini") throw new Error("synthetic: unexpected command");
     if (options.shell !== undefined) return this.runInShell(options.shell, params);
-    if (params.cmd === "/sbin/tini") {
-      if (options.copyThrows !== undefined) throw new Error(options.copyThrows);
-      const exit = options.copyExit === undefined ? (options.collected?.runExit ?? 0) : options.copyExit;
-      if (exit === null) {
-        const never = deferred<{ exitCode: number }>();
-        return { wait: () => never.promise };
-      }
-      this.copyExit = exit;
-      return { wait: () => Promise.resolve({ exitCode: exit }) };
+    if (options.copyThrows !== undefined) throw new Error(options.copyThrows);
+    const exit = options.copyExit === undefined ? (options.collected?.runExit ?? 0) : options.copyExit;
+    if (exit === null) {
+      const never = deferred<{ exitCode: number }>();
+      return { wait: () => never.promise };
     }
-    const packExit = options.packExit ?? (options.collected === null ? 2 : 0);
-    if (packExit === 0) this.archive = options.archive ?? (await this.sdk.packed());
-    return { wait: () => Promise.resolve({ exitCode: packExit }) };
+    this.packExit = options.packExit ?? (options.collected === null ? 2 : 0);
+    if (this.packExit === 0) this.archive = options.archive ?? (await this.sdk.packed());
+    this.copyExit = exit;
+    return { wait: () => Promise.resolve({ exitCode: exit }) };
   }
 
   private runInShell(kit: ShellKit, params: SandboxCommandParams): Handle {
-    if (params.cmd === "/sbin/tini") {
-      const [shell, flag, script, ...args] = params.args.slice(params.args.indexOf("--") + 1);
-      if (shell !== "/bin/sh" || flag !== "-c" || script === undefined) throw new Error("synthetic: unexpected copy command");
-      const launches = Array.from({ length: kit.options.launches ?? 1 }, () => kit.start(script, args));
-      const handle = kit.options.handle === "first" ? launches[0] : launches.at(-1);
-      if (handle === undefined) throw new Error("synthetic: no launch");
-      return { wait: async () => ({ exitCode: await handle.exit }) };
-    }
-    const [flag, script] = params.args;
-    if (params.cmd !== "/bin/sh" || flag !== "-c" || script === undefined) throw new Error("synthetic: unexpected command");
-    const run = kit.start(script, ["rbw-pack"]);
-    return { wait: async () => ({ exitCode: await run.exit }) };
+    const [shell, flag, script, ...args] = params.args.slice(params.args.indexOf("--") + 1);
+    if (shell !== "/bin/sh" || flag !== "-c" || script === undefined) throw new Error("synthetic: unexpected copy command");
+    const launches = Array.from({ length: kit.options.launches ?? 1 }, () => kit.start(script, args));
+    const handle = kit.options.handle === "first" ? launches[0] : launches.at(-1);
+    if (handle === undefined) throw new Error("synthetic: no launch");
+    return { wait: async () => ({ exitCode: await handle.exit }) };
   }
 
   readFile(file: { path: string }): Promise<NodeJS.ReadableStream | null> {
@@ -211,11 +222,12 @@ class FakeInstance implements SandboxInstance {
     const after = this.sdk.options.markerAfter === undefined ? 0 : this.sdk.options.markerAfter;
     const exit = this.sdk.options.markerExit ?? this.copyExit;
     if (exit === null || after === null || this.markerReads <= after) return null;
-    return Readable.from([Buffer.from(`${String(exit)}\n`)]);
+    return Readable.from([Buffer.from(`${String(exit)} ${String(this.packExit)}\n`)]);
   }
 
   stop(): Promise<unknown> {
     this.sdk.calls.push({ op: "stop", name: this.name });
+    this.sdk.options.onStop?.();
     this.status = "stopping";
     this.sdk.stopped = true;
     return Promise.resolve({});
@@ -254,6 +266,7 @@ export class FakeSandboxSdk implements SandboxSdk {
 
   get(name: string): Promise<SandboxInstance | null> {
     this.calls.push({ op: "get", name });
+    this.options.onGet?.();
     const instance = this.sandboxes.get(name);
     if (instance === undefined) return Promise.resolve(null);
     if (this.stopped) {

@@ -1,8 +1,8 @@
 // One copy on Vercel Sandbox: one microVM created from the kit image in Vercel Container Registry,
 // with no persistence, no network and the copy's outer limit as its timeout. The code state's file
-// and the job are written into it as data; the same copy script as the Docker backend's runs the
-// driver as root under the image's tini, at most once per sandbox; the copy is judged from its
-// completion marker and exit files; the runner directory comes back as one archive; and the
+// and the job are written into it as data; one command runs the Docker backend's copy script as
+// root under the image's tini, at most once per sandbox, and packs the runner directory; the copy
+// is judged from its completion marker and exit files; the archive is read back; and the
 // sandbox is stopped and its stop confirmed by status. The SDK is injected, so tests use a fake.
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join, posix } from "node:path";
@@ -77,51 +77,50 @@ export const STATUS_INTERVAL_MS = 2000;
 export const COPY_ENV = { PATH: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", HOME: "/root" };
 
 export const COPY_LOCK = "/var/lib/rbw/copy.lock";
-/** The copy script's exit status, written by the instance that ran it once it has finished. */
+/** `<copy status> <pack status>`, written by the instance that ran the copy once it has finished and packed. */
 export const COPY_DONE = "/var/lib/rbw/copy.done";
 /** The first wait for a missing marker; each later wait doubles, so the reads end at the outer limit well inside the read budget. */
 export const MARKER_FIRST_INTERVAL_MS = 1000;
 const MARKER_LIMIT_BYTES = 64;
 
+export const COLLECT_ARCHIVE = "/var/lib/rbw/collect.tar";
+/** The driver's 64 MiB artifact limit plus room for the exit files, the driver's output and the frozen manifest. */
+export const COLLECT_LIMIT_BYTES = ARTIFACT_LIMIT_BYTES + 8 * 1024 * 1024;
+const PACK_OVER_LIMIT = 3;
+
 /**
  * The copy script, run at most once per sandbox. The SDK retries a command whose response was
  * lost, which can start this script a second time; `mkdir` of the lock lets only the first
- * instance run the copy, and any other waits for its marker and exits with the status it records.
- * Only the shell, `mkdir` and `sleep` are used, which the kit's BusyBox has.
+ * instance run the copy and pack the runner directory into one archive (refusing one over the
+ * limit before it is read), and any other waits for its marker and exits with the status it records.
+ * The pack status is 0, 2 when there is no runner directory, 1 when `tar` failed, or 3 over the limit.
  */
 export const SANDBOX_COPY_SCRIPT = [
   "set -u",
   `lock=${COPY_LOCK}`,
   `done=${COPY_DONE}`,
+  `archive=${COLLECT_ARCHIVE}`,
   'mkdir -p "${lock%/*}" || exit 90',
   'if ! mkdir "$lock" 2> /dev/null; then',
   '  [ -d "$lock" ] || exit 90',
   '  while [ ! -s "$done" ]; do sleep 1; done',
-  '  read -r status < "$done"',
+  '  read -r status pack < "$done"',
   '  exit "$status"',
   "fi",
   "(",
   COPY_SCRIPT,
   ")",
   "status=$?",
-  'echo "$status" > "$done"',
+  "pack=2",
+  `if [ -d ${RUNNER_DIR} ]; then`,
+  "  pack=1",
+  `  if tar -C ${RUNNER_DIR} -cf "$archive" . && chmod 0644 "$archive"; then`,
+  "    pack=0",
+  `    [ "$(wc -c < "$archive")" -le ${String(COLLECT_LIMIT_BYTES)} ] || pack=${String(PACK_OVER_LIMIT)}`,
+  "  fi",
+  "fi",
+  'echo "$status $pack" > "$done"',
   'exit "$status"',
-].join("\n");
-
-export const COLLECT_ARCHIVE = "/var/lib/rbw/collect.tar";
-/** The driver's 64 MiB artifact limit plus room for the exit files, the driver's output and the frozen manifest. */
-export const COLLECT_LIMIT_BYTES = ARTIFACT_LIMIT_BYTES + 8 * 1024 * 1024;
-const PACK_OVER_LIMIT = 3;
-const PACK_NOTHING = 2;
-
-/** Packs the runner directory into one readable archive, refusing one over the limit before it is read. */
-export const PACK_SCRIPT = [
-  "set -u",
-  `archive=${COLLECT_ARCHIVE}`,
-  `[ -d ${RUNNER_DIR} ] || exit ${String(PACK_NOTHING)}`,
-  `tar -C ${RUNNER_DIR} -cf "$archive" . || exit 1`,
-  `[ "$(wc -c < "$archive")" -le ${String(COLLECT_LIMIT_BYTES)} ] || exit ${String(PACK_OVER_LIMIT)}`,
-  'chmod 0644 "$archive"',
 ].join("\n");
 
 const PINNED = /^[^\s@]+@(sha256:[0-9a-f]{64})$/;
@@ -277,30 +276,35 @@ async function place(r: Run, sandbox: SandboxInstance): Promise<void> {
   need(await until(r.deps.clock, r.deadline, (signal) => sandbox.writeFiles(files, { signal })), "sandbox_place_failed");
 }
 
-/** The status in the completion marker, or null while it is missing or not yet a whole status. */
-async function readMarker(r: Run, sandbox: SandboxInstance): Promise<number | null> {
+interface Marker {
+  status: number;
+  pack: number;
+}
+
+/** The statuses in the completion marker, or null while it is missing or not yet whole. */
+async function readMarker(r: Run, sandbox: SandboxInstance): Promise<Marker | null> {
   const { clock } = r.deps;
   r.budget.take("artifact_reads");
   const stream = need(await until(clock, r.deadline, (signal) => sandbox.readFile({ path: COPY_DONE }, { signal })), "sandbox_marker_failed");
   if (stream === null) return null;
   const bytes = need(await until(clock, r.deadline, (signal) => readCapped(stream, MARKER_LIMIT_BYTES, signal)), "sandbox_marker_failed");
-  const status = bytes === null ? undefined : /^(\d{1,3})\n$/.exec(bytes.toString("utf8"))?.[1];
-  return status === undefined ? null : Number(status);
+  const match = bytes === null ? null : /^(\d{1,3}) (\d)\n$/.exec(bytes.toString("utf8"));
+  return match === null ? null : { status: Number(match[1]), pack: Number(match[2]) };
 }
 
 /**
- * Runs the copy script and returns the status its completion marker records. The handle may be a
+ * Runs the copy script and returns what its completion marker records. The handle may be a
  * second launch's, so its own exit status is not used, and a marker still missing when it returns
  * is polled for until the outer limit.
  */
-async function runDriver(r: Run, sandbox: SandboxInstance): Promise<number> {
+async function runCopy(r: Run, sandbox: SandboxInstance): Promise<Marker> {
   const { clock } = r.deps;
   r.budget.take("mutating");
   const command = need(await until(clock, r.deadline, (signal) => sandbox.runCommand({ ...sandboxCopyCommand(r.plan), signal })), "sandbox_run_failed");
   need(await until(clock, r.deadline, (signal) => command.wait({ signal })), "sandbox_wait_failed");
   for (let interval = MARKER_FIRST_INTERVAL_MS; ; interval *= 2) {
-    const status = await readMarker(r, sandbox);
-    if (status !== null) return status;
+    const marker = await readMarker(r, sandbox);
+    if (marker !== null) return marker;
     const left = r.deadline - clock.now();
     if (left <= 0) throw new SandboxTimedOut();
     await clock.sleep(Math.min(interval, left));
@@ -372,14 +376,11 @@ async function extractTo(bytes: Buffer, dest: string): Promise<void> {
 
 type Collected = { kind: "dir"; dir: string } | { kind: "none" } | { kind: "over_limit" } | { kind: "unreadable" };
 
-/** Packs the runner directory in the sandbox and reads it back as one archive, within the size limit. */
-async function collect(r: Run, sandbox: SandboxInstance): Promise<Collected> {
+/** Reads back the archive the copy script packed, within the size limit. */
+async function collect(r: Run, sandbox: SandboxInstance, pack: number): Promise<Collected> {
   const { clock } = r.deps;
-  r.budget.take("mutating");
-  const pack = need(await until(clock, r.deadline, (signal) => sandbox.runCommand({ cmd: "/bin/sh", args: ["-c", PACK_SCRIPT], detached: true, signal })), "sandbox_collect_failed");
-  const packed = need(await until(clock, r.deadline, (signal) => pack.wait({ signal })), "sandbox_collect_failed");
-  if (packed.exitCode === PACK_OVER_LIMIT) return { kind: "over_limit" };
-  if (packed.exitCode !== 0) return { kind: "none" };
+  if (pack === PACK_OVER_LIMIT) return { kind: "over_limit" };
+  if (pack !== 0) return { kind: "none" };
   r.budget.take("artifact_reads");
   const stream = need(await until(clock, r.deadline, (signal) => sandbox.readFile({ path: COLLECT_ARCHIVE }, { signal })), "sandbox_collect_failed");
   if (stream === null) return { kind: "none" };
@@ -400,8 +401,9 @@ async function stopAndConfirm(r: Run, sandbox: SandboxInstance, hardDeadline: nu
   const { sdk, clock } = r.deps;
   r.budget.take("stops");
   await until(clock, hardDeadline, (signal) => sandbox.stop({ signal }));
-  for (let check = 0; check < STATUS_CHECKS && clock.now() < hardDeadline; check += 1) {
-    if (check > 0) await clock.sleep(STATUS_INTERVAL_MS);
+  for (let check = 0; check < STATUS_CHECKS; check += 1) {
+    if (check > 0) await clock.sleep(Math.max(0, Math.min(STATUS_INTERVAL_MS, hardDeadline - clock.now())));
+    if (clock.now() >= hardDeadline) return;
     r.budget.take("status_reads");
     const got = await until(clock, hardDeadline, (signal) => sdk.get(sandbox.name, { signal }));
     if (got.kind !== "done") continue;
@@ -471,8 +473,9 @@ export async function runSandboxCopy(plan: CopyPlan, deps: SandboxDeps): Promise
     if (sandbox.image !== undefined && reported !== digest) throw new SandboxFailure("sandbox_image_mismatch");
     const created = sandbox;
     await timed("place", () => place(r, created));
-    result.container_exit = await timed("run", () => runDriver(r, created));
-    const collected = await timed("collect", () => collect(r, created));
+    const marker = await timed("run", () => runCopy(r, created));
+    result.container_exit = marker.status;
+    const collected = await timed("collect", () => collect(r, created, marker.pack));
     let outcome: Interpreted;
     if (collected.kind === "over_limit") outcome = { status: "failed", reason: "collected_over_limit", records: false };
     else if (collected.kind === "unreadable") outcome = { status: "failed", reason: "collected_unreadable", records: false };

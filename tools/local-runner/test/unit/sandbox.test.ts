@@ -10,7 +10,6 @@ import {
   COPY_DONE,
   COPY_LOCK,
   MARKER_FIRST_INTERVAL_MS,
-  PACK_SCRIPT,
   SANDBOX_CALL_LIMITS,
   SANDBOX_COPY_SCRIPT,
   STATUS_CHECKS,
@@ -78,14 +77,14 @@ describe("sandbox copy: create", () => {
     expect(sdk.sandboxes.size).toBe(1);
     expect(result.sandbox.recovered_by_name).toBe(true);
     expect(result.status).toBe("complete");
-    expect(result.sandbox.calls.mutating).toBe(4);
+    expect(result.sandbox.calls.mutating).toBe(3);
   });
 
-  it("passes the deadline signal to both command starts, so the SDK's request and its retries stop at the outer limit", async () => {
+  it("passes the deadline signal to the one command start, so the SDK's request and its retries stop at the outer limit", async () => {
     const { sdk } = await run();
     const starts = sdk.calls.flatMap((call) => (call.op === "runCommand" ? [call.params] : []));
-    expect(starts.length).toBeGreaterThanOrEqual(2);
-    for (const params of starts) expect(params.signal).toBeInstanceOf(AbortSignal);
+    expect(starts).toHaveLength(1);
+    expect(starts[0]?.signal).toBeInstanceOf(AbortSignal);
   });
 
   it("runs the copy command without sudo, and records the provider's error code when the command is refused", async () => {
@@ -158,14 +157,15 @@ describe("sandbox copy: placement and commands", () => {
     const cleanFiles = clean.sdk.calls.find((call) => call.op === "writeFiles");
     expect(cleanFiles?.op === "writeFiles" ? cleanFiles.files.map((file) => file.path) : []).toEqual(["/var/lib/rbw/job/expected/trials.json", "/var/lib/rbw/job/request.json"]);
     const freeze = await run({ collected: { extra: [{ name: "./original-suite.json", content: "{}" }] } }, { placement: null, state: "clean", mode: "freeze", job_dir: null });
-    expect(freeze.sdk.ops()).toEqual(["create", "runCommand", "readFile", "runCommand", "readFile", "stop", "get"]);
+    expect(freeze.sdk.ops()).toEqual(["create", "runCommand", "readFile", "readFile", "stop", "get"]);
     expect(freeze.result.status).toBe("complete");
   });
 
-  it("runs the single-run copy script as root under tini as a subreaper, reads its completion marker, then packs and reads the record set, then stops", async () => {
+  it("runs one command, the single-run copy script that also packs the record set, as root under tini as a subreaper, reads its completion marker and the archive, then stops", async () => {
     const { sdk } = await run();
-    expect(sdk.ops()).toEqual(["create", "writeFiles", "runCommand", "readFile", "runCommand", "readFile", "stop", "get"]);
+    expect(sdk.ops()).toEqual(["create", "writeFiles", "runCommand", "readFile", "readFile", "stop", "get"]);
     const commands = sdk.calls.flatMap((call) => (call.op === "runCommand" ? [call.params] : []));
+    expect(commands).toHaveLength(1);
     expect(commands[0]).toEqual({
       cmd: "/sbin/tini",
       args: ["-s", "--", "/bin/sh", "-c", SANDBOX_COPY_SCRIPT, "rbw-copy", "trial", "planted-02"],
@@ -174,8 +174,8 @@ describe("sandbox copy: placement and commands", () => {
       detached: true,
       signal: commands[0]?.signal,
     });
-    expect(commands[1]).toEqual({ cmd: "/bin/sh", args: ["-c", PACK_SCRIPT], detached: true, signal: commands[1]?.signal });
-    expect(PACK_SCRIPT).toContain(String(COLLECT_LIMIT_BYTES));
+    expect(SANDBOX_COPY_SCRIPT).toContain(String(COLLECT_LIMIT_BYTES));
+    expect(SANDBOX_COPY_SCRIPT.indexOf(`> "$done"`)).toBeGreaterThan(SANDBOX_COPY_SCRIPT.indexOf("tar -C"));
     expect(sdk.calls.filter((call) => call.op === "readFile")).toEqual([
       { op: "readFile", name: NAME, path: COPY_DONE },
       { op: "readFile", name: NAME, path: COLLECT_ARCHIVE },
@@ -212,7 +212,7 @@ describe("sandbox copy: driver exit codes", () => {
 
   it("records nothing collected when the runner directory is missing", async () => {
     const { sdk, result } = await run({ collected: null, copyExit: 90 });
-    expect(sdk.ops()).toEqual(["create", "writeFiles", "runCommand", "readFile", "runCommand", "stop", "get"]);
+    expect(sdk.ops()).toEqual(["create", "writeFiles", "runCommand", "readFile", "stop", "get"]);
     expect(result).toMatchObject({ status: "failed", reason: "nothing_collected", collected_dir: null, container_exit: 90 });
   });
 });
@@ -229,7 +229,7 @@ describe("sandbox copy: limits", () => {
     expect(clock.now() - started).toBeLessThanOrEqual(COPY_OUTER_LIMIT_MS);
   });
 
-  it("refuses a record set the pack command finds over the limit, without reading it", async () => {
+  it("refuses a record set the copy script finds over the limit, without reading it", async () => {
     const { sdk, result } = await run({ packExit: 3 });
     expect(sdk.calls.some((call) => call.op === "readFile" && call.path === COLLECT_ARCHIVE)).toBe(false);
     expect(result).toMatchObject({ status: "failed", reason: "collected_over_limit", records_dir: null, collected_dir: null });
@@ -262,6 +262,28 @@ describe("sandbox copy: limits", () => {
     expect(clock.now() - started).toBeLessThanOrEqual(COPY_OUTER_LIMIT_MS);
   });
 
+  it("never sleeps or looks up the status past the hard deadline when the stop leaves less than the status checks need", async () => {
+    const clock = new FakeClock();
+    const hard = clock.now() + COPY_OUTER_LIMIT_MS;
+    const lookups: number[] = [];
+    const { result } = await run(
+      {
+        copyExit: null,
+        afterStop: ["stopping"],
+        onStop: () => {
+          clock.current += 7_000;
+        },
+        onGet: () => lookups.push(clock.now()),
+      },
+      {},
+      clock,
+    );
+    expect(lookups.length).toBeGreaterThan(0);
+    for (const at of lookups) expect(at).toBeLessThan(hard);
+    expect(clock.now()).toBeLessThanOrEqual(hard);
+    expect(result.sandbox).toMatchObject({ stop_confirmed: false, final_status: "stopping" });
+  });
+
   it("keeps every copy within spec §9.4's call counts and reports them", async () => {
     expect(SANDBOX_CALL_LIMITS).toEqual({ mutating: 8, artifact_reads: 12, stops: 1 });
     const scenarios: FakeSandboxOptions[] = [
@@ -280,7 +302,7 @@ describe("sandbox copy: limits", () => {
       expect(result.sandbox.within_limits).toBe(true);
     }
     const { result } = await run();
-    expect(result.sandbox.calls).toEqual({ mutating: 4, artifact_reads: 2, stops: 1, status_reads: 1 });
+    expect(result.sandbox.calls).toEqual({ mutating: 3, artifact_reads: 2, stops: 1, status_reads: 1 });
   });
 });
 
@@ -293,7 +315,7 @@ describe("sandbox copy: completion marker", () => {
   it("keeps polling for a marker that is missing when the handle returns, and collects only once it appears", async () => {
     const clock = new FakeClock();
     const { sdk, result } = await run({ markerAfter: 3 }, {}, clock);
-    expect(sdk.ops()).toEqual(["create", "writeFiles", "runCommand", "readFile", "readFile", "readFile", "readFile", "runCommand", "readFile", "stop", "get"]);
+    expect(sdk.ops()).toEqual(["create", "writeFiles", "runCommand", "readFile", "readFile", "readFile", "readFile", "readFile", "stop", "get"]);
     expect(clock.sleeps.slice(0, 3)).toEqual([MARKER_FIRST_INTERVAL_MS, 2 * MARKER_FIRST_INTERVAL_MS, 4 * MARKER_FIRST_INTERVAL_MS]);
     expect(result).toMatchObject({ status: "complete", container_exit: 0 });
     expect(result.sandbox.calls.artifact_reads).toBe(5);
@@ -326,19 +348,24 @@ function shellRun(kit: ShellKit) {
 }
 
 describe("sandbox copy: the copy script runs once per sandbox", () => {
-  it("imports the same result from one launch and from a retried launch, with one driver run, whichever handle the runner holds", async () => {
+  it("imports the same result from one launch and from a retried launch, with one driver run and one archive, whichever handle the runner holds", async () => {
     const single = new ShellKit({ runExit: 3 });
     const one = await shellRun(single);
     expect(single.driverCalls()).toEqual(["freeze", "run"]);
+    expect(single.tarCalls()).toBe(1);
+    expect(readFileSync(single.local(COPY_DONE), "utf8")).toBe("3 0\n");
+    expect(one.sdk.calls.filter((call) => call.op === "runCommand")).toHaveLength(1);
     expect(one.result).toMatchObject({ status: "incomplete", reason: "driver_internal_error", freeze_exit: 0, driver_exit: 3, container_exit: 3 });
     expect(existsSync(join(one.result.records_dir ?? "", "results", "planted-02", "trial-result.json"))).toBe(true);
     for (const handle of ["first", "last"] as const) {
       const kit = new ShellKit({ runExit: 3, launches: 2, handle });
       const twice = await shellRun(kit);
-      expect(kit.runs).toHaveLength(3);
-      const copies = kit.runs.slice(0, 2);
+      expect(kit.runs).toHaveLength(2);
+      const copies = kit.runs;
       expect(await Promise.all(copies.map((copy) => copy.exit))).toEqual([3, 3]);
       expect(kit.driverCalls()).toEqual(["freeze", "run"]);
+      expect(kit.tarCalls()).toBe(1);
+      expect(twice.sdk.calls.filter((call) => call.op === "readFile" && call.path === COLLECT_ARCHIVE)).toHaveLength(1);
       const pick = (result: typeof one.result) => ({ status: result.status, reason: result.reason, freeze_exit: result.freeze_exit, driver_exit: result.driver_exit, container_exit: result.container_exit });
       expect(pick(twice.result)).toEqual(pick(one.result));
       expect(listed(twice.result.collected_dir)).toEqual(listed(one.result.collected_dir));
@@ -356,7 +383,8 @@ describe("sandbox copy: the copy script runs once per sandbox", () => {
     expect(await first.exit).toBe(2);
     expect(await second.exit).toBe(2);
     expect(kit.driverCalls()).toEqual(["freeze", "run"]);
-    expect(readFileSync(kit.local(COPY_DONE), "utf8")).toBe("2\n");
+    expect(readFileSync(kit.local(COPY_DONE), "utf8")).toBe("2 0\n");
+    expect(kit.tarCalls()).toBe(1);
     expect(readFileSync(kit.local("/var/lib/rbw/results/rbw-runner/run.exit"), "utf8")).toBe("2\n");
   });
 
