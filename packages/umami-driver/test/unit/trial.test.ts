@@ -274,6 +274,12 @@ describe("one trial", () => {
     ]);
   });
 
+  it("passes the stop phase's deadline to the stop, already aborted once the copy's time is used up", async () => {
+    const run = await trial(tempDir(), { stack: { buildMs: 650000 } });
+    expect(run.events.at(-1)).toBe("stop");
+    expect(run.stack.stopSignal?.aborted).toBe(true);
+  });
+
   it("writes the result when stopping the app copy throws, with the stop phase named", async () => {
     const run = await trial(tempDir(), { stack: { stopThrows: true } });
     expect(run.outcome.internal_error).toEqual({ phase: "stop", error_class: "TypeError", code: null });

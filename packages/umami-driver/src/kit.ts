@@ -219,15 +219,19 @@ export class KitStack implements AppStack {
     return failed("startup_failed", "Umami did not answer /api/heartbeat after the reset");
   }
 
-  /** Runs rbw-stop, then confirms that rbw-start's group, which held both launchers, has ended. */
-  async stop(): Promise<StopReport> {
-    const result = await this.runner.run(rootCommand(KIT_SCRIPTS.stop));
+  /**
+   * Runs rbw-stop, then confirms that rbw-start's group, which held both launchers, has ended.
+   * `signal` is the stop phase's deadline: it ends rbw-stop, and once it has fired a group still
+   * alive is killed without the grace, so the stop cannot outlast the phase.
+   */
+  async stop(signal: AbortSignal): Promise<StopReport> {
+    const result = await this.runner.run({ ...rootCommand(KIT_SCRIPTS.stop), signal });
     const logs = [{ name: "stop", result }];
     if (this.starter === null) return { ok: result.code === 0, records: [], logs };
     const pgid = this.starter.pid;
     this.starter = null;
     const record: StopRecord = this.groups.alive(pgid)
-      ? await stopProcessGroup(pgid, { ...DEFAULT_STOP, control: this.groups, timers: this.timers })
+      ? await stopProcessGroup(pgid, { ...DEFAULT_STOP, ...(signal.aborted ? { graceMs: 0 } : {}), control: this.groups, timers: this.timers })
       : { pgid, term_sent: false, kill_sent: false, ended: true, waited_ms: 0 };
     return { ok: result.code === 0 && record.ended, records: [record], logs };
   }

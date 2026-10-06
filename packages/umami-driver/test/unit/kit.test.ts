@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { FixtureDatabase } from "../../src/database.ts";
 import type { ProcView } from "../../src/environment.ts";
 import { KIT, KIT_LOG_FILES, KIT_SCRIPTS, ExternalStack, KitStack, OWNER_DATABASE_URL, heartbeat, launcherExit, verifierPaths } from "../../src/kit.ts";
+import { DEFAULT_STOP } from "../../src/process.ts";
 import type { CommandResult, CommandSpec, GroupControl, LongProcess, ProcessRunner } from "../../src/process.ts";
 import { FakeTimers, commandResult } from "../helpers.ts";
 
@@ -275,7 +276,7 @@ describe("kit stack", () => {
     const control = groups();
     const { kit } = stack(runner, { control });
     await kit.start(new AbortController().signal);
-    const report = await kit.stop();
+    const report = await kit.stop(new AbortController().signal);
     expect(runner.ran.map((spec) => spec.command)).toEqual(["/opt/rbw/bin/rbw-stop"]);
     expect(report.ok).toBe(true);
     expect(report.records).toEqual([{ pgid: 500, term_sent: false, kill_sent: false, ended: true, waited_ms: 0 }]);
@@ -294,10 +295,31 @@ describe("kit stack", () => {
     };
     const { kit } = stack(runner, { control });
     await kit.start(new AbortController().signal);
-    const report = await kit.stop();
+    const report = await kit.stop(new AbortController().signal);
     expect(control.signals).toEqual(["SIGTERM 500", "SIGKILL 500"]);
     expect(report.records[0]).toMatchObject({ pgid: 500, term_sent: true, kill_sent: true, ended: true });
     expect(report.ok).toBe(false);
+  });
+
+  it("stops within the stop phase's deadline: rbw-stop gets its signal, and a late group is killed without the grace", async () => {
+    const runner = new KitRunner();
+    let killed = false;
+    const control = groups(() => !killed);
+    const signal = control.signal.bind(control);
+    control.signal = (pgid, name) => {
+      signal(pgid, name);
+      if (name === "SIGKILL") killed = true;
+    };
+    const { kit, timers } = stack(runner, { control });
+    await kit.start(new AbortController().signal);
+    const deadline = new AbortController();
+    deadline.abort(new Error("stop reached its time limit"));
+    const before = timers.now();
+    const report = await kit.stop(deadline.signal);
+    expect(runner.ran.find((spec) => spec.command === KIT_SCRIPTS.stop)?.signal).toBe(deadline.signal);
+    expect(control.signals).toEqual(["SIGTERM 500", "SIGKILL 500"]);
+    expect(report.records[0]).toMatchObject({ ended: true, kill_sent: true });
+    expect(timers.now() - before).toBeLessThan(DEFAULT_STOP.graceMs);
   });
 
   it("lists the kit's process logs under their names", () => {

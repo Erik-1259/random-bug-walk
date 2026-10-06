@@ -122,7 +122,11 @@ export class FakeStack implements AppStack {
     return Promise.resolve({ reason: null, detail: "", logs: [] });
   }
 
-  stop(): Promise<StopReport> {
+  /** The signal the trial passed to the last stop. */
+  stopSignal: AbortSignal | null = null;
+
+  stop(signal: AbortSignal): Promise<StopReport> {
+    this.stopSignal = signal;
     this.events.push("stop");
     if (this.plan.stopThrows === true) return Promise.reject(new TypeError(`synthetic stop failure at ${SECRET_DETAIL}`));
     this.timers.advance(2000);
@@ -232,6 +236,7 @@ export async function trial(root: string, plan: Plan = {}) {
   return {
     outcome,
     events,
+    stack,
     runner,
     outDir,
     trialId,

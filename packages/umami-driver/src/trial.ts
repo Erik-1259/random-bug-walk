@@ -73,8 +73,8 @@ export interface AppStack {
   verifyIdentity(): Promise<VerifiedIdentity | null>;
   /** Resets the fixture to a clean migrated baseline before a round. */
   resetFixture(repeatIndex: number, signal: AbortSignal): Promise<StepResult>;
-  /** Stops every process the stack started and confirms each has ended. */
-  stop(): Promise<StopReport>;
+  /** Stops every process the stack started and confirms each has ended, within `signal`'s deadline. */
+  stop(signal: AbortSignal): Promise<StopReport>;
   /** Log files the stack's processes write, kept as artifacts up to the stream limit. */
   logFiles(): { name: string; path: string }[];
 }
@@ -490,7 +490,7 @@ export async function runTrial(options: TrialOptions, deps: TrialDeps): Promise<
   const stop = begin("stop", limits.finish_ms);
   let stopped: StopReport = { ok: false, records: [], logs: [] };
   try {
-    stopped = await stack.stop();
+    stopped = await stack.stop(stop.signal);
     endPhase(ended(stop), !stopped.ok, timings, problems, []);
     await storeLogs(store, "stop", stopped.logs);
     for (const log of stack.logFiles()) {
