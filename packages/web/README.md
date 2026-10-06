@@ -69,6 +69,8 @@ These two paths are this app's reading convention. No current code stages the lo
 
 `/runs/<root>/<path>` serves only paths the manifest lists; any other path is not prerendered and gives 404.
 
+The pages and the file route call `loadResults`, which runs `readResults` once per directory per process and keeps the result with an index of the files the route serves. A build therefore reads and hashes each published file once to check it and once more to serve it, however many routes it prerenders. Under `next dev`, changes to the results directory show after a restart.
+
 ## Configuration
 
 `src/config.ts` is the one configuration loader. `RBW_RESULTS_DIR` names the results directory, relative to this directory or absolute. The default is `fixtures/development-2026-10-06`.
@@ -104,6 +106,17 @@ RBW_RESULTS_DIR=fixtures/no-release pnpm --filter @rbw/web build
 
 The build sets `NEXT_TELEMETRY_DISABLED=1`.
 
+## Deploying on Vercel (host steps)
+
+The conductor sets these on the host; this repository holds no Vercel configuration.
+
+- Root Directory: `packages/web`, with source files outside the root directory included in the build, since the app imports the workspace packages `@rbw/schema` and `@rbw/admission`.
+- Framework preset: Next.js. Vercel installs with pnpm from the repository root lockfile.
+- Node.js version: 24.x.
+- `RBW_RESULTS_DIR` is optional; unset, the build uses the development fixture.
+
+A push of a branch other than the production branch then builds a preview deployment.
+
 ## Dependencies
 
 - `next` lists `sharp` as an optional dependency for `next/image`. Its libvips binaries are LGPL, and this app does not use `next/image`, so `pnpm-workspace.yaml` removes it with an override.
@@ -114,6 +127,7 @@ The build sets `NEXT_TELEMETRY_DISABLED=1`.
 - `test/release.test.ts`: both fixtures parse; every refusal above; the development fixture's symptom and responses equal their committed sources.
 - `test/page.test.tsx`: the six cells in order, their text statuses with and without admission records (evidence and decisions from the real importer over the admission package's synthetic record sets), the no-release state, the funnel and the catalog.
 - `test/route.test.ts`: the file route serves exactly the published files, byte for byte, and 404 otherwise.
+- `test/reads.test.ts`: a directory is checked once per process, and prerendering every file route reads each added published file exactly twice, so reads grow linearly with the number of files.
 - `test/build.test.ts`: `next build` succeeds for both fixtures and prerenders the pages and files.
 
 ## What it does not do

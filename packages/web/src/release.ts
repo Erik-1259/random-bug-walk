@@ -9,7 +9,7 @@
 import { createHash } from "node:crypto";
 import type { Dirent } from "node:fs";
 import { lstat, readdir, readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import type { Decision, Evidence } from "@rbw/admission";
 import type { JsonValue, ObservedSymptom, PublicationStatus, PublicRunStatus, RootRunKind, RootRunOutcome, RootRunStatus, RunManifest, RunManifestEntry } from "@rbw/schema";
 import { recordPackages, type RecordPackages } from "./records.ts";
@@ -306,7 +306,7 @@ function chooseCase(runs: Run[]): Run | null {
   return chosen;
 }
 
-/** Reads and checks a results directory. Throws ReleaseError for a malformed one. */
+/** Reads and checks a results directory. Throws ReleaseError for a malformed one. Pages use loadResults. */
 export async function readResults(dir: string): Promise<Results> {
   if (!(await isDirectory(join(dir, "repository")))) throw new ReleaseError("layout", "the results directory has no repository/ directory");
   const reader = new Reader(dir, await recordPackages());
@@ -351,19 +351,53 @@ export async function readResults(dir: string): Promise<Results> {
   return { runs, caseRun: chooseCase(runs), release: null };
 }
 
+/** A checked results directory, with where each file readPublishedFile serves lives on disk. */
+export interface ResultsIndex {
+  results: Results;
+  /** Keyed by `<root>/<path>`. */
+  files: ReadonlyMap<string, { location: string; mediaType: string }>;
+}
+
+async function indexResults(dir: string): Promise<ResultsIndex> {
+  const results = await readResults(dir);
+  const files = new Map<string, { location: string; mediaType: string }>();
+  for (const run of results.runs) {
+    if (run.manifest === null) continue;
+    const root = run.rootExecutionId;
+    const location = join(dir, "repository", "runs", root);
+    files.set(`${root}/${MANIFEST_FILE}`, { location: join(location, MANIFEST_FILE), mediaType: "application/json" });
+    for (const entry of run.manifest.entries) {
+      if (isRepositoryFile(entry) && entry.media_type != null) files.set(`${root}/${entry.path}`, { location: join(location, entry.path), mediaType: entry.media_type });
+    }
+  }
+  return { results, files };
+}
+
+const indexes = new Map<string, Promise<ResultsIndex>>();
+
+/**
+ * The checked index of a results directory, read and checked once per directory per process.
+ * Every page and file of a build shares it, so a build reads each published file a fixed number
+ * of times however many routes it prerenders.
+ */
+export function loadResults(dir: string): Promise<ResultsIndex> {
+  const key = resolve(dir);
+  let index = indexes.get(key);
+  if (index === undefined) {
+    index = indexResults(key);
+    indexes.set(key, index);
+  }
+  return index;
+}
+
 /**
  * A published repository file of a run, or its manifest, for download. Only paths the manifest
  * lists are served; anything else, including a large file kept in the store, gives null.
  */
 export async function readPublishedFile(dir: string, root: string, path: string): Promise<PublishedFile | null> {
-  const results = await readResults(dir);
-  const manifest = results.runs.find((run) => run.rootExecutionId === root)?.manifest ?? null;
-  if (manifest === null) return null;
-  const location = join(dir, "repository", "runs", root);
-  if (path === MANIFEST_FILE) return { bytes: await readFile(join(location, MANIFEST_FILE)), mediaType: "application/json" };
-  const entry = manifest.entries.find((item) => item.path === path && isRepositoryFile(item));
-  if (entry?.media_type == null) return null;
-  return { bytes: await readFile(join(location, entry.path)), mediaType: entry.media_type };
+  const file = (await loadResults(dir)).files.get(`${root}/${path}`);
+  if (file === undefined) return null;
+  return { bytes: await readFile(file.location), mediaType: file.mediaType };
 }
 
 /** Every file readPublishedFile serves, for prerendering. */

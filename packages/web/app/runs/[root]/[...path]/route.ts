@@ -1,7 +1,7 @@
 // A run's published repository files and its manifest, prerendered as static files at the same
 // paths they have in the results repository (runs/<root>/<path>). Only manifest-listed files exist.
 import { loadSiteConfig } from "../../../../src/config.ts";
-import { publishedFiles, readPublishedFile, readResults } from "../../../../src/release.ts";
+import { loadResults, publishedFiles, readPublishedFile } from "../../../../src/release.ts";
 
 export const dynamic = "force-static";
 export const dynamicParams = false;
@@ -12,7 +12,7 @@ interface Params {
 }
 
 export async function generateStaticParams(): Promise<Params[]> {
-  const results = await readResults(loadSiteConfig().resultsDir);
+  const { results } = await loadResults(loadSiteConfig().resultsDir);
   return publishedFiles(results).map((file) => ({ root: file.root, path: file.path.split("/") }));
 }
 

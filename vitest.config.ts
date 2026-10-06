@@ -8,7 +8,6 @@ export default defineConfig({
     reporters: jsonReport ? ["default", "json"] : ["default"],
     outputFile: jsonReport ? { json: jsonReport } : {},
     projects: [
-      "apps/*",
       "packages/*",
       "tools/*",
       "kit/*",
