@@ -14,7 +14,8 @@ import { runCopyCommand } from "../../src/run-copy.ts";
 import { runSequence } from "../../src/sequence.ts";
 import type { SequenceOptions } from "../../src/sequence.ts";
 import type { Summary } from "../../src/summary.ts";
-import { FakeClock } from "../support/fakes.ts";
+import { FakeClock, FakeDocker, ok } from "../support/fakes.ts";
+import { FakeSandboxSdk } from "../support/fake-sandbox.ts";
 import { IMAGE_ID, KitImage } from "../support/kit-image.ts";
 import type { KitImageOptions } from "../support/kit-image.ts";
 import { CLEAN, PARTIAL, PLANTED, STUB, sha256, tempDir, writeAlternativeDir, writeManifest, writeProbeDir, writeTerms } from "../support/synthetic.ts";
@@ -255,5 +256,46 @@ describe("run-copy", () => {
     expect(outcome.copy).toMatchObject({ trial_id: "planted-01", status: "complete", placed_sha256: sha256(PLANTED) });
     expect(kit.created.filter((name) => name.endsWith("-observe-planted-01"))).toHaveLength(1);
     expect(outcome.exitCode).toBe(0);
+  });
+
+  const VCR_DIGEST = `sha256:${"cd".repeat(32)}`;
+  const VCR_IMAGE = `synthetic-team/synthetic-project/rbw-umami-kit@${VCR_DIGEST}`;
+
+  /** The kit's Docker, whose local image lists the given repository digests. */
+  function pushedDocker(kit: KitImage, repoDigests: string[]): FakeDocker {
+    return new FakeDocker((args, runOptions) => (args.includes("{{json .RepoDigests}}") ? ok(JSON.stringify(repoDigests)) : kit.docker.run(args, runOptions)));
+  }
+
+  it("runs the copy on Vercel Sandbox with --backend sandbox, and reports its stop and call counts", async () => {
+    const kit = new KitImage();
+    const { root, jobDir } = await observeJob(kit, (actual) => actual);
+    const dir = tempDir();
+    const docker = pushedDocker(kit, [`vcr.example.invalid/synthetic-team/synthetic-project/rbw-umami-kit@${VCR_DIGEST}`]);
+    const sdk = new FakeSandboxSdk({ collected: { runExit: 0 } });
+    const outcome = await runCopyCommand(
+      { job: jobDir, trial: "planted-01", root, image: "rbw-umami-kit:synthetic", manifest: writeManifest(dir), terms: writeTerms(dir), policy: null, work: join(dir, "work"), probesDir: writeProbeDir(), alternativeDir: writeAlternativeDir(), backend: "sandbox", sandboxImage: VCR_IMAGE },
+      { docker, clock: new FakeClock(), sandbox: sdk },
+    );
+    expect(outcome.refusal).toBeNull();
+    expect(outcome.copy).toMatchObject({ trial_id: "planted-01", status: "complete", placed_sha256: sha256(PLANTED), sandbox: { stop_confirmed: true, calls: { mutating: 4, artifact_reads: 1, stops: 1 } } });
+    expect(kit.created.filter((name) => !name.endsWith("-export"))).toEqual([]);
+    expect(sdk.ops()).toEqual(["create", "writeFiles", "runCommand", "runCommand", "readFile", "stop", "get"]);
+    const written = parseCanonical(readFileSync(join(dir, "work", "copy-summary.json"))) as { sandbox?: { name: string } };
+    expect(written.sandbox?.name).toMatch(/-observe-planted-01$/);
+    expect(outcome.exitCode).toBe(0);
+  });
+
+  it("refuses a VCR image that is not one of the local image's repository digests, before the export and any SDK call", async () => {
+    const kit = new KitImage();
+    const { root, jobDir } = await observeJob(kit, (actual) => actual);
+    const dir = tempDir();
+    const sdk = new FakeSandboxSdk();
+    const outcome = await runCopyCommand(
+      { job: jobDir, trial: "planted-01", root, image: "rbw-umami-kit:synthetic", manifest: writeManifest(dir), terms: writeTerms(dir), policy: null, work: join(dir, "work"), probesDir: writeProbeDir(), alternativeDir: writeAlternativeDir(), backend: "sandbox", sandboxImage: VCR_IMAGE },
+      { docker: pushedDocker(kit, [`vcr.example.invalid/synthetic-team/synthetic-project/rbw-umami-kit@sha256:${"ef".repeat(32)}`]), clock: new FakeClock(), sandbox: sdk },
+    );
+    expect(outcome).toMatchObject({ exitCode: 1, refusal: { reason: "sandbox_image_mismatch" } });
+    expect(kit.created).toEqual([]);
+    expect(sdk.calls).toEqual([]);
   });
 });

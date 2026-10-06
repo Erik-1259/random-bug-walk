@@ -29,6 +29,7 @@
     "@rbw/umami-driver": "workspace:*",
     "@rbw/umami-fixture": "workspace:*",
     "@rbw/writer": "workspace:*",
+    "@vercel/sandbox": "3.5.1",
     "axios": "1.20.0",
     "diff": "9.0.0",
     "tar-stream": "3.2.2"
