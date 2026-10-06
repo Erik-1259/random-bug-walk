@@ -1,0 +1,117 @@
+{
+  "candidate": "synthetic-candidate-1",
+  "card": {
+    "source_links": [
+      "https://code.example.invalid/synthetic-project/pull/1"
+    ],
+    "repository": "https://code.example.invalid/synthetic-project",
+    "date": "2026-01-15",
+    "license": "MIT",
+    "diff_excerpt": "- const range = synthetic(start, end);\n+ const range = synthetic(start, end, zone); // synthetic case valid",
+    "issue_text": "Synthetic source issue: daily totals shift by a day for some timezones.",
+    "confirmation": {
+      "card_id": "synthetic-card-1",
+      "shape_id": "synthetic-shape-1",
+      "rules_matched": [
+        "synthetic-rule-a",
+        "synthetic-rule-b"
+      ],
+      "matched_lines": [
+        "+ const range = synthetic(start, end, zone);"
+      ]
+    }
+  },
+  "issue": {
+    "symptom": {
+      "schema_version": 1,
+      "user_action": "Opened the daily pageview report for a two-day range with the reporting timezone set to America/Los_Angeles (synthetic case valid).",
+      "request": {
+        "method": "GET",
+        "path": "/api/websites/synthetic-website/pageviews",
+        "query": {
+          "unit": "day",
+          "timezone": "America/Los_Angeles"
+        }
+      },
+      "timezone": "America/Los_Angeles",
+      "locale": "en-US",
+      "fixture_description": "Eight synthetic pageviews: six on the evening of 1 January local time and two on 2 January.",
+      "events": [
+        {
+          "label": "first pageview",
+          "timestamp_seconds": 1767322800,
+          "utc_instant": "2026-01-02T03:00:00Z"
+        },
+        {
+          "label": "last pageview",
+          "timestamp_seconds": 1767398400,
+          "utc_instant": "2026-01-03T00:00:00Z"
+        }
+      ],
+      "http_status": 200,
+      "expected": [
+        {
+          "bucket_label": "2026-01-01",
+          "count": 6
+        },
+        {
+          "bucket_label": "2026-01-02",
+          "count": 2
+        }
+      ],
+      "observed": [
+        {
+          "bucket_label": "2026-01-01",
+          "count": 0
+        },
+        {
+          "bucket_label": "2026-01-02",
+          "count": 8
+        }
+      ],
+      "follow_up_examples": [
+        {
+          "timezone": "Pacific/Auckland",
+          "expected": [
+            {
+              "bucket_label": "2026-01-02",
+              "count": 8
+            }
+          ],
+          "observed": [
+            {
+              "bucket_label": "2026-01-02",
+              "count": 8
+            }
+          ]
+        },
+        {
+          "timezone": "Asia/Kolkata",
+          "expected": [
+            {
+              "bucket_label": "2026-01-02",
+              "count": 8
+            }
+          ],
+          "observed": [
+            {
+              "bucket_label": "2026-01-02",
+              "count": 8
+            }
+          ]
+        }
+      ],
+      "doc_excerpts": [
+        {
+          "text": "Synthetic excerpt: reports group pageviews by day in the timezone selected for the report.",
+          "source_url": "https://docs.example.invalid/reports"
+        }
+      ]
+    },
+    "excluded_identifiers": [
+      "getSyntheticRange",
+      "syntheticBucketHelper",
+      "synthetic.check-one"
+    ]
+  }
+}

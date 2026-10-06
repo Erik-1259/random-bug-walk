@@ -1,0 +1,11 @@
+[
+  {
+    "service": "tavily",
+    "unit": "credit",
+    "price": {
+      "microusd": 8000,
+      "per_units": 1
+    },
+    "source_url": "https://example.invalid/pricing"
+  }
+]

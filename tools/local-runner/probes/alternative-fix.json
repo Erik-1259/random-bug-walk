@@ -1,0 +1,7 @@
+{
+  "base_sha256": "7cb3219367fc73838d6ddc849e5d0b334fc6de4ad7a56bd3c593f35778d84b6c",
+  "description": "Alternative correct fix of the planted file, written for this project as development evidence: line 28 passes `timezone || 'utc'`, so a missing or empty timezone falls back to UTC. Its bytes differ from the clean file.",
+  "patch": "alternative-fix.patch",
+  "result_sha256": "49a8fba295573cce4577a4667c02781691f72057132f3554094d6a4f8e32e649",
+  "target_path": "src/queries/sql/pageviews/getPageviewStats.ts"
+}

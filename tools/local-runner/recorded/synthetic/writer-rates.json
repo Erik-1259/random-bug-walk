@@ -1,0 +1,20 @@
+[
+  {
+    "service": "token-factory",
+    "unit": "input_token",
+    "price": {
+      "microusd": 60000,
+      "per_units": 1000000
+    },
+    "source_url": "https://prices.example.invalid/synthetic"
+  },
+  {
+    "service": "token-factory",
+    "unit": "output_token",
+    "price": {
+      "microusd": 240000,
+      "per_units": 1000000
+    },
+    "source_url": "https://prices.example.invalid/synthetic"
+  }
+]
