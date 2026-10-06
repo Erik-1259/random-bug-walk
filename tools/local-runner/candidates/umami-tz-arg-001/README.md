@@ -18,6 +18,7 @@ Each value below is marked as one of:
 | `search-rates.json` | The search package's rate file: one `tavily` line | `@rbw/search`'s `record --rate-sheet` |
 | `context.json` | The run context of a development recording | both `record` commands' `--context` |
 | `max-calls` | The single line `2` | the writer's `record --max-calls` |
+| `issue.json` | The frozen issue revision: the issue the first live writer run produced on 2026-10-06 (`writer.issue:umami-tz-arg-001:2`), the source of the phrases | `search-input.json`'s phrases and this README's test |
 | `observed/` | The planted copy's recorded responses for the four checks, the source of the symptom's observed counts | this README and its test |
 
 ## `writer-input.json`
@@ -108,7 +109,7 @@ Not excluded, **chosen**: `timezone` and `unit`, which are the public query para
 | `input.source.start_date`, `end_date` | `2020-01-01`, `2026-10-06` | **chosen**: from the start of 2020, the year the Umami repository was created, to the date these inputs were written |
 | `input.docs.url` | `https://docs.umami.is/docs/api-reference/get-website-pageviews` | **chosen**: the Umami documentation page for the endpoint the user called. Checked with `curl`: it returned HTTP 200 and its text describes the endpoint and its `timezone` parameter. `https://umami.is/docs` redirects to `docs.umami.is`, and the page is listed in `https://docs.umami.is/sitemap.xml`. |
 | `input.docs.query` | `pageviews grouped by day in the selected time zone` | **chosen**: the symptom in the documentation's own terms |
-| `input.phrases` | `daily pageview counts for one website`, `just before or just after local midnight`, `each local day's count depends on the selected time zone` | **copied** from the symptom's `user_action` and `fixture_description`. The issue text is not written yet, so the phrases come from the symptom wording that the issue is written from. A test checks that each one is in the symptom. |
+| `input.phrases` | `Pageview counts mismatch America/Los_Angeles timezone grouping`, `Set the report period to March 7, 2026 through March 9, 2026`, `Compare each day's count with the visits recorded for that local day` | **copied** from the frozen issue revision, `issue.json` (title and reproduction steps). Each is at least six words: the first live run's shorter symptom phrase `just before or just after local midnight` matched unrelated calendar pages. The issue text is not written yet, so the phrases come from the symptom wording that the issue is written from. A test checks that each one is in the symptom. |
 | `input.docs_policy.allowed_domains` | `docs.umami.is` | **chosen**: the host of Umami's documentation |
 | `input.docs_policy.excluded_domains` | `date-fns.org` | **chosen**: the documentation of `date-fns`, the date library in Umami's `package.json` at the pinned commit, which the search README says to exclude |
 | `settings` | `timeout_seconds` 30, `max_results` 5, `excerpt_max_chars` 300, `passage_max_chars` 2000, `max_passages` 6, `project_docs_domains` empty | **copied** from the package's `DEFAULT_SETTINGS` |

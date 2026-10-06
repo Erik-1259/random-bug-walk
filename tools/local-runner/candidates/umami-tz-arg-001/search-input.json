@@ -25,9 +25,9 @@
       "query": "pageviews grouped by day in the selected time zone"
     },
     "phrases": [
-      "daily pageview counts for one website",
-      "just before or just after local midnight",
-      "each local day's count depends on the selected time zone"
+      "Pageview counts mismatch America/Los_Angeles timezone grouping",
+      "Set the report period to March 7, 2026 through March 9, 2026",
+      "Compare each day's count with the visits recorded for that local day"
     ],
     "docs_policy": {
       "allowed_domains": [

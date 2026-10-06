@@ -274,10 +274,16 @@ describe("search-input.json", () => {
     expect(searchFile().excluded).toEqual(writerInput().excluded);
   });
 
-  it("takes each of the three exact phrases from the symptom's wording", () => {
+  it("takes each of the three exact phrases from the frozen issue revision, each long enough to be distinctive", () => {
+    // Exact-phrase checks look for the issue's own text in public; a short generic phrase matches unrelated pages.
+    const issue = JSON.parse(bytes("issue.json").toString("utf8")) as { title: string; reproduction_steps: string[] };
+    const text = [issue.title, ...issue.reproduction_steps].join("\n");
     const input = parseSearchInput(searchFile().input);
-    const text = symptomText(writerInput().symptom);
-    for (const phrase of input.phrases) expect(text).toContain(phrase);
+    expect(input.phrases).toHaveLength(3);
+    for (const phrase of input.phrases) {
+      expect(text).toContain(phrase);
+      expect(phrase.split(/\s+/).length).toBeGreaterThanOrEqual(6);
+    }
   });
 });
 
