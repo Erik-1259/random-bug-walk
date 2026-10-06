@@ -1,0 +1,8 @@
+{
+  "root_execution_id": "00000000-0000-4000-8000-000000002005",
+  "kind": "kit_check",
+  "declared_stages": ["kit_check"],
+  "child_execution_ids": [],
+  "status": "running",
+  "outcome": null
+}

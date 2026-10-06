@@ -128,10 +128,10 @@ For automated pull request reviews, including Codex's:
 
 ## Reuse, dependencies and licences
 
-- Reuse in this order: the services and libraries the specification names, and their built-in features; Umami's own code, harness, seed data and API client; maintained open-source packages with compatible licences; new code.
+- Reuse in this order: the services and libraries the specification names, and their built-in features; Umami's own code, harness, seed data and API client; maintained open-source packages with compatible licenses; new code.
 - Each work item says what already covers it, what is left to write and a rough size. A PR adding more than about 200 lines of new non-test code says in one line why nothing existing fits.
 - Follow the patterns already in the repository; the first implementation of a kind sets the pattern.
-- Licences: MIT, Apache-2.0, BSD or ISC. Nothing GPL, AGPL, LGPL, noncommercial or share-alike in code. Pin exact versions (no `^` or `~`).
+- Licenses: MIT, Apache-2.0, BSD or ISC. CC-BY-4.0 is also allowed for data-only dependencies, such as `caniuse-lite`, the browser-support data Next.js uses at build time (owner's decision, Oct 6, 2026). Nothing GPL, AGPL, LGPL, noncommercial or share-alike in code. Pin exact versions (no `^` or `~`).
 - Bundles that include Umami code keep Umami's MIT notice.
 - A service the specification does not name needs the owner's OK.
 - This repository is MIT-licensed (`LICENSE`).
