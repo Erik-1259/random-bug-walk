@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "entries": [
+    { "outcome": "not_produced", "path": "results/00000000-0000-4000-8000-000000002004/clean-01/trial-result.json", "execution_id": "00000000-0000-4000-8000-000000002004", "trial_id": "clean-01", "reason": "stage_failed" }
+  ],
+  "redactions": []
+}
