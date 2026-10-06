@@ -193,7 +193,7 @@ describe("writer-input.json", () => {
     }
   });
 
-  it("gives the planted counts [2, 8, 2] for each zone whose planted outcome the live proof records as a count mismatch", () => {
+  it("takes each zone's observed counts from the planted copy's recorded response, which the live proof records as a count mismatch", () => {
     const { symptom } = writerInput();
     const rows = [
       { timezone: symptom.timezone, expected: symptom.expected, observed: symptom.observed },
@@ -206,7 +206,9 @@ describe("writer-input.json", () => {
       expect(labels(row.observed)).toEqual(fixture.bucket_labels);
       expect(counts(row.observed)).toEqual([2, 8, 2]);
       expect(counts(row.observed)).not.toEqual(counts(row.expected));
-      expect(counts(row.observed)).toEqual(fixture.predicted_planted_counts.counts[checkId]);
+      // The observed counts are copied from the planted copy's response, never from the prediction.
+      const response = JSON.parse(bytes(`observed/${checkId}.json`).toString("utf8")) as { pageviews: { y: number }[] };
+      expect(counts(row.observed)).toEqual(response.pageviews.map((point) => point.y));
     }
   });
 

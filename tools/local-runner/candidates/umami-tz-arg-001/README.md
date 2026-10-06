@@ -18,6 +18,7 @@ Each value below is marked as one of:
 | `search-rates.json` | The search package's rate file: one `tavily` line | `@rbw/search`'s `record --rate-sheet` |
 | `context.json` | The run context of a development recording | both `record` commands' `--context` |
 | `max-calls` | The single line `2` | the writer's `record --max-calls` |
+| `observed/` | The planted copy's recorded responses for the four checks, the source of the symptom's observed counts | this README and its test |
 
 ## `writer-input.json`
 
@@ -71,14 +72,14 @@ The primary example is the fixture's Los Angeles check against the **planted** c
 | `http_status` | `200`, **copied** from the classifier's order (`classify` in the fixture README): a check reaches `local_day_counts_mismatch` only after a 200 response with valid JSON |
 | `expected` | **copied**: labels from `bucket_labels`, counts `[3, 8, 1]` from the Los Angeles check's `expected` (the derivation script's table) |
 | `observed` | See below |
-| `follow_up_examples` | Auckland (expected `[1, 6, 5]`) and Kolkata (expected `[2, 7, 3]`), each built the same way as the primary example, with observed `[2, 8, 2]` |
+| `follow_up_examples` | Auckland (expected `[1, 6, 5]`) and Kolkata (expected `[2, 7, 3]`), each built the same way as the primary example, with observed counts copied from `observed/` |
 | `doc_excerpts` | **copied**: two sentences from `https://docs.umami.is/docs/api-reference/get-website-pageviews`, as fetched on 2026-10-06 (the endpoint description and the `timezone` parameter's description) |
 
 **Where each observed number comes from.** For each of the three zones:
 
 - **The outcome** is copied from `packages/umami-fixture/evidence/live-proof.json`, `states.planted.observed`: `assertion_fail` with `local_day_counts_mismatch` for `tzarg.la-day-counts`, `tzarg.auckland-day-counts` and `tzarg.kolkata-day-counts`.
 - **The bucket labels** follow from that outcome. The classifier reports `local_day_counts_mismatch` only when the labels are exactly the three `bucket_labels`, unique and ascending.
-- **The counts `[2, 8, 2]`** are the dispatched values. The live proof does **not** record them: its `source` says that per-check counts were not reported. The same numbers are in the data file's `predicted_planted_counts`, whose status is `predicted`. They are what bucketing the twelve events by UTC day gives (the UTC check's expected `[2, 8, 2]`), and they are consistent with the recorded outcome: the labels were right, the counts differed, and the total is 12. This difference is reported through the inbox, with a host step that confirms the counts from a planted copy's saved response before the paid call.
+- **The counts** are copied from the planted copy's recorded responses in `observed/` (`tzarg.<zone>-day-counts.json`, the `pageviews[].y` values in order). These are the response bodies of the observation job's `planted-01`, round 1, from the local runner's run of 2026-10-06 on kit image `sha256:f987de0d…51f1f75`. Every zone, UTC included, returned `[2, 8, 2]` with UTC-midnight buckets, so the planted copy ignores the time zone. A test checks that `observed` equals these files. The data file's `predicted_planted_counts` agrees, but it is a prediction and is not the source.
 
 ### `issue.excluded_identifiers`
 
@@ -130,7 +131,7 @@ Both are in the array format that the writer and search packages read today (`{ 
 | `rates.json` | `token-factory` `output_token` | 240,000 micro-USD per 1,000,000 tokens ($0.24 per million) | subject `nvidia/Nemotron-3_5-Lightning` |
 | `search-rates.json` | `tavily` `credit` | 8,000 micro-USD per credit ($0.008) | subject `api` |
 
-The envelope sheet records `account_confirmed: false`: these rates still need confirming against the account before the paid call.
+The envelope sheet records `account_confirmed: false`. The owner accepted these pinned rates for this development recording on 2026-10-06.
 
 ### Reserved amounts
 
