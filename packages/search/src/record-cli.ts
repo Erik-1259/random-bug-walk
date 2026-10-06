@@ -58,7 +58,9 @@ function argument(args: Map<string, string>, name: string): string {
   return args.get(name) ?? fail(USAGE);
 }
 
-const args = parseArgs(process.argv.slice(2));
+// `pnpm run record -- ...` passes the `--` through; skip it, as the README's command relies on it.
+const argv = process.argv.slice(2);
+const args = parseArgs(argv[0] === "--" ? argv.slice(1) : argv);
 const databaseUrl = process.env.DATABASE_URL;
 if (databaseUrl === undefined || databaseUrl === "") {
   fail("DATABASE_URL is not set");
