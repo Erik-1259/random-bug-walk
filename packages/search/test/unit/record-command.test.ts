@@ -247,6 +247,13 @@ describe("record command line", () => {
     expect(result.stderr + result.stdout).not.toContain("synthetic-pass");
   });
 
+  it("accepts the leading -- that `pnpm run record -- ...` passes, as the README documents", () => {
+    const result = run({ TAVILY_API_KEY: "synthetic-key-for-tests" }, ["--", ...ARGS]);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).not.toMatch(/usage/i);
+    expect(result.stderr).toContain("DATABASE_URL");
+  });
+
   it("exits non-zero with usage when an argument is missing", () => {
     const result = run({ DATABASE_URL: "x", TAVILY_API_KEY: "y" }, ["--context", "c.json"]);
     expect(result.status).not.toBe(0);
