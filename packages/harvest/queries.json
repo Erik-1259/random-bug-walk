@@ -1,0 +1,21 @@
+{
+  "comment": "The searches a live harvest runs. Commit search matches commit messages and issue search matches pull request titles and bodies, not diffs, so each query names the date API a time-zone fix touches and the diff is checked later by the candidate rule. `api` labels the query in the funnel's per-query report.",
+  "queries": [
+    { "kind": "commits", "api": "formatInTimeZone", "q": "formatInTimeZone timezone fix" },
+    { "kind": "commits", "api": "toZonedTime", "q": "toZonedTime timezone fix" },
+    { "kind": "commits", "api": "fromZonedTime", "q": "fromZonedTime timezone fix" },
+    { "kind": "commits", "api": "utcToZonedTime", "q": "utcToZonedTime timezone fix" },
+    { "kind": "commits", "api": "dayjs", "q": "dayjs tz timezone fix" },
+    { "kind": "commits", "api": "Intl.DateTimeFormat", "q": "\"Intl.DateTimeFormat\" timeZone fix" },
+    { "kind": "commits", "api": "useDateRange", "q": "useDateRange timezone" },
+    { "kind": "commits", "api": "startOfDay", "q": "startOfDay \"time zone\" fix" },
+    { "kind": "commits", "api": "startOfMonth", "q": "startOfMonth timezone fix" },
+    { "kind": "pulls", "api": "formatInTimeZone", "q": "is:pr is:merged formatInTimeZone timezone" },
+    { "kind": "pulls", "api": "toZonedTime", "q": "is:pr is:merged toZonedTime timezone" },
+    { "kind": "pulls", "api": "utcToZonedTime", "q": "is:pr is:merged utcToZonedTime timezone" },
+    { "kind": "pulls", "api": "dayjs", "q": "is:pr is:merged dayjs tz timezone fix" },
+    { "kind": "pulls", "api": "Intl.DateTimeFormat", "q": "is:pr is:merged \"Intl.DateTimeFormat\" timeZone fix" },
+    { "kind": "pulls", "api": "useDateRange", "q": "is:pr is:merged useDateRange timezone" },
+    { "kind": "pulls", "api": "startOfDay", "q": "is:pr is:merged startOfDay timezone fix" }
+  ]
+}
