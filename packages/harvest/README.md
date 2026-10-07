@@ -10,7 +10,7 @@ Finds public source fixes on GitHub that match shape `DT-1.tz-arg` (a caller has
 | `src/github-api.ts` | Zod schemas for the responses the funnel reads, and the URL builders. |
 | `src/frozen.ts` | The recording transport (live) and the replay transport (offline), and the run directory's manifest. |
 | `queries.json`, `src/queries.ts` | The searches a live harvest runs, in order, and their loader. |
-| `src/licence.ts` | The licence filter. |
+| `src/license.ts` | The license filter. |
 | `src/confirm.ts` | The candidate source rule and the structural confirmation. |
 | `src/funnel.ts` | The funnel stages, their drop reasons, and the pipeline over a transport. |
 | `src/harvest.ts`, `src/commands.ts`, `src/cli.ts` | The live run, the replay, and the command line. |
@@ -33,16 +33,16 @@ Each candidate stops at its first drop. Every stage has a count and a count per 
 | Stage | A candidate reaches it when | Drop reasons |
 | --- | --- | --- |
 | `harvested` | A search returned it, within `--max`. | none |
-| `licence_permitted` | The repository is available and not a fork, and its licence, as GitHub detects it, is MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause or ISC. | `repo_unavailable`, `fork`, `licence_missing`, `licence_unrecognised` (GitHub's `NOASSERTION`), `licence_not_permitted` |
+| `license_permitted` | The repository is available and not a fork, and its license, as GitHub detects it, is MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause or ISC. | `repo_unavailable`, `fork`, `license_missing`, `license_unrecognized` (GitHub's `NOASSERTION`), `license_not_permitted` |
 | `diff_fetched` | A pull request is merged. Its commit is not a duplicate (see below). The commit has one parent and fewer than 300 files, and it modifies at least one TypeScript or JavaScript file with a patch. For each such file whose added lines mention a time zone (at most 10 files), the parent and commit blobs are fetched and hash to the git blob IDs GitHub lists. | `pr_unavailable`, `pr_not_merged`, `commit_unavailable`, `duplicate_commit`, `duplicate_patch`, `not_single_parent`, `too_many_files`, `no_ts_js_change`, `patch_missing`, `blob_unavailable`, `blob_too_large` (no inline content, over 1 MB), `blob_mismatch` |
 | `source_rule_matched` | The candidate source rule matches a call whose time-zone argument is on a line the commit added. | `no_timezone_text_added`, `no_rule_match_on_added_line` |
 | `structurally_confirmed` | A matched call passes the structural checks below. | `function_missing_before`, `call_added`, `before_has_timezone_argument`, `timezone_is_constant`, `timezone_unbound` |
 
-### Repository and licence
+### Repository and license
 
 - The fork flag comes from the commit search result. When the result lacks it, as for every pull request, the repository record (`/repos/{owner}/{repo}`) is read. A fork drops as `fork`.
-- The licence comes from the search result when it carries one. Otherwise it comes from the repository record, if that was read. If neither names a licence, the licence endpoint (`/repos/{owner}/{repo}/license`) is read before the candidate drops as `licence_missing`; its 404 means no licence. Each candidate records which of the three named its licence, as `licence_source`.
-- Each repository's record and licence are requested at most once a run.
+- The license comes from the search result when it carries one. Otherwise it comes from the repository record, if that was read. If neither names a license, the license endpoint (`/repos/{owner}/{repo}/license`) is read before the candidate drops as `license_missing`; its 404 means no license. Each candidate records which of the three named its license, as `license_source`.
+- Each repository's record and license are requested at most once a run.
 
 ### De-duplication
 
@@ -78,6 +78,19 @@ For a rule match whose time-zone argument is on an added line, in the commit's v
 
 The first confirmed match makes the candidate confirmed. Otherwise the candidate drops with the first match's reason. Every match and its outcome is listed in the candidate's record.
 
+### Limits
+
+The rule and the checks are syntactic: they read each file's syntax tree, with no types, no data flow and no other files. `structurally_confirmed` means the change has the shape of the fix, not that the code is proven to be the fix. Known cases it gets wrong:
+
+- **Confirmed, though not the fix.**
+  - A literal wrapped in a cast or parentheses, as in `const timezone = "UTC" as const`.
+  - A literal declared in an inner block that shadows a selected zone declared earlier in the function.
+  - A call removed from one anonymous callback and added to a sibling one: both are paired as the same function.
+  - A constant reached through more than one alias, a function's return value or another file.
+- **Dropped, though a real fix.** The callee or the time-zone value has a name outside the rule's lists, or the zone arrives through a spread or a computed key.
+
+These are accepted rather than patched one by one. Closing them needs semantic analysis, such as a type checker, which this package does not do. A false confirmation costs little, because each confirmed candidate still goes through its card, the owner's alignment check and admission, where the planted copy must fail and the fixed copy must pass.
+
 ## Per-query report
 
 Each entry of `funnel.json`'s `harvest.queries` has the query's status, result count and the number of candidates it added, with:
@@ -95,7 +108,7 @@ A harvest writes a new run directory:
 - `responses/<hash>.json`: one file per request, with its URL, `requested_at` and `completed_at` (UTC), each rate-limited attempt and its wait, the status, the rate-limit headers and the response body;
 - `funnel.json`: the funnel.
 
-Bodies are frozen as projected by `src/github-api.ts`, so they hold only the fields the funnel reads. Commit authors, committer names and emails, user records and commit messages are dropped; the committer date is kept. No request header is recorded. The live run's pipeline reads the same projected bodies a replay reads, so `funnel --in` rebuilds the same `funnel.json` from the directory with no network. A request with no frozen response fails the replay; it never reaches the network. A run that did not complete cannot be replayed. Nor can a run with manifest schema version 1, written before the licence endpoint, de-duplication and the round-robin harvest: its frozen responses do not cover this funnel's requests.
+Bodies are frozen as projected by `src/github-api.ts`, so they hold only the fields the funnel reads. Commit authors, committer names and emails, user records and commit messages are dropped; the committer date is kept. No request header is recorded. The live run's pipeline reads the same projected bodies a replay reads, so `funnel --in` rebuilds the same `funnel.json` from the directory with no network. A request with no frozen response fails the replay; it never reaches the network. A run that did not complete cannot be replayed. Nor can a run with manifest schema version 1, written before the license endpoint, de-duplication and the round-robin harvest: its frozen responses do not cover this funnel's requests.
 
 A live run directory holds third-party source files and patches from the harvested repositories, and repository names that include their owners' account names. It belongs outside this repository and is not committed here. Anything taken from it for publication passes the publication checks first.
 
@@ -126,7 +139,7 @@ node packages/harvest/src/cli.ts funnel --in <run directory>
 
 - The committed run in `test/fixtures/synthetic-run/` is a harvest against a synthetic GitHub API (`test/support/synthetic-github.ts`) with a fixed clock. `node packages/harvest/test/support/generate-fixture.ts` regenerates it, and a test fails if the committed files differ from the generator's output.
 - The funnel test replays the committed run with `fetch` stubbed to fail and checks every stage count and every drop reason.
-- Further tests cover the query file, the round-robin harvest, the per-query report, de-duplication, the licence lookup and filter, rate-limit handling with an injected clock, the frozen responses and the structural confirmation.
+- Further tests cover the query file, the round-robin harvest, the per-query report, de-duplication, the license lookup and filter, rate-limit handling with an injected clock, the frozen responses and the structural confirmation.
 
 ## Not in this package
 

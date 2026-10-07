@@ -9,16 +9,16 @@ import { SHAPE_ID } from "@rbw/shapes";
 import { addedLines, addedText, candidateRuleBytes, CANDIDATE_RULE_IDS, examineFile, SOURCE_FILE, TIMEZONE_TEXT, type FileMatch } from "./confirm.ts";
 import type { Transport } from "./frozen.ts";
 import { schemas, urls, type Commit, type CommitFile, type Content, type SearchCommits } from "./github-api.ts";
-import { licenceDecision } from "./licence.ts";
+import { licenseDecision } from "./license.ts";
 import { searchUrl, type Query } from "./queries.ts";
 
-export const STAGES = ["harvested", "licence_permitted", "diff_fetched", "source_rule_matched", "structurally_confirmed"] as const;
+export const STAGES = ["harvested", "license_permitted", "diff_fetched", "source_rule_matched", "structurally_confirmed"] as const;
 export type Stage = (typeof STAGES)[number];
 
 /** Every reason a candidate can drop, by the stage it failed to reach. */
 export const DROP_REASONS: Readonly<Record<Stage, readonly string[]>> = {
   harvested: [],
-  licence_permitted: ["repo_unavailable", "fork", "licence_missing", "licence_unrecognised", "licence_not_permitted"],
+  license_permitted: ["repo_unavailable", "fork", "license_missing", "license_unrecognized", "license_not_permitted"],
   diff_fetched: [
     "pr_unavailable",
     "pr_not_merged",
@@ -72,7 +72,7 @@ export interface QueryRecord {
 }
 
 export interface Confirmation {
-  readonly licence: string;
+  readonly license: string;
   readonly commit: string;
   readonly parent: string;
   readonly path: string;
@@ -87,8 +87,8 @@ export interface Confirmation {
   readonly timezone: string;
 }
 
-/** Where a permitted licence was read: the search result, the repository record or the licence endpoint. */
-export type LicenceSource = "search" | "repository" | "licence_endpoint";
+/** Where a permitted license was read: the search result, the repository record or the license endpoint. */
+export type LicenseSource = "search" | "repository" | "license_endpoint";
 
 export interface CandidateRecord {
   readonly id: string;
@@ -96,8 +96,8 @@ export interface CandidateRecord {
   readonly repo: string;
   readonly pull: number | null;
   commit: string | null;
-  licence: string | null;
-  licence_source: LicenceSource | null;
+  license: string | null;
+  license_source: LicenseSource | null;
   committed_at: string | null;
   patch_id: string | null;
   stage_reached: Stage;
@@ -262,8 +262,8 @@ async function harvestCandidates(
         repo: hit.repo,
         pull: hit.pull,
         commit: hit.commit,
-        licence: null,
-        licence_source: null,
+        license: null,
+        license_source: null,
         committed_at: null,
         patch_id: null,
         stage_reached: "harvested",
@@ -278,19 +278,19 @@ async function harvestCandidates(
 
 /**
  * The repository checks. The fork flag comes from the search result, or from the repository record
- * when the result lacks it. The licence comes from the search result, then the repository record if
- * it was read, then the licence endpoint. The transport answers a repeated request from its record,
- * so each repository's record and licence are fetched at most once.
+ * when the result lacks it. The license comes from the search result, then the repository record if
+ * it was read, then the license endpoint. The transport answers a repeated request from its record,
+ * so each repository's record and license are fetched at most once.
  */
 async function checkRepository(transport: Transport, candidate: CandidateRecord, searched: ReadonlyMap<string, SearchRepository>): Promise<string> {
   const hit = searched.get(candidate.repo);
   let fork = hit?.fork;
   let spdx = hit?.license?.spdx_id ?? null;
-  let source: LicenceSource = "search";
+  let source: LicenseSource = "search";
   if (fork === undefined) {
     const response = await transport.get(urls.repository(candidate.repo));
     if (response.status !== 200) {
-      throw new Drop("licence_permitted", "repo_unavailable", `the repository returned ${String(response.status)}`);
+      throw new Drop("license_permitted", "repo_unavailable", `the repository returned ${String(response.status)}`);
     }
     const record = schemas.repository.parse(response.body);
     fork = record.fork;
@@ -300,38 +300,38 @@ async function checkRepository(transport: Transport, candidate: CandidateRecord,
     }
   }
   if (fork) {
-    throw new Drop("licence_permitted", "fork", "the repository is a fork");
+    throw new Drop("license_permitted", "fork", "the repository is a fork");
   }
   if (spdx === null) {
-    const response = await transport.get(urls.licence(candidate.repo));
+    const response = await transport.get(urls.license(candidate.repo));
     if (response.status === 200) {
-      spdx = schemas.licence.parse(response.body).license?.spdx_id ?? null;
-      source = "licence_endpoint";
+      spdx = schemas.license.parse(response.body).license?.spdx_id ?? null;
+      source = "license_endpoint";
     } else if (response.status !== 404) {
-      throw new Drop("licence_permitted", "repo_unavailable", `the licence endpoint returned ${String(response.status)}`);
+      throw new Drop("license_permitted", "repo_unavailable", `the license endpoint returned ${String(response.status)}`);
     }
   }
-  const decision = licenceDecision(spdx === null ? null : { spdx_id: spdx });
+  const decision = licenseDecision(spdx === null ? null : { spdx_id: spdx });
   if (!decision.permitted) {
-    const detail = spdx === null ? "neither the search result, the repository record nor the licence endpoint names a licence" : decision.detail;
-    throw new Drop("licence_permitted", decision.reason, detail);
+    const detail = spdx === null ? "neither the search result, the repository record nor the license endpoint names a license" : decision.detail;
+    throw new Drop("license_permitted", decision.reason, detail);
   }
-  candidate.licence = decision.spdx;
-  candidate.licence_source = source;
-  candidate.stage_reached = "licence_permitted";
+  candidate.license = decision.spdx;
+  candidate.license_source = source;
+  candidate.stage_reached = "license_permitted";
   return decision.spdx;
 }
 
 interface Resolved {
   readonly candidate: CandidateRecord;
   readonly order: number;
-  readonly licence: string;
+  readonly license: string;
   readonly commit: Commit;
 }
 
 /** Up to the commit: repository checks, the pull request's merge commit, and the commit itself. */
 async function resolve(transport: Transport, candidate: CandidateRecord, order: number, searched: ReadonlyMap<string, SearchRepository>): Promise<Resolved> {
-  const licence = await checkRepository(transport, candidate, searched);
+  const license = await checkRepository(transport, candidate, searched);
   if (candidate.pull !== null) {
     const response = await transport.get(urls.pull(candidate.repo, candidate.pull));
     if (response.status !== 200) {
@@ -350,7 +350,7 @@ async function resolve(transport: Transport, candidate: CandidateRecord, order: 
   const commit = schemas.commit.parse(response.body);
   candidate.committed_at = commit.commit.committer?.date ?? null;
   candidate.patch_id = patchId(commit.files);
-  return { candidate, order, licence, commit };
+  return { candidate, order, license, commit };
 }
 
 function commitTime(entry: Resolved): number {
@@ -410,7 +410,7 @@ async function fetchBlob(transport: Transport, repo: string, path: string, ref: 
 }
 
 /** After de-duplication: the commit's files and blobs, the source rule and the structural checks. */
-async function examine(transport: Transport, { candidate, licence, commit }: Resolved): Promise<void> {
+async function examine(transport: Transport, { candidate, license, commit }: Resolved): Promise<void> {
   const sha = commit.sha;
   const [parent] = commit.parents;
   if (commit.parents.length !== 1 || parent === undefined) {
@@ -458,7 +458,7 @@ async function examine(transport: Transport, { candidate, licence, commit }: Res
     const blob = blobs.find((entry) => entry.file.filename === match.path);
     if (match.outcome.status === "confirmed" && blob !== undefined) {
       candidate.confirmation = {
-        licence,
+        license,
         commit: sha,
         parent: parent.sha,
         path: match.path,

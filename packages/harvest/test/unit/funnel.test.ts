@@ -34,7 +34,7 @@ describe("funnel over the committed synthetic run", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(funnel.stages.map((stage) => [stage.stage, stage.count])).toEqual([
       ["harvested", 28],
-      ["licence_permitted", 23],
+      ["license_permitted", 23],
       ["diff_fetched", 10],
       ["source_rule_matched", 8],
       ["structurally_confirmed", 3],
@@ -53,7 +53,7 @@ describe("funnel over the committed synthetic run", () => {
       expect(Object.keys(stage.drops).sort(), stage.stage).toEqual([...expected].sort());
       expect(stage.drops, stage.stage).toEqual(Object.fromEntries(expected.map((reason) => [reason, reason === "duplicate_commit" ? 2 : 1])));
     }
-    expect(STAGES).toEqual(["harvested", "licence_permitted", "diff_fetched", "source_rule_matched", "structurally_confirmed"]);
+    expect(STAGES).toEqual(["harvested", "license_permitted", "diff_fetched", "source_rule_matched", "structurally_confirmed"]);
   });
 
   it("records each candidate's drop and the confirmed pairings", async () => {
@@ -64,9 +64,9 @@ describe("funnel over the committed synthetic run", () => {
     expect(reason("forked")).toBe("fork");
     expect(reason("copy")).toBe("duplicate_patch");
     expect(reason("mirror")).toBe("duplicate_commit");
-    expect(reason("no-licence")).toBe("licence_missing");
-    expect(reason("other-licence")).toBe("licence_unrecognised");
-    expect(reason("copyleft")).toBe("licence_not_permitted");
+    expect(reason("no-license")).toBe("license_missing");
+    expect(reason("other-license")).toBe("license_unrecognized");
+    expect(reason("copyleft")).toBe("license_not_permitted");
     expect(reason("commit-gone")).toBe("commit_unavailable");
     expect(reason("merge")).toBe("not_single_parent");
     expect(reason("wide")).toBe("too_many_files");
@@ -90,9 +90,9 @@ describe("funnel over the committed synthetic run", () => {
     expect(confirmed.map((candidate) => [candidate.repo, candidate.drop, candidate.confirmation?.path, candidate.confirmation?.call])).toEqual([
       ["synthetic-org/synthetic-sql", null, "src/queries/stats.ts", 'getDateSQL("created_at", unit, filters.timezone)'],
       ["synthetic-org/synthetic-hook", null, "src/pages/RangePage.tsx", "useDateRange({ timezone })"],
-      ["synthetic-org/synthetic-search-licence", null, "src/label.ts", "formatDate(d, timezone)"],
+      ["synthetic-org/synthetic-search-license", null, "src/label.ts", "formatDate(d, timezone)"],
     ]);
-    expect(confirmed[0]?.confirmation).toMatchObject({ licence: "Apache-2.0", before_call: 'getDateSQL("created_at", unit)', function: "statsQuery" });
+    expect(confirmed[0]?.confirmation).toMatchObject({ license: "Apache-2.0", before_call: 'getDateSQL("created_at", unit)', function: "statsQuery" });
   });
 
   it("stops harvesting at the cap, skips repeated search hits and records failed queries", async () => {
@@ -131,15 +131,15 @@ describe("funnel over the committed synthetic run", () => {
   it("reports each query's stage counts and its drop reasons, most frequent first", async () => {
     const funnel = await replay(FIXTURE_DIR);
     const [commits, failing, pulls] = funnel.harvest.queries;
-    expect(commits?.stages).toEqual({ harvested: 24, licence_permitted: 19, diff_fetched: 9, source_rule_matched: 7, structurally_confirmed: 2 });
+    expect(commits?.stages).toEqual({ harvested: 24, license_permitted: 19, diff_fetched: 9, source_rule_matched: 7, structurally_confirmed: 2 });
     expect(commits?.drops).toHaveLength(22);
     expect(commits?.drops.slice(0, 2)).toEqual([
-      { stage: "licence_permitted", reason: "fork", count: 1 },
-      { stage: "licence_permitted", reason: "licence_missing", count: 1 },
+      { stage: "license_permitted", reason: "fork", count: 1 },
+      { stage: "license_permitted", reason: "license_missing", count: 1 },
     ]);
-    expect(failing?.stages).toEqual({ harvested: 0, licence_permitted: 0, diff_fetched: 0, source_rule_matched: 0, structurally_confirmed: 0 });
+    expect(failing?.stages).toEqual({ harvested: 0, license_permitted: 0, diff_fetched: 0, source_rule_matched: 0, structurally_confirmed: 0 });
     expect(failing?.drops).toEqual([]);
-    expect(pulls?.stages).toEqual({ harvested: 4, licence_permitted: 4, diff_fetched: 1, source_rule_matched: 1, structurally_confirmed: 1 });
+    expect(pulls?.stages).toEqual({ harvested: 4, license_permitted: 4, diff_fetched: 1, source_rule_matched: 1, structurally_confirmed: 1 });
     expect(pulls?.drops).toEqual([
       { stage: "diff_fetched", reason: "duplicate_commit", count: 1 },
       { stage: "diff_fetched", reason: "pr_not_merged", count: 1 },
@@ -152,8 +152,8 @@ describe("de-duplication", () => {
   it("drops a fork by the search result's fork flag, before any commit is fetched", async () => {
     const funnel = await replay(FIXTURE_DIR);
     const forked = funnel.candidates.find((candidate) => candidate.repo === "synthetic-org/synthetic-forked");
-    expect(forked?.drop).toMatchObject({ stage: "licence_permitted", reason: "fork" });
-    expect(forked?.licence).toBeNull();
+    expect(forked?.drop).toMatchObject({ stage: "license_permitted", reason: "fork" });
+    expect(forked?.license).toBeNull();
   });
 
   it("drops a repeated commit SHA in another repository and keeps the earlier candidate", async () => {
@@ -195,37 +195,37 @@ describe("de-duplication", () => {
   });
 });
 
-describe("licence lookup", () => {
+describe("license lookup", () => {
   async function liveRequests(): Promise<string[]> {
     const github = syntheticGitHub();
     const clock = steppingClock();
     const client = createGitHubClient({ fetch: github.fetch, now: clock.now, sleep: () => Promise.resolve() });
-    const out = join(mkdtempSync(join(tmpdir(), "harvest-licence-")), "run");
+    const out = join(mkdtempSync(join(tmpdir(), "harvest-license-")), "run");
     await harvest({ client, out, max: SYNTHETIC_MAX, queries: SYNTHETIC_QUERIES, clock: clock.date, authenticated: false });
     return github.requests.map((request) => request.url);
   }
 
-  it("uses a licence the search result carries and fetches nothing for it", async () => {
+  it("uses a license the search result carries and fetches nothing for it", async () => {
     const urls = await liveRequests();
-    expect(urls.filter((url) => /^\/repos\/synthetic-org\/synthetic-search-licence(\/license)?$/.test(url))).toEqual([]);
+    expect(urls.filter((url) => /^\/repos\/synthetic-org\/synthetic-search-license(\/license)?$/.test(url))).toEqual([]);
     const funnel = await replay(FIXTURE_DIR);
-    const candidate = funnel.candidates.find((entry) => entry.repo === "synthetic-org/synthetic-search-licence");
-    expect([candidate?.licence, candidate?.licence_source]).toEqual(["ISC", "search"]);
+    const candidate = funnel.candidates.find((entry) => entry.repo === "synthetic-org/synthetic-search-license");
+    expect([candidate?.license, candidate?.license_source]).toEqual(["ISC", "search"]);
   });
 
-  it("fetches the licence once per repository when the search result lacks it", async () => {
+  it("fetches the license once per repository when the search result lacks it", async () => {
     const urls = await liveRequests();
     expect(urls.filter((url) => url === "/repos/synthetic-org/synthetic-hook/license")).toHaveLength(1);
     expect(urls).not.toContain("/repos/synthetic-org/synthetic-hook");
     const funnel = await replay(FIXTURE_DIR);
     const hook = funnel.candidates.filter((entry) => entry.repo === "synthetic-org/synthetic-hook");
-    expect(hook.map((entry) => [entry.licence, entry.licence_source])).toEqual([
-      ["MIT", "licence_endpoint"],
-      ["MIT", "licence_endpoint"],
+    expect(hook.map((entry) => [entry.license, entry.license_source])).toEqual([
+      ["MIT", "license_endpoint"],
+      ["MIT", "license_endpoint"],
     ]);
   });
 
-  it("reads the repository record for a pull request, then the licence endpoint when the record lists none", async () => {
+  it("reads the repository record for a pull request, then the license endpoint when the record lists none", async () => {
     const urls = await liveRequests();
     expect(urls).toContain("/repos/synthetic-org/synthetic-sql");
     expect(urls).toContain("/repos/synthetic-org/synthetic-sql/license");
@@ -233,17 +233,17 @@ describe("licence lookup", () => {
     expect(urls).not.toContain("/repos/synthetic-org/synthetic-open/license");
     const funnel = await replay(FIXTURE_DIR);
     const byId = new Map(funnel.candidates.map((entry) => [entry.id, entry]));
-    expect([byId.get("synthetic-org/synthetic-sql#7")?.licence, byId.get("synthetic-org/synthetic-sql#7")?.licence_source]).toEqual(["Apache-2.0", "licence_endpoint"]);
-    expect(byId.get("synthetic-org/synthetic-open#9")?.licence_source).toBe("repository");
+    expect([byId.get("synthetic-org/synthetic-sql#7")?.license, byId.get("synthetic-org/synthetic-sql#7")?.license_source]).toEqual(["Apache-2.0", "license_endpoint"]);
+    expect(byId.get("synthetic-org/synthetic-open#9")?.license_source).toBe("repository");
   });
 
-  it("drops as licence_missing only after the licence endpoint finds none", async () => {
+  it("drops as license_missing only after the license endpoint finds none", async () => {
     const urls = await liveRequests();
-    expect(urls).toContain("/repos/synthetic-org/synthetic-no-licence/license");
+    expect(urls).toContain("/repos/synthetic-org/synthetic-no-license/license");
     const funnel = await replay(FIXTURE_DIR);
-    const candidate = funnel.candidates.find((entry) => entry.repo === "synthetic-org/synthetic-no-licence");
-    expect(candidate?.drop).toMatchObject({ reason: "licence_missing" });
-    expect(candidate?.drop?.detail).toContain("licence endpoint");
+    const candidate = funnel.candidates.find((entry) => entry.repo === "synthetic-org/synthetic-no-license");
+    expect(candidate?.drop).toMatchObject({ reason: "license_missing" });
+    expect(candidate?.drop?.detail).toContain("license endpoint");
   });
 });
 
@@ -254,14 +254,14 @@ describe("drop ranking", () => {
       rankDrops([
         drop("structurally_confirmed", "timezone_unbound"),
         drop("diff_fetched", "no_ts_js_change"),
-        drop("licence_permitted", "licence_missing"),
+        drop("license_permitted", "license_missing"),
         drop("diff_fetched", "no_ts_js_change"),
         drop("diff_fetched", "duplicate_patch"),
         { drop: null },
       ]),
     ).toEqual([
       { stage: "diff_fetched", reason: "no_ts_js_change", count: 2 },
-      { stage: "licence_permitted", reason: "licence_missing", count: 1 },
+      { stage: "license_permitted", reason: "license_missing", count: 1 },
       { stage: "diff_fetched", reason: "duplicate_patch", count: 1 },
       { stage: "structurally_confirmed", reason: "timezone_unbound", count: 1 },
     ]);

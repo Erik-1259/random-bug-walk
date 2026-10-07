@@ -42,7 +42,7 @@ export type Exchange = z.infer<typeof exchangeSchema>;
 
 const querySchema = z.object({ kind: z.enum(["commits", "pulls"]), api: z.string(), q: z.string() });
 
-/** Version 2 added the licence endpoint, de-duplication and the round-robin harvest; a version 1 run cannot be replayed. */
+/** Version 2 added the license endpoint, de-duplication and the round-robin harvest; a version 1 run cannot be replayed. */
 const MANIFEST_VERSION = 2;
 
 const manifestSchema = z.object({

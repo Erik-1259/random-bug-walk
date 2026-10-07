@@ -62,10 +62,10 @@ interface FileChange {
 
 interface Scenario {
   name: string;
-  /** The licence's SPDX identifier, or null for a repository with none. */
-  licence?: string | null;
-  /** Where the licence shows: the search result, the repository record (the default), or only the licence endpoint. */
-  licenceIn?: "search" | "repository" | "licence_endpoint";
+  /** The license's SPDX identifier, or null for a repository with none. */
+  license?: string | null;
+  /** Where the license shows: the search result, the repository record (the default), or only the license endpoint. */
+  licenseIn?: "search" | "repository" | "license_endpoint";
   /** The search result's fork flag (default false); "absent" leaves the flag out of the search result. */
   fork?: boolean | "absent";
   repoStatus?: number;
@@ -120,18 +120,18 @@ const HOOK_FILES: FileChange[] = [{ path: "src/pages/RangePage.tsx", before: HOO
 
 const SCENARIOS: Scenario[] = [
   // The same change as "hook" in another repository, found first but committed later: a duplicate patch.
-  { name: "copy", licence: "MIT", committedAt: "2026-05-01T00:00:00Z", files: HOOK_FILES },
-  { name: "hook", licence: "MIT", committedAt: "2026-03-01T00:00:00Z", files: HOOK_FILES },
+  { name: "copy", license: "MIT", committedAt: "2026-05-01T00:00:00Z", files: HOOK_FILES },
+  { name: "hook", license: "MIT", committedAt: "2026-03-01T00:00:00Z", files: HOOK_FILES },
   { name: "repo-gone", repoStatus: 404, fork: "absent" },
-  { name: "forked", licence: "MIT", fork: true, files: HOOK_FILES },
-  { name: "no-licence", licence: null },
-  { name: "other-licence", licence: "NOASSERTION" },
-  { name: "copyleft", licence: "GPL-3.0" },
-  { name: "commit-gone", licence: "MIT", commitStatus: 422 },
-  { name: "merge", licence: "MIT", parents: 2, files: simple("src/merge.ts", LABEL, LABEL.replace("formatDate(d)", "formatDate(d, timezone)")) },
+  { name: "forked", license: "MIT", fork: true, files: HOOK_FILES },
+  { name: "no-license", license: null },
+  { name: "other-license", license: "NOASSERTION" },
+  { name: "copyleft", license: "GPL-3.0" },
+  { name: "commit-gone", license: "MIT", commitStatus: 422 },
+  { name: "merge", license: "MIT", parents: 2, files: simple("src/merge.ts", LABEL, LABEL.replace("formatDate(d)", "formatDate(d, timezone)")) },
   {
     name: "wide",
-    licence: "ISC",
+    license: "ISC",
     files: Array.from({ length: 11 }, (_unused, index) => ({
       path: `src/wide-${String(index)}.ts`,
       before: LABEL,
@@ -140,32 +140,32 @@ const SCENARIOS: Scenario[] = [
   },
   {
     name: "docs-only",
-    licence: "MIT",
+    license: "MIT",
     extraFiles: [{ filename: "README.md", status: "modified", sha: gitBlob("synthetic readme\n"), patch: "@@ -1 +1 @@\n-a\n+timezone" }],
   },
-  { name: "no-patch", licence: "MIT", files: [{ path: "src/big.ts", before: LABEL, after: `${LABEL}\n`, noPatch: true }] },
-  { name: "parent-gone", licence: "MIT", files: [{ path: "src/parent.ts", before: LABEL, after: LABEL.replace("formatDate(d)", "formatDate(d, timezone)"), beforeStatus: 404 }] },
-  { name: "huge-blob", licence: "MIT", files: [{ path: "src/huge.ts", before: LABEL, after: LABEL.replace("formatDate(d)", "formatDate(d, timezone)"), afterEncoding: "none" }] },
+  { name: "no-patch", license: "MIT", files: [{ path: "src/big.ts", before: LABEL, after: `${LABEL}\n`, noPatch: true }] },
+  { name: "parent-gone", license: "MIT", files: [{ path: "src/parent.ts", before: LABEL, after: LABEL.replace("formatDate(d)", "formatDate(d, timezone)"), beforeStatus: 404 }] },
+  { name: "huge-blob", license: "MIT", files: [{ path: "src/huge.ts", before: LABEL, after: LABEL.replace("formatDate(d)", "formatDate(d, timezone)"), afterEncoding: "none" }] },
   {
     name: "blob-drift",
-    licence: "MIT",
+    license: "MIT",
     files: [{ path: "src/drift.ts", before: LABEL, after: LABEL.replace("formatDate(d)", "formatDate(d, timezone)"), afterSha: gitBlob("synthetic other\n") }],
   },
-  { name: "no-tz-text", licence: "MIT", files: simple("src/a.ts", LABEL, LABEL.replace("formatDate(d)", "formatDate(d, 'yyyy')")) },
-  { name: "comment-only", licence: "MIT", files: simple("src/a.ts", LABEL, LABEL.replace("  return", "  // The timezone is handled later.\n  return")) },
+  { name: "no-tz-text", license: "MIT", files: simple("src/a.ts", LABEL, LABEL.replace("formatDate(d)", "formatDate(d, 'yyyy')")) },
+  { name: "comment-only", license: "MIT", files: simple("src/a.ts", LABEL, LABEL.replace("  return", "  // The timezone is handled later.\n  return")) },
   {
     name: "new-function",
-    licence: "BSD-3-Clause",
+    license: "BSD-3-Clause",
     files: simple("src/a.ts", LABEL, `${LABEL}\nexport function zoned(d: Date, timezone: string) {\n  return formatDate(d, timezone);\n}\n`),
   },
   {
     name: "new-call",
-    licence: "MIT",
+    license: "MIT",
     files: simple("src/a.ts", LABEL, LABEL.replace("  return formatDate(d);", "  const shown = formatDate(d, timezone);\n  return formatDate(d) + shown;")),
   },
   {
     name: "already-passed",
-    licence: "MIT",
+    license: "MIT",
     files: simple(
       "src/a.ts",
       `export function label(d: Date, zone: string, timezone: string) {\n  return formatInTimeZone(d, zone, "yyyy");\n}\n`,
@@ -174,7 +174,7 @@ const SCENARIOS: Scenario[] = [
   },
   {
     name: "constant-zone",
-    licence: "MIT",
+    license: "MIT",
     files: simple(
       "src/a.js",
       `export function label(d) {\n  return d.toLocaleDateString("en");\n}\n`,
@@ -183,20 +183,20 @@ const SCENARIOS: Scenario[] = [
   },
   {
     name: "global-zone",
-    licence: "MIT",
+    license: "MIT",
     files: simple("src/a.ts", `export function label(d: Date) {\n  return formatDate(d);\n}\n`, `export function label(d: Date) {\n  return formatDate(d, timezone);\n}\n`),
   },
-  { name: "sql", licence: "Apache-2.0", licenceIn: "licence_endpoint", searched: false, files: simple("src/queries/stats.ts", SQL_BEFORE, SQL_AFTER) },
+  { name: "sql", license: "Apache-2.0", licenseIn: "license_endpoint", searched: false, files: simple("src/queries/stats.ts", SQL_BEFORE, SQL_AFTER) },
   // The merge commit of pull request 7, also pushed to an unrelated repository under the same SHA.
-  { name: "mirror", licence: "MIT", sameCommitAs: "sql", files: simple("src/queries/stats.ts", SQL_BEFORE, SQL_AFTER) },
+  { name: "mirror", license: "MIT", sameCommitAs: "sql", files: simple("src/queries/stats.ts", SQL_BEFORE, SQL_AFTER) },
   {
-    name: "search-licence",
-    licence: "ISC",
-    licenceIn: "search",
+    name: "search-license",
+    license: "ISC",
+    licenseIn: "search",
     files: simple("src/label.ts", LABEL, LABEL.replace("formatDate(d)", "formatDate(d, timezone)")),
   },
   // The last commit result, which the round-robin reaches last and the cap leaves out.
-  { name: "beyond-max", licence: "MIT" },
+  { name: "beyond-max", license: "MIT" },
 ];
 
 interface PullScenario {
@@ -222,13 +222,13 @@ function repoName(scenario: string): string {
   return `synthetic-${scenario}`;
 }
 
-function licenceBody(licence: Scenario["licence"]): Json | null {
-  return licence === undefined || licence === null ? null : { key: licence.toLowerCase(), spdx_id: licence, name: licence };
+function licenseBody(license: Scenario["license"]): Json | null {
+  return license === undefined || license === null ? null : { key: license.toLowerCase(), spdx_id: license, name: license };
 }
 
-function repoBody(name: string, licence: Scenario["licence"], fork = false): Json {
+function repoBody(name: string, license: Scenario["license"], fork = false): Json {
   const owner = { login: ORG, id: 1, type: "Organization" };
-  return { id: 1, full_name: `${ORG}/${name}`, private: false, fork, owner, license: licenceBody(licence), language: "TypeScript", stargazers_count: 3 };
+  return { id: 1, full_name: `${ORG}/${name}`, private: false, fork, owner, license: licenseBody(license), language: "TypeScript", stargazers_count: 3 };
 }
 
 function contentBody(path: string, text: string, encoding = "base64", blob?: string): Json {
@@ -258,28 +258,28 @@ function buildRoutes(): Map<string, Route> {
     const source = scenario.sameCommitAs ?? scenario.name;
     const commit = sha(source);
     const parent = sha(`${source}:parent`);
-    const licenceIn = scenario.licenceIn ?? "repository";
+    const licenseIn = scenario.licenseIn ?? "repository";
     const fork = scenario.fork ?? false;
-    const licence = licenceBody(scenario.licence);
+    const license = licenseBody(scenario.license);
     if (scenario.searched !== false) {
       const repository: Json = {
         full_name: full,
         owner: { login: ORG },
         ...(fork === "absent" ? {} : { fork }),
-        ...(licenceIn === "search" ? { license: licence } : {}),
+        ...(licenseIn === "search" ? { license: license } : {}),
       };
       commitItems.push({ sha: commit, repository, commit: { message: "synthetic fix", author: PERSON } });
     }
     add(
       `/repos/${full}`,
       scenario.repoStatus ?? 200,
-      scenario.repoStatus === undefined ? repoBody(name, licenceIn === "licence_endpoint" ? null : scenario.licence, fork === true) : { message: "Not Found" },
+      scenario.repoStatus === undefined ? repoBody(name, licenseIn === "license_endpoint" ? null : scenario.license, fork === true) : { message: "Not Found" },
     );
     add(
       `/repos/${full}/license`,
-      scenario.repoStatus === undefined && licence !== null ? 200 : 404,
-      scenario.repoStatus === undefined && licence !== null
-        ? { name: "LICENSE", path: "LICENSE", content: Buffer.from("synthetic licence text\n").toString("base64"), license: licence }
+      scenario.repoStatus === undefined && license !== null ? 200 : 404,
+      scenario.repoStatus === undefined && license !== null
+        ? { name: "LICENSE", path: "LICENSE", content: Buffer.from("synthetic license text\n").toString("base64"), license: license }
         : { message: "Not Found" },
     );
     const files: Json[] = (scenario.files ?? []).map((file) => {
