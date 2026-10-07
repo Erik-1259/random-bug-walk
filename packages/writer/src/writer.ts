@@ -70,6 +70,12 @@ export function createModelProvider<K extends string>(
     throw new Error("a model provider needs an injected fetch; the library never picks one itself");
   }
   const { hashed, request_extras: extras } = profile;
+  // Extras add provider fields only; they never replace a field the metered call controls, such
+  // as the output limit the envelope is priced from.
+  const owned = Object.keys(extras).filter((key) => METERED_REQUEST_FIELDS.has(key));
+  if (owned.length > 0) {
+    throw new Error(`request extras may not set metered request fields: ${owned.join(", ")}`);
+  }
   const observed = new ObservedFetch(options.fetch);
   const provider = createOpenAICompatible({
     name: hashed.provider,
@@ -84,11 +90,29 @@ export function createModelProvider<K extends string>(
       if (body.tools !== undefined) {
         throw new Error("writer requests carry no tools");
       }
+      const collisions = Object.keys(extras).filter((key) => key in body);
+      if (collisions.length > 0) {
+        throw new Error(`request extras may not override request fields: ${collisions.join(", ")}`);
+      }
       return { ...body, ...extras };
     },
   });
   return { modelId: hashed.model, model: provider.chatModel(hashed.model), observed, profile };
 }
+
+/** Request fields the metered call sets itself; a profile's request extras may not set them. */
+const METERED_REQUEST_FIELDS: ReadonlySet<string> = new Set([
+  "model",
+  "messages",
+  "max_tokens",
+  "max_completion_tokens",
+  "response_format",
+  "stream",
+  "stream_options",
+  "tools",
+  "tool_choice",
+  "n",
+]);
 
 /** An infrastructure error after a reservation was requested; the operation may need an operator. */
 export class WriterInterruptedError extends Error {

@@ -287,6 +287,14 @@ describe("a second profile, end to end", () => {
     expect(l.reserves).toHaveLength(1);
   });
 
+  it.each(["max_tokens", "max_completion_tokens", "model", "messages", "response_format", "stream"])(
+    "refuses request extras that would override the metered field %s",
+    (field) => {
+      const profile = { ...TEST_PROFILE, request_extras: { [field]: 99_999 } };
+      expect(() => createModelProvider(profile, { fetch: synthesizingReplay(profile, []) })).toThrow(field);
+    },
+  );
+
   it("refuses a kind the profile does not list, before reserving", async () => {
     const l = await ledger();
     const outcome = await meteredStructuredCall(options(l.spend, TEST_PROFILE, synthesizingReplay(TEST_PROFILE, [])), {
