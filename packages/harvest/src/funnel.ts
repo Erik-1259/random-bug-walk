@@ -156,9 +156,10 @@ function byText(a: string, b: string): number {
 }
 
 /**
- * A patch ID in the manner of `git patch-id`: a hash of each file's name and its added and removed
- * lines with whitespace and line numbers ignored, so the same change committed elsewhere has the
- * same ID. A file GitHub gives no patch for counts by its blob ID. Null when no file has a patch.
+ * A patch ID in the manner of `git patch-id`: a hash of each file's name and its added, removed and
+ * context lines in order, with whitespace, line numbers and hunk headers ignored, so the same change
+ * committed elsewhere has the same ID. A file GitHub gives no patch for counts by its blob ID. Null
+ * when no file has a patch.
  */
 export function patchId(files: readonly CommitFile[]): string | null {
   if (!files.some((file) => file.patch !== undefined)) {
@@ -172,7 +173,7 @@ export function patchId(files: readonly CommitFile[]): string | null {
       continue;
     }
     for (const line of file.patch.split("\n")) {
-      if (line.startsWith("+") || line.startsWith("-")) {
+      if (line.startsWith("+") || line.startsWith("-") || line.startsWith(" ")) {
         hash.update(`${line.charAt(0)}${line.slice(1).replace(/\s+/g, "")}\n`);
       }
     }

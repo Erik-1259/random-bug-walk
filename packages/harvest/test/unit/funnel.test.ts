@@ -2,7 +2,8 @@ import { mkdtempSync, readFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { DROP_REASONS, STAGES, rankDrops, type CandidateRecord } from "../../src/funnel.ts";
+import { DROP_REASONS, STAGES, patchId, rankDrops, type CandidateRecord } from "../../src/funnel.ts";
+import type { CommitFile } from "../../src/github-api.ts";
 import { replay } from "../../src/harvest.ts";
 import { createGitHubClient } from "../../src/github.ts";
 import { harvest } from "../../src/harvest.ts";
@@ -282,6 +283,29 @@ describe("license lookup", () => {
     const candidate = funnel.candidates.find((entry) => entry.repo === "synthetic-org/synthetic-no-license");
     expect(candidate?.drop).toMatchObject({ reason: "license_missing" });
     expect(candidate?.drop?.detail).toContain("license endpoint");
+  });
+});
+
+describe("patch IDs", () => {
+  const file = (patch: string): CommitFile => ({ filename: "src/report.ts", status: "modified", sha: "synthetic-blob", patch });
+
+  it("differ for the same added and removed lines with different context", () => {
+    const first = patchId([file("@@ -1,3 +1,3 @@\n const zone = settings.zone;\n-format(d)\n+format(d, zone)")]);
+    const second = patchId([file("@@ -1,3 +1,3 @@\n const zone = user.zone;\n-format(d)\n+format(d, zone)")]);
+    expect(first).toMatch(/^[0-9a-f]{64}$/);
+    expect(second).not.toBe(first);
+  });
+
+  it("differ when the same context lines come in a different order", () => {
+    const first = patchId([file("@@ -1,4 +1,4 @@\n a();\n-format(d)\n+format(d, zone)\n b();")]);
+    const swapped = patchId([file("@@ -1,4 +1,4 @@\n b();\n-format(d)\n+format(d, zone)\n a();")]);
+    expect(swapped).not.toBe(first);
+  });
+
+  it("match for the same hunk at a different line number, with whitespace ignored", () => {
+    const first = patchId([file("@@ -1,4 +1,4 @@\n const zone = settings.zone;\n-format(d)\n+format(d, zone)\n return label;")]);
+    const moved = patchId([file("@@ -40,4 +40,4 @@ function label() {\n   const zone = settings.zone;\n-  format(d)\n+  format(d, zone)\n   return label;")]);
+    expect(moved).toBe(first);
   });
 });
 
