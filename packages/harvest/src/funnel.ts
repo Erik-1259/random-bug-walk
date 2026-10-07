@@ -358,7 +358,22 @@ function commitTime(entry: Resolved): number {
   return Number.isNaN(time) ? Number.POSITIVE_INFINITY : time;
 }
 
-/** Keeps the earliest commit of each SHA and then of each patch ID; earlier in harvest order breaks ties. */
+/** Why `examine` will drop a commit before reading its files: not one parent, or too many files. */
+function unexaminable(commit: Commit): Drop | null {
+  if (commit.parents.length !== 1) {
+    return new Drop("diff_fetched", "not_single_parent", `the commit has ${String(commit.parents.length)} parents`);
+  }
+  if (commit.files.length >= MAX_COMMIT_FILES) {
+    return new Drop("diff_fetched", "too_many_files", `the commit lists ${String(commit.files.length)} files, the most one page holds`);
+  }
+  return null;
+}
+
+/**
+ * Keeps the earliest commit of each SHA and then of each patch ID; earlier in harvest order breaks
+ * ties. A commit that `examine` will drop unread does not hold its patch ID, so a usable copy of
+ * the same patch is kept.
+ */
 function deduplicate(resolved: readonly Resolved[]): { kept: Resolved[]; dropped: [Resolved, Drop][] } {
   const ranked = [...resolved].sort((a, b) => commitTime(a) - commitTime(b) || a.order - b.order);
   const bySha = new Map<string, CandidateRecord>();
@@ -379,7 +394,7 @@ function deduplicate(resolved: readonly Resolved[]): { kept: Resolved[]; dropped
       dropped.push([entry, new Drop("diff_fetched", "duplicate_patch", `the patch is the same as candidate ${samePatch.id}, committed no later`)]);
       continue;
     }
-    if (patch !== null) {
+    if (patch !== null && unexaminable(entry.commit) === null) {
       byPatch.set(patch, entry.candidate);
     }
     kept.push(entry);
@@ -413,19 +428,20 @@ async function fetchBlob(transport: Transport, repo: string, path: string, ref: 
 async function examine(transport: Transport, { candidate, license, commit }: Resolved): Promise<void> {
   const sha = commit.sha;
   const [parent] = commit.parents;
-  if (commit.parents.length !== 1 || parent === undefined) {
-    throw new Drop("diff_fetched", "not_single_parent", `the commit has ${String(commit.parents.length)} parents`);
+  const skipped = unexaminable(commit);
+  if (skipped !== null) {
+    throw skipped;
   }
-  if (commit.files.length >= MAX_COMMIT_FILES) {
-    throw new Drop("diff_fetched", "too_many_files", `the commit lists ${String(commit.files.length)} files, the most one page holds`);
+  if (parent === undefined) {
+    throw new Error("a single-parent commit lists no parent");
   }
-  const sources = commit.files.filter((file) => file.status === "modified" && SOURCE_FILE.test(file.filename));
+  const sources = commit.files.filter((file) => (file.status === "modified" || file.status === "renamed") && SOURCE_FILE.test(file.filename));
   if (sources.length === 0) {
-    throw new Drop("diff_fetched", "no_ts_js_change", "the commit modifies no TypeScript or JavaScript file");
+    throw new Drop("diff_fetched", "no_ts_js_change", "the commit modifies or renames no TypeScript or JavaScript file");
   }
   const patched = sources.filter((file) => file.patch !== undefined);
   if (patched.length === 0) {
-    throw new Drop("diff_fetched", "patch_missing", "GitHub gave no patch for any modified TypeScript or JavaScript file");
+    throw new Drop("diff_fetched", "patch_missing", "GitHub gave no patch for any modified or renamed TypeScript or JavaScript file");
   }
   const timezoneFiles = patched.filter((file) => TIMEZONE_TEXT.test(addedText(file.patch ?? "")));
   if (timezoneFiles.length > MAX_TIMEZONE_FILES) {
@@ -433,7 +449,7 @@ async function examine(transport: Transport, { candidate, license, commit }: Res
   }
   const blobs: Blobs[] = [];
   for (const file of timezoneFiles) {
-    const before = await fetchBlob(transport, candidate.repo, file.filename, parent.sha, "parent");
+    const before = await fetchBlob(transport, candidate.repo, file.previous_filename ?? file.filename, parent.sha, "parent");
     const after = await fetchBlob(transport, candidate.repo, file.filename, sha, "commit");
     if (after.sha !== file.sha) {
       throw new Drop("diff_fetched", "blob_mismatch", `the commit blob of ${file.filename} is ${after.sha}, the commit lists ${file.sha ?? "none"}`);
@@ -443,7 +459,7 @@ async function examine(transport: Transport, { candidate, license, commit }: Res
   candidate.stage_reached = "diff_fetched";
 
   if (blobs.length === 0) {
-    throw new Drop("source_rule_matched", "no_timezone_text_added", "no modified TypeScript or JavaScript file adds time-zone text");
+    throw new Drop("source_rule_matched", "no_timezone_text_added", "no modified or renamed TypeScript or JavaScript file adds time-zone text");
   }
   for (const blob of blobs) {
     const added = addedLines(blob.file.patch ?? "");

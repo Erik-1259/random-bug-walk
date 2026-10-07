@@ -33,11 +33,11 @@ describe("funnel over the committed synthetic run", () => {
     const funnel = await replay(FIXTURE_DIR);
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(funnel.stages.map((stage) => [stage.stage, stage.count])).toEqual([
-      ["harvested", 28],
-      ["license_permitted", 23],
-      ["diff_fetched", 10],
-      ["source_rule_matched", 8],
-      ["structurally_confirmed", 3],
+      ["harvested", 31],
+      ["license_permitted", 26],
+      ["diff_fetched", 12],
+      ["source_rule_matched", 10],
+      ["structurally_confirmed", 5],
     ]);
   });
 
@@ -51,7 +51,7 @@ describe("funnel over the committed synthetic run", () => {
     for (const stage of funnel.stages) {
       const expected = DROP_REASONS[stage.stage];
       expect(Object.keys(stage.drops).sort(), stage.stage).toEqual([...expected].sort());
-      expect(stage.drops, stage.stage).toEqual(Object.fromEntries(expected.map((reason) => [reason, reason === "duplicate_commit" ? 2 : 1])));
+      expect(stage.drops, stage.stage).toEqual(Object.fromEntries(expected.map((reason) => [reason, reason === "duplicate_commit" || reason === "not_single_parent" ? 2 : 1])));
     }
     expect(STAGES).toEqual(["harvested", "license_permitted", "diff_fetched", "source_rule_matched", "structurally_confirmed"]);
   });
@@ -69,6 +69,7 @@ describe("funnel over the committed synthetic run", () => {
     expect(reason("copyleft")).toBe("license_not_permitted");
     expect(reason("commit-gone")).toBe("commit_unavailable");
     expect(reason("merge")).toBe("not_single_parent");
+    expect(reason("merged-patch")).toBe("not_single_parent");
     expect(reason("wide")).toBe("too_many_files");
     expect(reason("docs-only")).toBe("no_ts_js_change");
     expect(reason("no-patch")).toBe("patch_missing");
@@ -91,15 +92,17 @@ describe("funnel over the committed synthetic run", () => {
       ["synthetic-org/synthetic-sql", null, "src/queries/stats.ts", 'getDateSQL("created_at", unit, filters.timezone)'],
       ["synthetic-org/synthetic-hook", null, "src/pages/RangePage.tsx", "useDateRange({ timezone })"],
       ["synthetic-org/synthetic-search-license", null, "src/label.ts", "formatDate(d, timezone)"],
+      ["synthetic-org/synthetic-backport", null, "src/backport.ts", "formatDate(d, timezone)"],
+      ["synthetic-org/synthetic-renamed", null, "src/format/label.ts", "formatDate(d, timezone)"],
     ]);
     expect(confirmed[0]?.confirmation).toMatchObject({ license: "Apache-2.0", before_call: 'getDateSQL("created_at", unit)', function: "statsQuery" });
   });
 
   it("stops harvesting at the cap, skips repeated search hits and records failed queries", async () => {
     const funnel = await replay(FIXTURE_DIR);
-    expect(funnel.harvest.max).toBe(28);
+    expect(funnel.harvest.max).toBe(31);
     expect(funnel.harvest.queries.map((query) => [query.status, query.items, query.added])).toEqual([
-      [200, 26, 24],
+      [200, 29, 27],
       [422, 0, 0],
       [200, 4, 4],
     ]);
@@ -131,9 +134,10 @@ describe("funnel over the committed synthetic run", () => {
   it("reports each query's stage counts and its drop reasons, most frequent first", async () => {
     const funnel = await replay(FIXTURE_DIR);
     const [commits, failing, pulls] = funnel.harvest.queries;
-    expect(commits?.stages).toEqual({ harvested: 24, license_permitted: 19, diff_fetched: 9, source_rule_matched: 7, structurally_confirmed: 2 });
+    expect(commits?.stages).toEqual({ harvested: 27, license_permitted: 22, diff_fetched: 11, source_rule_matched: 9, structurally_confirmed: 4 });
     expect(commits?.drops).toHaveLength(22);
-    expect(commits?.drops.slice(0, 2)).toEqual([
+    expect(commits?.drops.slice(0, 3)).toEqual([
+      { stage: "diff_fetched", reason: "not_single_parent", count: 2 },
       { stage: "license_permitted", reason: "fork", count: 1 },
       { stage: "license_permitted", reason: "license_missing", count: 1 },
     ]);
@@ -181,6 +185,19 @@ describe("de-duplication", () => {
     expect(hook?.stage_reached).toBe("structurally_confirmed");
   });
 
+  it("keeps a single-parent backport when an earlier merge commit has the same patch", async () => {
+    const funnel = await replay(FIXTURE_DIR);
+    const merged = funnel.candidates.find((candidate) => candidate.repo === "synthetic-org/synthetic-merged-patch");
+    const backport = funnel.candidates.find((candidate) => candidate.repo === "synthetic-org/synthetic-backport");
+    expect(merged?.patch_id).toMatch(/^[0-9a-f]{64}$/);
+    expect(merged?.patch_id).toBe(backport?.patch_id);
+    expect(Date.parse(merged?.committed_at ?? "")).toBeLessThan(Date.parse(backport?.committed_at ?? ""));
+    expect(merged?.drop).toMatchObject({ stage: "diff_fetched", reason: "not_single_parent" });
+    expect(backport?.drop).toBeNull();
+    expect(backport?.stage_reached).toBe("structurally_confirmed");
+    expect(backport?.confirmation).toMatchObject({ path: "src/backport.ts", call: "formatDate(d, timezone)" });
+  });
+
   it("fetches no blob for a duplicate and no commit for a fork", async () => {
     const github = syntheticGitHub();
     const clock = steppingClock();
@@ -192,6 +209,27 @@ describe("de-duplication", () => {
     expect(urls.filter((url) => url.startsWith("/repos/synthetic-org/synthetic-copy/contents/"))).toEqual([]);
     expect(urls.filter((url) => url.startsWith("/repos/synthetic-org/synthetic-mirror/contents/"))).toEqual([]);
     expect(urls.some((url) => url.startsWith("/repos/synthetic-org/synthetic-copy/commits/"))).toBe(true);
+  });
+});
+
+describe("renamed files", () => {
+  it("confirms a renamed file, fetching the parent blob at its old path", async () => {
+    const github = syntheticGitHub();
+    const clock = steppingClock();
+    const client = createGitHubClient({ fetch: github.fetch, now: clock.now, sleep: () => Promise.resolve() });
+    const out = join(mkdtempSync(join(tmpdir(), "harvest-rename-")), "run");
+    await harvest({ client, out, max: SYNTHETIC_MAX, queries: SYNTHETIC_QUERIES, clock: clock.date, authenticated: false });
+    const contents = github.requests.map((request) => request.url).filter((url) => url.startsWith("/repos/synthetic-org/synthetic-renamed/contents/"));
+    expect(contents.map((url) => url.replace(/\?ref=[0-9a-f]+$/, ""))).toEqual([
+      "/repos/synthetic-org/synthetic-renamed/contents/src/label-old.ts",
+      "/repos/synthetic-org/synthetic-renamed/contents/src/format/label.ts",
+    ]);
+    const funnel = await replay(FIXTURE_DIR);
+    const renamed = funnel.candidates.find((candidate) => candidate.repo === "synthetic-org/synthetic-renamed");
+    expect(renamed?.drop).toBeNull();
+    expect(renamed?.stage_reached).toBe("structurally_confirmed");
+    expect(renamed?.matches.map((match) => match.path)).toEqual(["src/format/label.ts"]);
+    expect(renamed?.confirmation).toMatchObject({ path: "src/format/label.ts", before_call: "formatDate(d)", call: "formatDate(d, timezone)" });
   });
 });
 

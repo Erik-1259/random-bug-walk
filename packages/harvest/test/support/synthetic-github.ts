@@ -51,6 +51,8 @@ function patchOf(before: string, after: string): string {
 
 interface FileChange {
   path: string;
+  /** The file's path in the parent, for a commit that renames it. */
+  previousPath?: string;
   before: string;
   after: string;
   /** Overrides for the commit's file entry or its content responses. */
@@ -115,6 +117,8 @@ const LABEL = `export function label(d: Date, timezone: string) {
   return formatDate(d);
 }
 `;
+
+const BACKPORT_FILES = simple("src/backport.ts", LABEL, LABEL.replace("formatDate(d)", "formatDate(d, timezone)"));
 
 const HOOK_FILES: FileChange[] = [{ path: "src/pages/RangePage.tsx", before: HOOK_BEFORE, after: HOOK_AFTER }];
 
@@ -194,6 +198,15 @@ const SCENARIOS: Scenario[] = [
     license: "ISC",
     licenseIn: "search",
     files: simple("src/label.ts", LABEL, LABEL.replace("formatDate(d)", "formatDate(d, timezone)")),
+  },
+  // A merge commit committed first, then a single-parent backport of the same patch: the merge
+  // cannot be examined, so it does not hold the patch ID and the backport goes on.
+  { name: "merged-patch", license: "MIT", parents: 2, committedAt: "2026-02-01T00:00:00Z", files: BACKPORT_FILES },
+  { name: "backport", license: "MIT", committedAt: "2026-06-01T00:00:00Z", files: BACKPORT_FILES },
+  {
+    name: "renamed",
+    license: "MIT",
+    files: [{ path: "src/format/label.ts", previousPath: "src/label-old.ts", before: LABEL, after: LABEL.replace("formatDate(d)", "formatDate(d, timezone)") }],
   },
   // The last commit result, which the round-robin reaches last and the cap leaves out.
   { name: "beyond-max", license: "MIT" },
@@ -284,13 +297,14 @@ function buildRoutes(): Map<string, Route> {
     );
     const files: Json[] = (scenario.files ?? []).map((file) => {
       const afterBlob = file.afterSha ?? gitBlob(file.after);
-      const before = `/repos/${full}/contents/${encodePath(file.path)}?ref=${parent}`;
+      const before = `/repos/${full}/contents/${encodePath(file.previousPath ?? file.path)}?ref=${parent}`;
       const after = `/repos/${full}/contents/${encodePath(file.path)}?ref=${commit}`;
-      add(before, file.beforeStatus ?? 200, file.beforeStatus === undefined ? contentBody(file.path, file.before) : { message: "Not Found" });
+      add(before, file.beforeStatus ?? 200, file.beforeStatus === undefined ? contentBody(file.previousPath ?? file.path, file.before) : { message: "Not Found" });
       add(after, 200, contentBody(file.path, file.after, file.afterEncoding, file.afterEncoding === undefined ? undefined : afterBlob));
       return {
         filename: file.path,
-        status: "modified",
+        status: file.previousPath === undefined ? "modified" : "renamed",
+        ...(file.previousPath === undefined ? {} : { previous_filename: file.previousPath }),
         sha: afterBlob,
         additions: 1,
         deletions: 1,
