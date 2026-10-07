@@ -3,8 +3,9 @@
 // entries, and its exact bytes are hashed into rate_sheet_sha256.
 import type { EnvelopeLine, Price } from "@rbw/spend";
 import { z } from "zod";
-import { MAX_INPUT_TOKENS, MAX_OUTPUT_TOKENS, SERVICE } from "./config.ts";
+import { WRITER_MODEL_PROFILE } from "./config.ts";
 import { sha256Hex } from "./identity.ts";
+import type { ModelProfile } from "./profile.ts";
 
 const RateEntrySchema = z
   .object({
@@ -54,26 +55,27 @@ export function parseRateSheet(bytes: Uint8Array): RateSheetResult {
 
 export type EnvelopeResult = { ok: true; envelope: EnvelopeLine[] } | { ok: false; detail: string };
 
-function priceOf(entries: readonly RateEntry[], unit: string): Price | undefined {
-  return entries.find((e) => e.service === SERVICE && e.unit === unit)?.price;
+function priceOf(entries: readonly RateEntry[], service: string, unit: string): Price | undefined {
+  return entries.find((e) => e.service === service && e.unit === unit)?.price;
 }
 
-/** The two token lines of every writer call, priced from the rate record. */
-export function buildEnvelope(entries: readonly RateEntry[]): EnvelopeResult {
-  const input = priceOf(entries, "input_token");
-  const output = priceOf(entries, "output_token");
+/** The two token lines of every call under `profile`, priced from its service's rate entries. */
+export function buildEnvelope(entries: readonly RateEntry[], profile: ModelProfile = WRITER_MODEL_PROFILE): EnvelopeResult {
+  const { service, hashed } = profile;
+  const input = priceOf(entries, service, "input_token");
+  const output = priceOf(entries, service, "output_token");
   if (input === undefined || output === undefined) {
     const missing = input === undefined ? "input_token" : "output_token";
-    return { ok: false, detail: `the rate file has no ${SERVICE} ${missing} price` };
+    return { ok: false, detail: `the rate file has no ${service} ${missing} price` };
   }
   return {
     ok: true,
     envelope: [
-      { service: SERVICE, unit: "input_token", limit: MAX_INPUT_TOKENS, enforced_by: "client_counter", price: input },
+      { service, unit: "input_token", limit: hashed.max_input_tokens, enforced_by: "client_counter", price: input },
       {
-        service: SERVICE,
+        service,
         unit: "output_token",
-        limit: MAX_OUTPUT_TOKENS,
+        limit: hashed.max_output_tokens,
         enforced_by: "request_parameter",
         price: output,
       },

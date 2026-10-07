@@ -12,6 +12,7 @@ The package makes no live call in its tests or in public CI. A replay `fetch` an
 
 - [Scripts](#scripts)
 - [API](#api)
+- [Model profiles and a second caller](#model-profiles-and-a-second-caller)
 - [Model and request settings](#model-and-request-settings)
 - [Limits and how each is enforced](#limits-and-how-each-is-enforced)
 - [Prompt counting](#prompt-counting)
@@ -70,6 +71,40 @@ const card = await writer.writeCard({ candidate, source });
 A **repair** is not a separate API: after a failed or rejected call, the caller calls `writeIssue` or `writeCard` again. That is a new call with its own ordinal, its own reservation and its own settlement.
 
 Calls of one writer run one at a time, in the order they were made, so overlapping calls never pick the same ordinal. A provider serves one request at a time: if two writers share one provider and their requests overlap after launch, the later one is not sent and its call is recorded as `failed` with `request_not_sent` and settled.
+
+## Model profiles and a second caller
+
+A model profile (`ModelProfile` in `src/profile.ts`) is everything a metered call needs to know about one model. It has two parts:
+
+- **Hashed:** `hashed`, the object whose canonical digest is `runtime_profile_sha256`. The metered call reads the provider label, model ID, base URL, input and output limits, retries, request timeout and prompt-bound framing allowances from it; any other field is hashed but not read. The writer's `hashed` is `WRITER_PROFILE`, unchanged.
+- **Config beside it, not hashed:** `request_extras` (top-level fields added to every request body), `service` (the label of both envelope lines and the rate entries they are priced from), `actor_role` (the ledger role for the transitions), `kinds` (the operation kinds reserved under the profile) and `api_key_variable`.
+
+The writer's profile is `WRITER_MODEL_PROFILE`: `request_extras` `{ chat_template_kwargs: { enable_thinking: false } }`, service `token-factory`, role `writer`, kinds `writer.card` and `writer.issue`, key variable `TOKEN_FACTORY_WRITER_KEY`.
+
+Another caller makes the same metered call under its own profile:
+
+```ts
+import { createModelProvider, meteredStructuredCall } from "@rbw/writer";
+
+const provider = createModelProvider(profile, { fetch, apiKey });
+const outcome = await meteredStructuredCall(
+  { spend, provider, context, poolKey, allocationKey: null, slotKey, rateSheet },
+  { kind, candidate, prompt: { system, user }, schema, callOrdinal: 1 },
+);
+```
+
+| Function | Purpose |
+| --- | --- |
+| `createModelProvider(profile, { fetch, apiKey? })` | The profile's model on the OpenAI-compatible provider, with its request extras and no tools. `createWriterProvider` is this with the writer's profile. |
+| `meteredStructuredCall(options, request)` | One bounded, priced, reserved, launched and settled structured call, in the same steps as the writer's. Returns a refusal, or the `CallRecord` and the output. |
+| `meteredOperationId(profile, identity)` | The operation ID such a call reserves. |
+| `profileSha256(profile)` | The profile's `runtime_profile_sha256`. |
+
+- The `kind` must be one of the profile's `kinds`, and the candidate follows the writer's candidate format; otherwise the call is refused with `invalid_input` before anything is reserved.
+- Without `callOrdinal`, the call takes the first ordinal that no kind of the profile has used for the candidate, within the 12-call cap, as the writer does.
+- With `callOrdinal` (a positive integer), it reserves exactly that ordinal at attempt 1. It reads no other operation and the cap does not apply. A second reservation of the same call is refused as `operation_replayed`, and nothing is sent.
+- Calls on one provider must not overlap. A call that finds the provider busy is recorded as `failed` with `request_not_sent` and settled at zero.
+- The replay `fetch` answers the Token Factory chat-completions URL only, so a replayed profile uses that base URL.
 
 ## Model and request settings
 

@@ -1,5 +1,7 @@
 // The writer's fixed model, provider and limits. Nothing here is read from the environment:
 // there is no fallback model and no override of the model or the base URL.
+import type { WriterKind } from "./identity.ts";
+import type { ModelProfile } from "./profile.ts";
 
 export const MODEL_ID = "nvidia/Nemotron-3_5-Lightning";
 export const BASE_URL = "https://api.tokenfactory.nebius.com/v1/";
@@ -51,4 +53,14 @@ export const WRITER_PROFILE = Object.freeze({
     per_request_framing_tokens: PER_REQUEST_FRAMING_TOKENS,
   }),
   request_timeout_ms: REQUEST_TIMEOUT_MS,
+});
+
+/** The writer's model profile: the frozen profile above, hashed, and the writer's config beside it. */
+export const WRITER_MODEL_PROFILE: ModelProfile<WriterKind> = Object.freeze({
+  hashed: WRITER_PROFILE,
+  request_extras: Object.freeze({ chat_template_kwargs: Object.freeze({ enable_thinking: false }) }),
+  service: SERVICE,
+  actor_role: ACTOR_ROLE,
+  kinds: Object.freeze<WriterKind[]>(["writer.card", "writer.issue"]),
+  api_key_variable: API_KEY_VARIABLE,
 });
