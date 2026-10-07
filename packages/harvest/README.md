@@ -87,7 +87,9 @@ The rule and the checks are syntactic: they read each file's syntax tree, with n
   - A literal declared in an inner block that shadows a selected zone declared earlier in the function.
   - A call removed from one anonymous callback and added to a sibling one: both are paired as the same function.
   - A constant reached through more than one alias, a function's return value or another file.
-- **Dropped, though a real fix.** The callee or the time-zone value has a name outside the rule's lists, or the zone arrives through a spread or a computed key.
+- **Dropped, though a real fix.**
+  - The callee or the time-zone value has a name outside the rule's lists, or the zone arrives through a spread or a computed key.
+  - The selected zone has the runtime's zone as its fallback, as in `user.timezone ?? dayjs.tz.guess()`: the `guess()` call makes the whole value read as `timezone_is_constant`.
 
 These are accepted rather than patched one by one. Closing them needs semantic analysis, such as a type checker, which this package does not do. A false confirmation costs little, because each confirmed candidate still goes through its card, the owner's alignment check and admission, where the planted copy must fail and the fixed copy must pass.
 
