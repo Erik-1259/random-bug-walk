@@ -5,10 +5,11 @@
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
-import { CHAT_COMPLETIONS_URL, MODEL_ID } from "./config.ts";
+import { CHAT_COMPLETIONS_URL, WRITER_MODEL_PROFILE } from "./config.ts";
 import { RequestNotSentError, requestBody, requestUrl } from "./http.ts";
 import type { FetchFunction } from "./http.ts";
 import { canonicalJson, sha256Hex } from "./identity.ts";
+import type { ModelProfile } from "./profile.ts";
 
 const UsageSchema = z
   .object({
@@ -76,11 +77,12 @@ export interface RecordingInput {
   recordedAt: string;
 }
 
-export function makeRecording(input: RecordingInput): Recording {
+/** A recording of one exchange, carrying the model ID of the profile the request was made under. */
+export function makeRecording(input: RecordingInput, profile: ModelProfile = WRITER_MODEL_PROFILE): Recording {
   return RecordingSchema.parse({
     format_version: 1,
     provenance: input.provenance,
-    model_id: MODEL_ID,
+    model_id: profile.hashed.model,
     recorded_at: input.recordedAt,
     request: { body: JSON.parse(input.requestBody) as unknown },
     request_sha256: requestKey(input.requestBody),
