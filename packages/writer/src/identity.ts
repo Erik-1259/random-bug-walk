@@ -2,10 +2,12 @@
 // carries. The operation ID, the call name and the profile digest's encoding come from
 // @rbw/schema; the payload hash is of the exact request body this package sends.
 import { createHash } from "node:crypto";
-import { callName, canonicalDigest, operationId as schemaOperationId, providerCallIdentity, validateRecord } from "@rbw/schema";
+import { callName, operationId as schemaOperationId, providerCallIdentity, validateRecord } from "@rbw/schema";
 import type { JobRequest } from "@rbw/schema";
 import { z } from "zod";
-import { WRITER_PROFILE } from "./config.ts";
+import { WRITER_MODEL_PROFILE } from "./config.ts";
+import { profileSha256 } from "./profile.ts";
+import type { ModelProfile } from "./profile.ts";
 
 /** A string that the shared schema accepts as `type`. */
 function schemaString(type: "Uuid" | "Sha256") {
@@ -38,7 +40,7 @@ export function parseRunContext(value: unknown): RunContext {
 }
 
 export type WriterKind = "writer.card" | "writer.issue";
-export const WRITER_KINDS: readonly WriterKind[] = ["writer.card", "writer.issue"];
+export const WRITER_KINDS: readonly WriterKind[] = WRITER_MODEL_PROFILE.kinds;
 
 /** A candidate name: lowercase letters, digits, `_` and `-`, so it is one segment of a call name. */
 export const CANDIDATE_PATTERN = /^[a-z0-9][a-z0-9_-]{0,45}$/;
@@ -65,7 +67,7 @@ export function sha256Hex(data: string | Uint8Array): string {
   return createHash("sha256").update(data).digest("hex");
 }
 
-const PROFILE_SHA256 = canonicalDigest(WRITER_PROFILE).sha256;
+const PROFILE_SHA256 = profileSha256(WRITER_MODEL_PROFILE);
 
 /** SHA-256 of the canonical JSON v1 bytes of the frozen writer profile. */
 export function runtimeProfileSha256(): string {
@@ -77,13 +79,17 @@ export function payloadHash(body: string): string {
   return sha256Hex(body);
 }
 
-export interface WriterCallIdentity {
+export interface MeteredCallIdentity {
   context: RunContext;
-  kind: WriterKind;
+  kind: string;
   candidate: string;
   callOrdinal: number;
   /** 1 for the first operation at an ordinal; later attempts follow only an unsent one. */
   attemptOrdinal: number;
+}
+
+export interface WriterCallIdentity extends MeteredCallIdentity {
+  kind: WriterKind;
 }
 
 /**
@@ -92,11 +98,21 @@ export interface WriterCallIdentity {
  * already used in the ledger.
  */
 export function operationId(identity: WriterCallIdentity): string {
+  return operationIdFor(PROFILE_SHA256, identity);
+}
+
+/** The operation ID of a call made under `profile`, as the metered call reserves it. */
+export function meteredOperationId(profile: ModelProfile, identity: MeteredCallIdentity): string {
+  return operationIdFor(profileSha256(profile), identity);
+}
+
+/** The operation ID of a call under the profile whose digest is `profileSha`. */
+export function operationIdFor(profileSha: string, identity: MeteredCallIdentity): string {
   return schemaOperationId(
     providerCallIdentity({
       ...identity.context,
       kind: identity.kind,
-      runtime_profile_sha256: PROFILE_SHA256,
+      runtime_profile_sha256: profileSha,
       call_name: callName(identity.kind, identity.candidate, identity.callOrdinal),
       attempt_ordinal: identity.attemptOrdinal,
     }),
