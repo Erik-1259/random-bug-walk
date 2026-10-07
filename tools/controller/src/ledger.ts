@@ -25,8 +25,9 @@ function driverCode(error: unknown): string {
 /** The spend ledger in the database named by `databaseUrl`; the migrations must already be applied there. */
 export async function databaseLedger(databaseUrl: string, now: () => Date): Promise<Ledger> {
   const client = new pg.Client({ connectionString: databaseUrl });
-  const errors: string[] = [];
-  client.on("error", (error) => errors.push(driverCode(error)));
+  // A dropped connection surfaces as a failed ledger call, which the controller turns into
+  // needs_reconciliation; the listener only keeps the error from crashing the process.
+  client.on("error", () => undefined);
   try {
     await client.connect();
   } catch (error) {
@@ -35,10 +36,8 @@ export async function databaseLedger(databaseUrl: string, now: () => Date): Prom
   return {
     spend: createSpend({ client: fromPg(client), clock: now }),
     kind: "database",
-    close: async () => {
-      await client.end();
-      if (errors.length > 0) throw new LedgerError(`the connection to the database named by DATABASE_URL failed (driver error code ${errors.join(", ")})`);
-    },
+    // Closing never throws, so it cannot hide the job outcome already written.
+    close: () => client.end().catch(() => undefined),
   };
 }
 

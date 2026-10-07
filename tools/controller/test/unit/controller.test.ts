@@ -148,6 +148,19 @@ describe("the ledger flow of one job on the sandbox backend", () => {
 });
 
 describe("an uncertain launch", () => {
+  it("reports needs_reconciliation when the slot acquisition itself fails, and launches nothing", async () => {
+    const w = await world();
+    w.deps.spend = {
+      ...w.deps.spend,
+      acquireSlot: () => Promise.reject(Object.assign(new Error("synthetic: connection dropped"), { code: "ECONNRESET" })),
+    };
+    const outcome = await runJob(jobInputs(w, { kind: "kit_check", name: "kit-check" }), w.deps);
+    expect(outcome).toMatchObject({ status: "needs_reconciliation", exitCode: 1 });
+    expect(outcome.summary.reason).toBe("ledger_unavailable");
+    expect(outcome.summary.detail).toContain("ECONNRESET");
+    expect(w.sdk.calls).toEqual([]);
+  });
+
   it("stops the job at an uncertain create, holding the slot and the reservation, and launches nothing more", async () => {
     const w = await world({ sandbox: { create: "refused" } });
     const outcome = await runJob(jobInputs(w, { kind: "kit_check", name: "kit-check" }), w.deps);

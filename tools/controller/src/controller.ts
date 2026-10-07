@@ -733,7 +733,17 @@ export async function runJob(inputs: JobInputs, deps: ControllerDeps): Promise<J
   summary.controller.copy_reserved_microusd = Number(built.envelope.reserved_microusd);
 
   const run: Run = { inputs, deps, p, built, tag: runTag(state.ids.root_execution_id), deadline, summary, reconcile: false, copyResults: [] };
-  const hold = await ledger(() => deps.spend.acquireSlot({ slot_key: inputs.ledger.slot_key, root_execution_id: state.ids.root_execution_id, actor_role: ACTOR }));
+  let hold: Awaited<ReturnType<Spend["acquireSlot"]>>;
+  try {
+    hold = await ledger(() => deps.spend.acquireSlot({ slot_key: inputs.ledger.slot_key, root_execution_id: state.ids.root_execution_id, actor_role: ACTOR }));
+  } catch (error) {
+    if (!(error instanceof LedgerUnavailable)) throw error;
+    // The acquisition may have committed, so the slot may be held: the operator reconciles.
+    summary.status = "needs_reconciliation";
+    summary.reason = "ledger_unavailable";
+    summary.detail = error.message;
+    return finish();
+  }
   if (!hold.ok) {
     summary.reason = hold.code;
     summary.detail = refusalText(hold);
