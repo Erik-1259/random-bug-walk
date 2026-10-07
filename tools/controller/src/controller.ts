@@ -101,6 +101,8 @@ export interface CopyRecord {
   child_resource_id: string | null;
   stop_confirmed: boolean | null;
   phases_ms: Record<string, number>;
+  /** From the create call until run-copy returned after the stop: what the copy is settled from. */
+  live_ms: number | null;
   reserved_microusd: number | null;
   settled_microusd: number | null;
   ledger_state: OperationState | null;
@@ -501,7 +503,7 @@ async function recordOutcome(run: Run, record: CopyRecord, watch: LaunchWatch, o
   if (!child.ok) return refused(child, "running");
   const terminal = await transition("running", "terminal", { terminal_status: status });
   if (!terminal.ok) return refused(terminal, "running");
-  const settled = await ledger(() => spend.settle(copySettlement(run.built.envelope, opId, { launched: true, lifetime_ms: lifetimeMs(copy) }, evidence)));
+  const settled = await ledger(() => spend.settle(copySettlement(run.built.envelope, opId, { launched: true, lifetime_ms: record.live_ms ?? lifetimeMs(copy) }, evidence)));
   if (!settled.ok) return refused(settled, "terminal");
   record.ledger_state = settled.state;
   if (settled.over_envelope) {
@@ -530,6 +532,7 @@ async function runOneCopy(run: Run, trial: ExpectedTrial): Promise<{ go: boolean
     child_resource_id: null,
     stop_confirmed: null,
     phases_ms: {},
+    live_ms: null,
     reserved_microusd: null,
     settled_microusd: null,
     ledger_state: null,
@@ -538,7 +541,9 @@ async function runOneCopy(run: Run, trial: ExpectedTrial): Promise<{ go: boolean
     copy: null,
   };
   const request = built.job.request;
-  const reserved = await ledger(() =>
+  let reserved: Awaited<ReturnType<Spend["reserve"]>>;
+  try {
+    reserved = await ledger(() =>
     deps.spend.reserve(
       toReserveRequest(built.envelope, {
         ...op,
@@ -559,6 +564,14 @@ async function runOneCopy(run: Run, trial: ExpectedTrial): Promise<{ go: boolean
       }),
     ),
   );
+  } catch (error) {
+    // The reservation may have committed: keep its operation in the summary for reconciliation.
+    if (error instanceof LedgerUnavailable) {
+      record.ledger_detail = "the reservation's outcome is unknown";
+      run.summary.copies.push(record);
+    }
+    throw error;
+  }
   if (!reserved.ok) return { go: false, stop: { reason: `reserve_${reserved.code}`, detail: refusalText(reserved) } };
   run.summary.copies.push(record);
   record.reserved_microusd = Number(reserved.reserved_microusd);
@@ -576,7 +589,7 @@ async function runOneCopy(run: Run, trial: ExpectedTrial): Promise<{ go: boolean
   }
   record.ledger_state = "launching";
 
-  const watch = new LaunchWatch(() => launchDecision(run.deadline - deps.clock.now()).launch);
+  const watch = new LaunchWatch(() => launchDecision(run.deadline - deps.clock.now()).launch, () => deps.clock.now());
   let outcome: RunCopyOutcome | null = null;
   let failure: string | null = null;
   try {
@@ -607,6 +620,8 @@ async function runOneCopy(run: Run, trial: ExpectedTrial): Promise<{ go: boolean
   record.status = outcome?.copy?.status ?? (outcome?.refusal === null || outcome === null ? "not_run" : "refused");
   record.reason = outcome?.copy?.reason ?? outcome?.refusal?.reason ?? (failure === null ? null : "copy_error");
   record.phases_ms = outcome?.copy?.phases_ms ?? {};
+  // run-copy returns only after the stop, so this covers every untimed step between the phases.
+  if (watch.createdAtMs !== null) record.live_ms = Math.max(deps.clock.now() - watch.createdAtMs, lifetimeMs(record.copy));
   run.copyResults.push({ record, recordsDir: outcome?.recordsDir ?? null });
   deps.log(`${inputs.name} ${trial.trial_id} ${record.status}${record.reason === null ? "" : ` ${record.reason}`}`);
 

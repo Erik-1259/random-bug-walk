@@ -5,7 +5,7 @@ import { parseCanonical, sha256Hex } from "@rbw/schema";
 import type { Docker } from "@rbw/local-runner";
 import { runJob } from "../../src/controller.ts";
 import { JUDGE } from "../../src/limits.ts";
-import { FakeDocker } from "../../../local-runner/test/support/fakes.ts";
+import { FakeClock, FakeDocker } from "../../../local-runner/test/support/fakes.ts";
 import { jobInputs, world } from "../support/harness.ts";
 import type { LedgerCall, World } from "../support/harness.ts";
 import { SERIAL_CHECKS } from "../support/serial-checks.ts";
@@ -104,6 +104,40 @@ describe("the ledger flow of one job on the sandbox backend", () => {
     expect(sha256Hex(readFileSync(join(outcome.work, ...confirm.evidence.key.split("/"))))).toBe(confirm.evidence.sha256);
     const written = parseCanonical(readFileSync(join(outcome.jobDir, "summary.json"))) as { status: string };
     expect(written.status).toBe("complete");
+  });
+
+  it("settles from the create through the confirmed stop, including time outside the timed phases", async () => {
+    // Every clock read moves time on, so the untimed steps between phases take time too.
+    class TickingClock extends FakeClock {
+      override now(): number {
+        this.current += 7;
+        return this.current;
+      }
+    }
+    const w = await world({ clock: new TickingClock() });
+    const outcome = await runJob(jobInputs(w, { kind: "kit_check", name: "kit-check", trials: ["clean-01"] }), w.deps);
+    expect(outcome.status).toBe("complete");
+    const [copy] = outcome.summary.copies;
+    const timed = Object.entries(copy?.phases_ms ?? {}).reduce((sum, [name, ms]) => (name === "audit" ? sum : sum + ms), 0);
+    expect(copy?.live_ms).toBeGreaterThan(timed);
+    const settle = index(w.ledgerCalls, "settle").request as { service_lines: { unit: string; actual_quantity: number }[] };
+    const vcpuSeconds = settle.service_lines.find((line) => line.unit === "vcpu_second")?.actual_quantity;
+    expect(vcpuSeconds).toBe(4 * Math.ceil((copy?.live_ms ?? 0) / 1000));
+  });
+
+  it("keeps the copy's operation in the summary when the reservation's outcome is unknown", async () => {
+    const w = await world();
+    w.deps.spend = {
+      ...w.deps.spend,
+      reserve: () => Promise.reject(Object.assign(new Error("synthetic: response lost"), { code: "ECONNRESET" })),
+    };
+    const outcome = await runJob(jobInputs(w, { kind: "kit_check", name: "kit-check", trials: ["clean-01"] }), w.deps);
+    expect(outcome).toMatchObject({ status: "needs_reconciliation", exitCode: 1 });
+    expect(outcome.summary.reason).toBe("ledger_unavailable");
+    expect(outcome.summary.copies).toHaveLength(1);
+    expect(outcome.summary.copies[0]?.operation_id).toMatch(/^[0-9a-f]{64}$/);
+    expect(outcome.summary.copies[0]?.launch).toBe("not_launched");
+    expect(w.sdk.calls).toEqual([]);
   });
 
   it("names the job's real reservation and deadline in its request", async () => {

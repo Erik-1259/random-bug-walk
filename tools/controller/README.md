@@ -70,7 +70,7 @@ For each copy, in order:
 5. Record the sandbox (or container) as a **child resource** with the `running` transition.
 6. **Confirm** its terminal state with `confirmChild`. The evidence is `jobs/<name>/stops/<trial_id>.json` and its SHA-256: the stop confirmation, the final status, the call counts and the phase timings.
 7. Mark the copy **terminal**: `completed` when the copy completed, `failed` otherwise.
-8. **Settle** from the measured lifetime at the envelope's rates. The lifetime runs from the create call to the confirmed stop, rounded up to whole seconds. Each line's actual cost is rounded up, and all usage is known, so the operation becomes `reconciled`.
+8. **Settle** from the measured lifetime at the envelope's rates. The lifetime is measured directly, from the create call until the copy returns after its confirmed stop, so the untimed steps between phases count too. It is rounded up to whole seconds and recorded per copy as `live_ms`. Each line's actual cost is rounded up, and all usage is known, so the operation becomes `reconciled`.
 
 A copy whose create was never called (refused before it, or refused by the deadline check at the create) goes `launching → terminal (cancelled)` and settles at zero.
 

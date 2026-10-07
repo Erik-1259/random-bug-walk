@@ -15,9 +15,13 @@ export class LaunchWatch {
   container: string | null = null;
   /** The Docker `rm --force` result: true when it exited 0, null when it was not run. */
   removed: boolean | null = null;
+  /** When the create was called: the start of the copy's live-resource interval. */
+  createdAtMs: number | null = null;
+  private readonly now: () => number;
 
-  constructor(gate: () => boolean) {
+  constructor(gate: () => boolean, now: () => number = () => Date.now()) {
     this.gate = gate;
+    this.now = now;
   }
 
   /** Whether a create may be called now; notes the refusal or the call. */
@@ -27,6 +31,7 @@ export class LaunchWatch {
       return false;
     }
     this.createCalled = true;
+    this.createdAtMs = this.now();
     return true;
   }
 }
