@@ -302,6 +302,52 @@ importers:
         specifier: 8.23.1
         version: 8.23.1
 
+  tools/controller:
+    dependencies:
+      '@electric-sql/pglite':
+        specifier: 0.5.8
+        version: 0.5.8
+      '@rbw/admission':
+        specifier: workspace:*
+        version: link:../../packages/admission
+      '@rbw/envelope':
+        specifier: workspace:*
+        version: link:../../packages/envelope
+      '@rbw/local-runner':
+        specifier: workspace:*
+        version: link:../local-runner
+      '@rbw/schema':
+        specifier: workspace:*
+        version: link:../../packages/schema
+      '@rbw/spend':
+        specifier: workspace:*
+        version: link:../../packages/spend
+      '@rbw/umami-driver':
+        specifier: workspace:*
+        version: link:../../packages/umami-driver
+      '@rbw/umami-fixture':
+        specifier: workspace:*
+        version: link:../../packages/umami-fixture
+      pg:
+        specifier: 8.23.1
+        version: 8.23.1
+    devDependencies:
+      '@rbw/shapes':
+        specifier: workspace:*
+        version: link:../../packages/shapes
+      '@types/node':
+        specifier: 24.19.1
+        version: 24.19.1
+      '@types/pg':
+        specifier: 8.23.1
+        version: 8.23.1
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
+      vitest:
+        specifier: 5.0.3
+        version: 5.0.3(@types/node@24.19.1)(vite@8.3.2(@types/node@24.19.1)(yaml@2.9.1))
+
   tools/local-runner:
     dependencies:
       '@electric-sql/pglite':

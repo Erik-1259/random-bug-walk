@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "target_path": "src/queries/sql/pageviews/getPageviewStats.ts",
+  "base_sha256": "7cb3219367fc73838d6ddc849e5d0b334fc6de4ad7a56bd3c593f35778d84b6c",
+  "cases": {
+    "valid_fix": { "patch": "valid-fix.patch", "patch_sha256": "eb9f8e138949a36338dfcc99427d560f998f7584b4b2112d152411303dc9f5c3", "result_sha256": "49a8fba295573cce4577a4667c02781691f72057132f3554094d6a4f8e32e649" },
+    "empty_fix": { "patch": "empty-fix.patch", "patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "result_sha256": "7cb3219367fc73838d6ddc849e5d0b334fc6de4ad7a56bd3c593f35778d84b6c" },
+    "forgery": { "patch": "forgery.patch", "patch_sha256": "fa97cef81d37af3ad6cc634d414d0222261de5a7a9f6a8d09710a6be2aaaba48", "result_sha256": "e6cf606e3eb2f68d4dd27b548e86b564cd30ca55c7d74e2d237fc8b17110588c" }
+  },
+  "forgery_marker": "synthetic-forged-pass"
+}
