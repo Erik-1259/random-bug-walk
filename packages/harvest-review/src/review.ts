@@ -28,7 +28,7 @@ import type { ReviewOutput } from "./prompt.ts";
 import { combine, emptyMatrix, OUTCOMES, vote } from "./vote.ts";
 import type { Matrix, Outcome, Vote } from "./vote.ts";
 
-/** 8 × (120 s + 1,200 s) = 176 minutes of timeouts at most, inside the review job's 210 minutes. */
+/** 8 × (60 s + 120 s) = 24 minutes of request timeouts at most, inside a standard 30-minute job. */
 export const MAX_CANDIDATES = 8;
 
 export interface ReviewOptions {
@@ -72,6 +72,10 @@ export interface CallResult {
   settled_microusd: string | null;
   prompt_tokens: number | null;
   completion_tokens: number | null;
+  /** Reasoning tokens as reported inside completion_tokens; null when not reported. */
+  reasoning_tokens: number | null;
+  /** Length of the reply's reasoning text in UTF-16 code units (JavaScript string length); null when it has none. The text is not kept. */
+  reasoning_characters: number | null;
   input_token_bound: number;
   prompt_within_bound: boolean | null;
   ledger_refusal: string | null;
@@ -129,6 +133,30 @@ function errorCode(error: unknown): string {
   return "unknown";
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** The reasoning measures of a chat completion: the reported reasoning tokens and the reasoning text's length. */
+export function reasoningMeasures(responseBody: string | null): { reasoning_tokens: number | null; reasoning_characters: number | null } {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(responseBody ?? "null");
+  } catch {
+    return { reasoning_tokens: null, reasoning_characters: null };
+  }
+  const usage = isRecord(parsed) && isRecord(parsed.usage) ? parsed.usage : null;
+  const details = usage !== null && isRecord(usage.completion_tokens_details) ? usage.completion_tokens_details : null;
+  const tokens = details?.reasoning_tokens;
+  const choice = isRecord(parsed) && Array.isArray(parsed.choices) ? (parsed.choices[0] as unknown) : null;
+  const message = isRecord(choice) && isRecord(choice.message) ? choice.message : null;
+  const text = message?.reasoning;
+  return {
+    reasoning_tokens: typeof tokens === "number" && Number.isSafeInteger(tokens) && tokens >= 0 ? tokens : null,
+    reasoning_characters: typeof text === "string" ? text.length : null,
+  };
+}
+
 function callResult(call: CallRecord<ReviewKind>, output: ReviewOutput | null): CallResult {
   return {
     vote: vote(output),
@@ -142,6 +170,7 @@ function callResult(call: CallRecord<ReviewKind>, output: ReviewOutput | null): 
     settled_microusd: call.settlement?.settled_microusd.toString() ?? null,
     prompt_tokens: call.usage.prompt_tokens,
     completion_tokens: call.usage.completion_tokens,
+    ...reasoningMeasures(call.response_body),
     input_token_bound: call.input_token_bound,
     prompt_within_bound: call.prompt_within_bound,
     ledger_refusal: call.ledger_refusal,

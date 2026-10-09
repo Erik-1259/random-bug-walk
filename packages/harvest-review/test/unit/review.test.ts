@@ -22,6 +22,8 @@ import {
   syntheticInputs,
   tempDir,
 } from "../support.ts";
+import { NO, SYNTHETIC_REASONING, SYNTHETIC_REASONING_TOKENS, YES, scriptedFetch } from "../fixtures/scripted.ts";
+import type { Scripted } from "../fixtures/scripted.ts";
 
 let db: PGlite;
 beforeAll(async () => {
@@ -33,6 +35,8 @@ afterAll(async () => {
 
 interface CallResult {
   vote: string;
+  reasoning_tokens: number | null;
+  reasoning_characters: number | null;
   call_name: string;
   operation_id: string;
   status: string;
@@ -102,17 +106,23 @@ describe("review, end to end on PGlite with the replay fetch", () => {
     expect(kimiReserve?.runtime_profile_sha256).toBe(profileSha256(KIMI_PROFILE));
     expect(superReserve?.envelope.map((line) => [line.service, line.unit, line.limit])).toEqual([
       ["token-factory.nemotron-3-super", "input_token", 65_536],
-      ["token-factory.nemotron-3-super", "output_token", 4_096],
+      ["token-factory.nemotron-3-super", "output_token", 1_024],
     ]);
     expect(kimiReserve?.envelope.map((line) => [line.service, line.unit, line.limit])).toEqual([
       ["token-factory.kimi-k2.7-code", "input_token", 65_536],
-      ["token-factory.kimi-k2.7-code", "output_token", 32_768],
+      ["token-factory.kimi-k2.7-code", "output_token", 4_096],
     ]);
 
     expect(fetchSpy.bodies).toHaveLength(16);
     const [superBody, kimiBody] = fetchSpy.bodies;
-    expect(superBody).toMatchObject({ model: "nvidia/nemotron-3-super-120b-a12b", max_tokens: 4_096, chat_template_kwargs: { enable_thinking: false } });
-    expect(kimiBody).toMatchObject({ model: "moonshotai/Kimi-K2.7-Code", max_tokens: 32_768 });
+    expect(superBody).toMatchObject({
+      model: "nvidia/nemotron-3-super-120b-a12b",
+      max_tokens: 1_024,
+      chat_template_kwargs: { enable_thinking: false },
+      response_format: { type: "json_schema", json_schema: { strict: true } },
+    });
+    expect(kimiBody).toMatchObject({ model: "moonshotai/Kimi-K2.7-Code", max_tokens: 4_096 });
+    expect(kimiBody).not.toHaveProperty("response_format");
     expect(kimiBody).not.toHaveProperty("chat_template_kwargs");
     expect(kimiBody).not.toHaveProperty("thinking");
 
@@ -130,6 +140,10 @@ describe("review, end to end on PGlite with the replay fetch", () => {
       ["synthetic-backport", undefined, undefined, "not_reviewed"],
       ["synthetic-renamed", undefined, undefined, "not_reviewed"],
     ]);
+    // Kimi's reasoning is measured per call, from the reported count and the text length; the text is not kept.
+    expect(review.candidates[0]?.votes.kimi).toMatchObject({ reasoning_tokens: SYNTHETIC_REASONING_TOKENS, reasoning_characters: SYNTHETIC_REASONING.length });
+    expect(review.candidates[0]?.votes.super).toMatchObject({ reasoning_tokens: null, reasoning_characters: null });
+    expect(readFileSync(join(out, "review.json"), "utf8")).not.toContain(SYNTHETIC_REASONING);
     const passed = review.candidates[4]?.votes.super;
     expect([passed?.status, passed?.failure]).toEqual(["failed", "invalid_output"]);
     const http = review.candidates[5]?.votes.super;
@@ -151,6 +165,37 @@ describe("review, end to end on PGlite with the replay fetch", () => {
 
     const slot = await spy.spend.slotStatus({ slot_key: SLOT });
     expect(slot.ok && slot.holder).toBeNull();
+  });
+
+  /** Reviews the first synthetic candidate with Super answering yes and Kimi answering `kimi`. */
+  async function reviewOne(kimi: Scripted): Promise<ReviewFile["candidates"][number] | undefined> {
+    const inputs = syntheticInputs();
+    const spy = spySpend(await freshSpend(db));
+    const out = join(tempDir(), "run");
+    const args = reviewArgs(writeInputs({ ...inputs, candidates: inputs.candidates.slice(0, 1) }), out);
+    expect(await runCommand(commandOptions(args, spy.spend, scriptedFetch([[YES, kimi]]), []))).toBe(0);
+    return readReview(out).candidates[0];
+  }
+
+  it("accepts a Kimi reply that is exactly the JSON object, with surrounding whitespace, without a provider schema", async () => {
+    const entry = await reviewOne({ raw: `\n${JSON.stringify(NO)}\n` });
+    expect(entry?.votes.kimi).toMatchObject({ vote: "no", status: "completed", failure: null, output: NO });
+  });
+
+  it.each([
+    ["prose around the JSON", `My answer: ${JSON.stringify(YES)}`],
+    ["a fenced JSON block", ["```json", JSON.stringify(YES), "```"].join("\n")],
+    ["invalid JSON", '{"verdict": "fix", "zone_is_selected": "yes"'],
+  ])("counts a Kimi reply with %s as invalid output, voting unsure", async (_name, raw) => {
+    const entry = await reviewOne({ raw });
+    expect(entry?.votes.kimi).toMatchObject({
+      vote: "unsure",
+      status: "failed",
+      failure: "invalid_output",
+      output: null,
+      reasoning_tokens: SYNTHETIC_REASONING_TOKENS,
+    });
+    expect(entry?.outcome).toBe("needs_review");
   });
 
   it("reviews the candidates past the cap in a second run over the rest of the inputs", async () => {

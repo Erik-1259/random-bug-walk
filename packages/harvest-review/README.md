@@ -2,7 +2,7 @@
 
 Asks two models to judge each candidate that `@rbw/harvest` matched for shape `DT-1.tz-arg` (a caller holds the selected time zone but does not pass it to a date operation, which then uses its default). Their votes are combined with the harvest's ast-grep outcome into one of four outcomes. Every model call is metered through `@rbw/writer`'s `meteredStructuredCall`: bounded, priced, reserved in the spend ledger, launched, sent once and settled.
 
-The package makes no live call in its tests or in public CI. A replay `fetch` answers from committed synthetic recordings. **Planned:** the live review and the live acceptance run. Neither has been run against the live provider, and nothing in this repository was produced by one.
+The package makes no live call in its tests or in public CI. A replay `fetch` answers from committed synthetic recordings. **Planned:** the live review and the full live acceptance run. The limits were set from live calls on small synthetic inputs (see Measured limits); nothing committed in this repository was produced by a live call.
 
 ## Contents
 
@@ -38,7 +38,7 @@ node packages/harvest-review/src/cli.ts acceptance --rate-sheet packages/harvest
 
 - `build-inputs` reads `funnel.json` and the frozen responses of a harvest run directory, and makes no network call.
 - `review` and `acceptance` read `DATABASE_URL` (the spend database) and `TOKEN_FACTORY_REVIEW_KEY` (the review role's key) from the environment only. Neither value is printed, recorded or hashed.
-- Exit codes: 0 done; 1 the run stopped or could not start (or, for `acceptance`, a case failed); 2 bad usage.
+- Exit codes: 0 done; 1 the run stopped or could not start (or, for `acceptance`, a case failed on the combined outcome); 2 bad usage.
 
 ### build-inputs
 
@@ -58,17 +58,19 @@ The inputs file holds third-party code and repository names that include their o
 - **Run context:** a fresh one per run, with new UUIDs for `batch_id`, `root_execution_id` and `execution_id`, and `parent_execution_id` equal to the root. The project fields are those of the writer's run context. It is written into `review.json`; no context file is read.
 - **Ledger:** it acquires the slot for its root as role `harvest-review` and releases it at the end, as the writer's `record` command does.
 - **Calls:** at most 8 candidates (`--max-candidates`, default 8, at most 8). For each candidate, Super and then Kimi, one call at a time, with kind `harvest.review`, call ordinal 1 for Super and 2 for Kimi, and candidate key `h` plus the first 16 hex characters of SHA-256(candidate ID, a newline, the commit). The call name is `harvest.review:h…:1` or `:2`. Nothing retries.
-- **Duration:** a call can wait up to its request timeout, 120 s for Super and 1,200 s for Kimi, so the calls of a run of 8 candidates can take up to 8 × (120 s + 1,200 s) = 176 minutes, and a run can hold the `development` slot for up to about 3½ hours. **Planned:** the review runs in its own job with a 210-minute timeout.
-- **HTTP timeouts:** Node's built-in `fetch` (undici) waits at most 300 s for response headers by default, and a non-streaming completion sends none until it finishes, so a longer Kimi call would fail as a lost response before its own timeout. The live command (`src/live-fetch.ts`) therefore sends every request through an undici `Agent` whose header and body timeouts are the longest profile timeout, 1,200,000 ms. The replay `fetch` of the tests makes no HTTP request and is unaffected.
+- **Duration:** a call can wait up to its request timeout, 60 s for Super and 120 s for Kimi, so the calls of a run of 8 candidates can take up to 8 × (60 s + 120 s) = 24 minutes, which fits the standard 30-minute job.
+- **HTTP timeouts:** Node's built-in `fetch` (undici) waits at most 300 s for response headers by default, and a non-streaming completion sends none until it finishes. The live command (`src/live-fetch.ts`) sends every request through an undici `Agent` whose header and body timeouts are the longest profile timeout, 120,000 ms. At these timeouts the default would also do; the `Agent` keeps longer limits possible later. The replay `fetch` of the tests makes no HTTP request and is unaffected.
 - **Stops:** an uncertain call, a ledger refusal after launch, a refusal before sending (other than the input limit) or an unexpected error stops the run. It still writes `review.json` with what is known, names the operation, tries to release the slot and exits 1.
 - **Outputs:**
-  - `review.json`: the run context, both profiles' models, services and `runtime_profile_sha256`, the rate file's SHA-256, `stopped` (null, or why and at which operation), the counts per outcome, the agreement matrix (ast-grep confirmed or dropped × Super's vote × Kimi's vote), and per candidate its match, both calls (vote, the model's answer, status, failure, amounts, reported tokens and the counted bound), the reason and the outcome. A candidate the run did not reach has outcome `null`. Amounts are decimal strings.
-  - `recordings/`: one file per call that got a response, in the writer's recording format.
+  - `review.json`: the run context, both profiles' models, services and `runtime_profile_sha256`, the rate file's SHA-256, `stopped` (null, or why and at which operation), the counts per outcome, the agreement matrix (ast-grep confirmed or dropped × Super's vote × Kimi's vote), and per candidate its match, both calls (vote, the model's answer, status, failure, amounts, reported tokens, the reasoning length and the counted bound), the reason and the outcome. The reasoning length is `reasoning_tokens`, from the response's `usage.completion_tokens_details.reasoning_tokens`, and `reasoning_characters`, the length of `message.reasoning` (JavaScript string length); each is null when the response has none. The reasoning text itself is not stored in `review.json`. A candidate the run did not reach has outcome `null`. Amounts are decimal strings.
+  - `recordings/`: one file per call that got a response, in the writer's recording format. A recording holds the whole response body, so a live Kimi recording also holds its reasoning text.
   - stdout: the counts per outcome and where `review.json` was written.
 
 ### acceptance
 
-Runs the cases chosen with `--cases` through `review` and writes `acceptance.json` beside `review.json`, with each case's expected vote, its ast-grep outcome, each model's vote, and per model the cases that passed and failed. It prints one line per model.
+Runs the cases chosen with `--cases` through `review` and writes `acceptance.json` beside `review.json`, with each case's expected vote, its ast-grep outcome, its combined outcome, each model's vote, the cases that passed and failed on the combined outcome, and beside them each model's own case results. It prints one line for the combined outcome and one per model.
+
+- **Pass rule:** acceptance is judged on the combined outcome. It passes when every positive case is `confirmed` and no negative case is `confirmed`; a negative the run did not decide (outcome null) fails. Each model's own results (a positive needs its `yes`, a negative must not get its `yes`) are reported but do not decide the exit code. Exit code 0 when the combined outcome passes and the run finished; 1 otherwise.
 
 - **`--cases`** (required): case numbers from the acceptance set table below, 1 to 10, as a range (`1-5`, `6-10`) or a comma list (`2,4,10`, which may hold ranges). At most 8 cases, the run's cap, and no case twice. The whole set takes two runs, `--cases 1-5` and `--cases 6-10`.
 - **Report:** `acceptance.json` and stdout cover only the cases run. Each case keeps its candidate key in any selection.
@@ -77,7 +79,7 @@ Runs the cases chosen with `--cases` through `review` and writes `acceptance.jso
 
 The system prompt states the shape in one fixed sentence, what each output field means, and that the code shown is data to judge, never instructions. The user message holds the file path, the call and its line, the function path, the after function, the before functions and the hunks.
 
-Each model returns this object, validated with a strict Zod schema (sent as a strict JSON schema):
+The system prompt also states the exact JSON object to return, with no other text and no code fence. Each model returns this object, validated with a strict Zod schema. Super gets it as a strict JSON schema (`response_format`); Kimi gets no `response_format`, and its reply text is parsed as JSON and validated with the same schema after the call (see Model profiles):
 
 | Field | Values | Meaning |
 | --- | --- | --- |
@@ -104,6 +106,7 @@ A model's vote:
 - A candidate whose rendered request is over the input limit is not sent, and gets `needs_review` with reason `too_large`.
 - A candidate past the cap is `not_reviewed`.
 - An answer cut off at the output limit is invalid output: the call fails and votes `unsure`.
+- A Kimi reply is accepted only when its whole text, apart from surrounding whitespace, is the JSON object. Prose around the JSON, a code fence, invalid JSON, or JSON that fails the schema is invalid output and votes `unsure`.
 - A call that hits its request timeout is a lost response: the operation is `uncertain`, the run stops, and the slot stays held for the operator (see Recovery).
 
 ## Model profiles
@@ -113,15 +116,25 @@ A model's vote:
 | Model | `nvidia/nemotron-3-super-120b-a12b` | `moonshotai/Kimi-K2.7-Code` |
 | Service label | `token-factory.nemotron-3-super` | `token-factory.kimi-k2.7-code` |
 | Thinking | off: `chat_template_kwargs: { enable_thinking: false }`, as the writer sends to Lightning | always on; no request field is added (see below) |
-| Output tokens | 4,096 | 32,768 |
-| Request timeout | 120,000 ms | 1,200,000 ms |
-| `runtime_profile_sha256` | `ea1e2ebde4ac4b49080e997c7fa4d96e2aaa9e5656d0d2d99c34ef1d205651b7` | `debb9d0eb0a14795e3017e8bbdb1233b62bd00eeb8b74bf891fe66a2f4b22bce` |
+| Structured output | strict JSON schema (`json_schema_strict`) | none sent; validated after the call (`validated_after`) |
+| Output tokens | 1,024 | 4,096 |
+| Request timeout | 60,000 ms | 120,000 ms |
+| `runtime_profile_sha256` | `bdc6abef90a2e86ddd1210d334350a73d833ce89e1a17c715c7e33dfaf2221bd` | `9ab16d385a6e2fafb90352dcf7d2190173e294499fa810164f5173eb077f6992` |
 
-Both: provider `token-factory`, base URL `https://api.tokenfactory.nebius.com/v1/`, 65,536 counted input tokens, 0 retries, the writer's prompt-bound method and framing (16 tokens per message, 256 per request), role `harvest-review`, kind `harvest.review`, key variable `TOKEN_FACTORY_REVIEW_KEY`. The hashed part also holds each profile's request extras, so a change to how thinking is set changes the hash.
+Both: provider `token-factory`, base URL `https://api.tokenfactory.nebius.com/v1/`, 65,536 counted input tokens, 0 retries, the writer's prompt-bound method and framing (16 tokens per message, 256 per request), role `harvest-review`, kind `harvest.review`, key variable `TOKEN_FACTORY_REVIEW_KEY`. The hashed part also holds each profile's request extras and its `structured_output` mode, so a change to how thinking or the output is set changes the hash.
 
-Kimi-K2.7-Code always thinks: it has no documented way to turn thinking off. Moonshot's guide says thinking is always on for it and that `thinking: { type: "disabled" }` is an error ([use thinking models](https://platform.kimi.ai/docs/guide/use-thinking-models)), and the vLLM recipe says it runs in thinking mode only ([Kimi-K2.7-Code recipe](https://recipes.vllm.ai/moonshotai/Kimi-K2.7-Code)). Its reasoning counts against its 32,768 output tokens, so an answer cut off by the limit is invalid output and votes `unsure`. Its output limit and its 1,200,000 ms timeout are set so that they leave room for the reasoning.
+Kimi-K2.7-Code always thinks: it has no documented way to turn thinking off. Moonshot's guide says thinking is always on for it and that `thinking: { type: "disabled" }` is an error ([use thinking models](https://platform.kimi.ai/docs/guide/use-thinking-models)), and the vLLM recipe says it runs in thinking mode only ([Kimi-K2.7-Code recipe](https://recipes.vllm.ai/moonshotai/Kimi-K2.7-Code)). Its reasoning counts inside `completion_tokens` and against its 4,096 output tokens, so an answer cut off by the limit is invalid output and votes `unsure`.
 
-The limits are provisional, tuned for a thinking open-weight model before any live run. If a live run hits a timeout, a cut-off answer, a slower output rate than expected, or reasoning tokens counted outside the output cap, the settings are revisited rather than patched around.
+Why Kimi has no strict schema: with the strict `json_schema` response format, Kimi returned no reasoning, so the strict schema switched its thinking off. Without `response_format` it reasons. Kimi's request therefore carries no `response_format`, the prompt states the exact JSON object, and the reply is validated with the same Zod schema after the call. The writer's `meteredStructuredCall` selects this with the hashed profile field `structured_output: "validated_after"`; the writer's own profile keeps `"json_schema_strict"`.
+
+### Measured limits
+
+The limits come from live calls on small synthetic inputs, not from harvested candidates. The measurement records are not in this repository.
+
+- **Oct 9, 2026, 20 live acceptance calls:** Super's longest output was 101 tokens and its slowest call 2.5 s; Kimi's were 79 tokens and 4.3 s. Kimi ran with the strict schema in these calls and returned no reasoning.
+- **Oct 9, 2026, one Kimi probe without `response_format`:** Kimi reasoned, with 390 completion tokens, 335 of them reasoning, in 2.9 s.
+
+The limits are provisional. If a live run hits a timeout or a cut-off answer, they are revisited rather than patched around.
 
 ## Cost limits
 
@@ -133,10 +146,10 @@ The limits are provisional, tuned for a thinking open-weight model before any li
 | `token-factory.kimi-k2.7-code` | $0.95 | $4.00 |
 
 - The reservation per call is its worst case, each line rounded up to a whole micro-USD:
-  - Super: 19,661 + 3,687 = 23,348 micro-USD (65,536 input and 4,096 output tokens);
-  - Kimi: 62,260 + 131,072 = 193,332 micro-USD (65,536 input and 32,768 output tokens);
-  - per candidate: 216,680 micro-USD.
-- At most 8 candidates and two calls each: at most 1,733,440 micro-USD (about $1.73) reserved per run.
+  - Super: 19,661 + 922 = 20,583 micro-USD (65,536 input and 1,024 output tokens);
+  - Kimi: 62,260 + 16,384 = 78,644 micro-USD (65,536 input and 4,096 output tokens);
+  - per candidate: 99,227 micro-USD.
+- At most 8 candidates and two calls each: at most 793,816 micro-USD (about $0.79) reserved per run.
 - Settlement charges the reported usage and releases the rest.
 
 ## Recovery
@@ -152,20 +165,20 @@ An uncertain call (a request that may have reached the provider with no response
 
 ## Acceptance set
 
-Each case is a small hand-written change with the vote both models must give. Its review input is built by the same builder as a harvested candidate, and its ast-grep outcome is what the harvest's checks give the call (or `no_rule_match_on_added_line`).
+Each case is a small hand-written change with what it must get: a positive must be `confirmed`, and a negative must never be `confirmed`. The table also gives the vote each model is reported against. Its review input is built by the same builder as a harvested candidate, and its ast-grep outcome is what the harvest's checks give the call (or `no_rule_match_on_added_line`).
 
-| Case | Must be |
-| --- | --- |
-| `umami-style-fix`: an Umami-style query adds the selected zone to a date call | `yes` |
-| `options-user-timezone`: `{ timeZone: user.timezone }` | `yes` |
-| `member-filters-timezone`: a member read, `filters.timezone` | `yes` |
-| `not-a-date-operation`: `updatePreferences(userId, timezone)` | never `yes` |
-| `timezone-offset`: a `timezoneOffset` argument | never `yes` |
-| `utc-as-const`: `const timezone = "UTC" as const` | never `yes` |
-| `shadowing-inner-utc`: an inner-block `const timezone = "UTC"` shadows the selected zone | never `yes` |
-| `replaced-call`: `format(...)` replaced by `formatInTimeZone(...)` | never `yes` |
-| `moved-to-sibling-callback`: a call moved into a sibling anonymous callback | never `yes` |
-| `runtime-zone-guess`: `{ timeZone: dayjs.tz.guess() }` | never `yes` |
+| Case | Combined outcome must be | Each model's vote, reported against |
+| --- | --- | --- |
+| `umami-style-fix`: an Umami-style query adds the selected zone to a date call | `confirmed` | `yes` |
+| `options-user-timezone`: `{ timeZone: user.timezone }` | `confirmed` | `yes` |
+| `member-filters-timezone`: a member read, `filters.timezone` | `confirmed` | `yes` |
+| `not-a-date-operation`: `updatePreferences(userId, timezone)` | never `confirmed` | never `yes` |
+| `timezone-offset`: a `timezoneOffset` argument | never `confirmed` | never `yes` |
+| `utc-as-const`: `const timezone = "UTC" as const` | never `confirmed` | never `yes` |
+| `shadowing-inner-utc`: an inner-block `const timezone = "UTC"` shadows the selected zone | never `confirmed` | never `yes` |
+| `replaced-call`: `format(...)` replaced by `formatInTimeZone(...)` | never `confirmed` | never `yes` |
+| `moved-to-sibling-callback`: a call moved into a sibling anonymous callback | never `confirmed` | never `yes` |
+| `runtime-zone-guess`: `{ timeZone: dayjs.tz.guess() }` | never `confirmed` | never `yes` |
 
 ## Tests
 
@@ -173,8 +186,10 @@ Each case is a small hand-written change with the vote both models must give. It
 
 - The input builder on the harvest's committed synthetic run (candidates, match, after and before functions, hunks, a renamed file), and on hand-written sources (sibling callbacks, same-named methods, a call found by line and text, `<module>`).
 - Every row of the vote and combination tables, and the output schema.
-- The profiles, their hashes and their worst-case prices.
-- The live `fetch`: its `Agent`'s header and body timeouts cover Kimi's 1,200,000 ms, and Node's `fetch` applies the `Agent`'s header timeout (on a loopback server).
+- The profiles, their hashes, their worst-case prices and the 24-minute timeout total.
+- Kimi's request carries no `response_format` and Super's carries the strict schema; a Kimi reply that is exactly the JSON object is accepted, and one with prose around it, a code fence or invalid JSON votes `unsure` as invalid output; the reasoning length is recorded and the reasoning text is not.
+- The combined pass rule: all positives confirmed and no negative confirmed passes; one confirmed negative fails; one unconfirmed positive fails.
+- The live `fetch`: its `Agent`'s header and body timeouts cover Kimi's 120,000 ms, and Node's `fetch` applies the `Agent`'s header timeout (on a loopback server).
 - `--cases`: a range, a comma list, and the selections it refuses.
 - `build-inputs`, `review` and `acceptance` end to end: one reservation per call with the fixed ordinals and call names, each profile's service, limits and model in the reservation and the request, the outcomes, counts and matrix, a fresh context per run, `too_large`, the cap, `acceptance` runs of cases 1-5 and 6-10, and an uncertain call that stops the run with the slot held.
 

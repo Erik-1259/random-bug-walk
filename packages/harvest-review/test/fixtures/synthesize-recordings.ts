@@ -5,25 +5,11 @@
 // Usage: node test/fixtures/synthesize-recordings.ts
 import { copyFileSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { FetchFunction } from "@rbw/writer";
 import { runCommand } from "../../src/commands.ts";
 import { MAX_CANDIDATES } from "../../src/review.ts";
 import { POOL, RATES, RECORDINGS_DIR, SLOT, commandOptions, freshSpend, openDb, syntheticInputs, tempDir } from "../support.ts";
-import { ACCEPTANCE_SCRIPT, REVIEW_SCRIPT, response } from "./scripted.ts";
+import { ACCEPTANCE_SCRIPT, REVIEW_SCRIPT, scriptedFetch } from "./scripted.ts";
 import type { Scripted } from "./scripted.ts";
-
-function scriptedFetch(script: readonly (readonly [Scripted, Scripted])[]): FetchFunction {
-  const queue = script.flat();
-  return (_input, init) => {
-    const next = queue.shift();
-    if (next === undefined) {
-      return Promise.reject(new Error("the script has no answer for this request"));
-    }
-    const body = JSON.parse(typeof init?.body === "string" ? init.body : "{}") as { model?: string };
-    const answer = response(next, body.model ?? "");
-    return Promise.resolve(new Response(answer.body, { status: answer.status, headers: { "content-type": "application/json" } }));
-  };
-}
 
 const db = await openDb();
 const spend = await freshSpend(db);

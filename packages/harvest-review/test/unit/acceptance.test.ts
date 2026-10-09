@@ -1,12 +1,14 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { PGlite } from "@electric-sql/pglite";
+import type { FetchFunction } from "@rbw/writer";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { ACCEPTANCE_CASES, acceptanceInputs, parseCases } from "../../src/acceptance.ts";
+import { ACCEPTANCE_CASES, acceptanceInputs, casePasses, parseCases } from "../../src/acceptance.ts";
 import { runCommand } from "../../src/commands.ts";
 import { candidateKey } from "../../src/review.ts";
 import { RATES, SLOT, commandOptions, freshSpend, openDb, replayFetch, spySpend, tempDir } from "../support.ts";
 import type { Spy } from "../support.ts";
+import { NO, UNSURE, YES, scriptedFetch } from "../fixtures/scripted.ts";
 
 let db: PGlite;
 beforeAll(async () => {
@@ -20,16 +22,17 @@ function acceptanceArgs(out: string, cases: string): string[] {
   return ["acceptance", "--rate-sheet", RATES, "--out", out, "--slot-key", SLOT, "--pool", "development", "--cases", cases];
 }
 
-async function runCases(cases: string): Promise<{ code: number; spy: Spy; out: string; text: string }> {
+async function runCases(cases: string, fetch?: FetchFunction): Promise<{ code: number; spy: Spy; out: string; text: string }> {
   const spy = spySpend(await freshSpend(db));
   const out = join(tempDir(), "acceptance");
   const output: string[] = [];
-  const code = await runCommand(commandOptions(acceptanceArgs(out, cases), spy.spend, await replayFetch(), output));
+  const code = await runCommand(commandOptions(acceptanceArgs(out, cases), spy.spend, fetch ?? (await replayFetch()), output));
   return { code, spy, out, text: output.join("") };
 }
 
 interface Report {
-  cases: { case: string; expected: string; ast_grep: string; votes: Record<string, string>; passed: Record<string, boolean> }[];
+  cases: { case: string; expected: string; ast_grep: string; outcome: string | null; votes: Record<string, string>; passed: Record<string, boolean> }[];
+  combined: { passed: string[]; failed: string[] };
   models: Record<string, { passed: string[]; failed: string[] }>;
 }
 
@@ -65,23 +68,71 @@ describe("the acceptance set", () => {
     });
   });
 
-  it("runs cases 6-10 through review and reports, per model, which of them passed", async () => {
+  it("passes cases 6-10 on the combined outcome, though Kimi alone fails one, and reports each model beside it", async () => {
     const { code, spy, out, text } = await runCases("6-10");
-    // One synthetic recording has Kimi vote yes on a negative case, so these cases do not pass.
-    expect(code).toBe(1);
+    // One synthetic recording has Kimi vote yes on a negative case; Super votes no, so the case is not confirmed.
+    expect(code).toBe(0);
     expect(spy.reserves).toHaveLength(10);
     const report = JSON.parse(readFileSync(join(out, "acceptance.json"), "utf8")) as Report;
-    expect(report.models.super).toEqual({ passed: ACCEPTANCE_CASES.slice(5).map((entry) => entry.name), failed: [] });
+    const lastFive = ACCEPTANCE_CASES.slice(5).map((entry) => entry.name);
+    expect(report.combined).toEqual({ passed: lastFive, failed: [] });
+    expect(report.models.super).toEqual({ passed: lastFive, failed: [] });
     expect(report.models.kimi?.failed).toEqual(["runtime-zone-guess"]);
     expect(report.models.kimi?.passed).toHaveLength(4);
     expect(report.cases.find((entry) => entry.case === "runtime-zone-guess")).toMatchObject({
       expected: "not_yes",
+      outcome: "needs_review",
       votes: { super: "no", kimi: "yes" },
-      passed: { super: true, kimi: false },
+      passed: { combined: true, super: true, kimi: false },
     });
+    expect(text).toContain("combined: 5 of 5 passed");
     expect(text).toContain("super: 5 of 5 passed");
     expect(text).toContain("kimi: 4 of 5 passed; failed: runtime-zone-guess");
     expect(JSON.parse(readFileSync(join(out, "review.json"), "utf8"))).toHaveProperty("counts");
+  });
+
+  it("passes when every positive is confirmed and no negative is", async () => {
+    const { code, out } = await runCases("1-5");
+    expect(code).toBe(0);
+    const report = JSON.parse(readFileSync(join(out, "acceptance.json"), "utf8")) as Report;
+    expect(report.cases.map((entry) => entry.outcome)).toEqual(["confirmed", "confirmed", "confirmed", "model_rejected", "model_rejected"]);
+    expect(report.combined.failed).toEqual([]);
+  });
+
+  it("fails when one negative is confirmed", async () => {
+    // Case 6, utc-as-const, is confirmed by ast-grep; two yes votes confirm it.
+    const { code, out, text } = await runCases("1,6", scriptedFetch([[YES, YES], [YES, YES]]));
+    expect(code).toBe(1);
+    const report = JSON.parse(readFileSync(join(out, "acceptance.json"), "utf8")) as Report;
+    expect(report.cases.map((entry) => [entry.case, entry.outcome, entry.passed.combined])).toEqual([
+      ["umami-style-fix", "confirmed", true],
+      ["utc-as-const", "confirmed", false],
+    ]);
+    expect(report.combined).toEqual({ passed: ["umami-style-fix"], failed: ["utc-as-const"] });
+    expect(text).toContain("combined: 1 of 2 passed; failed: utc-as-const");
+  });
+
+  it("fails when one positive is not confirmed", async () => {
+    const { code, out } = await runCases("1,4", scriptedFetch([[YES, UNSURE], [NO, NO]]));
+    expect(code).toBe(1);
+    const report = JSON.parse(readFileSync(join(out, "acceptance.json"), "utf8")) as Report;
+    expect(report.cases.map((entry) => [entry.case, entry.outcome, entry.passed.combined])).toEqual([
+      ["umami-style-fix", "needs_review", false],
+      ["not-a-date-operation", "model_rejected", true],
+    ]);
+    expect(report.combined).toEqual({ passed: ["not-a-date-operation"], failed: ["umami-style-fix"] });
+  });
+
+  it("judges one case on the combined outcome", () => {
+    expect(casePasses("yes", "confirmed")).toBe(true);
+    for (const outcome of ["needs_review", "model_rejected", "not_reviewed", null] as const) {
+      expect(casePasses("yes", outcome)).toBe(false);
+    }
+    expect(casePasses("not_yes", "confirmed")).toBe(false);
+    for (const outcome of ["needs_review", "model_rejected"] as const) {
+      expect(casePasses("not_yes", outcome)).toBe(true);
+    }
+    expect(casePasses("not_yes", null)).toBe(false);
   });
 
   it("runs exactly cases 1-5 with --cases 1-5 and reports only those", async () => {

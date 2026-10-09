@@ -1,8 +1,8 @@
 // The two frozen model profiles of the harvest review. Each hashed part holds the model, the
-// limits, the writer's prompt-bound method and framing, and the request extras that set thinking,
-// so a change to any of them changes runtime_profile_sha256. The output limit and the timeout are
-// per model: Kimi always thinks, and its reasoning counts against its output tokens.
-import type { ModelProfile } from "@rbw/writer";
+// limits, how the structured output is obtained, the writer's prompt-bound method and framing, and
+// the request extras that set thinking, so a change to any of them changes runtime_profile_sha256.
+// The limits are per model and were set from measured calls (see the README); they are provisional.
+import type { ModelProfile, StructuredOutputMode } from "@rbw/writer";
 
 export const REVIEW_KIND = "harvest.review";
 export type ReviewKind = typeof REVIEW_KIND;
@@ -21,6 +21,7 @@ const BASE = {
 interface ModelLimits {
   readonly max_output_tokens: number;
   readonly request_timeout_ms: number;
+  readonly structured_output: StructuredOutputMode;
 }
 
 function profile(model: string, service: string, limits: ModelLimits, extras: Readonly<Record<string, unknown>>): ModelProfile<ReviewKind> {
@@ -35,26 +36,23 @@ function profile(model: string, service: string, limits: ModelLimits, extras: Re
   });
 }
 
-/** Thinking off as the writer sends it to Nemotron Lightning: the chat template's enable_thinking flag. */
+/** Thinking off as the writer sends it to Nemotron Lightning, and the strict JSON schema. */
 export const SUPER_PROFILE = profile(
   "nvidia/nemotron-3-super-120b-a12b",
   "token-factory.nemotron-3-super",
-  { max_output_tokens: 4_096, request_timeout_ms: 120_000 },
+  { max_output_tokens: 1_024, request_timeout_ms: 60_000, structured_output: "json_schema_strict" },
   Object.freeze({ chat_template_kwargs: Object.freeze({ enable_thinking: false }) }),
 );
 
 /**
- * No extras: Kimi-K2.7-Code has no documented way to turn thinking off. Moonshot's guide says
- * "thinking is always on" for it and that passing `thinking: { type: "disabled" }` errors
- * (https://platform.kimi.ai/docs/guide/use-thinking-models), and the vLLM recipe says it "runs in
- * thinking mode only" (https://recipes.vllm.ai/moonshotai/Kimi-K2.7-Code). Its reasoning counts
- * against its 32,768 output tokens, and the 1,200,000 ms timeout leaves room for it. All the
- * limits are provisional while they are tuned.
+ * Thinking on, with no request extras and no `response_format`: with the strict JSON schema the
+ * provider returned no reasoning, so the reply text is validated with the same schema after the
+ * call. Its reasoning counts against its 4,096 output tokens.
  */
 export const KIMI_PROFILE = profile(
   "moonshotai/Kimi-K2.7-Code",
   "token-factory.kimi-k2.7-code",
-  { max_output_tokens: 32_768, request_timeout_ms: 1_200_000 },
+  { max_output_tokens: 4_096, request_timeout_ms: 120_000, structured_output: "validated_after" },
   Object.freeze({}),
 );
 

@@ -1,7 +1,8 @@
-// The acceptance set: small hand-written synthetic changes with the vote each model must give.
-// Positives must get `yes`; negatives must never get `yes`. The `acceptance` command runs the
-// cases chosen with --cases through `review` and reports, per model, which of them passed. The
-// whole set is more than one run's cap, so it takes two runs.
+// The acceptance set: small hand-written synthetic changes with the outcome each must get.
+// Acceptance is judged on the combined outcome: every positive must be `confirmed` and no negative
+// may be. The `acceptance` command runs the cases chosen with --cases through `review` and reports
+// which of them passed, with each model's own case results beside it. The whole set is more than
+// one run's cap, so it takes two runs.
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
@@ -12,6 +13,7 @@ import { REVIEW_MODELS } from "./profiles.ts";
 import type { ModelName } from "./profiles.ts";
 import { executeReview, MAX_CANDIDATES } from "./review.ts";
 import type { ReviewOptions } from "./review.ts";
+import type { Outcome } from "./vote.ts";
 
 export interface AcceptanceCase {
   readonly name: string;
@@ -259,6 +261,16 @@ export function parseCases(value: string | undefined): number[] | null {
   return chosen.size <= MAX_CANDIDATES ? [...chosen].sort((a, b) => a - b) : null;
 }
 
+/** A positive passes when it is confirmed; a negative when the run decided it and did not confirm it. */
+export function casePasses(expected: AcceptanceCase["expected"], outcome: Outcome | null): boolean {
+  return expected === "yes" ? outcome === "confirmed" : outcome !== null && outcome !== "confirmed";
+}
+
+/** The passed and failed case names of one column of the report. */
+function split<C extends { case: string }>(cases: readonly C[], passed: (entry: C) => boolean): { passed: string[]; failed: string[] } {
+  return { passed: cases.filter(passed).map((entry) => entry.case), failed: cases.filter((entry) => !passed(entry)).map((entry) => entry.case) };
+}
+
 const USAGE = "usage: acceptance --rate-sheet <rates.json> --out <new dir> --slot-key <key> --pool <pool-key> --cases <1-5 | 6-10 | list>";
 
 export async function runAcceptance(options: ReviewOptions): Promise<number> {
@@ -317,25 +329,29 @@ export async function runAcceptance(options: ReviewOptions): Promise<number> {
         return [model.name, given !== null && (entry.expected === "yes" ? given === "yes" : given !== "yes")];
       }),
     ) as Record<ModelName, boolean>;
-    return { case: entry.name, expected: entry.expected, ast_grep: result?.ast_grep ?? null, votes, passed };
+    const outcome = result?.outcome ?? null;
+    return {
+      case: entry.name,
+      expected: entry.expected,
+      ast_grep: result?.ast_grep ?? null,
+      outcome,
+      votes,
+      passed: { combined: casePasses(entry.expected, outcome), ...passed },
+    };
   });
-  const models = Object.fromEntries(
-    REVIEW_MODELS.map((model) => [
-      model.name,
-      {
-        passed: cases.filter((entry) => entry.passed[model.name]).map((entry) => entry.case),
-        failed: cases.filter((entry) => !entry.passed[model.name]).map((entry) => entry.case),
-      },
-    ]),
-  ) as Record<ModelName, { passed: string[]; failed: string[] }>;
+  const combined = split(cases, (entry) => entry.passed.combined);
+  const models = Object.fromEntries(REVIEW_MODELS.map((model) => [model.name, split(cases, (entry) => entry.passed[model.name])])) as Record<
+    ModelName,
+    { passed: string[]; failed: string[] }
+  >;
   await mkdir(out, { recursive: true });
-  await writeFile(join(out, "acceptance.json"), `${JSON.stringify({ format_version: 1, cases, models }, null, 2)}\n`);
+  await writeFile(join(out, "acceptance.json"), `${JSON.stringify({ format_version: 1, cases, combined, models }, null, 2)}\n`);
+  const line = (name: string, { passed, failed }: { passed: string[]; failed: string[] }): void => {
+    say(`acceptance: ${name}: ${String(passed.length)} of ${String(cases.length)} passed${failed.length === 0 ? "" : `; failed: ${failed.join(", ")}`}`);
+  };
+  line("combined", combined);
   for (const model of REVIEW_MODELS) {
-    const { passed, failed } = models[model.name];
-    say(
-      `acceptance: ${model.name}: ${String(passed.length)} of ${String(cases.length)} passed${failed.length === 0 ? "" : `; failed: ${failed.join(", ")}`}`,
-    );
+    line(model.name, models[model.name]);
   }
-  const allPassed = REVIEW_MODELS.every((model) => models[model.name].failed.length === 0);
-  return code === 0 && allPassed ? 0 : 1;
+  return code === 0 && combined.failed.length === 0 ? 0 : 1;
 }
