@@ -115,6 +115,7 @@ An object already stored with the same bytes counts as stored, so a rerun with t
 | `release_file_mismatch` | the release directory does not hold exactly the listed files with their hashes |
 | `issue_mismatch` | the complete revision's `issue_sha256` is not the issue's hash |
 | `issue_not_ready` | the check report's status is not `ready_for_review` |
+| `card_invalid` | the published pattern card is missing or not schema-valid |
 | `novelty_blocked` | the published novelty summary is `blocked` |
 | `novelty_incomplete` | the published novelty summary is missing or not `clear` |
 | `approval_issue_mismatch` | the approval is not for this issue's hash |

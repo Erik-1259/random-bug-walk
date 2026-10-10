@@ -7,7 +7,8 @@ import { decisionErrors, evidenceErrors } from "@rbw/admission";
 import type { Decision } from "@rbw/admission";
 import { CanonicalError, RecordError, encodeCanonical, parseCanonical, parseRecord, sha256Hex, taskRevision } from "@rbw/schema";
 import type { ExpectedTrials, JobRequest, PublicationRecord, Release, RootRun, RunManifest, TaskRevisionIdentity } from "@rbw/schema";
-import { NOVELTY_PATH } from "./stage.ts";
+import { CardSchema } from "@rbw/writer";
+import { CARD_PATH, NOVELTY_PATH } from "./stage.ts";
 
 /** The admission policy a release is graded under. */
 export const RELEASE_POLICY_ID = "umami-uc3-v1";
@@ -32,6 +33,7 @@ export type CheckCode =
   | "release_file_mismatch"
   | "issue_mismatch"
   | "issue_not_ready"
+  | "card_invalid"
   | "novelty_blocked"
   | "novelty_incomplete"
   | "approval_issue_mismatch";
@@ -221,6 +223,8 @@ export function checkRelease(release: Release, run: PublishedRun, releaseDir: st
 
   if (manifest !== null) {
     checkAdmission(release, run, manifest, codes);
+    // ADM-07: a schema-valid pattern card.
+    if (!CardSchema.safeParse(json(runFile(run, manifest, CARD_PATH))).success) codes.add("card_invalid");
     // ADM-07: the three exact-phrase searches found no public match; an incomplete search is never clear.
     const novelty = json(runFile(run, manifest, NOVELTY_PATH)) as { status?: unknown } | null;
     if (novelty?.status === "blocked") codes.add("novelty_blocked");

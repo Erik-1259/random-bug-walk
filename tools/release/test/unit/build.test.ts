@@ -39,11 +39,12 @@ function readExpected(path: string): ExpectedTrials {
 }
 
 /** Stages the factory run, lets `change` edit the staging directory, and publishes it to a fresh destination. */
-async function published(change: (staging: string, exec: string) => void = () => undefined, novelty: "clear" | "blocked" | "incomplete" = "clear"): Promise<Published> {
+async function published(change: (staging: string, exec: string) => void = () => undefined, novelty: "clear" | "blocked" | "incomplete" = "clear", card = true): Promise<Published> {
   const dir = tempDir();
   const out = join(dir, "staging");
   const redactions = join(dir, "private", "redactions.txt");
-  const outcome = stage({ run: factory.run, rootRun: factory.rootRunFile, out, redactionsOut: redactions, ...generatedFiles(dir, novelty) });
+  const generated = generatedFiles(dir, novelty);
+  const outcome = stage({ run: factory.run, rootRun: factory.rootRunFile, out, redactionsOut: redactions, ...generated, card: card ? generated.card : undefined });
   if (!outcome.ok) throw new Error("synthetic: the stage was refused");
   change(out, factory.ids.executions.admission);
   const d = destination(w);
@@ -308,6 +309,18 @@ describe("build: a failing check stores and writes nothing", () => {
   it("ADM-07 refuses a release whose novelty is blocked (novelty_blocked)", async () => {
     const run = await published(undefined, "blocked");
     await refused(options({ run: run.runDir, publication: run.publication }), "novelty_blocked");
+  });
+
+  it("ADM-07 refuses a release whose run has no pattern card (card_invalid)", async () => {
+    const run = await published(undefined, "clear", false);
+    await refused(options({ run: run.runDir, publication: run.publication }), "card_invalid");
+  });
+
+  it("ADM-07 refuses a release whose pattern card is not schema-valid (card_invalid)", async () => {
+    const run = await published((staging) => {
+      editJson(join(staging, "generated", "card.json"), (card) => ({ ...card, bug_class: "not-a-bug-class" }));
+    });
+    await refused(options({ run: run.runDir, publication: run.publication }), "card_invalid");
   });
 
   it("ADM-07 refuses a release whose novelty is incomplete (novelty_incomplete)", async () => {

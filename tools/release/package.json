@@ -28,6 +28,7 @@
     "@rbw/schema": "workspace:*",
     "@rbw/umami-driver": "workspace:*",
     "@rbw/umami-fixture": "workspace:*",
+    "@rbw/writer": "workspace:*",
     "tar-stream": "3.2.2"
   },
   "devDependencies": {
