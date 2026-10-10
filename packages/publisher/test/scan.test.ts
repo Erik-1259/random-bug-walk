@@ -185,19 +185,23 @@ describe("scanner unavailable", () => {
     const envDump = join(world.dir, "scanner-env.json");
     const script = write(
       join(world.dir, "env-scanner.mjs"),
-      `import { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(envDump)}, JSON.stringify(Object.keys(process.env)));\nprocess.stdout.write("clean\\n");\n`,
+      `import { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(envDump)}, JSON.stringify(process.env));\nprocess.stdout.write("clean\\n");\n`,
     );
     const env = {
       PATH: process.env.PATH ?? "",
       HOME: world.dir,
       RBW_RESULTS_DEPLOY_KEY_FILE: join(world.dir, "unused-key"),
-      RBW_PUBLIC_STORE_TOKEN: ["synthetic", "placeholder"].join("-"),
+      BLOB_PUBLIC_STORE_ID: ["synthetic", "store", "placeholder"].join("-"),
+      VERCEL_OIDC_TOKEN: ["synthetic", "oidc", "placeholder"].join("-"),
     };
     const result = await publish(world, writeRootRun(world), ["--scanner", `${process.execPath} ${script}`], { env });
     expect(result.code).toBe(0);
-    const names = JSON.parse(readFileSync(envDump, "utf8")) as string[];
-    expect(names).not.toContain("RBW_RESULTS_DEPLOY_KEY_FILE");
-    expect(names).not.toContain("RBW_PUBLIC_STORE_TOKEN");
+    const seen = JSON.parse(readFileSync(envDump, "utf8")) as Record<string, string>;
+    const names = Object.keys(seen);
+    for (const [name, value] of Object.entries(env).filter(([name]) => name !== "PATH" && name !== "HOME")) {
+      expect(names).not.toContain(name);
+      expect(Object.values(seen).join("\n")).not.toContain(value);
+    }
     expect(names.filter((name) => name.startsWith("GIT_"))).toEqual([]);
   });
 

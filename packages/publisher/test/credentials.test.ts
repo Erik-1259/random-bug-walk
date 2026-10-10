@@ -24,10 +24,12 @@ import { runCli } from "../src/cli.ts";
 
 const STORE_BASE = "https://synthetic-store.example.invalid/test-prefix/";
 const KEY_VARIABLE = "RBW_RESULTS_DEPLOY_KEY_FILE";
-const TOKEN_VARIABLE = "RBW_PUBLIC_STORE_TOKEN";
+const STORE_ID_VARIABLE = "BLOB_PUBLIC_STORE_ID";
+const OIDC_VARIABLE = "VERCEL_OIDC_TOKEN";
 
 // Low-entropy placeholders without any real token prefix, assembled at runtime.
-const STORE_TOKEN = ["synthetic", "store", "credential", "placeholder"].join("-");
+const STORE_ID = ["synthetic", "public", "store", "placeholder"].join("-");
+const OIDC_TOKEN = ["synthetic", "oidc", "credential", "placeholder"].join("-");
 const KEY_CONTENT = ["synthetic", "deploy", "key", "placeholder"].join("-");
 
 interface RealWorld extends World {
@@ -75,11 +77,11 @@ function realArgv(world: RealWorld, extra: string[] = []): string[] {
 }
 
 function realEnv(world: RealWorld): Record<string, string> {
-  return { PATH: process.env.PATH ?? "", HOME: world.dir, [KEY_VARIABLE]: world.keyFile, [TOKEN_VARIABLE]: STORE_TOKEN };
+  return { PATH: process.env.PATH ?? "", HOME: world.dir, [KEY_VARIABLE]: world.keyFile, [STORE_ID_VARIABLE]: STORE_ID, [OIDC_VARIABLE]: OIDC_TOKEN };
 }
 
 describe("credential containment", () => {
-  it("never reads either credential variable in local mode", async () => {
+  it("never reads any credential variable in local mode", async () => {
     const world = createWorld();
     stage(world.staging);
     const read = new Set<string>();
@@ -87,7 +89,8 @@ describe("credential containment", () => {
       PATH: process.env.PATH ?? "",
       HOME: world.dir,
       [KEY_VARIABLE]: join(world.dir, "absent-key"),
-      [TOKEN_VARIABLE]: STORE_TOKEN,
+      [STORE_ID_VARIABLE]: STORE_ID,
+      [OIDC_VARIABLE]: OIDC_TOKEN,
     };
     const env = new Proxy(source, {
       get(target, property, receiver) {
@@ -98,10 +101,11 @@ describe("credential containment", () => {
     const result = await publish(world, writeRootRun(world), [], { env });
     expect(result.code).toBe(0);
     expect(read.has(KEY_VARIABLE)).toBe(false);
-    expect(read.has(TOKEN_VARIABLE)).toBe(false);
+    expect(read.has(STORE_ID_VARIABLE)).toBe(false);
+    expect(read.has(OIDC_VARIABLE)).toBe(false);
   });
 
-  it("passes the deploy key only to the push process and the store token only to the store client", async () => {
+  it("passes the deploy key only to the push process and the store ID and OIDC token only to the store client", async () => {
     const world = realWorld();
     const fake = harness(world.remote);
     const result = await runCli(realArgv(world), { env: realEnv(world), runner: fake.runner, blobClient: fake.blobClient, fetch: fake.fetch });
@@ -125,16 +129,19 @@ describe("credential containment", () => {
       const argv = [call.command, ...call.args].join("\n");
       expect(argv).not.toContain(world.keyFile);
       expect(argv).not.toContain(KEY_CONTENT);
-      expect(argv).not.toContain(STORE_TOKEN);
+      expect(argv).not.toContain(STORE_ID);
+      expect(argv).not.toContain(OIDC_TOKEN);
       const envText = Object.entries(call.env)
         .filter(([name]) => !(call === push && name === "GIT_SSH_COMMAND"))
         .map(([name, value]) => `${name}=${value}`)
         .join("\n");
       expect(envText).not.toContain(world.keyFile);
       expect(envText).not.toContain(KEY_CONTENT);
-      expect(envText).not.toContain(STORE_TOKEN);
+      expect(envText).not.toContain(STORE_ID);
+      expect(envText).not.toContain(OIDC_TOKEN);
       expect(Object.keys(call.env)).not.toContain(KEY_VARIABLE);
-      expect(Object.keys(call.env)).not.toContain(TOKEN_VARIABLE);
+      expect(Object.keys(call.env)).not.toContain(STORE_ID_VARIABLE);
+      expect(Object.keys(call.env)).not.toContain(OIDC_VARIABLE);
       if (call.command === "git") {
         expect(call.env.GIT_CONFIG_NOSYSTEM).toBe("1");
         expect(call.env.GIT_CONFIG_GLOBAL).toBe("/dev/null");
@@ -148,7 +155,9 @@ describe("credential containment", () => {
 
     expect(fake.puts.length).toBeGreaterThanOrEqual(2);
     for (const put of fake.puts) {
-      expect(put.options.token).toBe(STORE_TOKEN);
+      expect(put.options.storeId).toBe(STORE_ID);
+      expect(put.options.oidcToken).toBe(OIDC_TOKEN);
+      expect(put.options).not.toHaveProperty("token");
       expect(put.options.access).toBe("public");
       expect(put.options.addRandomSuffix).toBe(false);
       expect(put.pathname.startsWith("test-prefix/")).toBe(true);
@@ -160,7 +169,7 @@ describe("credential containment", () => {
     expect(statusPut?.options.cacheControlMaxAge).toBe(60);
     for (const request of fake.fetches) {
       expect(Object.keys(request.headers).map((name) => name.toLowerCase())).not.toContain("authorization");
-      expect(Object.values(request.headers).join("\n")).not.toContain(STORE_TOKEN);
+      expect(Object.values(request.headers).join("\n")).not.toContain(OIDC_TOKEN);
     }
 
     const everything = Buffer.concat([
@@ -169,67 +178,94 @@ describe("credential containment", () => {
       allRepositoryBytes(world.remote),
       ...[...fake.objects.values()].map((bytes) => Buffer.from(bytes)),
     ]).toString("latin1");
-    for (const secret of [STORE_TOKEN, KEY_CONTENT, world.keyFile]) expect(everything).not.toContain(secret);
+    for (const secret of [STORE_ID, OIDC_TOKEN, KEY_CONTENT, world.keyFile]) expect(everything).not.toContain(secret);
   });
 
+  // Store credentials that the SDK or an earlier version of the publisher would read never stand in for the two variables.
+  const otherTokens = {
+    RBW_PUBLIC_STORE_TOKEN: ["synthetic", "old", "token", "placeholder"].join("-"),
+    BLOB_READ_WRITE_TOKEN: ["synthetic", "read", "write", "placeholder"].join("-"),
+    BLOB_STORE_ID: ["synthetic", "default", "store", "placeholder"].join("-"),
+  };
+
   it.each([
-    ["the deploy key variable is unset", (world: RealWorld) => ({ ...realEnv(world), [KEY_VARIABLE]: undefined })],
-    ["the store token variable is unset", (world: RealWorld) => ({ ...realEnv(world), [TOKEN_VARIABLE]: undefined })],
+    ["the deploy key variable is unset", "deploy_key_unset", (world: RealWorld) => ({ ...realEnv(world), [KEY_VARIABLE]: undefined })],
+    ["the store ID is unset", "store_id_unset", (world: RealWorld) => ({ ...realEnv(world), ...otherTokens, [STORE_ID_VARIABLE]: undefined })],
+    ["the store ID is empty", "store_id_unset", (world: RealWorld) => ({ ...realEnv(world), ...otherTokens, [STORE_ID_VARIABLE]: "" })],
+    ["the store ID is blank", "store_id_unset", (world: RealWorld) => ({ ...realEnv(world), ...otherTokens, [STORE_ID_VARIABLE]: "  " })],
+    ["the OIDC token is unset", "oidc_token_unset", (world: RealWorld) => ({ ...realEnv(world), ...otherTokens, [OIDC_VARIABLE]: undefined })],
+    ["the OIDC token is empty", "oidc_token_unset", (world: RealWorld) => ({ ...realEnv(world), ...otherTokens, [OIDC_VARIABLE]: "" })],
+    ["the OIDC token is blank", "oidc_token_unset", (world: RealWorld) => ({ ...realEnv(world), ...otherTokens, [OIDC_VARIABLE]: " " })],
+    [
+      "only other store credentials are set",
+      "store_id_unset",
+      (world: RealWorld) => ({ ...realEnv(world), ...otherTokens, [STORE_ID_VARIABLE]: undefined, [OIDC_VARIABLE]: undefined }),
+    ],
     [
       "the deploy key is readable by others",
+      "deploy_key_permissions",
       (world: RealWorld) => {
         chmodSync(world.keyFile, 0o644);
         return realEnv(world);
       },
     ],
-    [
-      "the deploy key lies inside the state directory",
-      (world: RealWorld) => ({ ...realEnv(world), [KEY_VARIABLE]: join(world.state, "key") }),
-    ],
+    ["the deploy key lies inside the state directory", "deploy_key_missing", (world: RealWorld) => ({ ...realEnv(world), [KEY_VARIABLE]: join(world.state, "key") })],
     [
       "the deploy key lies inside staging",
+      "deploy_key_location",
       (world: RealWorld) => {
         const inside = write(join(world.staging, "inputs", "key"), KEY_CONTENT);
         chmodSync(inside, 0o600);
         return { ...realEnv(world), [KEY_VARIABLE]: inside };
       },
     ],
-    ["the SDK's default variable is the only token", (world: RealWorld) => ({ ...realEnv(world), [TOKEN_VARIABLE]: undefined, BLOB_READ_WRITE_TOKEN: STORE_TOKEN })],
-  ])("exits 4 when %s", async (_label, makeEnv) => {
+  ])("exits 4 when %s", async (_label, code, makeEnv) => {
     const world = realWorld();
     const fake = harness(world.remote);
     const env = Object.fromEntries(Object.entries(makeEnv(world)).filter((entry): entry is [string, string] => entry[1] !== undefined));
     const result = await runCli(realArgv(world), { env, runner: fake.runner, blobClient: fake.blobClient, fetch: fake.fetch });
     expect(result.code).toBe(4);
-    expect(result.stdout + result.stderr).not.toContain(KEY_CONTENT);
-    expect(result.stdout + result.stderr).not.toContain(STORE_TOKEN);
+    expect(result.stderr).toContain(`invalid input: ${code}\n`);
+    for (const secret of [KEY_CONTENT, STORE_ID, OIDC_TOKEN, ...Object.values(otherTokens)]) expect(result.stdout + result.stderr).not.toContain(secret);
     expect(fake.calls).toEqual([]);
     expect(fake.puts).toEqual([]);
+    expect(fake.fetches).toEqual([]);
     expect(existsSync(join(world.state, "roots"))).toBe(false);
   });
 
-  it("uses configured variable names", async () => {
+  it("uses a configured deploy key variable name", async () => {
     const world = realWorld();
     const fake = harness(world.remote);
-    const env = { PATH: process.env.PATH ?? "", HOME: world.dir, SYNTHETIC_KEY_PATH: world.keyFile, SYNTHETIC_STORE_SECRET: STORE_TOKEN };
-    const result = await runCli(realArgv(world, ["--deploy-key-env", "SYNTHETIC_KEY_PATH", "--store-token-env", "SYNTHETIC_STORE_SECRET"]), {
+    const env = { PATH: process.env.PATH ?? "", HOME: world.dir, SYNTHETIC_KEY_PATH: world.keyFile, [STORE_ID_VARIABLE]: STORE_ID, [OIDC_VARIABLE]: OIDC_TOKEN };
+    const result = await runCli(realArgv(world, ["--deploy-key-env", "SYNTHETIC_KEY_PATH"]), {
       env,
       runner: fake.runner,
       blobClient: fake.blobClient,
       fetch: fake.fetch,
     });
     expect(result.code).toBe(0);
-    expect(fake.puts.every((put) => put.options.token === STORE_TOKEN)).toBe(true);
+    expect(fake.calls.find((call) => call.args.includes("push"))?.env.GIT_SSH_COMMAND).toContain(`-i '${world.keyFile}'`);
+    expect(fake.puts.every((put) => put.options.storeId === STORE_ID && put.options.oidcToken === OIDC_TOKEN)).toBe(true);
+  });
+
+  it("has no flag that renames a store credential variable", async () => {
+    const world = realWorld();
+    const fake = harness(world.remote);
+    const env = { ...realEnv(world), SYNTHETIC_STORE_SECRET: OIDC_TOKEN };
+    const result = await runCli(realArgv(world, ["--store-token-env", "SYNTHETIC_STORE_SECRET"]), { env, runner: fake.runner, blobClient: fake.blobClient, fetch: fake.fetch });
+    expect(result.code).toBe(4);
+    expect(result.stderr).toContain("invalid input: usage\n");
+    expect(fake.calls).toEqual([]);
+    expect(fake.puts).toEqual([]);
   });
 
   it.each([
-    ["--store-token-env", "LC_SYNTHETIC_TOKEN"],
     ["--deploy-key-env", "LANG"],
     ["--deploy-key-env", "HOME"],
   ])("refuses %s %s, which child processes would inherit", async (flag, name) => {
     const world = realWorld();
     const fake = harness(world.remote);
-    const env = { ...realEnv(world), [name]: flag === "--store-token-env" ? STORE_TOKEN : world.keyFile };
+    const env = { ...realEnv(world), [name]: world.keyFile };
     const result = await runCli(realArgv(world, [flag, name]), { env, runner: fake.runner, blobClient: fake.blobClient, fetch: fake.fetch });
     expect(result.code).toBe(4);
     expect(fake.calls).toEqual([]);

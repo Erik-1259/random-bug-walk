@@ -28,11 +28,10 @@ Builds and validates a `ProjectPolicy` with purpose `public_demo` and visibility
 | `--replace` | off | Freeze a replacement candidate for a root whose current candidate is `blocked`. |
 | `--local-remote <dir>` | local mode | A bare repository standing in for the results repository. It must be hook-free: git runs a local remote's own receive hooks, so an executable file in its `hooks/` (other than `*.sample`) or a `core.hooksPath` or `include` setting in its `config` is refused (exit 4). |
 | `--local-store <dir>` | local mode | A directory standing in for the public store; the policy's base URI maps to it. |
-| `--real` | off | Real mode: the policy's destinations and both credentials. |
+| `--real` | off | Real mode: the policy's destinations and the credentials below. |
 | `--repository-url <url>` | real mode | Must equal the policy's `output_repository`, which must be on `github.com`. |
 | `--artifact-base-uri <url>` | real mode | Must equal the policy's `public_artifact_base_uri`. |
 | `--deploy-key-env <name>` | `RBW_RESULTS_DEPLOY_KEY_FILE` | Variable holding the deploy key's file path. Names that child processes inherit (`PATH`, `HOME`, `LANG`, `LANGUAGE`, `LC_*`) are refused. |
-| `--store-token-env <name>` | `RBW_PUBLIC_STORE_TOKEN` | Variable holding the public store's read-write token. The same names are refused. |
 | `--scanner <command>` | this Node binary running `tools/publication/src/cli.ts` of this checkout, by absolute path | Scanner command prefix, split on ASCII spaces. A relative token that names an existing file, such as `tools/publication/src/cli.ts`, is resolved against the current directory, because the scanner runs from a temporary directory. |
 | `--gitleaks <command>` | the scanner's default | Passed to the scanner as `--gitleaks`, with relative file tokens resolved the same way. |
 | `--scan-timeout-ms <n>` | `600000` | A scan that runs longer counts as unavailable. |
@@ -59,12 +58,13 @@ Log lines go to stderr as `publisher event=<name> key=value ...`. They hold IDs,
 
 ### Credentials
 
-Real mode reads exactly two credentials from the publisher's environment, and only in real mode. Local mode reads neither. The publisher never reads `.env` files and never falls back to a library's default variable such as `BLOB_READ_WRITE_TOKEN`.
+Real mode reads exactly three variables from the publisher's environment, and only in real mode. Local mode reads none of them. The public store's two variables have fixed names; no flag renames them. An unset, empty or blank `BLOB_PUBLIC_STORE_ID` or `VERCEL_OIDC_TOKEN` is refused (`store_id_unset`, `oidc_token_unset`, exit 4) before any call to the store. The publisher never reads `.env` files. It always passes the store ID and the OIDC token to the Vercel Blob SDK explicitly and never passes a `token`, so the SDK never falls back to its default variables (`BLOB_STORE_ID`, `BLOB_READ_WRITE_TOKEN`) or to a request's OIDC token.
 
-| Variable (default name) | Holds | Reaches |
+| Variable | Holds | Reaches |
 |---|---|---|
 | `RBW_RESULTS_DEPLOY_KEY_FILE` | Absolute path of the results repository's deploy key (write access). The file must be owner-only (no group or other permission bits) and outside this repository, staging and the state directory. Its contents are never read by the publisher. | Only the push process, through `GIT_SSH_COMMAND`: `ssh -i <path> -o IdentitiesOnly=yes -o BatchMode=yes -F /dev/null -o StrictHostKeyChecking=yes -o UserKnownHostsFile=<known hosts>` |
-| `RBW_PUBLIC_STORE_TOKEN` | The Vercel Blob read-write token. | Only the Vercel Blob SDK's `put`, as its explicit `token` option |
+| `BLOB_PUBLIC_STORE_ID` | The public Vercel Blob store's ID. | Only the Vercel Blob SDK's `put`, as its explicit `storeId` option |
+| `VERCEL_OIDC_TOKEN` | A short-lived Vercel OIDC token for the project, such as the one `vercel env pull` writes. The publisher does not refresh it. | Only the Vercel Blob SDK's `put`, as its explicit `oidcToken` option |
 
 The push goes to `git@github.com:<owner>/<repo>.git`, derived from `output_repository`. The fetch reads the public HTTPS URL without credentials. Store reads use plain public HTTPS requests without credentials.
 
@@ -134,6 +134,23 @@ roots/<root>/candidates/<id>/record.json    the latest PublicationRecord
 repository.git                              the publisher's own bare repository
 ```
 
+## Private store
+
+`@rbw/publisher/private-store` is a client for the private Vercel Blob store of the judge path. It imports only `@vercel/blob` (on first use), Node modules and the publisher's store and error modules, so other packages can use it without the rest of the publisher. `PrivateStore` has four methods:
+
+| Method | Does |
+|---|---|
+| `putNew(key, bytes, contentType)` | Writes without overwriting. If the key exists, the same bytes count as stored and different bytes are refused with `StoreError("store_mismatch")`. |
+| `put(key, bytes, contentType)` | Writes, overwriting an existing object. |
+| `get(key, maxBytes)` | Returns the current bytes, or `null` when the key does not exist. A body over `maxBytes` is refused with `LimitExceeded`. |
+| `list(prefix)` | Returns every key under the prefix, sorted. |
+
+Any other failure is `StoreError("store_unavailable")`. The module re-exports `StoreError`, `LimitExceeded` and `InvalidInput`.
+
+- `VercelPrivateStore({ storeId, oidcToken })` passes `access: "private"`, `storeId` and `oidcToken` on every SDK call, never a `token`. Reads use `useCache: false`, so a key that is rewritten reads current. Bodies over 100 MB are uploaded with the SDK's `multipart` option. A Vercel Function passes the OIDC token it receives with the request.
+- `privateStoreFromEnv(env)` builds one from `BLOB_PRIVATE_STORE_ID` and `VERCEL_OIDC_TOKEN` in the given object, and refuses an unset, empty or blank value with `InvalidInput` (`store_id_unset`, `oidc_token_unset`).
+- `LocalPrivateStore(dir)` keeps each key as a path under a directory, for tests and local runs. It reads no credential.
+
 ## `status`
 
 Read-only. Prints `root <id> <status>` for each root with a candidate, sorted by ID, then `count <status> <n>` for `prepared`, `published`, `blocked` and `failed`.
@@ -154,7 +171,7 @@ The proof creates a synthetic pattern file, a synthetic redaction-values file an
 | c | a synthetic forbidden term gives `blocked`, no commit and no upload; this scenario always uses the script's own pattern file |
 | d | a `running` root writes only the status object |
 
-It prints one line per scenario, then the `status` counts, and exits non-zero on any mismatch. Real mode reads both credentials through the publisher from the variables above, and checks the repository and the store without credentials.
+It prints one line per scenario, then the `status` counts, and exits non-zero on any mismatch. Real mode reads the credentials through the publisher from the variables above, and checks the repository and the store without credentials.
 
 ## Tests
 

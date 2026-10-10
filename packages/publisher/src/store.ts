@@ -3,6 +3,8 @@ import { mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "no
 import { dirname, join } from "node:path";
 import { LimitExceeded } from "./limits.ts";
 
+export { LimitExceeded };
+
 export type StoreFailure = "store_unavailable" | "store_mismatch";
 
 export class StoreError extends Error {
@@ -86,11 +88,20 @@ export class FilesystemStore implements PublicStore {
   }
 }
 
+/**
+ * Options of the `put` command of `@vercel/blob` 2.8.0. `storeId` and `oidcToken` are
+ * `BlobCommandOptions` fields (dist/create-folder-*.d.ts: "Use this together with `storeId`
+ * (or `BLOB_STORE_ID`) when you want to pass OIDC credentials explicitly"). Both are always
+ * passed and `token` never is, so `resolveBlobAuth` (src/helpers.ts) takes its OIDC branch
+ * with these values and never falls back to `BLOB_STORE_ID`, `BLOB_READ_WRITE_TOKEN` or a
+ * request-context token.
+ */
 export interface BlobPutOptions {
   access: "public";
   addRandomSuffix: false;
   allowOverwrite: boolean;
-  token: string;
+  storeId: string;
+  oidcToken: string;
   contentType: string;
   cacheControlMaxAge?: number;
 }
@@ -101,7 +112,7 @@ export interface BlobClient {
 }
 
 /** Reads a body chunk by chunk and stops, cancelling the rest, once more than maxBytes have arrived. */
-async function readLimited(response: Response, maxBytes: number): Promise<Uint8Array> {
+export async function readLimited(response: Response, maxBytes: number): Promise<Uint8Array> {
   if (response.body === null) return new Uint8Array();
   const reader: ReadableStreamDefaultReader<Uint8Array> = response.body.getReader();
   const chunks: Uint8Array[] = [];
@@ -127,7 +138,7 @@ async function readLimited(response: Response, maxBytes: number): Promise<Uint8A
 
 export type FetchFunction = (url: string, init?: RequestInit) => Promise<Response>;
 
-/** The real SDK, loaded only when real destinations are configured. The token is always passed explicitly. */
+/** The real SDK, loaded only when real destinations are configured. The store ID and OIDC token are always passed explicitly. */
 export const vercelBlobClient: BlobClient = {
   async put(pathname, body, options) {
     const { put } = await import("@vercel/blob");
@@ -139,13 +150,15 @@ export const vercelBlobClient: BlobClient = {
 /** Real mode: Vercel Blob for writes, plain public HTTPS reads for every read-back. */
 export class VercelBlobStore implements PublicStore {
   private readonly baseUri: string;
-  private readonly token: string;
+  private readonly storeId: string;
+  private readonly oidcToken: string;
   private readonly client: BlobClient;
   private readonly fetch: FetchFunction;
 
-  constructor(options: { baseUri: string; token: string; client: BlobClient; fetch: FetchFunction }) {
+  constructor(options: { baseUri: string; storeId: string; oidcToken: string; client: BlobClient; fetch: FetchFunction }) {
     this.baseUri = options.baseUri;
-    this.token = options.token;
+    this.storeId = options.storeId;
+    this.oidcToken = options.oidcToken;
     this.client = options.client;
     this.fetch = options.fetch;
   }
@@ -179,7 +192,13 @@ export class VercelBlobStore implements PublicStore {
   private async put(key: string, bytes: Uint8Array, options: { contentType: string; allowOverwrite: boolean; cacheControlMaxAge?: number }): Promise<void> {
     let url: string;
     try {
-      ({ url } = await this.client.put(this.pathname(key), bytes, { access: "public", addRandomSuffix: false, token: this.token, ...options }));
+      ({ url } = await this.client.put(this.pathname(key), bytes, {
+        access: "public",
+        addRandomSuffix: false,
+        storeId: this.storeId,
+        oidcToken: this.oidcToken,
+        ...options,
+      }));
     } catch {
       throw new StoreError("store_unavailable");
     }

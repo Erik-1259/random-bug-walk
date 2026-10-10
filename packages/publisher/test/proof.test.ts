@@ -36,7 +36,8 @@ describe("integration proof script", () => {
       PATH: process.env.PATH ?? "",
       HOME: world.dir,
       RBW_RESULTS_DEPLOY_KEY_FILE: keyFile,
-      RBW_PUBLIC_STORE_TOKEN: ["synthetic", "store", "placeholder"].join("-"),
+      BLOB_PUBLIC_STORE_ID: ["synthetic", "store", "placeholder"].join("-"),
+      VERCEL_OIDC_TOKEN: ["synthetic", "oidc", "placeholder"].join("-"),
     };
     const argvSeen: string[][] = [];
     const lines: string[] = [];
