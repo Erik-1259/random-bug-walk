@@ -136,9 +136,12 @@ function destinations(config: PublishConfig, policy: ProjectPolicy, deps: Publis
   if (destination.repositoryUrl !== repositoryUrl || destination.artifactBaseUri !== baseUri) throw new InvalidInput("destination_differs_from_policy");
   if (host !== "github.com") throw new InvalidInput("repository_not_on_github");
   const keyPath = deps.env[destination.deployKeyEnv];
-  const token = deps.env[destination.storeTokenEnv];
+  // Fixed names, read in real mode only. A blank value is refused too: the SDK trims both and would fall back to its defaults.
+  const storeId = deps.env.BLOB_PUBLIC_STORE_ID;
+  const oidcToken = deps.env.VERCEL_OIDC_TOKEN;
   if (keyPath === undefined || keyPath === "" || !isAbsolute(keyPath) || /[\0\n\r]/.test(keyPath)) throw new InvalidInput("deploy_key_unset");
-  if (token === undefined || token === "") throw new InvalidInput("store_token_unset");
+  if (storeId === undefined || storeId.trim() === "") throw new InvalidInput("store_id_unset");
+  if (oidcToken === undefined || oidcToken.trim() === "") throw new InvalidInput("oidc_token_unset");
   // The key file is checked with stat only; its contents are never read.
   const key = statSync(keyPath, { throwIfNoEntry: false });
   if (key?.isFile() !== true) throw new InvalidInput("deploy_key_missing");
@@ -159,7 +162,7 @@ function destinations(config: PublishConfig, policy: ProjectPolicy, deps: Publis
     `-o UserKnownHostsFile=${shellQuote(destination.knownHosts)}`,
   ].join(" ");
   return {
-    store: new VercelBlobStore({ baseUri, token, client: deps.blobClient ?? vercelBlobClient, fetch: deps.fetch ?? fetch }),
+    store: new VercelBlobStore({ baseUri, storeId, oidcToken, client: deps.blobClient ?? vercelBlobClient, fetch: deps.fetch ?? fetch }),
     repository: { readUrl: repositoryUrl, pushUrl: `git@github.com:${ownerRepo}.git`, branch: config.branch, pushEnv: { GIT_SSH_COMMAND: ssh } },
     ownerRepo,
   };

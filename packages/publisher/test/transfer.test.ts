@@ -51,7 +51,8 @@ describe("transfer accounting of existing objects", () => {
     );
     const store = new VercelBlobStore({
       baseUri: BASE_URI,
-      token: "synthetic-token",
+      storeId: "synthetic-store",
+      oidcToken: "synthetic-oidc",
       client: { put: () => Promise.reject(new Error("unused")) },
       fetch: () => Promise.resolve(new Response(body, { status: 200, headers: { "content-length": "1000" } })),
     });
@@ -63,7 +64,8 @@ describe("transfer accounting of existing objects", () => {
   it("still returns a body within the allowance", async () => {
     const store = new VercelBlobStore({
       baseUri: BASE_URI,
-      token: "synthetic-token",
+      storeId: "synthetic-store",
+      oidcToken: "synthetic-oidc",
       client: { put: () => Promise.reject(new Error("unused")) },
       fetch: () => Promise.resolve(new Response(Buffer.from("abc"), { status: 200 })),
     });
@@ -97,7 +99,8 @@ describe("reading a response body against the transfer limit", () => {
   function storeFor(response: Response): VercelBlobStore {
     return new VercelBlobStore({
       baseUri: BASE_URI,
-      token: "synthetic-token",
+      storeId: "synthetic-store",
+      oidcToken: "synthetic-oidc",
       client: { put: () => Promise.reject(new Error("unused")) },
       fetch: () => Promise.resolve(response),
     });
