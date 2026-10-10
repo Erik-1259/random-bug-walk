@@ -6,7 +6,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, posix } from "node:path";
 import { ImportRefusal, importRecordSet } from "@rbw/admission";
 import { assertRecord, buildExpectedTrials, buildJobRequest, canonicalDigest, mutationId, sha256Hex, taskRevision } from "@rbw/schema";
-import type { CodeState, ExpectedCheck, ExpectedTrials, JobKind, JobRequest } from "@rbw/schema";
+import type { CodeState, ExpectedCheck, ExpectedTrials, JobKind, JobRequest, TaskRevisionIdentity } from "@rbw/schema";
 import type { ProbeSet } from "@rbw/shapes";
 import { UMAMI_COMMIT } from "@rbw/umami-driver";
 import type { Fixture } from "@rbw/umami-fixture";
@@ -81,6 +81,12 @@ export interface JobContext {
   /** SHA-256 of the copy profile (resources, network, limits), as the runtime profile and the environment. */
   profileSha256: string;
   deadlineAt: string;
+  /** The project policy the jobs run under. Absent: the development placeholders. */
+  projectPolicy?: { sha256: string; policy_id: string };
+  /** The code state judge_verify's fixed trial grades. Absent: the alternative fix. */
+  judgeFixed?: "fixed" | "alternative_fix";
+  /** The frozen issue. Present: the candidate's revision is complete. Absent: provisional, with no issue. */
+  issue?: { sha256: string; style: string };
 }
 
 export interface BuiltJob {
@@ -131,6 +137,10 @@ export function expectedVectors(fixture: Fixture, probes: ProbeSet): Record<Code
   return vectors;
 }
 
+function policyId(ctx: JobContext): string {
+  return ctx.projectPolicy?.policy_id ?? POLICY_ID;
+}
+
 function kitRevision(ctx: JobContext): string {
   return taskRevision({
     schema_version: 1,
@@ -141,7 +151,7 @@ function kitRevision(ctx: JobContext): string {
     fixture_sha256: ctx.fixtureSha256,
     original_suite_sha256: ctx.originalSuite.sha256,
     added_suite_sha256: ctx.addedSuiteSha256,
-    grading_policy_id: POLICY_ID,
+    grading_policy_id: policyId(ctx),
     environment_sha256: ctx.profileSha256,
     mutation_id: null,
     issue_sha256: null,
@@ -149,29 +159,36 @@ function kitRevision(ctx: JobContext): string {
   }).sha256;
 }
 
-/** The candidate's provisional revision: the kit's inputs plus the mutation, with no issue yet. */
-function candidateRevision(ctx: JobContext): string {
+/**
+ * The identity the candidate's task revision hashes: the kit's inputs plus the mutation, and
+ * provisional with no issue until the context names the frozen issue, which makes it complete.
+ */
+export function candidateIdentity(ctx: JobContext): TaskRevisionIdentity {
   const clean = state(ctx.states, "clean");
   const planted = state(ctx.states, "planted");
   const mutation = mutationId(
     { host_commit: UMAMI_COMMIT, changes: [{ path: planted.path, original_sha256: clean.sha256, resulting_sha256: planted.sha256, original_mode: "100644", resulting_mode: "100644" }] },
     { allowedPaths: [planted.path] },
   ).sha256;
-  return taskRevision({
+  return {
     schema_version: 1,
-    revision_kind: "provisional",
+    revision_kind: ctx.issue === undefined ? "provisional" : "complete",
     host_commit: UMAMI_COMMIT,
     image_digest: ctx.imageDigest,
     kit_sha256: ctx.kitSha256,
     fixture_sha256: ctx.fixtureSha256,
     original_suite_sha256: ctx.originalSuite.sha256,
     added_suite_sha256: ctx.addedSuiteSha256,
-    grading_policy_id: POLICY_ID,
+    grading_policy_id: policyId(ctx),
     environment_sha256: ctx.profileSha256,
     mutation_id: mutation,
-    issue_sha256: null,
-    issue_style: null,
-  }).sha256;
+    issue_sha256: ctx.issue?.sha256 ?? null,
+    issue_style: ctx.issue?.style ?? null,
+  };
+}
+
+function candidateRevision(ctx: JobContext): string {
+  return taskRevision(candidateIdentity(ctx)).sha256;
 }
 
 export function buildJob(label: JobLabel, ctx: JobContext, baseline: { key: string; sha256: string } | null = null): BuiltJob {
@@ -185,7 +202,7 @@ export function buildJob(label: JobLabel, ctx: JobContext, baseline: { key: stri
     taskRevision: revision,
     patchSha256: {
       planted: patchHash(ctx.states, "planted"),
-      fixed: patchHash(ctx.states, label === "alternative-fix" ? "alternative_fix" : "fixed"),
+      fixed: patchHash(ctx.states, label === "alternative-fix" ? (ctx.judgeFixed ?? "alternative_fix") : "fixed"),
       partial: patchHash(ctx.states, "partial"),
       stub: patchHash(ctx.states, "stub"),
     },
@@ -197,7 +214,7 @@ export function buildJob(label: JobLabel, ctx: JobContext, baseline: { key: stri
   const built = buildJobRequest({
     schema_version: 1,
     project_id: ctx.ids.project_id,
-    project_policy_sha256: PLACEHOLDER_POLICY_SHA256,
+    project_policy_sha256: ctx.projectPolicy?.sha256 ?? PLACEHOLDER_POLICY_SHA256,
     batch_id: ctx.ids.batch_id,
     execution_id: executionId,
     root_execution_id: ctx.ids.root_execution_id,
@@ -205,7 +222,7 @@ export function buildJob(label: JobLabel, ctx: JobContext, baseline: { key: stri
     attempt_ordinal: 1,
     kind,
     task_revision: revision,
-    policy_id: POLICY_ID,
+    policy_id: policyId(ctx),
     runtime_profile_sha256: ctx.profileSha256,
     image_digest: ctx.imageDigest,
     expected_trials_key: `jobs/${executionId}/expected-trials.json`,

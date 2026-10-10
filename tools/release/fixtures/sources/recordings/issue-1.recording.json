@@ -1,0 +1,31 @@
+{
+  "format_version": 1,
+  "provenance": "synthetic",
+  "model_id": "nvidia/Nemotron-3_5-Lightning",
+  "recorded_at": "2026-10-05T00:00:00Z",
+  "request": {
+    "body": {
+      "model": "nvidia/Nemotron-3_5-Lightning",
+      "max_tokens": 8192,
+      "messages": [
+        {
+          "role": "system",
+          "content": "Synthetic issue prompt."
+        },
+        {
+          "role": "user",
+          "content": "Synthetic issue input."
+        }
+      ]
+    }
+  },
+  "request_sha256": "f719d9ec1b4de31c4df660beace7ade02afc4410befddcf699081c2ab4ac778a",
+  "response": {
+    "status": 200,
+    "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"{\\\"title\\\":\\\"Synthetic report: daily visits land on the wrong day for a far-from-UTC time zone\\\",\\\"reproduction_steps\\\":[\\\"Open the synthetic site's daily visits report.\\\",\\\"Choose a time zone far from UTC.\\\",\\\"Compare the daily totals with the recorded visits.\\\"],\\\"expected_result\\\":\\\"Each visit is counted on its local day.\\\",\\\"actual_result\\\":\\\"Some visits are counted on the neighboring day.\\\",\\\"environment\\\":\\\"Synthetic fixture data; the planted bug is synthetic.\\\"}\"}}],\"usage\":{\"prompt_tokens\":120,\"completion_tokens\":80}}"
+  },
+  "usage": {
+    "prompt_tokens": 120,
+    "completion_tokens": 80
+  }
+}

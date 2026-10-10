@@ -94,6 +94,16 @@ DEF_NAMES: Final = (
     "MutationChange",
     "MutationIdentity",
     "TaskRevisionIdentity",
+    "ImageReference",
+    "ReleaseRevision",
+    "ReleaseImages",
+    "ReleaseFamily",
+    "ReleaseRun",
+    "ReleaseAdmission",
+    "ReleaseFile",
+    "ReleaseApproval",
+    "ReleaseJudgeJob",
+    "Release",
 )
 
 type SafeInteger = int
@@ -753,3 +763,70 @@ class TaskRevisionIdentity(TypedDict):
     mutation_id: Sha256 | None
     issue_sha256: Sha256 | None
     issue_style: Slug | None
+
+
+type ImageReference = str
+
+
+class ReleaseRevision(TypedDict):
+    sha256: Sha256
+    identity: TaskRevisionIdentity
+
+
+class ReleaseImages(TypedDict):
+    kit_image: ImageReference
+    controller_image: ImageReference
+
+
+class ReleaseFamily(TypedDict):
+    family_id: Slug
+    source_fix: SourceFix
+    mutation_id: Sha256
+    split: Literal["public_demo"]
+
+
+class ReleaseRun(TypedDict):
+    root_execution_id: Uuid
+    publication_id: Uuid
+    manifest_sha256: Sha256
+    repository_commit: GitCommitId
+
+
+class ReleaseAdmission(TypedDict):
+    execution_id: Uuid
+    outcome_verdict: Literal["pass"]
+    classification: Literal["blind_spot_demonstrated"]
+
+
+class ReleaseFile(TypedDict):
+    path: RelativePath
+    sha256: Sha256
+
+
+class ReleaseApproval(TypedDict):
+    decision: Literal["approved"]
+    issue_sha256: Sha256
+    reviewed_at: UtcTime
+
+
+class ReleaseJudgeJob(TypedDict):
+    index_key: RelativePath
+    index_sha256: Sha256
+
+
+class Release(TypedDict):
+    schema_version: SchemaVersion
+    release_id: Uuid
+    project_id: Uuid
+    project_policy_sha256: Sha256
+    policy_id: Slug
+    created_at: UtcTime
+    calibration: Literal["not_requested"]
+    revisions: list[ReleaseRevision]
+    images: ReleaseImages
+    family: ReleaseFamily
+    run: ReleaseRun
+    admission: ReleaseAdmission
+    files: list[ReleaseFile]
+    approval: ReleaseApproval
+    judge_job: ReleaseJudgeJob

@@ -7,6 +7,7 @@ It runs only on the host or in private CI. Nothing in it passes credentials to s
 ```
 node packages/publisher/src/cli.ts policy  --project-id <uuid> --output-repository <url> --artifact-base-uri <url> --policy-version <n> --out <file>
 node packages/publisher/src/cli.ts publish --policy <file> --root-run <file> --staging <dir> --state <dir> --patterns <file> [options]
+node packages/publisher/src/cli.ts release --policy <file> --release-dir <dir> --state <dir> --patterns <file> [publish's destination options and limits]
 node packages/publisher/src/cli.ts status  --state <dir>
 ```
 
@@ -116,7 +117,7 @@ For a terminal root:
 5. **Commit and push.** One commit on the fetched head (or a first commit) adds only `runs/<root>/manifest.json` and the smaller files, as exact blobs with mode `100644`. Author and committer are `Random Bug Walk` with an empty email and `+0000` dates; the message is `chore(runs): publish <root>`. The push is fast-forward only. A rejected push records `failed` (`repository_unavailable`); the next call fetches again and retries.
 6. **Record `published`** only after the push succeeded and every object was verified.
 
-After each attempt, including one that finds the frozen candidate corrupt, it scans the status object on its own and rewrites it with the record's status; a failed or blocked status write is reported on stderr and changes neither the record nor the exit code. `published` is final: later calls print the stored record and contact nothing. Revising a published manifest is planned later work.
+After each attempt, including one that finds the frozen candidate corrupt, it scans the status object on its own and rewrites it with the record's status; a failed or blocked status write is reported on stderr and changes neither the record nor the exit code. `published` is final: later calls print the stored record and contact nothing. Revising a published manifest is planned later work; what is added to a published run, such as its issue at release time, is published under `releases/<release_id>/` by `release`.
 
 ### Limits
 
@@ -131,6 +132,8 @@ roots/<root>/candidates/<id>/manifest.json  the frozen RunManifest
 roots/<root>/candidates/<id>/files.json     the frozen file list
 roots/<root>/candidates/<id>/blobs/<sha256> the frozen, sanitized bytes
 roots/<root>/candidates/<id>/record.json    the latest PublicationRecord
+releases/<release>/limits.json              a release's limits, apart from its root's
+releases/<release>/record.json              a release's latest PublicationRecord
 repository.git                              the publisher's own bare repository
 ```
 
@@ -150,6 +153,17 @@ Any other failure is `StoreError("store_unavailable")`. The module re-exports `S
 - `VercelPrivateStore({ storeId, oidcToken })` passes `access: "private"`, `storeId` and `oidcToken` on every SDK call, never a `token`. Reads use `useCache: false`, so a key that is rewritten reads current. Bodies over 100 MB are uploaded with the SDK's `multipart` option. A Vercel Function passes the OIDC token it receives with the request.
 - `privateStoreFromEnv(env)` builds one from `BLOB_PRIVATE_STORE_ID` and `VERCEL_OIDC_TOKEN` in the given object, and refuses an unset, empty or blank value with `InvalidInput` (`store_id_unset`, `oidc_token_unset`).
 - `LocalPrivateStore(dir)` keeps each key as a path under a directory, for tests and local runs. It reads no credential.
+
+## `release`
+
+Publishes a release directory, written by `tools/release`'s `build`, as `releases/<release_id>/` in the results repository: `release.json`, `issue.json`, `issue-check.json` and the writer's card and issue recordings under `recordings/`. It takes `publish`'s destination options, scanner options and limits, and reads the same credentials in real mode.
+
+- The directory must hold canonical `release.json` (a `Release` record whose policy hash and project match `--policy`) and exactly the files it lists, each with its SHA-256; otherwise it exits 4 (`release_files_mismatch`) before contacting anything.
+- The scanner runs over every file, as it will be published, and the commit message. A blocked scan prints `path:line` locations only and publishes nothing.
+- One fetch of the branch. When `runs/<root>/manifest.json` is absent or has another SHA-256 than the release's `run.manifest_sha256`, or `releases/<release_id>/` is there with other bytes, it records `failed` (`repository_conflict`). The same bytes already there are `published`, with the commit that added them.
+- Otherwise one fast-forward commit, `chore(releases): publish <release_id>`, with the publisher's identity. Nothing goes to the public store and no status object is written.
+
+The result is a `PublicationRecord` of the release's root in `releases/<release_id>/record.json` of the state directory, printed to stdout with `publish`'s exit codes. The record type is keyed by root, so its `publication_id` holds the release ID and its `manifest_sha256` the SHA-256 of `release.json`; `artifacts` and `omissions` are empty. A published record is final for those bytes. Limits are counted per release.
 
 ## `status`
 

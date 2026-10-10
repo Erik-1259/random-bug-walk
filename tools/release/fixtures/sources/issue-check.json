@@ -1,0 +1,17 @@
+{
+  "status": "ready_for_review",
+  "codes": [],
+  "structure": {
+    "ok": true,
+    "detail": null
+  },
+  "numeric": {
+    "ok": true,
+    "violations": []
+  },
+  "identifiers": {
+    "ok": true,
+    "violations": []
+  },
+  "hint_words": []
+}
