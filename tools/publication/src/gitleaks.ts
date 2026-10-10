@@ -9,8 +9,23 @@ export const PINNED_GITLEAKS_VERSION = "8.30.1";
 /** Exit status requested for "leaks found", kept apart from gitleaks' error status 1. */
 const LEAKS_FOUND_STATUS = 42;
 
-// Extends the built-in rules. Passed explicitly so that no configuration in the content applies.
-const CONFIG = "[extend]\nuseDefault = true\n";
+/**
+ * A generic-api-key match that is only a SHA-256 digest keyed by a file path, the way suite
+ * manifests record each file (`"playwright.api.config.ts": "<64 hex>"`). Without it, every file
+ * whose name contains "api" or "key" is reported next to its digest. Any other key, and any value
+ * that is not exactly 64 lowercase hex characters, is still reported.
+ */
+export const FILE_HASH_ALLOWLIST = String.raw`^[\w./-]+\.[A-Za-z0-9]{1,8}["']?\s*:\s*["']?[a-f0-9]{64}["']?$`;
+
+/** Extends the built-in rules. Passed explicitly so that no configuration in the content applies. */
+export const GITLEAKS_CONFIG = `[extend]
+useDefault = true
+
+[[allowlists]]
+targetRules = ["generic-api-key"]
+regexTarget = "match"
+regexes = ['''${FILE_HASH_ALLOWLIST}''']
+`;
 
 export interface GitleaksBlob {
   /** Repository path for files, or a fixed file name for messages and text. */
@@ -70,7 +85,7 @@ export async function runGitleaks(
     const ignorePath = join(dir, "gitleaksignore");
     const reportPath = join(dir, "report.json");
     await mkdir(contentDir);
-    await writeFile(configPath, CONFIG, { flag: "wx" });
+    await writeFile(configPath, GITLEAKS_CONFIG, { flag: "wx" });
     await writeFile(ignorePath, "", { flag: "wx" });
     const copies = [...blobs.map((blob) => blob.path), ...blobs.map(() => NEUTRAL_NAME)];
     for (const [index, path] of copies.entries()) {
