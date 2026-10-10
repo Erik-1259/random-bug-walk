@@ -101,11 +101,11 @@ function approvalOf(path: string): ReleaseApproval {
   }
 }
 
-/** The writer's recordings, each as canonical bytes under recordings/. */
+/** The writer's recordings, each as canonical bytes under recordings/. Only `*.recording.json` files are taken, so the `*.summary.json` files `record --out` writes beside them never reach the release. */
 function recordingsOf(dir: string): { path: string; bytes: Uint8Array }[] {
   let names: string[];
   try {
-    names = readdirSync(dir).sort();
+    names = readdirSync(dir).filter((name) => name.endsWith(".recording.json")).sort();
   } catch {
     throw new ReleaseInputError("recordings_unreadable");
   }

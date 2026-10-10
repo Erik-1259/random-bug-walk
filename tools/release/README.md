@@ -51,7 +51,7 @@ The release directory (`--out`, published by the publisher's `release` as `relea
 release.json                  the Release record (canonical)
 issue.json                    the frozen issue
 issue-check.json              the writer's check report
-recordings/<name>             the writer's card and issue recordings
+recordings/<name>             the writer's card and issue recordings (only *.recording.json; summaries are skipped)
 ```
 
 ### `publish-replays`

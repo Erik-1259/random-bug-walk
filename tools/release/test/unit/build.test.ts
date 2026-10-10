@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 import { loadRateSheet } from "@rbw/envelope";
@@ -171,6 +171,16 @@ describe("build: the eligible release", () => {
     );
     expect(sha256Hex(readFileSync(join(opts.out, "issue.json")))).toBe(inputs.issueSha256);
     expect(checkRelease(release, { dir: eligible.runDir, policyBytes: w.policy.bytes, publication: eligible.record, rootRun: factory.rootRun }, opts.out)).toEqual([]);
+  });
+
+  it("publishes only the *.recording.json files of a writer record --out directory, never its summaries", async () => {
+    const recordings = join(tempDir(), "record-out");
+    cpSync(inputs.recordings, recordings, { recursive: true });
+    write(join(recordings, "card-1.summary.json"), canonical({ operation_id: "synthetic-operation", settled_microusd: 1 }));
+    const opts = options({ recordings });
+    const outcome = await buildRelease(opts, deps());
+    if (!outcome.ok) throw new Error(outcome.codes.join(","));
+    expect(readdirSync(join(opts.out, "recordings")).sort()).toEqual(["card-1.recording.json", "issue-1.recording.json"]);
   });
 
   it("ADM-07 makes the complete revision the admission's provisional one plus the frozen issue, from the judge job's own identity", async () => {
