@@ -2,7 +2,7 @@
 
 Asks two models to judge each candidate that `@rbw/harvest` matched for shape `DT-1.tz-arg` (a caller holds the selected time zone but does not pass it to a date operation, which then uses its default). Their votes are combined with the harvest's ast-grep outcome into one of four outcomes. Every model call is metered through `@rbw/writer`'s `meteredStructuredCall`: bounded, priced, reserved in the spend ledger, launched, sent once and settled.
 
-The package makes no live call in its tests or in public CI. A replay `fetch` answers from committed synthetic recordings. **Planned:** the live review and the full live acceptance run. The limits were set from live calls on small synthetic inputs (see Measured limits); nothing committed in this repository was produced by a live call.
+The package makes no live call in its tests or in public CI. A replay `fetch` answers from committed synthetic recordings. **Planned:** the live review and the full live acceptance run. The limits were set from live calls on small synthetic inputs; nothing committed in this repository was produced by a live call.
 
 ## Contents
 
@@ -126,14 +126,6 @@ Both: provider `token-factory`, base URL `https://api.tokenfactory.nebius.com/v1
 Kimi-K2.7-Code always thinks: it has no documented way to turn thinking off. Moonshot's guide says thinking is always on for it and that `thinking: { type: "disabled" }` is an error ([use thinking models](https://platform.kimi.ai/docs/guide/use-thinking-models)), and the vLLM recipe says it runs in thinking mode only ([Kimi-K2.7-Code recipe](https://recipes.vllm.ai/moonshotai/Kimi-K2.7-Code)). Its reasoning counts inside `completion_tokens` and against its 8,192 output tokens, so an answer cut off by the limit is invalid output and votes `unsure`.
 
 Why Kimi has no strict schema: with the strict `json_schema` response format, Kimi returned no reasoning, so the strict schema switched its thinking off. Without `response_format` it reasons. Kimi's request therefore carries no `response_format`, the prompt states the exact JSON object, and the reply is validated with the same Zod schema after the call. The writer's `meteredStructuredCall` selects this with the hashed profile field `structured_output: "validated_after"`; the writer's own profile keeps `"json_schema_strict"`.
-
-### Measured limits
-
-The limits come from live calls on small synthetic inputs, not from harvested candidates. The measurement records are not in this repository.
-
-- **Oct 9, 2026, 20 live acceptance calls:** Super's longest output was 101 tokens and its slowest call 2.5 s; Kimi's were 79 tokens and 4.3 s. Kimi ran with the strict schema in these calls and returned no reasoning.
-- **Oct 9, 2026, one Kimi probe without `response_format`:** Kimi reasoned, with 390 completion tokens, 335 of them reasoning, in 2.9 s.
-- **Oct 9, 2026, 10 live acceptance calls with Kimi thinking (4,096 output tokens, 120 s timeout):** Kimi took 2 to 105 s per call. The slowest produced 1,735 completion tokens in 105 s, about 16.5 tokens per second, within 15 s of the timeout. One call used all 4,096 output tokens on reasoning and was cut off (`invalid_output`). Because of these calls, Kimi's limits were raised to 8,192 output tokens and a 600 s timeout, and Kimi keeps thinking.
 
 The limits are provisional. If a live run hits a timeout or a cut-off answer, they are revisited rather than patched around.
 
