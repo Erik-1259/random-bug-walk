@@ -96,6 +96,8 @@ Each scan creates one new temporary directory `{dir}` and removes it afterwards.
 
 The built-in gitleaks rules come with a global path allowlist (for example lock files, images, and paths containing `gitleaks.toml`); the second copy of each blob under the neutral name keeps those paths covered. gitleaks itself skips content whose detected type is binary, such as content starting with a PDF header, in every mode; the secrets check does not cover such content, and the pattern and attribution checks still do.
 
+The configuration adds one allowlist, for the `generic-api-key` rule only (`FILE_HASH_ALLOWLIST` in `src/gitleaks.ts`): a match that is just a file path ending in a source, configuration or lock-file extension (`.ts`, `.json`, `.yaml` and the like; the list is in the code) followed by a SHA-256 digest, exactly 64 lowercase hex characters, as suite manifests record each file (`"playwright.api.config.ts": "<digest>"`). Without it, every file whose name contains `api` or `key` is reported next to its digest. Any other key or value is still reported.
+
 ## Library
 
 ```ts

@@ -10,7 +10,6 @@ export const packageDir = fileURLToPath(new URL("..", import.meta.url));
 export const repositoryRoot = resolve(packageDir, "..", "..");
 
 export const DEFAULT_DEPLOY_KEY_ENV = "RBW_RESULTS_DEPLOY_KEY_FILE";
-export const DEFAULT_STORE_TOKEN_ENV = "RBW_PUBLIC_STORE_TOKEN";
 export const DEFAULT_KNOWN_HOSTS = join(packageDir, "config", "github_known_hosts");
 /** The C2 scanner run by this Node binary, as separate tokens so no path is ever split. */
 export const DEFAULT_SCANNER: readonly string[] = [process.execPath, join(repositoryRoot, "tools", "publication", "src", "cli.ts")];
@@ -38,7 +37,6 @@ export type Destination =
       repositoryUrl: string;
       artifactBaseUri: string;
       deployKeyEnv: string;
-      storeTokenEnv: string;
       knownHosts: string;
     };
 
@@ -147,7 +145,6 @@ const PUBLISH_OPTIONS = {
   "local-remote": { type: "string" },
   "local-store": { type: "string" },
   "deploy-key-env": { type: "string" },
-  "store-token-env": { type: "string" },
   scanner: { type: "string" },
   gitleaks: { type: "string" },
   "scan-timeout-ms": { type: "string" },
@@ -163,7 +160,7 @@ const PUBLISH_OPTIONS = {
 export function loadPublishConfig(argv: readonly string[]): PublishConfig {
   const values = parse(argv, PUBLISH_OPTIONS);
   const real = values.real === true;
-  const realFlags = ["repository-url", "artifact-base-uri", "deploy-key-env", "store-token-env"];
+  const realFlags = ["repository-url", "artifact-base-uri", "deploy-key-env"];
   const localFlags = ["local-remote", "local-store"];
   for (const flag of real ? localFlags : realFlags) if (values[flag] !== undefined) throw new InvalidInput("mixed_destination_flags");
   const destination: Destination = real
@@ -172,7 +169,6 @@ export function loadPublishConfig(argv: readonly string[]): PublishConfig {
         repositoryUrl: required(values, "repository-url"),
         artifactBaseUri: required(values, "artifact-base-uri"),
         deployKeyEnv: variableName(values, "deploy-key-env", DEFAULT_DEPLOY_KEY_ENV),
-        storeTokenEnv: variableName(values, "store-token-env", DEFAULT_STORE_TOKEN_ENV),
         // Host-key pinning always uses the committed file; no flag replaces it.
         knownHosts: DEFAULT_KNOWN_HOSTS,
       }
