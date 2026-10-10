@@ -13,9 +13,13 @@ const LEAKS_FOUND_STATUS = 42;
  * A generic-api-key match that is only a SHA-256 digest keyed by a file path, the way suite
  * manifests record each file (`"playwright.api.config.ts": "<64 hex>"`). Without it, every file
  * whose name contains "api" or "key" is reported next to its digest. Any other key, and any value
- * that is not exactly 64 lowercase hex characters, is still reported.
+ * that is not exactly 64 lowercase hex characters, is still reported. The key must end in one of
+ * these source, configuration or lock-file extensions, so a dotted key such as `api.token` or
+ * `auth.secret` is still reported.
  */
-export const FILE_HASH_ALLOWLIST = String.raw`^[\w./-]+\.[A-Za-z0-9]{1,8}["']?\s*:\s*["']?[a-f0-9]{64}["']?$`;
+const FILE_EXTENSIONS = ["ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "cjs", "json", "yaml", "yml", "lock", "sql", "prisma", "md", "txt", "css", "html", "sh", "py"];
+
+export const FILE_HASH_ALLOWLIST = String.raw`^[\w./-]+\.(?:${FILE_EXTENSIONS.join("|")})["']?\s*:\s*["']?[a-f0-9]{64}["']?$`;
 
 /** Extends the built-in rules. Passed explicitly so that no configuration in the content applies. */
 export const GITLEAKS_CONFIG = `[extend]

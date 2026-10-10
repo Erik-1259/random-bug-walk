@@ -19,14 +19,19 @@ describe("PUB-02 gitleaks configuration", () => {
     expect(allowed(`${fileKey("playwright", "api", "config", "ts")}":"${digest("a")}"`)).toBe(true);
     expect(allowed(`tests/api/${fileKey("alpha", "spec", "ts")}": "${digest("b")}"`)).toBe(true);
     expect(allowed(`${fileKey("rbw-api", "config", "ts")}":"${digest("c")}`)).toBe(true);
+    expect(allowed(`${fileKey("package", "json")}":"${digest("n")}"`)).toBe(true);
   });
 
-  it("still reports a digest under any other key, and any other value under a file path", () => {
+  it("still reports a digest under any other key, including a dotted one, and any other value under a file path", () => {
     expect(allowed(`api_token":"${digest("d")}"`)).toBe(false);
     expect(allowed(`apiKey = "${digest("e")}"`)).toBe(false);
     expect(allowed(`auth_secret":"${digest("f")}"`)).toBe(false);
     expect(allowed(`${fileKey("deploy", "api", "config", "ts")}":"${digest("g").slice(0, 40)}"`)).toBe(false);
     expect(allowed(`${fileKey("deploy", "api", "config", "ts")}":"${digest("h").toUpperCase()}"`)).toBe(false);
     expect(allowed(`${fileKey("deploy", "api", "config", "ts")}":"${digest("i")}x"`)).toBe(false);
+    expect(allowed(`${fileKey("api", "token")}":"${digest("j")}"`)).toBe(false);
+    expect(allowed(`${fileKey("auth", "secret")}":"${digest("k")}"`)).toBe(false);
+    expect(allowed(`${fileKey("client", "key")}": "${digest("l")}"`)).toBe(false);
+    expect(allowed(`${fileKey("app", "password")}":"${digest("m")}"`)).toBe(false);
   });
 });
