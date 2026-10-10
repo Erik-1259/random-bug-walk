@@ -28,7 +28,7 @@ import type { ReviewOutput } from "./prompt.ts";
 import { combine, emptyMatrix, OUTCOMES, vote } from "./vote.ts";
 import type { Matrix, Outcome, Vote } from "./vote.ts";
 
-/** 8 × (60 s + 120 s) = 24 minutes of request timeouts at most, inside a standard 30-minute job. */
+/** 8 × (60 s + 600 s) = 88 minutes of request timeouts at most, inside a 120-minute job. */
 export const MAX_CANDIDATES = 8;
 
 export interface ReviewOptions {

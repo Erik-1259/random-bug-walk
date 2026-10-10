@@ -27,7 +27,7 @@ function worstCase(profile: ModelProfile): number {
 describe("the two review profiles", () => {
   it.each([
     [SUPER_PROFILE, "nvidia/nemotron-3-super-120b-a12b", "token-factory.nemotron-3-super", 1_024, 60_000, "json_schema_strict"],
-    [KIMI_PROFILE, "moonshotai/Kimi-K2.7-Code", "token-factory.kimi-k2.7-code", 4_096, 120_000, "validated_after"],
+    [KIMI_PROFILE, "moonshotai/Kimi-K2.7-Code", "token-factory.kimi-k2.7-code", 8_192, 600_000, "validated_after"],
   ])("hash the frozen limits and the model %s", (profile, model, service, maxOutputTokens, requestTimeoutMs, structuredOutput) => {
     expect(profile.hashed).toMatchObject({
       provider: "token-factory",
@@ -56,7 +56,7 @@ describe("the two review profiles", () => {
 
   it("keeps each profile's runtime_profile_sha256 at its committed value", () => {
     expect(profileSha256(SUPER_PROFILE)).toBe("bdc6abef90a2e86ddd1210d334350a73d833ce89e1a17c715c7e33dfaf2221bd");
-    expect(profileSha256(KIMI_PROFILE)).toBe("9ab16d385a6e2fafb90352dcf7d2190173e294499fa810164f5173eb077f6992");
+    expect(profileSha256(KIMI_PROFILE)).toBe("f40e98a60484b92198b77868a75e7e8ad80614e75e30c77c4e582947ece77b2f");
   });
 
   it("orders Super first at ordinal 1 and Kimi second at ordinal 2", () => {
@@ -66,17 +66,17 @@ describe("the two review profiles", () => {
     ]);
   });
 
-  it("prices the worst case at 20,583 micro-USD per Super call and 78,644 per Kimi call, 793,816 for 8 candidates", () => {
-    // ceil(65536 × 0.30) + ceil(1024 × 0.90), and ceil(65536 × 0.95) + ceil(4096 × 4.00) micro-USD.
+  it("prices the worst case at 20,583 micro-USD per Super call and 95,028 per Kimi call, 924,888 for 8 candidates", () => {
+    // ceil(65536 × 0.30) + ceil(1024 × 0.90), and ceil(65536 × 0.95) + ceil(8192 × 4.00) micro-USD.
     expect(worstCase(SUPER_PROFILE)).toBe(19_661 + 922);
-    expect(worstCase(KIMI_PROFILE)).toBe(62_260 + 16_384);
-    expect(worstCase(SUPER_PROFILE) + worstCase(KIMI_PROFILE)).toBe(99_227);
-    expect(MAX_CANDIDATES * (worstCase(SUPER_PROFILE) + worstCase(KIMI_PROFILE))).toBe(793_816);
+    expect(worstCase(KIMI_PROFILE)).toBe(62_260 + 32_768);
+    expect(worstCase(SUPER_PROFILE) + worstCase(KIMI_PROFILE)).toBe(115_611);
+    expect(MAX_CANDIDATES * (worstCase(SUPER_PROFILE) + worstCase(KIMI_PROFILE))).toBe(924_888);
   });
 
-  it("fits 8 candidates' request timeouts, 8 × (60 s + 120 s) = 24 minutes, in a 30-minute job", () => {
+  it("fits 8 candidates' request timeouts, 8 × (60 s + 600 s) = 88 minutes, in a 120-minute job", () => {
     const perCandidate = SUPER_PROFILE.hashed.request_timeout_ms + KIMI_PROFILE.hashed.request_timeout_ms;
-    expect(MAX_CANDIDATES * perCandidate).toBe(24 * 60_000);
-    expect(MAX_CANDIDATES * perCandidate).toBeLessThanOrEqual(30 * 60_000);
+    expect(MAX_CANDIDATES * perCandidate).toBe(88 * 60_000);
+    expect(MAX_CANDIDATES * perCandidate).toBeLessThanOrEqual(120 * 60_000);
   });
 });

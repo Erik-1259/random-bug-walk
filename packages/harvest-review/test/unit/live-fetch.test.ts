@@ -17,7 +17,7 @@ function agentOptions(dispatcher: unknown): Record<string, unknown> {
 }
 
 describe("the live fetch", () => {
-  it("sends each request with an Agent whose header and body timeouts cover Kimi's 120,000 ms", async () => {
+  it("sends each request with an Agent whose header and body timeouts cover Kimi's 600,000 ms", async () => {
     const seen: (RequestInit | undefined)[] = [];
     const fetch = liveFetch((_input, init) => {
       seen.push(init);
@@ -25,8 +25,8 @@ describe("the live fetch", () => {
     });
     await fetch("https://synthetic.example.invalid/v1/chat/completions", { method: "POST", body: "{}" });
 
-    expect(KIMI_PROFILE.hashed.request_timeout_ms).toBe(120_000);
-    expect(LIVE_HTTP_TIMEOUT_MS).toBe(120_000);
+    expect(KIMI_PROFILE.hashed.request_timeout_ms).toBe(600_000);
+    expect(LIVE_HTTP_TIMEOUT_MS).toBe(600_000);
     const init = seen[0];
     expect(init).toMatchObject({ method: "POST", body: "{}" });
     const options = agentOptions(init?.dispatcher);

@@ -58,8 +58,8 @@ The inputs file holds third-party code and repository names that include their o
 - **Run context:** a fresh one per run, with new UUIDs for `batch_id`, `root_execution_id` and `execution_id`, and `parent_execution_id` equal to the root. The project fields are those of the writer's run context. It is written into `review.json`; no context file is read.
 - **Ledger:** it acquires the slot for its root as role `harvest-review` and releases it at the end, as the writer's `record` command does.
 - **Calls:** at most 8 candidates (`--max-candidates`, default 8, at most 8). For each candidate, Super and then Kimi, one call at a time, with kind `harvest.review`, call ordinal 1 for Super and 2 for Kimi, and candidate key `h` plus the first 16 hex characters of SHA-256(candidate ID, a newline, the commit). The call name is `harvest.review:h…:1` or `:2`. Nothing retries.
-- **Duration:** a call can wait up to its request timeout, 60 s for Super and 120 s for Kimi, so the calls of a run of 8 candidates can take up to 8 × (60 s + 120 s) = 24 minutes, which fits the standard 30-minute job.
-- **HTTP timeouts:** Node's built-in `fetch` (undici) waits at most 300 s for response headers by default, and a non-streaming completion sends none until it finishes. The live command (`src/live-fetch.ts`) sends every request through an undici `Agent` whose header and body timeouts are the longest profile timeout, 120,000 ms. At these timeouts the default would also do; the `Agent` keeps longer limits possible later. The replay `fetch` of the tests makes no HTTP request and is unaffected.
+- **Duration:** a call can wait up to its request timeout, 60 s for Super and 600 s for Kimi, so the calls of a run of 8 candidates can take up to 8 × (60 s + 600 s) = 88 minutes, which fits a 120-minute job.
+- **HTTP timeouts:** Node's built-in `fetch` (undici) waits at most 300 s for response headers by default, and a non-streaming completion sends none until it finishes. The live command (`src/live-fetch.ts`) sends every request through an undici `Agent` whose header and body timeouts are the longest profile timeout, Kimi's 600,000 ms, which is longer than that default. The replay `fetch` of the tests makes no HTTP request and is unaffected.
 - **Stops:** an uncertain call, a ledger refusal after launch, a refusal before sending (other than the input limit) or an unexpected error stops the run. It still writes `review.json` with what is known, names the operation, tries to release the slot and exits 1.
 - **Outputs:**
   - `review.json`: the run context, both profiles' models, services and `runtime_profile_sha256`, the rate file's SHA-256, `stopped` (null, or why and at which operation), the counts per outcome, the agreement matrix (ast-grep confirmed or dropped × Super's vote × Kimi's vote), and per candidate its match, both calls (vote, the model's answer, status, failure, amounts, reported tokens, the reasoning length and the counted bound), the reason and the outcome. The reasoning length is `reasoning_tokens`, from the response's `usage.completion_tokens_details.reasoning_tokens`, and `reasoning_characters`, the length of `message.reasoning` (JavaScript string length); each is null when the response has none. The reasoning text itself is not stored in `review.json`. A candidate the run did not reach has outcome `null`. Amounts are decimal strings.
@@ -117,13 +117,13 @@ A model's vote:
 | Service label | `token-factory.nemotron-3-super` | `token-factory.kimi-k2.7-code` |
 | Thinking | off: `chat_template_kwargs: { enable_thinking: false }`, as the writer sends to Lightning | always on; no request field is added (see below) |
 | Structured output | strict JSON schema (`json_schema_strict`) | none sent; validated after the call (`validated_after`) |
-| Output tokens | 1,024 | 4,096 |
-| Request timeout | 60,000 ms | 120,000 ms |
-| `runtime_profile_sha256` | `bdc6abef90a2e86ddd1210d334350a73d833ce89e1a17c715c7e33dfaf2221bd` | `9ab16d385a6e2fafb90352dcf7d2190173e294499fa810164f5173eb077f6992` |
+| Output tokens | 1,024 | 8,192 |
+| Request timeout | 60,000 ms | 600,000 ms |
+| `runtime_profile_sha256` | `bdc6abef90a2e86ddd1210d334350a73d833ce89e1a17c715c7e33dfaf2221bd` | `f40e98a60484b92198b77868a75e7e8ad80614e75e30c77c4e582947ece77b2f` |
 
 Both: provider `token-factory`, base URL `https://api.tokenfactory.nebius.com/v1/`, 65,536 counted input tokens, 0 retries, the writer's prompt-bound method and framing (16 tokens per message, 256 per request), role `harvest-review`, kind `harvest.review`, key variable `TOKEN_FACTORY_REVIEW_KEY`. The hashed part also holds each profile's request extras and its `structured_output` mode, so a change to how thinking or the output is set changes the hash.
 
-Kimi-K2.7-Code always thinks: it has no documented way to turn thinking off. Moonshot's guide says thinking is always on for it and that `thinking: { type: "disabled" }` is an error ([use thinking models](https://platform.kimi.ai/docs/guide/use-thinking-models)), and the vLLM recipe says it runs in thinking mode only ([Kimi-K2.7-Code recipe](https://recipes.vllm.ai/moonshotai/Kimi-K2.7-Code)). Its reasoning counts inside `completion_tokens` and against its 4,096 output tokens, so an answer cut off by the limit is invalid output and votes `unsure`.
+Kimi-K2.7-Code always thinks: it has no documented way to turn thinking off. Moonshot's guide says thinking is always on for it and that `thinking: { type: "disabled" }` is an error ([use thinking models](https://platform.kimi.ai/docs/guide/use-thinking-models)), and the vLLM recipe says it runs in thinking mode only ([Kimi-K2.7-Code recipe](https://recipes.vllm.ai/moonshotai/Kimi-K2.7-Code)). Its reasoning counts inside `completion_tokens` and against its 8,192 output tokens, so an answer cut off by the limit is invalid output and votes `unsure`.
 
 Why Kimi has no strict schema: with the strict `json_schema` response format, Kimi returned no reasoning, so the strict schema switched its thinking off. Without `response_format` it reasons. Kimi's request therefore carries no `response_format`, the prompt states the exact JSON object, and the reply is validated with the same Zod schema after the call. The writer's `meteredStructuredCall` selects this with the hashed profile field `structured_output: "validated_after"`; the writer's own profile keeps `"json_schema_strict"`.
 
@@ -133,6 +133,7 @@ The limits come from live calls on small synthetic inputs, not from harvested ca
 
 - **Oct 9, 2026, 20 live acceptance calls:** Super's longest output was 101 tokens and its slowest call 2.5 s; Kimi's were 79 tokens and 4.3 s. Kimi ran with the strict schema in these calls and returned no reasoning.
 - **Oct 9, 2026, one Kimi probe without `response_format`:** Kimi reasoned, with 390 completion tokens, 335 of them reasoning, in 2.9 s.
+- **Oct 9, 2026, 10 live acceptance calls with Kimi thinking (4,096 output tokens, 120 s timeout):** Kimi took 2 to 105 s per call. The slowest produced 1,735 completion tokens in 105 s, about 16.5 tokens per second, within 15 s of the timeout. One call used all 4,096 output tokens on reasoning and was cut off (`invalid_output`). Because of these calls, Kimi's limits were raised to 8,192 output tokens and a 600 s timeout, and Kimi keeps thinking.
 
 The limits are provisional. If a live run hits a timeout or a cut-off answer, they are revisited rather than patched around.
 
@@ -147,9 +148,9 @@ The limits are provisional. If a live run hits a timeout or a cut-off answer, th
 
 - The reservation per call is its worst case, each line rounded up to a whole micro-USD:
   - Super: 19,661 + 922 = 20,583 micro-USD (65,536 input and 1,024 output tokens);
-  - Kimi: 62,260 + 16,384 = 78,644 micro-USD (65,536 input and 4,096 output tokens);
-  - per candidate: 99,227 micro-USD.
-- At most 8 candidates and two calls each: at most 793,816 micro-USD (about $0.79) reserved per run.
+  - Kimi: 62,260 + 32,768 = 95,028 micro-USD (65,536 input and 8,192 output tokens);
+  - per candidate: 115,611 micro-USD.
+- At most 8 candidates and two calls each: at most 924,888 micro-USD (about $0.92) reserved per run.
 - Settlement charges the reported usage and releases the rest.
 
 ## Recovery
@@ -186,10 +187,10 @@ Each case is a small hand-written change with what it must get: a positive must 
 
 - The input builder on the harvest's committed synthetic run (candidates, match, after and before functions, hunks, a renamed file), and on hand-written sources (sibling callbacks, same-named methods, a call found by line and text, `<module>`).
 - Every row of the vote and combination tables, and the output schema.
-- The profiles, their hashes, their worst-case prices and the 24-minute timeout total.
+- The profiles, their hashes, their worst-case prices and the 88-minute timeout total.
 - Kimi's request carries no `response_format` and Super's carries the strict schema; a Kimi reply that is exactly the JSON object is accepted, and one with prose around it, a code fence or invalid JSON votes `unsure` as invalid output; the reasoning length is recorded and the reasoning text is not.
 - The combined pass rule: all positives confirmed and no negative confirmed passes; one confirmed negative fails; one unconfirmed positive fails.
-- The live `fetch`: its `Agent`'s header and body timeouts cover Kimi's 120,000 ms, and Node's `fetch` applies the `Agent`'s header timeout (on a loopback server).
+- The live `fetch`: its `Agent`'s header and body timeouts cover Kimi's 600,000 ms, and Node's `fetch` applies the `Agent`'s header timeout (on a loopback server).
 - `--cases`: a range, a comma list, and the selections it refuses.
 - `build-inputs`, `review` and `acceptance` end to end: one reservation per call with the fixed ordinals and call names, each profile's service, limits and model in the reservation and the request, the outcomes, counts and matrix, a fresh context per run, `too_large`, the cap, `acceptance` runs of cases 1-5 and 6-10, and an uncertain call that stops the run with the slot held.
 

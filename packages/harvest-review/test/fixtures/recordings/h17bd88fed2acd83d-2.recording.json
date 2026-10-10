@@ -6,7 +6,7 @@
   "request": {
     "body": {
       "model": "moonshotai/Kimi-K2.7-Code",
-      "max_tokens": 4096,
+      "max_tokens": 8192,
       "messages": [
         {
           "role": "system",
@@ -19,7 +19,7 @@
       ]
     }
   },
-  "request_sha256": "2c4fde62a6f797b28f3d7b50c7f7c9dc7be42e5fde4f584e4e54faa21acb7b62",
+  "request_sha256": "18f3e977860af088e50bb22bf64dccd566bb5cea5642bd3eaca8fc5373b89c92",
   "response": {
     "status": 200,
     "body": "{\"id\":\"synthetic-completion\",\"object\":\"chat.completion\",\"created\":1767225600,\"model\":\"moonshotai/Kimi-K2.7-Code\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"{\\\"verdict\\\":\\\"fix\\\",\\\"zone_is_selected\\\":\\\"yes\\\",\\\"same_call\\\":\\\"yes\\\",\\\"reason\\\":\\\"Synthetic answer: fix, zone yes, same call yes.\\\"}\",\"reasoning\":\"Synthetic reasoning: the shown call gains the selected zone as an argument.\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":900,\"completion_tokens\":60,\"total_tokens\":960,\"completion_tokens_details\":{\"reasoning_tokens\":40}}}"

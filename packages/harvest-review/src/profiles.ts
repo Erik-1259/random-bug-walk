@@ -47,12 +47,12 @@ export const SUPER_PROFILE = profile(
 /**
  * Thinking on, with no request extras and no `response_format`: with the strict JSON schema the
  * provider returned no reasoning, so the reply text is validated with the same schema after the
- * call. Its reasoning counts against its 4,096 output tokens.
+ * call. Its reasoning counts against its 8,192 output tokens.
  */
 export const KIMI_PROFILE = profile(
   "moonshotai/Kimi-K2.7-Code",
   "token-factory.kimi-k2.7-code",
-  { max_output_tokens: 4_096, request_timeout_ms: 120_000, structured_output: "validated_after" },
+  { max_output_tokens: 8_192, request_timeout_ms: 600_000, structured_output: "validated_after" },
   Object.freeze({}),
 );
 

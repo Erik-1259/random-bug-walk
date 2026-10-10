@@ -110,7 +110,7 @@ describe("review, end to end on PGlite with the replay fetch", () => {
     ]);
     expect(kimiReserve?.envelope.map((line) => [line.service, line.unit, line.limit])).toEqual([
       ["token-factory.kimi-k2.7-code", "input_token", 65_536],
-      ["token-factory.kimi-k2.7-code", "output_token", 4_096],
+      ["token-factory.kimi-k2.7-code", "output_token", 8_192],
     ]);
 
     expect(fetchSpy.bodies).toHaveLength(16);
@@ -121,7 +121,7 @@ describe("review, end to end on PGlite with the replay fetch", () => {
       chat_template_kwargs: { enable_thinking: false },
       response_format: { type: "json_schema", json_schema: { strict: true } },
     });
-    expect(kimiBody).toMatchObject({ model: "moonshotai/Kimi-K2.7-Code", max_tokens: 4_096 });
+    expect(kimiBody).toMatchObject({ model: "moonshotai/Kimi-K2.7-Code", max_tokens: 8_192 });
     expect(kimiBody).not.toHaveProperty("response_format");
     expect(kimiBody).not.toHaveProperty("chat_template_kwargs");
     expect(kimiBody).not.toHaveProperty("thinking");
