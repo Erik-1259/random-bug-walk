@@ -6,7 +6,8 @@
   "license": "MIT",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./limits": "./src/limits.ts"
   },
   "engines": {
     "node": ">=24.21 <25"

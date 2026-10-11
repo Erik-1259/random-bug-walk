@@ -2,7 +2,9 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it } from "vitest";
 import { Catalog } from "../src/components/catalog.tsx";
 import { CasePage } from "../src/components/case-page.tsx";
-import { funnel, NO_VALIDATED_RESULT, REPLAY_STATE, REPLAY_STATE_TEXT, suiteMatrix, VALIDATED_RESULT } from "../src/model.ts";
+import { KNOWN_CONDITION_MESSAGE } from "@rbw/controller/judge-types";
+import { ReplayPanel } from "../src/components/replay.tsx";
+import { funnel, NO_VALIDATED_RESULT, REPLAY_STATE, REPLAY_STATE_TEXT, suiteMatrix, VALIDATED_RESULT, type ReplayStatus } from "../src/model.ts";
 import { readResults } from "../src/release.ts";
 import { AKL, LA } from "../../../packages/admission/test/support/record-set.ts";
 import { observe, testOutcome } from "../../../packages/admission/test/support/record-set.ts";
@@ -67,7 +69,7 @@ describe("case page from the development fixture", () => {
 
   it("disables replay and validated downloads, and keeps the diagnostic archive available", async () => {
     const html = renderToStaticMarkup(<CasePage results={await readResults(DEVELOPMENT)} />);
-    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Run verified replay<\/button>/);
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Plant and verify this example<\/button>/);
     const page = text(html);
     expect(page).toContain(`Replay status: ${REPLAY_STATE_TEXT.disabled}`);
     expect(page).toContain("Validated-task downloads: disabled, because there is no validated release");
@@ -150,7 +152,7 @@ describe("no-release state", () => {
     const results = await readResults(NO_RELEASE);
     expect(REPLAY_STATE).toEqual({ state: "disabled", reason: "There is no validated release to replay." });
     const html = renderToStaticMarkup(<CasePage results={results} />);
-    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Run verified replay<\/button>/);
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Plant and verify this example<\/button>/);
     const page = text(html);
     expect(page).toContain("Validated-task downloads: disabled, because there is no validated release");
     expect(page).toContain("00000000-0000-4000-8000-000000002001 failed, not validated");
@@ -168,7 +170,7 @@ describe("no-release state", () => {
   });
 
   it("has a text for every replay state", () => {
-    expect(Object.keys(REPLAY_STATE_TEXT).sort()).toEqual(["disabled", "failed", "passed", "ready", "running", "starting"]);
+    expect(Object.keys(REPLAY_STATE_TEXT).sort()).toEqual(["disabled", "incomplete", "needs_reconciliation", "not_reproduced", "ready", "running", "starting", "unavailable", "unknown", "verified"]);
     for (const value of Object.values(REPLAY_STATE_TEXT)) expect(value.length).toBeGreaterThan(0);
   });
 });
@@ -186,10 +188,19 @@ describe("case page with a published release", () => {
     expect(page).toContain("Comparison (ADM-08): blind spot demonstrated");
   });
 
-  it("keeps replay disabled with the release's reason", async () => {
+  it("keeps replay disabled with the release's reason when the judge routes are not configured", async () => {
     const html = renderToStaticMarkup(<CasePage results={await readResults(RELEASE)} />);
-    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Run verified replay<\/button>/);
-    expect(text(html)).toContain(`Replay status: ${REPLAY_STATE_TEXT.disabled}. Verified replay is not available yet.`);
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Plant and verify this example<\/button>/);
+    expect(text(html)).toContain(`Replay status: ${REPLAY_STATE_TEXT.disabled}. Verified replay is not enabled on this site.`);
+    expect(text(html)).toContain(`Frozen release ${RELEASE_ID}, created 2026-10-06 Replay No replay in this browser yet.`);
+    expect(html).not.toContain("judge-passcode");
+  });
+
+  it("offers the passcode field with the release when the judge routes are configured for it", async () => {
+    const html = renderToStaticMarkup(<CasePage results={await readResults(RELEASE)} judgeEnabled />);
+    expect(html).toContain('id="judge-passcode"');
+    expect(html).toContain('type="password"');
+    expect(text(html)).toContain(`Replay status: ${REPLAY_STATE_TEXT.ready}.`);
   });
 
   it("shows the release's provenance from its record", async () => {
@@ -231,7 +242,7 @@ describe("case page with a published release", () => {
     expect(page).toContain("Validated releases (ADM-09) 1");
     expect(page).toContain("A human check (ADM-07) approved this issue, and one release (ADM-09) was published.");
     expect(page).not.toContain("No release has been published yet");
-    expect(page).toContain("Verified replay is not built yet.");
+    expect(page).toContain("A verified replay is open only to judges with the passcode, one replay at a time");
   });
 });
 
@@ -275,5 +286,50 @@ describe("diagnostic catalog", () => {
     const page = text(renderToStaticMarkup(<Catalog results={await readResults(DEVELOPMENT)} />));
     expect(page).toContain(`${DEVELOPMENT_ROOT} factory Terminal Completed Published`);
     expect(page).toContain("generated/symptom.json Published 3441 bytes 1f0f71b985e1d4f7c336a51cb2371fad8ff0e1ac722c764dfc1d68668482cc7a");
+  });
+});
+
+describe("the replay cell", () => {
+  const release = { release_id: RELEASE_ID, created_at: "2026-10-06T11:38:10Z" };
+  function status(state: ReplayStatus["state"], known: boolean, failing: string[]): ReplayStatus {
+    return {
+      state,
+      request_id: "00000000-0000-4000-8000-00000000d001",
+      message: known ? KNOWN_CONDITION_MESSAGE : REPLAY_STATE_TEXT[state],
+      known_condition: known,
+      release_id: RELEASE_ID,
+      release_created_at: release.created_at,
+      created_at: "2026-12-03T10:00:00Z",
+      ended_at: "2026-12-03T10:21:05Z",
+      elapsed_seconds: 1265,
+      hard_cap_seconds: 2100,
+      copies: ["clean-01", "planted-01", "fixed-01"].map((trial_id) => ({ trial_id, status: "done", started_at: "2026-12-03T10:02:00Z" })),
+      cells: (["clean-01", "planted-01", "fixed-01"] as const).flatMap((trial_id) => [
+        { suite: "original" as const, trial_id, state: failing.length > 0 ? "fail" : "pass", matches_expectation: failing.length === 0, executed_count: 3, expected_count: 3, failing: failing.map((id) => ({ id, repeat_index: null, failure_code: null })) },
+        { suite: "added" as const, trial_id, state: trial_id === "planted-01" ? "fail" : "pass", matches_expectation: true, executed_count: 4, expected_count: 4, failing: [] },
+      ]),
+    };
+  }
+
+  it("shows a verified replay beside the frozen release, with both dates, the known condition, the duration apart from the hard cap and its cells", () => {
+    const page = text(renderToStaticMarkup(<ReplayPanel release={release} state="verified" reason="" status={status("verified", true, ["synthetic-spec-0001", "synthetic-spec-0002"])} />));
+    expect(page).toContain(`Frozen release ${RELEASE_ID}, created 2026-10-06 Replay Started 2026-12-03`);
+    expect(page).toContain(`Replay status: ${REPLAY_STATE_TEXT.verified}. ${KNOWN_CONDITION_MESSAGE}`);
+    expect(page).toContain("Measured duration: 21 min 5 s. Hard cap: 35 minutes.");
+    expect(page).toContain("clean copy: done planted copy: done fixed copy: done");
+    expect(page).toContain("Original API suite fail, not as expected 3 of 3 executed; failing: synthetic-spec-0001, synthetic-spec-0002");
+  });
+
+  it("shows a not_reproduced replay in text", () => {
+    const page = text(renderToStaticMarkup(<ReplayPanel release={release} state="not_reproduced" reason="" status={status("not_reproduced", false, ["synthetic-spec-0003"])} />));
+    expect(page).toContain(`Frozen release ${RELEASE_ID}, created 2026-10-06 Replay Started 2026-12-03`);
+    expect(page).toContain(`Replay status: ${REPLAY_STATE_TEXT.not_reproduced}.`);
+    expect(page).not.toContain(KNOWN_CONDITION_MESSAGE);
+  });
+
+  it("shows a disabled replay with the release's date and no replay date", () => {
+    const page = text(renderToStaticMarkup(<ReplayPanel release={release} state="disabled" reason="Verified replay is not enabled on this site." status={null} />));
+    expect(page).toContain(`Frozen release ${RELEASE_ID}, created 2026-10-06 Replay No replay in this browser yet.`);
+    expect(page).toContain(`Replay status: ${REPLAY_STATE_TEXT.disabled}. Verified replay is not enabled on this site.`);
   });
 });

@@ -78,6 +78,26 @@ export interface JobInputs {
   ids?: RunIds;
   /** The project policy the job runs under; absent, the development placeholders. */
   projectPolicy?: { sha256: string; policy_id: string };
+  /** A judge replay from its frozen judge job (prebuilt mode); absent for every other job. */
+  prebuilt?: PrebuiltJob;
+}
+
+/**
+ * A judge replay's frozen job, already overlaid and checked against its index. In prebuilt mode
+ * the controller takes its IDs and deadline from here, builds nothing with Docker, runs each copy
+ * from the frozen source, and leaves the slot to the judge controller, which releases it only
+ * after closing its own operation.
+ */
+export interface PrebuiltJob {
+  ids: RunIds;
+  deadlineMs: number;
+  /** In the fingerprint in place of the image digest. */
+  fingerprint: { index_sha256: string; request_id: string };
+  job: BuiltJob;
+  /** The extracted source.tar. */
+  sourceDir: string;
+  /** The controller sandbox's own reservation, counted with the copies against the ceiling. */
+  controllerReservedMicrousd: bigint;
 }
 
 export interface ControllerDeps {
@@ -91,6 +111,8 @@ export interface ControllerDeps {
   /** Needed for the sandbox backend. */
   sandbox?: SandboxSdk;
   log: (line: string) => void;
+  /** Told when each copy is reserved and when it ends. */
+  progress?: (trialId: string, event: "running" | "done") => Promise<void>;
 }
 
 export interface CopyRecord {
@@ -353,6 +375,34 @@ function emptySummary(inputs: JobInputs, deps: ControllerDeps, state: Controller
   };
 }
 
+/** Prebuilt mode: the frozen job as given, checked against the copy and ceiling limits; the frozen reservation is kept. */
+function prebuiltBuild(inputs: JobInputs, prebuilt: PrebuiltJob, deps: ControllerDeps, p: Paths, summary: ControllerSummary): Built {
+  const envelope = copyEnvelope(deps.rates);
+  if (!envelope.ok) throw new JobRefusal(`the copy envelope was refused (${envelope.code})`);
+  const { job } = prebuilt;
+  summary.image.digest = job.request.image_digest;
+  if (inputs.originalSuite !== null) {
+    const suiteBytes = readFileSync(inputs.originalSuite);
+    summary.original_suite = { sha256: sha256Hex(suiteBytes), test_count: parseSuiteManifest(suiteBytes).tests.length, source: "file" };
+  }
+  const trials = selectTrials(job.expected.trials, inputs.trials);
+  const limits = JOB_LIMITS[inputs.kind];
+  if (trials.length > limits.max_copies) throw new JobRefusal(`too_many_copies: ${String(trials.length)} copies, at most ${String(limits.max_copies)}`);
+  const reservation = envelope.reserved_microusd * BigInt(trials.length) + prebuilt.controllerReservedMicrousd;
+  if (reservation > BigInt(limits.ceiling_microusd)) throw new JobRefusal(`ceiling_exceeded: ${reservation.toString()} micro-USD with the controller, ceiling ${String(limits.ceiling_microusd)}`);
+  writeJobDir(p.job, job);
+  return { job, trials, digest: job.request.image_digest, envelope };
+}
+
+/** The summary of a job that was refused before it was built, such as a judge replay whose frozen job does not match. */
+export function refusedSummary(inputs: JobInputs, deps: ControllerDeps, ids: RunIds, startedMs: number, reason: string, detail: string): ControllerSummary {
+  const summary = emptySummary(inputs, deps, { schema_version: 1, fingerprint: "", kind: inputs.kind, name: inputs.name, ids, trials: null }, utcSeconds(startedMs));
+  summary.reason = reason;
+  summary.detail = detail;
+  summary.controller.ended_at = utcSeconds(deps.clock.now());
+  return summary;
+}
+
 interface Built {
   job: BuiltJob;
   trials: ExpectedTrial[];
@@ -579,6 +629,7 @@ async function runOneCopy(run: Run, trial: ExpectedTrial): Promise<{ go: boolean
   }
   if (!reserved.ok) return { go: false, stop: { reason: `reserve_${reserved.code}`, detail: refusalText(reserved) } };
   run.summary.copies.push(record);
+  await deps.progress?.(trial.trial_id, "running");
   record.reserved_microusd = Number(reserved.reserved_microusd);
   record.ledger_state = reserved.state;
   if (reserved.replay) {
@@ -612,6 +663,7 @@ async function runOneCopy(run: Run, trial: ExpectedTrial): Promise<{ go: boolean
         work: join(run.p.copies, trial.trial_id),
         backend: inputs.backend,
         sandboxImage: inputs.sandboxImage,
+        ...(inputs.prebuilt === undefined ? {} : { prebuiltSource: inputs.prebuilt.sourceDir }),
       },
       { docker: watchedDocker(deps.docker, watch), clock: deps.clock, ...(deps.sandbox === undefined ? {} : { sandbox: watchedSandbox(deps.sandbox, watch) }) },
     );
@@ -631,6 +683,7 @@ async function runOneCopy(run: Run, trial: ExpectedTrial): Promise<{ go: boolean
   deps.log(`${inputs.name} ${trial.trial_id} ${record.status}${record.reason === null ? "" : ` ${record.reason}`}`);
 
   const fine = await recordOutcome(run, record, watch, outcome);
+  await deps.progress?.(trial.trial_id, "done");
   if (!fine) return { go: false, stop: { reason: record.launch === "uncertain" ? "uncertain_launch" : "ledger_refused", detail: record.ledger_detail ?? `${trial.trial_id}: the launch outcome is not known` } };
   if (failure !== null) return { go: false, stop: { reason: "copy_error", detail: failure } };
   if (watch.refusedAtCreate) {
@@ -687,7 +740,7 @@ export async function runJob(inputs: JobInputs, deps: ControllerDeps): Promise<J
     kind: inputs.kind,
     name: inputs.name,
     image: inputs.image,
-    image_digest: await imageDigest(deps.docker, inputs.image),
+    image_digest: inputs.prebuilt === undefined ? await imageDigest(deps.docker, inputs.image) : null,
     fixture_sha256: sha256Hex(readFileSync(FIXTURE_FILE)),
     added_suite_sha256: existsSync(fixtureDir) ? await addedSuiteSha256(fixtureDir) : null,
     baseline_sha256: inputs.kind === "observe" && existsSync(baselinePath) ? fileSha(baselinePath) : null,
@@ -704,6 +757,7 @@ export async function runJob(inputs: JobInputs, deps: ControllerDeps): Promise<J
     alternative_patch_sha256: copyInputs.alternative.patch_sha256,
     original_suite_sha256: fileSha(inputs.originalSuite),
     ...(inputs.ids === undefined ? {} : { ids: inputs.ids }),
+    ...(inputs.prebuilt === undefined ? {} : { prebuilt: inputs.prebuilt.fingerprint }),
     ...(inputs.projectPolicy === undefined ? {} : { project_policy: inputs.projectPolicy }),
   }).sha256;
 
@@ -720,8 +774,8 @@ export async function runJob(inputs: JobInputs, deps: ControllerDeps): Promise<J
   if (existsSync(p.base) && readdirSync(p.base).length > 0) throw new InputsError(`jobs/${inputs.name} is not empty and holds no controller record`);
 
   const startedMs = deps.clock.now();
-  const deadline = startedMs + JOB_LIMITS[inputs.kind].controller_ms;
-  const state: ControllerState = { schema_version: 1, fingerprint, kind: inputs.kind, name: inputs.name, ids: inputs.ids ?? newRunIds(deps.uuid), trials: inputs.trials === null ? null : [...inputs.trials] };
+  const deadline = inputs.prebuilt?.deadlineMs ?? startedMs + JOB_LIMITS[inputs.kind].controller_ms;
+  const state: ControllerState = { schema_version: 1, fingerprint, kind: inputs.kind, name: inputs.name, ids: inputs.prebuilt?.ids ?? inputs.ids ?? newRunIds(deps.uuid), trials: inputs.trials === null ? null : [...inputs.trials] };
   mkdirSync(p.base, { recursive: true });
   writeFileSync(p.state, `${JSON.stringify(state, null, 2)}\n`);
   const summary = emptySummary(inputs, deps, state, utcSeconds(startedMs));
@@ -733,7 +787,7 @@ export async function runJob(inputs: JobInputs, deps: ControllerDeps): Promise<J
 
   let built: Built;
   try {
-    built = await build(inputs, deps, state, p, summary, deadline);
+    built = inputs.prebuilt === undefined ? await build(inputs, deps, state, p, summary, deadline) : prebuiltBuild(inputs, inputs.prebuilt, deps, p, summary);
   } catch (error) {
     if (!(error instanceof PlanError || error instanceof ExportError || error instanceof CodeStateRefusal || error instanceof JobRefusal || error instanceof InputsError)) throw error;
     summary.reason = "cannot_build";
@@ -794,7 +848,8 @@ export async function runJob(inputs: JobInputs, deps: ControllerDeps): Promise<J
   summary.import = { refusal: imported.refusal, evidence_sha256: imported.evidence_sha256, decision_sha256: imported.decision_sha256, trials: trialSummaries(imported.evidence) };
 
   try {
-    if (!run.reconcile) {
+    // In prebuilt mode the judge controller releases the slot after closing its own operation.
+    if (!run.reconcile && inputs.prebuilt === undefined) {
       const released = await ledger(() => deps.spend.releaseSlot({ slot_key: inputs.ledger.slot_key, root_execution_id: state.ids.root_execution_id, actor_role: ACTOR, evidence: null, reason: null }));
       summary.slot.released = released.ok;
       if (!released.ok) {

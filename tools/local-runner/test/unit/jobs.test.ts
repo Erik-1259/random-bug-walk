@@ -5,9 +5,11 @@ import { TRIAL_PROFILES, parseRecord, sha256Hex, taskRevision } from "@rbw/schem
 import { loadProbeSet } from "@rbw/shapes";
 import { loadFixture } from "@rbw/umami-fixture";
 import { deriveCodeStates, loadAlternativeFix } from "../../src/code-states.ts";
-import { BASELINE_KEY, JOB_LABELS, JobRefusal, POLICY_ID, buildJob, candidateIdentity, checkBaseline, expectedVectors, newRunIds, writeJobDir } from "../../src/jobs.ts";
+import { COPY_OUTER_LIMIT_MS } from "../../src/copy.ts";
+import { BASELINE_KEY, JOB_LABELS, JobRefusal, POLICY_ID, buildJob, candidateIdentity, checkBaseline, expectedVectors, newRunIds, runTag, writeJobDir } from "../../src/jobs.ts";
 import type { BuiltJob, JobContext, JobLabel } from "../../src/jobs.ts";
 import { importJob } from "../../src/records.ts";
+import * as shared from "../../src/shared.ts";
 import { CLEAN, MUTATION_PATCH, PARTIAL_PATCH, STUB_PATCH, sha256, tempDir, writeAlternativeDir, writeProbeDir } from "../support/synthetic.ts";
 
 let counter = 0;
@@ -288,5 +290,14 @@ describe("the observation's kit-check baseline", () => {
     const check = checkBaseline(root, observe.request);
     expect(check).toMatchObject({ ok: false, reason: "baseline_mismatch" });
     expect(check.ok ? "" : check.detail).toMatch(/^the kit-check records at jobs\/kit-check\/records import to [0-9a-f]{64}, not [0-9a-f]{64}$/);
+  });
+});
+
+describe("shared.ts", () => {
+  it("holds the run tag and the copy's outer limit, which jobs.ts and copy.ts re-export", () => {
+    expect(runTag).toBe(shared.runTag);
+    expect(runTag("00000000-0000-4000-8000-000000000001")).toBe(sha256Hex(Buffer.from("00000000-0000-4000-8000-000000000001")).slice(0, 8));
+    expect(COPY_OUTER_LIMIT_MS).toBe(shared.COPY_OUTER_LIMIT_MS);
+    expect(COPY_OUTER_LIMIT_MS).toBe(720_000);
   });
 });

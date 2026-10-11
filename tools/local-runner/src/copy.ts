@@ -4,12 +4,12 @@
 // 600 s copy deadline plus 120 s) stops the container with TERM, then KILL 10 s later.
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
-import { DEFAULT_PHASE_LIMITS } from "@rbw/umami-driver";
 import type { StateKey } from "./code-states.ts";
 import type { Clock } from "./clock.ts";
 import type { CommandResult, Docker } from "./docker.ts";
+import { COPY_OUTER_LIMIT_MS } from "./shared.ts";
 
-export const COPY_OUTER_LIMIT_MS = DEFAULT_PHASE_LIMITS.total_ms + 120_000;
+export { COPY_OUTER_LIMIT_MS };
 export const KILL_GRACE_MS = 10_000;
 /** For every docker command except `wait`, which the outer limit bounds. */
 export const COMMAND_TIMEOUT_MS = 300_000;

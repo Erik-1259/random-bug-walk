@@ -15,15 +15,14 @@ import {
   NOT_IN_RECORDS,
   originalSuiteSize,
   releaseHref,
-  REPLAY_STATE_TEXT,
   replayState,
   ROW_LABEL,
   runStatusText,
   suiteMatrix,
   VALIDATED_RESULT,
   VERDICT_TEXT,
-  type ReplayState,
 } from "../model.ts";
+import { ReplayControl } from "./replay-control.tsx";
 import { releaseFiles, type AdmissionRecords, type PublishedRelease, type Results, type Run } from "../release.ts";
 
 function Cell({ index, title, children }: { index: number; title: string; children: ReactNode }) {
@@ -158,20 +157,6 @@ function Matrix({ admission }: { admission: AdmissionRecords | null }) {
           <li>Admission verdict (ADM-02 to ADM-06): {decision.outcome_verdict === null ? "none" : VERDICT_TEXT[decision.outcome_verdict]}</li>
         </ul>
       )}
-    </>
-  );
-}
-
-function Replay({ replay }: { replay: ReplayState }) {
-  return (
-    <>
-      <button type="button" disabled aria-describedby="replay-status">
-        Run verified replay
-      </button>
-      <p id="replay-status">
-        Replay status: {REPLAY_STATE_TEXT[replay.state]}. {replay.reason}
-      </p>
-      <p>The page above is complete without a replay.</p>
     </>
   );
 }
@@ -329,7 +314,7 @@ function FunnelAndLimitations({ results }: { results: Results }) {
             ? "No release has been published yet, so no result here is validated."
             : "A human check (ADM-07) approved this issue, and one release (ADM-09) was published."}
         </li>
-        <li>Verified replay is not built yet.</li>
+        <li>A verified replay is open only to judges with the passcode, one replay at a time, and it can be held for inspection after two replays in a row that do not reproduce the release.</li>
         <li>This is a hackathon prototype.</li>
       </ul>
       <h3>Method</h3>
@@ -342,7 +327,8 @@ function FunnelAndLimitations({ results }: { results: Results }) {
   );
 }
 
-export function CasePage({ results }: { results: Results }) {
+/** `judgeEnabled`: the judge routes are configured for this release (src/config.ts, judgeEnabled). */
+export function CasePage({ results, judgeEnabled = false }: { results: Results; judgeEnabled?: boolean }) {
   const run = results.caseRun;
   return (
     <main>
@@ -358,7 +344,10 @@ export function CasePage({ results }: { results: Results }) {
         <Matrix admission={run?.admission ?? null} />
       </Cell>
       <Cell index={4} title="Verified replay">
-        <Replay replay={replayState(results)} />
+        <ReplayControl
+          release={results.release === null ? null : { release_id: results.release.record.release_id, created_at: results.release.record.created_at }}
+          initial={replayState(results, judgeEnabled)}
+        />
       </Cell>
       <Cell index={5} title="Provenance and downloads">
         <Provenance results={results} />

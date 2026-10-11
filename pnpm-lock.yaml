@@ -276,9 +276,21 @@ importers:
       '@rbw/admission':
         specifier: workspace:*
         version: link:../admission
+      '@rbw/controller':
+        specifier: workspace:*
+        version: link:../../tools/controller
+      '@rbw/publisher':
+        specifier: workspace:*
+        version: link:../publisher
       '@rbw/schema':
         specifier: workspace:*
         version: link:../schema
+      '@rbw/spend':
+        specifier: workspace:*
+        version: link:../spend
+      '@vercel/oidc':
+        specifier: 3.8.10
+        version: 3.8.10
       next:
         specifier: 16.3.8
         version: 16.3.8(@playwright/test@1.63.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
@@ -347,6 +359,9 @@ importers:
       '@rbw/local-runner':
         specifier: workspace:*
         version: link:../local-runner
+      '@rbw/publisher':
+        specifier: workspace:*
+        version: link:../../packages/publisher
       '@rbw/schema':
         specifier: workspace:*
         version: link:../../packages/schema
@@ -365,9 +380,15 @@ importers:
       '@rbw/writer':
         specifier: workspace:*
         version: link:../../packages/writer
+      '@vercel/sandbox':
+        specifier: 3.5.1
+        version: 3.5.1
       pg:
         specifier: 8.23.1
         version: 8.23.1
+      tar-stream:
+        specifier: 3.2.2
+        version: 3.2.2
     devDependencies:
       '@rbw/shapes':
         specifier: workspace:*

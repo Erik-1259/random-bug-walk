@@ -34,7 +34,10 @@ export const runProcess: ProcessRunner = (call) =>
       clearTimeout(timer);
       resolve({ code: timedOut ? null : code, spawnFailed, timedOut, stdout: Buffer.concat(stdout), stderr: Buffer.concat(stderr) });
     };
-    const child = spawn(call.command, call.args, { cwd: call.cwd, env: call.env, shell: false, stdio: ["pipe", "pipe", "pipe"] });
+    // The web app's type check also compiles this file (through the private store), and its Next
+    // types make ProcessEnv require NODE_ENV; this package's own check needs no cast.
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- needed under Next's types
+    const child = spawn(call.command, call.args, { cwd: call.cwd, env: call.env as NodeJS.ProcessEnv, shell: false, stdio: ["pipe", "pipe", "pipe"] });
     const timer =
       call.timeoutMs === undefined
         ? undefined

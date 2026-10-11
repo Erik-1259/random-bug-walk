@@ -10,6 +10,8 @@ import { dryRun } from "../../src/dry-run.ts";
 import { BASELINE_KEY, buildJob, expectedVectors, newRunIds, writeJobDir } from "../../src/jobs.ts";
 import { RECORDED_SYNTHETIC_DIR } from "../../src/recorded.ts";
 import { importJob } from "../../src/records.ts";
+import type { Docker } from "../../src/docker.ts";
+import { exportImage } from "../../src/projection.ts";
 import { runCopyCommand } from "../../src/run-copy.ts";
 import { runSequence } from "../../src/sequence.ts";
 import type { SequenceOptions } from "../../src/sequence.ts";
@@ -283,6 +285,36 @@ describe("run-copy", () => {
     const written = parseCanonical(readFileSync(join(dir, "work", "copy-summary.json"))) as { sandbox?: { name: string } };
     expect(written.sandbox?.name).toMatch(/-observe-planted-01$/);
     expect(outcome.exitCode).toBe(0);
+  });
+
+  it("runs a copy from a prebuilt source with no Docker call: no inspect, no repository digests and no export", async () => {
+    const kit = new KitImage();
+    const { root, jobDir } = await observeJob(kit, (actual) => actual);
+    const dir = tempDir();
+    const source = await exportImage(kit.docker, { image: IMAGE_ID, container: "rbw-synthetic-prebuilt-export", dest: join(dir, "source") });
+    const noDocker: Docker = { run: () => Promise.reject(new Error("synthetic: prebuilt mode must make no Docker call")) };
+    const sdk = new FakeSandboxSdk({ collected: { runExit: 0 } });
+    const outcome = await runCopyCommand(
+      {
+        job: jobDir,
+        trial: "planted-01",
+        root,
+        image: IMAGE_ID,
+        manifest: writeManifest(dir),
+        terms: writeTerms(dir),
+        policy: null,
+        work: join(dir, "work"),
+        probesDir: writeProbeDir(),
+        alternativeDir: writeAlternativeDir(),
+        backend: "sandbox",
+        sandboxImage: VCR_IMAGE,
+        prebuiltSource: source.source_dir,
+      },
+      { docker: noDocker, clock: new FakeClock(), sandbox: sdk },
+    );
+    expect(outcome.refusal).toBeNull();
+    expect(outcome.copy).toMatchObject({ trial_id: "planted-01", status: "complete", placed_sha256: sha256(PLANTED), audit: { verdict: "pass" } });
+    expect(sdk.ops().filter((op) => op === "create")).toHaveLength(1);
   });
 
   it("refuses a VCR image that is not one of the local image's repository digests, before the export and any SDK call", async () => {

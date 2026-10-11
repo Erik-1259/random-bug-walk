@@ -125,16 +125,20 @@ export function funnel(results: Results): FunnelStep[] {
   ];
 }
 
-export type ReplayStateName = "disabled" | "ready" | "starting" | "running" | "passed" | "failed";
+/** The replay control's states (design note section 6). Every state is written in text; color only repeats it. */
+export type ReplayStateName = "disabled" | "ready" | "starting" | "running" | "verified" | "not_reproduced" | "incomplete" | "needs_reconciliation" | "unavailable" | "unknown";
 
-/** Every state the replay control can show. Only "disabled" is reachable until the judge action exists. */
 export const REPLAY_STATE_TEXT: Record<ReplayStateName, string> = {
   disabled: "Disabled",
   ready: "Ready to start",
   starting: "Starting",
   running: "Running",
-  passed: "Finished: the replay reproduced the published result",
-  failed: "Finished: the replay did not reproduce the published result",
+  verified: "Verified: the replay reproduced the released result",
+  not_reproduced: "Not reproduced: the replay did not reproduce the released result",
+  incomplete: "Incomplete: the replay ended without a result",
+  needs_reconciliation: "Needs reconciliation: the replay's end is not confirmed, and the operator checks it",
+  unavailable: "Unavailable",
+  unknown: "No replay with this request",
 };
 
 export interface ReplayState {
@@ -145,9 +149,39 @@ export interface ReplayState {
 /** The replay control's state without a validated release (Results.release). */
 export const REPLAY_STATE: ReplayState = { state: "disabled", reason: "There is no validated release to replay." };
 
-/** With a release the control stays disabled until the judge action exists. */
-export function replayState(results: Results): ReplayState {
-  return results.release === null ? REPLAY_STATE : { state: "disabled", reason: "Verified replay is not available yet." };
+/** With a release, the control is ready when the judge routes are configured for it, and disabled otherwise. */
+export function replayState(results: Results, judgeEnabled = false): ReplayState {
+  if (results.release === null) return REPLAY_STATE;
+  return judgeEnabled ? { state: "ready", reason: "A replay runs three fresh copies of the released case, with a hard cap of 35 minutes." } : { state: "disabled", reason: "Verified replay is not enabled on this site." };
+}
+
+/** One of the replay's six cells, with its per-cell outcomes from the replay's evidence. */
+export interface ReplayCell {
+  suite: "original" | "added";
+  trial_id: string;
+  state: string;
+  matches_expectation: boolean;
+  executed_count: number;
+  expected_count: number;
+  failing: { id: string; repeat_index: number | null; failure_code: string | null }[];
+}
+
+/** What the status route returns: no resource IDs, operation IDs, keys or paths. */
+export interface ReplayStatus {
+  state: Exclude<ReplayStateName, "disabled" | "ready">;
+  request_id: string;
+  message: string;
+  /** The Dec 2–5 condition explains the only unexpected cells. */
+  known_condition: boolean;
+  release_id: string;
+  release_created_at: string;
+  created_at: string | null;
+  ended_at: string | null;
+  /** Measured from the create; shown apart from the hard cap. */
+  elapsed_seconds: number | null;
+  hard_cap_seconds: number;
+  copies: { trial_id: string; status: "not_started" | "running" | "done"; started_at: string | null }[];
+  cells: ReplayCell[];
 }
 
 /** Published runs whose files remain downloadable as diagnostic archives: every one but the released run. */

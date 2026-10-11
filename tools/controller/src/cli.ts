@@ -9,6 +9,12 @@
 //   attempt --work <new run dir> --policy <ProjectPolicy> --candidate <private input> --writer-rates <file>
 //         --search-rates <file> --image <local kit image> --manifest <file> --terms <file> --audit-policy <file>
 //         --kit-stage <dir> --sandbox-image <repository>@sha256:<digest> [--original-suite <file>]
+//   run   --job-kind judge_verify --request-id <uuid> --prebuilt <local store dir | judge job index key>
+//         --release <release.json> --deadline-at <UTC time> [--backend sandbox] [--sandbox-image <kit image>] [--work <dir>]
+//
+// The prebuilt form is the judge controller, started by the judge route in its own sandbox. It
+// also reads BLOB_PRIVATE_STORE_ID and VERCEL_OIDC_TOKEN for the private store, unless --prebuilt
+// names a local store directory.
 //
 // With --backend sandbox (the default) it reads DATABASE_URL, VERCEL_TOKEN, VERCEL_TEAM_ID and
 // VERCEL_PROJECT_ID from the environment, here and nowhere else, and never prints them. With
@@ -20,21 +26,26 @@
 // completed; 1 the summary (or root-run.json) was written with any other state; 2 a usage or input
 // error, with nothing run.
 import { randomUUID } from "node:crypto";
-import { resolve } from "node:path";
+import { existsSync, mkdtempSync, readFileSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { loadRateSheet } from "@rbw/envelope";
 import { CodeStateRefusal, InputsError, createDocker, createSandboxSdk, realClock } from "@rbw/local-runner";
-import { JOB_KIND_VALUES } from "@rbw/schema";
+import { InvalidInput, LocalPrivateStore, privateStoreFromEnv } from "@rbw/publisher/private-store";
+import { CanonicalError, JOB_KIND_VALUES, RecordError, parseRecord } from "@rbw/schema";
 import { createTavilyClient } from "@rbw/search";
 import type { JobKind } from "@rbw/schema";
 import { KEY_VARIABLES, prepareAttempt, runAttempt } from "./attempt.ts";
 import { runJob } from "./controller.ts";
 import type { Backend, ControllerDeps, JobInputs } from "./controller.ts";
-import { RATE_SHEET_PATH } from "./envelope.ts";
+import { isRequestId } from "./judge.ts";
+import { NO_DOCKER, runJudgeReplay } from "./judge-run.ts";
 import { LedgerError, databaseLedger, inMemoryLedger } from "./ledger.ts";
 import type { Ledger } from "./ledger.ts";
 import { DEVELOPMENT, JUDGE } from "./limits.ts";
 import { PROOF_DIR, ProofInputError, runProof } from "./proof.ts";
+import { RATE_SHEET_PATH } from "./rate-sheet.ts";
 
 const USAGE = `usage:
   node src/cli.ts run --job-kind <kit_check|observe|admission|judge_verify> --work <run dir> --image <tag|digest> --manifest <file> --terms <file> --kit-stage <dir>
@@ -45,6 +56,8 @@ const USAGE = `usage:
   node src/cli.ts attempt --work <new run dir> --policy <ProjectPolicy> --candidate <private input> --writer-rates <file> --search-rates <file>
                           --image <local kit image> --manifest <file> --terms <file> --audit-policy <file> --kit-stage <dir>
                           --sandbox-image <repository>@sha256:<digest> [--original-suite <file>]
+  node src/cli.ts run --job-kind judge_verify --request-id <uuid> --prebuilt <local store dir|index key> --release <file> --deadline-at <UTC time>
+                      [--backend sandbox] [--sandbox-image <kit image>] [--work <dir>]
 `;
 
 /** The Tavily API the attempt's phrase checks call. */
@@ -127,8 +140,35 @@ async function withLedger<T>(backend: Backend, run: (deps: ControllerDeps) => Pr
   }
 }
 
+/** The judge controller: one replay from the frozen judge job, on Sandbox, with no Docker. */
+async function judgeCommand(values: Values): Promise<number> {
+  if (values["job-kind"] !== "judge_verify") throw new UsageError("--prebuilt is only for --job-kind judge_verify");
+  if ((values.backend ?? "sandbox") !== "sandbox") throw new UsageError("--prebuilt runs on --backend sandbox");
+  const requestId = required(values, "request-id");
+  if (!isRequestId(requestId)) throw new UsageError("--request-id must be a lowercase UUID");
+  const release = parseRecord("Release", readFileSync(resolve(required(values, "release"))));
+  const deadlineAtMs = Date.parse(required(values, "deadline-at"));
+  if (Number.isNaN(deadlineAtMs)) throw new UsageError("--deadline-at must be a UTC time");
+  if (values["sandbox-image"] !== undefined && values["sandbox-image"] !== release.images.kit_image) throw new UsageError("--sandbox-image must be the release's kit image");
+  const prebuilt = required(values, "prebuilt");
+  let store;
+  if (existsSync(prebuilt) && statSync(prebuilt).isDirectory()) store = new LocalPrivateStore(resolve(prebuilt));
+  else if (prebuilt === release.judge_job.index_key) store = privateStoreFromEnv(process.env);
+  else throw new UsageError("--prebuilt must be a local store directory or the release's judge job index key");
+  const work = values.work === undefined ? mkdtempSync(join(tmpdir(), "rbw-judge-")) : resolve(values.work);
+  const outcome = await withLedger("sandbox", (deps) => runJudgeReplay({ requestId, release, store, deadlineAtMs, work }, { ...deps, docker: NO_DOCKER }));
+  process.stdout.write(`job=${outcome.summary.job.name} status=${outcome.summary.status} reason=${outcome.summary.reason ?? "-"} replay=${outcome.state} known_condition=${String(outcome.known_condition)} closed=${String(outcome.closed)}\n`);
+  return outcome.summary.status === "complete" && outcome.closed ? 0 : 1;
+}
+
 async function runCommand(args: string[]): Promise<number> {
-  const { values } = parseArgs({ args, strict: true, allowPositionals: false, options: { ...JOB_OPTIONS, "job-kind": { type: "string" }, fix: { type: "string" }, name: { type: "string" } } });
+  const { values } = parseArgs({
+    args,
+    strict: true,
+    allowPositionals: false,
+    options: { ...JOB_OPTIONS, "job-kind": { type: "string" }, fix: { type: "string" }, name: { type: "string" }, "request-id": { type: "string" }, prebuilt: { type: "string" }, release: { type: "string" }, "deadline-at": { type: "string" } },
+  });
+  if (values.prebuilt !== undefined) return judgeCommand(values);
   const kind = required(values, "job-kind");
   if (!(JOB_KIND_VALUES as readonly string[]).includes(kind)) throw new UsageError(`--job-kind must be one of ${JOB_KIND_VALUES.join(", ")}`);
   const jobKind = kind as JobKind;
@@ -220,7 +260,7 @@ async function attemptCommand(args: string[]): Promise<number> {
   return outcome.exitCode;
 }
 
-const KNOWN = [UsageError, InputsError, CodeStateRefusal, LedgerError, ProofInputError];
+const KNOWN = [UsageError, InputsError, CodeStateRefusal, LedgerError, ProofInputError, InvalidInput, RecordError, CanonicalError];
 
 async function main(argv: string[]): Promise<number> {
   const [command, ...rest] = argv;

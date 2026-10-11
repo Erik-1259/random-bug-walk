@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { SqlClient } from "./client.ts";
 import { assertSchemaName } from "./spend.ts";
@@ -30,7 +30,10 @@ export class MigrationError extends Error {
   }
 }
 
-const DEFAULT_MIGRATIONS_DIR = fileURLToPath(new URL("../migrations/", import.meta.url));
+// The web app bundles this package for its judge routes, which never migrate. So the directory is
+// joined from this module's path rather than `new URL("../migrations/", import.meta.url)`, which the
+// bundler would resolve as an asset, and the reads below tell it not to trace them.
+const DEFAULT_MIGRATIONS_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "migrations");
 
 // The record of applied migrations is insert-only, like every other table in the schema, and
 // takes rows only through applied_migrations_record, which turns on rbw.spend_api with set_config
@@ -100,10 +103,10 @@ export async function migrate(client: SqlClient, options: MigrateOptions = {}): 
   const schema = options.schema ?? "public";
   assertSchemaName(schema);
   const dir = options.migrationsDir ?? DEFAULT_MIGRATIONS_DIR;
-  const files = (await readdir(dir)).filter((file) => file.endsWith(".sql")).sort();
+  const files = (await readdir(/* turbopackIgnore: true */ dir)).filter((file) => file.endsWith(".sql")).sort();
   const sources = await Promise.all(
     files.map(async (file) => {
-      const sql = await readFile(join(dir, file), "utf8");
+      const sql = await readFile(/* turbopackIgnore: true */ join(dir, file), "utf8");
       return { file, sql, checksum: createHash("sha256").update(sql).digest("hex") };
     }),
   );

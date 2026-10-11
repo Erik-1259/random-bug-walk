@@ -3,7 +3,7 @@
 // under one pool, allocation and slot key. Each copy's deadline follows the child-deadline rule.
 import { FIXED_LIMITS } from "@rbw/envelope";
 import type { JobKind } from "@rbw/schema";
-import { DEFAULT_PHASE_LIMITS } from "@rbw/umami-driver";
+import { DEFAULT_PHASE_LIMITS } from "@rbw/umami-driver/limits";
 
 export interface JobLimits {
   controller_ms: number;
