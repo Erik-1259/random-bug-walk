@@ -1,6 +1,6 @@
 # @rbw/controller
 
-The trusted controller. It runs one job (kit check, observation, admission or judge replay) end to end against the spend ledger, one app copy at a time, on Vercel Sandbox, or on Docker for the conductor's local checks. The conductor starts it with one command; factory runs launch from a conductor command, not a web route. The judge route that will start the same controller is planned. This is part of a hackathon prototype.
+The trusted controller. It runs one job (kit check, observation, admission or judge replay) end to end against the spend ledger, one app copy at a time, on Vercel Sandbox, or on Docker for the conductor's local checks. It also runs the candidate attempt: one factory root, from the kit check to the admission, under a project policy. The conductor starts it with one command; factory runs launch from a conductor command, not a web route. The judge route that will start the same controller is planned. This is part of a hackathon prototype.
 
 Everything it writes is **development evidence**. It makes no admission claim and publishes nothing, and the planted bug is synthetic.
 
@@ -9,8 +9,9 @@ It reuses the existing packages and does not re-implement them:
 - **Each copy:** the local runner's `run-copy` path (`runCopyCommand`), the same code the `run-copy` command runs.
 - **The import:** `@rbw/admission`, through the local runner's `importJob`.
 - **The money:** `@rbw/spend` for the ledger, and `@rbw/envelope`'s rate sheet, fixed limits and `toReserveRequest`.
+- **The candidate text:** `@rbw/writer` for the card and the issue, and `@rbw/search` for the phrase checks and the novelty summary.
 
-The new code is the orchestration between them (the ledger flow, the deadlines, replay and the grader proof), which no existing package does. That is why it is more than 200 lines.
+The new code is the orchestration between them (the ledger flow, the deadlines, replay and the grader proof), which no existing package does. That is why it is more than 200 lines. The candidate attempt (`src/attempt.ts` and `src/symptom.ts`) adds about 560 lines for the same reason: nothing else runs the jobs, the writer and the searcher as one root, builds the symptom from an observation, or picks the phrases from the issue.
 
 ## Commands
 
@@ -24,7 +25,10 @@ node tools/controller/src/cli.ts run --job-kind <kit_check|observe|admission|jud
 node tools/controller/src/cli.ts proof --work <run dir> --image ... --manifest ... --terms ... --kit-stage ... \
   [--original-suite <file>] [--policy <file>] [--backend sandbox|docker] [--sandbox-image ...]
 node tools/controller/src/cli.ts create-slot-key --slot-key <key>
+node tools/controller/src/cli.ts attempt --work <new run dir> --policy <ProjectPolicy> --candidate <private input> ...
 ```
+
+`attempt` is described in [The candidate attempt](#the-candidate-attempt).
 
 - `--image`, `--manifest`, `--terms`, `--policy` and `--kit-stage` are the local runner's inputs (its README, Host commands). The kit image must be local, because each copy's source export and audit run on the host.
 - `--original-suite` is the driver's frozen original-suite manifest. Without it, the controller first runs one freeze copy on local Docker. That copy is free and not on the ledger.
@@ -138,6 +142,110 @@ Different inputs under the same name are refused, and the command exits 2. A new
 - The forgery keeps the planted bug. On every query, it tries to write a passing `trial-result.json`, a `run.exit`, a `reward.txt` and a report to these paths: its own temp directory, the root-only results directory, `/logs/verifier`, and `/tmp`. The kit lets the app write only its own temp directory and build outputs, and the driver reads only its own records.
 - `proof.json` in the run directory records each case's inputs, expectation, observation and result.
 
+## The candidate attempt
+
+`attempt` runs one new factory root under a project policy, on Vercel Sandbox only:
+
+```sh
+node tools/controller/src/cli.ts attempt --work <new run dir> --policy <ProjectPolicy> --candidate <private input> \
+  --writer-rates <file> --search-rates <file> --image <local kit image> --manifest <file> --terms <file> \
+  --audit-policy <file> --kit-stage <dir> --sandbox-image <repository>@sha256:<digest> [--original-suite <file>]
+```
+
+- `--policy` is the `ProjectPolicy` record. Its `project_id` is the root's project, and the SHA-256 of the file's bytes is the root's `project_policy_sha256`. A policy that names the development placeholder project is refused.
+- `--audit-policy` is the projection audit policy that `run --policy` takes.
+- `--writer-rates` and `--search-rates` are the writer's and the searcher's rate files, in the formats their `record` commands take.
+- Credentials come only from the environment: `DATABASE_URL`, `VERCEL_TOKEN`, `VERCEL_TEAM_ID` and `VERCEL_PROJECT_ID` (as `run` reads them), plus `TOKEN_FACTORY_WRITER_KEY` and `TAVILY_API_KEY`. A missing one is named, and the command exits 2 before anything runs. The two keys are read once and removed from the environment before any child process starts. No key reaches a log line, a record or an error message.
+- `--work` must be absent or empty. An attempt never resumes: a retry is a new root in a new directory.
+
+Exit codes: 0 when the root ends `terminal` and `completed`; 1 when `root-run.json` was written with any other state; 2 for a usage or input error, with nothing run.
+
+### The private input
+
+`--candidate` is one JSON object, validated before anything runs. Errors name fields, never values. A synthetic example:
+
+```json
+{
+  "candidate": "synthetic-candidate-1",
+  "card_source": {
+    "source_links": ["https://code.example.invalid/synthetic-project/pull/1"],
+    "repository": "https://code.example.invalid/synthetic-project",
+    "date": "2026-01-15",
+    "license": "MIT",
+    "diff_excerpt": "- const range = synthetic(start, end);\n+ const range = synthetic(start, end, zone);",
+    "issue_text": "Synthetic source issue: daily totals shift by a day for some timezones.",
+    "confirmation": { "card_id": "synthetic-card-1", "shape_id": "synthetic-shape-1", "rules_matched": ["synthetic-rule-a"], "matched_lines": ["+ const range = synthetic(start, end, zone);"] }
+  },
+  "excluded_identifiers": ["syntheticRangeHelper", "tzarg.la-day-counts"],
+  "search_settings": { "timeout_seconds": 30, "max_results": 5, "excerpt_max_chars": 300, "passage_max_chars": 2000, "max_passages": 6, "project_docs_domains": [] },
+  "search": {
+    "schema_version": 1,
+    "candidate": "synthetic-candidate-1",
+    "source": { "shape_keywords": ["synthetic", "timezone"], "symptom_words": ["daily", "counts"], "include_domains": ["github.com"], "start_date": "2020-01-01", "end_date": "2026-10-01" },
+    "docs": { "url": "https://docs.example.invalid/reports", "query": "daily counts timezone" },
+    "docs_policy": { "allowed_domains": ["docs.example.invalid"], "excluded_domains": ["datelib.example.invalid"] }
+  },
+  "user_action": "Opened the daily pageview report for three days with the report time zone set far from UTC.",
+  "locale": "en-US",
+  "fixture_description": "Twelve synthetic pageviews spread over three days, several of them close to local midnight.",
+  "doc_excerpts": [{ "text": "Synthetic excerpt: reports group pageviews by day in the time zone selected for the report.", "source_url": "https://docs.example.invalid/reports" }]
+}
+```
+
+- `candidate`: lowercase letters, digits, `_` and `-`, at most 40 characters; one name for the writer and the searcher.
+- `card_source`: the writer's `CardSource`.
+- `excluded_identifiers`: one list, for the writer's identifier scan and the searcher's query check.
+- `search_settings` and `search`: the searcher's `SearchSettings`, and its `SearchInput` without `phrases`, for the same `candidate`. Only the three phrase checks run, so the source and docs parts are validated but not searched.
+- `user_action`, `locale`, `fixture_description` and `doc_excerpts`: the symptom's prose. Its numbers come only from the fixture and the observation.
+
+### The stages
+
+The attempt makes one `RunIds` with the policy's `project_id`. Every stage runs under that root, in this order, and each one gates the next:
+
+1. **`kit_check` and `observe`:** `runJob` with the root's IDs and the policy, `policy_id` `umami-uc3-v1` (the release check requires it, and `ProjectPolicy` has no such field), on the development pool and slot. Without `--original-suite`, the kit check's freeze copy makes it, and every later job takes that same file.
+2. **`write`:** the symptom, then one card call and one issue call. There are no repairs.
+3. **`novelty`:** the three exact-phrase checks, then `summarizeNovelty`.
+4. **`admission`:** `runJob`, 13 copies, with the same IDs, policy and original suite.
+
+`runJob` takes two optional `JobInputs` fields for this, `ids` and `projectPolicy`. Both go into the job's fingerprint. Without them a job's bytes are what they were before.
+
+**The symptom** (`src/symptom.ts`, spec §9.6) is a schema-valid `ObservedSymptom`:
+- from the fixture: the request (its path; `startAt`, `endAt`, `unit` and `timezone` as strings), the time zone, the events (labeled `pageview <id>`) and every expected count, labeled by the date part of each bucket label;
+- from the observation: every observed count, read from the observe copy's recorded response body for that check, parsed as `classify` parses it, and `http_status` 200;
+- the first non-UTC check in fixture order is the primary zone, the other non-UTC checks are `follow_up_examples`, and the UTC control is left out;
+- a non-UTC check with no recorded response, or one that `classify` does not grade `local_day_counts_mismatch`, refuses the symptom (`symptom_unavailable`).
+
+**The phrases** are picked by code from the frozen issue: the `title`, the first sentence of `expected_result` and the first sentence of `actual_result`. Each has its double quotes removed and its whitespace collapsed, and is cut to at most 12 words.
+
+**The candidate text** runs in the attempt's process, against the controller's own ledger. Its run context is the admission's: the policy's project and hash, the batch, the observation's candidate `task_revision`, the root, and the `candidate-text` execution with the root as parent. It acquires the development slot for the root first, and releases it at the end when nothing blocks it. The writer and the searcher use the development pool, so their own caps (12 writer calls and 6 searches per candidate) and the ledger are the controls.
+
+### Outputs
+
+`<work>/` holds `jobs/kit-check/`, `jobs/observe/` and `jobs/admission/` (as `run` writes them), `candidate/` and `root-run.json`. Each file under `candidate/` is written once:
+
+| File | Content | Read by |
+|---|---|---|
+| `symptom.json`, `card.json`, `novelty.json` | the symptom, the writer's card, and the novelty summary with `issue_sha256` | `tools/release stage` |
+| `issue.json`, `issue-check.json`, `recordings/` | the frozen issue (canonical), the writer's check report with `issue_sha256`, and the card and issue recordings (provenance `live`) | `tools/release build` |
+| `search/` | the three phrase records | |
+| `ledger.json` | each writer and search operation's ID, kind, state, and reserved and settled micro-USD | the conductor |
+
+`issue_sha256` is the SHA-256 of `issue.json`'s bytes, so a check report or a novelty summary of another issue fails the release check. Nothing of the candidate text goes under `jobs/`, so `stage` never reads it. The issue text, its phrases and the search records stay under `candidate/`: they never reach a report line, a log line or a run record.
+
+`root-run.json` is the canonical `RootRun`: the policy's `project_id` and hash, `kind: "factory"`, `declared_stages` `kit_check`, `observe`, `write`, `novelty` and `admission`, and `child_execution_ids` for the jobs that have a job directory. The candidate-text execution has none, so it is not a child.
+
+The command prints one line per stage: its status and reason, each job's settled micro-USD, the card and issue call outcomes, the issue check status, each phrase check's outcome, the novelty status and the admission's `outcome_verdict`. It never prints issue text, phrases or URLs.
+
+### Stops
+
+Nothing is retried, and every stop still writes `root-run.json`. The admission does not run after a stop.
+
+| Cause | Root |
+|---|---|
+| A job `refused`, `symptom_unavailable`, a refused or failed writer call, an issue check other than `ready_for_review`, novelty `blocked` | `terminal`, `failed` |
+| A job `incomplete`, novelty `incomplete` | `terminal`, `incomplete` |
+| A job `needs_reconciliation`, an `uncertain` writer call, a search call left uncertain, an operation left unresolved in the ledger, a ledger call that failed, a slot release that was refused | `needs_reconciliation` (outcome `null`); the slot stays held and nothing more runs |
+
 ## Summary
 
 `jobs/<name>/summary.json` is canonical JSON (`encodeCanonical`). It holds:
@@ -197,6 +305,20 @@ Load the secrets into the shell from the owner's private env file, never on a co
 
 Adding `--backend docker` (and leaving out `--sandbox-image`) runs any of these on local Docker with the in-memory ledger, with no credentials.
 
+4. A candidate attempt, in a new run directory outside the repository. The private env file also sets `TOKEN_FACTORY_WRITER_KEY` and `TAVILY_API_KEY`. The policy, the private input and both rate files are the conductor's own files, never committed. The attempt runs on Sandbox only.
+
+   ```sh
+   run="$(mktemp -d)/run"
+   node tools/controller/src/cli.ts attempt --work "$run" --policy <public_demo ProjectPolicy> --candidate <private input> \
+     --writer-rates <writer rates> --search-rates <search rates> --image rbw-umami-kit:local \
+     --manifest <manifest> --terms <terms> --audit-policy <audit policy> --kit-stage <stage> \
+     --sandbox-image <vcr repository>@sha256:<digest>
+   jq -n --slurpfile ledger "$run/candidate/ledger.json" '{root: (input | {status, outcome}), jobs: [inputs | {name: .job.name, status, reason, settled_microusd: .spend.settled_microusd}], text: [$ledger[0].operations[] | {kind, state, reserved_microusd, settled_microusd}]}' \
+     "$run/root-run.json" "$run"/jobs/*/summary.json
+   ```
+
+   A root that stopped before the write stage has no `candidate/ledger.json`; jq then names the missing file. `tools/release stage` then takes `--run "$run" --root-run "$run/root-run.json"` with `--symptom`, `--card` and `--novelty` from `$run/candidate/`, and `build` takes `--issue "$run/candidate/issue.json" --issue-check "$run/candidate/issue-check.json" --recordings "$run/candidate/recordings"`.
+
 ## Tests
 
 ```sh
@@ -212,7 +334,8 @@ The unit tests use a PGlite ledger with every spend migration, plus the local ru
 - the Docker backend;
 - replay;
 - the per-copy envelope;
-- the committed proof inputs, and the grader proof against the fake backend.
+- the committed proof inputs, and the grader proof against the fake backend;
+- the candidate attempt: `runJob` with shared IDs and a policy, the symptom, the phrase picker, the order and identity of one root, its four stops, no resume, the keys and the privacy of the issue text, and the command's missing variable. These tests run on the Docker backend with a fake writer `fetch` and a search client answered in process. They replace the driver's canned response bodies with an Umami-shaped one, and use a fake clock that moves only when released, so 13 simulated copies fit the admission's deadline.
 
 Spec §6.1's four serial-run checks are in `test/support/serial-checks.ts`:
 - a replay creates no second job;
@@ -224,7 +347,8 @@ They run on PGlite in the unit tests, and on the Postgres in `DATABASE_URL` in `
 
 ## What it does not do
 
-- It is not the web route that starts a judge replay (planned), and it does not write or search candidates.
+- It is not the web route that starts a judge replay (planned).
+- The candidate attempt runs no source search, docs extract or writer repair, and publishes nothing: `tools/release` stages, publishes and builds from its root.
 - It never retries a launch, a copy or a job, and it never reconciles or releases a slot after an uncertain launch. Both are the operator's recorded actions.
 - It does not shorten a copy below the driver's 600 s: when the child deadline is shorter, the copy does not start.
 - It does not calibrate anything, and its summaries are not admissions.

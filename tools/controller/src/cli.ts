@@ -6,20 +6,28 @@
 //   proof --work <run dir> --image ... --manifest ... --terms ... --kit-stage ... [--original-suite <file>]
 //         [--policy <file>] [--backend sandbox|docker] [--sandbox-image ...]
 //   create-slot-key --slot-key <development|judge>
+//   attempt --work <new run dir> --policy <ProjectPolicy> --candidate <private input> --writer-rates <file>
+//         --search-rates <file> --image <local kit image> --manifest <file> --terms <file> --audit-policy <file>
+//         --kit-stage <dir> --sandbox-image <repository>@sha256:<digest> [--original-suite <file>]
 //
 // With --backend sandbox (the default) it reads DATABASE_URL, VERCEL_TOKEN, VERCEL_TEAM_ID and
 // VERCEL_PROJECT_ID from the environment, here and nowhere else, and never prints them. With
-// --backend docker it uses an in-memory ledger and no credentials.
+// --backend docker it uses an in-memory ledger and no credentials. attempt runs on Sandbox only,
+// and also reads TOKEN_FACTORY_WRITER_KEY and TAVILY_API_KEY, once, removing them from the
+// environment before any child process starts.
 //
-// Exit codes: 0 the job (or every proof case) is complete; 1 the summary was written but the job
-// is incomplete, refused or needs reconciliation; 2 a usage or input error, with nothing run.
+// Exit codes: 0 the job (or every proof case) is complete, or the attempt's root ended terminal and
+// completed; 1 the summary (or root-run.json) was written with any other state; 2 a usage or input
+// error, with nothing run.
 import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { loadRateSheet } from "@rbw/envelope";
 import { CodeStateRefusal, InputsError, createDocker, createSandboxSdk, realClock } from "@rbw/local-runner";
 import { JOB_KIND_VALUES } from "@rbw/schema";
+import { createTavilyClient } from "@rbw/search";
 import type { JobKind } from "@rbw/schema";
+import { KEY_VARIABLES, prepareAttempt, runAttempt } from "./attempt.ts";
 import { runJob } from "./controller.ts";
 import type { Backend, ControllerDeps, JobInputs } from "./controller.ts";
 import { RATE_SHEET_PATH } from "./envelope.ts";
@@ -34,7 +42,14 @@ const USAGE = `usage:
   node src/cli.ts proof --work <run dir> --image <tag|digest> --manifest <file> --terms <file> --kit-stage <dir>
                         [--original-suite <file>] [--policy <file>] [--backend sandbox|docker] [--sandbox-image <repository>@sha256:<digest>]
   node src/cli.ts create-slot-key --slot-key <key>
+  node src/cli.ts attempt --work <new run dir> --policy <ProjectPolicy> --candidate <private input> --writer-rates <file> --search-rates <file>
+                          --image <local kit image> --manifest <file> --terms <file> --audit-policy <file> --kit-stage <dir>
+                          --sandbox-image <repository>@sha256:<digest> [--original-suite <file>]
 `;
+
+/** The Tavily API the attempt's phrase checks call. */
+const TAVILY_BASE_URL = "https://api.tavily.com";
+const SANDBOX_VARIABLES = ["DATABASE_URL", "VERCEL_TOKEN", "VERCEL_TEAM_ID", "VERCEL_PROJECT_ID"] as const;
 
 class UsageError extends Error {}
 
@@ -161,6 +176,50 @@ async function createSlotKeyCommand(args: string[]): Promise<number> {
   }
 }
 
+async function attemptCommand(args: string[]): Promise<number> {
+  const { values } = parseArgs({
+    args,
+    strict: true,
+    allowPositionals: false,
+    options: {
+      ...JOB_OPTIONS,
+      candidate: { type: "string" },
+      "writer-rates": { type: "string" },
+      "search-rates": { type: "string" },
+      "audit-policy": { type: "string" },
+    },
+  });
+  if (values.backend !== undefined) throw new UsageError("attempt runs on the sandbox backend only");
+  const inputs = {
+    work: resolve(required(values, "work")),
+    policy: resolve(required(values, "policy")),
+    candidate: resolve(required(values, "candidate")),
+    writerRates: resolve(required(values, "writer-rates")),
+    searchRates: resolve(required(values, "search-rates")),
+    image: required(values, "image"),
+    manifest: resolve(required(values, "manifest")),
+    terms: resolve(required(values, "terms")),
+    auditPolicy: resolve(required(values, "audit-policy")),
+    kitStage: resolve(required(values, "kit-stage")),
+    originalSuite: path(values, "original-suite"),
+    backend: "sandbox" as const,
+    sandboxImage: required(values, "sandbox-image"),
+  };
+  for (const name of [...SANDBOX_VARIABLES, ...KEY_VARIABLES]) env(name);
+  const prepared = prepareAttempt(inputs, process.env);
+  const outcome = await withLedger("sandbox", (deps) =>
+    runAttempt(prepared, {
+      ...deps,
+      writerFetch: globalThis.fetch,
+      searchClient: (apiKey) => createTavilyClient({ apiKey, apiBaseURL: TAVILY_BASE_URL, allowLive: true }),
+      report: (line) => {
+        process.stdout.write(`${line}\n`);
+      },
+    }),
+  );
+  return outcome.exitCode;
+}
+
 const KNOWN = [UsageError, InputsError, CodeStateRefusal, LedgerError, ProofInputError];
 
 async function main(argv: string[]): Promise<number> {
@@ -169,6 +228,7 @@ async function main(argv: string[]): Promise<number> {
     if (command === "run") return await runCommand(rest);
     if (command === "proof") return await proofCommand(rest);
     if (command === "create-slot-key") return await createSlotKeyCommand(rest);
+    if (command === "attempt") return await attemptCommand(rest);
     throw new UsageError("unknown command");
   } catch (error) {
     if (KNOWN.some((kind) => error instanceof kind) || (error instanceof TypeError && "code" in error)) {
