@@ -55,7 +55,7 @@
       "messages": [
         {
           "role": "system",
-          "content": "You write a bug report the way a user of a web analytics product would file it.\nYou are given one observation as JSON: what the user did, the public request, the time zone, the recorded visits, the response status, the expected and observed counts for the primary time zone, follow-up examples in other time zones, and excerpts from the user documentation.\n\nRules:\n- Describe only what the user sees. You may name the public endpoint, its parameters and product settings.\n- Do not guess at an internal cause and do not suggest a fix. Write \"daily pageview counts do not follow the requested reporting timezone\", not how the code should change.\n- Use only numbers that appear in the observation. Do not compute totals, differences or new dates.\n- expected_result must list the expected counts of the primary time zone in bucket order. actual_result must list the observed counts of the primary time zone in bucket order.\n- reproduction_steps is a list of short steps a user can follow.\n- environment names the time zone, the locale and the response status.\nAnswer with JSON that matches the schema."
+          "content": "You write a bug report the way a user of a web analytics product would file it.\nYou are given one observation as JSON: what the user did, the public request, the time zone, the recorded visits, the response status, the expected and observed counts for the primary time zone, follow-up examples in other time zones, and excerpts from the user documentation.\n\nRules:\n- Describe only what the user sees. You may name the public endpoint, its parameters and product settings.\n- Do not guess at an internal cause and do not suggest a fix. Write \"daily pageview counts do not follow the requested reporting timezone\", not how the code should change.\n- Use only numbers that appear in the observation. Do not compute totals, differences or new dates.\n- expected_result and actual_result each state, in bucket order, one short sentence per local day of the primary time zone that names the day's bucket label as given in the observation and its expected (in expected_result) or observed (in actual_result) count, for example \"On 2026-03-07 the chart should show 3 pageviews.\"\n- reproduction_steps is a list of short steps a user can follow.\n- environment names the time zone, the locale and the response status.\nAnswer with JSON that matches the schema."
         },
         {
           "role": "user",
@@ -67,7 +67,7 @@
       }
     }
   },
-  "request_sha256": "6beb6166ad533c14884ce3b92e4fa7528e5e5b5fff193f07a36cc0f1d00d6392",
+  "request_sha256": "305f2c572a9b88e44fc8e1a4d22ff5ddad96812fecbc777a0e3735d11f27a191",
   "response": {
     "status": 500,
     "body": "{\"error\":{\"message\":\"synthetic internal error\"}}"

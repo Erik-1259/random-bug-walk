@@ -97,6 +97,15 @@ describe("check 2: numeric statements", () => {
     ]);
   });
 
+  it("passes one labeled sentence per day, as the issue prompt asks for", () => {
+    const base = observed();
+    const report = check({
+      expected_result: base.expected.map((b) => `On ${b.bucket_label} the chart should show ${String(b.count)} pageviews.`).join(" "),
+      actual_result: base.observed.map((b) => `On ${b.bucket_label} the chart shows ${String(b.count)} pageviews.`).join(" "),
+    });
+    expect(report.numeric).toEqual({ ok: true, violations: [] });
+  });
+
   describe("with counts small enough to appear inside a date", () => {
     function smallCounts(): ObservedSymptom {
       const parsed = parseObservedSymptom({
