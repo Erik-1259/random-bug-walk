@@ -78,6 +78,8 @@ export function ReplayControl({ release, initial }: Props) {
     const previous = window.localStorage.getItem(REQUEST_KEY);
     const requestId = crypto.randomUUID();
     window.localStorage.setItem(REQUEST_KEY, requestId);
+    // A new start drops the earlier replay's status, so a refusal shows its own reason.
+    setStatus(null);
     setView({ state: "starting", reason: "" });
     const response = await fetch("/api/judge", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ request_id: requestId }) });
     const answer = (await response.json()) as Answer;
