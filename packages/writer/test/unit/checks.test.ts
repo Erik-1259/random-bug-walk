@@ -1,6 +1,7 @@
 import type { PGlite } from "@electric-sql/pglite";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { checkIssue } from "../../src/issue-checks.ts";
+import { buildIssuePrompt } from "../../src/issue-prompt.ts";
 import type { IssueOutput } from "../../src/issue-schema.ts";
 import { parseObservedSymptom } from "../../src/observed-symptom.ts";
 import type { ObservedSymptom } from "../../src/observed-symptom.ts";
@@ -99,6 +100,9 @@ describe("check 2: numeric statements", () => {
 
   it("passes one labeled sentence per day, as the issue prompt asks for", () => {
     const base = observed();
+    const { system } = buildIssuePrompt(base);
+    expect(system).toContain("one short sentence per local day of the primary time zone that names the day's bucket label");
+    expect(system).toContain('"On 2026-03-07 the chart should show 3 pageviews."');
     const report = check({
       expected_result: base.expected.map((b) => `On ${b.bucket_label} the chart should show ${String(b.count)} pageviews.`).join(" "),
       actual_result: base.observed.map((b) => `On ${b.bucket_label} the chart shows ${String(b.count)} pageviews.`).join(" "),
