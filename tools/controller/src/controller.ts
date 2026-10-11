@@ -74,6 +74,10 @@ export interface JobInputs {
   /** A subset of the kind's trials, in profile order; null runs all of them. */
   trials: readonly string[] | null;
   ledger: LedgerTarget;
+  /** The root's IDs, shared by every job of one root; absent, the job makes its own. */
+  ids?: RunIds;
+  /** The project policy the job runs under; absent, the development placeholders. */
+  projectPolicy?: { sha256: string; policy_id: string };
 }
 
 export interface ControllerDeps {
@@ -407,6 +411,7 @@ async function build(inputs: JobInputs, deps: ControllerDeps, state: ControllerS
     vectors: expectedVectors(loadFixture(), copyInputs.probes),
     profileSha256: profileSha256(),
     deadlineAt: utcSeconds(deadlineMs),
+    ...(inputs.projectPolicy === undefined ? {} : { projectPolicy: inputs.projectPolicy }),
   };
   let baseline: { key: string; sha256: string } | null = null;
   if (inputs.kind === "observe") {
@@ -698,6 +703,8 @@ export async function runJob(inputs: JobInputs, deps: ControllerDeps): Promise<J
     alternative_record_sha256: copyInputs.alternative.record_sha256,
     alternative_patch_sha256: copyInputs.alternative.patch_sha256,
     original_suite_sha256: fileSha(inputs.originalSuite),
+    ...(inputs.ids === undefined ? {} : { ids: inputs.ids }),
+    ...(inputs.projectPolicy === undefined ? {} : { project_policy: inputs.projectPolicy }),
   }).sha256;
 
   if (existsSync(p.state)) {
@@ -714,7 +721,7 @@ export async function runJob(inputs: JobInputs, deps: ControllerDeps): Promise<J
 
   const startedMs = deps.clock.now();
   const deadline = startedMs + JOB_LIMITS[inputs.kind].controller_ms;
-  const state: ControllerState = { schema_version: 1, fingerprint, kind: inputs.kind, name: inputs.name, ids: newRunIds(deps.uuid), trials: inputs.trials === null ? null : [...inputs.trials] };
+  const state: ControllerState = { schema_version: 1, fingerprint, kind: inputs.kind, name: inputs.name, ids: inputs.ids ?? newRunIds(deps.uuid), trials: inputs.trials === null ? null : [...inputs.trials] };
   mkdirSync(p.base, { recursive: true });
   writeFileSync(p.state, `${JSON.stringify(state, null, 2)}\n`);
   const summary = emptySummary(inputs, deps, state, utcSeconds(startedMs));

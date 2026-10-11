@@ -1,3 +1,5 @@
+export { DECLARED_STAGES, GRADING_POLICY_ID, KEY_VARIABLES, pickPhrases, prepareAttempt, runAttempt } from "./attempt.ts";
+export type { AttemptDeps, AttemptInputs, AttemptOutcome, PreparedAttempt, PrivateInput } from "./attempt.ts";
 export { runJob } from "./controller.ts";
 export type { Backend, ControllerDeps, ControllerSummary, CopyRecord, JobInputs, JobOutcome, JobStatus, Launch } from "./controller.ts";
 export { CONTROLLER_ENVELOPE_SECONDS, COPY_ENVELOPE_SECONDS, RATE_SHEET_PATH, controllerEnvelope, copyEnvelope, copySettlement, judgeReservation } from "./envelope.ts";
@@ -9,3 +11,5 @@ export { COPY_DEADLINE_MS, DEVELOPMENT, JOB_LIMITS, JUDGE, PARENT_MARGIN_MS, chi
 export type { LaunchDecision, LedgerTarget } from "./limits.ts";
 export { PROOF_DIR, ProofInputError, loadProofInputs, runProof } from "./proof.ts";
 export type { ProofCase, ProofInputs, ProofOptions, ProofResult } from "./proof.ts";
+export { SymptomUnavailable, buildSymptom } from "./symptom.ts";
+export type { SymptomProse } from "./symptom.ts";
