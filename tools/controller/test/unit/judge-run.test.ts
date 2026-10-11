@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { importRecordSet } from "@rbw/admission";
-import { LocalPrivateStore } from "@rbw/publisher/private-store";
+import { LocalPrivateStore, StoreError } from "@rbw/publisher/private-store";
 import type { PrivateStore } from "@rbw/publisher/private-store";
 import { encodeCanonical, parseCanonical, parseRecord, sha256Hex } from "@rbw/schema";
 import type { JobRequest, Release } from "@rbw/schema";
@@ -213,9 +213,10 @@ describe("prebuilt mode: a judge replay from the frozen judge job, with no Docke
 });
 
 describe("prebuilt mode: a frozen judge job that does not match", () => {
-  async function mismatch(r: Replay) {
+  async function mismatch(r: Replay, reason = "judge_job_mismatch") {
     const outcome = await run(r);
-    expect(outcome.summary.reason).toBe("judge_job_mismatch");
+    expect(outcome.summary.reason).toBe(reason);
+    expect(outcome).toMatchObject({ state: "incomplete", closed: true });
     expect(r.w.ledgerCalls.filter((call) => call.method === "reserve")).toHaveLength(0);
     expect(r.w.sdk.ops().filter((op) => op === "create")).toHaveLength(0);
     const { op, slot } = await ledgerState(r);
@@ -228,6 +229,7 @@ describe("prebuilt mode: a frozen judge job that does not match", () => {
     expect(r.events.indexOf("put:root-run.json")).toBeLessThan(r.events.indexOf("ledger:transition:terminal:controller"));
     const summary = parseCanonical(await get(r, `judge/${r.root}/run/jobs/judge/summary.json`)) as unknown as { job: { execution_id: string } };
     expect(summary.job.execution_id).toBe(judgeIds(REQUEST_ID).execution);
+    expect(r.events.at(-1)).toBe("sdk:stop");
   }
 
   it("refuses an index whose hash is not the release's, with no copy operations, and still closes its own operation", async () => {
@@ -237,6 +239,16 @@ describe("prebuilt mode: a frozen judge job that does not match", () => {
 
   it("refuses a file whose hash is not the index's", async () => {
     await mismatch(await prepare({ corrupt: "strict-terms.txt" }));
+  });
+
+  it("ends incomplete and still closes its own operation when the store fails reading a judge job file", async () => {
+    const r = await prepare();
+    const store = r.store;
+    r.store = {
+      ...store,
+      get: (key, max) => (key.endsWith("/source.tar") ? Promise.reject(new StoreError("store_unavailable")) : store.get(key, max)),
+    };
+    await mismatch(r, "judge_job_unavailable");
   });
 });
 
@@ -262,9 +274,10 @@ describe("prebuilt mode: the Dec 2–5 known condition across a date rollover", 
     return { ...evidence, request: { ...evidence.request, task_revision: taskRevision } };
   }
 
-  it("is verified with the known condition when a replay starting 23:50 UTC on Dec 1 ends on Dec 2", async () => {
-    const started = Date.parse("2026-12-01T23:50:00Z");
-    const ended = Date.parse("2026-12-02T00:20:00Z");
+  /** Runs a replay starting at `startedAt` whose evidence becomes the two revenue failures, and that ends at `endedAt`. */
+  async function rollover(startedAt: string, endedAt: string) {
+    const started = Date.parse(startedAt);
+    const ended = Date.parse(endedAt);
     const created = started - 30_000;
     const r = await prepare({ created });
     const work = tempDir("rbw-judge-work-");
@@ -290,11 +303,23 @@ describe("prebuilt mode: the Dec 2–5 known condition across a date rollover", 
     const outcome = await run(r, judgeDeadlineMs(created), work);
     expect(rolled).toBe(true);
     expect(outcome.summary.status).toBe("complete");
-    expect(outcome.summary.controller.started_at).toBe("2026-12-01T23:50:00Z");
+    expect(outcome.summary.controller.started_at).toBe(startedAt);
+    return { outcome, progress: parseProgress(await get(r, `judge/${r.root}/progress.json`)) };
+  }
+
+  it("is verified with the known condition when a replay starting 23:50 UTC on Dec 1 ends on Dec 2", async () => {
+    const { outcome, progress } = await rollover("2026-12-01T23:50:00Z", "2026-12-02T00:20:00Z");
     expect(outcome).toMatchObject({ state: "verified", known_condition: true });
-    const progress = parseProgress(await get(r, `judge/${r.root}/progress.json`));
     expect(progress.state).toBe("verified");
     expect(progress.known_condition).toBe(true);
     expect(progress.ended_at).toBe("2026-12-02T00:20:00Z");
+  });
+
+  it("is verified with the known condition when a replay starting 23:50 UTC on Dec 5 ends on Dec 6", async () => {
+    const { outcome, progress } = await rollover("2026-12-05T23:50:00Z", "2026-12-06T00:20:00Z");
+    expect(outcome).toMatchObject({ state: "verified", known_condition: true });
+    expect(progress.state).toBe("verified");
+    expect(progress.known_condition).toBe(true);
+    expect(progress.ended_at).toBe("2026-12-06T00:20:00Z");
   });
 });

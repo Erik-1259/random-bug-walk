@@ -91,25 +91,26 @@ export function overlayJudgeJob(frozen: { request: Uint8Array; expected: Uint8Ar
   };
 }
 
-type Fetched = { ok: true; indexSha256: string } | { ok: false; detail: string };
+type Fetched = { ok: true; indexSha256: string } | { ok: false; reason: "judge_job_mismatch" | "judge_job_unavailable"; detail: string };
 
 /** Reads the index into `dir` and checks it against the release, then each file against the index. */
 async function fetchJudgeJob(store: PrivateStore, release: Release, dir: string): Promise<Fetched> {
   const { index_key: indexKey, index_sha256: indexSha256 } = release.judge_job;
+  const refused = (detail: string): Fetched => ({ ok: false, reason: "judge_job_mismatch", detail });
   const index = await store.get(indexKey, INDEX_LIMIT_BYTES);
-  if (index === null) return { ok: false, detail: "the judge job's index is missing" };
-  if (sha256Hex(index) !== indexSha256) return { ok: false, detail: "the index's SHA-256 is not the release's" };
+  if (index === null) return refused("the judge job's index is missing");
+  if (sha256Hex(index) !== indexSha256) return refused("the index's SHA-256 is not the release's");
   const parsed = JSON.parse(Buffer.from(index).toString("utf8")) as { release_id?: unknown; files?: unknown };
   const files = Array.isArray(parsed.files) ? (parsed.files as { path?: unknown; sha256?: unknown }[]) : [];
-  if (parsed.release_id !== release.release_id) return { ok: false, detail: "the index names another release" };
+  if (parsed.release_id !== release.release_id) return refused("the index names another release");
   const prefix = indexKey.slice(0, indexKey.lastIndexOf("/") + 1);
   mkdirSync(dir, { recursive: true });
   for (const name of JOB_FILES) {
     const listed = files.find((file) => file.path === name);
-    if (typeof listed?.sha256 !== "string") return { ok: false, detail: `the index does not list ${name}` };
+    if (typeof listed?.sha256 !== "string") return refused(`the index does not list ${name}`);
     const bytes = await store.get(`${prefix}${name}`, FILE_LIMIT_BYTES);
-    if (bytes === null) return { ok: false, detail: `${name} is missing` };
-    if (sha256Hex(bytes) !== listed.sha256) return { ok: false, detail: `${name}'s SHA-256 is not the index's` };
+    if (bytes === null) return refused(`${name} is missing`);
+    if (sha256Hex(bytes) !== listed.sha256) return refused(`${name}'s SHA-256 is not the index's`);
     writeFileSync(join(dir, name), bytes);
   }
   return { ok: true, indexSha256 };
@@ -193,8 +194,6 @@ export async function runJudgeReplay(options: JudgeRunOptions, deps: ControllerD
   const progress: ReplayProgress = { ...(stored === null ? newProgress(ids.root, startedMs, options.deadlineAtMs) : parseProgress(stored)) };
   const putProgress = () => store.put(keys.progress, progressBytes(progress), JSON_TYPE);
   const putRoot = (status: RootRun["status"], outcome: RootRun["outcome"]) => store.put(keys.rootRun, encodeCanonical(replayRootRun(judge, options.requestId, status, outcome)), JSON_TYPE);
-  await putRoot("running", null);
-  await putProgress();
 
   const runIds: RunIds = {
     run_tag: runTag(ids.root),
@@ -228,12 +227,21 @@ export async function runJudgeReplay(options: JudgeRunOptions, deps: ControllerD
   let known = false;
   let summary: ControllerSummary;
   let root: { status: RootRun["status"]; outcome: RootRun["outcome"] };
-  const fetched = await fetchJudgeJob(store, release, jobFiles);
+  let fetched: Fetched;
+  // A store failure here ends the replay incomplete and still closes the operation; no copy is reserved yet.
+  try {
+    await putRoot("running", null);
+    await putProgress();
+    fetched = await fetchJudgeJob(store, release, jobFiles);
+  } catch (error) {
+    if (!(error instanceof StoreError)) throw error;
+    fetched = { ok: false, reason: "judge_job_unavailable", detail: `the private store failed (${error.code})` };
+  }
   if (!fetched.ok) {
-    summary = refusedSummary(inputs, deps, runIds, startedMs, "judge_job_mismatch", fetched.detail);
+    summary = refusedSummary(inputs, deps, runIds, startedMs, fetched.reason, fetched.detail);
     mkdirSync(jobDir, { recursive: true });
     writeFileSync(join(jobDir, "summary.json"), encodeCanonical(summary));
-    deps.log(`judge judge_job_mismatch ${fetched.detail}`);
+    deps.log(`judge ${fetched.reason} ${fetched.detail}`);
     state = "incomplete";
     root = { status: "terminal", outcome: "failed" };
   } else {

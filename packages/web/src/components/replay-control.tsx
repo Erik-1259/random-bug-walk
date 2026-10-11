@@ -39,8 +39,13 @@ export function ReplayControl({ release, initial }: Props) {
   };
 
   const refresh = async (requestId: string) => {
-    const response = await fetch(`/api/judge/status?request_id=${requestId}`, { cache: "no-store" });
-    show((await response.json()) as Answer);
+    try {
+      const response = await fetch(`/api/judge/status?request_id=${requestId}`, { cache: "no-store" });
+      show((await response.json()) as Answer);
+    } catch {
+      // A failed poll keeps the view; a fresh copy of it arms the next poll.
+      setView((current) => ({ ...current }));
+    }
   };
 
   useEffect(() => {
