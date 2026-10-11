@@ -171,7 +171,8 @@ describe("prebuilt mode: a judge replay from the frozen judge job, with no Docke
     expect(relative).toContain("root-run.json");
     expect(relative).toContain("progress.json");
     for (const name of ["summary.json", "evidence.json", "decision.json", "job/request.json", "records/request.json"]) expect(relative).toContain(`run/jobs/judge/${name}`);
-    expect(relative.every((path) => ["root-run.json", "progress.json"].includes(path) || /^run\/jobs\/judge\/(summary\.json|evidence\.json|decision\.json|job\/|records\/)/.test(path))).toBe(true);
+    expect(relative.some((path) => path.startsWith("run/jobs/judge/stops/"))).toBe(true);
+    expect(relative.every((path) => ["root-run.json", "progress.json"].includes(path) || /^run\/jobs\/judge\/(summary\.json|evidence\.json|decision\.json|job\/|records\/|stops\/)/.test(path))).toBe(true);
     const root = parseRecord("RootRun", await get(r, `judge/${r.root}/root-run.json`));
     expect(root).toMatchObject({ kind: "judge_replay", status: "terminal", outcome: "completed", root_execution_id: r.root, child_execution_ids: [judgeIds(REQUEST_ID).execution], project_id: r.release.project_id });
     const progress = parseProgress(await get(r, `judge/${r.root}/progress.json`));

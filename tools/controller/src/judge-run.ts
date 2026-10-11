@@ -47,7 +47,8 @@ const PROGRESS_LIMIT_BYTES = 1024 * 1024;
 /** The files a judge job's index must list (tools/release, "The judge job"). */
 const JOB_FILES = ["audit-policy.json", "expected-trials.json", "original-suite.json", "projection-manifest.json", "request.json", "source.tar", "strict-terms.txt"] as const;
 /** What run/jobs/judge/ holds in the private store; never copies/ or the source. */
-const RUN_FILES = ["summary.json", "evidence.json", "decision.json", "job", "records"] as const;
+// stops/ holds each copy's stop evidence, which its settlement names; it must outlive this sandbox.
+const RUN_FILES = ["summary.json", "evidence.json", "decision.json", "job", "records", "stops"] as const;
 
 /** The Docker layer in prebuilt mode: there is no Docker in the controller sandbox, so any call is an error. */
 export const NO_DOCKER: Docker = {
