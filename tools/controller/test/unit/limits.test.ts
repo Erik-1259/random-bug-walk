@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { COPY_OUTER_LIMIT_MS } from "@rbw/local-runner";
-import { COPY_ENVELOPE_SECONDS, copyEnvelope, copySettlement } from "../../src/envelope.ts";
+import { CONTROLLER_ENVELOPE_SECONDS, COPY_ENVELOPE_SECONDS, controllerEnvelope, copyEnvelope, copySettlement, judgeReservation } from "../../src/envelope.ts";
 import { COPY_DEADLINE_MS, DEVELOPMENT, JOB_LIMITS, JUDGE, childDeadlineMs, launchDecision } from "../../src/limits.ts";
 import { rates } from "../support/harness.ts";
 
@@ -83,5 +83,35 @@ describe("the per-copy priced envelope", () => {
       [0, 0],
     ]);
     expect(unlaunched.terminal_evidence_key).toBeNull();
+  });
+});
+
+describe("the judge job's reservation", () => {
+  it("prices the judge controller's sandbox like a copy: its 2 vCPU and 4 GB for the judge deadline plus the shutdown allowance, and one creation", async () => {
+    const envelope = controllerEnvelope(await rates());
+    if (!envelope.ok) throw new Error("synthetic: envelope refused");
+    expect(CONTROLLER_ENVELOPE_SECONDS).toBe(2100 + 60);
+    expect(envelope.lines).toEqual([
+      { service: "vercel-sandbox", unit: "vcpu_second", limit: 4320, enforced_by: "provider_timeout", price: { microusd: 128000, per_units: 3600 } },
+      { service: "vercel-sandbox", unit: "memory_gb_second", limit: 8640, enforced_by: "provider_timeout", price: { microusd: 21200, per_units: 3600 } },
+      { service: "vercel-sandbox", unit: "creation", limit: 1, enforced_by: "client_counter", price: { microusd: 600000, per_units: 1000000 } },
+    ]);
+    expect(envelope.reserved_microusd).toBe(204_481n);
+  });
+
+  it("reserves three copy envelopes plus the controller envelope from the pinned rate sheet, under the judge ceiling", async () => {
+    const pinned = await rates();
+    const copy = copyEnvelope(pinned);
+    const controller = controllerEnvelope(pinned);
+    if (!copy.ok || !controller.ok) throw new Error("synthetic: envelope refused");
+    expect(judgeReservation(pinned)).toEqual({ ok: true, reserved_microusd: 3n * copy.reserved_microusd + controller.reserved_microusd });
+    expect(judgeReservation(pinned)).toEqual({ ok: true, reserved_microusd: 647_527n });
+    expect(647_527).toBeLessThanOrEqual(JOB_LIMITS.judge_verify.ceiling_microusd);
+  });
+
+  it("refuses with the missing prices when the rate sheet lacks a sandbox price", async () => {
+    const pinned = await rates();
+    const sheet = { ...pinned.sheet, entries: pinned.sheet.entries.filter((entry) => entry.unit !== "creation") };
+    expect(judgeReservation({ ...pinned, sheet })).toEqual({ ok: false, code: "unknown_price", missing: [{ service: "vercel-sandbox", subject: "iad1", unit: "creation" }] });
   });
 });

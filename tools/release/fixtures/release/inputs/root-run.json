@@ -1,0 +1,1 @@
+{"child_execution_ids":["00000000-0000-4000-8100-000000000005"],"declared_stages":["admission"],"kind":"factory","outcome":"completed","project_id":"00000000-0000-4000-8000-000000000001","project_policy_sha256":"7749aa26b966e375d324794cc65e7e6ee5b978f83844d30dc283d930fb160c2e","root_execution_id":"00000000-0000-4000-8100-000000000001","schema_version":1,"status":"terminal"}

@@ -40,21 +40,29 @@ export type Destination =
       knownHosts: string;
     };
 
-export interface PublishConfig {
+/** What publish and release share: the policy, state, scanner, destination and limits. */
+export interface DestinationConfig {
   policyFile: string;
-  rootRunFile: string;
-  stagingDir: string;
   stateDir: string;
   patternFile: string;
-  redactionValuesFile: string | null;
   branch: string;
-  replace: boolean;
   destination: Destination;
   scanner: string[];
   gitleaks: string | null;
   scanTimeoutMs: number;
-  largeObjectThreshold: number;
   limits: Limits;
+}
+
+export interface PublishConfig extends DestinationConfig {
+  rootRunFile: string;
+  stagingDir: string;
+  redactionValuesFile: string | null;
+  replace: boolean;
+  largeObjectThreshold: number;
+}
+
+export interface ReleaseConfig extends DestinationConfig {
+  releaseDir: string;
 }
 
 export interface PolicyConfig {
@@ -130,15 +138,11 @@ export function isBranchName(name: string): boolean {
   );
 }
 
-const PUBLISH_OPTIONS = {
+const DESTINATION_OPTIONS = {
   policy: { type: "string" },
-  "root-run": { type: "string" },
-  staging: { type: "string" },
   state: { type: "string" },
   patterns: { type: "string" },
-  "redaction-values": { type: "string" },
   branch: { type: "string" },
-  replace: { type: "boolean" },
   real: { type: "boolean" },
   "repository-url": { type: "string" },
   "artifact-base-uri": { type: "string" },
@@ -148,7 +152,6 @@ const PUBLISH_OPTIONS = {
   scanner: { type: "string" },
   gitleaks: { type: "string" },
   "scan-timeout-ms": { type: "string" },
-  "large-threshold-bytes": { type: "string" },
   "limit-push-attempts": { type: "string" },
   "limit-metadata-requests": { type: "string" },
   "limit-new-public-bytes": { type: "string" },
@@ -156,9 +159,18 @@ const PUBLISH_OPTIONS = {
   "limit-store-operations": { type: "string" },
 } as const;
 
-/** The one configuration loader: flags only, with the documented defaults. Credentials are read later, in real mode only. */
-export function loadPublishConfig(argv: readonly string[]): PublishConfig {
-  const values = parse(argv, PUBLISH_OPTIONS);
+const PUBLISH_OPTIONS = {
+  ...DESTINATION_OPTIONS,
+  "root-run": { type: "string" },
+  staging: { type: "string" },
+  "redaction-values": { type: "string" },
+  replace: { type: "boolean" },
+  "large-threshold-bytes": { type: "string" },
+} as const;
+
+const RELEASE_OPTIONS = { ...DESTINATION_OPTIONS, "release-dir": { type: "string" } } as const;
+
+function destinationConfig(values: Values): DestinationConfig {
   const real = values.real === true;
   const realFlags = ["repository-url", "artifact-base-uri", "deploy-key-env"];
   const localFlags = ["local-remote", "local-store"];
@@ -177,22 +189,16 @@ export function loadPublishConfig(argv: readonly string[]): PublishConfig {
   if (!isBranchName(branch)) throw new InvalidInput("invalid_branch");
   const scannerText = text(values, "scanner");
   const scanner = scannerText === undefined ? [...DEFAULT_SCANNER] : resolveCommand(scannerText);
-  const redactionValues = text(values, "redaction-values");
   const gitleaksText = text(values, "gitleaks");
   return {
     policyFile: path(values, "policy"),
-    rootRunFile: path(values, "root-run"),
-    stagingDir: path(values, "staging"),
     stateDir: path(values, "state"),
     patternFile: path(values, "patterns"),
-    redactionValuesFile: redactionValues === undefined ? null : resolve(redactionValues),
     branch,
-    replace: values.replace === true,
     destination,
     scanner,
     gitleaks: gitleaksText === undefined ? null : resolveCommand(gitleaksText).join(" "),
     scanTimeoutMs: positiveInteger(values, "scan-timeout-ms", 600_000),
-    largeObjectThreshold: positiveInteger(values, "large-threshold-bytes", 1024 * 1024),
     limits: {
       pushAttempts: positiveInteger(values, "limit-push-attempts", DEFAULT_LIMITS.pushAttempts),
       metadataRequests: positiveInteger(values, "limit-metadata-requests", DEFAULT_LIMITS.metadataRequests),
@@ -201,6 +207,26 @@ export function loadPublishConfig(argv: readonly string[]): PublishConfig {
       storeOperations: positiveInteger(values, "limit-store-operations", DEFAULT_LIMITS.storeOperations),
     },
   };
+}
+
+/** The one configuration loader: flags only, with the documented defaults. Credentials are read later, in real mode only. */
+export function loadPublishConfig(argv: readonly string[]): PublishConfig {
+  const values = parse(argv, PUBLISH_OPTIONS);
+  const redactionValues = text(values, "redaction-values");
+  return {
+    ...destinationConfig(values),
+    rootRunFile: path(values, "root-run"),
+    stagingDir: path(values, "staging"),
+    redactionValuesFile: redactionValues === undefined ? null : resolve(redactionValues),
+    replace: values.replace === true,
+    largeObjectThreshold: positiveInteger(values, "large-threshold-bytes", 1024 * 1024),
+  };
+}
+
+/** The release command's flags: publish's destination flags and limits, and the release directory. */
+export function loadReleaseConfig(argv: readonly string[]): ReleaseConfig {
+  const values = parse(argv, RELEASE_OPTIONS);
+  return { ...destinationConfig(values), releaseDir: path(values, "release-dir") };
 }
 
 export function loadPolicyConfig(argv: readonly string[]): PolicyConfig {

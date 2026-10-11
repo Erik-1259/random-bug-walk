@@ -29,6 +29,8 @@ export interface StoredLimits {
  *   roots/<root>/candidates/<id>/snapshot.sha256  canonical hash of the terminal RootRun it was frozen from
  *   roots/<root>/candidates/<id>/blobs/<sha256>
  *   roots/<root>/candidates/<id>/record.json  the latest PublicationRecord
+ *   releases/<release>/limits.json            a release's limits and usage
+ *   releases/<release>/record.json            a release's latest PublicationRecord
  *   repository.git                            the publisher's own bare repository
  */
 export class StateDir {
@@ -117,13 +119,40 @@ export class StateDir {
     return parseRecord("PublicationRecord", readFileSync(join(this.candidateDir(root, publicationId), "record.json")));
   }
 
-  loadLimits(root: string): StoredLimits | null {
-    const path = join(this.rootDir(root), "limits.json");
+  private readLimits(path: string): StoredLimits | null {
     return existsSync(path) ? (parseCanonical(readFileSync(path)) as unknown as StoredLimits) : null;
+  }
+
+  loadLimits(root: string): StoredLimits | null {
+    return this.readLimits(join(this.rootDir(root), "limits.json"));
   }
 
   saveLimits(root: string, value: StoredLimits): void {
     this.write(join(this.rootDir(root), "limits.json"), encodeCanonical(value));
+  }
+
+  private releaseDir(releaseId: string): string {
+    return join(this.dir, "releases", releaseId);
+  }
+
+  /** Limits kept per release, apart from the root's own, so a release never spends its run's attempts. */
+  get releaseLimits(): Pick<StateDir, "loadLimits" | "saveLimits"> {
+    return {
+      loadLimits: (releaseId) => this.readLimits(join(this.releaseDir(releaseId), "limits.json")),
+      saveLimits: (releaseId, value) => {
+        this.write(join(this.releaseDir(releaseId), "limits.json"), encodeCanonical(value));
+      },
+    };
+  }
+
+  saveReleaseRecord(releaseId: string, record: PublicationRecord): void {
+    this.write(join(this.releaseDir(releaseId), "record.json"), encodeCanonical(record));
+  }
+
+  /** A release's latest record, or null when there is none. */
+  loadReleaseRecord(releaseId: string): PublicationRecord | null {
+    const path = join(this.releaseDir(releaseId), "record.json");
+    return existsSync(path) ? parseRecord("PublicationRecord", readFileSync(path)) : null;
   }
 
   /** Root IDs with a current candidate, sorted. */

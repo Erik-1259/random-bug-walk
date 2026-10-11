@@ -1,0 +1,3 @@
+# synthetic terms for tests only
+strict:synthetic-local-runner-canary
+generic:synthetic-generic-word

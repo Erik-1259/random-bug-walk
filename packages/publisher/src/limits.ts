@@ -20,14 +20,14 @@ const ZERO: Limits = { pushAttempts: 0, metadataRequests: 0, newPublicBytes: 0, 
  * the lowered values are what is stored.
  */
 export class Budget {
-  private readonly state: StateDir;
+  private readonly state: Pick<StateDir, "loadLimits" | "saveLimits">;
   private readonly root: string;
   private readonly limits: Limits;
   private readonly used: Limits;
   /** Tags of amounts that count once per root, such as the repository payload of a candidate. */
   private readonly counted: string[];
 
-  constructor(state: StateDir, root: string, configured: Limits) {
+  constructor(state: Pick<StateDir, "loadLimits" | "saveLimits">, root: string, configured: Limits) {
     this.state = state;
     this.root = root;
     const stored = state.loadLimits(root);

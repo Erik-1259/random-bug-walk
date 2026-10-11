@@ -103,6 +103,15 @@ export class Repository {
     return result.stdout.toString("utf8").trim();
   }
 
+  /** The bytes of the file at `path` in a commit, or null when there is no file there. */
+  async blobAt(commit: string, path: string): Promise<Buffer | null> {
+    const type = await this.git(["cat-file", "-t", `${commit}:${path}`]);
+    if (type.code !== 0 || type.stdout.toString("utf8").trim() !== "blob") return null;
+    const result = await this.git(["cat-file", "blob", `${commit}:${path}`]);
+    if (result.code !== 0) throw new RepositoryUnavailable("cat-file");
+    return result.stdout;
+  }
+
   /** The oldest commit reachable from `head` that added `path`. */
   async addedBy(head: string, path: string): Promise<string> {
     const log = await this.output(["log", "--format=%H", "--diff-filter=A", head, "--", path], "log");

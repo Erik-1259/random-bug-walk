@@ -1,11 +1,12 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { PUBLICATION_STATUS_VALUES, RecordError, buildPolicy } from "@rbw/schema";
-import { loadPolicyConfig, loadPublishConfig, loadStatusConfig } from "./config.ts";
+import { loadPolicyConfig, loadPublishConfig, loadReleaseConfig, loadStatusConfig } from "./config.ts";
 import { InvalidInput } from "./errors.ts";
 import { Logger } from "./log.ts";
 import { runProcess, type ProcessRunner } from "./process.ts";
-import { EXIT, publishCommand } from "./publish.ts";
+import { EXIT, publishCommand, type PublishDeps } from "./publish.ts";
+import { releaseCommand } from "./release.ts";
 import { StateDir } from "./state.ts";
 import type { BlobClient, FetchFunction } from "./store.ts";
 
@@ -22,7 +23,7 @@ export interface CliResult {
   stderr: string;
 }
 
-const USAGE = "usage: cli.ts policy|publish|status [options]; see packages/publisher/README.md\n";
+const USAGE = "usage: cli.ts policy|publish|release|status [options]; see packages/publisher/README.md\n";
 
 /** Writes a frozen policy file. An existing file is never overwritten; identical bytes are accepted. */
 function policyCommand(argv: readonly string[], out: (text: string) => void): number {
@@ -74,8 +75,8 @@ export async function runCli(argv: readonly string[], deps: Partial<CliDeps> = {
   try {
     if (command === "policy") return { code: policyCommand(rest, out), stdout, stderr };
     if (command === "status") return { code: statusCommand(rest, out), stdout, stderr };
-    if (command !== "publish") throw new InvalidInput("usage");
-    const code = await publishCommand(loadPublishConfig(rest), {
+    if (command !== "publish" && command !== "release") throw new InvalidInput("usage");
+    const publishDeps: PublishDeps = {
       env: deps.env ?? process.env,
       runner: deps.runner ?? runProcess,
       ...(deps.blobClient === undefined ? {} : { blobClient: deps.blobClient }),
@@ -83,7 +84,8 @@ export async function runCli(argv: readonly string[], deps: Partial<CliDeps> = {
       logger: new Logger(err),
       stdout: out,
       stderr: err,
-    });
+    };
+    const code = command === "publish" ? await publishCommand(loadPublishConfig(rest), publishDeps) : await releaseCommand(loadReleaseConfig(rest), publishDeps);
     return { code, stdout, stderr };
   } catch (error) {
     if (error instanceof InvalidInput) {

@@ -1,6 +1,7 @@
 export { runJob } from "./controller.ts";
 export type { Backend, ControllerDeps, ControllerSummary, CopyRecord, JobInputs, JobOutcome, JobStatus, Launch } from "./controller.ts";
-export { COPY_ENVELOPE_SECONDS, RATE_SHEET_PATH, copyEnvelope, copySettlement } from "./envelope.ts";
+export { CONTROLLER_ENVELOPE_SECONDS, COPY_ENVELOPE_SECONDS, RATE_SHEET_PATH, controllerEnvelope, copyEnvelope, copySettlement, judgeReservation } from "./envelope.ts";
+export type { JudgeReservation } from "./envelope.ts";
 export { LaunchWatch, watchedDocker, watchedSandbox } from "./launch.ts";
 export { LedgerError, databaseLedger, inMemoryLedger } from "./ledger.ts";
 export type { Ledger } from "./ledger.ts";

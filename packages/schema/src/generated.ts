@@ -1,6 +1,6 @@
 // Derived from packages/schema/schema/records.schema.json; regenerate with pnpm --filter @rbw/schema run generate.
 
-export const DEF_NAMES = ["SafeInteger", "NonNegativeInteger", "PositiveInteger", "SchemaVersion", "Uuid", "Sha256", "ImageDigest", "GitCommitId", "UtcTime", "DurationMs", "ByteCount", "TokenCount", "MicroUsd", "StageName", "TrialId", "Slug", "ArtifactKind", "RelativePath", "MediaType", "HttpsRepositoryUrl", "HttpsBaseUri", "HttpsObjectUri", "PolicyPurpose", "Visibility", "RootRunKind", "RootRunStatus", "RootRunOutcome", "PublicationStatus", "FailureReason", "OmissionOutcome", "EntryOutcome", "OmissionReason", "RedactionCategory", "Exposure", "ProjectPolicy", "SourceFix", "Family", "FamilyRegistry", "HeldOutIdentityList", "RootRun", "ArtifactEntry", "ArtifactManifest", "PublishedArtifact", "Omission", "PublicationRecord", "Redaction", "ExecutionLink", "RunManifestEntry", "RunManifest", "PublicRunStatus", "PathOmissionDeclaration", "WithheldDeclaration", "RedactionDeclaration", "StagingOmissions", "JobKind", "CodeState", "ExpectedOutcome", "ObservedOutcome", "TrialStatus", "TrialReason", "AssertionFailureCode", "CheckId", "TestId", "OperationKind", "CallName", "FileMode", "TaskRevisionKind", "TimeZoneName", "LocaleTag", "EndpointPath", "JobRequest", "ExpectedCheck", "ExpectedTrial", "ExpectedTrials", "CheckObservation", "TrialObservations", "TrialResult", "QueryParameters", "SymptomRequest", "SymptomEvent", "BucketCount", "FollowUpExample", "DocExcerpt", "ObservedSymptom", "OperationIdentity", "MutationChange", "MutationIdentity", "TaskRevisionIdentity"] as const;
+export const DEF_NAMES = ["SafeInteger", "NonNegativeInteger", "PositiveInteger", "SchemaVersion", "Uuid", "Sha256", "ImageDigest", "GitCommitId", "UtcTime", "DurationMs", "ByteCount", "TokenCount", "MicroUsd", "StageName", "TrialId", "Slug", "ArtifactKind", "RelativePath", "MediaType", "HttpsRepositoryUrl", "HttpsBaseUri", "HttpsObjectUri", "PolicyPurpose", "Visibility", "RootRunKind", "RootRunStatus", "RootRunOutcome", "PublicationStatus", "FailureReason", "OmissionOutcome", "EntryOutcome", "OmissionReason", "RedactionCategory", "Exposure", "ProjectPolicy", "SourceFix", "Family", "FamilyRegistry", "HeldOutIdentityList", "RootRun", "ArtifactEntry", "ArtifactManifest", "PublishedArtifact", "Omission", "PublicationRecord", "Redaction", "ExecutionLink", "RunManifestEntry", "RunManifest", "PublicRunStatus", "PathOmissionDeclaration", "WithheldDeclaration", "RedactionDeclaration", "StagingOmissions", "JobKind", "CodeState", "ExpectedOutcome", "ObservedOutcome", "TrialStatus", "TrialReason", "AssertionFailureCode", "CheckId", "TestId", "OperationKind", "CallName", "FileMode", "TaskRevisionKind", "TimeZoneName", "LocaleTag", "EndpointPath", "JobRequest", "ExpectedCheck", "ExpectedTrial", "ExpectedTrials", "CheckObservation", "TrialObservations", "TrialResult", "QueryParameters", "SymptomRequest", "SymptomEvent", "BucketCount", "FollowUpExample", "DocExcerpt", "ObservedSymptom", "OperationIdentity", "MutationChange", "MutationIdentity", "TaskRevisionIdentity", "ImageReference", "ReleaseRevision", "ReleaseImages", "ReleaseFamily", "ReleaseRun", "ReleaseAdmission", "ReleaseFile", "ReleaseApproval", "ReleaseJudgeJob", "Release"] as const;
 export type DefName = (typeof DEF_NAMES)[number];
 
 export type SafeInteger = number;
@@ -461,6 +461,72 @@ export interface TaskRevisionIdentity {
   issue_style: Slug | null;
 }
 
+export type ImageReference = string;
+
+export interface ReleaseRevision {
+  sha256: Sha256;
+  identity: TaskRevisionIdentity;
+}
+
+export interface ReleaseImages {
+  kit_image: ImageReference;
+  controller_image: ImageReference;
+}
+
+export interface ReleaseFamily {
+  family_id: Slug;
+  source_fix: SourceFix;
+  mutation_id: Sha256;
+  split: "public_demo";
+}
+
+export interface ReleaseRun {
+  root_execution_id: Uuid;
+  publication_id: Uuid;
+  manifest_sha256: Sha256;
+  repository_commit: GitCommitId;
+}
+
+export interface ReleaseAdmission {
+  execution_id: Uuid;
+  outcome_verdict: "pass";
+  classification: "blind_spot_demonstrated";
+}
+
+export interface ReleaseFile {
+  path: RelativePath;
+  sha256: Sha256;
+}
+
+export interface ReleaseApproval {
+  decision: "approved";
+  issue_sha256: Sha256;
+  reviewed_at: UtcTime;
+}
+
+export interface ReleaseJudgeJob {
+  index_key: RelativePath;
+  index_sha256: Sha256;
+}
+
+export interface Release {
+  schema_version: SchemaVersion;
+  release_id: Uuid;
+  project_id: Uuid;
+  project_policy_sha256: Sha256;
+  policy_id: Slug;
+  created_at: UtcTime;
+  calibration: "not_requested";
+  revisions: ReleaseRevision[];
+  images: ReleaseImages;
+  family: ReleaseFamily;
+  run: ReleaseRun;
+  admission: ReleaseAdmission;
+  files: ReleaseFile[];
+  approval: ReleaseApproval;
+  judge_job: ReleaseJudgeJob;
+}
+
 /** Maps each definition name to its type. */
 export interface DefTypes {
   SafeInteger: SafeInteger;
@@ -551,4 +617,14 @@ export interface DefTypes {
   MutationChange: MutationChange;
   MutationIdentity: MutationIdentity;
   TaskRevisionIdentity: TaskRevisionIdentity;
+  ImageReference: ImageReference;
+  ReleaseRevision: ReleaseRevision;
+  ReleaseImages: ReleaseImages;
+  ReleaseFamily: ReleaseFamily;
+  ReleaseRun: ReleaseRun;
+  ReleaseAdmission: ReleaseAdmission;
+  ReleaseFile: ReleaseFile;
+  ReleaseApproval: ReleaseApproval;
+  ReleaseJudgeJob: ReleaseJudgeJob;
+  Release: Release;
 }
