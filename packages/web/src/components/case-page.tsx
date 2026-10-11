@@ -14,14 +14,17 @@ import {
   NO_VALIDATED_RESULT,
   NOT_IN_RECORDS,
   originalSuiteSize,
-  REPLAY_STATE,
+  releaseHref,
   REPLAY_STATE_TEXT,
+  replayState,
   ROW_LABEL,
   runStatusText,
   suiteMatrix,
+  VALIDATED_RESULT,
   VERDICT_TEXT,
+  type ReplayState,
 } from "../model.ts";
-import type { AdmissionRecords, Results, Run } from "../release.ts";
+import { releaseFiles, type AdmissionRecords, type PublishedRelease, type Results, type Run } from "../release.ts";
 
 function Cell({ index, title, children }: { index: number; title: string; children: ReactNode }) {
   return (
@@ -34,13 +37,13 @@ function Cell({ index, title, children }: { index: number; title: string; childr
   );
 }
 
-function Symptom({ symptom }: { symptom: ObservedSymptom | null }) {
+function Symptom({ symptom, validated }: { symptom: ObservedSymptom | null; validated: boolean }) {
   if (symptom === null) return <p>No published run holds an observed symptom yet.</p>;
   const examples = countExamples(symptom);
   const differing = examples.filter((example) => example.differs).length;
   return (
     <>
-      <p className="label">Development evidence, not validated</p>
+      <p className="label">{validated ? "Validated release, synthetic planted bug" : "Development evidence, not validated"}</p>
       <p>
         Synthetic task: the bug in this case was planted on purpose in a copy of Umami, an open-source web analytics app. It is not a real Umami bug.
       </p>
@@ -159,14 +162,14 @@ function Matrix({ admission }: { admission: AdmissionRecords | null }) {
   );
 }
 
-function Replay() {
+function Replay({ replay }: { replay: ReplayState }) {
   return (
     <>
       <button type="button" disabled aria-describedby="replay-status">
         Run verified replay
       </button>
       <p id="replay-status">
-        Replay status: {REPLAY_STATE_TEXT[REPLAY_STATE.state]}. {REPLAY_STATE.reason}
+        Replay status: {REPLAY_STATE_TEXT[replay.state]}. {replay.reason}
       </p>
       <p>The page above is complete without a replay.</p>
     </>
@@ -192,9 +195,73 @@ function FileList({ run }: { run: Run }) {
   );
 }
 
+/** The release's provenance, from its record; the hashes of judge_job and files stay in release.json. */
+function ReleaseProvenance({ release, run }: { release: PublishedRelease; run: Run }) {
+  const { record } = release;
+  const [revision] = record.revisions;
+  return (
+    <dl>
+      <dt>Release</dt>
+      <dd>{record.release_id}</dd>
+      <dt>Release SHA-256</dt>
+      <dd>{release.sha256}</dd>
+      <dt>Release created</dt>
+      <dd>{record.created_at}</dd>
+      <dt>Run</dt>
+      <dd>
+        {run.rootExecutionId} ({run.kind}, {runStatusText(run).outcome.toLowerCase()})
+      </dd>
+      <dt>Publication</dt>
+      <dd>{record.run.publication_id}</dd>
+      <dt>Results repository commit</dt>
+      <dd>{record.run.repository_commit}</dd>
+      <dt>Project policy SHA-256</dt>
+      <dd>{record.project_policy_sha256}</dd>
+      <dt>Policy</dt>
+      <dd>{record.policy_id}</dd>
+      <dt>Task revision</dt>
+      <dd>{revision?.sha256 ?? NOT_IN_RECORDS}</dd>
+      <dt>Admission's provisional task revision</dt>
+      <dd>{run.admission?.evidence.request.task_revision ?? NOT_IN_RECORDS}</dd>
+      <dt>Kit version</dt>
+      <dd>{revision?.identity.kit_sha256 ?? NOT_IN_RECORDS}</dd>
+      <dt>Kit image</dt>
+      <dd>{record.images.kit_image}</dd>
+      <dt>Controller image</dt>
+      <dd>{record.images.controller_image}</dd>
+      <dt>Family</dt>
+      <dd>
+        {record.family.family_id} ({record.family.split}), source fix {record.family.source_fix.upstream} at {record.family.source_fix.commit}
+      </dd>
+      <dt>Human check (ADM-07)</dt>
+      <dd>Approved on {record.approval.reviewed_at.slice(0, "YYYY-MM-DD".length)}</dd>
+      <dt>Calibration</dt>
+      <dd>Not requested</dd>
+    </dl>
+  );
+}
+
 function Provenance({ results }: { results: Results }) {
   const run = results.caseRun;
-  const archives = run === null ? diagnosticArchives(results) : [run];
+  const { release } = results;
+  if (release !== null && run !== null) {
+    return (
+      <>
+        <ReleaseProvenance release={release} run={run} />
+        <h3>Validated-task downloads</h3>
+        <ul>
+          {releaseFiles(results).map((file) => (
+            <li key={file.path}>
+              <a href={releaseHref(file.release, file.path)}>{file.path}</a>
+            </li>
+          ))}
+        </ul>
+        <p>The released run's files:</p>
+        <FileList run={run} />
+        <DiagnosticArchive archives={diagnosticArchives(results)} empty="No other published runs." />
+      </>
+    );
+  }
   return (
     <>
       {run === null ? null : (
@@ -210,14 +277,22 @@ function Provenance({ results }: { results: Results }) {
           <dt>Kit version</dt>
           <dd>{NOT_IN_RECORDS}</dd>
           <dt>Release</dt>
-          <dd>None. The release step (ADM-09) is planned.</dd>
+          <dd>None published yet.</dd>
           <dt>Calibration</dt>
           <dd>Not requested</dd>
         </dl>
       )}
       <p>Validated-task downloads: disabled, because there is no validated release.</p>
+      <DiagnosticArchive archives={run === null ? diagnosticArchives(results) : [run]} empty="No run has been published." />
+    </>
+  );
+}
+
+function DiagnosticArchive({ archives, empty }: { archives: Run[]; empty: string }) {
+  return (
+    <>
       <h3>Diagnostic archive (not validated)</h3>
-      {archives.length === 0 ? <p>No run has been published.</p> : null}
+      {archives.length === 0 ? <p>{empty}</p> : null}
       {archives.map((archive) => (
         <div key={archive.rootExecutionId}>
           <p>
@@ -249,7 +324,11 @@ function FunnelAndLimitations({ results }: { results: Results }) {
         <li>The planted bug is synthetic. It was introduced on purpose and is not a real Umami bug.</li>
         <li>Only the original Umami API suite was measured. Other upstream tests were not evaluated.</li>
         <li>Calibration: not requested. No solve counts are reported.</li>
-        <li>The card, issue and leak checks (ADM-07) and releases (ADM-09) are planned, so no result here is validated.</li>
+        <li>
+          {results.release === null
+            ? "No release has been published yet, so no result here is validated."
+            : "A human check (ADM-07) approved this issue, and one release (ADM-09) was published."}
+        </li>
         <li>Verified replay is not built yet.</li>
         <li>This is a hackathon prototype.</li>
       </ul>
@@ -268,9 +347,9 @@ export function CasePage({ results }: { results: Results }) {
   return (
     <main>
       <h1>Random Bug Walk results</h1>
-      <p className="headline">{NO_VALIDATED_RESULT}</p>
+      <p className="headline">{results.release === null ? NO_VALIDATED_RESULT : VALIDATED_RESULT}</p>
       <Cell index={1} title="Symptom">
-        <Symptom symptom={run?.symptom ?? null} />
+        <Symptom symptom={run?.symptom ?? null} validated={results.release !== null} />
       </Cell>
       <Cell index={2} title="Expected and observed local-day counts">
         <Counts symptom={run?.symptom ?? null} />
@@ -279,7 +358,7 @@ export function CasePage({ results }: { results: Results }) {
         <Matrix admission={run?.admission ?? null} />
       </Cell>
       <Cell index={4} title="Verified replay">
-        <Replay />
+        <Replay replay={replayState(results)} />
       </Cell>
       <Cell index={5} title="Provenance and downloads">
         <Provenance results={results} />

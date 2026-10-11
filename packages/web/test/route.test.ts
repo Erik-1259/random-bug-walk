@@ -2,7 +2,8 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { dynamic, dynamicParams, generateStaticParams, GET } from "../app/runs/[root]/[...path]/route.ts";
-import { DEVELOPMENT, DEVELOPMENT_ROOT, NO_RELEASE, runDir } from "./support/results.ts";
+import * as releaseRoute from "../app/releases/[release]/[...path]/route.ts";
+import { DEVELOPMENT, DEVELOPMENT_ROOT, NO_RELEASE, RELEASE, RELEASE_ID, RELEASE_ROOT, releaseDir, runDir } from "./support/results.ts";
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -41,5 +42,43 @@ describe("published file route", () => {
     expect((await get(DEVELOPMENT_ROOT, ["..", "..", "..", "package.json"])).status).toBe(404);
     expect((await get(DEVELOPMENT_ROOT, ["unlisted.json"])).status).toBe(404);
     expect((await get("00000000-0000-4000-8000-000000002001", ["report.md"])).status).toBe(404);
+  });
+});
+
+function getRelease(release: string, path: string[]): Promise<Response> {
+  return releaseRoute.GET(new Request(`https://example.invalid/releases/${release}/${path.join("/")}`), { params: Promise.resolve({ release, path }) });
+}
+
+describe("release file route", () => {
+  it("is prerendered for release.json and the release's listed files, and for nothing without a release", async () => {
+    expect(releaseRoute.dynamic).toBe("force-static");
+    expect(releaseRoute.dynamicParams).toBe(false);
+    vi.stubEnv("RBW_RESULTS_DIR", RELEASE);
+    expect((await releaseRoute.generateStaticParams()).map((item) => `${item.release}/${item.path.join("/")}`)).toEqual([
+      `${RELEASE_ID}/release.json`,
+      `${RELEASE_ID}/issue-check.json`,
+      `${RELEASE_ID}/issue.json`,
+      `${RELEASE_ID}/recordings/card-1.recording.json`,
+      `${RELEASE_ID}/recordings/issue-1.recording.json`,
+    ]);
+    vi.stubEnv("RBW_RESULTS_DIR", DEVELOPMENT);
+    expect(await releaseRoute.generateStaticParams()).toEqual([]);
+  });
+
+  it("serves release.json and issue.json as their exact bytes", async () => {
+    vi.stubEnv("RBW_RESULTS_DIR", RELEASE);
+    for (const name of ["release.json", "issue.json"]) {
+      const response = await getRelease(RELEASE_ID, [name]);
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-type")).toBe("application/json");
+      expect(Buffer.from(await response.arrayBuffer()).equals(readFileSync(join(releaseDir(RELEASE), name)))).toBe(true);
+    }
+  });
+
+  it("answers 404 for a path the release does not list", async () => {
+    vi.stubEnv("RBW_RESULTS_DIR", RELEASE);
+    expect((await getRelease(RELEASE_ID, ["unlisted.json"])).status).toBe(404);
+    expect((await getRelease(RELEASE_ID, ["..", "..", "runs", RELEASE_ROOT, "manifest.json"])).status).toBe(404);
+    expect((await getRelease(RELEASE_ROOT, ["issue.json"])).status).toBe(404);
   });
 });

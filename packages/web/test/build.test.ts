@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { DEVELOPMENT, DEVELOPMENT_ROOT, NO_RELEASE, runDir } from "./support/results.ts";
+import { DEVELOPMENT, DEVELOPMENT_ROOT, NO_RELEASE, RELEASE, RELEASE_ID, releaseDir, runDir } from "./support/results.ts";
 
 const APP = fileURLToPath(new URL("..", import.meta.url));
 const SERVER_APP = join(APP, ".next", "server", "app");
@@ -22,9 +22,9 @@ function prerendered(): string[] {
   return Object.keys(manifest.routes).sort();
 }
 
-// One test builds both fixtures in turn, because both builds write the same .next directory.
+// One test builds the three fixtures in turn, because every build writes the same .next directory.
 describe("next build", () => {
-  it("prerenders the case page, the catalog and every published file for each fixture", () => {
+  it("prerenders the case page, the catalog and every published and release file for each fixture", () => {
     build(NO_RELEASE);
     expect(prerendered()).toEqual([
       "/",
@@ -51,5 +51,15 @@ describe("next build", () => {
     const body = join(SERVER_APP, "runs", DEVELOPMENT_ROOT, "report.md.body");
     expect(existsSync(body)).toBe(true);
     expect(readFileSync(body).equals(readFileSync(join(runDir(DEVELOPMENT, DEVELOPMENT_ROOT), "report.md")))).toBe(true);
+    expect(prerendered().some((route) => route.startsWith("/releases/"))).toBe(false);
+
+    build(RELEASE);
+    expect(prerendered()).toContain(`/releases/${RELEASE_ID}/release.json`);
+    const releasePage = readFileSync(join(SERVER_APP, "index.html"), "utf8");
+    expect(releasePage).toContain("Validated blind-spot example");
+    expect(releasePage).not.toContain("No validated blind-spot example yet");
+    expect(releasePage).toContain(RELEASE_ID);
+    const releaseBody = join(SERVER_APP, "releases", RELEASE_ID, "release.json.body");
+    expect(readFileSync(releaseBody).equals(readFileSync(join(releaseDir(RELEASE), "release.json")))).toBe(true);
   }, 600_000);
 });

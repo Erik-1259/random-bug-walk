@@ -1,16 +1,21 @@
-import { cpSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { canonicalDigest, encodeCanonical, parseCanonical, type JsonValue } from "@rbw/schema";
-import { readPublishedFile, readResults, ReleaseError, type ReleaseErrorCode } from "../src/release.ts";
+import { canonicalDigest, encodeCanonical, parseCanonical, parseRecord, sha256Hex, type JsonValue, type Release } from "@rbw/schema";
+import { readPublishedFile, readReleaseFile, readResults, ReleaseError, type ReleaseErrorCode } from "../src/release.ts";
 import {
   addRunFile,
   cleanup,
   copyFixture,
+  copyRelease,
   DEVELOPMENT,
   DEVELOPMENT_ROOT,
   NO_RELEASE,
   readManifest,
+  RELEASE,
+  RELEASE_ID,
+  RELEASE_ROOT,
+  releaseDir,
   runDir,
   SYMPTOM_SOURCE,
   syntheticCase,
@@ -74,6 +79,103 @@ describe("no-release fixture", () => {
     ]);
     const incomplete = results.runs[1]?.manifest?.entries.find((entry) => entry.outcome === "not_produced");
     expect(incomplete).toMatchObject({ trial_id: "clean-01", reason: "stage_failed", sha256: null });
+  });
+});
+
+describe("release fixture", () => {
+  it("reads the release, its integrity hash and its run as the case", async () => {
+    const results = await readResults(RELEASE);
+    expect(results.release?.record.release_id).toBe(RELEASE_ID);
+    expect(results.release?.sha256).toBe(sha256Hex(readFileSync(join(releaseDir(RELEASE), "release.json"))));
+    expect(results.caseRun?.rootExecutionId).toBe(RELEASE_ROOT);
+    expect(results.caseRun).toBe(results.runs.find((run) => run.rootExecutionId === RELEASE_ROOT));
+  });
+
+  it("makes the released run the case even when another run would be chosen", async () => {
+    const built = syntheticCase();
+    expect(built.root < RELEASE_ROOT).toBe(true);
+    expect((await readResults(built.dir)).caseRun?.admission?.decision.comparison?.classification).toBe("blind_spot_demonstrated");
+    const dir = copyRelease();
+    renameSync(runDir(built.dir, built.root), runDir(dir, built.root));
+    const results = await readResults(dir);
+    expect(results.runs).toHaveLength(2);
+    expect(results.caseRun?.rootExecutionId).toBe(RELEASE_ROOT);
+  });
+
+  it("serves release.json and the listed files, and nothing else", async () => {
+    const file = await readReleaseFile(RELEASE, RELEASE_ID, "issue.json");
+    expect(file?.mediaType).toBe("application/json");
+    expect(Buffer.from(file?.bytes ?? []).equals(readFileSync(join(releaseDir(RELEASE), "issue.json")))).toBe(true);
+    expect(await readReleaseFile(RELEASE, RELEASE_ID, "release.json")).not.toBeNull();
+    expect(await readReleaseFile(RELEASE, RELEASE_ID, "../../runs/x")).toBeNull();
+    expect(await readReleaseFile(RELEASE, RELEASE_ROOT, "issue.json")).toBeNull();
+  });
+});
+
+/** Rewrites the copied release's release.json canonically after a change, as the publisher writes it. */
+function rewriteRelease(dir: string, change: (release: Release) => Release, releaseId = RELEASE_ID): void {
+  const path = join(releaseDir(dir, releaseId), "release.json");
+  writeFileSync(path, encodeCanonical(change(parseRecord("Release", readFileSync(path)))));
+}
+
+describe("malformed release directories are refused", () => {
+  it("a release.json that fails the schema", async () => {
+    const dir = copyRelease();
+    rewriteRelease(dir, (release) => ({ ...release, calibration: "requested" as "not_requested" }));
+    expect(await refusal(dir)).toBe("release_invalid");
+  });
+
+  it("a release.json that is not canonical bytes", async () => {
+    const dir = copyRelease();
+    const path = join(releaseDir(dir), "release.json");
+    writeFileSync(path, `${readFileSync(path, "utf8")}\n`);
+    expect(await refusal(dir)).toBe("release_invalid");
+  });
+
+  it("a release directory named after another release", async () => {
+    const dir = copyRelease();
+    renameSync(releaseDir(dir), releaseDir(dir, "00000000-0000-4000-8000-000000000699"));
+    expect(await refusal(dir)).toBe("release_invalid");
+  });
+
+  it("a file the release does not list", async () => {
+    const dir = copyRelease();
+    writeFile(join(releaseDir(dir), "recordings", "extra.recording.json"), "{}");
+    expect(await refusal(dir)).toBe("release_invalid");
+  });
+
+  it("a listed file with other bytes", async () => {
+    const dir = copyRelease();
+    writeFileSync(join(releaseDir(dir), "issue.json"), "{}");
+    expect(await refusal(dir)).toBe("release_invalid");
+  });
+
+  it("a second release directory", async () => {
+    const dir = copyRelease();
+    const second = "00000000-0000-4000-8000-000000000699";
+    cpSync(releaseDir(dir), releaseDir(dir, second), { recursive: true });
+    rewriteRelease(dir, (release) => ({ ...release, release_id: second }), second);
+    expect(await refusal(dir)).toBe("release_invalid");
+  });
+
+  it("an empty releases directory is no release", async () => {
+    const dir = copyFixture(DEVELOPMENT);
+    mkdirSync(join(dir, "repository", "releases"));
+    expect((await readResults(dir)).release).toBeNull();
+  });
+});
+
+describe("releases that do not match their run are refused", () => {
+  it("a release naming a root the repository does not hold", async () => {
+    const dir = copyRelease();
+    rewriteRelease(dir, (release) => ({ ...release, run: { ...release.run, root_execution_id: "00000000-0000-4000-8100-000000009999" } }));
+    expect(await refusal(dir)).toBe("release_mismatch");
+  });
+
+  it("a release whose manifest_sha256 is not the run's manifest bytes", async () => {
+    const dir = copyRelease();
+    rewriteRelease(dir, (release) => ({ ...release, run: { ...release.run, manifest_sha256: "0".repeat(64) } }));
+    expect(await refusal(dir)).toBe("release_mismatch");
   });
 });
 

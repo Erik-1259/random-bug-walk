@@ -5,6 +5,7 @@ import type { BucketCount, ObservedSymptom } from "@rbw/schema";
 import type { AdmissionRecords, Results, Run } from "./release.ts";
 
 export const NO_VALIDATED_RESULT = "No validated blind-spot example yet";
+export const VALIDATED_RESULT = "Validated blind-spot example";
 export const NOT_IN_RECORDS = "Not in this run's published records";
 
 export type MatrixRow = "original" | "added";
@@ -120,8 +121,7 @@ export function funnel(results: Results): FunnelStep[] {
     { label: "Runs with an admission decision", count: decided.length },
     { label: "Admission verdict pass", count: decided.filter((decision) => decision.outcome_verdict === "pass").length },
     { label: "Blind spot demonstrated (ADM-08)", count: decided.filter((decision) => decision.comparison?.classification === "blind_spot_demonstrated").length },
-    // Releases (ADM-09) have no record format yet, so no record can count here (Results.release).
-    { label: "Validated releases (ADM-09, planned)", count: 0 },
+    { label: "Validated releases (ADM-09)", count: results.release === null ? 0 : 1 },
   ];
 }
 
@@ -142,12 +142,18 @@ export interface ReplayState {
   reason: string;
 }
 
-/** The replay control's state: disabled while there is no validated release (Results.release). */
+/** The replay control's state without a validated release (Results.release). */
 export const REPLAY_STATE: ReplayState = { state: "disabled", reason: "There is no validated release to replay." };
 
-/** Published runs whose files remain downloadable as diagnostic archives. */
+/** With a release the control stays disabled until the judge action exists. */
+export function replayState(results: Results): ReplayState {
+  return results.release === null ? REPLAY_STATE : { state: "disabled", reason: "Verified replay is not available yet." };
+}
+
+/** Published runs whose files remain downloadable as diagnostic archives: every one but the released run. */
 export function diagnosticArchives(results: Results): Run[] {
-  return results.runs.filter((run) => run.manifest !== null);
+  const released = results.release?.record.run.root_execution_id;
+  return results.runs.filter((run) => run.manifest !== null && run.rootExecutionId !== released);
 }
 
 const PUBLICATION_TEXT = { prepared: "Prepared", published: "Published", blocked: "Blocked", failed: "Publication failed" } as const;
@@ -163,6 +169,11 @@ export function runStatusText(run: Run): { status: string; outcome: string; publ
 }
 
 export const ENTRY_OUTCOME_TEXT = { published: "Published", truncated: "Truncated", not_produced: "Not produced", withheld_private: "Withheld (private)" } as const;
+
+/** A link to a file of the published release. */
+export function releaseHref(releaseId: string, path: string): string {
+  return `/releases/${releaseId}/${path}`;
+}
 
 /** A link to a published file: the site's copy of a repository file, or the store's URI of a large one. */
 export function fileHref(root: string, path: string, publicUri: string | null): string {

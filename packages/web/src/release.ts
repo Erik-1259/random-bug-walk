@@ -4,6 +4,7 @@
 //   repository/runs/<root>/<entry path>    the run's published files below the large-file threshold
 //   store/status/<root>.json               each run's PublicRunStatus
 //   store/sha256/<hex>                     large published files (optional here; linked by public_uri)
+//   repository/releases/<id>/release.json  the release (at most one), with the files its record lists
 // Inside a run it reads generated/symptom.json (an ObservedSymptom) and, for each job execution,
 // results/<execution>/evidence.json and decision.json as @rbw/admission writes them.
 import { createHash } from "node:crypto";
@@ -11,11 +12,12 @@ import type { Dirent } from "node:fs";
 import { lstat, readdir, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { Decision, Evidence } from "@rbw/admission";
-import type { JsonValue, ObservedSymptom, PublicationStatus, PublicRunStatus, RootRunKind, RootRunOutcome, RootRunStatus, RunManifest, RunManifestEntry } from "@rbw/schema";
+import type { JsonValue, ObservedSymptom, PublicationStatus, PublicRunStatus, Release, RootRunKind, RootRunOutcome, RootRunStatus, RunManifest, RunManifestEntry } from "@rbw/schema";
 import { recordPackages, type RecordPackages } from "./records.ts";
 
 export const MANIFEST_FILE = "manifest.json";
 export const SYMPTOM_PATH = "generated/symptom.json";
+export const RELEASE_FILE = "release.json";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const JOB_OUTPUT = /^results\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/(evidence|decision)\.json$/;
 
@@ -31,7 +33,9 @@ export type ReleaseErrorCode =
   | "run_missing"
   | "symptom_invalid"
   | "admission_invalid"
-  | "admission_mismatch";
+  | "admission_mismatch"
+  | "release_invalid"
+  | "release_mismatch";
 
 export class ReleaseError extends Error {
   readonly code: ReleaseErrorCode;
@@ -69,11 +73,14 @@ export interface Results {
   runs: Run[];
   /** The run the case page shows (see chooseCase), if any published run holds an observed symptom. */
   caseRun: Run | null;
-  /**
-   * The validated release. Releases (ADM-09) are planned and have no record format yet, so no
-   * published record can make a result eligible, and this is always null.
-   */
-  release: null;
+  /** The published release (ADM-09), or null. With a release, caseRun is its run. */
+  release: PublishedRelease | null;
+}
+
+export interface PublishedRelease {
+  record: Release;
+  /** SHA-256 of release.json's canonical bytes: the release's integrity (route step 2 in W2-8 compares it). */
+  sha256: string;
 }
 
 export interface PublishedFile {
@@ -171,6 +178,59 @@ class Reader {
       const bytes = await readFile(join(this.runDir(root), entry.path));
       if (bytes.length !== entry.size_bytes || sha256(bytes) !== entry.sha256) throw new ReleaseError("file_hash_mismatch", `runs/${root}/${entry.path} differs from its manifest entry`);
     }
+  }
+
+  releaseDir(releaseId: string): string {
+    return join(this.dir, "repository", "releases", releaseId);
+  }
+
+  /**
+   * The one release, if any: a UUID-named directory holding a canonical, schema-valid release.json
+   * named after it, and exactly the files its record lists, with their bytes.
+   */
+  async readRelease(): Promise<PublishedRelease | null> {
+    const found = await entries(join(this.dir, "repository", "releases"));
+    if (found.length > 1) throw new ReleaseError("release_invalid", "releases/ holds more than one release");
+    const [entry] = found;
+    if (entry === undefined) return null;
+    const id = entry.name;
+    if (!entry.isDirectory() || !UUID.test(id)) throw new ReleaseError("release_invalid", `releases/${id} is not a release directory`);
+    const bytes = await readFile(join(this.releaseDir(id), RELEASE_FILE)).catch((error: unknown) => {
+      if (isMissing(error)) throw new ReleaseError("release_invalid", `releases/${id} has no ${RELEASE_FILE}`);
+      throw error;
+    });
+    let record: Release;
+    try {
+      record = this.packages.schema.parseRecord("Release", bytes);
+    } catch (error) {
+      if (error instanceof this.packages.schema.RecordError || error instanceof this.packages.schema.CanonicalError) {
+        throw new ReleaseError("release_invalid", `releases/${id}/${RELEASE_FILE}: ${error.message}`);
+      }
+      throw error;
+    }
+    if (!this.isCanonical(bytes, record)) throw new ReleaseError("release_invalid", `releases/${id}/${RELEASE_FILE} is not canonical JSON`);
+    if (record.release_id !== id) throw new ReleaseError("release_invalid", `releases/${id} holds the release ${record.release_id}`);
+    const listed = new Map(record.files.map((file) => [file.path, file.sha256]));
+    const present = new Set(await runFiles(this.releaseDir(id)));
+    for (const path of present) {
+      if (path !== RELEASE_FILE && !listed.has(path)) throw new ReleaseError("release_invalid", `releases/${id}/${path} is not a file of the release`);
+    }
+    for (const [path, hash] of listed) {
+      if (!present.has(path)) throw new ReleaseError("release_invalid", `releases/${id}/${path} is listed but absent`);
+      if (sha256(await readFile(join(this.releaseDir(id), path))) !== hash) throw new ReleaseError("release_invalid", `releases/${id}/${path} differs from its release entry`);
+    }
+    return { record, sha256: sha256(bytes) };
+  }
+
+  /** The release's one link: its run is published here, with the manifest bytes the release names. */
+  async releaseRun(release: Release, runs: Run[]): Promise<Run> {
+    const root = release.run.root_execution_id;
+    const run = runs.find((item) => item.rootExecutionId === root && item.manifest !== null);
+    if (run === undefined) throw new ReleaseError("release_mismatch", `releases/${release.release_id} names runs/${root}, which is not published here`);
+    if (sha256(await readFile(join(this.runDir(root), MANIFEST_FILE))) !== release.run.manifest_sha256) {
+      throw new ReleaseError("release_mismatch", `releases/${release.release_id} names other manifest bytes for runs/${root}`);
+    }
+    return run;
   }
 
   /** The bytes of a published entry: from the repository, or from the store for a large file. */
@@ -348,7 +408,9 @@ export async function readResults(dir: string): Promise<Results> {
     });
   }
   runs.sort((a, b) => (a.rootExecutionId < b.rootExecutionId ? -1 : 1));
-  return { runs, caseRun: chooseCase(runs), release: null };
+  const release = await reader.readRelease();
+  if (release === null) return { runs, caseRun: chooseCase(runs), release: null };
+  return { runs, caseRun: await reader.releaseRun(release.record, runs), release };
 }
 
 /** A checked results directory, with where each file readPublishedFile serves lives on disk. */
@@ -356,6 +418,8 @@ export interface ResultsIndex {
   results: Results;
   /** Keyed by `<root>/<path>`. */
   files: ReadonlyMap<string, { location: string; mediaType: string }>;
+  /** The files readReleaseFile serves, keyed by `<release_id>/<path>`. */
+  releaseFiles: ReadonlyMap<string, { location: string; mediaType: string }>;
 }
 
 async function indexResults(dir: string): Promise<ResultsIndex> {
@@ -370,7 +434,12 @@ async function indexResults(dir: string): Promise<ResultsIndex> {
       if (isRepositoryFile(entry) && entry.media_type != null) files.set(`${root}/${entry.path}`, { location: join(location, entry.path), mediaType: entry.media_type });
     }
   }
-  return { results, files };
+  const served = new Map<string, { location: string; mediaType: string }>();
+  for (const { release, path } of releaseFiles(results)) {
+    const mediaType = path.endsWith(".json") ? "application/json" : "application/octet-stream";
+    served.set(`${release}/${path}`, { location: join(dir, "repository", "releases", release, path), mediaType });
+  }
+  return { results, files, releaseFiles: served };
 }
 
 const indexes = new Map<string, Promise<ResultsIndex>>();
@@ -407,4 +476,18 @@ export function publishedFiles(results: Results): { root: string; path: string }
       ? []
       : [{ root: run.rootExecutionId, path: MANIFEST_FILE }, ...run.manifest.entries.filter(isRepositoryFile).map((entry) => ({ root: run.rootExecutionId, path: entry.path }))],
   );
+}
+
+/** A file of the published release, or its release.json, for download; any other path gives null. */
+export async function readReleaseFile(dir: string, releaseId: string, path: string): Promise<PublishedFile | null> {
+  const file = (await loadResults(dir)).releaseFiles.get(`${releaseId}/${path}`);
+  if (file === undefined) return null;
+  return { bytes: await readFile(file.location), mediaType: file.mediaType };
+}
+
+/** Every file readReleaseFile serves, for prerendering: release.json, then the record's files. */
+export function releaseFiles(results: Results): { release: string; path: string }[] {
+  const record = results.release?.record;
+  if (record === undefined) return [];
+  return [RELEASE_FILE, ...record.files.map((file) => file.path)].map((path) => ({ release: record.release_id, path }));
 }

@@ -41,11 +41,18 @@ function RunFiles({ run }: { run: Run }) {
   );
 }
 
+function releaseSentence(results: Results): string {
+  const record = results.release?.record;
+  if (record === undefined) return "None of them is a validated release.";
+  return `Run ${record.run.root_execution_id} is validated release ${record.release_id}; the others are not validated.`;
+}
+
 export function Catalog({ results }: { results: Results }) {
+  const released = results.release?.record;
   return (
     <main>
       <h1>Diagnostic catalog</h1>
-      <p>Every run in the published records, with its recorded status. None of them is a validated release.</p>
+      <p>{`Every run in the published records, with its recorded status. ${releaseSentence(results)}`}</p>
       <table className="runs">
         <thead>
           <tr>
@@ -65,6 +72,7 @@ export function Catalog({ results }: { results: Results }) {
               <tr key={run.rootExecutionId}>
                 <th scope="row">
                   <a href={`#run-${run.rootExecutionId}`}>{run.rootExecutionId}</a>
+                  {released?.run.root_execution_id === run.rootExecutionId ? <span className="label">{`Validated release ${released.release_id}`}</span> : null}
                 </th>
                 <td>{run.kind}</td>
                 <td>{text.status}</td>
