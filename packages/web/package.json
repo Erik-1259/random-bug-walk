@@ -11,14 +11,18 @@
   "scripts": {
     "build": "NEXT_TELEMETRY_DISABLED=1 next build",
     "dev": "next dev",
-    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p scripts/tsconfig.json --noEmit",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p scripts/tsconfig.json --noEmit && tsc -p test/judge/tsconfig.json --noEmit",
     "lint": "eslint . --max-warnings 0",
     "test": "vitest run",
     "publish-fixture": "node scripts/publish-fixture.ts"
   },
   "dependencies": {
     "@rbw/admission": "workspace:*",
+    "@rbw/controller": "workspace:*",
+    "@rbw/publisher": "workspace:*",
     "@rbw/schema": "workspace:*",
+    "@rbw/spend": "workspace:*",
+    "@vercel/oidc": "3.8.10",
     "next": "16.3.8",
     "react": "19.3.0",
     "react-dom": "19.3.0"

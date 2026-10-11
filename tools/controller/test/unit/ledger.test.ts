@@ -23,12 +23,20 @@ const { clients, Client } = await vi.hoisted(async () => {
 });
 vi.mock("pg", () => ({ default: { Client } }));
 
-const { databaseLedger } = await import("../../src/ledger.ts");
+const { LedgerError, databaseLedger } = await import("../../src/ledger.ts");
+const databaseModule = await import("../../src/database-ledger.ts");
 
 describe("the database ledger's close", () => {
   it("does not throw after the connection reported an error, so the job's own outcome stands", async () => {
     const ledger = await databaseLedger("postgresql://synthetic@db.example.invalid/synthetic", () => new Date(0));
     clients.at(-1)?.emit("error", Object.assign(new Error("synthetic: connection dropped"), { code: "ECONNRESET" }));
     await expect(ledger.close()).resolves.toBeUndefined();
+  });
+});
+
+describe("ledger.ts", () => {
+  it("re-exports the database ledger from database-ledger.ts", () => {
+    expect(databaseLedger).toBe(databaseModule.databaseLedger);
+    expect(LedgerError).toBe(databaseModule.LedgerError);
   });
 });

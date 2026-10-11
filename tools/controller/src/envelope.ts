@@ -1,17 +1,15 @@
 // One app copy's priced envelope and its settlement. @rbw/envelope prices whole jobs (a controller
-// sandbox plus its copies); the controller here runs on the conductor's host and reserves each
-// copy on its own, so the envelope is one copy's lines, priced from the same pinned rate sheet and
-// fixed limits. Its time limit is the sandbox's own timeout, which the provider enforces: the
-// run-copy path's outer limit (the driver's 600 s plus 120 s), plus the shutdown allowance.
-// A judge replay's controller sandbox is priced the same way, with the judge's controller
-// resources and deadline; the judge job reserves it plus three copies.
-import { fileURLToPath } from "node:url";
+// sandbox plus its copies); the controller reserves each copy on its own, so the envelope is one
+// copy's lines, priced from the same pinned rate sheet and fixed limits. Its time limit is the
+// sandbox's own timeout, which the provider enforces: the run-copy path's outer limit (the
+// driver's 600 s plus 120 s), plus the shutdown allowance. Factory runs' controller runs on the
+// conductor's host and reserves only its copies. A judge replay's controller runs in its own
+// sandbox, which the judge route reserves with the controller envelope (the judge's controller
+// resources and deadline) before it starts it; the judge job reserves it plus three copies.
 import { FIXED_LIMITS, priceFor, runtime_profile_sha256 } from "@rbw/envelope";
 import type { Envelope, Fraction, Rates } from "@rbw/envelope";
-import { COPY_OUTER_LIMIT_MS } from "@rbw/local-runner";
+import { COPY_OUTER_LIMIT_MS } from "@rbw/local-runner/shared";
 import type { EnforcedBy, EnvelopeLine, Unit, UsageSettlement } from "@rbw/spend";
-
-export const RATE_SHEET_PATH = fileURLToPath(new URL("../rate-sheets/v1.json", import.meta.resolve("@rbw/envelope")));
 
 const SERVICE = "vercel-sandbox";
 const SUBJECT = "iad1";

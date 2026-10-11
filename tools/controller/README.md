@@ -1,6 +1,6 @@
 # @rbw/controller
 
-The trusted controller. It runs one job (kit check, observation, admission or judge replay) end to end against the spend ledger, one app copy at a time, on Vercel Sandbox, or on Docker for the conductor's local checks. It also runs the candidate attempt: one factory root, from the kit check to the admission, under a project policy. The conductor starts it with one command; factory runs launch from a conductor command, not a web route. The judge route that will start the same controller is planned. This is part of a hackathon prototype.
+The trusted controller. It runs one job (kit check, observation, admission or judge replay) end to end against the spend ledger, one app copy at a time, on Vercel Sandbox, or on Docker for the conductor's local checks. It also runs the candidate attempt: one factory root, from the kit check to the admission, under a project policy. The conductor starts it with one command; factory runs launch from a conductor command, not a web route. For a judge replay, the judge route (`packages/web`) starts the same controller in its own Vercel Sandbox (prebuilt mode, below). This is part of a hackathon prototype.
 
 Everything it writes is **development evidence**. It makes no admission claim and publishes nothing, and the planted bug is synthetic.
 
@@ -26,6 +26,8 @@ node tools/controller/src/cli.ts proof --work <run dir> --image ... --manifest .
   [--original-suite <file>] [--policy <file>] [--backend sandbox|docker] [--sandbox-image ...]
 node tools/controller/src/cli.ts create-slot-key --slot-key <key>
 node tools/controller/src/cli.ts attempt --work <new run dir> --policy <ProjectPolicy> --candidate <private input> ...
+node tools/controller/src/cli.ts run --job-kind judge_verify --request-id <uuid> --prebuilt <local store dir|judge job index key> \
+  --release <release.json> --deadline-at <UTC time> [--backend sandbox] [--sandbox-image <the release's kit image>] [--work <dir>]
 ```
 
 `attempt` is described in [The candidate attempt](#the-candidate-attempt).
@@ -35,6 +37,7 @@ node tools/controller/src/cli.ts attempt --work <new run dir> --policy <ProjectP
 - `--fix` is for `judge_verify` only: the fix to grade as `fixed-01`, in the local runner's alternative-fix layout (`alternative-fix.json` and its patch). The default is the local runner's alternative fix.
 - `--backend sandbox` is the default. It reads `DATABASE_URL`, `VERCEL_TOKEN`, `VERCEL_TEAM_ID` and `VERCEL_PROJECT_ID` from the environment, never from arguments, and prints none of them. A missing one is named and the command exits 2.
 - `--backend docker` runs the copies on local Docker with an in-memory PGlite ledger. That ledger has every `@rbw/spend` migration and both slot keys, as the local runner's recorded mode uses. It needs no credentials. Its amounts are what the same copies would reserve and settle on Sandbox.
+- `--prebuilt` is prebuilt mode, the judge controller: it runs the release's frozen judge job with no Docker and writes `judge/<root>/` in the private store (`BLOB_PRIVATE_STORE_ID` and `VERCEL_OIDC_TOKEN`, or a local store directory). The judge route starts it; `src/judge-run.ts` describes its checks and its end order.
 - `create-slot-key` is an owner action on the database in `DATABASE_URL`. The migrations seed the pools but no slot key, so `development` and `judge` are each created once.
 
 The job goes in `<run dir>/jobs/<name>/`. The name defaults to `kit-check`, `observe`, `admission` or `judge`. An observation reads its baseline from `<run dir>/jobs/kit-check/evidence.json`, so the kit check and the observation share one run directory.
@@ -347,9 +350,9 @@ They run on PGlite in the unit tests, and on the Postgres in `DATABASE_URL` in `
 
 ## What it does not do
 
-- It is not the web route that starts a judge replay (planned).
+- It is not the web route that starts a judge replay (`packages/web`).
 - The candidate attempt runs no source search, docs extract or writer repair, and publishes nothing: `tools/release` stages, publishes and builds from its root.
 - It never retries a launch, a copy or a job, and it never reconciles or releases a slot after an uncertain launch. Both are the operator's recorded actions.
 - It does not shorten a copy below the driver's 600 s: when the child deadline is shorter, the copy does not start.
 - It does not calibrate anything, and its summaries are not admissions.
-- It runs the controller itself on the conductor's host, not in a sandbox, so it reserves only the copies.
+- For factory runs it runs on the conductor's host, not in a sandbox, so it reserves only the copies. A judge replay's controller runs in its own sandbox, which the judge route reserves.

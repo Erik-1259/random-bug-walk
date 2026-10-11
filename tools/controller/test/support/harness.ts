@@ -15,7 +15,7 @@ import type { FakeSandboxOptions } from "../../../local-runner/test/support/fake
 import { KitImage } from "../../../local-runner/test/support/kit-image.ts";
 import type { KitImageOptions } from "../../../local-runner/test/support/kit-image.ts";
 import { tempDir, writeAlternativeDir, writeManifest, writeProbeDir, writeTerms } from "../../../local-runner/test/support/synthetic.ts";
-import { RATE_SHEET_PATH } from "../../src/envelope.ts";
+import { RATE_SHEET_PATH } from "../../src/rate-sheet.ts";
 import { DEVELOPMENT } from "../../src/limits.ts";
 import type { ControllerDeps, JobInputs } from "../../src/controller.ts";
 

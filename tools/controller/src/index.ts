@@ -2,13 +2,14 @@ export { DECLARED_STAGES, GRADING_POLICY_ID, KEY_VARIABLES, pickPhrases, prepare
 export type { AttemptDeps, AttemptInputs, AttemptOutcome, PreparedAttempt, PrivateInput } from "./attempt.ts";
 export { runJob } from "./controller.ts";
 export type { Backend, ControllerDeps, ControllerSummary, CopyRecord, JobInputs, JobOutcome, JobStatus, Launch } from "./controller.ts";
-export { CONTROLLER_ENVELOPE_SECONDS, COPY_ENVELOPE_SECONDS, RATE_SHEET_PATH, controllerEnvelope, copyEnvelope, copySettlement, judgeReservation } from "./envelope.ts";
+export { CONTROLLER_ENVELOPE_SECONDS, COPY_ENVELOPE_SECONDS, controllerEnvelope, copyEnvelope, copySettlement, judgeReservation } from "./envelope.ts";
 export type { JudgeReservation } from "./envelope.ts";
 export { LaunchWatch, watchedDocker, watchedSandbox } from "./launch.ts";
 export { LedgerError, databaseLedger, inMemoryLedger } from "./ledger.ts";
 export type { Ledger } from "./ledger.ts";
 export { COPY_DEADLINE_MS, DEVELOPMENT, JOB_LIMITS, JUDGE, PARENT_MARGIN_MS, childDeadlineMs, launchDecision } from "./limits.ts";
 export type { LaunchDecision, LedgerTarget } from "./limits.ts";
+export { RATE_SHEET_PATH } from "./rate-sheet.ts";
 export { PROOF_DIR, ProofInputError, loadProofInputs, runProof } from "./proof.ts";
 export type { ProofCase, ProofInputs, ProofOptions, ProofResult } from "./proof.ts";
 export { SymptomUnavailable, buildSymptom } from "./symptom.ts";

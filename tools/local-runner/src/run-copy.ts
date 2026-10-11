@@ -37,6 +37,11 @@ export interface RunCopyOptions extends CopyInputOptions {
   backend?: "docker" | "sandbox";
   /** For the sandbox backend: the kit image in VCR, pinned by digest, which must be one of `image`'s repository digests. */
   sandboxImage?: string | null;
+  /**
+   * A judge replay's frozen source (the release's exported image source). With it, the copy uses
+   * this source and the job's image digest, and makes no Docker call: no inspect and no export.
+   */
+  prebuiltSource?: string;
 }
 
 export interface RunCopyDeps {
@@ -95,15 +100,19 @@ export async function runCopyCommand(options: RunCopyOptions, deps: RunCopyDeps)
   const label = labelOf(request.kind);
   const tag = runTag(request.root_execution_id);
   try {
-    const digest = await inspectImage(deps.docker, options.image);
-    if (digest !== request.image_digest) return refused("image_mismatch", `the job names ${request.image_digest} but ${options.image} is ${digest}`);
-    if (target !== null) {
-      const pushed = (await inspectRepoDigests(deps.docker, options.image)).some((item) => item.endsWith(`@${target.digest}`));
-      if (!pushed) return refused("sandbox_image_mismatch", `${options.image} has no repository digest ${target.digest}, so the VCR image is not the job's image`);
+    let digest = request.image_digest;
+    let sourceDir = options.prebuiltSource;
+    if (sourceDir === undefined) {
+      digest = await inspectImage(deps.docker, options.image);
+      if (digest !== request.image_digest) return refused("image_mismatch", `the job names ${request.image_digest} but ${options.image} is ${digest}`);
+      if (target !== null) {
+        const pushed = (await inspectRepoDigests(deps.docker, options.image)).some((item) => item.endsWith(`@${target.digest}`));
+        if (!pushed) return refused("sandbox_image_mismatch", `${options.image} has no repository digest ${target.digest}, so the VCR image is not the job's image`);
+      }
+      sourceDir = (await exportImage(deps.docker, { image: digest, container: `rbw-${tag}-${label}-${trial.trial_id}-export`, dest: join(options.work, "source") })).source_dir;
     }
-    const exported = await exportImage(deps.docker, { image: digest, container: `rbw-${tag}-${label}-${trial.trial_id}-export`, dest: join(options.work, "source") });
-    const states = deriveCodeStates(readFileSync(join(exported.source_dir, inputs.probes.data.target_path)), inputs.probes, inputs.alternative);
-    const plan = planCopy(trial, { tag, label, image: digest, work: options.work, jobDir: options.job, sourceDir: exported.source_dir, states, inputs });
+    const states = deriveCodeStates(readFileSync(join(sourceDir, inputs.probes.data.target_path)), inputs.probes, inputs.alternative);
+    const plan = planCopy(trial, { tag, label, image: digest, work: options.work, jobDir: options.job, sourceDir, states, inputs });
     let result: CopyResult;
     let sandbox: SandboxReport | null = null;
     if (target !== null) {

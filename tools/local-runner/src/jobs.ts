@@ -11,6 +11,9 @@ import type { ProbeSet } from "@rbw/shapes";
 import { UMAMI_COMMIT } from "@rbw/umami-driver";
 import type { Fixture } from "@rbw/umami-fixture";
 import type { CodeStates, StateFile, StateKey } from "./code-states.ts";
+import { runTag } from "./shared.ts";
+
+export { runTag };
 
 export type JobLabel = "kit-check" | "observe" | "admission" | "alternative-fix";
 
@@ -50,10 +53,6 @@ export interface RunIds {
   root_execution_id: string;
   executions: Readonly<Record<JobLabel | "candidate-text", string>>;
   release_id: string;
-}
-
-export function runTag(rootExecutionId: string): string {
-  return sha256Hex(Buffer.from(rootExecutionId)).slice(0, 8);
 }
 
 export function newRunIds(uuid: () => string): RunIds {

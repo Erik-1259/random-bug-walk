@@ -1,6 +1,6 @@
 # @rbw/web
 
-The results site: a Next.js app (App Router) that renders the case evidence page and a diagnostic catalog from published records. Every page and file is prerendered at build time from a results directory, and nothing is computed or launched at request time. This is part of a hackathon prototype.
+The results site: a Next.js app (App Router) that renders the case evidence page and a diagnostic catalog from published records. Every page and file is prerendered at build time from a results directory. Only the judge routes run at request time; they start one judge replay at a time (below). This is part of a hackathon prototype.
 
 ## Pages
 
@@ -28,7 +28,7 @@ With a release (ADM-09), the page shows "Validated blind-spot example". The case
 
 Without a release, the page shows "No validated blind-spot example yet", provenance says "Release: None published yet.", validated-task downloads are disabled, and the funnel counts 0 validated releases. A run that holds an observed symptom is shown as the case, labelled "Development evidence, not validated", and published runs are downloadable as diagnostic archives.
 
-In both states the replay button is disabled. The replay control's states (`disabled`, `ready`, `starting`, `running`, `passed`, `failed`) are defined in `src/model.ts`. Only `disabled` is reachable: the replay action is planned as the next item.
+Without a release, or when the judge routes are not configured for the release, the replay control is disabled. Otherwise it shows a passcode field and the "Plant and verify this example" button (see Judge routes).
 
 ## Results directory
 
@@ -81,9 +81,52 @@ The symptom and admission paths are this app's reading convention. No current co
 
 The pages and the file route call `loadResults`, which runs `readResults` once per directory per process and keeps the result with an index of the files the route serves. A build therefore reads and hashes each published file once to check it and once more to serve it, however many routes it prerenders. Under `next dev`, changes to the results directory show after a restart.
 
+## Judge routes
+
+A judge replay plants and verifies the released case again: three fresh copies (clean, planted, fixed) on Vercel Sandbox, started by a controller in its own sandbox, with the conductor's machine off. Only judges with the shared passcode can start one, and only one runs at a time.
+
+| Route | Request | Answer |
+|---|---|---|
+| `POST /api/judge/session` | `{ passcode }` | A correct passcode sets the session cookie (HttpOnly, Secure, SameSite=Strict, an HMAC keyed with the passcode, so a new passcode ends every session); a wrong or missing one gives 401 |
+| `POST /api/judge` | exactly `{ request_id }`, a UUID the browser makes and keeps | `starting`, the replay's status when the request ID already has one, or `unavailable` with a reason |
+| `GET /api/judge/status?request_id=<uuid>` | | The replay's state, the copies' progress, the measured duration apart from the 35-minute hard cap, and at the end the six cells with their failing tests |
+
+Both judge routes refuse a request without the session cookie before any ledger, Blob or Sandbox call. The release comes from the build, not the request.
+
+The states, each written in text:
+
+| State | Meaning |
+|---|---|
+| `disabled` | No release, or the judge routes are not configured for it |
+| `ready` | The control can start a replay |
+| `starting` | The controller sandbox was created and no copy has started |
+| `running` | A copy has started |
+| `verified` | All six cells came out as the release's did |
+| `not_reproduced` | At least one cell did not |
+| `incomplete` | The replay ended without a result, or ran past its timeout with nothing left open |
+| `needs_reconciliation` | A launch or the end of the replay is not confirmed; the operator checks the ledger |
+| `unavailable` | Busy (another replay runs: try again shortly), the budget, the hold, the release, or the access token |
+
+The hold: after two `not_reproduced` replays in a row (`incomplete` ones do not count), new replays are `unavailable` ("held for inspection") until `RBW_JUDGE_HOLD_CLEARED_AT` is set to a later time.
+
+The known condition: on the 2nd to the 5th of a month, when the only unexpected cells are the original suite's two upstream revenue tests, the replay is `verified` and the page says: "Two upstream revenue tests fail on the 2nd to the 5th of each month, a known date-dependent condition in Umami's own test data, not in this example. They are shown as failures and are not counted against this replay."
+
 ## Configuration
 
 `src/config.ts` is the one configuration loader. `RBW_RESULTS_DIR` names the results directory, relative to this directory or absolute. The default is `fixtures/development-2026-10-06`.
+
+The judge routes read these server variables at request time; none of them is in the client bundle, and the routes print none of them:
+
+| Variable | Use |
+|---|---|
+| `RBW_JUDGE_PASSCODE` | The shared judge passcode, compared in constant time; unset disables the judge routes |
+| `RBW_JUDGE_RELEASE_ID`, `RBW_JUDGE_RELEASE_SHA256` | The release the routes accept: the built release must have this ID and its `release.json` this SHA-256 |
+| `RBW_JUDGE_HOLD_CLEARED_AT` | Optional UTC time; replays created before it do not count for the hold |
+| `DATABASE_URL` | The spend ledger |
+| `VERCEL_TOKEN`, `VERCEL_TEAM_ID`, `VERCEL_PROJECT_ID` | Vercel Sandbox, for the controller sandbox and its copies |
+| `BLOB_PRIVATE_STORE_ID` | The private Blob store; the request's OIDC token authenticates it |
+
+The controller sandbox receives the last four, and the request's OIDC token, as environment values. The build freezes the release's `release.json` and the pinned rate sheet into the server bundle (`next.config.ts`), because the functions do not hold the results directory.
 
 The record packages read their schema files next to their sources, which a bundled copy cannot do, so `src/records.ts` loads them with imports the bundler leaves out, and Node loads them from the workspace during prerendering.
 
@@ -145,6 +188,6 @@ A push of a branch other than the production branch then builds a preview deploy
 
 - It does not rerun the release step's checks; it reads `release.json` and checks only its files and its link to the run.
 - It does not render the frozen issue inline; `issue.json` is a download.
-- It does not run replays and has no server route that launches compute.
+- Its only routes that launch compute are the judge routes, and only for judges with the passcode. It has no anonymous replays, no queue and no cancel action.
 - It reads a local results directory at build time; it fetches nothing from the results repository or the store.
 - It uses no external fonts or assets.
