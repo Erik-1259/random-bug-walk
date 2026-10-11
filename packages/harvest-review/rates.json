@@ -1,0 +1,26 @@
+[
+  {
+    "service": "token-factory.nemotron-3-super",
+    "unit": "input_token",
+    "price": { "microusd": 300000, "per_units": 1000000 },
+    "source_url": "https://tokenfactory.nebius.com/organization/prices"
+  },
+  {
+    "service": "token-factory.nemotron-3-super",
+    "unit": "output_token",
+    "price": { "microusd": 900000, "per_units": 1000000 },
+    "source_url": "https://tokenfactory.nebius.com/organization/prices"
+  },
+  {
+    "service": "token-factory.kimi-k2.7-code",
+    "unit": "input_token",
+    "price": { "microusd": 950000, "per_units": 1000000 },
+    "source_url": "https://tokenfactory.nebius.com/organization/prices"
+  },
+  {
+    "service": "token-factory.kimi-k2.7-code",
+    "unit": "output_token",
+    "price": { "microusd": 4000000, "per_units": 1000000 },
+    "source_url": "https://tokenfactory.nebius.com/organization/prices"
+  }
+]

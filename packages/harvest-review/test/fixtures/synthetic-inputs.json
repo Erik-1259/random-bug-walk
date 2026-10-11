@@ -1,0 +1,259 @@
+{
+  "format_version": 1,
+  "candidates": [
+    {
+      "candidate_id": "synthetic-org/synthetic-sql#7",
+      "repo": "synthetic-org/synthetic-sql",
+      "commit": "41a5470ec8cfca5a6864156bc280cdc649a3861c",
+      "path": "src/queries/stats.ts",
+      "previous_path": null,
+      "line": 3,
+      "call": "getDateSQL(\"created_at\", unit, filters.timezone)",
+      "function": "statsQuery",
+      "ast_grep": "confirmed",
+      "after": {
+        "start_line": 1,
+        "end_line": 4,
+        "text": "1 | export function statsQuery(siteId: string, filters: { unit: string; timezone: string }) {\n2 |   const { unit } = filters;\n3 |   return getDateSQL(\"created_at\", unit, filters.timezone);\n4 | }"
+      },
+      "before": [
+        {
+          "start_line": 1,
+          "end_line": 4,
+          "text": "1 | export function statsQuery(siteId: string, filters: { unit: string; timezone: string }) {\n2 |   const { unit } = filters;\n3 |   return getDateSQL(\"created_at\", unit);\n4 | }"
+        }
+      ],
+      "hunks": [
+        "@@ -3,1 +3,1 @@\n-  return getDateSQL(\"created_at\", unit);\n+  return getDateSQL(\"created_at\", unit, filters.timezone);"
+      ]
+    },
+    {
+      "candidate_id": "synthetic-org/synthetic-hook@ce1e0ac0c82ce451cfe1ef58791f3b8c105e0e0e",
+      "repo": "synthetic-org/synthetic-hook",
+      "commit": "ce1e0ac0c82ce451cfe1ef58791f3b8c105e0e0e",
+      "path": "src/pages/RangePage.tsx",
+      "previous_path": null,
+      "line": 5,
+      "call": "useDateRange({ timezone })",
+      "function": "RangePage",
+      "ast_grep": "confirmed",
+      "after": {
+        "start_line": 3,
+        "end_line": 7,
+        "text": "3 | export function RangePage() {\n4 |   const { timezone } = useTimezone();\n5 |   const range = useDateRange({ timezone });\n6 |   return range;\n7 | }"
+      },
+      "before": [
+        {
+          "start_line": 3,
+          "end_line": 6,
+          "text": "3 | export function RangePage() {\n4 |   const range = useDateRange();\n5 |   return range;\n6 | }"
+        }
+      ],
+      "hunks": [
+        "@@ -1,4 +1,5 @@\n-import { useDateRange } from \"./hooks\";\n-\n-export function RangePage() {\n-  const range = useDateRange();\n+import { useDateRange, useTimezone } from \"./hooks\";\n+\n+export function RangePage() {\n+  const { timezone } = useTimezone();\n+  const range = useDateRange({ timezone });"
+      ]
+    },
+    {
+      "candidate_id": "synthetic-org/synthetic-new-function@a33cc94955626c9a3609de7ce4ae0baa43d5dbe0",
+      "repo": "synthetic-org/synthetic-new-function",
+      "commit": "a33cc94955626c9a3609de7ce4ae0baa43d5dbe0",
+      "path": "src/a.ts",
+      "previous_path": null,
+      "line": 6,
+      "call": "formatDate(d, timezone)",
+      "function": "zoned",
+      "ast_grep": "function_missing_before",
+      "after": {
+        "start_line": 5,
+        "end_line": 7,
+        "text": "5 | export function zoned(d: Date, timezone: string) {\n6 |   return formatDate(d, timezone);\n7 | }"
+      },
+      "before": [],
+      "hunks": [
+        "@@ -5,0 +5,4 @@\n+export function zoned(d: Date, timezone: string) {\n+  return formatDate(d, timezone);\n+}\n+"
+      ]
+    },
+    {
+      "candidate_id": "synthetic-org/synthetic-new-call@1bee8814de42248551e2ec7dfbdf5d06a0e5d80e",
+      "repo": "synthetic-org/synthetic-new-call",
+      "commit": "1bee8814de42248551e2ec7dfbdf5d06a0e5d80e",
+      "path": "src/a.ts",
+      "previous_path": null,
+      "line": 2,
+      "call": "formatDate(d, timezone)",
+      "function": "label",
+      "ast_grep": "call_added",
+      "after": {
+        "start_line": 1,
+        "end_line": 4,
+        "text": "1 | export function label(d: Date, timezone: string) {\n2 |   const shown = formatDate(d, timezone);\n3 |   return formatDate(d) + shown;\n4 | }"
+      },
+      "before": [
+        {
+          "start_line": 1,
+          "end_line": 3,
+          "text": "1 | export function label(d: Date, timezone: string) {\n2 |   return formatDate(d);\n3 | }"
+        }
+      ],
+      "hunks": [
+        "@@ -2,1 +2,2 @@\n-  return formatDate(d);\n+  const shown = formatDate(d, timezone);\n+  return formatDate(d) + shown;"
+      ]
+    },
+    {
+      "candidate_id": "synthetic-org/synthetic-already-passed@629738c7577c49dcb0499ed7b214f5987bce2a05",
+      "repo": "synthetic-org/synthetic-already-passed",
+      "commit": "629738c7577c49dcb0499ed7b214f5987bce2a05",
+      "path": "src/a.ts",
+      "previous_path": null,
+      "line": 2,
+      "call": "formatInTimeZone(d, timezone, \"yyyy\")",
+      "function": "label",
+      "ast_grep": "before_has_timezone_argument",
+      "after": {
+        "start_line": 1,
+        "end_line": 3,
+        "text": "1 | export function label(d: Date, zone: string, timezone: string) {\n2 |   return formatInTimeZone(d, timezone, \"yyyy\");\n3 | }"
+      },
+      "before": [
+        {
+          "start_line": 1,
+          "end_line": 3,
+          "text": "1 | export function label(d: Date, zone: string, timezone: string) {\n2 |   return formatInTimeZone(d, zone, \"yyyy\");\n3 | }"
+        }
+      ],
+      "hunks": [
+        "@@ -2,1 +2,1 @@\n-  return formatInTimeZone(d, zone, \"yyyy\");\n+  return formatInTimeZone(d, timezone, \"yyyy\");"
+      ]
+    },
+    {
+      "candidate_id": "synthetic-org/synthetic-constant-zone@b0fed2a52c92711dcc72c41cf3f82c82e9b77813",
+      "repo": "synthetic-org/synthetic-constant-zone",
+      "commit": "b0fed2a52c92711dcc72c41cf3f82c82e9b77813",
+      "path": "src/a.js",
+      "previous_path": null,
+      "line": 2,
+      "call": "d.toLocaleDateString(\"en\", { timeZone: \"UTC\" })",
+      "function": "label",
+      "ast_grep": "timezone_is_constant",
+      "after": {
+        "start_line": 1,
+        "end_line": 3,
+        "text": "1 | export function label(d) {\n2 |   return d.toLocaleDateString(\"en\", { timeZone: \"UTC\" });\n3 | }"
+      },
+      "before": [
+        {
+          "start_line": 1,
+          "end_line": 3,
+          "text": "1 | export function label(d) {\n2 |   return d.toLocaleDateString(\"en\");\n3 | }"
+        }
+      ],
+      "hunks": [
+        "@@ -2,1 +2,1 @@\n-  return d.toLocaleDateString(\"en\");\n+  return d.toLocaleDateString(\"en\", { timeZone: \"UTC\" });"
+      ]
+    },
+    {
+      "candidate_id": "synthetic-org/synthetic-global-zone@b753581403d59d4e0c3760d84aac342796a16ab9",
+      "repo": "synthetic-org/synthetic-global-zone",
+      "commit": "b753581403d59d4e0c3760d84aac342796a16ab9",
+      "path": "src/a.ts",
+      "previous_path": null,
+      "line": 2,
+      "call": "formatDate(d, timezone)",
+      "function": "label",
+      "ast_grep": "timezone_unbound",
+      "after": {
+        "start_line": 1,
+        "end_line": 3,
+        "text": "1 | export function label(d: Date) {\n2 |   return formatDate(d, timezone);\n3 | }"
+      },
+      "before": [
+        {
+          "start_line": 1,
+          "end_line": 3,
+          "text": "1 | export function label(d: Date) {\n2 |   return formatDate(d);\n3 | }"
+        }
+      ],
+      "hunks": [
+        "@@ -2,1 +2,1 @@\n-  return formatDate(d);\n+  return formatDate(d, timezone);"
+      ]
+    },
+    {
+      "candidate_id": "synthetic-org/synthetic-search-license@b28936956b98dc2768f9ea8def14eb83094b95bd",
+      "repo": "synthetic-org/synthetic-search-license",
+      "commit": "b28936956b98dc2768f9ea8def14eb83094b95bd",
+      "path": "src/label.ts",
+      "previous_path": null,
+      "line": 2,
+      "call": "formatDate(d, timezone)",
+      "function": "label",
+      "ast_grep": "confirmed",
+      "after": {
+        "start_line": 1,
+        "end_line": 3,
+        "text": "1 | export function label(d: Date, timezone: string) {\n2 |   return formatDate(d, timezone);\n3 | }"
+      },
+      "before": [
+        {
+          "start_line": 1,
+          "end_line": 3,
+          "text": "1 | export function label(d: Date, timezone: string) {\n2 |   return formatDate(d);\n3 | }"
+        }
+      ],
+      "hunks": [
+        "@@ -2,1 +2,1 @@\n-  return formatDate(d);\n+  return formatDate(d, timezone);"
+      ]
+    },
+    {
+      "candidate_id": "synthetic-org/synthetic-backport@05a7d8ad21c25d8ef41ac3c18b0524c28d251dd5",
+      "repo": "synthetic-org/synthetic-backport",
+      "commit": "05a7d8ad21c25d8ef41ac3c18b0524c28d251dd5",
+      "path": "src/backport.ts",
+      "previous_path": null,
+      "line": 2,
+      "call": "formatDate(d, timezone)",
+      "function": "label",
+      "ast_grep": "confirmed",
+      "after": {
+        "start_line": 1,
+        "end_line": 3,
+        "text": "1 | export function label(d: Date, timezone: string) {\n2 |   return formatDate(d, timezone);\n3 | }"
+      },
+      "before": [
+        {
+          "start_line": 1,
+          "end_line": 3,
+          "text": "1 | export function label(d: Date, timezone: string) {\n2 |   return formatDate(d);\n3 | }"
+        }
+      ],
+      "hunks": [
+        "@@ -2,1 +2,1 @@\n-  return formatDate(d);\n+  return formatDate(d, timezone);"
+      ]
+    },
+    {
+      "candidate_id": "synthetic-org/synthetic-renamed@ce920eb7263bc005e035df8257250ea7c98379dc",
+      "repo": "synthetic-org/synthetic-renamed",
+      "commit": "ce920eb7263bc005e035df8257250ea7c98379dc",
+      "path": "src/format/label.ts",
+      "previous_path": "src/label-old.ts",
+      "line": 2,
+      "call": "formatDate(d, timezone)",
+      "function": "label",
+      "ast_grep": "confirmed",
+      "after": {
+        "start_line": 1,
+        "end_line": 3,
+        "text": "1 | export function label(d: Date, timezone: string) {\n2 |   return formatDate(d, timezone);\n3 | }"
+      },
+      "before": [
+        {
+          "start_line": 1,
+          "end_line": 3,
+          "text": "1 | export function label(d: Date, timezone: string) {\n2 |   return formatDate(d);\n3 | }"
+        }
+      ],
+      "hunks": [
+        "@@ -2,1 +2,1 @@\n-  return formatDate(d);\n+  return formatDate(d, timezone);"
+      ]
+    }
+  ]
+}

@@ -23,7 +23,7 @@ export type { IssueOutput } from "./issue-schema.ts";
 export { ObservedSymptomSchema, parseObservedSymptom } from "./observed-symptom.ts";
 export type { ObservedSymptom } from "./observed-symptom.ts";
 export { profileSha256 } from "./profile.ts";
-export type { HashedProfile, ModelProfile } from "./profile.ts";
+export type { HashedProfile, ModelProfile, StructuredOutputMode } from "./profile.ts";
 export type { PromptMessages } from "./prompt.ts";
 export { countPromptBound } from "./prompt-bound.ts";
 export { actualMicrousd, buildEnvelope, parseRateSheet, rateSheetSha256 } from "./rates.ts";

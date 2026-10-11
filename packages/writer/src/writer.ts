@@ -2,7 +2,7 @@
 // reserved against the spend pool, recorded as launching before the request, and settled after it.
 // The caller protocol of @rbw/spend is followed exactly; nothing retries.
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
-import { Output, generateText, jsonSchema, zodSchema } from "ai";
+import { Output, asSchema, generateText, jsonSchema, zodSchema } from "ai";
 import type { FlexibleSchema, LanguageModel } from "ai";
 import { callName } from "@rbw/schema";
 import type {
@@ -336,17 +336,35 @@ interface Meter<K extends string> {
   rateSheet: Uint8Array;
 }
 
-function generate<T>(provider: ModelProvider, prompt: PromptMessages, schema: FlexibleSchema<T>) {
+/** The reply text parsed as JSON and validated with the request's schema. Throws when either fails. */
+async function validatedAfter<T>(text: string, schema: FlexibleSchema<T>): Promise<T> {
+  const value: unknown = JSON.parse(text);
+  const { validate } = asSchema(schema);
+  if (validate === undefined) {
+    throw new Error("the request's schema has no validator");
+  }
+  const result = await validate(value);
+  if (!result.success) {
+    throw result.error;
+  }
+  return result.value;
+}
+
+/** Sends the request and returns the validated output; throws on a reply that does not validate. */
+async function generate<T>(provider: ModelProvider, prompt: PromptMessages, schema: FlexibleSchema<T>): Promise<T> {
   const { hashed } = provider.profile;
-  return generateText({
+  const request = {
     model: provider.model,
     system: prompt.system,
     prompt: prompt.user,
-    output: Output.object({ schema }),
     maxRetries: hashed.max_retries,
     maxOutputTokens: hashed.max_output_tokens,
     abortSignal: AbortSignal.timeout(hashed.request_timeout_ms),
-  });
+  };
+  if (hashed.structured_output === "validated_after") {
+    return validatedAfter((await generateText(request)).text, schema);
+  }
+  return (await generateText({ ...request, output: Output.object({ schema }) })).output;
 }
 
 async function render<T>(provider: ModelProvider, rendered: Rendered<T>): Promise<Preview> {
@@ -527,7 +545,7 @@ async function meteredCallSteps<T, K extends string>(
 
   let output: T | null = null;
   const { exchange, error } = await provider.observed.send(body, async () => {
-    output = (await generate(provider, rendered.prompt, rendered.schema)).output;
+    output = await generate(provider, rendered.prompt, rendered.schema);
   });
   const { status, failure } = classify(exchange, error);
   const response = exchange.kind === "response" ? exchange : null;
