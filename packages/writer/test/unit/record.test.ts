@@ -4,6 +4,7 @@ import { join } from "node:path";
 import type { PGlite } from "@electric-sql/pglite";
 import { createSpend } from "@rbw/spend";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { CardSchema } from "../../src/card-schema.ts";
 import { API_KEY_VARIABLE } from "../../src/config.ts";
 import { runRecord } from "../../src/record.ts";
 import { createReplayFetch } from "../../src/recording.ts";
@@ -140,6 +141,7 @@ describe("the record command", () => {
 
     const files = (await readdir(join(dir, "out"))).sort();
     expect(files).toEqual([
+      "card-1.card.json",
       "card-1.recording.json",
       "card-1.summary.json",
       "issue-2.recording.json",
@@ -166,6 +168,8 @@ describe("the record command", () => {
       };
       expect(recording.request.body.chat_template_kwargs).toEqual({ enable_thinking: false });
     }
+    const card = CardSchema.parse(JSON.parse(await readFile(join(dir, "out", "card-1.card.json"), "utf8")));
+    expect(card.id).toBe("synthetic-card-1");
     const issueSummary = await readFile(join(dir, "out", "issue-2.summary.json"), "utf8");
     expect(JSON.parse(issueSummary)).toMatchObject({ check_report: { status: "ready_for_review" } });
 

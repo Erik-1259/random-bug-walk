@@ -1,6 +1,6 @@
 # @rbw/harvest
 
-Finds public source fixes on GitHub that match shape `DT-1.tz-arg` (a caller has the selected time zone but does not pass it to a date operation), confirms them structurally, and reports a funnel with a count and a reason for every drop. It makes no model or paid calls, and it stops at "structurally confirmed". Writing cards for confirmed candidates is a later, paid step.
+Finds public source fixes on GitHub that match shape `DT-1.tz-arg` (a caller has the selected time zone but does not pass it to a date operation), confirms them structurally, and reports a funnel with a count and a reason for every drop. It makes no model or paid calls, and it stops at "structurally confirmed". Cards for candidates the review confirms are written by `card-inputs` in `@rbw/harvest-review` and the writer's paid `record` command.
 
 ## Contents
 

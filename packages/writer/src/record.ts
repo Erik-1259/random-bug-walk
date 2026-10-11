@@ -248,6 +248,9 @@ export async function runRecord(options: RecordOptions): Promise<number> {
       const text = JSON.stringify(summary(call, extra), bigintText, 2);
       await writeFile(join(out, `${name}.summary.json`), `${text}\n`);
       say(text);
+      if ("card" in outcome && outcome.card !== null) {
+        await writeFile(join(out, `${name}.card.json`), `${JSON.stringify(outcome.card, null, 2)}\n`);
+      }
 
       if (call.status === "uncertain") {
         say(`record: uncertain: lost_response for operation ${call.operation_id}; it needs a manual reconciliation`);
