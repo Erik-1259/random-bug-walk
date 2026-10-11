@@ -183,6 +183,31 @@ describe("the record command", () => {
     expect(everything).not.toMatch(/authorization|bearer/i);
   });
 
+  it("writes no card file when the call fails a later check, here a prompt above its counted bound", async () => {
+    const replay = createReplayFetch(await committedRecordings());
+    const inflated: typeof fetch = async (input, init) => {
+      const response = await replay(input, init);
+      const body = (await response.json()) as { usage?: { prompt_tokens?: number } };
+      if (body.usage !== undefined) body.usage.prompt_tokens = 10_000_000;
+      return new Response(JSON.stringify(body), { status: response.status, headers: response.headers });
+    };
+    let out = "";
+    const code = await runRecord({
+      argv: argv("1"),
+      env: ENV,
+      fetch: inflated,
+      provenance: "synthetic",
+      connect: () => Promise.resolve({ spend: createSpend({ client: db, schema }), close: () => Promise.resolve() }),
+      write: (text) => {
+        out += text;
+      },
+      now: () => new Date("2026-10-05T00:00:00Z"),
+    });
+    expect(code).toBe(1);
+    expect(out).toMatch(/BOUND EXCEEDED/);
+    expect((await readdir(join(dir, "out"))).sort()).not.toContain("card-1.card.json");
+  });
+
   it("stops after one call with --max-calls 1", async () => {
     const result = await run(argv("1"), ENV);
     expect(result.code, result.out).toBe(0);
