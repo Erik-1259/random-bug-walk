@@ -94,7 +94,7 @@ export interface FileMatch {
   readonly outcome: MatchOutcome;
 }
 
-const FUNCTION_KINDS = new Set([
+export const FUNCTION_KINDS = new Set([
   "function_declaration",
   "function_expression",
   "arrow_function",
@@ -137,11 +137,11 @@ function argumentsOf(call: SgNode): SgNode[] {
   return fieldOf(call, "arguments")?.namedChildren().filter((node) => kindOf(node) !== "comment") ?? [];
 }
 
-function enclosingFunctions(node: SgNode): SgNode[] {
+export function enclosingFunctions(node: SgNode): SgNode[] {
   return node.ancestors().filter((ancestor) => FUNCTION_KINDS.has(kindOf(ancestor)));
 }
 
-function functionLabel(fn: SgNode): string {
+export function functionLabel(fn: SgNode): string {
   const name = fieldOf(fn, "name")?.text();
   if (name !== undefined) {
     return name;
@@ -157,7 +157,7 @@ function functionLabel(fn: SgNode): string {
 }
 
 /** The names of the functions around a node, outermost first, or `<module>` at top level. */
-function functionPath(node: SgNode): string {
+export function functionPath(node: SgNode): string {
   const names = enclosingFunctions(node).reverse().map(functionLabel);
   return names.length === 0 ? "<module>" : names.join("/");
 }

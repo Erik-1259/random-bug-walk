@@ -145,6 +145,6 @@ node packages/harvest/src/cli.ts funnel --in <run directory>
 
 ## Not in this package
 
-- Model calls, cards and anything after `structurally_confirmed`.
+- Model calls, cards and anything after `structurally_confirmed`. A two-model review of the matched candidates is in `@rbw/harvest-review`.
 - SWE-rebench V2 and sources other than GitHub search.
 - Target confirmation and probes, which stay in `@rbw/shapes`.

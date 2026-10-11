@@ -2,6 +2,8 @@
 // whose canonical digest is the operation's runtime_profile_sha256; the rest is config beside it.
 import { canonicalDigest } from "@rbw/schema";
 
+export type StructuredOutputMode = "json_schema_strict" | "validated_after";
+
 /** The fields of the hashed part that the metered call reads. A profile may hash more fields. */
 export interface HashedProfile {
   readonly provider: string;
@@ -11,6 +13,12 @@ export interface HashedProfile {
   readonly max_output_tokens: number;
   readonly max_retries: number;
   readonly request_timeout_ms: number;
+  /**
+   * How the structured output is obtained. `json_schema_strict` (also when absent) sends the schema
+   * as a strict `response_format`; `validated_after` sends no `response_format` and parses and
+   * validates the reply text with the same schema after the call.
+   */
+  readonly structured_output?: StructuredOutputMode;
   /** Framing allowances of the prompt bound (see prompt-bound.ts). */
   readonly prompt_bound: {
     readonly method: string;
