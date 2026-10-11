@@ -167,6 +167,22 @@ describe("the phrase picker", () => {
   });
 });
 
+describe("the phrase picker, short opening sentences", () => {
+  it("takes the start of the field, up to 12 words, when its first sentence has fewer than 6 words", () => {
+    const issue = {
+      title: "Daily visitor counts shift by one day for a named time zone",
+      reproduction_steps: ["Step."],
+      expected_result: "Counts are right. Each of the three days shows the visits stored for that local day.",
+      actual_result: "Counts are wrong. Two of the three days show visits that belong to the next day.",
+      environment: "Synthetic.",
+    };
+    const [, expected, actual] = pickPhrases(issue);
+    expect(expected).toBe("Counts are right. Each of the three days shows the visits stored");
+    expect(actual).toBe("Counts are wrong. Two of the three days show visits that belong");
+    for (const phrase of [expected, actual]) expect(phrase.split(" ").length).toBeGreaterThanOrEqual(6);
+  });
+});
+
 describe("one attempt: a root under the policy, start to finish", () => {
   let run: Run;
 

@@ -218,7 +218,7 @@ The attempt makes one `RunIds` with the policy's `project_id`. Every stage runs 
 - the first non-UTC check in fixture order is the primary zone, the other non-UTC checks are `follow_up_examples`, and the UTC control is left out;
 - a non-UTC check with no recorded response, or one that `classify` does not grade `local_day_counts_mismatch`, refuses the symptom (`symptom_unavailable`).
 
-**The phrases** are picked by code from the frozen issue: the `title`, the first sentence of `expected_result` and the first sentence of `actual_result`. Each has its double quotes removed and its whitespace collapsed, and is cut to at most 12 words.
+**The phrases** are picked by code from the frozen issue: the `title`, the first sentence of `expected_result` and the first sentence of `actual_result`. Each has its double quotes removed and its whitespace collapsed, and is cut to at most 12 words. When a first sentence has fewer than 6 words, its phrase is the start of the field instead, up to 12 words: a shorter phrase matches almost any page.
 
 **The candidate text** runs in the attempt's process, against the controller's own ledger. Its run context is the admission's: the policy's project and hash, the batch, the observation's candidate `task_revision`, the root, and the `candidate-text` execution with the root as parent. It acquires the development slot for the root first, and releases it at the end when nothing blocks it. The writer and the searcher use the development pool, so their own caps (12 writer calls and 6 searches per candidate) and the ledger are the controls.
 

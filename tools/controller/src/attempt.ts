@@ -36,6 +36,8 @@ const PHRASE_CALLS = ["phrase-1", "phrase-2", "phrase-3"] as const;
 const JOB_NAMES = ["kit-check", "observe", "admission"] as const;
 const ACTOR = "controller";
 const PHRASE_WORDS = 12;
+/** A shorter phrase matches almost any page, so it can't show novelty. */
+const PHRASE_MIN_WORDS = 6;
 const INPUT_FIELDS = ["candidate", "card_source", "excluded_identifiers", "search_settings", "search", "user_action", "locale", "fixture_description", "doc_excerpts"];
 const UNRESOLVED = new Set(["prepared", "launching", "running", "uncertain"]);
 
@@ -230,9 +232,15 @@ function words(text: string): string {
   return text.split(" ").slice(0, PHRASE_WORDS).join(" ");
 }
 
-/** The three exact phrases, picked by code from the frozen issue: the title and the first sentences of the expected and actual results. */
+/** The first sentence, or the start of the field when that sentence is too short to be distinctive. */
+function resultPhrase(text: string): string {
+  const sentence = firstSentence(text);
+  return words(sentence.split(" ").length >= PHRASE_MIN_WORDS ? sentence : clean(text));
+}
+
+/** The three exact phrases, picked by code from the frozen issue: the title and the first sentences of the expected and actual results (or their first 12 words when that sentence has fewer than 6). */
 export function pickPhrases(issue: IssueOutput): [string, string, string] {
-  return [words(clean(issue.title)), words(firstSentence(issue.expected_result)), words(firstSentence(issue.actual_result))];
+  return [words(clean(issue.title)), resultPhrase(issue.expected_result), resultPhrase(issue.actual_result)];
 }
 
 function writeOnce(path: string, bytes: string | Uint8Array): void {
