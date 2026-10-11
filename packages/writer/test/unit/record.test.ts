@@ -4,6 +4,7 @@ import { join } from "node:path";
 import type { PGlite } from "@electric-sql/pglite";
 import { createSpend } from "@rbw/spend";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { CardSchema } from "../../src/card-schema.ts";
 import { API_KEY_VARIABLE } from "../../src/config.ts";
 import { runRecord } from "../../src/record.ts";
 import { createReplayFetch } from "../../src/recording.ts";
@@ -140,6 +141,7 @@ describe("the record command", () => {
 
     const files = (await readdir(join(dir, "out"))).sort();
     expect(files).toEqual([
+      "card-1.card.json",
       "card-1.recording.json",
       "card-1.summary.json",
       "issue-2.recording.json",
@@ -166,6 +168,8 @@ describe("the record command", () => {
       };
       expect(recording.request.body.chat_template_kwargs).toEqual({ enable_thinking: false });
     }
+    const card = CardSchema.parse(JSON.parse(await readFile(join(dir, "out", "card-1.card.json"), "utf8")));
+    expect(card.id).toBe("synthetic-card-1");
     const issueSummary = await readFile(join(dir, "out", "issue-2.summary.json"), "utf8");
     expect(JSON.parse(issueSummary)).toMatchObject({ check_report: { status: "ready_for_review" } });
 
@@ -177,6 +181,31 @@ describe("the record command", () => {
       expect(everything).not.toContain(secret);
     }
     expect(everything).not.toMatch(/authorization|bearer/i);
+  });
+
+  it("writes no card file when the call fails a later check, here a prompt above its counted bound", async () => {
+    const replay = createReplayFetch(await committedRecordings());
+    const inflated: typeof fetch = async (input, init) => {
+      const response = await replay(input, init);
+      const body = (await response.json()) as { usage?: { prompt_tokens?: number } };
+      if (body.usage !== undefined) body.usage.prompt_tokens = 10_000_000;
+      return new Response(JSON.stringify(body), { status: response.status, headers: response.headers });
+    };
+    let out = "";
+    const code = await runRecord({
+      argv: argv("1"),
+      env: ENV,
+      fetch: inflated,
+      provenance: "synthetic",
+      connect: () => Promise.resolve({ spend: createSpend({ client: db, schema }), close: () => Promise.resolve() }),
+      write: (text) => {
+        out += text;
+      },
+      now: () => new Date("2026-10-05T00:00:00Z"),
+    });
+    expect(code).toBe(1);
+    expect(out).toMatch(/BOUND EXCEEDED/);
+    expect((await readdir(join(dir, "out"))).sort()).not.toContain("card-1.card.json");
   });
 
   it("stops after one call with --max-calls 1", async () => {

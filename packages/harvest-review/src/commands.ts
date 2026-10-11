@@ -1,8 +1,9 @@
-// The command line: `build-inputs` (no network), `review` and `acceptance` (metered calls).
+// The command line: `build-inputs` and `card-inputs` (no network), `review` and `acceptance` (metered calls).
 // Exit codes: 0 done; 1 the run stopped or could not start; 2 bad usage.
 import { writeFile } from "node:fs/promises";
 import { parseArgs } from "node:util";
 import { runAcceptance } from "./acceptance.ts";
+import { runCardInputs } from "./card-inputs.ts";
 import { buildInputs } from "./inputs.ts";
 import { runReview } from "./review.ts";
 import type { ReviewOptions } from "./review.ts";
@@ -10,6 +11,7 @@ import type { ReviewOptions } from "./review.ts";
 const USAGE = `usage:
   cli.ts build-inputs --run <harvest run dir> --out <review-inputs.json>
   cli.ts review --inputs <review-inputs.json> --rate-sheet <rates.json> --out <new dir> --slot-key <key> --pool <pool-key> [--max-candidates <1-8>]
+  cli.ts card-inputs --run <harvest run dir> --review <review.json> --out <dir>
   cli.ts acceptance --rate-sheet <rates.json> --out <new dir> --slot-key <key> --pool <pool-key> --cases <1-5 | 6-10 | list>`;
 
 async function runBuildInputs(options: ReviewOptions): Promise<number> {
@@ -40,6 +42,8 @@ export async function runCommand(options: ReviewOptions): Promise<number> {
       return runBuildInputs(sub);
     case "review":
       return runReview(sub);
+    case "card-inputs":
+      return runCardInputs(sub);
     case "acceptance":
       return runAcceptance(sub);
     default:

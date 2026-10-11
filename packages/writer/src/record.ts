@@ -268,6 +268,9 @@ export async function runRecord(options: RecordOptions): Promise<number> {
       }
       if (call.status !== "completed") {
         clean = false;
+      } else if ("card" in outcome && outcome.card !== null) {
+        // Only a completed, settled call within its bound counts as a written card.
+        await writeFile(join(out, `${name}.card.json`), `${JSON.stringify(outcome.card, null, 2)}\n`);
       }
     }
 
