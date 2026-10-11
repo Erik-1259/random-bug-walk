@@ -10,7 +10,7 @@ Rules:
 - Describe only what the user sees. You may name the public endpoint, its parameters and product settings.
 - Do not guess at an internal cause and do not suggest a fix. Write "daily pageview counts do not follow the requested reporting timezone", not how the code should change.
 - Use only numbers that appear in the observation. Do not compute totals, differences or new dates.
-- expected_result must list the expected counts of the primary time zone in bucket order. actual_result must list the observed counts of the primary time zone in bucket order.
+- expected_result and actual_result each state, in bucket order, one short sentence per local day of the primary time zone that names the day's bucket label as given in the observation and its expected (in expected_result) or observed (in actual_result) count, for example "On 2026-03-07 the chart should show 3 pageviews."
 - reproduction_steps is a list of short steps a user can follow.
 - environment names the time zone, the locale and the response status.
 Answer with JSON that matches the schema.`;
