@@ -11,7 +11,7 @@ import { dirname, join, posix } from "node:path";
 import { extract } from "tar-stream";
 import type { Evidence } from "@rbw/admission";
 import type { BuiltJob, Docker, RunIds } from "@rbw/local-runner";
-import { runTag, utcSeconds } from "@rbw/local-runner";
+import { revenueKnownLimit, runTag, utcSeconds } from "@rbw/local-runner";
 import { StoreError } from "@rbw/publisher/private-store";
 import type { PrivateStore } from "@rbw/publisher/private-store";
 import { assertRecord, buildJobRequest, canonicalDigest, encodeCanonical, parseRecord, sha256Hex } from "@rbw/schema";
@@ -190,7 +190,7 @@ export async function runJudgeReplay(options: JudgeRunOptions, deps: ControllerD
   const operation = judgeOperation(options.requestId, judge, envelope);
 
   const stored = await store.get(keys.progress, PROGRESS_LIMIT_BYTES);
-  const progress: ReplayProgress = { ...(stored === null ? newProgress(ids.root, startedMs, options.deadlineAtMs) : parseProgress(stored)), state: "running" };
+  const progress: ReplayProgress = { ...(stored === null ? newProgress(ids.root, startedMs, options.deadlineAtMs) : parseProgress(stored)) };
   const putProgress = () => store.put(keys.progress, progressBytes(progress), JSON_TYPE);
   const putRoot = (status: RootRun["status"], outcome: RootRun["outcome"]) => store.put(keys.rootRun, encodeCanonical(replayRootRun(judge, options.requestId, status, outcome)), JSON_TYPE);
   await putRoot("running", null);
@@ -252,6 +252,8 @@ export async function runJudgeReplay(options: JudgeRunOptions, deps: ControllerD
           progress.copies = progress.copies.map((copy) =>
             copy.trial_id !== trialId ? copy : { ...copy, status: event, started_at: event === "running" ? utcSeconds(deps.clock.now()) : copy.started_at },
           );
+          // "running" means a copy has started; until then the replay is still starting.
+          if (event === "running") progress.state = "running";
           try {
             await putProgress();
           } catch (error) {
@@ -264,7 +266,10 @@ export async function runJudgeReplay(options: JudgeRunOptions, deps: ControllerD
     summary = outcome.summary;
     if (outcome.status === "complete") {
       const evidence = JSON.parse(readFileSync(join(jobDir, "evidence.json"), "utf8")) as Evidence;
-      const verdict = replayVerdict(evidence, judge, startedMs, parseSuiteManifest(readFileSync(join(jobFiles, "original-suite.json"))));
+      // The revenue tests may run after a date rollover, so the known condition applies if the replay started or ended in its window.
+      const endedMs = deps.clock.now();
+      const verdictAt = revenueKnownLimit(startedMs).applies ? startedMs : endedMs;
+      const verdict = replayVerdict(evidence, judge, verdictAt, parseSuiteManifest(readFileSync(join(jobFiles, "original-suite.json"))));
       state = verdict.state;
       known = verdict.known_condition;
       root = { status: "terminal", outcome: "completed" };
