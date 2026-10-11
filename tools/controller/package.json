@@ -25,9 +25,11 @@
     "@rbw/envelope": "workspace:*",
     "@rbw/local-runner": "workspace:*",
     "@rbw/schema": "workspace:*",
+    "@rbw/search": "workspace:*",
     "@rbw/spend": "workspace:*",
     "@rbw/umami-driver": "workspace:*",
     "@rbw/umami-fixture": "workspace:*",
+    "@rbw/writer": "workspace:*",
     "pg": "8.23.1"
   },
   "devDependencies": {

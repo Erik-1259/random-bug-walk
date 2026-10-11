@@ -9,7 +9,7 @@ import { dirname, join } from "node:path";
 import type { ControllerSummary, CopyRecord } from "@rbw/controller";
 import { buildJob, containerName, importJob, mergeRecordSet, runCopyCommand, runTag, summaryBytes, trialSummaries, writeJobDir } from "@rbw/local-runner";
 import type { BuiltJob, CopyResult, JobContext, JobLabel, RunIds } from "@rbw/local-runner";
-import { buildJobRequest, buildPolicy, encodeCanonical, sha256Hex } from "@rbw/schema";
+import { buildJobRequest, buildPolicy, canonicalDigest, encodeCanonical, sha256Hex } from "@rbw/schema";
 import type { FamilyRegistry, HeldOutIdentityList, RootRun } from "@rbw/schema";
 import { FakeClock, FakeDocker, ok } from "../../../local-runner/test/support/fakes.ts";
 import { KitImage } from "../../../local-runner/test/support/kit-image.ts";
@@ -260,14 +260,24 @@ export async function factoryRun(w: World, group = "8000"): Promise<FactoryRun> 
   return { run, ids, ctx, admission, rootRun, rootRunFile };
 }
 
-/** Synthetic generated files a factory stage passes on: the symptom, the card and the novelty summary. */
+const SOURCES = join(dirname(new URL(import.meta.url).pathname), "..", "..", "fixtures", "sources");
+
+/** The SHA-256 of the synthetic issue's canonical bytes, which the check report and the novelty summary name. */
+export const SOURCE_ISSUE_SHA256 = canonicalDigest(JSON.parse(readFileSync(join(SOURCES, "issue.json"), "utf8")) as never).sha256;
+
+/** Synthetic generated files a factory stage passes on: the symptom, the card and the novelty summary of the synthetic issue. */
 export function generatedFiles(dir: string, novelty: "clear" | "blocked" | "incomplete" = "clear"): { symptom: string; card: string; novelty: string } {
   return {
-    symptom: write(join(dir, "generated", "symptom.json"), readFileSync(join(dirname(new URL(import.meta.url).pathname), "..", "..", "fixtures", "sources", "symptom.json"))),
-    card: write(join(dir, "generated", "card.json"), readFileSync(join(dirname(new URL(import.meta.url).pathname), "..", "..", "fixtures", "sources", "card.json"))),
+    symptom: write(join(dir, "generated", "symptom.json"), readFileSync(join(SOURCES, "symptom.json"))),
+    card: write(join(dir, "generated", "card.json"), readFileSync(join(SOURCES, "card.json"))),
     novelty: write(
       join(dir, "generated", "novelty.json"),
-      canonical({ status: novelty, matching_urls: novelty === "blocked" ? ["https://forum.example.invalid/synthetic-thread"] : [], incomplete_calls: novelty === "incomplete" ? ["phrase-2"] : [] }),
+      canonical({
+        status: novelty,
+        matching_urls: novelty === "blocked" ? ["https://forum.example.invalid/synthetic-thread"] : [],
+        incomplete_calls: novelty === "incomplete" ? ["phrase-2"] : [],
+        issue_sha256: SOURCE_ISSUE_SHA256,
+      }),
     ),
   };
 }

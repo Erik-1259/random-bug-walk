@@ -33,9 +33,11 @@ export type CheckCode =
   | "release_file_mismatch"
   | "issue_mismatch"
   | "issue_not_ready"
+  | "issue_check_mismatch"
   | "card_invalid"
   | "novelty_blocked"
   | "novelty_incomplete"
+  | "novelty_issue_mismatch"
   | "approval_issue_mismatch";
 
 /** The published run a release names: its directory as a fresh clone holds runs/<root>/, and its records. */
@@ -157,6 +159,12 @@ function checkAdmission(release: Release, run: PublishedRun, manifest: RunManife
   if (taskRevision(revision.identity).sha256 !== revision.sha256 || taskRevision(provisionalOf(revision.identity)).sha256 !== request.task_revision) codes.add("revision_mismatch");
 }
 
+/** The SHA-256 of the release directory's issue.json, or null when it has none. */
+function issueSha256Of(releaseDir: string): string | null {
+  const issue = readOptional(join(releaseDir, "issue.json"));
+  return issue === null ? null : sha256Hex(issue);
+}
+
 function checkReleaseDir(release: Release, releaseDir: string, codes: Set<CheckCode>): void {
   const listed = new Map(release.files.map((file) => [file.path, file.sha256]));
   const present = readdirSync(releaseDir, { recursive: true, withFileTypes: true })
@@ -172,21 +180,22 @@ function checkReleaseDir(release: Release, releaseDir: string, codes: Set<CheckC
     codes.add("release_file_mismatch");
   }
 
-  const issue = readOptional(join(releaseDir, "issue.json"));
-  const issueSha256 = issue === null ? null : sha256Hex(issue);
+  const issueSha256 = issueSha256Of(releaseDir);
   if (issueSha256 === null || release.revisions[0]?.identity.issue_sha256 !== issueSha256) codes.add("issue_mismatch");
   // ADM-07: the human alignment check is the recorded approval of exactly this issue.
   if (issueSha256 === null || release.approval.issue_sha256 !== issueSha256) codes.add("approval_issue_mismatch");
   // ADM-07: the writer's code checks (structure, numbers, the identifier scan) passed.
-  const report = json(readOptional(join(releaseDir, "issue-check.json"))) as { status?: unknown } | null;
+  const report = json(readOptional(join(releaseDir, "issue-check.json"))) as { status?: unknown; issue_sha256?: unknown } | null;
   if (report?.status !== "ready_for_review") codes.add("issue_not_ready");
+  // The check report names the issue it was made for, so a report of another issue never passes.
+  if (issueSha256 === null || report?.issue_sha256 !== issueSha256) codes.add("issue_check_mismatch");
 }
 
 /**
  * ADM-09: a release names a passing admission of a completed factory root under the public_demo
  * policy, its complete revision reduces to that admission's revision, and the release directory
  * holds exactly the files it lists. ADM-07: its issue passed the writer's checks and the exact-
- * phrase searches, and the owner approved this issue's hash. Returns every failing code, sorted.
+ * phrase searches, both recorded for this issue's hash, and the owner approved this issue's hash. Returns every failing code, sorted.
  */
 export function checkRelease(release: Release, run: PublishedRun, releaseDir: string): CheckCode[] {
   const codes = new Set<CheckCode>();
@@ -226,9 +235,12 @@ export function checkRelease(release: Release, run: PublishedRun, releaseDir: st
     // ADM-07: a schema-valid pattern card.
     if (!CardSchema.safeParse(json(runFile(run, manifest, CARD_PATH))).success) codes.add("card_invalid");
     // ADM-07: the three exact-phrase searches found no public match; an incomplete search is never clear.
-    const novelty = json(runFile(run, manifest, NOVELTY_PATH)) as { status?: unknown } | null;
+    const novelty = json(runFile(run, manifest, NOVELTY_PATH)) as { status?: unknown; issue_sha256?: unknown } | null;
     if (novelty?.status === "blocked") codes.add("novelty_blocked");
     else if (novelty?.status !== "clear") codes.add("novelty_incomplete");
+    // The searches were of this issue's phrases only when the summary names this issue.
+    const issueSha256 = issueSha256Of(releaseDir);
+    if (issueSha256 === null || novelty?.issue_sha256 !== issueSha256) codes.add("novelty_issue_mismatch");
   }
   checkReleaseDir(release, releaseDir, codes);
   return [...codes].sort();

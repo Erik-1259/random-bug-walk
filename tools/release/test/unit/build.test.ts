@@ -316,6 +316,18 @@ describe("build: a failing check stores and writes nothing", () => {
     await refused(options({ issueCheck }), "issue_not_ready");
   });
 
+  it("ADM-07 refuses a check report made for another issue (issue_check_mismatch)", async () => {
+    const issueCheck = write(join(tempDir(), "issue-check.json"), JSON.stringify({ ...JSON.parse(readFileSync(inputs.issueCheck, "utf8")), issue_sha256: "e".repeat(64) }));
+    await refused(options({ issueCheck }), "issue_check_mismatch");
+  });
+
+  it("ADM-07 refuses a published novelty summary made for another issue (novelty_issue_mismatch)", async () => {
+    const run = await published((staging) => {
+      editJson(join(staging, "generated", "novelty.json"), (novelty) => ({ ...novelty, issue_sha256: "e".repeat(64) }));
+    });
+    await refused(options({ run: run.runDir, publication: run.publication }), "novelty_issue_mismatch");
+  });
+
   it("ADM-07 refuses a release whose novelty is blocked (novelty_blocked)", async () => {
     const run = await published(undefined, "blocked");
     await refused(options({ run: run.runDir, publication: run.publication }), "novelty_blocked");

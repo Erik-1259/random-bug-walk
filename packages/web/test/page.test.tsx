@@ -198,8 +198,8 @@ describe("case page with a published release", () => {
     const record = results.release?.record;
     expect(page).toContain(`Release ${RELEASE_ID} Release SHA-256 ${results.release?.sha256 ?? "none"} Release created 2026-10-06T11:38:10Z`);
     expect(page).toContain(`Run ${RELEASE_ROOT} (factory, completed)`);
-    expect(page).toContain("Publication ff74b6ec-ae2d-8673-86b1-9b5722d1a13d");
-    expect(page).toContain("Results repository commit 66b26fed8cc3d23f9487e70984bce4c54d2a5633");
+    expect(page).toContain(`Publication ${record?.run.publication_id ?? "none"}`);
+    expect(page).toContain(`Results repository commit ${record?.run.repository_commit ?? "none"}`);
     expect(page).toContain("Project policy SHA-256 7749aa26b966e375d324794cc65e7e6ee5b978f83844d30dc283d930fb160c2e Policy umami-uc3-v1");
     expect(page).toContain("Task revision 274265fba006f23e1efc2aee9ac773557894da6f34fd5f4cab29d8d659d66107");
     expect(page).toContain(`Admission's provisional task revision ${results.caseRun?.admission?.evidence.request.task_revision ?? "none"}`);
