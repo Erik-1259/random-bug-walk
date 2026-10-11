@@ -14,6 +14,7 @@ The package makes no live call in its tests or in public CI. A replay `fetch` an
 | `src/vote.ts` | One model's vote and the combination table. |
 | `src/review.ts` | The `review` command. |
 | `src/acceptance.ts` | The acceptance set and the `acceptance` command. |
+| `src/card-inputs.ts` | The `card-inputs` command. |
 | `src/commands.ts`, `src/cli.ts` | The command line. |
 | `src/live-fetch.ts` | The live `fetch`, with HTTP timeouts that cover the longest request timeout. |
 | `rates.json` | The two models' token prices, in the writer's rate-file format. |
@@ -25,6 +26,7 @@ The package makes no live call in its tests or in public CI. A replay `fetch` an
 node packages/harvest-review/src/cli.ts build-inputs --run <harvest run dir> --out <review-inputs.json>
 node packages/harvest-review/src/cli.ts review --inputs <review-inputs.json> --rate-sheet <rates.json> --out <new dir> --slot-key development --pool development [--max-candidates N]
 node packages/harvest-review/src/cli.ts acceptance --rate-sheet <rates.json> --out <new dir> --slot-key development --pool development --cases <1-5 | 6-10 | list>
+node packages/harvest-review/src/cli.ts card-inputs --run <harvest run dir> --review <review.json> --out <dir>
 ```
 
 Examples:
@@ -36,7 +38,7 @@ node packages/harvest-review/src/cli.ts acceptance --rate-sheet packages/harvest
 node packages/harvest-review/src/cli.ts acceptance --rate-sheet packages/harvest-review/rates.json --out /tmp/acceptance-2 --slot-key development --pool development --cases 6-10
 ```
 
-- `build-inputs` reads `funnel.json` and the frozen responses of a harvest run directory, and makes no network call.
+- `build-inputs` and `card-inputs` read `funnel.json` and the frozen responses of a harvest run directory, and make no network call. `card-inputs` reads no environment variable.
 - `review` and `acceptance` read `DATABASE_URL` (the spend database) and `TOKEN_FACTORY_REVIEW_KEY` (the review role's key) from the environment only. Neither value is printed, recorded or hashed.
 - Exit codes: 0 done; 1 the run stopped or could not start (or, for `acceptance`, a case failed on the combined outcome); 2 bad usage.
 
@@ -74,6 +76,28 @@ Runs the cases chosen with `--cases` through `review` and writes `acceptance.jso
 
 - **`--cases`** (required): case numbers from the acceptance set table below, 1 to 10, as a range (`1-5`, `6-10`) or a comma list (`2,4,10`, which may hold ranges). At most 8 cases, the run's cap, and no case twice. The whole set takes two runs, `--cases 1-5` and `--cases 6-10`.
 - **Report:** `acceptance.json` and stdout cover only the cases run. Each case keeps its candidate key in any selection.
+
+### card-inputs
+
+Writes the input files of the writer's `record` command for the candidates whose review outcome is `confirmed`, one card call each. It reads the harvest run directory (`funnel.json` and the review inputs that `build-inputs` would build from it) and `review.json`.
+
+- **Per `confirmed` candidate** (none for any other outcome), two files under `--out`:
+  - `<candidate_key>.input.json`: `{ "candidate": <candidate_key>, "card": <source>, "issue": { "symptom": null, "excluded_identifiers": [] } }`, in `record`'s input format. The `issue` part is required by that format and unused with `--max-calls 1`.
+  - `<candidate_key>.context.json`: a fresh run context, as `review` makes one.
+- **Card source:** `source_links` (the commit's GitHub URL, then the pull request's when the funnel record has a pull number), `repository` (the repository's GitHub URL), `date` (the UTC date of `committed_at`), `license` (the funnel record's), `diff_excerpt` (the review input's hunks, joined with newlines), `issue_text` (empty: the frozen responses keep no commit message or pull request body), and `confirmation` with `card_id` `card-<candidate_key>`, the funnel's `shape_id`, the candidate rule ID for the match's path as `rules_matched`, and the call text as `matched_lines`.
+- **Refusal:** when a `confirmed` candidate has no record with the same candidate ID and commit in the review inputs or in `funnel.json`, it prints `card-inputs: refused: unmatched <candidate_key>`, writes nothing and exits 1.
+- **stdout:** `model_confirmed <n>`, each candidate key and `--out`; never a candidate ID, repository name, link or source text.
+- **Funnel:** `model_confirmed` is the count `card-inputs` prints, and `card_written` is the number of card files the `record` runs write. It stops at confirmed, not admitted. The harvest's `funnel.json` is not rewritten.
+
+Then run `record` once per input file, with absolute paths (pnpm runs it in `packages/writer`) and its own `--out` per candidate:
+
+```sh
+pnpm --filter @rbw/writer run record -- --max-calls 1 --input <abs>/<key>.input.json --context <abs>/<key>.context.json --rate-sheet <abs rate file> --slot-key development --pool development --out <abs records>/<key>/
+```
+
+A fresh context names the card `card-1`, so the card is `<abs records>/<key>/card-1.card.json`. Nothing retries: a failed card call leaves no card file. A rerun first runs `card-inputs` again into a new `--out` (new contexts) and gives `record` a new `--out`.
+
+The run directory, `review.json`, every file under `--out` and every `record` `--out` (recordings, summaries and cards) hold third-party code and repository names. They stay outside this repository and out of logs.
 
 ## The prompt and the output
 
@@ -184,6 +208,7 @@ Each case is a small hand-written change with what it must get: a positive must 
 - The combined pass rule: all positives confirmed and no negative confirmed passes; one confirmed negative fails; one unconfirmed positive fails.
 - The live `fetch`: its `Agent`'s header and body timeouts cover Kimi's 600,000 ms, and Node's `fetch` applies the `Agent`'s header timeout (on a loopback server).
 - `--cases`: a range, a comma list, and the selections it refuses.
+- `card-inputs` on the harvest's synthetic run and a synthetic review: files only for confirmed candidates, every card source field (with and without a pull number, `.ts` and `.tsx`), the input and context formats, the refusal, and stdout with no repository name or link.
 - `build-inputs`, `review` and `acceptance` end to end: one reservation per call with the fixed ordinals and call names, each profile's service, limits and model in the reservation and the request, the outcomes, counts and matrix, a fresh context per run, `too_large`, the cap, `acceptance` runs of cases 1-5 and 6-10, and an uncertain call that stops the run with the slot held.
 
 `test/fixtures/synthetic-inputs.json` is `build-inputs` over the harvest's synthetic run, and a test fails when it differs. `node test/fixtures/synthesize-recordings.ts` regenerates the recordings from `test/fixtures/scripted.ts`, splitting the synthetic inputs and the acceptance set into runs within the cap; a prompt or schema change needs a regeneration, and the end-to-end tests fail on a recording that no longer matches the request.

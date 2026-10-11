@@ -1,5 +1,7 @@
 export { ACCEPTANCE_CASES, acceptanceInputs, runAcceptance } from "./acceptance.ts";
 export type { AcceptanceCase } from "./acceptance.ts";
+export { runCardInputs } from "./card-inputs.ts";
+export type { CardInput } from "./card-inputs.ts";
 export { runCommand } from "./commands.ts";
 export { buildCandidateInput, buildInputs, parseReviewInputs, reviewedMatch } from "./inputs.ts";
 export type { CandidateInput, CandidateSource, FunctionText, ReviewInputs } from "./inputs.ts";
