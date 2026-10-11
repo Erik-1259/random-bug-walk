@@ -11,7 +11,8 @@ The shared record schema, canonical JSON v1, the project policy builder, the fam
 - every status, outcome, reason and category list, including `JobKind`, `CodeState`, `ExpectedOutcome`, `ObservedOutcome`, `TrialStatus`, `TrialReason`, `AssertionFailureCode` and `TaskRevisionKind`;
 - the records `ProjectPolicy`, `FamilyRegistry`, `HeldOutIdentityList`, `RootRun`, `ArtifactManifest`, `PublicationRecord`, `RunManifest`, `PublicRunStatus` and `StagingOmissions`, with their item types;
 - the job records `JobRequest`, `ExpectedTrials` (with `ExpectedTrial` and `ExpectedCheck`), `TrialObservations` (with `CheckObservation`), `TrialResult` and `ObservedSymptom` (with `SymptomRequest`, `SymptomEvent`, `BucketCount`, `FollowUpExample` and `DocExcerpt`);
-- the identity records `OperationIdentity`, `MutationIdentity` (with `MutationChange`) and `TaskRevisionIdentity`.
+- the identity records `OperationIdentity`, `MutationIdentity` (with `MutationChange`) and `TaskRevisionIdentity`;
+- the release record `Release`, with `ReleaseRevision`, `ReleaseImages`, `ReleaseFamily`, `ReleaseRun`, `ReleaseAdmission`, `ReleaseFile`, `ReleaseApproval`, `ReleaseJudgeJob` and the common type `ImageReference`. It has no code rules: `tools/release` checks that its complete revision reduces to the admission's provisional one (see `tools/release/README.md`).
 
 Every object forbids unknown fields and requires every field; a nullable field holds `null`. `schema_version` is the constant `1`. Cross-field rules are conditional subschemas (`if`/`then`/`else`, `oneOf`) wherever the format allows.
 

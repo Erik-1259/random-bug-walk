@@ -1153,6 +1153,231 @@
           }
         }
       ]
+    },
+    "ImageReference": {
+      "description": "A registry image pinned by its manifest digest: <repository>@sha256:<64 lowercase hex>.",
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:[._:/-][a-z0-9]+)*@sha256:[0-9a-f]{64}$"
+    },
+    "ReleaseRevision": {
+      "description": "The complete task revision and the identity it hashes.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sha256", "identity"],
+      "properties": {
+        "sha256": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "identity": {
+          "$ref": "#/$defs/TaskRevisionIdentity"
+        }
+      },
+      "allOf": [
+        {
+          "type": "object",
+          "properties": {
+            "identity": {
+              "type": "object",
+              "properties": {
+                "revision_kind": {
+                  "const": "complete"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "ReleaseImages": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kit_image", "controller_image"],
+      "properties": {
+        "kit_image": {
+          "$ref": "#/$defs/ImageReference"
+        },
+        "controller_image": {
+          "$ref": "#/$defs/ImageReference"
+        }
+      }
+    },
+    "ReleaseFamily": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["family_id", "source_fix", "mutation_id", "split"],
+      "properties": {
+        "family_id": {
+          "$ref": "#/$defs/Slug"
+        },
+        "source_fix": {
+          "$ref": "#/$defs/SourceFix"
+        },
+        "mutation_id": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "split": {
+          "const": "public_demo"
+        }
+      }
+    },
+    "ReleaseRun": {
+      "description": "The published root run and its PublicationRecord's IDs.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["root_execution_id", "publication_id", "manifest_sha256", "repository_commit"],
+      "properties": {
+        "root_execution_id": {
+          "$ref": "#/$defs/Uuid"
+        },
+        "publication_id": {
+          "$ref": "#/$defs/Uuid"
+        },
+        "manifest_sha256": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "repository_commit": {
+          "$ref": "#/$defs/GitCommitId"
+        }
+      }
+    },
+    "ReleaseAdmission": {
+      "description": "The admission job's verdict and ADM-08 classification. Only a passing admission with a demonstrated blind spot is released.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["execution_id", "outcome_verdict", "classification"],
+      "properties": {
+        "execution_id": {
+          "$ref": "#/$defs/Uuid"
+        },
+        "outcome_verdict": {
+          "const": "pass"
+        },
+        "classification": {
+          "const": "blind_spot_demonstrated"
+        }
+      }
+    },
+    "ReleaseFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/RelativePath"
+        },
+        "sha256": {
+          "$ref": "#/$defs/Sha256"
+        }
+      }
+    },
+    "ReleaseApproval": {
+      "description": "The recorded human approval of the frozen issue (ADM-07). A rejection is no release.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["decision", "issue_sha256", "reviewed_at"],
+      "properties": {
+        "decision": {
+          "const": "approved"
+        },
+        "issue_sha256": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "reviewed_at": {
+          "$ref": "#/$defs/UtcTime"
+        }
+      }
+    },
+    "ReleaseJudgeJob": {
+      "description": "The frozen judge job's index in the private store, by key and SHA-256.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["index_key", "index_sha256"],
+      "properties": {
+        "index_key": {
+          "$ref": "#/$defs/RelativePath"
+        },
+        "index_sha256": {
+          "$ref": "#/$defs/Sha256"
+        }
+      }
+    },
+    "Release": {
+      "description": "A released case (ADM-09). release_id is a UUID assigned before anything is built, never derived from content; release_sha256 is the SHA-256 of this record's canonical bytes. files lists the release directory's other files.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "release_id",
+        "project_id",
+        "project_policy_sha256",
+        "policy_id",
+        "created_at",
+        "calibration",
+        "revisions",
+        "images",
+        "family",
+        "run",
+        "admission",
+        "files",
+        "approval",
+        "judge_job"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "#/$defs/SchemaVersion"
+        },
+        "release_id": {
+          "$ref": "#/$defs/Uuid"
+        },
+        "project_id": {
+          "$ref": "#/$defs/Uuid"
+        },
+        "project_policy_sha256": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "policy_id": {
+          "$ref": "#/$defs/Slug"
+        },
+        "created_at": {
+          "$ref": "#/$defs/UtcTime"
+        },
+        "calibration": {
+          "const": "not_requested"
+        },
+        "revisions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ReleaseRevision"
+          },
+          "minItems": 1,
+          "maxItems": 1
+        },
+        "images": {
+          "$ref": "#/$defs/ReleaseImages"
+        },
+        "family": {
+          "$ref": "#/$defs/ReleaseFamily"
+        },
+        "run": {
+          "$ref": "#/$defs/ReleaseRun"
+        },
+        "admission": {
+          "$ref": "#/$defs/ReleaseAdmission"
+        },
+        "files": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ReleaseFile"
+          },
+          "uniqueItems": true
+        },
+        "approval": {
+          "$ref": "#/$defs/ReleaseApproval"
+        },
+        "judge_job": {
+          "$ref": "#/$defs/ReleaseJudgeJob"
+        }
+      }
     }
   }
 }

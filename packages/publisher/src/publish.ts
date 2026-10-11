@@ -16,7 +16,7 @@ import {
   type RecordContext,
   type RootRun,
 } from "@rbw/schema";
-import { isInside, repositoryRoot, type Limits, type PublishConfig } from "./config.ts";
+import { isInside, repositoryRoot, type DestinationConfig, type Limits, type PublishConfig } from "./config.ts";
 import { InvalidInput } from "./errors.ts";
 import { MANIFEST_FILE, freeze, type Candidate, type FrozenFile } from "./freeze.ts";
 import { Budget, LimitExceeded } from "./limits.ts";
@@ -41,7 +41,7 @@ export interface PublishDeps {
 
 export const EXIT = { published: 0, blocked: 1, failed: 2, status: 3, invalid: 4 } as const;
 
-function readInput(path: string, code: string): Buffer {
+export function readInput(path: string, code: string): Buffer {
   try {
     return readFileSync(path);
   } catch {
@@ -49,7 +49,7 @@ function readInput(path: string, code: string): Buffer {
   }
 }
 
-function parseInput<K extends DefName>(type: K, bytes: Uint8Array, code: string, context: RecordContext = {}): DefTypes[K] {
+export function parseInput<K extends DefName>(type: K, bytes: Uint8Array, code: string, context: RecordContext = {}): DefTypes[K] {
   try {
     return parseRecord(type, bytes, context);
   } catch (error) {
@@ -71,7 +71,7 @@ function realLocation(path: string): string {
   return resolve(realpathSync(current), ...rest);
 }
 
-function loadPolicy(config: PublishConfig): { policy: ProjectPolicy; sha256: string } {
+export function loadPolicy(config: DestinationConfig): { policy: ProjectPolicy; sha256: string } {
   const bytes = readInput(config.policyFile, "policy_unreadable");
   const policy = parseInput("ProjectPolicy", bytes, "policy_invalid");
   if (!Buffer.from(encodeCanonical(policy)).equals(bytes)) throw new InvalidInput("policy_not_canonical");
@@ -101,7 +101,7 @@ function checkLocalRemoteHooks(remote: string): void {
   }
 }
 
-interface Destinations {
+export interface Destinations {
   store: PublicStore;
   repository: Omit<RepositorySettings, "gitDir">;
   ownerRepo: string;
@@ -116,8 +116,8 @@ function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
-/** Builds the destinations. Credentials are read here, and only in real mode. */
-function destinations(config: PublishConfig, policy: ProjectPolicy, deps: PublishDeps): Destinations {
+/** Builds the destinations. Credentials are read here, and only in real mode. `inputDir` is the staging or release directory. */
+export function destinations(config: DestinationConfig, inputDir: string, policy: ProjectPolicy, deps: PublishDeps): Destinations {
   const repositoryUrl = policy.output_repository ?? "";
   const baseUri = policy.public_artifact_base_uri ?? "";
   const { host, ownerRepo } = ownerAndRepo(repositoryUrl);
@@ -147,7 +147,7 @@ function destinations(config: PublishConfig, policy: ProjectPolicy, deps: Publis
   if (key?.isFile() !== true) throw new InvalidInput("deploy_key_missing");
   if ((key.mode & 0o077) !== 0) throw new InvalidInput("deploy_key_permissions");
   const realKey = realLocation(keyPath);
-  for (const dir of [repositoryRoot, config.stagingDir, config.stateDir]) {
+  for (const dir of [repositoryRoot, inputDir, config.stateDir]) {
     if (isInside(realKey, realLocation(dir))) throw new InvalidInput("deploy_key_location");
   }
   if (statSync(destination.knownHosts, { throwIfNoEntry: false })?.isFile() !== true) throw new InvalidInput("known_hosts_missing");
@@ -168,16 +168,16 @@ function destinations(config: PublishConfig, policy: ProjectPolicy, deps: Publis
   };
 }
 
-function checkStateLocation(config: PublishConfig): void {
+export function checkStateLocation(config: DestinationConfig, inputDir: string): void {
   const state = realLocation(config.stateDir);
-  const forbidden = [repositoryRoot, config.stagingDir];
+  const forbidden = [repositoryRoot, inputDir];
   if (config.destination.mode === "local") forbidden.push(config.destination.remote, config.destination.store);
   for (const dir of forbidden) {
     if (isInside(state, realLocation(dir)) || isInside(realLocation(dir), state)) throw new InvalidInput("state_location");
   }
 }
 
-function printLocations(deps: PublishDeps, locations: readonly string[]): void {
+export function printLocations(deps: PublishDeps, locations: readonly string[]): void {
   for (const location of locations) deps.stderr(`${location}\n`);
 }
 
@@ -469,23 +469,28 @@ class Publisher {
   }
 }
 
-function printRecord(deps: PublishDeps, record: PublicationRecord): number {
+export function printRecord(deps: PublishDeps, record: PublicationRecord): number {
   deps.stdout(`${new TextDecoder().decode(encodeCanonical(record))}\n`);
   return record.status === "published" ? EXIT.published : record.status === "blocked" ? EXIT.blocked : EXIT.failed;
+}
+
+/** The C2 scanner for a destination. */
+export function scannerFor(config: DestinationConfig, target: Destinations, deps: PublishDeps): Scanner {
+  return new Scanner(
+    { command: config.scanner, gitleaks: config.gitleaks, patternFile: config.patternFile, repository: target.ownerRepo, timeoutMs: config.scanTimeoutMs },
+    deps.runner,
+    deps.env,
+    deps.logger,
+  );
 }
 
 /** The publish command. Every validation happens before anything is written. */
 export async function publishCommand(config: PublishConfig, deps: PublishDeps): Promise<number> {
   const { policy, sha256: policySha256 } = loadPolicy(config);
   const root = parseInput("RootRun", readInput(config.rootRunFile, "root_run_unreadable"), "root_run_invalid", { policy });
-  const target = destinations(config, policy, deps);
-  checkStateLocation(config);
-  const scanner = new Scanner(
-    { command: config.scanner, gitleaks: config.gitleaks, patternFile: config.patternFile, repository: target.ownerRepo, timeoutMs: config.scanTimeoutMs },
-    deps.runner,
-    deps.env,
-    deps.logger,
-  );
+  const target = destinations(config, config.stagingDir, policy, deps);
+  checkStateLocation(config, config.stagingDir);
+  const scanner = scannerFor(config, target, deps);
 
   const state = new StateDir(config.stateDir);
   if (root.status !== "terminal") {

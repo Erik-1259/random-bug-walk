@@ -1,0 +1,9 @@
+{
+  "check_id": "tzarg.utc-day-counts",
+  "repeat_index": 5,
+  "observed": "pass",
+  "failure_code": null,
+  "duration_ms": 25,
+  "response_artifact_key": "responses/tzarg.utc-day-counts.json",
+  "response_artifact_sha256": "5585e53975ed71eae790197365b4e0b53953771d9423652a043dd6836cf3dbaa"
+}

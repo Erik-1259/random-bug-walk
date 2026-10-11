@@ -2532,6 +2532,96 @@
       "type": "ObservedSymptom",
       "expect": "invalid",
       "rule": "time zone shape"
+    },
+    {
+      "name": "release-valid",
+      "type": "Release",
+      "expect": "valid",
+      "rule": "a release with its complete revision and approval"
+    },
+    {
+      "name": "release-supersedes",
+      "type": "Release",
+      "expect": "invalid",
+      "rule": "no superseded release"
+    },
+    {
+      "name": "release-eligible-field",
+      "type": "Release",
+      "expect": "invalid",
+      "rule": "no eligible field"
+    },
+    {
+      "name": "release-provisional-revision",
+      "type": "Release",
+      "expect": "invalid",
+      "rule": "the revision is complete"
+    },
+    {
+      "name": "release-two-revisions",
+      "type": "Release",
+      "expect": "invalid",
+      "rule": "one revision only"
+    },
+    {
+      "name": "release-no-revision",
+      "type": "Release",
+      "expect": "invalid",
+      "rule": "one revision only"
+    },
+    {
+      "name": "release-approval-reviewer",
+      "type": "Release",
+      "expect": "invalid",
+      "rule": "approval has three fields"
+    },
+    {
+      "name": "release-approval-no-time",
+      "type": "Release",
+      "expect": "invalid",
+      "rule": "approval has three fields"
+    },
+    {
+      "name": "release-approval-rejected",
+      "type": "Release",
+      "expect": "invalid",
+      "rule": "a rejection is no release"
+    },
+    {
+      "name": "release-calibration-requested",
+      "type": "Release",
+      "expect": "invalid",
+      "rule": "calibration is not requested"
+    },
+    {
+      "name": "release-split-held-out",
+      "type": "Release",
+      "expect": "invalid",
+      "rule": "the split is public_demo"
+    },
+    {
+      "name": "release-kit-image-tag",
+      "type": "Release",
+      "expect": "invalid",
+      "rule": "images are pinned by digest"
+    },
+    {
+      "name": "release-verdict-reject",
+      "type": "Release",
+      "expect": "invalid",
+      "rule": "only a passing admission is released"
+    },
+    {
+      "name": "release-caught",
+      "type": "Release",
+      "expect": "invalid",
+      "rule": "only a demonstrated blind spot is released"
+    },
+    {
+      "name": "release-file-absolute",
+      "type": "Release",
+      "expect": "invalid",
+      "rule": "file paths are relative"
     }
   ]
 }

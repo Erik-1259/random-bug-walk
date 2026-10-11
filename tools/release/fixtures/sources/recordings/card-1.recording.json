@@ -1,0 +1,31 @@
+{
+  "format_version": 1,
+  "provenance": "synthetic",
+  "model_id": "nvidia/Nemotron-3_5-Lightning",
+  "recorded_at": "2026-10-05T00:00:00Z",
+  "request": {
+    "body": {
+      "model": "nvidia/Nemotron-3_5-Lightning",
+      "max_tokens": 8192,
+      "messages": [
+        {
+          "role": "system",
+          "content": "Synthetic card prompt."
+        },
+        {
+          "role": "user",
+          "content": "Synthetic card input."
+        }
+      ]
+    }
+  },
+  "request_sha256": "070eff5511e243777f1e84327d85d85d2f47125f26b1527c1bc4bc0213b02e78",
+  "response": {
+    "status": 200,
+    "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"{\\\"id\\\":\\\"synthetic-card-1\\\",\\\"provenance\\\":{\\\"source_links\\\":[\\\"https://code.example.invalid/synthetic-project/pull/1\\\"],\\\"repository\\\":\\\"https://code.example.invalid/synthetic-project\\\",\\\"date\\\":\\\"2026-01-15\\\",\\\"license\\\":\\\"MIT\\\"},\\\"bug_class\\\":\\\"time_and_date\\\",\\\"mechanism\\\":\\\"Synthetic: a daily report groups visits by UTC day instead of the requested time zone.\\\",\\\"shape\\\":{\\\"shape_id\\\":\\\"synthetic-shape-1\\\",\\\"rules_matched\\\":[\\\"synthetic-rule-a\\\"],\\\"matched_lines\\\":[\\\"+ const range = synthetic(start, end, zone);\\\"]},\\\"fault_shape\\\":\\\"Synthetic: a time zone is not carried into the grouping step.\\\",\\\"trigger\\\":\\\"A report requested for a time zone far from UTC.\\\",\\\"symptom\\\":\\\"Daily totals shift to the neighboring day.\\\",\\\"apis\\\":[\\\"synthetic-report-endpoint\\\"],\\\"runtime_dependence\\\":{\\\"value\\\":\\\"yes\\\",\\\"reason\\\":\\\"Synthetic: the shift appears only for some time zones and hours.\\\",\\\"levers_apply\\\":[\\\"hidden_runtime_state\\\",\\\"magnitude_visible_only_at_runtime\\\"],\\\"levers_absent\\\":[\\\"ordering_or_concurrency\\\",\\\"external_side_effect_semantics\\\"],\\\"levers_unverified\\\":[\\\"distance_between_symptom_and_cause\\\",\\\"plausible_wrong_static_fix\\\",\\\"path_ambiguity\\\"]},\\\"fidelity_tier\\\":\\\"A\\\",\\\"references\\\":{\\\"diff_excerpt\\\":\\\"- const range = synthetic(start, end);\\\\n+ const range = synthetic(start, end, zone);\\\",\\\"failing_tests\\\":[]}}\"}}],\"usage\":{\"prompt_tokens\":120,\"completion_tokens\":80}}"
+  },
+  "usage": {
+    "prompt_tokens": 120,
+    "completion_tokens": 80
+  }
+}

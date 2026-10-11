@@ -1,0 +1,2 @@
+# The fixture keeps each copy's artifacts/build/ logs, which the root .gitignore would drop.
+!build/

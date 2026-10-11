@@ -3,6 +3,8 @@
 // copy on its own, so the envelope is one copy's lines, priced from the same pinned rate sheet and
 // fixed limits. Its time limit is the sandbox's own timeout, which the provider enforces: the
 // run-copy path's outer limit (the driver's 600 s plus 120 s), plus the shutdown allowance.
+// A judge replay's controller sandbox is priced the same way, with the judge's controller
+// resources and deadline; the judge job reserves it plus three copies.
 import { fileURLToPath } from "node:url";
 import { FIXED_LIMITS, priceFor, runtime_profile_sha256 } from "@rbw/envelope";
 import type { Envelope, Fraction, Rates } from "@rbw/envelope";
@@ -15,6 +17,8 @@ const SERVICE = "vercel-sandbox";
 const SUBJECT = "iad1";
 /** Seconds a copy's sandbox may live: its timeout plus the shutdown allowance. */
 export const COPY_ENVELOPE_SECONDS = COPY_OUTER_LIMIT_MS / 1000 + FIXED_LIMITS.shutdown_seconds;
+/** Seconds the judge controller's sandbox may live: the judge deadline plus the shutdown allowance. */
+export const CONTROLLER_ENVELOPE_SECONDS = FIXED_LIMITS.judge.deadline_seconds + FIXED_LIMITS.shutdown_seconds;
 
 export type CopyEnvelope = Extract<Envelope, { ok: true }>;
 
@@ -47,23 +51,48 @@ function cost(quantity: bigint, price: { microusd: number; per_units: number }):
 }
 
 const { vcpu, memory_gb: memoryGb } = FIXED_LIMITS.app;
-const TIMEOUT_S = BigInt(COPY_OUTER_LIMIT_MS / 1000);
 const SHUTDOWN_S = BigInt(FIXED_LIMITS.shutdown_seconds);
 
-const QUANTITIES: readonly Quantity[] = [
-  { unit: "vcpu_second", enforced_by: "provider_timeout", parts: { compute: BigInt(vcpu) * TIMEOUT_S, shutdown_allowance: BigInt(vcpu) * SHUTDOWN_S } },
-  { unit: "memory_gb_second", enforced_by: "provider_timeout", parts: { compute: BigInt(memoryGb) * TIMEOUT_S, shutdown_allowance: BigInt(memoryGb) * SHUTDOWN_S } },
-  { unit: "creation", enforced_by: "client_counter", parts: { creations: 1n } },
-];
+/** One sandbox's quantities: its vCPU and memory over its timeout and the shutdown allowance, and one creation. */
+function sandboxQuantities(sandbox: { vcpu: number; memory_gb: number }, timeoutS: bigint): readonly Quantity[] {
+  return [
+    { unit: "vcpu_second", enforced_by: "provider_timeout", parts: { compute: BigInt(sandbox.vcpu) * timeoutS, shutdown_allowance: BigInt(sandbox.vcpu) * SHUTDOWN_S } },
+    { unit: "memory_gb_second", enforced_by: "provider_timeout", parts: { compute: BigInt(sandbox.memory_gb) * timeoutS, shutdown_allowance: BigInt(sandbox.memory_gb) * SHUTDOWN_S } },
+    { unit: "creation", enforced_by: "client_counter", parts: { creations: 1n } },
+  ];
+}
+
+const COPY_QUANTITIES = sandboxQuantities(FIXED_LIMITS.app, BigInt(COPY_OUTER_LIMIT_MS / 1000));
+const CONTROLLER_QUANTITIES = sandboxQuantities(FIXED_LIMITS.judge, BigInt(FIXED_LIMITS.judge.deadline_seconds));
 
 /** One copy's envelope: vCPU and memory seconds for its sandbox's lifetime, and one creation. */
 export function copyEnvelope(rates: Rates): Envelope {
-  const missing = QUANTITIES.filter((q) => priceFor(rates.sheet, SERVICE, SUBJECT, q.unit) === null).map((q) => ({ service: SERVICE, subject: SUBJECT, unit: q.unit }));
+  return sandboxEnvelope(rates, COPY_QUANTITIES);
+}
+
+/** The judge controller's envelope: its sandbox's vCPU and memory seconds for the judge deadline, and one creation. */
+export function controllerEnvelope(rates: Rates): Envelope {
+  return sandboxEnvelope(rates, CONTROLLER_QUANTITIES);
+}
+
+export type JudgeReservation = { ok: true; reserved_microusd: bigint } | Exclude<Envelope, { ok: true }>;
+
+/** What a judge job reserves: its three copies' envelopes plus its controller's. */
+export function judgeReservation(rates: Rates): JudgeReservation {
+  const copy = copyEnvelope(rates);
+  if (!copy.ok) return copy;
+  const controller = controllerEnvelope(rates);
+  if (!controller.ok) return controller;
+  return { ok: true, reserved_microusd: BigInt(FIXED_LIMITS.judge.app_copies) * copy.reserved_microusd + controller.reserved_microusd };
+}
+
+function sandboxEnvelope(rates: Rates, quantities: readonly Quantity[]): Envelope {
+  const missing = quantities.filter((q) => priceFor(rates.sheet, SERVICE, SUBJECT, q.unit) === null).map((q) => ({ service: SERVICE, subject: SUBJECT, unit: q.unit }));
   if (missing.length > 0) return { ok: false, code: "unknown_price", missing };
   const lines: EnvelopeLine[] = [];
   const components: Record<string, Fraction> = {};
   let reserved = 0n;
-  for (const q of QUANTITIES) {
+  for (const q of quantities) {
     const price = priceFor(rates.sheet, SERVICE, SUBJECT, q.unit);
     if (price === null) throw new Error("a checked price is missing");
     const limit = Object.values(q.parts).reduce((sum, part) => sum + part, 0n);
