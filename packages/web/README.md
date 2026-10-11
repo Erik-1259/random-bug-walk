@@ -9,6 +9,7 @@ The results site: a Next.js app (App Router) that renders the case evidence page
 | `/` | The case page, with its six cells in a fixed order (below) |
 | `/catalog` | Every run with its recorded status, and each published run's manifest entries |
 | `/runs/<root>/<path>` | A published run's files and its `manifest.json`, at the paths they have in the results repository |
+| `/releases/<release_id>/<path>` | The release's `release.json` and the files its record lists, at the paths they have in the results repository |
 
 The case page's cells, in order:
 
@@ -16,16 +17,18 @@ The case page's cells, in order:
 2. expected versus observed local-day counts for each time zone, with the source timestamps in a collapsed table;
 3. the original API suite and the added checks on the clean, planted and fixed copies (the six cells of ADM-08), each with a text status;
 4. the verified replay button and its state;
-5. provenance (run, policy hash, task revision, kit version, release, calibration) and downloads;
+5. provenance (release, run, policy, task revision, kit version, family, human check, calibration) and downloads;
 6. the batch funnel, the limitations and the method.
 
 The page names the measured original **API** suite and says that other upstream tests were not evaluated. Calibration is shown as "Not requested", never as a solve count. On narrow screens the suite matrix stacks its six cells, each with its row and column label. Every status is written in text; color only repeats it.
 
-### No validated result yet
+### With and without a release
 
-Releases (ADM-09) are planned and have no record format yet, so no published record can make a result eligible. The page therefore always shows "No validated blind-spot example yet", the funnel and the method; the replay button is disabled, and validated-task downloads are disabled. Published runs stay downloadable as diagnostic archives, each labelled "not validated". A run that holds an observed symptom is shown as the case, labelled "Development evidence, not validated".
+With a release (ADM-09), the page shows "Validated blind-spot example". The case is the released run, labelled "Validated release, synthetic planted bug". Provenance comes from `release.json`, and the validated-task downloads list `release.json`, the release's files and the released run's files. Other published runs stay in the diagnostic archive, each labelled "not validated". The funnel counts 1 validated release. The catalog marks the released run.
 
-The replay control's states (`disabled`, `ready`, `starting`, `running`, `passed`, `failed`) are defined in `src/model.ts`. Only `disabled` is reachable: the replay action is planned as the next item.
+Without a release, the page shows "No validated blind-spot example yet", provenance says "Release: None published yet.", validated-task downloads are disabled, and the funnel counts 0 validated releases. A run that holds an observed symptom is shown as the case, labelled "Development evidence, not validated", and published runs are downloadable as diagnostic archives.
+
+In both states the replay button is disabled. The replay control's states (`disabled`, `ready`, `starting`, `running`, `passed`, `failed`) are defined in `src/model.ts`. Only `disabled` is reachable: the replay action is planned as the next item.
 
 ## Results directory
 
@@ -36,6 +39,7 @@ repository/runs/<root>/manifest.json   each published run's RunManifest (canonic
 repository/runs/<root>/<entry path>    the run's published files below the large-file threshold
 store/status/<root>.json               each run's PublicRunStatus (canonical JSON)
 store/sha256/<hex>                     large published files; optional, since pages link them by public_uri
+repository/releases/<release_id>/      the release (at most one): release.json and the files its record lists
 ```
 
 `repository/` is a checkout of the results branch and `store/` a copy of the public store's objects. Inside a published run, the app reads:
@@ -47,7 +51,11 @@ store/sha256/<hex>                     large published files; optional, since pa
 
 The case is the run with a symptom that got furthest: a demonstrated blind spot, then any admission decision, then a symptom alone; ties go to the first root execution ID. Every run stays in the catalog.
 
-These two paths are this app's reading convention. No current code stages the local runner's outputs for the publisher; that hand-off is planned.
+With a release, the case is the released run instead.
+
+The release step (`tools/release`) runs its checks before it writes a release, so the app does not rerun them. It checks that `release.json` is a canonical `Release` named after its directory, that the directory holds exactly the listed files with their SHA-256, and that `release.run` names a run published here whose `manifest.json` bytes have `manifest_sha256`. The release's integrity is the SHA-256 of `release.json`'s bytes (`Results.release.sha256`).
+
+The symptom and admission paths are this app's reading convention. No current code stages the local runner's outputs for the publisher; that hand-off is planned.
 
 ### Refusals
 
@@ -66,8 +74,10 @@ These two paths are this app's reading convention. No current code stages the lo
 | `symptom_invalid` | A symptom that fails `parseRecord("ObservedSymptom")` |
 | `admission_invalid` | Published evidence or a decision that is not canonical or fails its shape, or a second admission job in one run |
 | `admission_mismatch` | A decision whose `evidence_sha256` is not the evidence file's, or records of another root, execution or kind |
+| `release_invalid` | More than one release, an entry that is not a UUID-named directory, a `release.json` that is missing, fails `parseRecord("Release")`, is not canonical or names another release, or a file that is unlisted, absent or has another SHA-256 |
+| `release_mismatch` | A release whose run is not published here, or whose `manifest_sha256` is not that run's `manifest.json` bytes |
 
-`/runs/<root>/<path>` serves only paths the manifest lists; any other path is not prerendered and gives 404.
+`/runs/<root>/<path>` serves only paths the manifest lists, and `/releases/<release_id>/<path>` only `release.json` and the paths the release lists; any other path is not prerendered and gives 404.
 
 The pages and the file route call `loadResults`, which runs `readResults` once per directory per process and keeps the result with an index of the files the route serves. A build therefore reads and hashes each published file once to check it and once more to serve it, however many routes it prerenders. Under `next dev`, changes to the results directory show after a restart.
 
@@ -102,6 +112,7 @@ pnpm --filter @rbw/web test        # unit tests, including one that runs next bu
 pnpm --filter @rbw/web typecheck
 pnpm --filter @rbw/web dev         # local development server
 RBW_RESULTS_DIR=fixtures/no-release pnpm --filter @rbw/web build
+RBW_RESULTS_DIR=../../tools/release/fixtures/release pnpm --filter @rbw/web build   # the synthetic release
 ```
 
 The build sets `NEXT_TELEMETRY_DISABLED=1`.
@@ -113,7 +124,7 @@ The conductor sets these on the host; this repository holds no Vercel configurat
 - Root Directory: `packages/web`, with source files outside the root directory included in the build, since the app imports the workspace packages `@rbw/schema` and `@rbw/admission`.
 - Framework preset: Next.js. Vercel installs with pnpm from the repository root lockfile.
 - Node.js version: 24.x.
-- `RBW_RESULTS_DIR` is optional; unset, the build uses the development fixture.
+- `RBW_RESULTS_DIR` is optional; unset, the build uses the development fixture, which holds no release.
 
 A push of a branch other than the production branch then builds a preview deployment.
 
@@ -124,15 +135,16 @@ A push of a branch other than the production branch then builds a preview deploy
 
 ## Tests
 
-- `test/release.test.ts`: both fixtures parse; every refusal above; the development fixture's symptom and responses equal their committed sources.
-- `test/page.test.tsx`: the six cells in order, their text statuses with and without admission records (evidence and decisions from the real importer over the admission package's synthetic record sets), the no-release state, the funnel and the catalog.
-- `test/route.test.ts`: the file route serves exactly the published files, byte for byte, and 404 otherwise.
+- `test/release.test.ts`: both fixtures and the release fixture (`tools/release/fixtures/release`, read in place) parse; every refusal above; the development fixture's symptom and responses equal their committed sources.
+- `test/page.test.tsx`: the six cells in order, their text statuses with and without admission records (evidence and decisions from the real importer over the admission package's synthetic record sets), the no-release and release states, the funnel and the catalog.
+- `test/route.test.ts`: the run and release file routes serve exactly the published files, byte for byte, and 404 otherwise.
 - `test/reads.test.ts`: a directory is checked once per process, and prerendering every file route reads each added published file exactly twice, so reads grow linearly with the number of files.
-- `test/build.test.ts`: `next build` succeeds for both fixtures and prerenders the pages and files.
+- `test/build.test.ts`: `next build` succeeds for the two fixtures and the release fixture and prerenders the pages and files.
 
 ## What it does not do
 
-- It shows no validated result: releases (ADM-09) and the card, issue and leak checks (ADM-07) are planned.
+- It does not rerun the release step's checks; it reads `release.json` and checks only its files and its link to the run.
+- It does not render the frozen issue inline; `issue.json` is a download.
 - It does not run replays and has no server route that launches compute.
 - It reads a local results directory at build time; it fetches nothing from the results repository or the store.
 - It uses no external fonts or assets.

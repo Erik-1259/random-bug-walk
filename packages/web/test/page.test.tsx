@@ -2,11 +2,11 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it } from "vitest";
 import { Catalog } from "../src/components/catalog.tsx";
 import { CasePage } from "../src/components/case-page.tsx";
-import { funnel, NO_VALIDATED_RESULT, REPLAY_STATE, REPLAY_STATE_TEXT, suiteMatrix } from "../src/model.ts";
+import { funnel, NO_VALIDATED_RESULT, REPLAY_STATE, REPLAY_STATE_TEXT, suiteMatrix, VALIDATED_RESULT } from "../src/model.ts";
 import { readResults } from "../src/release.ts";
 import { AKL, LA } from "../../../packages/admission/test/support/record-set.ts";
 import { observe, testOutcome } from "../../../packages/admission/test/support/record-set.ts";
-import { cleanup, DEVELOPMENT, DEVELOPMENT_ROOT, NO_RELEASE, syntheticCase } from "./support/results.ts";
+import { cleanup, DEVELOPMENT, DEVELOPMENT_ROOT, NO_RELEASE, RELEASE, RELEASE_ID, RELEASE_ROOT, syntheticCase } from "./support/results.ts";
 
 afterEach(cleanup);
 
@@ -81,7 +81,8 @@ describe("case page from the development fixture", () => {
     expect(page).toContain("Calibration Not requested");
     expect(page).not.toMatch(/\b0 solves\b/);
     expect(page).toContain("Task revision Not in this run's published records");
-    expect(page).toContain("Release None. The release step (ADM-09) is planned.");
+    expect(page).toContain("Release None published yet.");
+    expect(page).toContain("No release has been published yet, so no result here is validated.");
   });
 });
 
@@ -130,7 +131,7 @@ describe("case page with admission records", () => {
       ["Runs with an admission decision", 1],
       ["Admission verdict pass", 0],
       ["Blind spot demonstrated (ADM-08)", 0],
-      ["Validated releases (ADM-09, planned)", 0],
+      ["Validated releases (ADM-09)", 0],
     ]);
   });
 });
@@ -172,6 +173,68 @@ describe("no-release state", () => {
   });
 });
 
+describe("case page with a published release", () => {
+  it("names the validated example, labels the released case and keeps the six cells", async () => {
+    const html = renderToStaticMarkup(<CasePage results={await readResults(RELEASE)} />);
+    expect(cellOrder(html)).toEqual(["1", "2", "3", "4", "5", "6"]);
+    const page = text(html);
+    expect(page).toContain(VALIDATED_RESULT);
+    expect(page).not.toContain(NO_VALIDATED_RESULT);
+    expect(page).toContain("Validated release, synthetic planted bug");
+    expect(page).not.toContain("Development evidence, not validated");
+    expect(page).toContain("Synthetic task: the bug in this case was planted on purpose");
+    expect(page).toContain("Comparison (ADM-08): blind spot demonstrated");
+  });
+
+  it("keeps replay disabled with the release's reason", async () => {
+    const html = renderToStaticMarkup(<CasePage results={await readResults(RELEASE)} />);
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Run verified replay<\/button>/);
+    expect(text(html)).toContain(`Replay status: ${REPLAY_STATE_TEXT.disabled}. Verified replay is not available yet.`);
+  });
+
+  it("shows the release's provenance from its record", async () => {
+    const results = await readResults(RELEASE);
+    const page = text(renderToStaticMarkup(<CasePage results={results} />));
+    const record = results.release?.record;
+    expect(page).toContain(`Release ${RELEASE_ID} Release SHA-256 ${results.release?.sha256 ?? "none"} Release created 2026-10-06T11:38:10Z`);
+    expect(page).toContain(`Run ${RELEASE_ROOT} (factory, completed)`);
+    expect(page).toContain("Publication ff74b6ec-ae2d-8673-86b1-9b5722d1a13d");
+    expect(page).toContain("Results repository commit 66b26fed8cc3d23f9487e70984bce4c54d2a5633");
+    expect(page).toContain("Project policy SHA-256 7749aa26b966e375d324794cc65e7e6ee5b978f83844d30dc283d930fb160c2e Policy umami-uc3-v1");
+    expect(page).toContain("Task revision 274265fba006f23e1efc2aee9ac773557894da6f34fd5f4cab29d8d659d66107");
+    expect(page).toContain(`Admission's provisional task revision ${results.caseRun?.admission?.evidence.request.task_revision ?? "none"}`);
+    expect(page).toContain("Kit version 1390cb9fe50f0189e52d6e35b11eac9860ccaf77b8d1ae2ca94daf85e9fde71e");
+    expect(page).toContain(`Kit image ${record?.images.kit_image ?? "none"} Controller image ${record?.images.controller_image ?? "none"}`);
+    expect(page).toContain("Family synthetic-family-1 (public_demo), source fix synthetic-upstream at aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    expect(page).toContain("Human check (ADM-07) Approved on 2026-10-14");
+    expect(page).toContain("Calibration Not requested");
+    expect(page).not.toContain(record?.judge_job.index_sha256 ?? "none");
+  });
+
+  it("links the release's files and the released run's files, and no other archive", async () => {
+    const html = renderToStaticMarkup(<CasePage results={await readResults(RELEASE)} />);
+    for (const path of ["release.json", "issue.json", "issue-check.json", "recordings/card-1.recording.json", "recordings/issue-1.recording.json"]) {
+      expect(html).toContain(`href="/releases/${RELEASE_ID}/${path}"`);
+    }
+    expect(html).toContain(`href="/runs/${RELEASE_ROOT}/manifest.json"`);
+    expect(html).toContain(`href="/runs/${RELEASE_ROOT}/report.md"`);
+    const page = text(html);
+    expect(page).not.toContain("Validated-task downloads: disabled");
+    expect(page).toContain("Diagnostic archive (not validated) No other published runs.");
+    expect(page).not.toContain(`${RELEASE_ROOT} completed, not validated`);
+  });
+
+  it("counts the release in the funnel and names the human check in the limitations", async () => {
+    const results = await readResults(RELEASE);
+    expect(funnel(results).at(-1)).toEqual({ label: "Validated releases (ADM-09)", count: 1 });
+    const page = text(renderToStaticMarkup(<CasePage results={results} />));
+    expect(page).toContain("Validated releases (ADM-09) 1");
+    expect(page).toContain("A human check (ADM-07) approved this issue, and one release (ADM-09) was published.");
+    expect(page).not.toContain("No release has been published yet");
+    expect(page).toContain("Verified replay is not built yet.");
+  });
+});
+
 describe("suite matrix", () => {
   it("has six cells in row and column order", () => {
     expect(suiteMatrix(null).map((cell) => `${cell.row}/${cell.column}/${cell.status}`)).toEqual([
@@ -194,6 +257,18 @@ describe("diagnostic catalog", () => {
     expect(page).toContain("00000000-0000-4000-8000-000000002005 kit_check Running None yet Not published");
     expect(page).toContain("results/00000000-0000-4000-8000-000000002004/clean-01/trial-result.json Not produced (stage_failed)");
     expect(html).toContain('href="/runs/00000000-0000-4000-8000-000000002001/logs/00000000-0000-4000-8000-000000002002/run.log"');
+  });
+
+  it("marks the released run and says which run is the validated release", async () => {
+    const page = text(renderToStaticMarkup(<Catalog results={await readResults(RELEASE)} />));
+    expect(page).toContain(`Run ${RELEASE_ROOT} is validated release ${RELEASE_ID}; the others are not validated.`);
+    expect(page).toContain(`${RELEASE_ROOT} Validated release ${RELEASE_ID} factory Terminal Completed Published`);
+  });
+
+  it("says that no run is a validated release without one", async () => {
+    const page = text(renderToStaticMarkup(<Catalog results={await readResults(NO_RELEASE)} />));
+    expect(page).toContain("None of them is a validated release.");
+    expect(page).not.toContain("Validated release ");
   });
 
   it("lists the development run's files with their hashes", async () => {

@@ -13,6 +13,10 @@ export const FIXTURES = fileURLToPath(new URL("../../fixtures/", import.meta.url
 export const DEVELOPMENT = join(FIXTURES, "development-2026-10-06");
 export const NO_RELEASE = join(FIXTURES, "no-release");
 export const DEVELOPMENT_ROOT = "00000000-0000-4000-8000-000000001006";
+/** The release package's synthetic results directory, read in place: one released factory run. */
+export const RELEASE = fileURLToPath(new URL("../../../../tools/release/fixtures/release/", import.meta.url));
+export const RELEASE_ID = "00000000-0000-4000-8000-000000000601";
+export const RELEASE_ROOT = "00000000-0000-4000-8100-000000000001";
 export const SYMPTOM_SOURCE = fileURLToPath(new URL("../../../../tools/local-runner/candidates/umami-tz-arg-001/writer-input.json", import.meta.url));
 
 const created: string[] = [];
@@ -37,6 +41,17 @@ export function copyFixture(fixture: string): string {
 export function writeFile(path: string, bytes: string | Uint8Array): void {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, bytes);
+}
+
+export function releaseDir(results: string, releaseId: string = RELEASE_ID): string {
+  return join(results, "repository", "releases", releaseId);
+}
+
+/** A copy of the release fixture's published directories: inputs/ and private-store/ are not published. */
+export function copyRelease(): string {
+  const dir = tempDir();
+  for (const part of ["repository", "store"]) cpSync(join(RELEASE, part), join(dir, part), { recursive: true });
+  return dir;
 }
 
 export function runDir(results: string, root: string): string {
