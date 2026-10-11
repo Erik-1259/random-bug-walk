@@ -24,8 +24,8 @@ export function revenueTestIds(suite: SuiteTests): string[] {
 
 /**
  * Whether the replay reproduced the release: every one of the six cells as expected, for the
- * released task revision. On the 2nd to the 5th of a month (UTC), original-suite cells whose only
- * failures are the two revenue tests are the known condition: the replay is verified with
+ * released task revision. On the 2nd to the 5th of a month (UTC), original-suite cells whose failures
+ * are exactly the two revenue tests, both of them, are the known condition: the replay is verified with
  * known_condition set. Anything else unexpected is not_reproduced.
  */
 export function replayVerdict(evidence: Evidence, release: { task_revision: string }, runDateMs: number, suite: SuiteTests): { state: "verified" | "not_reproduced"; known_condition: boolean } {
@@ -38,6 +38,6 @@ export function replayVerdict(evidence: Evidence, release: { task_revision: stri
   const known =
     revenueKnownLimit(runDateMs).applies &&
     revenue.size === 2 &&
-    unexpected.every((cell) => cell.suite === "original" && cell.state === "fail" && cell.executed_count === cell.expected_count && cell.failing.length > 0 && cell.failing.every((item) => revenue.has(item.id)));
+    unexpected.every((cell) => cell.suite === "original" && cell.state === "fail" && cell.executed_count === cell.expected_count && cell.failing.length === revenue.size && cell.failing.every((item) => revenue.has(item.id)));
   return known ? { state: "verified", known_condition: true } : { state: "not_reproduced", known_condition: false };
 }

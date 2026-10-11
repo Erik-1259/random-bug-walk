@@ -172,6 +172,10 @@ describe("replayVerdict", () => {
     expect(replayVerdict(evidence([TEST_IDS[0] ?? "", TEST_IDS[1] ?? ""]), RELEASE, DEC_6, SUITE)).toEqual({ state: "not_reproduced", known_condition: false });
   });
 
+  it("is not_reproduced when only one of the two revenue tests fails, on Dec 3", () => {
+    expect(replayVerdict(evidence([TEST_IDS[0] ?? ""]), RELEASE, DEC_3, SUITE)).toEqual({ state: "not_reproduced", known_condition: false });
+  });
+
   it("is not_reproduced for a third failure on Dec 3", () => {
     expect(replayVerdict(evidence([TEST_IDS[0] ?? "", TEST_IDS[1] ?? "", TEST_IDS[2] ?? ""]), RELEASE, DEC_3, SUITE).state).toBe("not_reproduced");
   });
