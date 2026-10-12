@@ -119,6 +119,14 @@ function recordingsOf(dir: string): { path: string; bytes: Uint8Array }[] {
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
+/** Docker's rule: the first path segment is a registry host when it has a "." or ":" or is localhost. */
+function hasRegistryHost(reference: string): boolean {
+  const slash = reference.indexOf("/");
+  if (slash < 0) return false;
+  const first = reference.slice(0, slash);
+  return first.includes(".") || first.includes(":") || first === "localhost";
+}
+
 /** The family that links the mutation, and the public-demo check against the registry and the held-out list. */
 function familyOf(registryPath: string, heldOutPath: string, mutationId: string, codes: Set<string>): { family: Family | null } {
   const registry = record("FamilyRegistry", registryPath, "registry_invalid");
@@ -193,7 +201,9 @@ export async function buildRelease(options: BuildOptions, deps: BuildDeps): Prom
       }
       throw error;
     }
-    const kitImage = repoDigests.filter((item) => validateRecord("ImageReference", item).length === 0).sort()[0];
+    // The judge replay creates its sandboxes from this reference, so only a registry digest will do: a
+    // local name such as rbw-umami-kit@sha256:... (no registry host) exists on this host alone.
+    const kitImage = repoDigests.filter((item) => validateRecord("ImageReference", item).length === 0 && hasRegistryHost(item)).sort()[0];
     if (kitImage === undefined) codes.add("kit_image_missing");
     const mutationId = job.identity.mutation_id ?? "";
     const { family } = familyOf(options.registry, options.heldOut, mutationId, codes);

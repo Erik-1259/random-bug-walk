@@ -15,7 +15,7 @@ import { LocalPrivateStore } from "@rbw/publisher/private-store";
 import type { PrivateStore } from "@rbw/publisher/private-store";
 import { stage } from "../../src/stage.ts";
 import { checkout, destination, publish } from "../support/publish.ts";
-import { CONTROLLER_IMAGE, KIT_IMAGE, RELEASE_ID, canonical, factoryRun, generatedFiles, kitDocker, tempDir, world, write } from "../support/world.ts";
+import { CONTROLLER_IMAGE, KIT_IMAGE, RELEASE_ID, VCR_DIGEST, canonical, factoryRun, generatedFiles, kitDocker, tempDir, world, write } from "../support/world.ts";
 import type { FactoryRun, World } from "../support/world.ts";
 
 const SOURCES = new URL("../../fixtures/sources/", import.meta.url).pathname;
@@ -407,6 +407,17 @@ describe("build: a failing check stores and writes nothing", () => {
 
   it("ADM-09 refuses a kit image with no repository digest (kit_image_missing)", async () => {
     await refused(options(), "kit_image_missing", { docker: kitDocker(w.kit, []) });
+  });
+
+  it("records the kit image's registry digest, never a local name, which a judge sandbox cannot pull", async () => {
+    const opts = options();
+    const outcome = await buildRelease(opts, deps({ docker: kitDocker(w.kit, [`rbw-umami-kit@${VCR_DIGEST}`, KIT_IMAGE]) }));
+    expect(outcome).toMatchObject({ ok: true });
+    expect(parseRecord("Release", readFileSync(join(opts.out, "release.json"))).images.kit_image).toBe(KIT_IMAGE);
+  });
+
+  it("refuses a kit image with only a local repository digest (kit_image_missing)", async () => {
+    await refused(options(), "kit_image_missing", { docker: kitDocker(w.kit, [`rbw-umami-kit@${VCR_DIGEST}`]) });
   });
 
   it("ADM-09 refuses a root that is not a factory root (root_not_factory)", async () => {
