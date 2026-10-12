@@ -64,7 +64,7 @@ For each `judge/<root>/root-run.json` in the private store, in root order: a roo
 
 - `project_id`, `project_policy_sha256` (the `--policy` file), `policy_id` (from the published admission request), `created_at`, `calibration: "not_requested"`.
 - `revisions`: one complete revision `{ sha256, identity }`, the built judge job's `candidateIdentity(ctx)` and its request's `task_revision`. It is the admission's provisional identity with `revision_kind: "complete"`, `issue_sha256` (the frozen issue) and `issue_style: "user-report"`.
-- `images`: `kit_image` (from `inspectRepoDigests`) and `controller_image` (`--controller-image`).
+- `images`: `kit_image` (the first registry digest from `inspectRepoDigests`; the judge replay creates its sandboxes from it) and `controller_image` (`--controller-image`).
 - `family`: the registry family that links the mutation, its source fix, `mutation_id` and `split: "public_demo"`.
 - `run`: the root and its `PublicationRecord`'s `publication_id`, `manifest_sha256` and `repository_commit`.
 - `admission`: the admission execution, `outcome_verdict` and ADM-08 `classification`.
@@ -128,7 +128,7 @@ An object already stored with the same bytes counts as stored, so a rerun with t
 |---|---|
 | `unregistered`, `held_out_conflict`, `invalid` | `checkPublicDemoInput` refuses the mutation against the registry and the held-out list |
 | `source_fix_ambiguous` | the family does not name exactly one source fix |
-| `kit_image_missing` | `inspectRepoDigests` returns no repository digest for the kit image |
+| `kit_image_missing` | `inspectRepoDigests` returns no registry digest for the kit image (a local name with no registry host, such as `rbw-umami-kit@sha256:...`, does not count: a judge sandbox could not pull it) |
 | `judge_job_unbuildable` | the image, its export or the code states cannot be read |
 | `store_mismatch`, `store_unavailable` | the private store holds other bytes under a judge job key, or cannot be used |
 
