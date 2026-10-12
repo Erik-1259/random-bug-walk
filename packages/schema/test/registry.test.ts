@@ -13,6 +13,8 @@ import {
 import { validateRecord } from "../src/validate.ts";
 
 const UMAMI_FIX = { upstream: "umami", commit: "e6f3f3b4b40a490d5cb050471baa0999366dab2a" };
+// The planted change at the pinned Umami commit, as the candidate attempt computes it.
+const UMAMI_MUTATION = "4c2531a343d8250607df3ab84491e2d7e655849c1dbcb477264a5c126b21ccca";
 const HELD_OUT: HeldOutIdentityList = {
   schema_version: 1,
   family_ids: ["synthetic-held-out-001"],
@@ -48,13 +50,18 @@ describe("committed registry", () => {
   it("validates and registers umami-tz-arg-001 as specified", () => {
     expect(validateRecord("FamilyRegistry", registry)).toEqual([]);
     expect(registry.families).toEqual([
-      { family_id: "umami-tz-arg-001", exposure: "public", held_out_eligible: false, source_fixes: [UMAMI_FIX], mutation_ids: [] },
+      { family_id: "umami-tz-arg-001", exposure: "public", held_out_eligible: false, source_fixes: [UMAMI_FIX], mutation_ids: [UMAMI_MUTATION] },
     ]);
+  });
+
+  it("accepts the linked mutation for the public demo", () => {
+    expect(() => { checkPublicDemoInput(registry, { kind: "mutation", mutation_id: UMAMI_MUTATION }, HELD_OUT); }).not.toThrow();
   });
 
   it("reports no held-out eligibility for any registered identity", () => {
     expect(isHeldOutEligible(registry, { kind: "family", family_id: "umami-tz-arg-001" })).toBe(false);
     expect(isHeldOutEligible(registry, { kind: "source_fix", ...UMAMI_FIX })).toBe(false);
+    expect(isHeldOutEligible(registry, { kind: "mutation", mutation_id: UMAMI_MUTATION })).toBe(false);
   });
 });
 
@@ -96,7 +103,7 @@ describe("registry operations", () => {
     expect(umami?.exposure).toBe("public");
     expect(umami?.held_out_eligible).toBe(false);
     expect(umami?.source_fixes).toEqual([UMAMI_FIX, { upstream: "umami", commit: "3".repeat(40) }]);
-    expect(umami?.mutation_ids).toEqual(["e".repeat(64)]);
+    expect(umami?.mutation_ids).toEqual([UMAMI_MUTATION, "e".repeat(64)]);
     expect(isHeldOutEligible(registry, { kind: "mutation", mutation_id: "e".repeat(64) })).toBe(false);
     expect(validateRecord("FamilyRegistry", registry)).toEqual([]);
   });
