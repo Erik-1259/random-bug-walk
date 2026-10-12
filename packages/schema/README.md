@@ -89,7 +89,7 @@ TypeScript validates with Ajv (draft 2020-12, strict mode); Python with `jsonsch
 
 ## Family registry
 
-`registry/families.json` is the committed registry. It holds `umami-tz-arg-001`: public, not eligible for held-out use, with the source fix `umami` at `e6f3f3b4b40a490d5cb050471baa0999366dab2a` and no mutation IDs yet.
+`registry/families.json` is the committed registry. It holds `umami-tz-arg-001`: public, not eligible for held-out use, with the source fix `umami` at `e6f3f3b4b40a490d5cb050471baa0999366dab2a` and one mutation ID, `4c2531a343d8250607df3ab84491e2d7e655849c1dbcb477264a5c126b21ccca`: the planted change in `src/queries/sql/pageviews/getPageviewStats.ts` at the pinned Umami commit, which the candidate attempt admitted.
 
 The functions in `src/registry.ts` and `rbw_schema/registry.py` never change an entry's `exposure` or `held_out_eligible`; the schema only allows `public` and `false`.
 

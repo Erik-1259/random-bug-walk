@@ -18,6 +18,8 @@ from rbw_schema.registry import (
 from rbw_schema.validate import validate_record
 
 UMAMI_FIX = {"upstream": "umami", "commit": "e6f3f3b4b40a490d5cb050471baa0999366dab2a"}
+# The planted change at the pinned Umami commit, as the candidate attempt computes it.
+UMAMI_MUTATION = "4c2531a343d8250607df3ab84491e2d7e655849c1dbcb477264a5c126b21ccca"
 HELD_OUT: HeldOutIdentityList = {
     "schema_version": 1,
     "family_ids": ["synthetic-held-out-001"],
@@ -61,11 +63,14 @@ def test_committed_registry_is_valid_and_registers_umami() -> None:
             "exposure": "public",
             "held_out_eligible": False,
             "source_fixes": [UMAMI_FIX],
-            "mutation_ids": [],
+            "mutation_ids": [UMAMI_MUTATION],
         }
     ]
     umami: Identity = {"kind": "family", "family_id": "umami-tz-arg-001"}
     assert is_held_out_eligible(registry, umami) is False
+    mutation: Identity = {"kind": "mutation", "mutation_id": UMAMI_MUTATION}
+    assert is_held_out_eligible(registry, mutation) is False
+    check_public_demo_input(registry, mutation, HELD_OUT)
 
 
 @pytest.mark.parametrize(
@@ -100,7 +105,7 @@ def test_exposure_and_eligibility_cannot_change() -> None:
     umami = linked["families"][0]
     assert umami["exposure"] == "public"
     assert umami["held_out_eligible"] is False
-    assert umami["mutation_ids"] == ["e" * 64]
+    assert umami["mutation_ids"] == [UMAMI_MUTATION, "e" * 64]
     assert validate_record("FamilyRegistry", linked) == []
 
 
