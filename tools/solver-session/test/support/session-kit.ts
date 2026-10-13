@@ -36,6 +36,8 @@ export interface SessionKitOptions {
   run?: () => CommandResult;
   /** `docker rm`'s answer for a container; the default removes it. */
   rm?: (container: string) => CommandResult;
+  /** The runtime logs' `docker cp` answer per call (1-based); the default copies them. */
+  copyLogs?: (call: number) => CommandResult;
   /** rbw-check-cold's answer per call (1-based); the default is cold. */
   checkCold?: (call: number) => CommandResult;
   /** The source files (manifest, export and container); SOURCE_FILES by default. */
@@ -62,6 +64,7 @@ export class SessionKit {
   private colds = 0;
   private builds = 0;
   private starts = 0;
+  private logCopies = 0;
 
   constructor(options: SessionKitOptions = {}) {
     this.options = options;
@@ -104,7 +107,10 @@ export class SessionKit {
       this.incoming.set(staging[1], readFileSync(from));
       return ok();
     }
-    if (from.endsWith(":/var/lib/rbw/logs")) return ok();
+    if (from.endsWith(":/var/lib/rbw/logs")) {
+      this.logCopies += 1;
+      return this.options.copyLogs?.(this.logCopies) ?? ok();
+    }
     return failed(1, `unexpected cp ${from} ${to}`);
   }
 

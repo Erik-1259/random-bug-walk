@@ -156,6 +156,9 @@ export class Session implements SolverTools {
   private started = false;
   private submitted: SubmitResult | null = null;
   private closed = false;
+  /** Set once the container is gone (or never started); close() then does nothing. */
+  private removed = false;
+  private logCopies = 0;
 
   private constructor(options: SessionOptions, deps: SessionDeps) {
     this.options = options;
@@ -463,18 +466,32 @@ export class Session implements SolverTools {
     return result;
   }
 
-  /** Copies the runtime logs out (harness capture, both arms) and removes the container. Idempotent. */
+  /**
+   * Copies the runtime logs out (harness capture, both arms) and removes the container. Idempotent.
+   * A failed copy keeps the container (the logs' only copy) and throws; calling close() again retries.
+   */
   close(): Promise<void> {
     return this.serial(() => this.closeNow());
   }
 
   private async closeNow(): Promise<void> {
-    if (this.closed) return;
+    if (this.removed) return;
     this.closed = true;
-    if (!this.started) return;
-    const logs = await this.deps.docker.run(["cp", `${this.container}:${LOGS_DIR}`, join(this.work, "logs")], { timeoutMs: SCRIPT_TIMEOUT_MS });
+    if (!this.started) {
+      this.removed = true;
+      return;
+    }
+    this.logCopies += 1;
+    // A retry copies into a fresh directory: docker cp nests into a destination that already exists.
+    const destination = join(this.work, this.logCopies === 1 ? "logs" : `logs-retry-${String(this.logCopies - 1)}`);
+    const logs = await this.deps.docker.run(["cp", `${this.container}:${LOGS_DIR}`, destination], { timeoutMs: SCRIPT_TIMEOUT_MS });
+    if (logs.code !== 0) {
+      this.event("closed", { logs_copied: false, removed: false });
+      throw new SessionError("logs_copy_failed", `kept container ${this.container} for its runtime logs: ${logs.stderr.trim()}`);
+    }
     const removed = await this.deps.docker.run(["rm", "--force", this.container], { timeoutMs: SCRIPT_TIMEOUT_MS });
-    this.event("closed", { logs_copied: logs.code === 0, removed: removed.code === 0 });
+    this.event("closed", { logs_copied: true, logs_dir: destination.slice(this.work.length + 1), removed: removed.code === 0 });
+    this.removed = true;
     if (removed.code !== 0) throw new SessionError("container_remove_failed", removed.stderr.trim());
   }
 }

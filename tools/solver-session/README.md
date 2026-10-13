@@ -11,7 +11,7 @@ One solver attempt's session on local Docker, for the paired comparison (UC1): a
 5. **Snapshot.** Before the first build, the snapshot script records each build output's owner, group and mode, a copy of each `tracked` output, and the entries of each `sticky` directory, under `/var/lib/rbw/session` (root only).
 6. **Start.** `rbw-check-cold`, `rbw-build-app`, `rbw-start`: the same in both arms. A failed first start is an infrastructure error (`SessionError`).
 7. **Tools** until submit (next section).
-8. **Close.** `docker cp` of `/var/lib/rbw/logs` to `<work>/logs` (the harness's copy of the runtime logs, in both arms), then `docker rm --force`.
+8. **Close.** `docker cp` of `/var/lib/rbw/logs` to `<work>/logs` (the harness's copy of the runtime logs, in both arms), then `docker rm --force`. A failed copy keeps the container and throws `logs_copy_failed`; calling `close()` again retries the copy into `<work>/logs-retry-N`.
 
 ### The neutral commit
 
@@ -59,7 +59,7 @@ The session's other in-container scripts (the placement, the log slice, the trac
 | `events.jsonl` | one line per step and tool call (a command is recorded by its SHA-256) |
 | `rebuilds/initial.json`, `rebuilds/rebuild-NN.json` | each build and start's full output |
 | `submission/` | the submission and the target file's bytes |
-| `logs/` | `/var/lib/rbw/logs` copied out at close |
+| `logs/` | `/var/lib/rbw/logs` copied out at close (`logs-retry-N/` when an earlier copy failed) |
 
 ## Host command
 

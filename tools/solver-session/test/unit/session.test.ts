@@ -338,4 +338,14 @@ describe("submit and close", () => {
     await expect(session.readFile(TARGET)).rejects.toThrow(/session_closed/);
     expect(existsSync(join(session.work, "events.jsonl"))).toBe(true);
   });
+
+  it("keeps the container and fails when the runtime logs cannot be copied out, then retries", async () => {
+    const { kit, session } = await open({ copyLogs: (call) => (call === 1 ? failed(1, "Error response from daemon: transient\n") : ok()) });
+    await expect(session.close()).rejects.toThrow(/logs_copy_failed/);
+    expect(kit.docker.named("rm").filter((call) => call[2] === "rbw-solver-uc1-test-on-01")).toHaveLength(0);
+    await expect(session.readFile(TARGET)).rejects.toThrow(/session_closed/);
+    await session.close();
+    expect(kit.docker.named("cp").filter((call) => call[1] === "rbw-solver-uc1-test-on-01:/var/lib/rbw/logs")).toHaveLength(2);
+    expect(kit.docker.named("rm").filter((call) => call[2] === "rbw-solver-uc1-test-on-01")).toHaveLength(1);
+  });
 });
