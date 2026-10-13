@@ -1,0 +1,216 @@
+{
+  "schema_version": 1,
+  "fixture_id": "rc-1-backup-code-001",
+  "date": "2026-10-13",
+  "kind": "local_delay_study",
+  "setup": {
+    "script": "packages/umami-fixture-rc1/host/race-delay-study.sh",
+    "image": "a race kit image (kit/umami-race) built locally for arm64 over a local kit/umami base; native arm64, not the released amd64 image",
+    "umami_commit": "ec0ff50388c264ed8ce46f00967e92f7e71476ae",
+    "clean_route_sha256": "3e766a0ba16e2547c234442176c04a0f2fd096d033a7079d21938dd9796acb87",
+    "planted_route_sha256": "30426f040a2c4ea1730827644b8947feed39dc8f2487fec1372139f5be9d66fb",
+    "clean_route_sha256_matches_pinned_kit_image": true,
+    "database_delay": "Toxiproxy latency toxic on the downstream (Postgres to Umami), set per round with rbw-proxy set-latency; proxy checked before and after every round",
+    "toxiproxy_version": "2.12.0",
+    "container_limits": "4 CPUs, 6 GB",
+    "rounds_per_delay_per_variant": 20,
+    "delays_ms": [
+      0,
+      25,
+      50,
+      100,
+      200
+    ],
+    "rounds": "each round after a template reset; the concurrent double-spend check and the serial control run in one Playwright run"
+  },
+  "sweep": [
+    {
+      "delay_ms": 0,
+      "planted": {
+        "race_rounds": 20,
+        "double_spend": 9,
+        "race_pass": 11,
+        "serial_control_pass": 20,
+        "serial_control_rounds": 20,
+        "overlap_ms": {
+          "min": 692.6,
+          "median": 881.4,
+          "max": 942.9
+        },
+        "race_round_ms": {
+          "min": 1109,
+          "median": 1140,
+          "max": 1194
+        }
+      },
+      "clean": {
+        "race_rounds": 20,
+        "double_spend_false_positive": 0,
+        "race_pass": 20,
+        "serial_control_pass": 20,
+        "serial_control_rounds": 20,
+        "overlap_ms": {
+          "min": 696.5,
+          "median": 874.5,
+          "max": 956.4
+        },
+        "race_round_ms": {
+          "min": 1083,
+          "median": 1166,
+          "max": 1204
+        }
+      }
+    },
+    {
+      "delay_ms": 25,
+      "planted": {
+        "race_rounds": 20,
+        "double_spend": 20,
+        "race_pass": 0,
+        "serial_control_pass": 20,
+        "serial_control_rounds": 20,
+        "overlap_ms": {
+          "min": 1245.4,
+          "median": 1266.1,
+          "max": 1319.7
+        },
+        "race_round_ms": {
+          "min": 1589,
+          "median": 1612,
+          "max": 1639
+        }
+      },
+      "clean": {
+        "race_rounds": 20,
+        "double_spend_false_positive": 0,
+        "race_pass": 20,
+        "serial_control_pass": 20,
+        "serial_control_rounds": 20,
+        "overlap_ms": {
+          "min": 1247.5,
+          "median": 1276.2,
+          "max": 1381.4
+        },
+        "race_round_ms": {
+          "min": 1612,
+          "median": 1646,
+          "max": 1751
+        }
+      }
+    },
+    {
+      "delay_ms": 50,
+      "planted": {
+        "race_rounds": 20,
+        "double_spend": 20,
+        "race_pass": 0,
+        "serial_control_pass": 20,
+        "serial_control_rounds": 20,
+        "overlap_ms": {
+          "min": 1484.6,
+          "median": 1506.8,
+          "max": 1592.6
+        },
+        "race_round_ms": {
+          "min": 2024,
+          "median": 2070,
+          "max": 2115
+        }
+      },
+      "clean": {
+        "race_rounds": 20,
+        "double_spend_false_positive": 0,
+        "race_pass": 20,
+        "serial_control_pass": 20,
+        "serial_control_rounds": 20,
+        "overlap_ms": {
+          "min": 1481.8,
+          "median": 1502.2,
+          "max": 1591.1
+        },
+        "race_round_ms": {
+          "min": 2075,
+          "median": 2103,
+          "max": 2163
+        }
+      }
+    },
+    {
+      "delay_ms": 100,
+      "planted": {
+        "race_rounds": 20,
+        "double_spend": 20,
+        "race_pass": 0,
+        "serial_control_pass": 20,
+        "serial_control_rounds": 20,
+        "overlap_ms": {
+          "min": 1923.7,
+          "median": 2001.4,
+          "max": 2080.1
+        },
+        "race_round_ms": {
+          "min": 2891,
+          "median": 2908,
+          "max": 2960
+        }
+      },
+      "clean": {
+        "race_rounds": 20,
+        "double_spend_false_positive": 0,
+        "race_pass": 20,
+        "serial_control_pass": 20,
+        "serial_control_rounds": 20,
+        "overlap_ms": {
+          "min": 1973.2,
+          "median": 2017.8,
+          "max": 2089.4
+        },
+        "race_round_ms": {
+          "min": 2970,
+          "median": 3026,
+          "max": 3118
+        }
+      }
+    },
+    {
+      "delay_ms": 200,
+      "planted": {
+        "race_rounds": 20,
+        "double_spend": 20,
+        "race_pass": 0,
+        "serial_control_pass": 20,
+        "serial_control_rounds": 20,
+        "overlap_ms": {
+          "min": 3168.0,
+          "median": 3186.4,
+          "max": 3264.9
+        },
+        "race_round_ms": {
+          "min": 4753,
+          "median": 4854,
+          "max": 4985
+        }
+      },
+      "clean": {
+        "race_rounds": 20,
+        "double_spend_false_positive": 0,
+        "race_pass": 20,
+        "serial_control_pass": 20,
+        "serial_control_rounds": 20,
+        "overlap_ms": {
+          "min": 3174.5,
+          "median": 3223.6,
+          "max": 3332.9
+        },
+        "race_round_ms": {
+          "min": 5007,
+          "median": 5051,
+          "max": 5158
+        }
+      }
+    }
+  ],
+  "chosen_delay_ms": 25,
+  "arch_note": "The sweep ran on native arm64. The released image is amd64. The amd64 race image built from the same source passes all ten in-image race self-tests under linux/amd64 emulation on Apple silicon (the latency toxic, per-container set-latency, the API-change audit, and the timed check that app database traffic goes through the proxy), so the delay mechanism works on amd64. The per-round app build could not run under emulation: rbw-build-app's cold-build check (rbw-check-cold) refuses the /root/.cache that Rosetta recreates on every emulated process, the same limitation the race kit README records for the base self-test. Confirming 20/20 planted and 0/20 clean at the chosen delay on the released amd64 image therefore needs native amd64 hardware and is not done here.",
+  "finding": "At zero database delay the planted race is flaky: 9 of 20 rounds double-spent, matching the earlier no-delay proof (about half). At a 25 ms downstream latency toxic the planted race double-spends in 20 of 20 rounds and the clean copy never does (0 of 20 false positives), and the serial control passes 20 of 20 in every cell; 50, 100 and 200 ms are also 20/20 planted and 0/20 clean. The smallest delay meeting ADM-05's 20-of-20 planted and 0-of-20 clean on arm64 is 25 ms. The delay widens the window between each request's read and the first request's write: planted overlap rises from a 881 ms median at 0 ms to 1266 ms at 25 ms, and both verify requests read the backup code as unused before either marks it used. Clean overlap is the same size, but the guard still refuses the second write, so clean stays 0/20 at every delay. This is an arm64 result; see arch_note for the amd64 confirmation still owed on native hardware. Picking 25 ms leaves little margin (0 ms was already 9/20), so a release targeting amd64 should re-measure the smallest 20/20 delay on that arch and may prefer 50 ms for margin."
+}
