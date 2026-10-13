@@ -80,7 +80,12 @@ for (const root of existsSync(runs) ? readdirSync(runs) : []) {
 }
 for (const root of statusOnly) {
   if (existsSync(join(runs, root))) continue;
-  writeFileSync(join(out, "store", "status", `${root}.json`), await fetchBytes(new URL(`status/${root}.json`, base).href));
+  const status = await fetchBytes(new URL(`status/${root}.json`, base).href);
+  // Published after the clone: its manifest is not in this snapshot, so the build would refuse it.
+  if (JSON.parse(status.toString("utf8")).publication_status === "published") {
+    throw new Error(`run ${root} was published during assembly; run the script again`);
+  }
+  writeFileSync(join(out, "store", "status", `${root}.json`), status);
   console.log(`run ${root}: status only`);
 }
 console.log(`store objects: ${objects}`);
