@@ -9,7 +9,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { runCommand } from "../../src/commands.ts";
 import { ScreenRecordSchema } from "../../src/record.ts";
 import type { StaticProbe } from "../../src/record.ts";
-import { MISS, scriptedFetch } from "../fixtures/scripted.ts";
+import { LOCATED_AND_FIXED, MISS, scriptedFetch } from "../fixtures/scripted.ts";
 import { commandOptions, ENV, freshSpend, noNetwork, openDb, POOL, RATES, SLOT, spySpend, syntheticTree, tempDir } from "../support.ts";
 import type { Tree } from "../support.ts";
 
@@ -111,6 +111,39 @@ describe("stop paths after the slot is held", () => {
     expect(probe.stopped).toMatchObject({ reason: "ledger_refusal", attempt: 1, detail: "invalid_request" });
     expect(probe.cost.unsettled_operation_ids).toHaveLength(1);
     expect(output.join("")).toContain("the ledger refused a write after launch (invalid_request)");
+  });
+
+  it("stops inconclusive when the reported prompt tokens exceed the counted bound, even on a hit", async () => {
+    const spend = await freshSpend(db);
+    const fake = scriptedFetch([LOCATED_AND_FIXED, LOCATED_AND_FIXED], { prompt_tokens: 10_000_000, completion_tokens: 80 });
+    const out = join(tempDir(), "out");
+    const output: string[] = [];
+    const code = await runCommand(commandOptions([...args(syntheticTree(), out, 2), "--fail-at-hits", "1"], spend, fake.fetch, output));
+    expect(code).toBe(1);
+    expect(fake.bodies).toHaveLength(1);
+    const { verdict, probe } = probeOf(out);
+    expect(verdict).toBe("inconclusive");
+    expect(probe.stopped).toMatchObject({ reason: "bound_exceeded", attempt: 1, detail: "prompt_tokens_over_bound" });
+    expect(probe.attempts).toHaveLength(1);
+    expect(probe.attempts[0]?.prompt_within_bound).toBe(false);
+    expect(probe.cost.unsettled_operation_ids).toEqual([]);
+    expect(output.join("")).toContain("screen: bound exceeded: reported prompt tokens 10000000 exceed the counted bound");
+    expect(await slotHolder(spend)).toBeNull();
+  });
+
+  it("lists a reserved operation whose launch was refused as unsettled", async () => {
+    const spend = await freshSpend(db);
+    const refusing: Spend = { ...spend, transition: () => Promise.resolve({ ok: false, code: "pool_halted", detail: "synthetic halt" }) };
+    const fake = scriptedFetch([MISS, MISS]);
+    const out = join(tempDir(), "out");
+    const output: string[] = [];
+    const code = await runCommand(commandOptions(args(syntheticTree(), out, 2), refusing, fake.fetch, output));
+    expect(code).toBe(1);
+    expect(fake.bodies).toHaveLength(0);
+    const { probe } = probeOf(out);
+    expect(probe.stopped).toMatchObject({ reason: "refused", attempt: 1, detail: "pool_halted" });
+    expect(probe.stopped?.operation_id).toMatch(/.+/);
+    expect(probe.cost.unsettled_operation_ids).toEqual([probe.stopped?.operation_id]);
   });
 
   it("writes an error record and tries the release when the spend throws", async () => {

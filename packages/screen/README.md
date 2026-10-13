@@ -54,7 +54,7 @@ node packages/screen/src/cli.ts plan --input /tmp/case/screen-input.json --tree 
 | `--out` | A new or empty directory. |
 | `--slot-key`, `--pool` | The spend slot the run acquires for its fresh root, and the pool every call reserves from. |
 
-Exit codes: 0 the run finished (whatever the verdict), or stopped because the verdict was decided; 1 the run could not start, did not fit the budget, or stopped on a refusal, an uncertain call or an error; 2 bad usage.
+Exit codes: 0 the run finished (whatever the verdict), or stopped because the verdict was decided; 1 the run could not start, did not fit the budget, or stopped on a refusal, an uncertain call, a prompt over its counted bound or an error; 2 bad usage.
 
 ## Input
 
@@ -97,7 +97,7 @@ A **hit** is `located`, `fixed` or `located_and_fixed`. The verdict:
 
 - `fail`: hits reached `--fail-at-hits`. The site is findable from the source alone. The run stops at that point, since no further attempt can change the verdict, and spends nothing more.
 - `pass`: every planned attempt gave a scored answer, with fewer hits.
-- `inconclusive`: neither; for example an attempt gave no answer, or the run stopped early on a refusal.
+- `inconclusive`: neither; for example an attempt gave no answer, or the run stopped early on a refusal or on a prompt over its counted bound.
 
 ## Model profiles, metering and caps
 
@@ -116,13 +116,13 @@ The profiles are constants in `src/profiles.ts`. Each profile's hashed part (its
 
 | Limit | Enforced by | When |
 | --- | --- | --- |
-| Input tokens per call | The writer's counted prompt bound (UTF-8 bytes of the request plus framing); over the limit the call is refused as `prompt_too_large`, nothing is reserved or sent, and the run stops `inconclusive`. Envelope line `enforced_by: "client_counter"` | Before reserving |
+| Input tokens per call | The writer's counted prompt bound (UTF-8 bytes of the request plus framing); over the limit the call is refused as `prompt_too_large`, nothing is reserved or sent, and the run stops `inconclusive`. If the provider then reports more prompt tokens than the bound, the run stops (`bound_exceeded`) and is `inconclusive` whatever that answer was. Envelope line `enforced_by: "client_counter"` | Before reserving, and on the reported usage |
 | Output tokens per call | `max_tokens` in the request. Envelope line `enforced_by: "request_parameter"` | In the request |
 | Calls per run | `--attempts`, at most 8; each attempt reserves its own call ordinal (1 to N) | Before each call |
 | Money | The budget check before the run, then `@rbw/spend` reserving each call's worst case against the pool; a refusal stops the run | Before the run and before each call |
 | Retries | None: `max_retries: 0`, and the writer's fetch wrapper sends one request per call | At the request |
 
-The metered values the record carries per attempt: `reserved_microusd`, `settled_microusd`, `prompt_tokens`, `completion_tokens`, `input_token_bound` and `prompt_within_bound`. The run's `cost` sums them and lists any launched call that has no settlement. An operation interrupted by an error after its reservation was requested has no attempt entry and unknown amounts: `cost` lists it as unsettled and leaves it out of both sums.
+The metered values the record carries per attempt: `reserved_microusd`, `settled_microusd`, `prompt_tokens`, `completion_tokens`, `input_token_bound` and `prompt_within_bound`. The run's `cost` sums them and lists any launched call that has no settlement. An operation the run stopped on without an attempt entry (interrupted by an error after its reservation was requested, or reserved and then refused its launch) has unknown or unsettled amounts: `cost` lists it as unsettled and leaves it out of both sums.
 
 The limits are predictions sized for a few source files and one symptom, not measurements; a live run measures them, and any change changes the profile digest.
 

@@ -38,7 +38,7 @@ export const AttemptSchema = z.strictObject({
 export type Attempt = z.infer<typeof AttemptSchema>;
 
 export const StoppedSchema = z.strictObject({
-  reason: z.enum(["verdict_decided", "refused", "prompt_too_large", "uncertain", "ledger_refusal", "error"]),
+  reason: z.enum(["verdict_decided", "refused", "prompt_too_large", "uncertain", "ledger_refusal", "bound_exceeded", "error"]),
   attempt: z.number().int().positive().nullable(),
   operation_id: z.string().nullable(),
   detail: z.string(),

@@ -36,14 +36,19 @@ export const MISS: ScreenAnswer = {
   reason: MISS_REASON,
 };
 
-export function completion(content: string, model: string): string {
+export interface Usage {
+  prompt_tokens: number;
+  completion_tokens: number;
+}
+
+export function completion(content: string, model: string, usage: Usage = SYNTHETIC_USAGE): string {
   return JSON.stringify({
     id: "synthetic-completion",
     object: "chat.completion",
     created: 1767225600,
     model,
     choices: [{ index: 0, message: { role: "assistant", content }, finish_reason: "stop" }],
-    usage: { ...SYNTHETIC_USAGE, total_tokens: SYNTHETIC_USAGE.prompt_tokens + SYNTHETIC_USAGE.completion_tokens },
+    usage: { ...usage, total_tokens: usage.prompt_tokens + usage.completion_tokens },
   });
 }
 
@@ -53,7 +58,7 @@ export interface ScriptedFetch {
 }
 
 /** A fetch that answers each request from `script` in call order and keeps every request body. */
-export function scriptedFetch(script: readonly Scripted[]): ScriptedFetch {
+export function scriptedFetch(script: readonly Scripted[], usage: Usage = SYNTHETIC_USAGE): ScriptedFetch {
   const queue = [...script];
   const bodies: Record<string, unknown>[] = [];
   return {
@@ -73,7 +78,7 @@ export function scriptedFetch(script: readonly Scripted[]): ScriptedFetch {
       }
       const content = next === "invalid" ? JSON.stringify({ file: "src/report.ts" }) : JSON.stringify(next);
       const model = typeof body.model === "string" ? body.model : "";
-      return Promise.resolve(new Response(completion(content, model), { status: 200, headers: { "content-type": "application/json" } }));
+      return Promise.resolve(new Response(completion(content, model, usage), { status: 200, headers: { "content-type": "application/json" } }));
     },
   };
 }

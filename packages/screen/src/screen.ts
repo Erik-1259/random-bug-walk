@@ -169,12 +169,13 @@ export async function executeScreen(options: ScreenOptions, run: ScreenRun): Pro
   const attempts: Attempt[] = [];
   const answers: AnswerEntry[] = [];
 
-  // An operation interrupted after its reservation was requested has no attempt entry; its amounts are
-  // unknown, so it is listed as unsettled and stays out of the reserved and settled sums.
+  // An operation the run stopped on without an attempt entry (interrupted by an error, or reserved and
+  // then refused its launch) has unknown or unsettled amounts, so it is listed as unsettled and stays
+  // out of the reserved and settled sums.
   const unsettled = (stopped: Stopped | null): string[] => {
     const ids = attempts.filter((attempt) => attempt.settled_microusd === null).map((attempt) => attempt.operation_id);
-    const interrupted = stopped?.reason === "error" ? stopped.operation_id : null;
-    return interrupted === null || attempts.some((attempt) => attempt.operation_id === interrupted) ? ids : [...ids, interrupted];
+    const orphan = stopped?.operation_id ?? null;
+    return orphan === null || attempts.some((attempt) => attempt.operation_id === orphan) ? ids : [...ids, orphan];
   };
   const probe = (stopped: Stopped | null): StaticProbe => {
     const settled = attempts.flatMap((attempt) => (attempt.settled_microusd === null ? [] : [attempt.settled_microusd]));
@@ -208,11 +209,16 @@ export async function executeScreen(options: ScreenOptions, run: ScreenRun): Pro
   };
   const finish = async (stopped: Stopped | null): Promise<ScreenRecord> => {
     const probed = probe(stopped);
-    const verdict = verdictOf(
-      attempts.map((attempt) => attempt.outcome),
-      run.attempts,
-      run.failAtHits,
-    );
+    // A call whose reported prompt exceeded the counted bound spent outside the reserved envelope, so
+    // its answer decides nothing: the run is inconclusive.
+    const verdict =
+      stopped?.reason === "bound_exceeded"
+        ? "inconclusive"
+        : verdictOf(
+            attempts.map((attempt) => attempt.outcome),
+            run.attempts,
+            run.failAtHits,
+          );
     const record = buildRecord({ subject, probe: probed, verdict, binding: run.binding, judgedOn: options.now() });
     await mkdir(run.out, { recursive: true });
     await writeFile(join(run.out, "screen.json"), `${JSON.stringify(record, null, 2)}\n`);
@@ -339,6 +345,12 @@ async function attemptAll(options: ScreenOptions, run: ScreenRun, loop: Loop): P
     if (call.ledger_refusal !== null) {
       say(`screen: the ledger refused a write after launch (${call.ledger_refusal}) for operation ${call.operation_id}`);
       return { reason: "ledger_refusal", attempt: index, operation_id: call.operation_id, detail: call.ledger_refusal };
+    }
+    if (call.prompt_within_bound === false) {
+      say(
+        `screen: bound exceeded: reported prompt tokens ${String(call.usage.prompt_tokens)} exceed the counted bound ${String(call.input_token_bound)} for operation ${call.operation_id}`,
+      );
+      return { reason: "bound_exceeded", attempt: index, operation_id: call.operation_id, detail: "prompt_tokens_over_bound" };
     }
     const hits = attempts.filter((attempt) => isHit(attempt.outcome)).length;
     if (hits >= run.failAtHits && index < run.attempts) {
