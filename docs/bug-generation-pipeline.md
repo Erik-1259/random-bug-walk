@@ -17,7 +17,13 @@ This project turns a known kind of bug into a validated task in a pinned host ap
 
 ## What a new bug class costs
 
-Steps 3, 4 and 8 carry over to any new class in the same host that provides the full set of probes (mutation, partial and stub), and the admission machinery in step 7 is shared. A class that records the partial and stub probes as not applicable (such as the race family) also needs the local runner's code-state derivation and the admission profile to accept a mutation-only probe set; today `tools/local-runner/src/code-states.ts` loads all three and refuses such a set. Each new class still needs, once: harvest queries (step 1), a shape rule (step 2), checks with whatever driver the class needs (step 5), and integration of the class's symptom into the candidate attempt (steps 6–7). Today the attempt's symptom builder (`tools/controller/src/symptom.ts`) and its fixture staging are specific to the time-zone family: it accepts only a day-count mismatch and builds time-zone and pageview fields, so a new class also needs its own symptom shape for the writer and family selection in the controller. After that, another site of the same class in the same host can reuse the class's driver, kit changes and seeding, so it should cost much less than the first.
+Today the pipeline is wired end to end for one family, the time-zone family: the local runner's inputs default to its probes, alternative fix and fixture, the candidate attempt's symptom builder (`tools/controller/src/symptom.ts`) accepts only its day-count mismatch, and the judge replay reloads its assets. The steps are written as separate packages, but running a second class through them needs family selection in each of those places. Planned work for that:
+
+- **Per class, once:** harvest queries (step 1), a shape rule (step 2), checks with whatever driver the class needs (step 5), and a symptom shape the writer can use (step 6).
+- **Family selection:** the local runner (probes, alternative fix, fixture), the controller (fixture staging, symptom, kit image) and the judge replay need to take the family as an input instead of assuming the time-zone family.
+- **Classes without partial and stub probes** (such as the race family) also need the code-state derivation (`tools/local-runner/src/code-states.ts`, which loads all three probes today) and the admission profile to accept a mutation-only probe set.
+
+Once a class is wired, another site of the same class in the same host can reuse its driver, kit changes and seeding, so it should cost much less than the first.
 
 ## The static-headroom screen
 
