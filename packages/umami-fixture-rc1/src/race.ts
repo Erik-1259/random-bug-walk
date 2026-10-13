@@ -2,6 +2,8 @@ import { backupCodeFor, type Fixture, type FixtureCheck } from "./fixture.ts";
 import { execute, type HttpResult, type RequestContext } from "./http.ts";
 import { errorSummary, isRecord, parseJsonBody } from "./json.ts";
 import { loginRequest, verifyBackupCodeRequest, type Credentials } from "./requests.ts";
+import { fireConcurrent, fireSequential, overlapOf } from "./template/index.ts";
+import type { AttemptTiming, RequestOutcome, RequestPlan } from "./template/index.ts";
 
 export type SetupFailureCode = "auth_failed" | "seed_failed";
 
@@ -106,30 +108,58 @@ export async function loginForChallenge(context: RequestContext, credentials: Cr
   return { ok: true, partialToken: token };
 }
 
-/** Sends one verify request, without retries, and records when it was sent and when it settled. */
-export async function attemptVerify(context: RequestContext, partialToken: string, backupCode: string, now: Clock, origin: number): Promise<VerifyAttempt> {
-  const sent = now();
-  try {
-    const result = await execute(context, verifyBackupCodeRequest(partialToken, backupCode));
-    const settled = now();
+/** Builds the VerifyAttempt for one settled or thrown verify request. Redacts the token and code from a failure. */
+function recordAttempt(outcome: RequestOutcome, timing: AttemptTiming, state: VerifyState): VerifyAttempt {
+  if (outcome.settled) {
+    const { result } = outcome;
     return {
-      sent_ms: milliseconds(sent - origin),
-      settled_ms: milliseconds(settled - origin),
+      sent_ms: timing.sent_ms,
+      settled_ms: timing.settled_ms,
       status: result.status,
       error_code: result.status === 200 ? null : errorCode(result),
       token_issued: tokenIssued(result),
       failure: null,
     };
+  }
+  return {
+    sent_ms: timing.sent_ms,
+    settled_ms: timing.settled_ms,
+    status: null,
+    error_code: null,
+    token_issued: false,
+    failure: errorSummary(outcome.error, [state.partialToken, state.backupCode]),
+  };
+}
+
+interface VerifyState {
+  partialToken: string;
+  backupCode: string;
+}
+
+/** The request plan for a backup-code check: sign in for a challenge, then verify the check's code. */
+function verifyPlan(fixture: Fixture, check: FixtureCheck, credentials: Credentials): RequestPlan<VerifyState, VerifyAttempt, SetupFailure> {
+  const backupCode = backupCodeFor(fixture, check).plaintext;
+  return {
+    setup: async (context) => {
+      const challenge = await loginForChallenge(context, credentials);
+      return challenge.ok ? { ok: true, state: { partialToken: challenge.partialToken, backupCode } } : challenge;
+    },
+    request: (state) => verifyBackupCodeRequest(state.partialToken, state.backupCode),
+    record: recordAttempt,
+  };
+}
+
+/** Sends one verify request, without retries, and records when it was sent and when it settled. */
+export async function attemptVerify(context: RequestContext, partialToken: string, backupCode: string, now: Clock, origin: number): Promise<VerifyAttempt> {
+  const sent = now();
+  const state: VerifyState = { partialToken, backupCode };
+  try {
+    const result = await execute(context, verifyBackupCodeRequest(partialToken, backupCode));
+    const settled = now();
+    return recordAttempt({ settled: true, result }, { sent_ms: milliseconds(sent - origin), settled_ms: milliseconds(settled - origin) }, state);
   } catch (error) {
     const settled = now();
-    return {
-      sent_ms: milliseconds(sent - origin),
-      settled_ms: milliseconds(settled - origin),
-      status: null,
-      error_code: null,
-      token_issued: false,
-      failure: errorSummary(error, [partialToken, backupCode]),
-    };
+    return recordAttempt({ settled: false, error }, { sent_ms: milliseconds(sent - origin), settled_ms: milliseconds(settled - origin) }, state);
   }
 }
 
@@ -145,21 +175,14 @@ export async function runSerialReuse(
   credentials: Credentials,
   now: Clock,
 ): Promise<RoundResult<SerialReuseEvidence>> {
-  const code = backupCodeFor(fixture, check).plaintext;
-  const first = await loginForChallenge(context, credentials);
-  if (!first.ok) {
-    return first;
-  }
-  const origin = now();
-  const attempts = [await attemptVerify(context, first.partialToken, code, now, origin)];
-  if (attempts[0]?.token_issued === true) {
-    const second = await loginForChallenge(context, credentials);
-    if (!second.ok) {
-      return { ...second, evidence: { check_id: check.check_id, kind: "serial_reuse", attempts } };
+  const sequence = await fireSequential(context, verifyPlan(fixture, check, credentials), (first) => first.token_issued, now);
+  if (!sequence.ok) {
+    if (sequence.attempts.length > 0) {
+      return { ...sequence.failure, evidence: { check_id: check.check_id, kind: "serial_reuse", attempts: sequence.attempts } };
     }
-    attempts.push(await attemptVerify(context, second.partialToken, code, now, origin));
+    return sequence.failure;
   }
-  return { ok: true, evidence: { check_id: check.check_id, kind: "serial_reuse", attempts } };
+  return { ok: true, evidence: { check_id: check.check_id, kind: "serial_reuse", attempts: sequence.attempts } };
 }
 
 /**
@@ -174,27 +197,20 @@ export async function runDoubleSpend(
   credentials: Credentials,
   now: Clock,
 ): Promise<RoundResult<DoubleSpendEvidence>> {
-  const code = backupCodeFor(fixture, check).plaintext;
-  const first = await loginForChallenge(contexts[0], credentials);
-  if (!first.ok) {
-    return first;
+  const burst = await fireConcurrent(contexts, verifyPlan(fixture, check, credentials), now);
+  if (!burst.ok) {
+    return burst.failure;
   }
-  const second = await loginForChallenge(contexts[1], credentials);
-  if (!second.ok) {
-    return second;
+  const [a, b] = burst.attempts;
+  if (a === undefined || b === undefined) {
+    return { ok: false, failure_code: "seed_failed", reason: "the race did not fire two verify requests" };
   }
-  const origin = now();
-  const attempts = await Promise.all([
-    attemptVerify(contexts[0], first.partialToken, code, now, origin),
-    attemptVerify(contexts[1], second.partialToken, code, now, origin),
-  ]);
-  return { ok: true, evidence: { check_id: check.check_id, kind: "concurrent_double_spend", attempts, overlap_ms: overlapMs(attempts) } };
+  return { ok: true, evidence: { check_id: check.check_id, kind: "concurrent_double_spend", attempts: [a, b], overlap_ms: burst.overlap_ms } };
 }
 
 /** The time both requests were in flight together; zero or less when one settled before the other was sent. */
 export function overlapMs(attempts: readonly [VerifyAttempt, VerifyAttempt]): number {
-  const [a, b] = attempts;
-  return milliseconds(Math.min(a.settled_ms, b.settled_ms) - Math.max(a.sent_ms, b.sent_ms));
+  return overlapOf(attempts.map((attempt) => ({ sent_ms: attempt.sent_ms, settled_ms: attempt.settled_ms })));
 }
 
 /** The evidence as the check's response artifact: JSON with a trailing newline. */
