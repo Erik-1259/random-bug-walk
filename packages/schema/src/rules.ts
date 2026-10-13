@@ -1,5 +1,5 @@
 import { canonicalDigest } from "./canonical.ts";
-import { TRIAL_PROFILES, jobOperationIdentity, jobPayloadDigest, utcInstantKey, utcSeconds } from "./derive.ts";
+import { TRIAL_PROFILES, allowedTrialProfiles, jobOperationIdentity, jobPayloadDigest, utcInstantKey, utcSeconds } from "./derive.ts";
 import type {
   ArtifactManifest,
   DefName,
@@ -96,7 +96,10 @@ function expectedTrialsRules(manifest: ExpectedTrials, request: JobRequest | und
   if (trials.some((trial) => hasDuplicates(trial.expected_checks.map((check) => check.check_id)))) errors.push("trials:duplicate_check");
   if (request === undefined) return errors;
   if (canonicalDigest(manifest).sha256 !== request.expected_trials_sha256) errors.push("request:expected_trials_sha256");
-  const profile = TRIAL_PROFILES[request.kind];
+  // An admission manifest follows the full profile or, for a family without ADM-06 probes, the
+  // profile without them; the trial IDs pick the one it is checked against.
+  const ids = trials.map((trial) => trial.trial_id).join("\n");
+  const profile = allowedTrialProfiles(request.kind).find((item) => item.trials.map((trial) => trial.trial_id).join("\n") === ids) ?? TRIAL_PROFILES[request.kind];
   if (profile.originalSuite) {
     if (trials.some((trial) => trial.original_suite_sha256 === null)) errors.push("trials:original_suite_missing");
   } else if (trials.some((trial) => trial.original_suite_sha256 !== null)) {

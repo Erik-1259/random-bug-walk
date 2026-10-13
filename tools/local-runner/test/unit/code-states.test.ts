@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { loadProbeSet } from "@rbw/shapes";
@@ -14,6 +14,7 @@ import {
   sha256,
   writeAlternativeDir,
   writeProbeDir,
+  writeRaceProbeDir,
 } from "../support/synthetic.ts";
 
 function derive(probeDir = writeProbeDir(), alternativeDir = writeAlternativeDir()) {
@@ -127,5 +128,30 @@ describe("the committed alternative fix", () => {
     expect(patch).toContain(`-${plantedLine?.slice(1) ?? "missing"}`);
     expect(patch.match(/^@@ /gm)).toHaveLength(1);
     expect(patch.match(/^diff --git /gm)).toHaveLength(1);
+  });
+});
+
+describe("code states of a family that records ADM-06 as not applicable", () => {
+  it("derives only the clean, planted and fixed states, with no alternative fix", () => {
+    const states = deriveCodeStates(Buffer.from(CLEAN), loadProbeSet(writeRaceProbeDir()), null);
+    expect([...states.keys()]).toEqual(["clean", "planted", "fixed"]);
+    expect(states.get("planted")?.bytes.toString()).toBe(PLANTED);
+    expect(states.get("fixed")?.bytes.equals(Buffer.from(CLEAN))).toBe(true);
+    expect(stateForPatch(states, "partial", null)).toBeNull();
+  });
+
+  it("still refuses a probe set without the ADM-06 record that lacks the partial and stub probes", () => {
+    const dir = writeProbeDir();
+    const data = JSON.parse(readFileSync(join(dir, "probes.json"), "utf8")) as { probes: { id: string }[] };
+    data.probes = data.probes.filter((probe) => probe.id === "mutation");
+    writeFileSync(join(dir, "probes.json"), JSON.stringify(data));
+    const error = refusal(() => deriveCodeStates(Buffer.from(CLEAN), loadProbeSet(dir), null));
+    expect(error.reason).toBe("patch_scope");
+    expect(error.message).toContain("no partial probe");
+  });
+
+  it("keeps the time-zone family's alternative fix when one is given", () => {
+    const states = deriveCodeStates(Buffer.from(CLEAN), loadProbeSet(writeProbeDir()), loadAlternativeFix(writeAlternativeDir()));
+    expect([...states.keys()]).toEqual(["clean", "planted", "fixed", "partial", "stub", "alternative_fix"]);
   });
 });

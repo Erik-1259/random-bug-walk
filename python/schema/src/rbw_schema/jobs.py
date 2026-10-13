@@ -5,15 +5,19 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from typing import TypedDict, cast
+from typing import NotRequired, TypedDict, cast
 
 from rbw_schema.canonical import CanonicalDigest, canonical_digest
 from rbw_schema.derive import (
+    ADMISSION_WITHOUT_PROBES_PROFILE,
     TRIAL_PROFILES,
+    Adm06Applicability,
     ProfileTrial,
     TrialProfile,
+    allowed_trial_profiles,
     job_operation_identity,
     job_payload_digest,
+    trial_profile,
 )
 from rbw_schema.generated import (
     FILE_MODE_VALUES,
@@ -32,13 +36,16 @@ from rbw_schema.generated import (
 from rbw_schema.validate import RecordError, assert_record, validate_record
 
 __all__ = [
+    "ADMISSION_WITHOUT_PROBES_PROFILE",
     "TRIAL_PROFILES",
+    "Adm06Applicability",
     "BuiltExpectedTrials",
     "BuiltJobRequest",
     "ExpectedTrialsInput",
     "MutationInput",
     "ProfileTrial",
     "TrialProfile",
+    "allowed_trial_profiles",
     "build_expected_trials",
     "build_job_request",
     "call_name",
@@ -48,6 +55,7 @@ __all__ = [
     "operation_id",
     "provider_call_identity",
     "task_revision",
+    "trial_profile",
 ]
 
 
@@ -70,6 +78,9 @@ class ExpectedTrialsInput(TypedDict):
     added_suite_sha256: str
     # An expected-check vector for each code state the kind uses; others are ignored.
     checks: dict[CodeState, list[ExpectedCheck]]
+    # Admission only: "not_applicable" for a family whose probe set records ADM-06 as not
+    # applicable, which drops partial-01 and stub-01. Omitted means "required".
+    adm06: NotRequired[Adm06Applicability]
 
 
 @dataclass(frozen=True)
@@ -180,11 +191,18 @@ def build_expected_trials(given: ExpectedTrialsInput) -> BuiltExpectedTrials:
     given hashes and check vectors.
 
     Raises RecordError with a build: code for a kind that is not a job kind, a missing patch hash
-    or check vector, or a missing original suite outside observe.
+    or check vector, a missing original suite outside observe, or an ADM-06 choice other than
+    "required" outside admission.
     """
     if given["kind"] not in JOB_KIND_VALUES:
         raise RecordError("ExpectedTrials", ["build:kind"])
-    profile = TRIAL_PROFILES[given["kind"]]
+    # Read as a string: a caller may pass any value.
+    adm06: str = given.get("adm06", "required")
+    if adm06 != "required" and (adm06 != "not_applicable" or given["kind"] != "admission"):
+        raise RecordError("ExpectedTrials", ["build:adm06"])
+    profile = trial_profile(
+        given["kind"], "not_applicable" if adm06 == "not_applicable" else "required"
+    )
     if profile.original_suite and given["original_suite_sha256"] is None:
         raise RecordError("ExpectedTrials", ["build:original_suite_missing"])
     candidate = {

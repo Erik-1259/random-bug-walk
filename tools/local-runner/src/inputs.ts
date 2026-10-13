@@ -5,13 +5,13 @@ import { join } from "node:path";
 import { InputError, canonicalJson, parseManifest } from "@rbw/projection";
 import type { Manifest } from "@rbw/projection";
 import { sha256Hex } from "@rbw/schema";
-import { PROBE_DIR, loadProbeSet } from "@rbw/shapes";
+import { loadProbeSet } from "@rbw/shapes";
 import type { ProbeSet } from "@rbw/shapes";
 import { UMAMI_COMMIT, addedSuiteSha256 } from "@rbw/umami-driver";
-import { FIXTURE_FILE, loadFixture } from "@rbw/umami-fixture";
-import type { Fixture } from "@rbw/umami-fixture";
-import { ALTERNATIVE_FIX_DIR, loadAlternativeFix } from "./code-states.ts";
+import { loadAlternativeFix } from "./code-states.ts";
 import type { AlternativeFix } from "./code-states.ts";
+import { DEFAULT_FAMILY, FamilyError, checkFamilyProbes, checkKitStage, familyFor, raceLatency } from "./family.ts";
+import type { Family, FamilyFixture, FamilyId } from "./family.ts";
 import { DEFAULT_POLICY } from "./projection.ts";
 import { loadRecordedDir } from "./recorded.ts";
 import type { RecordedDir } from "./recorded.ts";
@@ -24,9 +24,13 @@ export interface CopyInputOptions {
   manifest: string;
   terms: string;
   policy: string | null;
-  /** The shapes package's probe directory unless a test gives another. */
+  /** The bug family; the time-zone family when absent. */
+  family?: FamilyId;
+  /** Race family only: the database latency each copy's Toxiproxy applies, 0 to 10000 ms; absent keeps the image default. */
+  raceLatencyMs?: number | null;
+  /** The family's probe directory unless a test gives another. */
   probesDir?: string;
-  /** This package's alternative fix unless a test gives another. */
+  /** The family's alternative fix unless a test gives another. */
   alternativeDir?: string;
 }
 
@@ -38,10 +42,14 @@ export interface CopyInputs {
   termsSha256: string;
   policyPath: string | null;
   policySha256: string;
+  family: Family;
+  /** The latency every copy sets with `rbw-proxy set-latency`, or null for the image's own setting. */
+  raceLatencyMs: number | null;
   probes: ProbeSet;
   probesJsonSha256: string;
   probePatchesSha256: Record<string, string>;
-  alternative: AlternativeFix;
+  /** Null for a family without an alternative fix. */
+  alternative: AlternativeFix | null;
 }
 
 export interface RunInputOptions extends CopyInputOptions {
@@ -50,7 +58,7 @@ export interface RunInputOptions extends CopyInputOptions {
 }
 
 export interface RunInputs extends CopyInputs {
-  fixture: Fixture;
+  fixture: FamilyFixture;
   fixtureSha256: string;
   addedSuiteSha256: string;
   recorded: RecordedDir;
@@ -67,6 +75,15 @@ function read(path: string | URL, what: string): Buffer {
 
 /** The inputs one copy needs: the manifest, the term list, the policy, the probes and the alternative fix. */
 export function loadCopyInputs(options: CopyInputOptions): CopyInputs {
+  let family: Family;
+  let latency: number | null;
+  try {
+    family = familyFor(options.family);
+    latency = raceLatency(family, options.raceLatencyMs);
+  } catch (error) {
+    if (error instanceof FamilyError) throw new InputsError(error.message);
+    throw error;
+  }
   const manifestBytes = read(options.manifest, "manifest");
   let manifest: Manifest;
   try {
@@ -75,7 +92,7 @@ export function loadCopyInputs(options: CopyInputOptions): CopyInputs {
     if (error instanceof InputError) throw new InputsError("the manifest is not a projection manifest");
     throw error;
   }
-  const probesDir = options.probesDir ?? PROBE_DIR;
+  const probesDir = options.probesDir ?? family.probesDir;
   const probes = loadProbeSet(probesDir);
   if (manifest.host_commit !== UMAMI_COMMIT || probes.data.host_commit !== UMAMI_COMMIT) {
     throw new InputsError(`the manifest and the probes must be at the pinned commit ${UMAMI_COMMIT}`);
@@ -94,11 +111,18 @@ export function loadCopyInputs(options: CopyInputOptions): CopyInputs {
     termsSha256,
     policyPath: options.policy,
     policySha256: sha256Hex(policyBytes),
+    family,
+    raceLatencyMs: latency,
     probes,
     probesJsonSha256: sha256Hex(read(join(probesDir, "probes.json"), "probes.json")),
     probePatchesSha256: Object.fromEntries([...probes.patches.entries()].map(([id, text]) => [id, sha256Hex(Buffer.from(text))])),
-    alternative: loadAlternativeFix(options.alternativeDir ?? ALTERNATIVE_FIX_DIR),
+    alternative: alternativeFor(options.alternativeDir ?? family.alternativeDir),
   };
+}
+
+/** The family's alternative fix, or null when it has none. */
+function alternativeFor(dir: string | null): AlternativeFix | null {
+  return dir === null ? null : loadAlternativeFix(dir);
 }
 
 /** Every input of the full sequence. */
@@ -106,10 +130,17 @@ export async function loadRunInputs(options: RunInputOptions): Promise<RunInputs
   const copy = loadCopyInputs(options);
   const fixtureDir = join(options.kitStage, "umami-fixture");
   if (!existsSync(fixtureDir)) throw new InputsError("the kit stage has no umami-fixture directory (run the driver's stage-kit.ts)");
+  try {
+    checkKitStage(copy.family, options.kitStage);
+    checkFamilyProbes(copy.family, copy.probes);
+  } catch (error) {
+    if (error instanceof FamilyError) throw new InputsError(error.message);
+    throw error;
+  }
   return {
     ...copy,
-    fixture: loadFixture(),
-    fixtureSha256: sha256Hex(read(FIXTURE_FILE, "fixture data file")),
+    fixture: copy.family.loadFixture(),
+    fixtureSha256: sha256Hex(read(copy.family.fixtureFile, "fixture data file")),
     addedSuiteSha256: await addedSuiteSha256(fixtureDir),
     recorded: loadRecordedDir(options.recorded),
   };
@@ -123,13 +154,15 @@ export function inputHashes(inputs: RunInputs, fromImage: { kitSha256: string | 
     policy_sha256: inputs.policySha256,
     probes_json_sha256: inputs.probesJsonSha256,
     probe_patches_sha256: inputs.probePatchesSha256,
-    alternative_fix_record_sha256: inputs.alternative.record_sha256,
-    alternative_fix_patch_sha256: inputs.alternative.patch_sha256,
+    alternative_fix_record_sha256: inputs.alternative?.record_sha256 ?? null,
+    alternative_fix_patch_sha256: inputs.alternative?.patch_sha256 ?? null,
     fixture_sha256: inputs.fixtureSha256,
     added_suite_sha256: inputs.addedSuiteSha256,
     recorded_files_sha256: inputs.recorded.files,
     kit_sha256: fromImage.kitSha256,
     original_suite_sha256: fromImage.originalSuiteSha256,
+    // Recorded only off the default, so a time-zone run's inputs are what they always were.
+    ...(inputs.family.id === DEFAULT_FAMILY ? {} : { family: inputs.family.id, race_latency_ms: inputs.raceLatencyMs === null ? "image_default" : String(inputs.raceLatencyMs) }),
   };
 }
 

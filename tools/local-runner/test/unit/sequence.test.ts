@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { encodeCanonical, parseCanonical, sha256Hex } from "@rbw/schema";
@@ -15,12 +15,13 @@ import { exportImage } from "../../src/projection.ts";
 import { runCopyCommand } from "../../src/run-copy.ts";
 import { runSequence } from "../../src/sequence.ts";
 import type { SequenceOptions } from "../../src/sequence.ts";
+import { summaryText } from "../../src/summary.ts";
 import type { Summary } from "../../src/summary.ts";
 import { FakeClock, FakeDocker, ok } from "../support/fakes.ts";
 import { FakeSandboxSdk } from "../support/fake-sandbox.ts";
 import { IMAGE_ID, KitImage } from "../support/kit-image.ts";
 import type { KitImageOptions } from "../support/kit-image.ts";
-import { CLEAN, PARTIAL, PLANTED, STUB, sha256, tempDir, writeAlternativeDir, writeManifest, writeProbeDir, writeTerms } from "../support/synthetic.ts";
+import { CLEAN, PARTIAL, PLANTED, STUB, sha256, tempDir, writeAlternativeDir, writeManifest, writeProbeDir, writeRaceProbeDir, writeTerms } from "../support/synthetic.ts";
 
 function uuids(): () => string {
   let counter = 0;
@@ -107,6 +108,12 @@ describe("the full local sequence over the real driver code paths, without Docke
       "admission-stub-01": sha256(STUB),
     });
     expect(Object.keys(placed).some((name) => name.includes("clean-"))).toBe(false);
+  });
+
+  it("keeps the default run's summary shape: no family record and no family line", async () => {
+    const { summary } = await sequence();
+    expect(Object.keys(summary)).not.toContain("family");
+    expect(summaryText(summary)).not.toMatch(/^family /m);
   });
 
   it("labels the summary development evidence and records the run date, the known limit, the image and every input hash", async () => {
@@ -317,6 +324,19 @@ describe("run-copy", () => {
     expect(sdk.ops().filter((op) => op === "create")).toHaveLength(1);
   });
 
+  it("refuses a race-family copy on a time-zone kit image after the export, before any copy container", async () => {
+    const kit = new KitImage();
+    const { root, jobDir } = await observeJob(kit, (actual) => actual);
+    const dir = tempDir();
+    const outcome = await runCopyCommand(
+      { job: jobDir, trial: "planted-01", root, image: "rbw-umami-kit:synthetic", manifest: writeManifest(dir), terms: writeTerms(dir), policy: null, work: join(dir, "work"), family: "race", raceLatencyMs: 50, probesDir: writeRaceProbeDir() },
+      { docker: kit.docker, clock: new FakeClock({ manual: true }) },
+    );
+    expect(outcome).toMatchObject({ exitCode: 1, copy: null, refusal: { reason: "image_family_mismatch" } });
+    expect(outcome.refusal?.detail).toContain("rbw-umami-race-kit-image-manifest/1");
+    expect(kit.created.filter((name) => !name.endsWith("-export"))).toEqual([]);
+  });
+
   it("refuses a VCR image that is not one of the local image's repository digests, before the export and any SDK call", async () => {
     const kit = new KitImage();
     const { root, jobDir } = await observeJob(kit, (actual) => actual);
@@ -329,5 +349,114 @@ describe("run-copy", () => {
     expect(outcome).toMatchObject({ exitCode: 1, refusal: { reason: "sandbox_image_mismatch" } });
     expect(kit.created).toEqual([]);
     expect(sdk.calls).toEqual([]);
+  });
+});
+
+describe("the race family: 11 admission copies, ADM-06 not applicable, a database latency per copy", () => {
+  const raceOverrides = (extra: Partial<SequenceOptions> = {}): Partial<SequenceOptions> => ({ family: "race", probesDir: writeRaceProbeDir(), alternativeDir: undefined, raceLatencyMs: 50, ...extra });
+
+  it("runs the kit check, the observation and an 11-copy admission without partial, stub or alternative-fix copies, and records the family", async () => {
+    const { summary, result, kit } = await sequence({ family: "race" }, raceOverrides());
+    expect(result.exitCode).toBe(0);
+    expect(summary.family).toEqual({ id: "race", adm06: { status: "not_applicable", reason: "Synthetic: a partial or stub fix of this race has no natural form." }, admission_copies: 11 });
+    expect(summary.code_states.map((state) => state.state)).toEqual(["clean", "planted", "fixed"]);
+    expect(summary.jobs.map((item) => item.label)).toEqual(["kit-check", "observe", "admission"]);
+    const admission = job(summary, "admission");
+    expect(admission.copies.map((copy) => copy.trial_id)).toEqual([
+      "clean-01",
+      "fixed-01",
+      "fixed-02",
+      "fixed-03",
+      "fixed-04",
+      "fixed-05",
+      "planted-01",
+      "planted-02",
+      "planted-03",
+      "planted-04",
+      "planted-05",
+    ]);
+    expect(admission.copies.every((copy) => copy.status === "complete")).toBe(true);
+    expect(admission.copies.every((copy) => copy.proxy?.exit === 0 && copy.proxy.latency_ms === 50 && copy.proxy.source === "override")).toBe(true);
+    expect(summary.admission).toMatchObject({
+      decisions: { "ADM-02": "pass", "ADM-03": "pass", "ADM-04": "pass", "ADM-05": "pass", "ADM-06": "not_applicable" },
+      comparison: "blind_spot_demonstrated",
+      outcome_verdict: "pass",
+    });
+    expect(summary.alternative_fix).toBeNull();
+    expect(summary.inputs).toMatchObject({ family: "race", race_latency_ms: "50", alternative_fix_record_sha256: null });
+    expect(kit.created.some((name) => name.includes("alternative-fix") || name.includes("partial") || name.includes("stub"))).toBe(false);
+    const latencies = [...kit.containers.values()].map((container) => container.latency);
+    expect(latencies.length).toBe(1 + 5 + 1 + 11);
+    expect(latencies.every((latency) => latency === "50")).toBe(true);
+    expect(summaryText(summary)).toContain("family race admission_copies 11 adm06 not_applicable");
+  });
+
+  it("runs no candidate text: the recorded inputs describe the time-zone bug, so no card, issue or search reaches the race task revision", async () => {
+    const { summary, result } = await sequence({ family: "race" }, raceOverrides());
+    expect(result.exitCode).toBe(0);
+    expect(summary.candidate_text).toMatchObject({ status: "not_run", code: "symptom_unavailable" });
+    expect(existsSync(join(result.summaryPath, "..", "candidate-text"))).toBe(false);
+    expect(summaryText(summary)).toContain("candidate text not_run symptom_unavailable");
+  });
+
+  it("names the selected latency in the runtime profile and task revision, so runs at different latencies get different revisions", async () => {
+    const request = async (raceLatencyMs: number | null) => {
+      const { result } = await sequence({ family: "race" }, raceOverrides({ raceLatencyMs }));
+      expect(result.exitCode).toBe(0);
+      return parseCanonical(readFileSync(join(result.summaryPath, "..", "jobs", "admission", "job", "request.json"))) as { task_revision: string; runtime_profile_sha256: string };
+    };
+    const [at50, at75, imageDefault] = [await request(50), await request(75), await request(null)];
+    expect(new Set([at50.task_revision, at75.task_revision, imageDefault.task_revision]).size).toBe(3);
+    expect(new Set([at50.runtime_profile_sha256, at75.runtime_profile_sha256, imageDefault.runtime_profile_sha256]).size).toBe(3);
+  });
+
+  it("passes no latency argument when the run keeps the race image's default", async () => {
+    const { result, kit, summary } = await sequence({ family: "race" }, raceOverrides({ raceLatencyMs: null }));
+    expect(result.exitCode).toBe(0);
+    expect(summary.jobs.flatMap((item) => item.copies).every((copy) => copy.proxy === undefined)).toBe(true);
+    expect([...kit.containers.values()].every((container) => container.latency === null)).toBe(true);
+  });
+
+  it("stops at the export when the race family is given a time-zone kit image", async () => {
+    const { summary, result } = await sequence({ family: "race", imageFamily: "time-zone" }, raceOverrides());
+    expect(result.exitCode).toBe(1);
+    expect(summary.failure).toMatchObject({ step: "export" });
+    expect(summary.failure?.detail).toContain("rbw-umami-race-kit-image-manifest/1");
+    expect(summary.jobs).toEqual([]);
+  });
+
+  it("stops at the export when the default family is given a race kit image", async () => {
+    const { summary, result } = await sequence({ imageFamily: "race" });
+    expect(result.exitCode).toBe(1);
+    expect(summary.failure).toMatchObject({ step: "export" });
+    expect(summary.failure?.detail).toContain("is a race kit image (rbw-umami-race-kit-image-manifest/1)");
+  });
+
+  it("refuses a kit stage that holds the time-zone fixture for a race run, before any docker command", async () => {
+    const kit = new KitImage();
+    await expect(runSequence(options(kit, raceOverrides()), { docker: kit.docker, clock: new FakeClock({ manual: true }), uuid: uuids(), log: () => undefined })).rejects.toThrow(/kit stage holds no rc-1-backup-code-001\.v1\.json/);
+    expect(kit.docker.calls).toEqual([]);
+  });
+
+  it("refuses the time-zone probe set (with partial and stub probes) for the race fixture, which declares no partial or stub vector", async () => {
+    const kit = new KitImage({ family: "race" });
+    await expect(runSequence(options(kit, raceOverrides({ probesDir: writeProbeDir() })), { docker: kit.docker, clock: new FakeClock({ manual: true }), uuid: uuids(), log: () => undefined })).rejects.toThrow(
+      /declares the code states clean,fixed,planted, but its probe set needs clean,fixed,partial,planted,stub/,
+    );
+  });
+
+  it("refuses a latency for the time-zone family, and one above 10000 ms", async () => {
+    const kit = new KitImage();
+    await expect(runSequence(options(kit, { raceLatencyMs: 50 }), { docker: kit.docker, clock: new FakeClock({ manual: true }), uuid: uuids(), log: () => undefined })).rejects.toThrow(/has no database proxy/);
+    const race = new KitImage({ family: "race" });
+    await expect(runSequence(options(race, raceOverrides({ raceLatencyMs: 10001 })), { docker: race.docker, clock: new FakeClock({ manual: true }), uuid: uuids(), log: () => undefined })).rejects.toThrow(/from 0 to 10000/);
+  });
+
+  it("prints the 11 admission copies with the latency argument in the dry run", async () => {
+    const lines = await dryRun(options(new KitImage({ family: "race" }), raceOverrides()), { uuid: uuids() });
+    const creates = lines.filter((line) => line.startsWith("docker create ") && line.includes(" rbw-copy "));
+    expect(creates).toHaveLength(1 + 5 + 1 + 11);
+    expect(creates.every((line) => / rbw-copy (freeze freeze|trial [a-z]+-\d\d) 50$/.test(line))).toBe(true);
+    expect(lines).toContain("family race: 11 admission copies, ADM-06 not applicable, latency 50 ms");
   });
 });

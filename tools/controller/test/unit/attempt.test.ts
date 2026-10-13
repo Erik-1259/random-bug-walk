@@ -17,6 +17,7 @@ import type { AttemptFiles, AttemptOptions, AttemptWorld } from "../support/atte
 import { stage } from "../../../release/src/stage.ts";
 import { jobInputs, uuids, world } from "../support/harness.ts";
 import { FakeClock } from "../../../local-runner/test/support/fakes.ts";
+import { writeRaceProbeDir } from "../../../local-runner/test/support/synthetic.ts";
 import type { LedgerCall, World } from "../support/harness.ts";
 
 // The driver's canned response bodies are not shaped like Umami's; the observation needs counts.
@@ -544,5 +545,23 @@ describe("the attempt command", () => {
     } finally {
       rmSync(work, { recursive: true, force: true });
     }
+  });
+});
+
+describe("the attempt's family", () => {
+  it("refuses a race-family attempt before anything runs, because the issue writer's symptom holds time-zone fields only", async () => {
+    const w = await world({ kit: { family: "race" } });
+    const files = attemptFiles(w.dir);
+    const inputs = attemptInputs(w, files, { family: "race", raceLatencyMs: 50, probesDir: writeRaceProbeDir(), alternativeDir: undefined });
+    const aw = attemptDeps(w, inputs.work, {});
+    let refusal: unknown = null;
+    try {
+      prepareAttempt(inputs, aw.env);
+    } catch (error) {
+      refusal = error;
+    }
+    expect(refusal).toBeInstanceOf(InputsError);
+    expect((refusal as Error).message).toMatch(/^symptom_unavailable: the race family has no ObservedSymptom/);
+    expect(w.kit.created).toEqual([]);
   });
 });

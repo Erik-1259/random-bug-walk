@@ -2,9 +2,10 @@
 // the same functions the real run uses, without Docker. Values that only the image can give (its
 // digest, its image manifest and the frozen original suite) are shown as placeholders.
 import { join } from "node:path";
-import { TRIAL_PROFILES } from "@rbw/schema";
+import { trialProfile } from "@rbw/schema";
 import { APP_DIR, COPY_OUTER_LIMIT_MS, KILL_GRACE_MS, copyCommands } from "./copy.ts";
 import { commandLine } from "./docker.ts";
+import { DEFAULT_FAMILY, adm06For } from "./family.ts";
 import { inputHashes, inputLines, loadRunInputs } from "./inputs.ts";
 import { JOB_KINDS, JOB_LABELS, newRunIds } from "./jobs.ts";
 import { containerName } from "./plan.ts";
@@ -22,6 +23,11 @@ export async function dryRun(options: SequenceOptions, deps: { uuid: () => strin
     "input kit_sha256 and original_suite_sha256 come from the image manifest and the freeze copy",
     `outer limit per copy ${String(COPY_OUTER_LIMIT_MS)} ms: TERM, then KILL after ${String(KILL_GRACE_MS)} ms if the container is still running`,
   ];
+  const adm06 = adm06For(inputs.probes);
+  // Off the default family only, so a time-zone dry run prints what it always printed.
+  if (inputs.family.id !== DEFAULT_FAMILY) {
+    lines.push(`family ${inputs.family.id}: ${adm06 === "required" ? "13 admission copies" : "11 admission copies, ADM-06 not applicable"}, latency ${inputs.raceLatencyMs === null ? "image default" : `${String(inputs.raceLatencyMs)} ms`}`);
+  }
   const print = (args: readonly string[]): void => {
     lines.push(commandLine(args));
   };
@@ -30,10 +36,11 @@ export async function dryRun(options: SequenceOptions, deps: { uuid: () => strin
   for (const args of [["create", "--name", exporter, "--network", "none", image], ["cp", `${exporter}:${APP_DIR}`, "-"], ["cp", `${exporter}:${IMAGE_MANIFEST_PATH}`, "-"], ["rm", "--force", exporter]]) {
     print(args);
   }
-  const freeze = { job: "freeze", trial_id: "freeze", state: "clean" as const, image, mode: "freeze" as const, job_dir: null, placement: null };
+  const latency = inputs.raceLatencyMs === null ? {} : { proxy_latency_ms: inputs.raceLatencyMs };
+  const freeze = { job: "freeze", trial_id: "freeze", state: "clean" as const, image, mode: "freeze" as const, job_dir: null, placement: null, ...latency };
   for (const args of copyCommands({ ...freeze, container: containerName(ids.run_tag, "source", "freeze"), work_dir: join(options.work, "freeze") })) print(args);
-  for (const label of JOB_LABELS) {
-    const trials = TRIAL_PROFILES[JOB_KINDS[label]].trials.filter((trial) => label !== "alternative-fix" || trial.trial_id === "fixed-01");
+  for (const label of JOB_LABELS.filter((item) => item !== "alternative-fix" || inputs.alternative !== null)) {
+    const trials = trialProfile(JOB_KINDS[label], adm06).trials.filter((trial) => label !== "alternative-fix" || trial.trial_id === "fixed-01");
     for (const trial of trials) {
       const plan = {
         job: label,
@@ -45,6 +52,7 @@ export async function dryRun(options: SequenceOptions, deps: { uuid: () => strin
         work_dir: join(options.work, "copies", label, trial.trial_id),
         job_dir: join(options.work, "jobs", label, "job"),
         placement: trial.code_state === "clean" ? null : { path: target, bytes: Buffer.alloc(0), sha256: "" },
+        ...latency,
       };
       for (const args of copyCommands(plan)) print(args);
     }
