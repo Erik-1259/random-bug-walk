@@ -1,8 +1,9 @@
-// The controller command line's --family and --race-latency-ms, run as a child process. Each
-// case is a usage error, which exits 2 before any ledger, Docker or SDK call.
+// The controller command line's --family and --race-latency-ms. The command line cases run it as
+// a child process and are usage errors, which exit 2 before any ledger, Docker or SDK call.
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { runJobInputs } from "../../src/run-options.ts";
 import { tempDir, writeKitStage, writeManifest, writeTerms } from "../../../local-runner/test/support/synthetic.ts";
 
 const CLI = new URL("../../src/cli.ts", import.meta.url).pathname;
@@ -71,5 +72,21 @@ describe("the controller command line's family options", () => {
     const result = cli(["proof", "--backend", "docker", ...jobArgs(), "--family", "race"]);
     expect(result.status).toBe(2);
     expect(result.stderr).toContain("Unknown option '--family'");
+  });
+
+  it("refuses the family options for the judge controller, whose prebuilt job carries no family", () => {
+    for (const extra of [["--family", "race"], ["--race-latency-ms", "5"]]) {
+      const result = cli(["run", "--job-kind", "judge_verify", "--prebuilt", "store", ...extra]);
+      expect(result.status).toBe(2);
+      expect(result.stderr).toContain(`${extra[0] ?? ""} is not for the judge controller`);
+    }
+  });
+
+  it("carries the family and latency into the job inputs, and nothing without them", () => {
+    const base = { "job-kind": "admission", work: "w", image: "i", manifest: "m", terms: "t", "kit-stage": "k", backend: "docker" };
+    expect(runJobInputs({ ...base, family: "race", "race-latency-ms": "250" })).toMatchObject({ family: "race", raceLatencyMs: 250 });
+    const plain = runJobInputs(base);
+    expect("family" in plain).toBe(false);
+    expect("raceLatencyMs" in plain).toBe(false);
   });
 });
