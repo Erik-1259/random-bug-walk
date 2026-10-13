@@ -8,6 +8,7 @@ import type { ScreenSubject } from "./inputs.ts";
 import { isScreenModelName, MAX_ATTEMPTS, SCREEN_PROFILES } from "./profiles.ts";
 import type { ScreenModelName } from "./profiles.ts";
 import { screenPrompt } from "./prompt.ts";
+import { siteLabel } from "./site.ts";
 import { DEFAULT_FAIL_AT_HITS } from "./score.ts";
 import { executeScreen } from "./screen.ts";
 import type { ScreenOptions } from "./screen.ts";
@@ -117,7 +118,7 @@ export async function runPlan(options: ScreenOptions): Promise<number> {
   }
   const prompt = screenPrompt(subject.input.symptom, subject.files);
   const promptBytes = Buffer.byteLength(prompt.system) + Buffer.byteLength(prompt.user);
-  say(`plan: case ${subject.input.case}; planted site ${subject.input.target_path}:${String(subject.site.start_line)}-${String(subject.site.end_line)}`);
+  say(`plan: case ${subject.input.case}; planted site ${siteLabel(subject.input.target_path, subject.site)}`);
   say(`plan: files shown: ${subject.files.map((file) => file.path).join(", ")}`);
   say(`plan: prompt messages ${String(promptBytes)} bytes; per-call input limit ${String(profile.hashed.max_input_tokens)} tokens`);
   say(`plan: model ${profile.hashed.model}; worst case ${String(worst.per_call_microusd)} micro-USD per call, ${String(attempts * worst.per_call_microusd)} for ${String(attempts)} attempts; budget ${String(budget)}`);

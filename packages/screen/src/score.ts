@@ -14,7 +14,7 @@ export const SCORING = Object.freeze({
   line_tolerance: LINE_TOLERANCE,
   max_claim_lines: MAX_CLAIM_LINES,
   located:
-    "the answer names the planted file, its range is at most max_claim_lines lines, and the range overlaps the planted site widened by line_tolerance lines on each side",
+    "the answer names the planted file, its range is at most max_claim_lines lines, and the range overlaps one hunk of the planted site widened by line_tolerance lines on each side",
   fixed:
     "replacing the answer's lines of the planted file with its fixed_code gives the clean file, compared line by line after trimming each line, collapsing runs of whitespace and dropping blank lines",
   hit: "located or fixed",
@@ -67,7 +67,7 @@ export function scoreAnswer(answer: ScreenAnswer, target: string, site: PlantedS
   }
   const fixed = normalizedCode(applied).join("\n") === normalizedCode(clean).join("\n");
   const width = answer.end_line - answer.start_line + 1;
-  const overlaps = answer.start_line <= site.end_line + LINE_TOLERANCE && answer.end_line >= site.start_line - LINE_TOLERANCE;
+  const overlaps = site.hunks.some((hunk) => answer.start_line <= hunk.end_line + LINE_TOLERANCE && answer.end_line >= hunk.start_line - LINE_TOLERANCE);
   const located = overlaps && width <= MAX_CLAIM_LINES;
   if (located) {
     return { outcome: fixed ? "located_and_fixed" : "located", miss_kind: null };

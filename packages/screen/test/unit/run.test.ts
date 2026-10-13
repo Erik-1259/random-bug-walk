@@ -88,7 +88,7 @@ describe("screen run, end to end on PGlite with the fake model", () => {
     expect(record.record).toBe("uc1-static-headroom-screen");
     expect(record.verdict).toBe("pass");
     expect(record.static_tells).toEqual([]);
-    expect(record.subject).toMatchObject({ target_file: "src/report.ts", planted_site: "src/report.ts:12-12", planted_sha256: sha256Hex(PLANTED_REPORT) });
+    expect(record.subject).toMatchObject({ target_file: "src/report.ts", planted_site: "src/report.ts:12-12", planted_hunks: [{ start_line: 12, end_line: 12 }], planted_sha256: sha256Hex(PLANTED_REPORT) });
     expect(record.screen).toMatchObject({ binding: false, judged_on: "2026-10-13" });
     expect(probe).toMatchObject({ attempts_planned: 4, attempts_run: 4, answered: 4, hits: 0, fail_at_hits: 1, stopped: null });
     expect(probe.attempts.map((a) => [a.outcome, a.miss_kind, a.hit_range])).toEqual(Array.from({ length: 4 }, () => ["miss", "other_file", null]));

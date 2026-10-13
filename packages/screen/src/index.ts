@@ -23,5 +23,5 @@ export { applyAnswer, DEFAULT_FAIL_AT_HITS, isHit, LINE_TOLERANCE, MAX_CLAIM_LIN
 export type { AttemptOutcome, MissKind, Score, Verdict } from "./score.ts";
 export { executeScreen, freshContext, screenKey } from "./screen.ts";
 export type { AnswerEntry, ScreenOptions, ScreenResult, ScreenRun } from "./screen.ts";
-export { plantedSite, sha256Hex } from "./site.ts";
-export type { PlantedSite } from "./site.ts";
+export { plantedSite, sha256Hex, siteLabel } from "./site.ts";
+export type { PlantedHunk, PlantedSite } from "./site.ts";

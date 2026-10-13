@@ -54,6 +54,32 @@ describe("scoreAnswer", () => {
   });
 });
 
+describe("scoreAnswer with a mutation of two far-apart hunks", () => {
+  const clean = Array.from({ length: 90 }, (_, i) => `const v${String(i + 1)} = ${String(i + 1)};`);
+  const plantedLines = [...clean];
+  plantedLines[9] = "const v10 = 0;";
+  plantedLines[79] = "const v80 = 0;";
+  const planted = plantedLines.join("\n");
+  const twoHunks = plantedSite(clean.join("\n"), planted);
+  const scoreTwo = (start: number, end: number) =>
+    scoreAnswer({ ...LOCATED_ONLY, start_line: start, end_line: end, fixed_code: "const x = 1;" }, "src/report.ts", twoHunks, planted, clean.join("\n"));
+
+  it("counts an answer between the hunks as a miss", () => {
+    expect(scoreTwo(40, 45)).toEqual({ outcome: "miss", miss_kind: "other_lines" });
+    expect(scoreTwo(13, 13)).toEqual({ outcome: "miss", miss_kind: "other_lines" });
+  });
+
+  it("counts an answer at either hunk, within the tolerance, as located", () => {
+    expect(scoreTwo(10, 10).outcome).toBe("located");
+    expect(scoreTwo(82, 82).outcome).toBe("located");
+    expect(scoreTwo(8, 8).outcome).toBe("located");
+  });
+
+  it("calls a wide range that overlaps a hunk too wide", () => {
+    expect(scoreTwo(5, 20)).toEqual({ outcome: "miss", miss_kind: "range_too_wide" });
+  });
+});
+
 describe("verdictOf", () => {
   const outcomes = (...list: AttemptOutcome[]) => list;
 

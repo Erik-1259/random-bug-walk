@@ -5,6 +5,7 @@
 import { z } from "zod";
 import type { ScreenSubject } from "./inputs.ts";
 import { SCORING } from "./score.ts";
+import { siteLabel } from "./site.ts";
 import type { AttemptOutcome, Verdict } from "./score.ts";
 
 export const RECORD_NAME = "uc1-static-headroom-screen";
@@ -154,7 +155,7 @@ export function buildRecord(inputs: RecordInputs): ScreenRecord {
       {
         location: `${attempt.hit_range.file}:${String(attempt.hit_range.start_line)}-${String(attempt.hit_range.end_line)}`,
         kind: OUTCOME_KIND[attempt.outcome],
-        detail: `Attempt ${String(attempt.attempt)} of ${String(probe.attempts_planned)} answered with this range from the shown files and the symptom alone; the planted site is ${target}:${String(site.start_line)}-${String(site.end_line)}.`,
+        detail: `Attempt ${String(attempt.attempt)} of ${String(probe.attempts_planned)} answered with this range from the shown files and the symptom alone; the planted site is ${siteLabel(target, site)}.`,
       },
     ];
   });
@@ -178,7 +179,8 @@ export function buildRecord(inputs: RecordInputs): ScreenRecord {
       target_file: target,
       clean_sha256: subject.clean_sha256,
       planted_sha256: subject.planted_sha256,
-      planted_site: `${target}:${String(site.start_line)}-${String(site.end_line)}`,
+      planted_site: siteLabel(target, site),
+      planted_hunks: site.hunks.map((hunk) => ({ start_line: hunk.start_line, end_line: hunk.end_line })),
       mutation: site.mutation,
     },
     verdict,

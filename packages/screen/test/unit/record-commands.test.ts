@@ -1,7 +1,9 @@
+import { writeFileSync } from "node:fs";
 import type { PGlite } from "@electric-sql/pglite";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { integerArg, runCommand } from "../../src/commands.ts";
 import { ScreenRecordSchema } from "../../src/record.ts";
+import { CLEAN_REPORT } from "../fixtures/synthetic-source.ts";
 import { commandOptions, freshSpend, noNetwork, openDb, RATES, spySpend, syntheticTree } from "../support.ts";
 
 /** A synthetic record in the shape of the written screen records: a judgment, no probe run. */
@@ -73,6 +75,15 @@ describe("plan", () => {
     expect(text).toContain("plan: case synthetic-currency-001; planted site src/report.ts:12-12");
     expect(text).toContain("plan: files shown: src/format.ts, src/report.ts");
     expect(text).toContain("worst case 21505 micro-USD per call, 172040 for 8 attempts; budget 172040");
+  });
+
+  it("prints every hunk of a mutation with two far-apart hunks", async () => {
+    const args = planArgs("1", "1000000");
+    const cleanPath = args[args.indexOf("--clean") + 1] ?? "";
+    writeFileSync(cleanPath, CLEAN_REPORT.replace('import { formatTotal } from "./format";', 'import { formatTotal } from "./format.ts";'));
+    const output: string[] = [];
+    expect(await runCommand(commandOptions(args, spySpend(await freshSpend(db)).spend, noNetwork, output))).toBe(0);
+    expect(output.join("")).toContain("plan: case synthetic-currency-001; planted site src/report.ts:2-2, 12-12\n");
   });
 
   it("exits 1 when the plan does not fit the budget", async () => {

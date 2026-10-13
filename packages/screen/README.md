@@ -62,7 +62,7 @@ Exit codes: 0 the run finished (whatever the verdict), or stopped because the ve
 | `files` | Every file shown to the model, 1 to 12, `target_path` among them; relative, forward slashes, no `.` or `..` segments. |
 | `symptom` | The issue-style symptom, at most 4,000 characters: what a user sees, never where the bug is. |
 
-The planted site is found by comparing the planted file with the clean copy line by line: the lines both share at the start and at the end are trimmed, and what is left is the site (one region, which spans every hunk when a mutation has several). For a pure deletion, the site is the two planted lines on either side of it. The record states the site and a unified diff of it.
+The planted site is found by comparing the planted file with the clean copy line by line (a longest-common-subsequence line diff). Each run of changed lines is one hunk, so a mutation that touches two far-apart places has two small sites, not one wide region between them. For a hunk that only deletes lines, the site is the two planted lines on either side of it. The record states every hunk (`planted_site` as `path:start-end, start-end`, and `planted_hunks`) and a unified diff of the mutation. A changed region larger than 16,000,000 clean-by-planted line pairs, which no single planted bug produces, is kept as one hunk.
 
 ## What the model sees
 
@@ -79,7 +79,7 @@ Code scores each answer; no model judges another model's answer.
 
 | Outcome | When |
 | --- | --- |
-| `located` | The answer names the planted file, its range is at most 10 lines, and the range overlaps the planted site widened by 2 lines on each side. |
+| `located` | The answer names the planted file, its range is at most 10 lines, and the range overlaps one hunk of the planted site widened by 2 lines on each side. |
 | `fixed` | Replacing the answer's lines of the planted file with `fixed_code` gives the clean file, compared line by line after trimming each line, collapsing runs of whitespace and dropping blank lines. |
 | `located_and_fixed` | Both. |
 | `miss` | A valid answer that is neither, with `miss_kind`: `other_file`, `invalid_range` (outside the file), `range_too_wide` (overlaps but wider than 10 lines) or `other_lines`. |
@@ -138,7 +138,7 @@ Under `--out`:
 
 ## The screen record
 
-`screen.json` is a `uc1-static-headroom-screen` record, version 1, as the written screen records use it: `record`, `record_version`, `case`, `case_status`, `shape`, `screen` (`source`, `criterion`, `binding`, `judged_on`, `judged_by`), `subject` (`host`, `host_commit`, `source_read_from`, `target_file`, `clean_sha256`, `planted_sha256`, plus `planted_site` and `mutation`), `verdict`, `verdict_summary`, `static_tells`, `consequences` and `optional_static_probe`.
+`screen.json` is a `uc1-static-headroom-screen` record, version 1, as the written screen records use it: `record`, `record_version`, `case`, `case_status`, `shape`, `screen` (`source`, `criterion`, `binding`, `judged_on`, `judged_by`), `subject` (`host`, `host_commit`, `source_read_from`, `target_file`, `clean_sha256`, `planted_sha256`, plus `planted_site`, `planted_hunks` and `mutation`), `verdict`, `verdict_summary`, `static_tells`, `consequences` and `optional_static_probe`.
 
 - A written record states `optional_static_probe` as text, such as "Not run.". This package fills it with the probe as an object: model, service, `runtime_profile_sha256`, `rate_sheet_sha256`, the SHA-256 of the prompt and of the symptom, the files shown, the run's root execution ID, `attempts_planned`, `attempts_run`, `answered`, `hits`, `fail_at_hits`, the scoring constants, `cost` (`budget_microusd`, `worst_case_microusd_per_call`, `reserved_microusd`, `settled_microusd`, `unsettled_operation_ids`), `stopped` and one entry per attempt.
 - `static_tells` lists one entry per hit: the answer's range, whether it located the site, gave the clean file or both, and a sentence written by code.
