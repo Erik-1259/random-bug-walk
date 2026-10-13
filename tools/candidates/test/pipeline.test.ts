@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { encodeCanonical } from "@rbw/schema";
 import { describe, expect, it } from "vitest";
@@ -53,6 +53,41 @@ describe("planting", () => {
     for (const [path, text] of Object.entries(CLEAN)) {
       expect(readFileSync(`${run.hostDir}/${path}`, "utf8")).toBe(text);
     }
+  });
+
+  it("never writes through a host path that is a symbolic link to the host tree", async () => {
+    const real = makeHost();
+    const link = join(tempDir("rbw-candidates-link-"), "host");
+    symlinkSync(real, link, "dir");
+    const screen = scripted([miss(), miss(), miss()]);
+    await runPipeline(input(finder(threeSites()), screen, { hostDir: link }));
+    expect(screen.calls).toHaveLength(3);
+    expect(screen.calls[0]?.files["src/beta.ts"]).not.toContain("store.lock(id);");
+    for (const [path, text] of Object.entries(CLEAN)) {
+      expect(readFileSync(join(real, path), "utf8")).toBe(text);
+    }
+  });
+
+  it("refuses a site whose path runs through a symbolic link, without writing through it", async () => {
+    const host = makeHost();
+    const outside = tempDir("rbw-candidates-outside-");
+    writeFileSync(join(outside, "gamma.ts"), CLEAN["src/gamma.ts"] ?? "");
+    symlinkSync(outside, join(host, "linked"), "dir");
+    mkdirSync(join(host, "deep"));
+    symlinkSync(join(host, "src"), join(host, "deep", "src"), "dir");
+    const viaOutside: Site = { ...site("src/gamma.ts", "filter(Boolean)", "filter((x) => x)", 0.9, 1) };
+    viaOutside.diff = viaOutside.diff.replaceAll("src/gamma.ts", "linked/gamma.ts");
+    viaOutside.file = "linked/gamma.ts";
+    const viaInside: Site = { ...viaOutside, confidence: 0.8, file: "deep/src/gamma.ts", diff: viaOutside.diff.replaceAll("linked/gamma.ts", "deep/src/gamma.ts") };
+    const screen = scripted([]);
+    const { record } = await runPipeline(input(finder([viaOutside, viaInside]), screen, { hostDir: host }));
+    expect(screen.calls).toHaveLength(0);
+    expect(record.candidates.map((entry) => [entry.status, entry.reason])).toEqual([
+      ["plant_failed", "file_missing"],
+      ["plant_failed", "file_missing"],
+    ]);
+    expect(readFileSync(join(outside, "gamma.ts"), "utf8")).toBe(CLEAN["src/gamma.ts"]);
+    expect(readFileSync(join(host, "src", "gamma.ts"), "utf8")).toBe(CLEAN["src/gamma.ts"]);
   });
 
   it("removes its scratch copies by default and keeps them when asked", async () => {

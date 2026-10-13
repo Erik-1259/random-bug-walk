@@ -1,7 +1,7 @@
 // Checks a site from the finder and plants it: in memory for a dry run, or in a scratch copy of
 // the host tree for a screen.
 import { createHash } from "node:crypto";
-import { cpSync, lstatSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, lstatSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { applyPatch, parsePatch } from "diff";
 import type { Site } from "./types.ts";
@@ -69,10 +69,13 @@ export function checkSiteFields(site: Site): void {
 /** Returns the planted bytes of the site's file, or throws a PlantError. Writes nothing. */
 export function plantedText(hostDir: string, site: Site): string {
   checkSiteFields(site);
-  const path = join(hostDir, ...site.file.split("/"));
   let clean: string;
   try {
-    if (!lstatSync(path).isFile()) {
+    // The site's path must name a regular file with no symbolic link anywhere along it, so that a
+    // scratch copy (which keeps links as links) can never be written through to another file.
+    const root = realpathSync(hostDir);
+    const path = join(root, ...site.file.split("/"));
+    if (!lstatSync(path).isFile() || realpathSync(path) !== path) {
       throw new Error("not a regular file");
     }
     clean = readFileSync(path, "utf8");
@@ -109,9 +112,11 @@ function ignored(hostDir: string, source: string): boolean {
 
 /**
  * Copies the host tree to `dest` (which must not exist) without the COPY_IGNORE directories,
- * then writes the planted file. Symbolic links are copied as links.
+ * then writes the planted file. A host path that is itself a symbolic link is resolved first;
+ * links inside the tree are copied as links.
  */
-export function plantCopy(hostDir: string, site: Site, dest: string): void {
+export function plantCopy(host: string, site: Site, dest: string): void {
+  const hostDir = realpathSync(host);
   const planted = plantedText(hostDir, site);
   cpSync(hostDir, dest, {
     recursive: true,
