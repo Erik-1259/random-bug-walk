@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "symptom_kind": "concurrent_double_acceptance",
+  "user_action": "Signed in from two browser tabs at once and entered the same unused backup code in both.",
+  "request": {
+    "method": "POST",
+    "path": "/api/synthetic/verify",
+    "query": {}
+  },
+  "locale": "en-US",
+  "fixture_description": "Synthetic data: one account with two-step sign-in and ten unused backup codes.",
+  "concurrent_attempts": [
+    {
+      "label": "request a",
+      "sent_ms": 0,
+      "settled_ms": 87,
+      "http_status": 200,
+      "outcome": "accepted",
+      "error_code": null
+    },
+    {
+      "label": "request b",
+      "sent_ms": 1,
+      "settled_ms": 92,
+      "http_status": 200,
+      "outcome": "accepted",
+      "error_code": null
+    }
+  ],
+  "overlap_ms": 86,
+  "expected": {
+    "accepted": 1,
+    "refused": 1
+  },
+  "observed": {
+    "accepted": 2,
+    "refused": 0
+  },
+  "sequential_attempts": [
+    {
+      "label": "first use",
+      "sent_ms": 0,
+      "settled_ms": 64,
+      "http_status": 200,
+      "outcome": "accepted",
+      "error_code": null
+    },
+    {
+      "label": "reuse after the first use finished",
+      "sent_ms": 130,
+      "settled_ms": 171,
+      "http_status": 400,
+      "outcome": "refused",
+      "error_code": "synthetic-invalid-code"
+    }
+  ],
+  "doc_excerpts": [
+    {
+      "text": "Synthetic excerpt: each backup code can be used once.",
+      "source_url": "https://example.invalid/docs/two-step-sign-in"
+    }
+  ],
+  "stack_trace": "synthetic frame"
+}

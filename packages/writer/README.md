@@ -65,6 +65,7 @@ const card = await writer.writeCard({ candidate, source });
 | `writer.previewIssue(symptom)`, `writer.previewCard(source)` | Render the exact request bytes and count their bound. Reserve and send nothing. |
 | `checkIssue(output, symptom, excluded)` | The four issue checks as a pure function. |
 | `parseObservedSymptom(value)` | The only way to obtain an `ObservedSymptom` (a branded type). |
+| `parseWriterSymptom(value)` | Parses either family's input: a `RaceSymptom` when the value has `symptom_kind`, otherwise an `ObservedSymptom`. |
 | `createReplayFetch`, `loadRecordings`, `makeRecording` | The replay layer (see [Recordings](#recordings-and-the-replay-fetch)). |
 | `runRecord(options)` | The `record` command with its dependencies injected. |
 
@@ -246,7 +247,26 @@ The issue writer accepts only an `ObservedSymptom`. A narrow local Zod type in `
 | `follow_up_examples` | `{ timezone, expected, observed }` |
 | `doc_excerpts` | `{ text, source_url }`: user-documentation passages only |
 
-An extra field anywhere (a stack trace, a source path, a check ID, a patch, card content), a missing field or another `schema_version` is refused with `invalid_input` before anything is reserved. The issue prompt builder (`src/issue-prompt.ts`) takes only a validated `ObservedSymptom` and imports nothing from the card modules.
+An extra field anywhere (a stack trace, a source path, a check ID, a patch, card content), a missing field or another `schema_version` is refused with `invalid_input` before anything is reserved. The issue prompt builder (`src/issue-prompt.ts`) takes only a validated symptom and imports nothing from the card modules.
+
+### Race family: RaceSymptom
+
+A value with a `symptom_kind` field is parsed as a `RaceSymptom` instead (`src/race-symptom.ts`, matching `@rbw/schema`'s `RaceSymptom` record); any other value is parsed as an `ObservedSymptom` exactly as before. `parseWriterSymptom(value)` does this dispatch, and the writer uses it. Every object is strict and every field is required:
+
+| Field | Type |
+| --- | --- |
+| `schema_version` | `1` |
+| `symptom_kind` | `concurrent_double_acceptance` |
+| `user_action`, `fixture_description` | strings, in user terms |
+| `request` | `{ method, path, query }`: the public endpoint |
+| `locale` | string or `null` |
+| `concurrent_attempts` | exactly two `{ label, sent_ms, settled_ms, http_status, outcome, error_code }`, whole milliseconds; `outcome` is `accepted` (HTTP 200, no error code) or `refused` (with an error code) |
+| `overlap_ms` | positive integer: how long both requests were in flight together |
+| `expected`, `observed` | `{ accepted, refused }`; `observed` must count the concurrent outcomes |
+| `sequential_attempts` | the same code used twice one after the other, as attempts |
+| `doc_excerpts` | `{ text, source_url }` |
+
+The race prompt asks for one fixed count line at the end of each result field, `Expected: accepted=<n>, refused=<n>` in `expected_result` and `Observed: accepted=<n>, refused=<n>` in `actual_result`, with the observation's counts as digits, and forbids writing a backup code, a token or a password. The issue checks below apply with two differences: the numeric vectors are read only from those lines, and the hint words are `race`, `atomic`, `lock`, `transaction`, `mutex`, `compare-and-swap` and `check then write` (with their usual forms). A field states its counts only when exactly one line starts with its label (`Expected:` or `Observed:`, in any case), that line is the exact form (case-sensitive keys, digits only, no other spacing, punctuation or text on the line) and its counts equal the observation's. A missing, duplicated or malformed line, or counts that differ, gives `missing_expected_vector` or `missing_observed_vector`; counts written in free text without the line are never read.
 
 ## Issue checks and the check report
 

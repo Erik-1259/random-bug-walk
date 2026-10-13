@@ -15,9 +15,12 @@ import {
   CONTEXT,
   ISSUE_CASES,
   ISSUE_OUTPUTS,
+  RACE_ISSUE_CASES,
+  RACE_ISSUE_OUTPUTS,
   SYNTHETIC_USAGE,
   cardSource,
   completion,
+  raceSymptom,
   symptom,
 } from "./cases.ts";
 
@@ -68,7 +71,10 @@ for (const name of ISSUE_CASES) {
   const usage = name === "missing-usage" ? null : SYNTHETIC_USAGE;
   await write(`issue-${name}.json`, body(await writer.previewIssue(symptom(name))), response(ISSUE_OUTPUTS[name], usage));
 }
+for (const name of RACE_ISSUE_CASES) {
+  await write(`issue-${name}.json`, body(await writer.previewIssue(raceSymptom(name))), response(RACE_ISSUE_OUTPUTS[name], SYNTHETIC_USAGE));
+}
 for (const name of CARD_CASES) {
   await write(`card-${name}.json`, body(await writer.previewCard(cardSource(name))), response(CARD_OUTPUTS[name], SYNTHETIC_USAGE));
 }
-process.stdout.write(`wrote ${String(ISSUE_CASES.length + CARD_CASES.length)} synthetic recordings\n`);
+process.stdout.write(`wrote ${String(ISSUE_CASES.length + RACE_ISSUE_CASES.length + CARD_CASES.length)} synthetic recordings\n`);

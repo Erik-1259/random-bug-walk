@@ -30,7 +30,7 @@ import type { IssueCheckReport } from "./issue-checks.ts";
 import { buildIssuePrompt } from "./issue-prompt.ts";
 import { IssueOutputSchema } from "./issue-schema.ts";
 import type { IssueOutput } from "./issue-schema.ts";
-import { parseObservedSymptom } from "./observed-symptom.ts";
+import { parseWriterSymptom } from "./race-symptom.ts";
 import { profileSha256 } from "./profile.ts";
 import type { ModelProfile } from "./profile.ts";
 import { countPromptBound } from "./prompt-bound.ts";
@@ -191,7 +191,7 @@ export type Preview = { ok: true; request_body: string; input_token_bound: numbe
 
 export interface IssueRequest {
   candidate: string;
-  /** Must parse as an ObservedSymptom; anything else is refused before reserving. */
+  /** Must parse as an ObservedSymptom or a RaceSymptom; anything else is refused before reserving. */
   symptom: unknown;
   /** The fixture's internal names, supplied as data. */
   excludedIdentifiers: readonly string[];
@@ -701,7 +701,7 @@ export function createWriter(options: WriterOptions): Writer {
   }
 
   function renderIssue(symptom: unknown): Rendered<IssueOutput> {
-    const parsed = parseObservedSymptom(symptom);
+    const parsed = parseWriterSymptom(symptom);
     if (!parsed.ok) {
       return refusal("invalid_input", parsed.detail);
     }
@@ -727,7 +727,7 @@ export function createWriter(options: WriterOptions): Writer {
       if (!excluded.success) {
         return refusal("invalid_input", "excludedIdentifiers must be a list of strings");
       }
-      const parsed = parseObservedSymptom(request.symptom);
+      const parsed = parseWriterSymptom(request.symptom);
       if (!parsed.ok) {
         return refusal("invalid_input", parsed.detail);
       }

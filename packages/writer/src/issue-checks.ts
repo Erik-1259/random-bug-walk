@@ -5,7 +5,8 @@ import { z } from "zod";
 import { CARD_FIELD_IDENTIFIERS } from "./card-schema.ts";
 import { IssueOutputSchema, issueFields } from "./issue-schema.ts";
 import type { IssueOutput } from "./issue-schema.ts";
-import type { ObservedSymptom } from "./observed-symptom.ts";
+import { isRaceSymptom } from "./race-symptom.ts";
+import type { WriterSymptom } from "./race-symptom.ts";
 
 export type IssueCheckCode = "invalid_structure" | "numeric_mismatch" | "excluded_identifier";
 
@@ -56,6 +57,24 @@ function countRuns(text: string): bigint[] {
   return digitRuns(text.replace(DATE_OR_TIME, " ")).map(BigInt);
 }
 
+// A race issue states its counts on one fixed line per result field: `Expected: accepted=<n>,
+// refused=<n>` in expected_result and `Observed: accepted=<n>, refused=<n>` in actual_result. The
+// line must be a whole line, exactly as written (case-sensitive keys, ASCII digits, no other
+// spacing or punctuation). Free-text counts elsewhere are never read. The field states its counts
+// only when exactly one line starts with the label, that line is the exact form, and its counts
+// equal the observation's.
+const RACE_LABEL = { expected: "Expected", observed: "Observed" } as const;
+
+/** True when `text` holds exactly one `<Label>: accepted=<n>, refused=<n>` line with these counts. */
+function statesRaceCounts(text: string, key: "expected" | "observed", counts: { accepted: number; refused: number }): boolean {
+  const label = RACE_LABEL[key];
+  const labelLine = new RegExp(`^\\s*${label}\\s*:`, "i");
+  const exactLine = new RegExp(`^${label}: accepted=([0-9]+), refused=([0-9]+)$`);
+  const lines = text.split(/\r?\n/).filter((line) => labelLine.test(line));
+  const match = lines.length === 1 ? exactLine.exec(lines[0] ?? "") : null;
+  return match !== null && BigInt(match[1] ?? "") === BigInt(counts.accepted) && BigInt(match[2] ?? "") === BigInt(counts.refused);
+}
+
 /** Every string and number value in the observation (never its keys). */
 function symptomValues(value: unknown): string[] {
   if (typeof value === "string") {
@@ -84,7 +103,7 @@ function containsInOrder(runs: bigint[], vector: bigint[]): boolean {
   return next === vector.length;
 }
 
-function checkNumbers(issue: IssueOutput, symptom: ObservedSymptom): NumericViolation[] {
+function checkNumbers(issue: IssueOutput, symptom: WriterSymptom): NumericViolation[] {
   const supported = new Set(symptomValues(symptom).flatMap(digitRuns).map((run) => BigInt(run)));
   const violations: NumericViolation[] = [];
   for (const { field, text } of issueFields(issue)) {
@@ -94,11 +113,15 @@ function checkNumbers(issue: IssueOutput, symptom: ObservedSymptom): NumericViol
       }
     }
   }
-  const counts = (buckets: { count: number }[]) => buckets.map((b) => BigInt(b.count));
-  if (!containsInOrder(countRuns(issue.expected_result), counts(symptom.expected))) {
+  // The time-zone family's vectors are its bucket counts in bucket order; the race family's are
+  // the accepted and refused counts on the fixed Expected and Observed lines.
+  const states = isRaceSymptom(symptom)
+    ? (text: string, key: "expected" | "observed") => statesRaceCounts(text, key, symptom[key])
+    : (text: string, key: "expected" | "observed") => containsInOrder(countRuns(text), symptom[key].map((b) => BigInt(b.count)));
+  if (!states(issue.expected_result, "expected")) {
     violations.push({ field: "expected_result", reason: "missing_expected_vector", number: null });
   }
-  if (!containsInOrder(countRuns(issue.actual_result), counts(symptom.observed))) {
+  if (!states(issue.actual_result, "observed")) {
     violations.push({ field: "actual_result", reason: "missing_observed_vector", number: null });
   }
   return violations;
@@ -155,7 +178,7 @@ function checkIdentifiers(issue: IssueOutput, excluded: readonly string[]): Iden
   return [...listed, ...builtIn];
 }
 
-/** Words that hint at a cause without naming it, with the forms each one matches. */
+/** Words that hint at a cause without naming it, with the forms each one matches (time-zone family). */
 const HINT_WORDS: { word: string; pattern: RegExp }[] = [
   { word: "argument", pattern: wordPattern("arguments?") },
   { word: "parameter", pattern: wordPattern("parameters?") },
@@ -168,9 +191,21 @@ const HINT_WORDS: { word: string; pattern: RegExp }[] = [
   { word: "dropped", pattern: wordPattern("dropped") },
 ];
 
-function findHintWords(issue: IssueOutput): HintWord[] {
+/** The race family's hint words: names for a kind of fix rather than for what the user saw. */
+const RACE_HINT_WORDS: { word: string; pattern: RegExp }[] = [
+  { word: "race", pattern: wordPattern("rac(?:e|es|ing)") },
+  { word: "atomic", pattern: wordPattern("atomic(?:ally|ity)?") },
+  { word: "lock", pattern: wordPattern("lock(?:s|ed|ing)?") },
+  { word: "transaction", pattern: wordPattern("transactions?") },
+  { word: "mutex", pattern: wordPattern("mutex(?:es)?") },
+  { word: "compare-and-swap", pattern: wordPattern("compare[-\\s]and[-\\s]swap") },
+  { word: "check then write", pattern: wordPattern("check(?:s|ed)?[-\\s]then[-\\s](?:write|update|act)") },
+];
+
+function findHintWords(issue: IssueOutput, symptom: WriterSymptom): HintWord[] {
+  const words = isRaceSymptom(symptom) ? RACE_HINT_WORDS : HINT_WORDS;
   return issueFields(issue).flatMap(({ field, text }) =>
-    HINT_WORDS.flatMap(({ word, pattern }) =>
+    words.flatMap(({ word, pattern }) =>
       [...text.matchAll(pattern)].map((match) => ({ field, offset: match.index, word })),
     ).sort((a, b) => a.offset - b.offset),
   );
@@ -192,7 +227,7 @@ export function structureFailure(detail: string): IssueCheckReport {
  * Runs the four checks on a model output. `excluded` is the caller's list of internal names for
  * the fixture (function and helper names, source paths, check IDs, shape ID, source-fix commit).
  */
-export function checkIssue(output: unknown, symptom: ObservedSymptom, excluded: readonly string[]): IssueCheckReport {
+export function checkIssue(output: unknown, symptom: WriterSymptom, excluded: readonly string[]): IssueCheckReport {
   const parsed = IssueOutputSchema.safeParse(output);
   if (!parsed.success) {
     return structureFailure(z.prettifyError(parsed.error));
@@ -210,6 +245,6 @@ export function checkIssue(output: unknown, symptom: ObservedSymptom, excluded: 
     structure: { ok: true, detail: null },
     numeric: { ok: numeric.length === 0, violations: numeric },
     identifiers: { ok: identifiers.length === 0, violations: identifiers },
-    hint_words: findHintWords(issue),
+    hint_words: findHintWords(issue, symptom),
   };
 }

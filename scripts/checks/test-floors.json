@@ -9,7 +9,7 @@
     "packages/harvest-review": 83,
     "packages/projection": 126,
     "packages/publisher": 181,
-    "packages/schema": 922,
+    "packages/schema": 952,
     "packages/screen": 60,
     "packages/search": 84,
     "packages/shapes": 75,
@@ -19,10 +19,10 @@
     "packages/umami-fixture": 109,
     "packages/umami-fixture-rc1": 118,
     "packages/web": 143,
-    "packages/writer": 188,
+    "packages/writer": 237,
     "scripts/checks": 194,
     "tools/candidates": 66,
-    "tools/controller": 143,
+    "tools/controller": 158,
     "tools/local-runner": 192,
     "tools/neon-ci": 98,
     "tools/publication": 166,
@@ -30,6 +30,6 @@
     "tools/solver-session": 90
   },
   "pytest": {
-    "python/schema": 891
+    "python/schema": 921
   }
 }
