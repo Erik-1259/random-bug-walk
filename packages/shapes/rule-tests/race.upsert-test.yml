@@ -1,0 +1,26 @@
+id: race.upsert
+valid:
+  - |
+    await db.preference.upsert({ where: { profileId }, update: {}, create: { profileId }, select: { theme: true } });
+  - |
+    await db.preference.upsert({ where: { profileId }, create: { profileId } });
+  - |
+    await db.preference.findUnique({ where: { profileId } });
+  - |
+    const text = "db.preference.upsert({ where: { id }, update: {}, create: { id } })";
+  - |
+    await upsert({ where: { profileId }, update: {}, create: { profileId } });
+invalid:
+  - |
+    await db.client.preference.upsert({ where: { profileId }, update: { theme }, create: { profileId, theme } });
+  - |
+    return db.stat.upsert({ create: { profileId, visits: 1 }, where: { profileId }, update: { visits: { increment: 1 } } });
+  - |
+    await tx.setting.upsert({
+      where: { key: 'mode' },
+      update: { value },
+      create: {
+        key: 'mode',
+        value,
+      },
+    });

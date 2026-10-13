@@ -1,6 +1,6 @@
 # @rbw/shapes
 
-Bug shapes encoded as ast-grep rules and confirmed by code, with no model. The package holds two shapes:
+Bug shapes encoded as ast-grep rules and confirmed by code, with no model. The package holds two site-level shapes, listed below. It also holds class-level rules for the race family, which list every site of a class in a host tree (see [Class rules and site finding](#class-rules-and-site-finding)).
 
 - `DT-1.tz-arg`: a caller has the selected timezone but does not pass it to a date operation, which then silently uses its default. It is labeled `synthetic_transplant`, tier `B`: the source fix is in a React date-range hook, and the target is a SQL date helper.
 - `RC-1.atomic-backup-code`: a two-factor backup code is read as unused, then, after an `await`, written back as used without checking that it is still unused, so two concurrent requests can both spend it. It is labeled `partial_reversion`, tier `A`: see [RC-1](#rc-1atomic-backup-code) below.
@@ -17,8 +17,10 @@ The sections on target confirmation, source confirmation and the command line de
 | `probes/dt-1.tz-arg/` | The mutation, partial and stub probe patches, and `probes.json` with each probe's base and result hashes and expected outcome vector. |
 | `src/shape.ts` | The pinned target and source data, including every expected hash. Callers cannot override these through the CLI or the package exports. |
 | `rules/rc-1.atomic-backup-code.yml`, `rules/rc-1.atomic-backup-code.source.yml`, `probes/rc-1.atomic-backup-code/`, `src/rc1.ts` | The same parts for `RC-1.atomic-backup-code`. |
+| `rules/race.class.yml` | The race class rules: `race.guarded-write` and `race.upsert`, each with a fix, and their `.planted` rules. |
+| `src/classes.ts` | `findSites` and `findSitesInSource`: run the class rules over a tree or one file and list each site with its planted diff and a structural confidence. |
 
-The rules run through `@ast-grep/napi`, which loads the YAML files directly. The napi engine does not apply `fix`, so the package expands the rule's `fix` template with the match's metavariables and commits the edit through the engine. The `ast-grep` CLI gives the same bytes on the same input, and a unit test checks this.
+The rules run through `@ast-grep/napi`, which loads the YAML files directly. The napi engine does not apply `fix`, so the package expands the rule's `fix` template with the match's metavariables and commits the edit through the engine. It follows the CLI where that matters: a fix may be a mapping with `template`, `expandStart` and `expandEnd` (the edit widens over adjacent siblings that match), a rule may define `utils`, and a multi-line capture is re-indented to its new position. The `ast-grep` CLI gives the same bytes on the same input, and unit tests check this for every rule file.
 
 ## Target confirmation
 
@@ -70,6 +72,38 @@ The label is `partial_reversion`, tier `A`: the source fix and the target are th
 
 There is no `confirm-target` or `confirm-source` command for this shape yet. The unit tests check the rules on synthetic sources, and `test:upstream` checks them, the recorded hashes and the mutation patch against the pinned blobs.
 
+## Class rules and site finding
+
+The site rules above name one file, function and variable. The class rules name none of them: they match a bug class by its structure, so one rule finds every site of the class in a host tree. Each class has a fixed-form rule, whose fix plants the bug at a site, and a planted-form rule, `<id>.planted`, that matches what the fix produces. Both share `metadata.class_id`.
+
+| Class | Fixed form (matched) | Planted form (after the fix) |
+| --- | --- | --- |
+| `RACE.guarded-write` | A function reads a model (`find*` or `count` on `<client>.<model>`) and also writes the same model (`update`, `updateMany`, `delete` or `deleteMany`) with a `where` that holds a state guard after at least one other key. A guard is a key that is not an identity or scope key (`id`, `*Id`, `*_id`), with a literal value (`false`, `true`, `null`, a number or a string), a comparison object (`{ lt: limit }`), or a version key (`version`, `updatedAt`, and similar). The guard makes the write apply only while the state it read still holds. | The guard and the comma before it are removed, so the write applies even when another request changed the record after the read: two concurrent requests can both spend the same record. |
+| `RACE.check-then-act` | An `upsert` whose argument has exactly `where`, `update` and `create`, in any order. | A `findUnique` on the same `where`, then an `update` or a `create` depending on the result. Two concurrent requests can both see no record and both create it. |
+
+The rules leave out, by design: a guard in the first position of `where` (the rewrite takes the comma before the guard), a guard nested in `AND`/`OR`, an `upsert` with other keys such as `select`, and writes through anything other than `<client>.<model>.<method>(...)`.
+
+`findSites(root, ruleBytes, prefix)` scans every `.ts` and `.tsx` file under `root` (skipping `node_modules`, `.git`, build output and `.d.ts` files). For each fixed-form match it applies the fix to that match alone and records:
+
+- `class_id`, `rule_id`, `path` (with `prefix`), `line`, `column`, the nearest named enclosing `function` and the `matched` text;
+- `diff`: a git-style unified diff of that one site, and the file's `original_sha256` and `result_sha256`;
+- `planted_form_confirmed`: the planted-form rule matches the rewritten file at the edited spot (false when, for example, a second guard remains);
+- `confidence`: named boolean `signals`, a `score` that sums their weights, and a `level` (`high` from 0.75, `medium` from 0.45, otherwise `low`; always `low` when the planted form is not confirmed).
+
+| Class | Signal | Weight | Holds when |
+| --- | --- | --- | --- |
+| `RACE.guarded-write` | `read_before_write` | 0.3 | A read of the same model ends before the write starts. |
+| | `read_checks_guard` | 0.25 | That read filters on the guard key with the same value, or the code reads `<read result>.<guard key>` between the read and the end of the write. |
+| | `write_result_used` | 0.2 | The write's result is bound to a name that is used after the write (for example, a `count` check). |
+| | `identity_from_read` | 0.15 | Another key of the `where` uses the read's result. |
+| | `await_between` | 0.1 | Another `await` sits between the read and the write. |
+| `RACE.check-then-act` | `not_in_batch_transaction` | 0.3 | The `upsert` is not inside the array of a batch `$transaction([...])`, where the split form would not run. |
+| | `create_covers_where` | 0.25 | Every key of `where` appears in `create` with the same value. |
+| | `request_handler` | 0.25 | An enclosing function is named `GET`, `POST`, `PUT`, `PATCH` or `DELETE`, or the path has an `api` directory. |
+| | `where_is_object` | 0.2 | `where` is an object literal. |
+
+The confidence ranks sites for the next steps; it does not prove a site is a race or that a planted copy can be told apart by tests. The report (`rule_sha256`, `classes`, `files_scanned`, `site_count`, `sites` sorted by path, line, column and rule) is canonical JSON, so the same tree gives the same bytes. A list of sites in a real host can describe weaknesses in that host, so it is kept out of this repository; the tests use the synthetic tree in `test/unit/fixtures/race/`.
+
 ## Command line
 
 ```sh
@@ -77,11 +111,12 @@ node packages/shapes/src/cli.ts confirm-target --file <file> --path <repository 
   [--mode <git mode>] [--rule <rule file>] [--record <out>] [--declared-mutation <out>]
 node packages/shapes/src/cli.ts confirm-source --git-dir <dir> --commit <sha> --parent <sha> [--rule <rule file>] [--record <out>]
 node packages/shapes/src/cli.ts check-probes --planted <file> [--record <out>]
+node packages/shapes/src/cli.ts find-sites --root <source dir> [--prefix <repository path prefix>] [--rule <class rule file>] [--record <out>]
 ```
 
 Records are canonical JSON with sorted keys. Identical inputs give identical bytes. Without `--record`, the record goes to stdout. Without `--mode`, the mode comes from the file's execute bits. Exit codes:
 
-- 0: confirmed;
+- 0: confirmed, or for `find-sites`, the scan ran (the site count goes to stderr);
 - 1: `not_applicable`, `unsupported_source_match` or `refused`, with the reason printed to stderr;
 - 2: the command cannot run (bad usage, unreadable input, malformed rule or probe data, or a failing git command).
 
@@ -99,5 +134,5 @@ No Umami source file is committed. The probe patches carry a few lines of contex
 
 - Building or running Umami, and the added checks themselves.
 - Mutation IDs and task revisions (the schema package computes identity hashes).
-- Other shapes and other candidates.
+- Other site-level shapes and other candidates. Planting the class sites in a copy, screening them and writing their checks.
 - The race fixture's concurrent check: it lives in `packages/umami-fixture-rc1`, with the race kit image in `kit/umami-race`.

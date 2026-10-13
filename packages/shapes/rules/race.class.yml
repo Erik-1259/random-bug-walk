@@ -1,0 +1,245 @@
+# Class-level rules for the race family. Unlike the site rules, these name no file, function,
+# model or variable: they match by structure, so running them over a host tree lists every site of
+# the class. Each class has a fixed-form rule, whose fix plants the bug at one site, and a
+# planted-form rule that matches what the fix produces.
+#
+# Class RACE.guarded-write: a function awaits a read of a record and later writes the same model
+# with a `where` that pins the record's identity and also a state guard (`used: false`,
+# `status: 'pending'`, `count: { lt: limit }`, `version: row.version`). The guard makes the write
+# a compare-and-swap: a request that lost the race matches no row. The fix drops the guard, so two
+# concurrent requests that both read the old state can both write (a lost update or a double spend).
+id: race.guarded-write
+language: TypeScript
+severity: info
+message: A write after a read of the same model keeps a state guard in its where, so it applies only while the state it read still holds.
+note: Without the guard the write no longer fails for a record another request already changed, so two concurrent requests can both succeed.
+utils:
+  write-call:
+    kind: call_expression
+    all:
+      - pattern: $DB.$MODEL.$WRITE($$$)
+      - has:
+          field: function
+          has:
+            field: property
+            regex: ^(update|updateMany|delete|deleteMany)$
+      # The read is any call of a read method on the same model anywhere in the enclosing
+      # function. The method test sits inside the search, so the write itself never satisfies it.
+      - inside:
+          any:
+            - kind: function_declaration
+            - kind: function_expression
+            - kind: arrow_function
+            - kind: method_definition
+          stopBy: end
+          has:
+            stopBy: end
+            kind: call_expression
+            all:
+              - pattern: $RDB.$MODEL.$READ($$$)
+              - has:
+                  field: function
+                  has:
+                    field: property
+                    regex: ^(findFirst|findFirstOrThrow|findUnique|findUniqueOrThrow|findMany|count)$
+  guard-pair:
+    kind: pair
+    all:
+      - follows:
+          pattern: ","
+      - has:
+          field: key
+          kind: property_identifier
+          not:
+            regex: ^(id|[A-Za-z_$][A-Za-z0-9_$]*Id|[A-Za-z0-9_$]*_id|AND|OR|NOT)$
+      - any:
+          - has:
+              field: value
+              any:
+                - kind: "false"
+                - kind: "true"
+                - kind: "null"
+                - kind: number
+                - kind: string
+          - has:
+              field: value
+              kind: object
+              has:
+                kind: pair
+                has:
+                  field: key
+                  regex: ^(lt|lte|gt|gte|not|equals)$
+          - has:
+              field: key
+              regex: ^(version|revision|updatedAt|updated_at|etag)$
+rule:
+  matches: guard-pair
+  inside:
+    kind: object
+    inside:
+      kind: pair
+      has:
+        field: key
+        regex: ^where$
+      inside:
+        kind: object
+        inside:
+          kind: arguments
+          inside:
+            matches: write-call
+fix:
+  template: ""
+  expandStart:
+    pattern: ","
+metadata:
+  class_id: RACE.guarded-write
+  form: fixed
+  keywords: [race condition, lost update, double spend, compare-and-swap, conditional update, check-then-act]
+  cwe: CWE-367 Time-of-check Time-of-use (TOCTOU) Race Condition
+  related_lint_rule: require-atomic-updates
+---
+id: race.guarded-write.planted
+language: TypeScript
+severity: info
+message: A write after a read of the same model pins only the record's identity, so it applies even when another request changed the state it read.
+utils:
+  guard-pair:
+    kind: pair
+    all:
+      - follows:
+          pattern: ","
+      - has:
+          field: key
+          kind: property_identifier
+          not:
+            regex: ^(id|[A-Za-z_$][A-Za-z0-9_$]*Id|[A-Za-z0-9_$]*_id|AND|OR|NOT)$
+      - any:
+          - has:
+              field: value
+              any:
+                - kind: "false"
+                - kind: "true"
+                - kind: "null"
+                - kind: number
+                - kind: string
+          - has:
+              field: value
+              kind: object
+              has:
+                kind: pair
+                has:
+                  field: key
+                  regex: ^(lt|lte|gt|gte|not|equals)$
+          - has:
+              field: key
+              regex: ^(version|revision|updatedAt|updated_at|etag)$
+rule:
+  kind: object
+  not:
+    has:
+      matches: guard-pair
+  inside:
+    kind: pair
+    has:
+      field: key
+      regex: ^where$
+    inside:
+      kind: object
+      inside:
+        kind: arguments
+        inside:
+          kind: call_expression
+          all:
+            - pattern: $DB.$MODEL.$WRITE($$$)
+            - has:
+                field: function
+                has:
+                  field: property
+                  regex: ^(update|updateMany|delete|deleteMany)$
+            - inside:
+                any:
+                  - kind: function_declaration
+                  - kind: function_expression
+                  - kind: arrow_function
+                  - kind: method_definition
+                stopBy: end
+                has:
+                  stopBy: end
+                  kind: call_expression
+                  all:
+                    - pattern: $RDB.$MODEL.$READ($$$)
+                    - has:
+                        field: function
+                        has:
+                          field: property
+                          regex: ^(findFirst|findFirstOrThrow|findUnique|findUniqueOrThrow|findMany|count)$
+metadata:
+  class_id: RACE.guarded-write
+  form: planted
+  keywords: [race condition, lost update, double spend, compare-and-swap, conditional update, check-then-act]
+  cwe: CWE-367 Time-of-check Time-of-use (TOCTOU) Race Condition
+  related_lint_rule: require-atomic-updates
+---
+# Class RACE.check-then-act: an `upsert` (where, update, create, and nothing else) creates or
+# updates a record in one statement. The fix splits it into a read and, depending on the result, an
+# update or a create. Two concurrent requests can both see no record and both create it, which
+# fails on a unique key or leaves a duplicate.
+id: race.upsert
+language: TypeScript
+severity: info
+message: An upsert reads and writes the record in one statement.
+note: Split into a read followed by a create, two concurrent requests can both find no record and both create one.
+utils:
+  only-upsert-keys:
+    not:
+      has:
+        kind: pair
+        not:
+          has:
+            field: key
+            regex: ^(where|update|create)$
+rule:
+  kind: call_expression
+  all:
+    - pattern: $DB.$MODEL.upsert($ARG)
+    - has:
+        field: arguments
+        has:
+          kind: object
+          all:
+            - has:
+                kind: pair
+                pattern:
+                  context: "({ where: $WHERE })"
+                  selector: pair
+            - has:
+                kind: pair
+                pattern:
+                  context: "({ update: $UPDATE })"
+                  selector: pair
+            - has:
+                kind: pair
+                pattern:
+                  context: "({ create: $CREATE })"
+                  selector: pair
+            - matches: only-upsert-keys
+fix: "$DB.$MODEL.findUnique({ where: $WHERE }).then((found) => (found ? $DB.$MODEL.update({ where: $WHERE, data: $UPDATE }) : $DB.$MODEL.create({ data: $CREATE })))"
+metadata:
+  class_id: RACE.check-then-act
+  form: fixed
+  keywords: [race condition, check-then-act, upsert, get or create, duplicate create, unique constraint]
+  cwe: CWE-367 Time-of-check Time-of-use (TOCTOU) Race Condition
+  related_lint_rule: none
+---
+id: race.upsert.planted
+language: TypeScript
+severity: info
+message: A record is read and then created or updated in a separate statement.
+rule:
+  pattern: "$DB.$MODEL.findUnique({ where: $WHERE }).then(($FOUND) => ($FOUND ? $DB.$MODEL.update({ where: $WHERE, data: $UPDATE }) : $DB.$MODEL.create({ data: $CREATE })))"
+metadata:
+  class_id: RACE.check-then-act
+  form: planted
+  keywords: [race condition, check-then-act, upsert, get or create, duplicate create, unique constraint]
+  cwe: CWE-367 Time-of-check Time-of-use (TOCTOU) Race Condition
+  related_lint_rule: none

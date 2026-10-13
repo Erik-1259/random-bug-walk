@@ -1,0 +1,22 @@
+import { db } from '@/lib/db';
+
+export const holdSeat = async (seatId: string, guestId: string) => {
+  return db.client.$transaction(async (tx) => {
+    const seat = await tx.seat.findUnique({ where: { id: seatId } });
+    if (!seat || seat.status !== 'open') {
+      return null;
+    }
+
+    await tx.seat.update({
+      where: {
+        id: seat.id,
+        status: 'open',
+      },
+      data: { status: 'held', guestId },
+    });
+
+    await tx.seat.update({ where: { id: seat.id }, data: { heldAt: new Date() } });
+
+    return seat;
+  });
+};

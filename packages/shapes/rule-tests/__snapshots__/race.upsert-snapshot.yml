@@ -1,0 +1,127 @@
+id: race.upsert
+snapshots:
+  ? |
+    await db.client.preference.upsert({ where: { profileId }, update: { theme }, create: { profileId, theme } });
+  : fixed: |
+      await db.client.preference.findUnique({ where: { profileId } }).then((found) => (found ? db.client.preference.update({ where: { profileId }, data: { theme } }) : db.client.preference.create({ data: { profileId, theme } })));
+    labels:
+    - source: 'db.client.preference.upsert({ where: { profileId }, update: { theme }, create: { profileId, theme } })'
+      style: primary
+      start: 6
+      end: 108
+    - source: 'where: { profileId }'
+      style: secondary
+      start: 36
+      end: 56
+    - source: 'update: { theme }'
+      style: secondary
+      start: 58
+      end: 75
+    - source: 'create: { profileId, theme }'
+      style: secondary
+      start: 77
+      end: 105
+    - source: '{ where: { profileId }, update: { theme }, create: { profileId, theme } }'
+      style: secondary
+      start: 34
+      end: 107
+    - source: '{ where: { profileId }, update: { theme }, create: { profileId, theme } }'
+      style: secondary
+      start: 34
+      end: 107
+  ? |
+    await tx.setting.upsert({
+      where: { key: 'mode' },
+      update: { value },
+      create: {
+        key: 'mode',
+        value,
+      },
+    });
+  : fixed: |
+      await tx.setting.findUnique({ where: { key: 'mode' } }).then((found) => (found ? tx.setting.update({ where: { key: 'mode' }, data: { value } }) : tx.setting.create({ data: {
+        key: 'mode',
+        value,
+      } })));
+    labels:
+    - source: |-
+        tx.setting.upsert({
+          where: { key: 'mode' },
+          update: { value },
+          create: {
+            key: 'mode',
+            value,
+          },
+        })
+      style: primary
+      start: 6
+      end: 120
+    - source: 'where: { key: ''mode'' }'
+      style: secondary
+      start: 28
+      end: 50
+    - source: 'update: { value }'
+      style: secondary
+      start: 54
+      end: 71
+    - source: |-
+        create: {
+            key: 'mode',
+            value,
+          }
+      style: secondary
+      start: 75
+      end: 116
+    - source: |-
+        {
+          where: { key: 'mode' },
+          update: { value },
+          create: {
+            key: 'mode',
+            value,
+          },
+        }
+      style: secondary
+      start: 24
+      end: 119
+    - source: |-
+        {
+          where: { key: 'mode' },
+          update: { value },
+          create: {
+            key: 'mode',
+            value,
+          },
+        }
+      style: secondary
+      start: 24
+      end: 119
+  ? |
+    return db.stat.upsert({ create: { profileId, visits: 1 }, where: { profileId }, update: { visits: { increment: 1 } } });
+  : fixed: |
+      return db.stat.findUnique({ where: { profileId } }).then((found) => (found ? db.stat.update({ where: { profileId }, data: { visits: { increment: 1 } } }) : db.stat.create({ data: { profileId, visits: 1 } })));
+    labels:
+    - source: 'db.stat.upsert({ create: { profileId, visits: 1 }, where: { profileId }, update: { visits: { increment: 1 } } })'
+      style: primary
+      start: 7
+      end: 119
+    - source: 'where: { profileId }'
+      style: secondary
+      start: 58
+      end: 78
+    - source: 'update: { visits: { increment: 1 } }'
+      style: secondary
+      start: 80
+      end: 116
+    - source: 'create: { profileId, visits: 1 }'
+      style: secondary
+      start: 24
+      end: 56
+    - source: '{ create: { profileId, visits: 1 }, where: { profileId }, update: { visits: { increment: 1 } } }'
+      style: secondary
+      start: 22
+      end: 118
+    - source: '{ create: { profileId, visits: 1 }, where: { profileId }, update: { visits: { increment: 1 } } }'
+      style: secondary
+      start: 22
+      end: 118

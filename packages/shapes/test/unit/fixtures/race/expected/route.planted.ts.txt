@@ -1,0 +1,26 @@
+import { db } from '@/lib/db';
+
+export async function POST(request: Request) {
+  const { profileId, theme } = await request.json();
+
+  await db.client.preference.findUnique({ where: { profileId } }).then((found) => (found ? db.client.preference.update({ where: { profileId }, data: { theme } }) : db.client.preference.create({ data: {
+    profileId,
+    theme,
+  } })));
+
+  return Response.json({ ok: true });
+}
+
+export async function touchProfile(profileId: string) {
+  return db.client.profileStat.upsert({ create: { profileId, visits: 1 }, where: { profileId }, update: { visits: { increment: 1 } } });
+}
+
+export async function readPreference(profileId: string) {
+  return db.client.preference.upsert({ where: { profileId }, update: {}, create: { profileId }, select: { theme: true } });
+}
+
+export async function resetPreferences(profileId: string) {
+  await db.client.$transaction([
+    db.client.preference.upsert({ where: { profileId }, update: { theme: null }, create: { profileId } }),
+  ]);
+}
