@@ -153,6 +153,10 @@ export class SessionKit {
   private async script(name: string, rest: string[], options: RunOptions): Promise<CommandResult> {
     this.ran.push(name);
     if (name === "rbw-snapshot" || name === "rbw-reset" || name === "rbw-kill-app") return ok();
+    if (name === "rbw-clear-logs") {
+      for (const file of rest) if (this.logs.has(file)) this.logs.set(file, "");
+      return ok();
+    }
     if (name === "rbw-place") {
       const [app, path, staging] = rest.map(String);
       const file = this.files.get(String(path));

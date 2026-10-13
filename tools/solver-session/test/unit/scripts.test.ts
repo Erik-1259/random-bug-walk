@@ -9,7 +9,7 @@ import { extract } from "tar-stream";
 import { describe, expect, it } from "vitest";
 import { sha256, tempDir } from "../../../local-runner/test/support/synthetic.ts";
 import { KILL_APP_SCRIPT } from "../../src/reset.ts";
-import { LOG_SLICE_SCRIPT, PLACE_SCRIPT } from "../../src/session.ts";
+import { CLEAR_LOGS_SCRIPT, LOG_SLICE_SCRIPT, PLACE_SCRIPT } from "../../src/session.ts";
 import { TRACKED_TAR_SCRIPT } from "../../src/tracked.ts";
 
 function sh(script: string, args: readonly string[], env: Record<string, string> = {}): { code: number | null; stdout: Buffer; stderr: string } {
@@ -103,6 +103,26 @@ describe("the server_logs slice script", () => {
   it("reads a missing log as empty", () => {
     expect(slice(null, -1, 8)).toEqual({ header: "0 0", body: "" });
     expect(slice(null, 5, 8)).toEqual({ header: "0 0", body: "" });
+  });
+});
+
+describe("the runtime log clearing script", () => {
+  it("empties each named log that exists, keeping its mode, and creates none", () => {
+    const root = tempDir("rbw-solver-session-clear-");
+    const umami = join(root, "umami.stderr.log");
+    writeFileSync(umami, "old start\n", { mode: 0o640 });
+    const missing = join(root, "postgres.stderr.log");
+    const result = sh(CLEAR_LOGS_SCRIPT, ["rbw-clear-logs", umami, missing]);
+    expect(result.stderr).toBe("");
+    expect(result.code).toBe(0);
+    expect(readFileSync(umami, "utf8")).toBe("");
+    expect(statSync(umami).mode & 0o777).toBe(0o640);
+    expect(existsSync(missing)).toBe(false);
+  });
+
+  it("succeeds when the logs directory does not exist yet", () => {
+    const root = tempDir("rbw-solver-session-clear-");
+    expect(sh(CLEAR_LOGS_SCRIPT, ["rbw-clear-logs", join(root, "logs", "umami.stderr.log")]).code).toBe(0);
   });
 });
 

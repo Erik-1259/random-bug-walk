@@ -110,6 +110,16 @@ rm -f "$3"
 sha256sum "$target"
 `;
 
+/**
+ * Empties each named log that exists and creates none. Run at every build boundary, while no
+ * launcher writes them, so no failure in the next build or start can serve an earlier start's output.
+ */
+export const CLEAR_LOGS_SCRIPT = `set -eu
+for f in "$@"; do
+  if [ -f "$f" ]; then : > "$f"; fi
+done
+`;
+
 /** Prints "<size> <start>" and then the log's bytes from <start>, at most <max>. A negative offset asks for the tail. */
 export const LOG_SLICE_SCRIPT = `set -eu
 f=$1; off=$2; max=$3
@@ -156,8 +166,8 @@ export class Session implements SolverTools {
   private digest = "";
   private rebuilds = 0;
   /**
-   * Bumped at every build boundary: a started app's logs are truncated by rbw-start, and a failed
-   * build leaves no current logs. A log cursor names the generation it read.
+   * Bumped at every build boundary, where both runtime logs are emptied; a failed build leaves no
+   * current logs. A log cursor names the generation it read.
    */
   private logGeneration = 0;
   /** rbw-start ran since the last build boundary, so the log files are this generation's. */
@@ -374,9 +384,11 @@ export class Session implements SolverTools {
    * (for example a pnpm store under /tmp), so it is the agent's failed rebuild, not an error.
    */
   private async buildAndStart(label: string, byAgent: boolean): Promise<{ result: RebuildResult; build: BuildStreams | null }> {
-    // The files still hold the last start's logs until rbw-start truncates them; until then they are not served.
+    // A new log generation: the launchers are stopped, so the last start's logs are emptied now,
+    // and nothing is served until the build passes and rbw-start runs.
     this.logGeneration += 1;
     this.logsCurrent = false;
+    await this.execOk("clear_logs", ["/bin/sh", "-c", CLEAR_LOGS_SCRIPT, "rbw-clear-logs", LOG_FILES.umami, LOG_FILES.postgres], SCRIPT_TIMEOUT_MS);
     const cold = await this.exec(["/opt/rbw/bin/rbw-check-cold"], SCRIPT_TIMEOUT_MS);
     if (cold.code !== 0) {
       const found = text(cold.stdout).trim();

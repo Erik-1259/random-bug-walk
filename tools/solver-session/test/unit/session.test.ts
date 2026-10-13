@@ -46,7 +46,7 @@ describe("opening a session", () => {
       IMAGE_ID, "tail", "-f", "/dev/null",
     ]);
     expect(kit.files.get(TARGET)?.bytes.toString()).toBe(PLANTED);
-    expect(kit.ran).toEqual(["cat-build-outputs", "rbw-place", "rbw-tracked", "rbw-snapshot", "rbw-check-cold", "rbw-build-app", "rbw-start"]);
+    expect(kit.ran).toEqual(["cat-build-outputs", "rbw-place", "rbw-tracked", "rbw-snapshot", "rbw-clear-logs", "rbw-check-cold", "rbw-build-app", "rbw-start"]);
     await session.close();
   });
 
@@ -134,7 +134,7 @@ describe("rebuild_restart", () => {
     const { kit, session } = await open();
     kit.ran.length = 0;
     const result = await session.rebuildRestart();
-    expect(kit.ran).toEqual(["rbw-stop", "rbw-kill-app", "rbw-reset", "rbw-check-cold", "rbw-build-app", "rbw-start"]);
+    expect(kit.ran).toEqual(["rbw-stop", "rbw-kill-app", "rbw-reset", "rbw-clear-logs", "rbw-check-cold", "rbw-build-app", "rbw-start"]);
     expect(result).toMatchObject({ ok: true, refused: null, build: { exit_code: 0 }, start: { exit_code: 0, output: START_OK, withheld_lines: 0 } });
   });
 
@@ -166,7 +166,7 @@ describe("rebuild_restart", () => {
     const result = await session.rebuildRestart();
     expect(result).toMatchObject({ ok: false, refused: "not_cold", build: { exit_code: null }, start: null });
     expect(result.build.output).toContain("pnpm store present: /tmp/.pnpm-store");
-    expect(kit.ran).toEqual(["rbw-stop", "rbw-kill-app", "rbw-reset", "rbw-check-cold"]);
+    expect(kit.ran).toEqual(["rbw-stop", "rbw-kill-app", "rbw-reset", "rbw-clear-logs", "rbw-check-cold"]);
     expect(await session.rebuildRestart()).toMatchObject({ ok: true });
   });
 
@@ -289,6 +289,70 @@ describe("the agent's other tools", () => {
     expect(await session.rebuildRestart()).toMatchObject({ ok: true });
     kit.logs.set("/var/lib/rbw/logs/umami.stderr.log", "new start\n");
     expect(await session.serverLogs(idle.cursor)).toMatchObject({ ok: true, umami: { text: "new start\n", restarted: true } });
+  });
+
+  it("serves no earlier Umami log when the next start fails before launching Umami", async () => {
+    const holder: { kit?: SessionKit } = {};
+    const { kit, session } = await open(
+      {
+        start: (call) => {
+          if (call === 1) return ok(START_OK);
+          // Postgres started and wrote this generation's log; check-db.js failed before the Umami launcher.
+          holder.kit?.logs.set("/var/lib/rbw/logs/postgres.stderr.log", "pg second start\n");
+          return failed(1, "rbw-start: check-db.js failed\n");
+        },
+      },
+      { limits: { logBytes: 64 } },
+    );
+    holder.kit = kit;
+    kit.logs.set("/var/lib/rbw/logs/umami.stderr.log", "old umami start\n");
+    kit.logs.set("/var/lib/rbw/logs/postgres.stderr.log", "old pg start\n");
+    const before = await session.serverLogs();
+    if (!before.ok) throw new Error("server logs refused");
+    expect(await session.rebuildRestart()).toMatchObject({ ok: false, start: { exit_code: 1 } });
+    expect(await session.serverLogs(before.cursor)).toMatchObject({
+      ok: true,
+      umami: { text: "", size: 0, restarted: true },
+      postgres: { text: "pg second start\n", restarted: true },
+      cursor: { generation: 2 },
+    });
+    expect(await session.serverLogs()).toMatchObject({ ok: true, umami: { text: "", size: 0 }, postgres: { text: "pg second start\n" } });
+  });
+
+  it("serves the failed start's own logs when Umami launched and then exited", async () => {
+    const holder: { kit?: SessionKit } = {};
+    const { kit, session } = await open(
+      {
+        start: (call) => {
+          if (call === 1) return ok(START_OK);
+          holder.kit?.logs.set("/var/lib/rbw/logs/postgres.stderr.log", "pg second start\n");
+          holder.kit?.logs.set("/var/lib/rbw/logs/umami.stderr.log", "Error: second start crashed\n");
+          return LOG_TAIL_FAILURE;
+        },
+      },
+      { limits: { logBytes: 64 } },
+    );
+    holder.kit = kit;
+    kit.logs.set("/var/lib/rbw/logs/umami.stderr.log", "old umami start\n");
+    const before = await session.serverLogs();
+    if (!before.ok) throw new Error("server logs refused");
+    expect(await session.rebuildRestart()).toMatchObject({ ok: false, start: { exit_code: 1 } });
+    expect(await session.serverLogs(before.cursor)).toMatchObject({
+      ok: true,
+      umami: { text: "Error: second start crashed\n", restarted: true },
+      postgres: { text: "pg second start\n", restarted: true },
+      cursor: { generation: 2 },
+    });
+  });
+
+  it("clears both runtime logs at every build boundary, before the build", async () => {
+    const { kit, session } = await open({ build: (call) => (call === 2 ? failed(1) : ok("build_exit=0\n")) });
+    const clears = () => kit.execs().filter((call) => call[3] === "rbw-clear-logs").map((call) => call.slice(4));
+    expect(clears()).toEqual([["/var/lib/rbw/logs/umami.stderr.log", "/var/lib/rbw/logs/postgres.stderr.log"]]);
+    kit.ran.length = 0;
+    await session.rebuildRestart();
+    expect(kit.ran).toEqual(["rbw-stop", "rbw-kill-app", "rbw-reset", "rbw-clear-logs", "rbw-check-cold", "rbw-build-app"]);
+    expect(clears()).toHaveLength(2);
   });
 
   it("refuses server logs in the off arm without reading them", async () => {
