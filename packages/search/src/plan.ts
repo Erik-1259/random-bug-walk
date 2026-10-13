@@ -58,13 +58,13 @@ export function phraseIndex(name: string): number {
   return Number(name.slice("phrase-".length)) - 1;
 }
 
-export function sourceQuery(name: string, input: SearchInput): string {
+export function sourceQuery(name: string, input: Pick<SearchInput, "source">): string {
   const { shape_keywords, symptom_words } = input.source;
   const words = name === "source-1" ? [...shape_keywords, ...symptom_words] : [...symptom_words, ...shape_keywords];
   return words.join(" ");
 }
 
-export function sourceOptions(input: SearchInput, settings: SearchSettings): Record<string, unknown> {
+export function sourceOptions(input: Pick<SearchInput, "source">, settings: SearchSettings): Record<string, unknown> {
   return {
     searchDepth: "basic",
     maxResults: settings.max_results,
@@ -89,7 +89,7 @@ export function phraseOptions(settings: SearchSettings): Record<string, unknown>
   };
 }
 
-export function docsOptions(input: SearchInput, settings: SearchSettings): Record<string, unknown> {
+export function docsOptions(input: Pick<SearchInput, "docs">, settings: SearchSettings): Record<string, unknown> {
   return {
     extractDepth: "basic",
     includeUsage: true,
@@ -110,7 +110,7 @@ export type PolicyRefusal =
   | "excluded_identifier";
 
 /** Checks the docs URL against the allowed and excluded domain lists. Excluded wins. */
-export function checkDocsUrl(input: SearchInput): PolicyRefusal | null {
+export function checkDocsUrl(input: Pick<SearchInput, "docs" | "docs_policy">): PolicyRefusal | null {
   let host: string;
   try {
     const url = new URL(input.docs.url);
@@ -128,7 +128,7 @@ export function checkDocsUrl(input: SearchInput): PolicyRefusal | null {
 }
 
 /** Source searches may be restricted only to GitHub, Stack Overflow and the project-docs domains. */
-export function checkSourceDomains(input: SearchInput, settings: SearchSettings): PolicyRefusal | null {
+export function checkSourceDomains(input: Pick<SearchInput, "source" | "docs_policy">, settings: SearchSettings): PolicyRefusal | null {
   const allowed = [...BASE_SOURCE_DOMAINS, ...settings.project_docs_domains];
   const excluded = input.docs_policy.excluded_domains;
   for (const domain of input.source.include_domains) {
