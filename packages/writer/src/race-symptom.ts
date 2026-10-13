@@ -60,6 +60,13 @@ export const RaceSymptomSchema = z
       symptom.observed.refused === symptom.concurrent_attempts.filter((attempt) => attempt.outcome === "refused").length,
     "observed counts the outcomes of the concurrent attempts",
   )
+  .refine(
+    (symptom) =>
+      symptom.overlap_ms ===
+      Math.min(...symptom.concurrent_attempts.map((attempt) => attempt.settled_ms)) -
+        Math.max(...symptom.concurrent_attempts.map((attempt) => attempt.sent_ms)),
+    "overlap_ms is the earlier settle time minus the later send time of the concurrent attempts",
+  )
   .brand<"RaceSymptom">();
 
 /** A validated race observation. The brand means only `parseWriterSymptom` can produce one. */

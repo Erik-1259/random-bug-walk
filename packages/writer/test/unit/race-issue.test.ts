@@ -65,6 +65,7 @@ describe("the race symptom input", () => {
       return value;
     }],
     ["a zero overlap", () => ({ ...raceSymptom("valid"), overlap_ms: 0 })],
+    ["a positive overlap that is not the earlier settle time minus the later send time", () => ({ ...raceSymptom("valid"), overlap_ms: 90 })],
     ["another symptom kind", () => ({ ...raceSymptom("valid"), symptom_kind: "synthetic_kind" })],
   ];
 
