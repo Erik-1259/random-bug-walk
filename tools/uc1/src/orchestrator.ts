@@ -38,7 +38,6 @@ import {
   attemptRow,
   attemptStatus,
   isGraded,
-  isInfrastructure,
   listRuns,
   needsGrade,
   readAttempt,
@@ -484,9 +483,11 @@ async function runIndex(pass: Pass, item: PlannedAttempt): Promise<void> {
     }
     if (record.status === "infrastructure_error") return;
     if (pass.stop !== null) return;
-    // A rerun is a whole new attempt, so its own worst case must fit before it starts, and it stays
-    // held until the rerun's session ends, so a rerun starting meanwhile cannot count on the same room.
-    const hold = record.runs.some(isInfrastructure) ? `rerun-${attemptKey({ arm: item.arm, index: item.index, rerun: record.runs.length })}` : null;
+    // Any restart of an index that already has a run (an infrastructure rerun, or a restart after a
+    // spend refusal) is a whole new attempt, so its own worst case must fit before it starts, and it
+    // stays held until its session ends, so a restart starting meanwhile cannot count on the same room.
+    // Only a never-started index starts on one turn's worst case.
+    const hold = record.runs.length > 0 ? `rerun-${attemptKey({ arm: item.arm, index: item.index, rerun: record.runs.length })}` : null;
     const fits = hold === null ? await pass.allowance.check(pass.turnWorst) : await pass.allowance.admit(hold, BigInt(pass.run.attempt_worst_case_microusd));
     if (!fits.ok) {
       pass.halt(fits.reason, fits.detail);

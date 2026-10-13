@@ -28,7 +28,7 @@
     "tools/publication": 166,
     "tools/release": 74,
     "tools/solver-session": 91,
-    "tools/uc1": 74
+    "tools/uc1": 78
   },
   "pytest": {
     "python/schema": 921

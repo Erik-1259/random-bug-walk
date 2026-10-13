@@ -211,6 +211,22 @@ export function detectableSentence(offSolved: number, offCounted: number, onCoun
   return `Detectable difference (calculated, 80% power, ${String(TABLE_ARM_SIZE)} counted attempts per arm) at the observed off-arm rate of ${String(offSolved * 5)}% (${String(offSolved)}/${String(offCounted)}): ${detectable}.`;
 }
 
+type ArmResult = ResultsRecord["bugs"][number]["arms"]["off"];
+
+/** One arm's solve count over its counted attempts, with its 95% Clopper–Pearson interval. */
+function armSolves(name: string, arm: ArmResult): string {
+  const interval = arm.clopper_pearson_95 === null ? "no counted attempts" : `${arm.clopper_pearson_95[0]} to ${arm.clopper_pearson_95[1]}`;
+  return `${name} ${String(arm.solved)}/${String(arm.counted)} (${interval})`;
+}
+
+/**
+ * Each arm's solve count over all its counted attempts with a 95% Clopper–Pearson interval, as the
+ * pre-registration reports per arm; it is also the futility rule's all-attempt solve outcome.
+ */
+function solvesSentence(off: ArmResult, on: ArmResult): string {
+  return `Solves over all counted attempts (grade 2), with 95% Clopper–Pearson intervals: ${armSolves("off", off)}; ${armSolves("on", on)}.`;
+}
+
 /** The run's report: the label, the plan, every attempt, both grades, spend and the analysis statements. */
 export function reportMarkdown(summary: RunSummary, analysis: ResultsRecord | null): string {
   const lines: string[] = [];
@@ -264,7 +280,9 @@ export function reportMarkdown(summary: RunSummary, analysis: ResultsRecord | nu
       const on = bug.arms.on;
       if (summary.mode === "pilot") lines.push(`Harness pilot, k = ${String(off.counted)} off and ${String(on.counted)} on; not a UC1 result.`, "");
       else lines.push(`Illustration on 1 bug, k = ${String(off.counted)} off and ${String(on.counted)} on.`, "", detectableSentence(off.solved, off.counted, on.counted), "");
-      lines.push(bug.made_worse.statement, "", turnsSentence(bug.turns), "");
+      lines.push(bug.made_worse.statement, "");
+      if (summary.mode !== "pilot") lines.push(solvesSentence(off, on), "");
+      lines.push(turnsSentence(bug.turns), "");
     }
     lines.push(analysis.claim_scope, "");
   }

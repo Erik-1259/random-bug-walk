@@ -469,6 +469,26 @@ describe("resumes, reruns and exit codes", () => {
     await w.close();
   });
 
+  it("restarts an index stopped by a spend refusal only when a whole attempt's worst case fits", async () => {
+    let room = TURN_WORST + 2_227n;
+    // Attempt 1 settles 4 turns (1 980); attempt 2's first turn fits and its second is refused.
+    const w = await world({ view: (view) => ({ ...view, settled_microusd: view.settled_microusd + 40_000_000n - room }) });
+    const first = await runSessions(pilot(w), w.deps);
+    expect(first.stop).toMatchObject({ reason: "allowance_exceeded" });
+    expect(runs(first.runDir, "002-on").map((run) => run.ended)).toEqual(["spend_refused"]);
+    const sessions = w.sessions.length;
+    // Reconciliation frees room for more than one turn but less than a whole attempt.
+    room = ATTEMPT_WORST - 1n;
+    const second = await runSessions(pilot(w), w.deps);
+    expect(second.stop).toMatchObject({ reason: "allowance_exceeded" });
+    expect(runs(second.runDir, "002-on")).toHaveLength(1);
+    expect(w.sessions).toHaveLength(sessions);
+    room = 40_000_000n;
+    expect((await runSessions(pilot(w), w.deps)).exitCode).toBe(0);
+    expect(runs(second.runDir, "002-on").map((run) => run.ended)).toEqual(["spend_refused", "submitted"]);
+    await w.close();
+  });
+
   it("refuses to resume a run after its solver profile or rate sheet changed", async () => {
     let tight = true;
     const w = await world({ view: (view) => (tight ? { ...view, settled_microusd: view.settled_microusd + 40_000_000n - TURN_WORST + 1n } : view) });

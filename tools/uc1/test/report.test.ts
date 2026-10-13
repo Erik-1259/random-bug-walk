@@ -110,3 +110,28 @@ describe("the detectable-difference sentence", () => {
     expect(pilot).not.toContain("percentage points at alpha");
   });
 });
+
+describe("the per-arm solve counts", () => {
+  it("reports each arm's solves over its counted attempts with a 95% Clopper–Pearson interval", () => {
+    const analysis = analyze([...arm("off", 20, 2), ...arm("on", 20, 9)]);
+    const report = reportMarkdown(summary("run"), analysis);
+    const off = analysis.bugs[0]?.arms.off.clopper_pearson_95;
+    const on = analysis.bugs[0]?.arms.on.clopper_pearson_95;
+    expect(off).not.toBeNull();
+    expect(report).toContain(`Solves over all counted attempts (grade 2), with 95% Clopper–Pearson intervals: off 2/20 (${off?.[0] ?? ""} to ${off?.[1] ?? ""}); on 9/20 (${on?.[0] ?? ""} to ${on?.[1] ?? ""}).`);
+  });
+
+  it("reports the all-attempt solve counts with intervals when the futility rule stopped the solve test", () => {
+    const analysis = analyze([...arm("off", 19, 0, 1), ...arm("on", 20, 0)]);
+    const report = reportMarkdown(summary("run"), analysis);
+    expect(report).toContain(analysis.bugs[0]?.made_worse.statement ?? "missing");
+    const off = analysis.bugs[0]?.arms.off.clopper_pearson_95;
+    const on = analysis.bugs[0]?.arms.on.clopper_pearson_95;
+    expect(report).toContain(`off 0/19 (${off?.[0] ?? ""} to ${off?.[1] ?? ""}); on 0/20 (${on?.[0] ?? ""} to ${on?.[1] ?? ""}).`);
+  });
+
+  it("does not put the solve counts in a pilot report", () => {
+    const pilot = reportMarkdown(summary("pilot"), analyze([...arm("off", 2, 0), ...arm("on", 2, 1)]));
+    expect(pilot).not.toContain("Clopper–Pearson");
+  });
+});
