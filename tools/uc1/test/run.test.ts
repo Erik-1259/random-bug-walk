@@ -1,7 +1,7 @@
 // The counted run's rules in the dry-run world: the spend guard before every model call and
 // regrade, the refusals before anything starts, the rerun rule, the scope rule, concurrency and
 // the model freeze.
-import { existsSync, mkdtempSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readSolverRateSheet, solverEnvelope, SUPER_SOLVER_PROFILE } from "@rbw/solver";
@@ -334,6 +334,74 @@ describe("attempts, reruns and scope", () => {
     expect(done.summary.spend.uc1_roots).toEqual({ roots: 2, settled_microusd: both.settled_microusd.toString(), open_microusd: "0" });
     const report = readFileSync(join(second.runDir, "staging", "report.md"), "utf8");
     expect(report).toContain(`Every UC1 root under the runs directory (2, this one included): settled $${(Number(both.settled_microusd) / 1_000_000).toFixed(4)}, open $0.0000, against the UC1 cap of $40.0000.`);
+    await w.close();
+  });
+});
+
+const ATTEMPT_WORST = (() => {
+  const priced = solverEnvelope(readSolverRateSheet(), SUPER_SOLVER_PROFILE);
+  if (!priced.ok) throw new Error("the solver rate sheet must price Super");
+  return BigInt(priced.attempt_worst_case_microusd);
+})();
+
+describe("resumes, reruns and exit codes", () => {
+  it("refuses to resume or regrade a run whose root finalize has made terminal", async () => {
+    const w = await world();
+    const outcome = await runSessions(pilot(w), w.deps);
+    await runGrade2({ runDir: outcome.runDir }, w.deps);
+    const done = await finalize({ runDir: outcome.runDir }, w.deps);
+    expect(done.rootRun.status).toBe("terminal");
+    const sessions = w.sessions.length;
+    await expect(runSessions(pilot(w), w.deps)).rejects.toThrow("finalized");
+    await expect(runGrade2({ runDir: outcome.runDir }, w.deps)).rejects.toThrow("finalized");
+    expect(w.sessions).toHaveLength(sessions);
+    expect(json(join(outcome.runDir, "root-run.json"))).toMatchObject({ status: "terminal" });
+    await w.close();
+  });
+
+  it("starts an infrastructure rerun only when a whole attempt's worst case fits", async () => {
+    let tight = false;
+    const w = await world({
+      sessionFault: (request) => {
+        if (!request.id.endsWith("on-002-r0")) return null;
+        tight = true;
+        return "error";
+      },
+      // Room for more than one turn but less than a whole attempt.
+      view: (view) => (tight ? { ...view, settled_microusd: view.settled_microusd + 40_000_000n - ATTEMPT_WORST + 1n } : view),
+    });
+    const outcome = await runSessions(pilot(w), w.deps);
+    expect(outcome.exitCode).toBe(1);
+    expect(outcome.stop).toMatchObject({ reason: "allowance_exceeded" });
+    // Only the failed first run at index 2 exists: the rerun never opened a session.
+    expect(runs(outcome.runDir, "002-on")).toHaveLength(1);
+    expect(w.sessions).toHaveLength(1);
+    await w.close();
+  });
+
+  it("refuses to resume a run after its solver profile or rate sheet changed", async () => {
+    let tight = true;
+    const w = await world({ view: (view) => (tight ? { ...view, settled_microusd: view.settled_microusd + 40_000_000n - TURN_WORST + 1n } : view) });
+    const first = await runSessions(pilot(w), w.deps);
+    expect(first.stop).toMatchObject({ reason: "allowance_exceeded" });
+    tight = false;
+    const path = join(first.runDir, "run.json");
+    const original = readFileSync(path, "utf8");
+    writeFileSync(path, JSON.stringify({ ...json(path), rate_sheet_sha256: "0".repeat(64) }));
+    await expect(runSessions(pilot(w), w.deps)).rejects.toThrow("solver profile or rate sheet");
+    writeFileSync(path, JSON.stringify({ ...JSON.parse(original), runtime_profile_sha256: "0".repeat(64) }));
+    await expect(runSessions(pilot(w), w.deps)).rejects.toThrow("solver profile or rate sheet");
+    writeFileSync(path, original);
+    expect((await runSessions(pilot(w), w.deps)).exitCode).toBe(0);
+    await w.close();
+  });
+
+  it("exits 1 when an attempt ends an infrastructure error after its reruns", async () => {
+    const w = await world({ sessionFault: (request) => (request.id.includes("on-003-") ? "error" : null) });
+    const outcome = await runSessions(pilot(w), w.deps);
+    expect(outcome.stop).toBeNull();
+    expect(json(join(outcome.runDir, "attempts", "003-on", "attempt.json")).status).toBe("infrastructure_error");
+    expect(outcome.exitCode).toBe(1);
     await w.close();
   });
 });

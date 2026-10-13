@@ -38,6 +38,7 @@ import {
   attemptRow,
   attemptStatus,
   isGraded,
+  isInfrastructure,
   listRuns,
   needsGrade,
   readAttempt,
@@ -141,6 +142,14 @@ function writeRootRun(runDir: string, run: RunRecord, status: RootRun["status"],
   const record = rootRunRecord(run, status, outcome, childExecutions(readAttempts(runDir, run), readSeeded(runDir)));
   writeFileSync(join(runDir, "root-run.json"), encodeCanonical(record));
   return record;
+}
+
+/** Refuses more work on a run whose root finalize made terminal: the publisher freezes that root's first terminal snapshot. */
+function refuseFinalized(runDir: string, name: string): void {
+  const path = join(runDir, "root-run.json");
+  if (existsSync(path) && (readJson(path) as RootRun).status === "terminal") {
+    throw new RunRefusal(`run ${name} was finalized and its root is terminal; start a new run name to continue`);
+  }
 }
 
 function gradeTarget(runDir: string): GradeTarget {
@@ -386,7 +395,8 @@ async function runIndex(pass: Pass, item: PlannedAttempt): Promise<void> {
     if (record.runs.length > 0) writeAttempt(pass.runDir, record);
     if (record.status === "counted" || record.status === "infrastructure_error") return;
     if (pass.stop !== null) return;
-    const fits = await pass.allowance.check(pass.turnWorst);
+    // A rerun is a whole new attempt, so its own worst case must fit before it starts.
+    const fits = await pass.allowance.check(record.runs.some(isInfrastructure) ? BigInt(pass.run.attempt_worst_case_microusd) : pass.turnWorst);
     if (!fits.ok) {
       pass.halt(fits.reason, fits.detail);
       return;
@@ -431,6 +441,15 @@ export async function runSessions(options: SessionsOptions, deps: Uc1Deps): Prom
     if (existing.mode !== options.mode || existing.case_sha256 !== loaded.sha256 || existing.project_policy_sha256 !== policy.sha256 || existing.issue_sha256 !== sha256Hex(issueBytes)) {
       throw new RunRefusal(`run ${options.name} was started with another mode, case, policy or issue`);
     }
+    if (
+      existing.runtime_profile_sha256 !== profileSha256(profile) ||
+      existing.rate_sheet_sha256 !== priced.rate_sheet_sha256 ||
+      existing.turn_worst_case_microusd !== priced.turn_worst_case_microusd ||
+      existing.attempt_worst_case_microusd !== priced.attempt_worst_case_microusd
+    ) {
+      throw new RunRefusal(`run ${options.name} was started with another solver profile or rate sheet`);
+    }
+    refuseFinalized(runDir, options.name);
   } else if (existsSync(runDir) && readdirSync(runDir).length > 0) {
     throw new RunRefusal(`${runDir} exists and is not a UC1 run`);
   }
@@ -550,11 +569,10 @@ export async function runSessions(options: SessionsOptions, deps: Uc1Deps): Prom
   }
 
   writeProgress(runDir, run, null);
-  const allFinal = run.plan.every((item) => {
-    const record = readAttempt(runDir, item);
-    return record !== null && (record.status === "counted" || record.status === "infrastructure_error");
-  });
-  return { exitCode: pass.stop === null && allFinal && seededOk ? 0 : 1, runDir, rootExecutionId: run.root_execution_id, stop: pass.stop };
+  const finals = run.plan.map((item) => readAttempt(runDir, item));
+  const allCounted = finals.every((record) => record?.status === "counted");
+  // An attempt that ended an infrastructure error after its reruns is final but still exits 1.
+  return { exitCode: pass.stop === null && allCounted && seededOk ? 0 : 1, runDir, rootExecutionId: run.root_execution_id, stop: pass.stop };
 }
 
 /** results/summary.json as it stands, without the analysis (a progress view between steps). */
@@ -576,6 +594,7 @@ export async function runGrade2(options: { runDir: string }, deps: Uc1Deps): Pro
   const { runDir } = options;
   const run = readRun(runDir);
   if (run === null) throw new RunRefusal(`${runDir} is not a UC1 run`);
+  refuseFinalized(runDir, run.name);
   const slot = await deps.spend.slotStatus({ slot_key: DEVELOPMENT_SLOT });
   if (!slot.ok) throw new RunRefusal(`the development slot is unavailable (${slot.code})`);
   if (slot.holder !== null) throw new RunRefusal(`the development slot is held by ${slot.holder}; grade 2 needs it free, since the controller takes it for each job`);

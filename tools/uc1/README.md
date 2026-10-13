@@ -32,7 +32,7 @@ Each step is its own command, so grade 2 (the only step that spends on Vercel Sa
 2. **`grade2`: the protected regrade.** For every seeded round trip and every counted, graded attempt (the final run at its index), one controller `judge_verify` job on Vercel Sandbox, serially, on the development pool and slot under the root, each only when its worst case fits the allowance. A grade that stops for infrastructure reasons is retried as a grade only, up to 2 times. The slot must be free: the controller takes it for each job.
 3. **`finalize`: the records.** The analyzer's rows and its results record, the summary, the report, the publisher's staging directory, and the root's terminal status: `completed` when every planned index has a final status and, in a pilot, both seeded round trips took their expected routes and passed both grades; `incomplete` otherwise (for example when the run stopped); `needs_reconciliation` when the ledger shows an open or uncertain operation under the root. It refuses while any counted, graded attempt or seeded round trip has no finished grade 2.
 
-An existing run directory resumes: `pilot` or `run` with the same `--name` continues at the first index without a final status, with the same root, model, case, policy and issue.
+An existing run directory resumes until it is finalized: `pilot` or `run` with the same `--name` continues at the first index without a final status, with the same root, model, case, policy, issue, runtime profile and rate sheet. Once `finalize` has made the root terminal, `pilot`, `run` and `grade2` refuse that run, since the publisher freezes the root's first terminal snapshot; continuing after that takes a new `--name` (a new root).
 
 ## Commands
 
@@ -108,7 +108,7 @@ The pre-registration's rule: no model call, regrade or rerun starts unless its w
 - **Roots.** Every `run.json` under `<runs>`, the pilot included, which is the pre-registration's reading of what the cap covers (model calls, Sandbox regrades and reruns, including the pilot).
 - **Settled and open.** Read from the ledger: the operations whose `root_execution_id` is a UC1 root (a read of the `operations` table), each one's settled and open amounts from `spend_operation_status`. An operation that is terminal or reconciled with nothing open is cached.
 - **Model calls.** The solver's ledger is wrapped so that each reservation is checked first: its envelope's worst case (the solver's turn reservation) must fit, or the reservation is refused with `insufficient_funds` and the detail `uc1_allowance_exceeded: ...`, and the model call is never sent. The attempt ends `spend_refused`.
-- **Attempts.** Before an attempt (or a rerun) starts, one turn's worst case must fit.
+- **Attempts.** Before an attempt starts, one turn's worst case must fit. Before an infrastructure rerun starts, a whole attempt's worst case at its caps must fit.
 - **Regrades.** A grade 2 job starts only when one Sandbox copy's worst case fits; it counts as open until the job ends.
 - **Concurrency.** The check and the reservation run under one lock in the process, so 3 sessions at once cannot carry the run past the cap.
 - **Stops.** An allowance that does not fit, an uncertain operation under the roots, or a halted ledger stops the run: nothing billable starts again in that process, running attempts are refused at their next turn, no new attempt starts, and the stop goes to `stops.jsonl`. After the ledger is reconciled, the same command resumes.
@@ -172,7 +172,8 @@ Refused before anything is written (exit 2):
 - a pilot on any case but `umami-tz-arg-001`;
 - a policy that is not `public_demo` and public;
 - `--concurrency` outside 1 to 3;
-- a different `--model` after the first counted attempt under `<runs>`, or a resumed run on another model, case, policy or issue;
+- a different `--model` after the first counted attempt under `<runs>`, or a resumed run on another model, case, policy, issue, runtime profile or rate sheet;
+- a `pilot`, `run` or `grade2` on a run whose root `finalize` already made terminal;
 - an image that resolves to another digest than the case's.
 
 Stops during a step (exit 1, recorded in `stops.jsonl`): the allowance, an uncertain operation or a halted ledger, a session refused before its container (an audit or image mismatch: the run stops, nothing is rerun), the slot held by another root, and a slot that cannot be released (the root becomes `needs_reconciliation`).
