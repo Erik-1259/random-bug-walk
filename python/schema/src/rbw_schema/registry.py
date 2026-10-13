@@ -88,7 +88,7 @@ def _registered(registry: FamilyRegistry, identity: Identity) -> bool:
 def _refuse_held_out(identities: Sequence[Identity], held_out: HeldOutIdentityList) -> None:
     if validate_record("HeldOutIdentityList", held_out):
         raise RegistryRefusal("invalid")
-    # A held-out identity is refused as it stands; it is never relabelled public.
+    # A held-out identity is refused as it stands; it is never relabeled public.
     if any(_in_list(held_out, identity) for identity in identities):
         raise RegistryRefusal("held_out_conflict")
 

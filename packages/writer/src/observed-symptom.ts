@@ -1,5 +1,5 @@
-// A narrow local definition of the issue writer's only input. It will be replaced by the shared
-// schema package's `ObservedSymptom`, and field names may change then.
+// A narrow local definition of the issue writer's only input. The controller's candidate attempt
+// builds the symptom as @rbw/schema's `ObservedSymptom` record and passes it here to be parsed.
 //
 // It holds what a user could see and do: the action, the public request, the time zone, the
 // recorded visits in user terms, the response status, expected and observed counts, and

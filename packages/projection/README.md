@@ -187,10 +187,10 @@ An unavailable audit writes `{"error":"<code>","exit_code":2,"verdict":"unavaila
 
 `pnpm --filter @rbw/projection test` runs the Vitest suite. It builds synthetic git repositories and copies in a temporary directory, needs no network, and uses only synthetic terms (`synthetic-strict-canary`, `synthetic strict phrase`, `synthetic-generic-word`). Test names carry the ADM ID they cover.
 
-## Not in this package (planned elsewhere)
+## Not in this package
 
-- Building the image, applying patches during a run, and re-scanning the built layout before grading.
-- Dependency and toolchain manifests.
-- Issue-text leak checks and phrase searches.
-- Mutations that add, delete or rename files, or change a mode.
+- Building the image (`kit/umami`) and placing each copy's code state before its build (`tools/local-runner`, which runs `audit` on every copy first). Re-scanning the built layout before grading is not done here.
+- Dependency and toolchain manifests: this package does not check them.
+- Issue-text checks (`packages/writer`, which scans an issue for internal identifiers) and phrase searches (`packages/search`).
+- Mutations that add, delete or rename files, or change a mode: not supported; such a diff is malformed (above).
 - Choosing the real exclusions and terms, which the host owns.

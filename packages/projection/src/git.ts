@@ -20,7 +20,7 @@ const MAX_OUTPUT = 1024 * 1024 * 1024;
 
 /**
  * Environment for every git call: the caller's `GIT_*` variables are dropped, global and
- * system configuration are ignored, replace refs are not honoured and nothing prompts.
+ * system configuration are ignored, replace refs are not honored and nothing prompts.
  */
 function gitEnvironment(options: GitOptions): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};

@@ -30,7 +30,7 @@ on:
 permissions: {}
 
 # Pull request runs supersede earlier runs for the same pull request number. Push runs are keyed
-# on their commit, so none is cancelled or replaced: each is the only scan of its own range.
+# on their commit, so none is canceled or replaced: each is the only scan of its own range.
 # The literal prefix keeps this group distinct from any group a caller workflow could define.
 concurrency:
   group: rbw-ci-${{ github.workflow_ref }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('push-{0}', github.sha) }}
@@ -109,7 +109,7 @@ jobs:
 
   typecheck:
     needs: changes
-    # Skips only on a successful docs-only classification; a failed or cancelled classifier runs it.
+    # Skips only on a successful docs-only classification; a failed or canceled classifier runs it.
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.docs-only != 'true') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -151,7 +151,7 @@ jobs:
 
   lint:
     needs: changes
-    # Skips only on a successful docs-only classification; a failed or cancelled classifier runs it.
+    # Skips only on a successful docs-only classification; a failed or canceled classifier runs it.
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.docs-only != 'true') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -208,7 +208,7 @@ jobs:
 
   unit-tests:
     needs: changes
-    # Skips only on a successful docs-only classification; a failed or cancelled classifier runs it.
+    # Skips only on a successful docs-only classification; a failed or canceled classifier runs it.
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.docs-only != 'true') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -263,7 +263,7 @@ jobs:
 
   build:
     needs: changes
-    # Skips only on a successful docs-only classification; a failed or cancelled classifier runs it.
+    # Skips only on a successful docs-only classification; a failed or canceled classifier runs it.
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.docs-only != 'true') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20

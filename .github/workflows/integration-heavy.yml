@@ -1,4 +1,4 @@
-# Purpose: placeholder for a heavy integration suite that is planned for the next wave.
+# Purpose: placeholder for a heavy integration suite. No heavy suite exists yet.
 # It is not a required check. It starts only on a manual run, or when the `heavy-integration`
 # label is added to a pull request from this repository. It uses no secrets and no Neon branch.
 #

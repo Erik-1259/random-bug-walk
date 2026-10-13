@@ -11,8 +11,9 @@ Umami. It holds:
 
 The app builds and runs as `rbw-app` (UID 2001) and Postgres runs as `rbw-db` (UID 2002), both
 started through `/opt/rbw/bin/rbw-launch`. The image has no browser binaries. This is part of a
-hackathon prototype; the driver, the fixture packages and the runner that use the image are
-separate work items.
+hackathon prototype; the driver (`packages/umami-driver`), the fixture (`packages/umami-fixture`)
+and the runners that use the image (`tools/local-runner`, `tools/controller`) are separate
+packages.
 
 ## Files
 

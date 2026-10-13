@@ -3,8 +3,8 @@
 # umami-tz-arg-001 proof runs: clean, planted, partial or stub.
 #
 # These edits are proof scaffolding. They exist only to show that the fixture's checks tell
-# the states apart. The canonical rule and probe data belong to another package (item W1-6),
-# and this script will switch to that data once it merges.
+# the states apart. The canonical rule and probe patches are in packages/shapes
+# (probes/dt-1.tz-arg/); this proof script keeps its own one-line edits.
 #
 # Usage: prepare-copy.sh <clean|planted|partial|stub> <dir>
 # <dir> must not exist yet. Exits non-zero, changing nothing further, if the pinned file
