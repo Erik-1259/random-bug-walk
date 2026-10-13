@@ -12,14 +12,14 @@ Nothing in this document reports a result. No counted attempt has run when it is
 
 ## Owner decisions of Oct 13, 2026
 
-1. **Decision change.** The owner authorized the race class and UC1 together on Oct 13. This reverses plan decisions #11 and #12 (UC1 only if the race class is dropped) and #24 (a UC1 demonstration without the race class).
+1. **Decision change.** The owner authorized the race class and UC1 together on Oct 13. Earlier, UC1 was to run only if the race class was dropped; now both run, and UC1 depends on an admitted, screened race case.
 2. **Priority.** UC1 depends on the race class. Without an admitted race case that passes its screen, there is no UC1 run. If the two compete for build lanes, the development slot or supervised hours, the race class wins and UC1 is cut first.
 3. **Race family, ADM-06.** The race family records ADM-06 (partial-fix and stub-fix probe states) as not applicable, with the reason stated in the race family's own records. This document does not restate that reason.
 4. **RootRun kind.** A new RootRun kind, `paired_comparison`, is approved as an addition to the kinds listed in spec §9.9 (`factory`, `kit_check`, `judge_replay`). Every UC1 attempt, model reservation and grade sits under one such root per bug run.
 5. **Spending cap.** **$40** on Nemotron 3 Super, **$75** if the Kimi-K2.7-Code fallback is needed. The decision does not say what the cap covers; this document's reading is stated under "Caps", pending the owner's confirmation.
 6. **Fallback to the time-zone case: open until Oct 18, 2026 at noon.** The owner decides at that time whether UC1 falls back to the released time-zone case (`umami-tz-arg-001`) if no race case has been admitted and screened. Until then, nothing is built that assumes either answer. The two branches are pre-registered here so that the decision changes only which branch applies:
    - **No fallback:** if no screened race case exists by Oct 18 at noon, UC1 is not run. The pilot stays development evidence only.
-   - **Fallback chosen:** the time-zone case runs under this same protocol, labeled throughout as a **low-headroom contrast**, never as a tool-effect illustration. That case fails the static-headroom screen of spec §8.3 (its mutation leaves the destructured `timezone` unused while the same file's ClickHouse branch still passes it; the binding judgment and its line references are in `docs/uc1-screen/umami-tz-arg-001.json`), so a result on it says nothing about how much logs help on bugs the source does not already reveal. Choosing this branch amends plan decision #32, and the amendment is recorded with the owner's decision.
+   - **Fallback chosen:** the time-zone case runs under this same protocol, labeled throughout as a **low-headroom contrast**, never as a tool-effect illustration. That case fails the static-headroom screen of spec §8.3 (its mutation leaves the destructured `timezone` unused while the same file's ClickHouse branch still passes it; the binding judgment and its line references are in `docs/uc1-screen/umami-tz-arg-001.json`), so a result on it says nothing about how much logs help on bugs the source does not already reveal. Choosing this branch is an owner amendment to the rule that a UC1 bug must pass the screen, and it is recorded with the owner's decision.
 
 ## Bug selection
 
