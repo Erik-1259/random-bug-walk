@@ -276,13 +276,25 @@ function words(text: string): string {
   return text.split(" ").slice(0, PHRASE_WORDS).join(" ");
 }
 
+// A race issue ends each result field with a fixed count line (`Expected: accepted=<n>, refused=<n>`
+// or `Observed: ...`) that the issue check reads. It is not user prose, so no phrase is taken from it.
+const RACE_COUNT_LINE = /^(?:Expected|Observed): accepted=[0-9]+, refused=[0-9]+$/;
+
+function withoutCountLines(text: string): string {
+  return text
+    .split(/\r?\n/)
+    .filter((line) => !RACE_COUNT_LINE.test(line))
+    .join("\n");
+}
+
 /** The first sentence, or the start of the field when that sentence is too short to be distinctive. */
-function resultPhrase(text: string): string {
+function resultPhrase(field: string): string {
+  const text = withoutCountLines(field);
   const sentence = firstSentence(text);
   return words(sentence.split(" ").length >= PHRASE_MIN_WORDS ? sentence : clean(text));
 }
 
-/** The three exact phrases, picked by code from the frozen issue: the title and the first sentences of the expected and actual results (or their first 12 words when that sentence has fewer than 6). */
+/** The three exact phrases, picked by code from the frozen issue: the title and the first sentences of the expected and actual results (or their first 12 words when that sentence has fewer than 6), never a race issue's fixed count lines. */
 export function pickPhrases(issue: IssueOutput): [string, string, string] {
   return [words(clean(issue.title)), resultPhrase(issue.expected_result), resultPhrase(issue.actual_result)];
 }

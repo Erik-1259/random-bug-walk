@@ -136,14 +136,14 @@ export function racePrivateInput(): Record<string, unknown> {
   };
 }
 
-/** A user-style race issue whose every number comes from the symptom: the accepted and refused counts, expected and observed, and the HTTP statuses. */
+/** A user-style race issue whose every number comes from the symptom: the HTTP statuses, and the accepted and refused counts on the fixed Expected and Observed lines that end the two result fields. */
 export function syntheticRaceIssue(symptom: RaceSymptom): IssueOutput {
   const statuses = symptom.concurrent_attempts.map((attempt) => String(attempt.http_status)).join(" and ");
   return {
     title: "Synthetic report: one backup code signs in twice when it is entered in two tabs at the same moment",
     reproduction_steps: ["Sign in to the synthetic account in two browser tabs until each asks for a code.", "Enter the same unused backup code in both tabs and submit them together."],
-    expected_result: `Of the two requests sent together, ${String(symptom.expected.accepted)} is accepted and ${String(symptom.expected.refused)} is refused. A backup code works once.`,
-    actual_result: `${String(symptom.observed.accepted)} were accepted and ${String(symptom.observed.refused)} refused, so both tabs were signed in with one code. The responses were ${statuses}.`,
+    expected_result: `Of the two requests sent together, one should be accepted and the other refused. A backup code works once.\nExpected: accepted=${String(symptom.expected.accepted)}, refused=${String(symptom.expected.refused)}`,
+    actual_result: `Both tabs were signed in with the same backup code. The responses were ${statuses}.\nObserved: accepted=${String(symptom.observed.accepted)}, refused=${String(symptom.observed.refused)}`,
     environment: "Synthetic fixture data; the planted bug is synthetic.",
   };
 }

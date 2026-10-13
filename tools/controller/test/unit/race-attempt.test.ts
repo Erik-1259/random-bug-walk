@@ -142,7 +142,7 @@ describe("a race-family attempt, start to finish", () => {
   it("checks the three phrases picked from the race issue, each from 6 to 12 words with no double quote, and finds novelty clear", () => {
     const issue = parseCanonical(readFileSync(join(run.work, "candidate", "issue.json"))) as never;
     const phrases = pickPhrases(issue);
-    expect(phrases).toEqual(["Synthetic report: one backup code signs in twice when it is entered", "Of the two requests sent together, 1 is accepted and 1 is", "2 were accepted and 0 refused, so both tabs were signed in"]);
+    expect(phrases).toEqual(["Synthetic report: one backup code signs in twice when it is entered", "Of the two requests sent together, one should be accepted and the", "Both tabs were signed in with the same backup code."]);
     expect(run.aw.search.queries.map((query) => query.replace(/^"|"$/g, ""))).toEqual(phrases);
     expect(parseCanonical(readFileSync(join(run.work, "candidate", "novelty.json")))).toMatchObject({ status: "clear" });
   });
@@ -159,6 +159,22 @@ describe("a race-family attempt, start to finish", () => {
     const texts = files(out).map((file) => readFileSync(file, "latin1"));
     expect(texts.length).toBeGreaterThan(0);
     for (const secret of secrets) for (const text of texts) expect(text).not.toContain(secret);
+  });
+});
+
+describe("the phrase picker on a race issue", () => {
+  it("never takes a phrase from the fixed Expected and Observed count lines, even when the prose before them is short", () => {
+    const issue = {
+      title: "One backup code signs in twice when it is entered in two tabs",
+      reproduction_steps: ["Step."],
+      expected_result: "One is refused.\nExpected: accepted=1, refused=1",
+      actual_result: "Both tabs signed in.\nObserved: accepted=2, refused=0",
+      environment: "Synthetic.",
+    };
+    const [, expected, actual] = pickPhrases(issue);
+    expect(expected).toBe("One is refused.");
+    expect(actual).toBe("Both tabs signed in.");
+    for (const phrase of [expected, actual]) expect(phrase).not.toMatch(/accepted=|refused=/);
   });
 });
 
