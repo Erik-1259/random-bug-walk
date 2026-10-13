@@ -262,6 +262,29 @@ describe("find sites in one file", () => {
     expect(batch?.confidence).toMatchObject({ score: 0.7, level: "medium", signals: { not_in_batch_transaction: false } });
   });
 
+  it("keeps the full score for an upsert inside an interactive transaction callback", () => {
+    const code = [
+      "export async function POST(db, profileId) {",
+      "  return db.client.$transaction(async (tx) => tx.preference.upsert({ where: { profileId }, update: {}, create: { profileId } }));",
+      "}",
+      "",
+    ].join("\n");
+    const sites = findSitesInSource(CLASSES, "lib/prefs.ts", code);
+    expect(sites.map((site) => site.confidence.signals.not_in_batch_transaction)).toEqual([true]);
+  });
+
+  it("counts only the read's where, not its select, as filtering on the guard", () => {
+    const code = [
+      "export async function close(db, id) {",
+      "  const room = await db.client.room.findFirst({ where: { id }, select: { id: true, active: true } });",
+      "  await db.client.room.update({ where: { id: room.id, active: true }, data: { active: false } });",
+      "}",
+      "",
+    ].join("\n");
+    const sites = findSitesInSource(CLASSES, "lib/rooms.ts", code);
+    expect(sites.map((site) => site.confidence.signals.read_checks_guard)).toEqual([false]);
+  });
+
   it("gives each site a diff of that site alone", () => {
     for (const site of sitesIn("lib/documents.ts")) {
       const changed = site.diff.split("\n").filter((line) => /^[-+](?![-+])/.test(line));

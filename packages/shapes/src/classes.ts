@@ -103,6 +103,7 @@ const WEIGHTS: Readonly<Record<string, Readonly<Record<string, number>>>> = {
 
 const READ_METHODS = new Set(["findFirst", "findFirstOrThrow", "findUnique", "findUniqueOrThrow", "findMany", "count"]);
 const HTTP_HANDLERS = /^(GET|POST|PUT|PATCH|DELETE)$/;
+const FUNCTION_KINDS = new Set(["function_declaration", "function_expression", "arrow_function", "method_definition"]);
 
 function before(a: SgNode, b: SgNode): boolean {
   return a.range().end.index <= b.range().start.index;
@@ -150,10 +151,14 @@ function pairKey(pair: SgNode): string | undefined {
   return fieldOf(pair, "key")?.text();
 }
 
+function objectPairs(object: SgNode | null | undefined): SgNode[] {
+  return (object?.children() ?? []).filter((child) => kindOf(child) === "pair");
+}
+
 function guardedWriteSignals(guard: SgNode): Signals {
   const call = guard.ancestors().find((node) => kindOf(node) === "call_expression");
   const write = call === undefined ? undefined : modelCall(call);
-  const fn = guard.ancestors().find((node) => ["function_declaration", "function_expression", "arrow_function", "method_definition"].includes(kindOf(node) ?? ""));
+  const fn = guard.ancestors().find((node) => FUNCTION_KINDS.has(kindOf(node) ?? ""));
   if (call === undefined || write === undefined || fn === undefined) {
     return { read_before_write: false, read_checks_guard: false, write_result_used: false, identity_from_read: false, await_between: false };
   }
@@ -166,8 +171,10 @@ function guardedWriteSignals(guard: SgNode): Signals {
   const read = reads.at(-1);
   const key = pairKey(guard);
   const value = fieldOf(guard, "value")?.text().replace(/\s+/g, " ");
+  // Only the read's own `where` filters; a `select` or `include` naming the field does not.
+  const readWhere = read === undefined ? undefined : objectPairs(fieldOf(read, "arguments")?.children().find((child) => kindOf(child) === "object")).find((pair) => pairKey(pair) === "where");
   const readFilters =
-    read?.findAll({ rule: { kind: "pair" } }).some((pair) => pairKey(pair) === key && fieldOf(pair, "value")?.text().replace(/\s+/g, " ") === value) ?? false;
+    readWhere?.findAll({ rule: { kind: "pair" } }).some((pair) => pairKey(pair) === key && fieldOf(pair, "value")?.text().replace(/\s+/g, " ") === value) ?? false;
   const readNames = read === undefined ? [] : boundNames(read);
   // The code tests the guarded field of what it read (`if (seat.status !== 'open')`) before writing.
   const testedInCode =
@@ -216,13 +223,19 @@ function upsertSignals(call: SgNode, path: string): Signals {
   const create = call.getMatch("CREATE");
   const whereEntries = kindOf(where) === "object" ? objectEntries(where) : new Map<string, string>();
   const createEntries = kindOf(create) === "object" ? objectEntries(create) : new Map<string, string>();
-  const inBatch = call.ancestors().some((node) => {
-    if (kindOf(node) !== "arguments") {
-      return false;
+  // Only an upsert in the array passed to `$transaction([...])` is batched; one inside an
+  // interactive `$transaction(async (tx) => ...)` callback can run the split form.
+  let inBatch = false;
+  for (const node of call.ancestors()) {
+    if (FUNCTION_KINDS.has(kindOf(node) ?? "")) {
+      break;
     }
-    const callee = fieldOf(node.parent(), "function");
-    return /(^|\.)\$transaction$/.test(callee?.text() ?? "");
-  });
+    const args = node.parent();
+    if (kindOf(node) === "array" && kindOf(args) === "arguments" && /(^|\.)\$transaction$/.test(fieldOf(args?.parent(), "function")?.text() ?? "")) {
+      inBatch = true;
+      break;
+    }
+  }
   const handler = call.ancestors().some((node) => HTTP_HANDLERS.test(functionName(node) ?? ""));
   return {
     not_in_batch_transaction: !inBatch,
