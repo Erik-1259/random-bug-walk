@@ -17,10 +17,10 @@ This project turns a known kind of bug into a validated task in a pinned host ap
 
 ## What a new bug class costs
 
-Today the pipeline is wired end to end for one family, the time-zone family: the local runner's inputs default to its probes, alternative fix and fixture, the candidate attempt's symptom builder (`tools/controller/src/symptom.ts`) accepts only its day-count mismatch, and the judge replay reloads its assets. The steps are written as separate packages, but running a second class through them needs family selection in each of those places. Planned work for that:
+Today the pipeline is wired end to end for one family, the time-zone family: the local runner's inputs default to its probes, alternative fix and fixture, the candidate attempt's symptom builder (`tools/controller/src/symptom.ts`) accepts only its day-count mismatch, and the release's judge-job construction (`tools/release/src/judge-job.ts`) loads its fixture, probes and alternative fix (the judge replay then runs that frozen job). The steps are written as separate packages, but running a second class through them needs family selection in each of those places. Planned work for that:
 
-- **Per class, once:** harvest queries (step 1), a shape rule (step 2), checks with whatever driver the class needs (step 5), and a symptom shape the writer can use (step 6).
-- **Family selection:** the local runner (probes, alternative fix, fixture), the controller (fixture staging, symptom, kit image) and the judge replay need to take the family as an input instead of assuming the time-zone family.
+- **Per class, once:** harvest queries (step 1), a shape rule (step 2), checks with whatever driver the class needs (step 5), a symptom shape the writer can use (step 6), and an entry for the family, its source fix and mutation in `packages/schema/registry/families.json`, without which the release build refuses the case as unregistered (step 7).
+- **Family selection:** the local runner (probes, alternative fix, fixture), the controller (fixture staging, symptom, kit image) and the release's judge-job construction need to take the family as an input instead of assuming the time-zone family.
 - **Classes without partial and stub probes** (such as the race family) also need the code-state derivation (`tools/local-runner/src/code-states.ts`, which loads all three probes today) and the admission profile to accept a mutation-only probe set.
 
 Once a class is wired, another site of the same class in the same host can reuse its driver, kit changes and seeding, so it should cost much less than the first.
