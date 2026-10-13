@@ -208,6 +208,68 @@ describe("find sites in one file", () => {
     ]);
   });
 
+  it("confirms a surviving id only when it holds the read's own id", () => {
+    const text = [
+      "export async function activate(ownerId: string, targetId: string, docId: string) {",
+      "  const row = await db.client.document.findFirst({ where: { ownerId } });",
+      "  await db.client.document.updateMany({ where: { id: targetId, active: false }, data: { active: true } });",
+      "  await db.client.document.updateMany({ where: { id: row.id, active: false }, data: { active: true } });",
+      "  await db.client.document.updateMany({ where: { id: row.ownerId, active: false }, data: { active: true } });",
+      "  await db.client.document.updateMany({ where: { id, active: false }, data: { active: true } });",
+      "}",
+      "export async function pinned(docId: string) {",
+      "  const { id: readId, title = docId } = await db.client.document.findFirst({ where: { id: docId } });",
+      "  await db.client.document.updateMany({ where: { id: docId, active: false }, data: { active: true } });",
+      "  await db.client.document.updateMany({ where: { id: readId, active: false }, data: { active: true } });",
+      "  await db.client.document.updateMany({ where: { id: title, active: false }, data: { active: true } });",
+      "}",
+      "export async function shorthand(docId: string) {",
+      "  const { id } = await db.client.document.findFirst({ where: { id: docId } });",
+      "  await db.client.document.updateMany({ where: { id, active: false }, data: { active: true } });",
+      "}",
+      "export async function defaulted(docId: string, fallback: string) {",
+      "  const { id = fallback } = await db.client.document.findFirst({ where: { title: docId } });",
+      "  await db.client.document.updateMany({ where: { id, active: false }, data: { active: true } });",
+      "}",
+      "",
+    ].join("\n");
+    const sites = findSitesInSource(CLASSES, "lib/activate.ts", text);
+    expect(sites.map((site) => [site.line, site.planted_form_confirmed])).toEqual([
+      [3, false],
+      [4, true],
+      [5, false],
+      [6, false],
+      [10, true],
+      [11, true],
+      [12, false],
+      [16, true],
+      [20, false],
+    ]);
+  });
+
+  it("takes only names the read's destructuring binds, not a default value or a computed key", () => {
+    const text = [
+      "export async function claim(seatId: string, fallback: string, field: string) {",
+      "  const { id = fallback } = await db.client.seat.findFirst({ where: { id: seatId, taken: false } });",
+      "  await db.client.seat.update({ where: { id: fallback, taken: false }, data: { taken: true } });",
+      "}",
+      "export async function pick(seatId: string, field: string) {",
+      "  const { [field]: picked, ...rest } = await db.client.seat.findFirst({ where: { id: seatId, taken: false } });",
+      "  await db.client.seat.update({ where: { id: field, taken: false }, data: { taken: true } });",
+      "  await db.client.seat.update({ where: { id: picked, taken: false }, data: { taken: true } });",
+      "  await db.client.seat.update({ where: { id: rest.id, taken: false }, data: { taken: true } });",
+      "}",
+      "",
+    ].join("\n");
+    const sites = findSitesInSource(CLASSES, "lib/seats.ts", text);
+    expect(sites.map((site) => [site.line, site.confidence.signals.identity_from_read])).toEqual([
+      [3, false],
+      [7, false],
+      [8, true],
+      [9, true],
+    ]);
+  });
+
   it("leaves out a guard in a where that holds any comment, where removing it could leave a stray comma", () => {
     const text = [
       "export async function redeem(code: string) {",

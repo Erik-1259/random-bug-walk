@@ -130,13 +130,66 @@ function boundNames(call: SgNode): string[] {
   if (kindOf(node) !== "variable_declarator" || node === null) {
     return [];
   }
-  const name = fieldOf(node, "name");
-  if (kindOf(name) === "identifier" && name !== null) {
-    return [name.text()];
+  return patternNames(fieldOf(node, "name"));
+}
+
+/**
+ * Names a binding pattern binds: identifiers in binding positions only, never a default value
+ * (`{ id = fallback }`) or a computed key (`{ [field]: picked }`).
+ */
+function patternNames(pattern: SgNode | null): string[] {
+  switch (kindOf(pattern)) {
+    case "identifier":
+    case "shorthand_property_identifier_pattern":
+      return pattern === null ? [] : [pattern.text()];
+    case "pair_pattern":
+      return patternNames(fieldOf(pattern, "value"));
+    case "assignment_pattern":
+    case "object_assignment_pattern":
+      return patternNames(fieldOf(pattern, "left"));
+    case "object_pattern":
+    case "array_pattern":
+    case "rest_pattern":
+      return (pattern?.children() ?? []).flatMap((child) => patternNames(child));
+    default:
+      return [];
   }
-  return (name?.findAll({ rule: { any: [{ kind: "shorthand_property_identifier_pattern" }, { kind: "identifier" }] } }) ?? []).map((n) =>
-    n.text(),
-  );
+}
+
+/**
+ * Whether a value text holds the read's own `id`: `<record>.id` (or `<records>[<index>].id` for a
+ * list read) when the read is bound to a name, the name an `id` key destructures to (without a
+ * default), or the read's own `where` id value.
+ */
+function readIdTest(read: SgNode | undefined): (value: string) => boolean {
+  const values = new Set<string>();
+  let record: RegExp | undefined;
+  if (read === undefined) {
+    return () => false;
+  }
+  const whereId = objectEntries(fieldOf(readWhereOf(read), "value")).get("id");
+  if (whereId !== undefined) {
+    values.add(whereId);
+  }
+  let node: SgNode | null = read.parent();
+  if (kindOf(node) === "await_expression") {
+    node = node?.parent() ?? null;
+  }
+  const name = kindOf(node) === "variable_declarator" ? fieldOf(node, "name") : null;
+  if (kindOf(name) === "identifier" && name !== null) {
+    record = new RegExp(`^${name.text().replace(/\$/g, "\\$")}(\\[[^\\[\\]]*\\])?\\.id$`);
+  } else if (kindOf(name) === "object_pattern") {
+    for (const child of name?.children() ?? []) {
+      if (kindOf(child) === "shorthand_property_identifier_pattern" && child.text() === "id") {
+        values.add("id");
+      } else if (kindOf(child) === "pair_pattern" && pairKey(child) === "id" && kindOf(fieldOf(child, "value")) === "identifier") {
+        values.add(fieldOf(child, "value")?.text() ?? "");
+      }
+    }
+  }
+  values.delete("");
+  const norm = (text: string): string => text.replace(/\s+/g, " ");
+  return (value) => [...values].some((idValue) => norm(idValue) === norm(value)) || (record?.test(norm(value)) ?? false);
 }
 
 function referencesAfter(scope: SgNode, names: readonly string[], after: SgNode): boolean {
@@ -196,20 +249,26 @@ function readWhereOf(read: SgNode | undefined): SgNode | undefined {
 }
 
 /**
- * Whether every entry the rewrite leaves in the guard's `where` pins the record: its key is `id`,
- * or it is a direct entry of the read's own `where` with the same key and the same value text.
- * Any other entry, including a read key with a different value, may still keep the write
+ * Whether every entry the rewrite leaves in the guard's `where` pins the record the code read: an
+ * `id` entry whose value is the read's own id (see `readIdTest`), or a direct entry of the read's
+ * own `where` with the same key and the same value text. Any other entry, including an `id` from
+ * elsewhere or a read key with a different value, may write another record or keep the write
  * conditional, so the planted form is then not confirmed.
  */
 function survivorsPinRecord(guard: SgNode): boolean {
-  const readEntries = objectEntries(fieldOf(readWhereOf(writeContext(guard)?.read), "value"));
+  const read = writeContext(guard)?.read;
+  const readEntries = objectEntries(fieldOf(readWhereOf(read), "value"));
+  const holdsReadId = readIdTest(read);
   const norm = (text: string | undefined): string | undefined => text?.replace(/\s+/g, " ");
   return (guard.parent()?.children() ?? [])
     .filter((child) => child.id() !== guard.id() && (kindOf(child) === "pair" || kindOf(child) === "shorthand_property_identifier"))
     .every((child) => {
       const key = kindOf(child) === "pair" ? pairKey(child) : child.text();
       const value = kindOf(child) === "pair" ? fieldOf(child, "value")?.text() : child.text();
-      return key === "id" || (key !== undefined && readEntries.has(key) && norm(readEntries.get(key)) === norm(value));
+      if (key === "id") {
+        return value !== undefined && holdsReadId(value);
+      }
+      return key !== undefined && readEntries.has(key) && norm(readEntries.get(key)) === norm(value);
     });
 }
 
