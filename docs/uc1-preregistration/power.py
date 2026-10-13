@@ -5,6 +5,8 @@ Standard library only. Run from the repository root:
     python3 docs/uc1-preregistration/power.py            # print the generated block
     python3 docs/uc1-preregistration/power.py --check    # exit 1 if the doc's block differs
 
+`--doc PATH` checks another copy of the doc (the repository's tests use it on a changed copy).
+
 Solve outcome: exact power of the two-sided Fisher exact test, by full enumeration of the
 21 x 21 outcome tables. The rejection region is computed with exact rational arithmetic; the
 power sums binomial probabilities over that region. Nothing here is simulated or measured.
@@ -248,6 +250,9 @@ def doc_block(text: str) -> str | None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--check", action="store_true", help="compare with the doc's block")
+    parser.add_argument(
+        "--doc", type=Path, default=DOC, help="the doc to check (default: %(default)s)"
+    )
     args = parser.parse_args()
     try:
         self_check()
@@ -258,11 +263,12 @@ def main() -> int:
     if not args.check:
         sys.stdout.write(block)
         return 0
-    found = doc_block(DOC.read_text(encoding="utf-8"))
+    doc: Path = args.doc
+    found = doc_block(doc.read_text(encoding="utf-8"))
     if found != block:
-        sys.stderr.write(f"power: the generated block in {DOC.name} is missing or differs\n")
+        sys.stderr.write(f"power: the generated block in {doc.name} is missing or differs\n")
         return 1
-    sys.stdout.write(f"power: {DOC.name} matches the generated block\n")
+    sys.stdout.write(f"power: {doc.name} matches the generated block\n")
     return 0
 
 

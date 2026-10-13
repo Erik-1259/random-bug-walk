@@ -4,10 +4,20 @@ import { readFileSync } from "node:fs";
 import { isEntryPoint, runMain } from "./main.ts";
 
 /**
+ * Markdown under docs/ that a test or check reads. `docs/uc1-preregistration/power.py --check`
+ * compares its generated block with this file, so an edit to it alone must still run the tests.
+ */
+export const CHECKED_DOCS: readonly string[] = ["docs/uc1-preregistration.md"];
+
+/**
  * The single docs-path rule. A file that a test or check reads must never match it, which is
- * why root Markdown other than README.md and Markdown inside code directories are excluded.
+ * why root Markdown other than README.md, Markdown inside code directories and CHECKED_DOCS
+ * are excluded.
  */
 export function isDocsPath(path: string): boolean {
+  if (CHECKED_DOCS.includes(path)) {
+    return false;
+  }
   if (path === "LICENSE" || path === "README.md" || path.endsWith("/README.md")) {
     return true;
   }
