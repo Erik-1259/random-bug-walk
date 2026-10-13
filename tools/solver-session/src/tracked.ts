@@ -5,7 +5,7 @@
 // file by file, for content, type and the executable bit. Untracked files are not compared.
 import { lstatSync, readFileSync, readlinkSync } from "node:fs";
 import { join } from "node:path";
-import { gitDiff } from "@rbw/local-runner";
+import { APP_DIR, gitDiff } from "@rbw/local-runner";
 import type { Docker } from "@rbw/local-runner";
 import { sha256Hex } from "@rbw/schema";
 import { structuredPatch } from "diff";
@@ -25,10 +25,14 @@ export class TrackedReadError extends Error {
   override name = "TrackedReadError";
 }
 
-/** Lists the tracked paths that exist, then archives exactly those, from /workspace/app. */
+/** Where the container's list of present tracked paths is written. */
+export const TRACKED_LIST = "/var/lib/rbw/session/tracked.list";
+
+/** Lists the given tracked paths that exist under the app directory $1 into the file $2, then archives exactly those. */
 export const TRACKED_TAR_SCRIPT = `set -eu
-cd /workspace/app
-list=/var/lib/rbw/session/tracked.list
+cd "$1"
+list=$2
+shift 2
 : > "$list"
 for p do
   if [ -e "$p" ] || [ -L "$p" ]; then printf '%s\\n' "$p" >> "$list"; fi
@@ -62,7 +66,7 @@ export async function readContainerTracked(docker: Docker, container: string, pa
     archive.on("finish", resolve);
     archive.on("error", reject);
   });
-  const result = await docker.run(["exec", "--user", "0:0", container, "/bin/sh", "-c", TRACKED_TAR_SCRIPT, "rbw-tracked", ...paths], { stdout: archive, timeoutMs: READ_TIMEOUT_MS });
+  const result = await docker.run(["exec", "--user", "0:0", container, "/bin/sh", "-c", TRACKED_TAR_SCRIPT, "rbw-tracked", APP_DIR, TRACKED_LIST, ...paths], { stdout: archive, timeoutMs: READ_TIMEOUT_MS });
   if (result.code !== 0) throw new TrackedReadError(`reading the tracked files exited ${String(result.code)}: ${result.stderr.trim()}`);
   await finished;
   return found;

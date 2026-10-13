@@ -132,6 +132,24 @@ describe("the cold-build reset", () => {
     expect(existsSync(join(app, ".turbo"))).toBe(false);
   });
 
+  it("gives every build output its recorded owner and group back", () => {
+    const root = imageTree();
+    expect(sh(root, SNAPSHOT_SCRIPT, "rbw-snapshot")).toMatchObject({ code: 0 });
+    // The tests cannot run as root, so the snapshot's owners are rewritten to an owner no file
+    // has, and a logging `chown` first on PATH shows what the reset restores.
+    const owners = join(root, "var/lib/rbw/session/owners");
+    const lines = readFileSync(owners, "utf8").trimEnd().split("\n");
+    writeFileSync(owners, `${lines.map((line) => line.replace(/^(\S+) \d+:\d+:/, "$1 2001:2001:")).join("\n")}\n`);
+    const bin = join(root, "fake-bin");
+    mkdirSync(bin);
+    writeFileSync(join(bin, "chown"), `#!/bin/sh\necho "$*" >> "${join(root, "chown.log")}"\n`, { mode: 0o755 });
+    simulateBuild(root, 1);
+    const result = spawnSync("/bin/sh", ["-c", RESET_SCRIPT, "rbw-reset", root], { encoding: "utf8", env: { PATH: `${bin}:${process.env.PATH ?? "/usr/bin:/bin"}` } });
+    expect(result.status).toBe(0);
+    const expected = kitBuildOutputs().entries.map((entry) => `2001:2001 ${join(root, "workspace/app", entry.path)}`);
+    expect(readFileSync(join(root, "chown.log"), "utf8").trimEnd().split("\n").sort()).toEqual(expected.sort());
+  });
+
   it("refuses to reset without a snapshot, and to snapshot twice", () => {
     const root = imageTree();
     expect(sh(root, RESET_SCRIPT, "rbw-reset")).toMatchObject({ code: 2, out: "rbw-reset: no snapshot\n" });

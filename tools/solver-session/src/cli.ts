@@ -2,7 +2,7 @@
 // kit image and the session's steps on a host with Docker. See README.md.
 //
 //   smoke --id <id> --image <tag|digest> --manifest <file> --terms <file> --work <dir>
-//         [--policy <file>] [--probes <dir>] [--arm on|off] [--rebuilds <n>]
+//         [--digest <sha256:...>] [--policy <file>] [--probes <dir>] [--arm on|off] [--rebuilds <n>]
 //
 // It opens the session (derive, audit, container, overlay, snapshot, cold build and start), runs
 // one command, reads the target file, runs <n> rebuild_restart calls (default 1), reads the
@@ -15,7 +15,7 @@ import { createDocker, realClock } from "@rbw/local-runner";
 import { Session, SessionError, SessionRefusal } from "./session.ts";
 
 const USAGE = `usage:
-  node src/cli.ts smoke --id <id> --image <tag|digest> --manifest <file> --terms <file> --work <dir> [--policy <file>] [--probes <dir>] [--arm on|off] [--rebuilds <n>]
+  node src/cli.ts smoke --id <id> --image <tag|digest> --manifest <file> --terms <file> --work <dir> [--digest <sha256:...>] [--policy <file>] [--probes <dir>] [--arm on|off] [--rebuilds <n>]
 `;
 
 class UsageError extends Error {}
@@ -38,6 +38,7 @@ async function smoke(args: string[]): Promise<number> {
     options: {
       id: { type: "string" },
       image: { type: "string" },
+      digest: { type: "string" },
       manifest: { type: "string" },
       terms: { type: "string" },
       work: { type: "string" },
@@ -56,6 +57,7 @@ async function smoke(args: string[]): Promise<number> {
     {
       id: values.id,
       image: values.image,
+      expectedDigest: values.digest ?? null,
       work: path(values, "work"),
       manifest: path(values, "manifest"),
       terms: path(values, "terms"),

@@ -2,6 +2,10 @@
 // one kit container. Every method returns plain JSON-safe data; text is UTF-8 (invalid bytes are
 // replaced). A call the session refuses resolves with `ok: false` and a reason; it never throws
 // for something the agent did, only for an infrastructure failure (SessionError).
+//
+// Calls are serialized: a session runs one call at a time, in the order they were made, so a
+// loop may issue a model's parallel tool calls at once and each still sees the previous one's
+// effects.
 
 export interface RunResult {
   /** The command's exit status; 124 when it timed out; null when it could not run. */
@@ -18,7 +22,10 @@ export type WriteResult = { ok: true; sha256: string; bytes: number } | { ok: fa
 export interface RebuildResult {
   /** True when the build exited 0 and the app answered its heartbeat. */
   ok: boolean;
-  /** Refused before anything ran (the rebuild cap); the other fields are then empty. */
+  /**
+   * Refused before the build ran: "rebuild_cap" (the other fields are empty) or "not_cold" (the
+   * tree was still warm after the reset, from something the agent left; build.output says what).
+   */
   refused: string | null;
   build: { exit_code: number | null; output: string };
   /** rbw-start's own lines only: the runtime output is scrubbed in both arms (see scrub.ts). */
@@ -27,6 +34,8 @@ export interface RebuildResult {
 
 /** Byte offsets into each log, as the last server_logs call left them. */
 export interface LogCursor {
+  /** The app start the offsets belong to; each start truncates the logs. */
+  generation: number;
   umami: number;
   postgres: number;
 }
@@ -37,7 +46,10 @@ export interface LogSlice {
   size: number;
   /** More bytes follow this slice. */
   more: boolean;
-  /** The log was restarted (it is shorter than the cursor), so the slice is its tail. */
+  /**
+   * The app was started again since the cursor (the slice then reads the new log from its
+   * start), or the log is shorter than the cursor (the slice is then its tail).
+   */
   restarted: boolean;
 }
 
@@ -59,9 +71,9 @@ export interface SolverTools {
   run(cmd: string): Promise<RunResult>;
   /** A file as the app user can read it; a relative path is under /workspace/app. */
   readFile(path: string): Promise<ReadResult>;
-  /** Writes a tracked file under the app tree, as root, keeping the file's owner and mode. */
+  /** Writes a tracked file under the app tree, as root, keeping the file's owner and mode; not one the build regenerates. */
   writeFile(path: string, content: string): Promise<WriteResult>;
-  /** rbw-stop, the cold-build reset, rbw-build-app, then rbw-start. */
+  /** rbw-stop, ending every rbw-app process, the cold-build reset, rbw-build-app, then rbw-start. */
   rebuildRestart(): Promise<RebuildResult>;
   /** A byte-capped slice of umami.stderr.log and postgres.stderr.log; refused in the off arm. */
   serverLogs(cursor?: LogCursor | null): Promise<ServerLogsResult>;

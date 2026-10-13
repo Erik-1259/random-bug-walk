@@ -142,6 +142,35 @@ rm -rf "$app/.turbo" "$app/node_modules/.cache"
 echo "reset_entries=$(wc -l < "$state/owners" | tr -d ' ')"
 `;
 
+/**
+ * Ends every process of rbw-app (uid from `id -u rbw-app`) with KILL, and waits until none is
+ * left but zombies, up to 10 s. rbw-stop ends only the kit's own launchers and their process
+ * groups, so a server or writer the agent started under setsid or tmux would otherwise survive a
+ * rebuild. Reads $root/proc; exit 2 when a process will not die.
+ */
+export const KILL_APP_SCRIPT = `set -eu
+root=$1
+uid=$(id -u rbw-app)
+rounds=0
+while :; do
+  left=0
+  for dir in "$root"/proc/[0-9]*; do
+    info=$(awk '/^State:/ { state = $2 } /^Uid:/ { real = $2; effective = $3 } END { print real, effective, state }' "$dir/status" 2>/dev/null) || continue
+    set -- $info
+    [ "$#" -eq 3 ] || continue
+    [ "$1" = "$uid" ] || [ "$2" = "$uid" ] || continue
+    [ "$3" != Z ] || continue
+    left=$((left + 1))
+    kill -s KILL "\${dir##*/}" 2>/dev/null || true
+  done
+  [ "$left" -gt 0 ] || break
+  rounds=$((rounds + 1))
+  if [ "$rounds" -ge 100 ]; then echo "rbw-kill-app: rbw-app processes survive KILL" >&2; exit 2; fi
+  sleep 0.1
+done
+echo "killed_rounds=$rounds"
+`;
+
 /** The docker exec argument list (after the container name) that runs one of the scripts as root. */
 export function scriptArgs(script: string, name: string, root = ""): string[] {
   return ["/bin/sh", "-c", script, name, root];

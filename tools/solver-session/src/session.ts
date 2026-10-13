@@ -10,7 +10,7 @@ import { join, posix } from "node:path";
 import { APP_DIR, COPY_RESOURCES, CodeStateRefusal, ExportError, InputsError, PlanError, auditCopy, deriveCodeStates, exportImage, inspectImage, loadCopyInputs } from "@rbw/local-runner";
 import type { AuditResult, Clock, CommandResult, CopyInputOptions, Docker } from "@rbw/local-runner";
 import { sha256Hex } from "@rbw/schema";
-import { RESET_SCRIPT, SESSION_STATE_DIR, SNAPSHOT_SCRIPT, kitBuildOutputs, scriptArgs } from "./reset.ts";
+import { KILL_APP_SCRIPT, RESET_SCRIPT, SESSION_STATE_DIR, SNAPSHOT_SCRIPT, kitBuildOutputs, scriptArgs } from "./reset.ts";
 import { scrubStartOutput, tailText } from "./scrub.ts";
 import { compareTracked, readContainerTracked, submission } from "./tracked.ts";
 import type { LogCursor, LogSlice, ReadResult, RebuildResult, RunResult, ServerLogsResult, SolverTools, SubmitResult, WriteResult } from "./tools.ts";
@@ -47,6 +47,11 @@ export interface SessionOptions extends CopyInputOptions {
   id: string;
   /** The kit image (tag or digest); every container runs by its content digest. */
   image: string;
+  /**
+   * The content digest the image must resolve to (sha256:...), or null to accept whatever it
+   * resolves to. A counted attempt passes the digest its case admits; null is for a smoke run.
+   */
+  expectedDigest: string | null;
   /** Must be absent or empty. */
   work: string;
   /** The on arm: server_logs is served. The off arm refuses it. */
@@ -88,21 +93,25 @@ const SCRIPT_TIMEOUT_MS = 300_000;
 const BUILD_TIMEOUT_MS = 1_900_000;
 const START_TIMEOUT_MS = 400_000;
 const DOCKER_MARGIN_MS = 60_000;
+/** Staging files for write_file, one per placement: <INCOMING>-<n>. */
 const INCOMING = `${SESSION_STATE_DIR}/incoming`;
 const LOGS_DIR = "/var/lib/rbw/logs";
 const LOG_FILES = { umami: `${LOGS_DIR}/umami.stderr.log`, postgres: `${LOGS_DIR}/postgres.stderr.log` } as const;
 
-/** Writes the incoming file over a tracked file in place, so the file keeps its owner and mode. */
-const PLACE_SCRIPT = `set -eu
-target="${APP_DIR}/$1"
-if [ -L "$target" ] || [ ! -f "$target" ]; then rm -f ${INCOMING}; echo "not a regular file" >&2; exit 3; fi
-cat ${INCOMING} > "$target"
-rm -f ${INCOMING}
+/**
+ * Writes the staging file $3 over the tracked file $2 under the app directory $1 in place, so the
+ * file keeps its owner and mode, and removes the staging file. Exit 3: not a regular file.
+ */
+export const PLACE_SCRIPT = `set -eu
+target="$1/$2"
+if [ -L "$target" ] || [ ! -f "$target" ]; then rm -f "$3"; echo "not a regular file" >&2; exit 3; fi
+cat "$3" > "$target"
+rm -f "$3"
 sha256sum "$target"
 `;
 
 /** Prints "<size> <start>" and then the log's bytes from <start>, at most <max>. A negative offset asks for the tail. */
-const LOG_SLICE_SCRIPT = `set -eu
+export const LOG_SLICE_SCRIPT = `set -eu
 f=$1; off=$2; max=$3
 if [ -f "$f" ]; then size=$(stat -c %s "$f"); else size=0; fi
 if [ "$off" -lt 0 ] || [ "$off" -gt "$size" ]; then
@@ -135,7 +144,15 @@ export class Session implements SolverTools {
   private target = "";
   private tracked: string[] = [];
   private writable = new Set<string>();
+  /** Tracked paths the agent may write and the submission is scoped over: the build's outputs are left out. */
+  private scoped: string[] = [];
+  private digest = "";
   private rebuilds = 0;
+  /** Bumped on every rbw-start, which truncates both logs; a log cursor names the generation it read. */
+  private logGeneration = 0;
+  private staged = 0;
+  /** Tool calls, end() and close() run one at a time, in call order. */
+  private queue: Promise<unknown> = Promise.resolve();
   private started = false;
   private submitted: SubmitResult | null = null;
   private closed = false;
@@ -159,9 +176,20 @@ export class Session implements SolverTools {
       const initial = await session.startContainer(prepared.digest, prepared.planted);
       return { session, opened: { digest: prepared.digest, audit: prepared.audit, planted_sha256: sha256Hex(prepared.planted), initial } };
     } catch (error) {
-      await session.close();
+      try {
+        await session.close();
+      } catch {
+        // The original failure is the one to report; close() records its own in events.jsonl.
+      }
       throw error;
     }
+  }
+
+  /** Runs one call after every call made before it has settled. */
+  private serial<T>(call: () => Promise<T>): Promise<T> {
+    const next = this.queue.then(call, call);
+    this.queue = next.catch(() => undefined);
+    return next;
   }
 
   private event(op: string, detail: Record<string, unknown> = {}): void {
@@ -172,6 +200,10 @@ export class Session implements SolverTools {
     try {
       const inputs = loadCopyInputs(this.options);
       const digest = await inspectImage(this.deps.docker, this.options.image);
+      if (this.options.expectedDigest !== null && digest !== this.options.expectedDigest) {
+        throw new SessionRefusal("image_mismatch", `${this.options.image} is ${digest}, not the expected ${this.options.expectedDigest}`);
+      }
+      this.digest = digest;
       const exported = await exportImage(this.deps.docker, { image: digest, container: `${this.container}-export`, dest: join(this.work, "source") });
       this.target = inputs.probes.data.target_path;
       const states = deriveCodeStates(readFileSync(join(exported.source_dir, this.target)), inputs.probes, inputs.alternative);
@@ -189,7 +221,12 @@ export class Session implements SolverTools {
       if (audit.verdict !== "pass") throw new SessionRefusal("audit_not_passed", `the planted projection's audit is ${audit.verdict} (${audit.reason ?? "no reason"})`);
       this.projection = join(this.work, "audit", "projection");
       this.tracked = inputs.manifest.files.map((file) => file.path);
-      this.writable = new Set(this.tracked);
+      // The build rewrites its tracked outputs (kit/umami/build-outputs.txt) from other sources,
+      // and the reset puts them back before every build, so they are neither the agent's to write
+      // nor part of its diff. The overlay check still covers them, before any build.
+      const outputs = new Set(kitBuildOutputs().entries.map((entry) => entry.path));
+      this.scoped = this.tracked.filter((path) => path === this.target || !outputs.has(path));
+      this.writable = new Set(this.scoped);
       return { digest, audit, planted: planted.bytes };
     } catch (error) {
       if (error instanceof PlanError || error instanceof ExportError || error instanceof CodeStateRefusal || error instanceof InputsError) {
@@ -211,8 +248,8 @@ export class Session implements SolverTools {
 
   private async startContainer(digest: string, planted: Buffer): Promise<RebuildResult> {
     const created = await this.deps.docker.run(["run", "--detach", "--name", this.container, ...COPY_RESOURCES, digest, "tail", "-f", "/dev/null"], { timeoutMs: SCRIPT_TIMEOUT_MS });
-    this.started = true;
     if (created.code !== 0) throw new SessionError("container_start_failed", created.stderr.trim());
+    this.started = true;
     this.event("container_started", { container: this.container, digest });
     const outputs = await this.execOk("build_outputs_read", ["cat", "/opt/rbw/etc/build-outputs.txt"], SCRIPT_TIMEOUT_MS);
     if (text(outputs.stdout) !== kitBuildOutputs().text) throw new SessionError("build_outputs_mismatch", "the image's build-outputs.txt is not kit/umami/build-outputs.txt");
@@ -224,7 +261,7 @@ export class Session implements SolverTools {
     if (changed.length > 0) throw new SessionError("overlay_mismatch", `the container's tracked files differ from the audited projection: ${changed.map((item) => item.path).join(", ")}`);
     await this.execOk("snapshot", scriptArgs(SNAPSHOT_SCRIPT, "rbw-snapshot"), SCRIPT_TIMEOUT_MS);
     this.event("overlaid", { target: this.target, planted_sha256: sha256Hex(planted), tracked: this.tracked.length });
-    const initial = await this.buildAndStart("initial");
+    const initial = await this.buildAndStart("initial", false);
     if (!initial.ok) throw new SessionError("initial_start_failed", initial.start?.output ?? initial.build.output);
     return initial;
   }
@@ -233,11 +270,13 @@ export class Session implements SolverTools {
   private async place(path: string, bytes: Buffer): Promise<WriteResult> {
     const incoming = join(this.work, "incoming");
     mkdirSync(incoming, { recursive: true });
-    const host = join(incoming, `${String(this.deps.clock.now())}-${sha256Hex(bytes).slice(0, 16)}`);
+    this.staged += 1;
+    const host = join(incoming, `${String(this.staged).padStart(4, "0")}-${sha256Hex(bytes).slice(0, 16)}`);
+    const staging = `${INCOMING}-${String(this.staged)}`;
     writeFileSync(host, bytes, { mode: 0o644 });
-    const copied = await this.deps.docker.run(["cp", host, `${this.container}:${INCOMING}`], { timeoutMs: SCRIPT_TIMEOUT_MS });
+    const copied = await this.deps.docker.run(["cp", host, `${this.container}:${staging}`], { timeoutMs: SCRIPT_TIMEOUT_MS });
     if (copied.code !== 0) throw new SessionError("copy_in_failed", copied.stderr.trim());
-    const result = await this.exec(["/bin/sh", "-c", PLACE_SCRIPT, "rbw-place", path], SCRIPT_TIMEOUT_MS);
+    const result = await this.exec(["/bin/sh", "-c", PLACE_SCRIPT, "rbw-place", APP_DIR, path, staging], SCRIPT_TIMEOUT_MS);
     if (result.code === 3) return { ok: false, reason: "not_a_regular_file" };
     const expected = sha256Hex(bytes);
     if (result.code !== 0 || !text(result.stdout).startsWith(`${expected} `)) throw new SessionError("place_failed", `exit ${String(result.code)}: ${result.stderr.trim()}`);
@@ -249,7 +288,11 @@ export class Session implements SolverTools {
     if (this.submitted !== null) throw new SessionError("session_ended", "the attempt was submitted");
   }
 
-  async run(cmd: string): Promise<RunResult> {
+  run(cmd: string): Promise<RunResult> {
+    return this.serial(() => this.runNow(cmd));
+  }
+
+  private async runNow(cmd: string): Promise<RunResult> {
     this.live();
     const timeout = this.limits.commandTimeoutMs;
     const result = await this.exec(
@@ -261,7 +304,11 @@ export class Session implements SolverTools {
     return outcome;
   }
 
-  async readFile(path: string): Promise<ReadResult> {
+  readFile(path: string): Promise<ReadResult> {
+    return this.serial(() => this.readFileNow(path));
+  }
+
+  private async readFileNow(path: string): Promise<ReadResult> {
     this.live();
     if (path === "" || path.includes("\0") || path.length > 4096) return { ok: false, reason: "bad_path" };
     const absolute = path.startsWith("/") ? path : `${APP_DIR}/${path}`;
@@ -284,7 +331,11 @@ export class Session implements SolverTools {
     return this.writable.has(relative) ? relative : null;
   }
 
-  async writeFile(path: string, content: string): Promise<WriteResult> {
+  writeFile(path: string, content: string): Promise<WriteResult> {
+    return this.serial(() => this.writeFileNow(path, content));
+  }
+
+  private async writeFileNow(path: string, content: string): Promise<WriteResult> {
     this.live();
     const tracked = this.trackedPath(path);
     if (tracked === null) {
@@ -292,19 +343,36 @@ export class Session implements SolverTools {
       return { ok: false, reason: "not_tracked" };
     }
     const bytes = Buffer.from(content, "utf8");
-    if (bytes.length > this.limits.writeBytes) return { ok: false, reason: "too_large" };
+    if (bytes.length > this.limits.writeBytes) {
+      this.event("write_file", { path: tracked, refused: "too_large", bytes: bytes.length });
+      return { ok: false, reason: "too_large" };
+    }
     const result = await this.place(tracked, bytes);
     this.event("write_file", { path: tracked, ...result });
     return result;
   }
 
-  private async buildAndStart(label: string): Promise<RebuildResult> {
+  /**
+   * rbw-check-cold, rbw-build-app, then rbw-start when the build passed. A warm tree before the
+   * first build is an infrastructure error; before a rebuild it can come from what the agent left
+   * (for example a pnpm store under /tmp), so it is the agent's failed rebuild, not an error.
+   */
+  private async buildAndStart(label: string, byAgent: boolean): Promise<RebuildResult> {
     const cold = await this.exec(["/opt/rbw/bin/rbw-check-cold"], SCRIPT_TIMEOUT_MS);
-    if (cold.code !== 0) throw new SessionError("not_cold", text(cold.stdout).trim());
+    if (cold.code !== 0) {
+      const found = text(cold.stdout).trim();
+      this.event("build_start", { label, refused: "not_cold", exit_code: cold.code });
+      if (!byAgent) throw new SessionError("not_cold", found);
+      return { ok: false, refused: "not_cold", build: { exit_code: null, output: tailText(`rbw-check-cold: the build would not be cold\n${found}\n`, this.limits.buildOutputBytes) }, start: null };
+    }
     const build = await this.exec(["/opt/rbw/bin/rbw-build-app"], BUILD_TIMEOUT_MS);
     const buildOutput = `${text(build.stdout)}${build.stderr}`;
     let start: CommandResult | null = null;
-    if (build.code === 0) start = await this.exec(["/opt/rbw/bin/rbw-start"], START_TIMEOUT_MS);
+    if (build.code === 0) {
+      // rbw-start's launchers truncate both logs, so cursors from before it no longer apply.
+      this.logGeneration += 1;
+      start = await this.exec(["/opt/rbw/bin/rbw-start"], START_TIMEOUT_MS);
+    }
     const raw = { label, build: { exit_code: build.code, stdout: text(build.stdout), stderr: build.stderr }, start: start === null ? null : { exit_code: start.code, stdout: text(start.stdout), stderr: start.stderr } };
     mkdirSync(join(this.work, "rebuilds"), { recursive: true });
     writeFileSync(join(this.work, "rebuilds", `${label}.json`), `${JSON.stringify(raw, null, 2)}\n`, { mode: 0o600 });
@@ -319,7 +387,11 @@ export class Session implements SolverTools {
     return result;
   }
 
-  async rebuildRestart(): Promise<RebuildResult> {
+  rebuildRestart(): Promise<RebuildResult> {
+    return this.serial(() => this.rebuildRestartNow());
+  }
+
+  private async rebuildRestartNow(): Promise<RebuildResult> {
     this.live();
     if (this.rebuilds >= this.limits.maxRebuilds) {
       this.event("rebuild_restart", { refused: "rebuild_cap" });
@@ -327,11 +399,15 @@ export class Session implements SolverTools {
     }
     this.rebuilds += 1;
     await this.execOk("stop", ["/opt/rbw/bin/rbw-stop"], STOP_TIMEOUT_MS);
+    // rbw-stop ends only the kit's own launchers; anything the agent started outside rbw-launch's
+    // process group (setsid, tmux) would keep serving old code or writing build outputs.
+    await this.execOk("kill_app", scriptArgs(KILL_APP_SCRIPT, "rbw-kill-app"), SCRIPT_TIMEOUT_MS);
     await this.execOk("reset", scriptArgs(RESET_SCRIPT, "rbw-reset"), SCRIPT_TIMEOUT_MS);
-    return this.buildAndStart(`rebuild-${String(this.rebuilds).padStart(2, "0")}`);
+    return this.buildAndStart(`rebuild-${String(this.rebuilds).padStart(2, "0")}`, true);
   }
 
-  private async slice(file: string, offset: number | null): Promise<LogSlice & { next: number }> {
+  /** A slice from `offset` (null: the tail); `stale` marks a cursor from before the last start, read from 0. */
+  private async slice(file: string, offset: number | null, stale: boolean): Promise<LogSlice & { next: number }> {
     const max = this.limits.logBytes;
     const result = await this.execOk("log_read", ["/bin/sh", "-c", LOG_SLICE_SCRIPT, "rbw-log", file, String(offset ?? -1), String(max)], 30_000);
     const newline = result.stdout.indexOf(0x0a);
@@ -339,47 +415,60 @@ export class Session implements SolverTools {
     const size = Number(sizeText);
     const start = Number(startText);
     const body = result.stdout.subarray(newline + 1);
-    return { text: text(body), size, more: start + body.length < size, restarted: offset !== null && offset > size, next: start + body.length };
+    return { text: text(body), size, more: start + body.length < size, restarted: stale || (offset !== null && offset > size), next: start + body.length };
   }
 
-  async serverLogs(cursor: LogCursor | null = null): Promise<ServerLogsResult> {
+  serverLogs(cursor: LogCursor | null = null): Promise<ServerLogsResult> {
+    return this.serial(() => this.serverLogsNow(cursor));
+  }
+
+  private async serverLogsNow(cursor: LogCursor | null): Promise<ServerLogsResult> {
     this.live();
     if (!this.options.serverLogs) {
       this.event("server_logs", { refused: "not_in_this_arm" });
       return { ok: false, reason: "server_logs_unavailable" };
     }
-    const umami = await this.slice(LOG_FILES.umami, cursor?.umami ?? null);
-    const postgres = await this.slice(LOG_FILES.postgres, cursor?.postgres ?? null);
+    const stale = cursor !== null && cursor.generation !== this.logGeneration;
+    const umami = await this.slice(LOG_FILES.umami, stale ? 0 : (cursor?.umami ?? null), stale);
+    const postgres = await this.slice(LOG_FILES.postgres, stale ? 0 : (cursor?.postgres ?? null), stale);
     this.event("server_logs", { umami_bytes: Buffer.byteLength(umami.text), postgres_bytes: Buffer.byteLength(postgres.text) });
     const { next: umamiNext, ...umamiSlice } = umami;
     const { next: postgresNext, ...postgresSlice } = postgres;
-    return { ok: true, umami: umamiSlice, postgres: postgresSlice, cursor: { umami: umamiNext, postgres: postgresNext } };
+    return { ok: true, umami: umamiSlice, postgres: postgresSlice, cursor: { generation: this.logGeneration, umami: umamiNext, postgres: postgresNext } };
   }
 
   /** submit(): the attempt's diff against the neutral commit; the files go under <work>/submission. */
-  async submit(): Promise<SubmitResult> {
+  submit(): Promise<SubmitResult> {
     return this.end("submit");
   }
 
   /** Ends the attempt on submit or on a cap the solver enforces; extracts the diff once. */
-  async end(reason: "submit" | "cap"): Promise<SubmitResult> {
+  end(reason: "submit" | "cap"): Promise<SubmitResult> {
+    return this.serial(() => this.endNow(reason));
+  }
+
+  private async endNow(reason: "submit" | "cap"): Promise<SubmitResult> {
     if (this.submitted !== null) return this.submitted;
     if (this.closed) throw new SessionError("session_closed", "the session's container is removed");
-    const current = await readContainerTracked(this.deps.docker, this.container, this.tracked);
-    const result = submission(this.projection, compareTracked(this.projection, this.tracked, current, this.target), this.target);
+    const current = await readContainerTracked(this.deps.docker, this.container, this.scoped);
+    const result = submission(this.projection, compareTracked(this.projection, this.scoped, current, this.target), this.target);
     const dir = join(this.work, "submission");
     mkdirSync(dir, { recursive: true });
     const entry = current.get(this.target);
     if (result.target_sha256 !== null && entry !== undefined) writeFileSync(join(dir, "target.bin"), entry.bytes);
     writeFileSync(join(dir, "target.patch"), result.target_patch);
-    writeFileSync(join(dir, "submission.json"), `${JSON.stringify({ ended_by: reason, target_path: this.target, ...result }, null, 2)}\n`);
+    writeFileSync(join(dir, "submission.json"), `${JSON.stringify({ ended_by: reason, target_path: this.target, image_digest: this.digest, ...result }, null, 2)}\n`);
     this.event("submit", { ended_by: reason, scope: result.scope, changed: result.changed.length, target_sha256: result.target_sha256 });
     this.submitted = result;
     return result;
   }
 
   /** Copies the runtime logs out (harness capture, both arms) and removes the container. Idempotent. */
-  async close(): Promise<void> {
+  close(): Promise<void> {
+    return this.serial(() => this.closeNow());
+  }
+
+  private async closeNow(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
     if (!this.started) return;

@@ -4,7 +4,7 @@ One solver attempt's session on local Docker, for the paired comparison (UC1): a
 
 ## What one session does
 
-1. **Derive and audit.** It resolves the image tag to its content digest and exports the pinned source with `tools/local-runner`'s `exportImage`, derives the planted file with its `deriveCodeStates` (the probes' hashes are checked), and audits the planted projection with its `auditCopy`, against the manifest, the term list and the policy. Anything but `pass` refuses the session (`SessionRefusal`) before any container exists.
+1. **Derive and audit.** It resolves the image tag to its content digest and exports the pinned source with `tools/local-runner`'s `exportImage`, derives the planted file with its `deriveCodeStates` (the probes' hashes are checked), and audits the planted projection with its `auditCopy`, against the manifest, the term list and the policy. Anything but `pass` refuses the session (`SessionRefusal`) before any container exists. With `expectedDigest` set (a counted attempt passes the digest its case admits), an image that resolves to any other digest is refused too (`image_mismatch`); `null` accepts whatever the tag resolves to, for a smoke run. The digest the session ran is recorded in `submission.json` (`image_digest`).
 2. **Container.** `docker run --detach --name rbw-solver-<id> --network none --cpus 4 --memory 8g --security-opt no-new-privileges <digest> tail -f /dev/null`, the local runner's copy resources (spec §9.4). The image's `tini` is PID 1.
 3. **Build-outputs check.** The image's `/opt/rbw/etc/build-outputs.txt` must be byte-identical to `kit/umami/build-outputs.txt` (`KIT_BUILD_OUTPUTS`), which the reset is built from.
 4. **Overlay.** The planted file goes in through a root-only staging file and is written over the image's file in place, so it keeps the image's owner and mode. The container's tracked files (every path in the manifest) are then read out and compared with the audited projection; any difference stops the session (`overlay_mismatch`).
@@ -19,18 +19,18 @@ The kit image has no git (and no bash: commands run under BusyBox `sh`). The neu
 
 ## The tool interface
 
-`src/tools.ts` defines `SolverTools`, which `Session` implements. Every method resolves with JSON-safe data; a refusal is `ok: false` with a reason, and only an infrastructure failure throws (`SessionError`).
+`src/tools.ts` defines `SolverTools`, which `Session` implements. Every method resolves with JSON-safe data; a refusal is `ok: false` with a reason, and only an infrastructure failure throws (`SessionError`). Calls are serialized: the session runs one at a time in call order (and `end()` and `close()` with them), so a loop may issue a model's parallel tool calls at once. Each placement has its own staging file.
 
 | Method | What it does |
 |---|---|
 | `run(cmd)` | `sh -c <cmd>` as `rbw-app` through the kit's `rbw-launch` (clean environment, its own process group, cleaned up when it ends), in `/workspace/app`; 120 s timeout (exit 124), 64 KiB kept per stream |
 | `readFile(path)` | `head -c` as `rbw-app`, so the app user's permissions apply; a relative path is under `/workspace/app`; 256 KiB returned |
-| `writeFile(path, content)` | Only a tracked path (in the manifest), relative or under `/workspace/app`; written as root in place, keeping the owner and mode; 1 MiB at most |
-| `rebuildRestart()` | `rbw-stop`, the reset script, `rbw-check-cold` (must pass, or `SessionError`), `rbw-build-app`, then `rbw-start` when the build passed; at most 8 calls per attempt (`rebuild_cap`) |
-| `serverLogs(cursor?)` | The on arm only (`serverLogs: true`); the off arm gets `server_logs_unavailable` without any read. A 16 KiB slice of `umami.stderr.log` and `postgres.stderr.log`: the tail with no cursor, otherwise forward from the cursor; `restarted` when a log is shorter than its cursor (each start truncates it) |
+| `writeFile(path, content)` | Only a tracked path (in the manifest), relative or under `/workspace/app`, and not one of the build's `tracked` outputs; written as root in place, keeping the owner and mode; 1 MiB at most (`too_large`) |
+| `rebuildRestart()` | `rbw-stop`, then `KILL_APP_SCRIPT` (every `rbw-app` process is killed, so nothing the agent started under `setsid` or `tmux` survives to serve old code or write build outputs), the reset script, `rbw-check-cold`, `rbw-build-app`, then `rbw-start` when the build passed; at most 8 calls per attempt (`rebuild_cap`). A tree still warm after the reset is the agent's failed rebuild (`ok: false`, `refused: "not_cold"`, the findings in `build.output`), not an error |
+| `serverLogs(cursor?)` | The on arm only (`serverLogs: true`); the off arm gets `server_logs_unavailable` without any read. A 16 KiB slice of `umami.stderr.log` and `postgres.stderr.log`: the tail with no cursor, otherwise forward from the cursor. Each start truncates both logs, so a cursor carries the start it belongs to (`generation`); a cursor from before the last start reads the new logs from byte 0, with `restarted: true`. `restarted` is also set when a log is shorter than its cursor |
 | `submit()` | The diff against the neutral commit; the session takes no further tool calls |
 
-`Session.end("cap")` does the same extraction when the solver stops the attempt at a cap. The submission is `in_scope` when nothing but the target file changed (or nothing did) and `out_of_scope` otherwise; the files are `<work>/submission/{submission.json,target.bin,target.patch}`, and `target.bin` holds the bytes the grade step reads.
+`Session.end("cap")` does the same extraction when the solver stops the attempt at a cap. The submission is `in_scope` when nothing but the target file changed (or nothing did) and `out_of_scope` otherwise. The build's own `tracked` outputs (`kit/umami/build-outputs.txt`) are left out of that comparison: the build regenerates them from other sources, so a fix upstream of a generator could change them, and the reset restores them before every build. The overlay check still covers them, before the first build; the files are `<work>/submission/{submission.json,target.bin,target.patch}`, and `target.bin` holds the bytes the grade step reads.
 
 ## The cold-build reset
 
@@ -43,9 +43,9 @@ The kit image has no git (and no bash: commands run under BusyBox `sh`). The neu
 | `tracked` | the snapshot's copy put back |
 | `sticky` | every entry the snapshot did not list removed (for example tsup's `tsup.config.bundled_*.mjs`) |
 
-Each gets its recorded owner, group and mode back. The script then empties `/var/tmp/rbw-app` and `/var/tmp/rbw-db` and removes `.turbo` and `node_modules/.cache`, the other things `rbw-check-cold` looks for. The database in `/var/lib/rbw/pgdata` is kept across rebuilds. `parseBuildOutputs` reads the list and refuses an unknown kind or an unsafe path.
+Each gets its recorded owner, group and mode back (the tests check the `chown` with a logging stand-in, since they cannot run as root). The script then empties `/var/tmp/rbw-app` and `/var/tmp/rbw-db` and removes `.turbo` and `node_modules/.cache`, the other things `rbw-check-cold` looks for. The database in `/var/lib/rbw/pgdata` is kept across rebuilds. `parseBuildOutputs` reads the list and refuses an unknown kind or an unsafe path.
 
-The tests run the snapshot and reset scripts and the kit's own `rbw-check-cold` (each absolute path moved under a temporary root) with `/bin/sh`, against a tree laid out from `build-outputs.txt`; after a simulated build, the reset makes `rbw-check-cold` pass again, twice.
+The session's other in-container scripts (the placement, the log slice, the tracked-file archive and `KILL_APP_SCRIPT`) take their paths as arguments, and `test/unit/scripts.test.ts` runs each for real with `/bin/sh` against a temporary tree. The tests run the snapshot and reset scripts and the kit's own `rbw-check-cold` (each absolute path moved under a temporary root) with `/bin/sh`, against a tree laid out from `build-outputs.txt`; after a simulated build, the reset makes `rbw-check-cold` pass again, twice.
 
 ## The log scrub
 
@@ -66,8 +66,10 @@ The tests run the snapshot and reset scripts and the kit's own `rbw-check-cold` 
 A smoke run of one session with no model: it opens the session, runs one command, reads a file, runs `--rebuilds` rebuilds, reads the server logs (on arm) and submits with no change.
 
 ```sh
-node tools/solver-session/src/cli.ts smoke --id smoke-01 --image rbw-umami-kit:local --manifest <manifest> --terms <terms> --work <work> [--arm on|off] [--rebuilds <n>]
+node tools/solver-session/src/cli.ts smoke --id smoke-01 --image rbw-umami-kit:local --manifest <manifest> --terms <terms> --work <work> [--digest <sha256:...>] [--arm on|off] [--rebuilds <n>]
 ```
+
+`--digest` refuses the run unless the image resolves to that digest.
 
 `<manifest>` and `<terms>` are as in `tools/local-runner`'s README (a synthetic term list works for a development run). It prints one JSON line per step. Exit codes: 0 every step ran and every build started; 1 a step failed; 2 a usage error or a refusal before any container.
 
