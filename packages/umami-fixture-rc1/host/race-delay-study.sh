@@ -18,7 +18,9 @@
 # with the delay, round index, check id, observed outcome, failure code, the two verify attempts
 # (status, error code, token issued, sent/settled ms), the overlap, and the check's duration (round
 # time), and it prints a one-line summary per check per delay. The planted line is the one the data
-# file's target names. evidence/rc-1-race-study.json summarizes a run of this script.
+# file's target names. A round that does not leave an observation for every check the data file
+# names (a Playwright timeout or abort) stops the study with an error, so a sweep never reports
+# fewer rounds than it was asked for. evidence/rc-1-race-study.json summarizes a run of this script.
 set -eu
 variant=$1
 rounds=$2
@@ -42,6 +44,7 @@ echo "arch: $(uname -m)"
 echo "route.ts sha256: $(sha256sum "$ROUTE" | cut -d' ' -f1)"
 mkdir -p "$FIX"
 for part in package.json playwright.config.ts src checks data; do cp -a "/rc1/$part" "$FIX/$part"; done
+CHECKS=$($NODE -e "console.log(require('$FIX/data/rc-1-backup-code-001.v1.json').checks.map(c=>c.check_id).join(' '))")
 
 if [ "$variant" = planted ]; then
   sed -i 's/where: { id: unusedCodes\[matchIndex\]\.id, used: false },/where: { id: unusedCodes[matchIndex].id },/' "$ROUTE"
@@ -88,8 +91,11 @@ await c.end();
       RBW_FIXTURE_ADMIN_USERNAME=admin RBW_FIXTURE_ADMIN_PASSWORD=umami \
       $NODE /opt/rbw/verifier/node_modules/@playwright/test/cli.js test --config "$FIX/playwright.config.ts" --workers=1 --retries=0 > "$OUT/d${delay}-round-$i.log" 2>&1 || true
     /opt/rbw/bin/rbw-proxy check > /dev/null || { echo "proxy check failed after delay=$delay round=$i"; exit 1; }
-    for obs in "$dir"/observations/*.json; do
-      [ -f "$obs" ] || { echo "delay $delay round $i: no observations (see $OUT/d${delay}-round-$i.log)"; continue; }
+    for check in $CHECKS; do
+      [ -f "$dir/observations/$check.json" ] || { echo "delay $delay round $i: no observation for $check (see $OUT/d${delay}-round-$i.log)" >&2; exit 1; }
+    done
+    for check in $CHECKS; do
+      obs="$dir/observations/$check.json"
       $NODE -e "
 const fs=require('fs');
 const o=JSON.parse(fs.readFileSync('$obs','utf8'));
