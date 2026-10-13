@@ -155,6 +155,15 @@ describe("--judge-fixed", () => {
     expect(reference.summary.import.trials.find((trial) => trial.trial_id === "fixed-01")).toMatchObject({ status: "complete", added_verdict: "match", original_failed: 0 });
     expect(placed(alternative, "fixed-01")).toBe(sha256(ALTERNATIVE));
   });
+
+  it("refuses, rather than replays, a stored grade when the same job is asked to grade the other code state", async () => {
+    const w = await testWorld();
+    const trials = { "job-kind": "judge_verify", ledger: "development", trials: "fixed-01", name: "grade-1" };
+    const synthetic = { probesDir: jobInputs(w).probesDir, alternativeDir: jobInputs(w).alternativeDir };
+    const reference = await runJob({ ...runJobInputs(values(w, { ...trials, "judge-fixed": "fixed" })), ...synthetic }, w.deps);
+    expect(reference.status).toBe("complete");
+    await expect(runJob({ ...runJobInputs(values(w, trials)), ...synthetic }, w.deps)).rejects.toThrow(/holds another job/);
+  });
 });
 
 describe("the command line", () => {
