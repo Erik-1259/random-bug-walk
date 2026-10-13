@@ -8,16 +8,18 @@
 // argument) whose filter sits on a line the commit added is confirmed when, structurally:
 // - the parent has a function at the same nesting path (`function_missing_before` otherwise);
 // - that function calls a write method on the same receiver the same number of times on both
-//   sides, and one of the parent's writes that no other write of the commit keeps unchanged is
-//   there to pair with (`call_added`); the method may change, as `update` to `updateMany`;
-// - the paired write's filter keys are a strict subset of the commit's filter keys, so the commit
-//   added a condition to the write (`guard_not_added`);
+//   sides (`call_added`); the method may change, as `update` to `updateMany`;
+// - a parent write that no other write of the commit keeps unchanged, preferably the one at the
+//   same position, has filter keys that are a strict subset of the commit's filter keys, so the
+//   commit added a condition to the write (`guard_not_added`);
 // - an added condition compares a state: its value is a literal (`used: false`), an operator
-//   object (`{ gt: 0 }`, `{ $ne: "done" }`) or the same field of a record read earlier
-//   (`version: row.version`), not a value such as `userId: session.user.id`, which scopes the
-//   write to an owner rather than re-checking a state (`guard_not_state`);
-// - the write's own function awaits a read before the write (`no_read_before_write`): the read,
-//   the await and the write are the check-then-act window the guard closes.
+//   object (`{ gt: 0 }`, `{ $ne: "done" }`) or the same field of a record the function bound from
+//   an awaited read (`version: row.version`), not a value such as `userId: session.user.id` or
+//   `teamId: ctx.teamId`, which scopes the write to an owner rather than re-checking a state
+//   (`guard_not_state`);
+// - the write's own function awaits a read before the write, through the write's receiver or bound
+//   to the record the write goes through or the guard compares with (`no_read_before_write`): the
+//   read, the await and the write are the check-then-act window the guard closes.
 import { fileURLToPath } from "node:url";
 import { Lang, parse, type SgNode } from "@ast-grep/napi";
 import { argumentsOf, calleeOf, enclosingFunctions, fieldOf, functionPath, hasFunctionPath, isLiteral, kindOf, squash } from "./confirm.ts";
@@ -35,9 +37,19 @@ export const WRITE_METHOD =
 
 /**
  * A read: a callee whose name is, or starts with as a camel-case word, find, get, select, count,
- * query, fetch, load, read or exists (`findFirst`, `getUser`, `query`), but not `getter` or `finder`.
+ * query, fetch, load, read or exists (`findFirst`, `getUser`, `query`), but not `getter` or `finder`,
+ * and not a write that also returns the record (`findOneAndUpdate`, `findAndModify`).
  */
-export const READ_METHOD = /^(find|get|select|count|query|fetch|load|read|exists)([A-Z_$0-9].*)?$/;
+export const READ_METHOD = /^(?!findOneAnd|findAndModify)(find|get|select|count|query|fetch|load|read|exists)([A-Z_$0-9].*)?$/;
+
+/** Writes whose lone object argument is the filter. For other writes it is the data written (`coupon.update({ used: true })`). */
+const FILTER_FIRST_METHOD = /^(delete|deleteMany|deleteOne|findOneAndDelete)$/;
+
+/**
+ * Keys that scope a write to an owner or tenant. Compared with a field of a value
+ * (`userId: session.userId`), they restrict who may write rather than re-check a state.
+ */
+const SCOPE_KEYS = /^(user|owner|account|team|org|organization|tenant|workspace|website|project|member|author|creator)_?id$/i;
 
 /** Added text that names a write method or a filter, as the cheap filter before any blob is fetched. */
 export const WRITE_TEXT =
@@ -79,7 +91,11 @@ function propertyKey(property: SgNode): string | undefined {
   return undefined;
 }
 
-/** The write's filter: the object value of a `where` key in an object argument, or else the first argument when it is an object. */
+/**
+ * The write's filter: the object value of a `where` key in an object argument, or else the first
+ * argument when it is an object and either a second argument follows (`updateOne(filter, update)`)
+ * or the method is a delete.
+ */
 export function filterOf(call: SgNode): SgNode | undefined {
   const args = argumentsOf(call);
   for (const argument of args.filter((node) => kindOf(node) === "object")) {
@@ -91,7 +107,7 @@ export function filterOf(call: SgNode): SgNode | undefined {
     }
   }
   const [first] = args;
-  return kindOf(first) === "object" ? first : undefined;
+  return kindOf(first) === "object" && (args.length > 1 || FILTER_FIRST_METHOD.test(methodOf(call))) ? first : undefined;
 }
 
 function filterKeys(filter: SgNode | undefined): Map<string, SgNode> {
@@ -131,8 +147,12 @@ function addsFilter(call: SgNode, added: ReadonlySet<number>): boolean {
   return false;
 }
 
-/** Whether a condition compares a state: a literal, an operator object, or the same field of a record (`version: row.version`). */
-function comparesState(key: string, property: SgNode): boolean {
+/**
+ * Whether a condition compares a state: a literal, an operator object, or the same field of a
+ * record the function read earlier (`version: row.version`), unless the key scopes the write to an
+ * owner or tenant (`userId: row.userId`).
+ */
+function comparesState(key: string, property: SgNode, records: ReadonlySet<string>): boolean {
   const value = kindOf(property) === "pair" ? fieldOf(property, "value") : null;
   if (value === null) {
     return false;
@@ -142,10 +162,21 @@ function comparesState(key: string, property: SgNode): boolean {
   }
   const kind = kindOf(value);
   if (kind === "object") {
-    const keys = value.namedChildren().map(propertyKey);
-    return keys.length > 0 && keys.every((name) => name !== undefined && OPERATOR_KEYS.has(name));
+    // Every key an operator, and no operand a nested filter (`owner: { is: { id } }` scopes by a relation).
+    const properties = value.namedChildren();
+    return (
+      properties.length > 0 &&
+      properties.every((child) => {
+        const name = propertyKey(child);
+        return name !== undefined && OPERATOR_KEYS.has(name) && kindOf(fieldOf(child, "value")) !== "object";
+      })
+    );
   }
-  return kind === "member_expression" && unquote(fieldOf(value, "property")?.text() ?? "") === key;
+  if (kind !== "member_expression" || SCOPE_KEYS.test(key)) {
+    return false;
+  }
+  const object = fieldOf(value, "object");
+  return kindOf(object) === "identifier" && records.has(object?.text() ?? "") && unquote(fieldOf(value, "property")?.text() ?? "") === key;
 }
 
 function calleeName(call: SgNode): string {
@@ -153,15 +184,49 @@ function calleeName(call: SgNode): string {
   return kindOf(callee) === "member_expression" ? (fieldOf(callee, "property")?.text() ?? "") : (callee?.text() ?? "");
 }
 
-/** Whether the write's own function (or the module, at top level) awaits a read that ends before the write starts. */
-function awaitsReadBefore(root: SgNode, call: SgNode): boolean {
+interface AwaitedRead {
+  /** The receiver of the read call (`db.coupon` in `db.coupon.findFirst(...)`), or "" for a plain call. */
+  readonly receiver: string;
+  /** The name the awaited result is bound to (`coupon` in `const coupon = await ...`), if any. */
+  readonly bound: string | undefined;
+}
+
+/** The reads the write's own function (or the module, at top level) awaits, ending before the write starts. */
+function awaitedReadsBefore(root: SgNode, call: SgNode): AwaitedRead[] {
   const [owner] = enclosingFunctions(call);
   const scope = owner ?? root;
   const start = call.range().start.index;
   return scope
     .findAll({ rule: { kind: "await_expression" } })
     .filter((node) => node.range().end.index <= start && enclosingFunctions(node)[0]?.id() === owner?.id())
-    .some((node) => node.findAll({ rule: { kind: "call_expression" } }).some((inner) => READ_METHOD.test(calleeName(inner))));
+    .flatMap((node) => {
+      const parent = node.parent();
+      const name = kindOf(parent) === "variable_declarator" ? fieldOf(parent, "name") : null;
+      const bound = kindOf(name) === "identifier" ? name?.text() : undefined;
+      return node
+        .findAll({ rule: { kind: "call_expression" } })
+        .filter((inner) => READ_METHOD.test(calleeName(inner)))
+        .map((inner) => ({ receiver: kindOf(fieldOf(inner, "function")) === "member_expression" ? receiverOf(inner) : "", bound }));
+    });
+}
+
+/** The leading name of a receiver (`coupon` in `coupon.items`). */
+function rootName(receiver: string): string {
+  return /^[A-Za-z_$][\w$]*/.exec(receiver)?.[0] ?? "";
+}
+
+/**
+ * Whether an awaited read is the check the write acts on: it reads through the write's receiver
+ * (`db.coupon.findFirst` before `db.coupon.update`), or its result is the record the write goes
+ * through (`coupon.destroy(...)`) or the guard compares with (`version: row.version`). A session
+ * lookup or another unrelated read does not count.
+ */
+function readsChecked(reads: readonly AwaitedRead[], receiver: string, guard: SgNode): boolean {
+  const guardValue = fieldOf(guard, "value");
+  const compared = kindOf(guardValue) === "member_expression" ? (fieldOf(guardValue, "object")?.text() ?? "") : "";
+  return reads.some(
+    (read) => (receiver !== "" && read.receiver === receiver) || (read.bound !== undefined && (read.bound === rootName(receiver) || read.bound === compared)),
+  );
 }
 
 function judge(beforeRoot: SgNode, afterRoot: SgNode, call: SgNode): RaceMatchOutcome {
@@ -179,7 +244,8 @@ function judge(beforeRoot: SgNode, afterRoot: SgNode, call: SgNode): RaceMatchOu
       detail: `${path} writes through ${receiver} ${String(beforeCalls.length)} times before and ${String(afterCalls.length)} after`,
     };
   }
-  // A parent write that another write of the commit keeps unchanged is not a partner.
+  // A parent write that another write of the commit keeps unchanged is not a partner. The commit
+  // has one write fewer than the parent besides this one, so at least one parent write stays free.
   const unchanged = afterCalls.filter((candidate) => candidate.id() !== call.id()).map((candidate) => squash(candidate.text()));
   const free = beforeCalls.filter((candidate) => {
     const kept = unchanged.indexOf(squash(candidate.text()));
@@ -189,9 +255,6 @@ function judge(beforeRoot: SgNode, afterRoot: SgNode, call: SgNode): RaceMatchOu
     unchanged.splice(kept, 1);
     return false;
   });
-  if (free.length === 0) {
-    return { status: "rejected", reason: "call_added", detail: `no write through ${receiver} in the parent's ${path} was changed by the commit` };
-  }
   const afterKeys = filterKeys(filterOf(call));
   const extends_ = (candidate: SgNode): boolean => {
     const keys = filterKeys(filterOf(candidate));
@@ -205,11 +268,13 @@ function judge(beforeRoot: SgNode, afterRoot: SgNode, call: SgNode): RaceMatchOu
   }
   const before = filterKeys(filterOf(paired));
   const guards = [...afterKeys].filter(([key]) => !before.has(key));
-  const guard = guards.find(([key, property]) => comparesState(key, property));
+  const reads = awaitedReadsBefore(afterRoot, call);
+  const records = new Set(reads.flatMap((read) => (read.bound === undefined ? [] : [read.bound])));
+  const guard = guards.find(([key, property]) => comparesState(key, property, records));
   if (guard === undefined) {
     return { status: "rejected", reason: "guard_not_state", detail: `the added condition ${guards.map(([, property]) => squash(property.text())).join(", ")} compares no state` };
   }
-  if (!awaitsReadBefore(afterRoot, call)) {
+  if (!readsChecked(reads, receiver, guard[1])) {
     return { status: "rejected", reason: "no_read_before_write", detail: `${path} awaits no read before the write` };
   }
   return { status: "confirmed", before_call: paired.text(), before_line: paired.range().start.line + 1, guard: squash(guard[1].text()) };
