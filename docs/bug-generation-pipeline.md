@@ -17,7 +17,7 @@ This project turns a known kind of bug into a validated task in a pinned host ap
 
 ## What a new bug class costs
 
-Steps 3, 4 and 6–8 carry over to any new class in the same host. Each new class still needs, once: harvest queries (step 1), a shape rule (step 2), and checks with whatever driver the class needs (step 5). After that, another site of the same class in the same host can reuse the class's driver, kit changes and seeding, so it should cost much less than the first.
+Steps 3, 4 and 8 carry over to any new class in the same host, and the admission machinery in step 7 is shared. Each new class still needs, once: harvest queries (step 1), a shape rule (step 2), checks with whatever driver the class needs (step 5), and integration of the class's symptom into the candidate attempt (steps 6–7). Today the attempt's symptom builder (`tools/controller/src/symptom.ts`) and its fixture staging are specific to the time-zone family: it accepts only a day-count mismatch and builds time-zone and pageview fields, so a new class also needs its own symptom shape for the writer and family selection in the controller. After that, another site of the same class in the same host can reuse the class's driver, kit changes and seeding, so it should cost much less than the first.
 
 ## The static-headroom screen
 
