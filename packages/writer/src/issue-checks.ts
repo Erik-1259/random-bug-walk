@@ -57,28 +57,60 @@ function countRuns(text: string): bigint[] {
   return digitRuns(text.replace(DATE_OR_TIME, " ")).map(BigInt);
 }
 
-// A race count is a standalone number stated with its outcome: "2 were accepted", "1 refused",
-// "2 of them were accepted", or an outcome label before the number: "accepted: 2",
-// "accepted requests: 2", "accepted (2)", "accepted - 2", "the number accepted was 2". A label may
-// hold up to three words between the outcome and its `:`, `=`, bracket, dash or linking verb, but
-// never a digit or other punctuation. A digit run inside a path or word (`/api/2fa`), or one
-// followed by a unit or another number (`0 ms`, `1.5`), is never a count. After a label's
-// separator, the digit run's start is already bounded, so `accepted:2` is a count.
-const COUNT = String.raw`(\d+)(?![\p{L}\p{N}_]|[.,:]\d)(?!\s*(?:ms|milliseconds?|seconds?|s|%)(?![\p{L}]))`;
-const STANDALONE = String.raw`(?<![\p{L}\p{N}_./:-])${COUNT}`;
-const OUTCOME = String.raw`(accept\p{L}*|refus\p{L}*|reject\p{L}*)`;
-const LABEL_SEPARATOR = String.raw`(?:\s*[:=(\-\u2013\u2014]|\s+(?:was|were|is|are))\s*`;
-const RACE_COUNT = new RegExp(
-  `${STANDALONE}\\s+(?:\\p{L}+\\s+){0,3}?${OUTCOME}(?![\\p{L}])|(?<![\\p{L}])${OUTCOME}(?:\\s+\\p{L}+){0,3}?${LABEL_SEPARATOR}${COUNT}`,
+// A race count is read clause by clause. The text is split into clauses at sentence ends,
+// semicolons, commas, `and`, `but`, `while` and `whereas`, and at a colon or dash that does not
+// lead into a number (so `accepted: 2` and `accepted - 2` stay one clause); a clause that is
+// ambiguous as a whole is split again at any colon or dash ("both were accepted in 5 ms: 2
+// accepted"). A clause states a count
+// only when it holds exactly one outcome word and exactly one count number, in either order and in
+// any voice: "2 were accepted", "the server accepted 2 requests", "refused: 0", "0 failed". A
+// clause with two outcome words, two count numbers or a negation (`not`, `never`, `n't`) is
+// ambiguous and states nothing. A number is never a count when it is a timing (`0 ms`, `5 s`), a
+// percentage, part of a path, word, decimal or date, or an ID or code (`request 2`, `#2`,
+// `HTTP 200`, `status 400`).
+const CLAUSE_BREAK =
+  /[.!?](?=\s|$)|[;,](?!\d)|[:\u2013\u2014](?!\s*\d)|\s-\s(?!\s*\d)|(?<![\p{L}])(?:and|but|while|whereas)(?![\p{L}])/giu;
+const LABEL_BREAK = /[:=\u2013\u2014]|\s-\s/u;
+const ACCEPTED_WORD = String.raw`accept\p{L}*|succe(?:ss|ed)\p{L}*`;
+const REFUSED_WORD = String.raw`refus\p{L}*|reject\p{L}*|denied|deny|denies|declin\p{L}*|fail\p{L}*`;
+const OUTCOME_WORD = new RegExp(`(?<![\\p{L}])(?:(${ACCEPTED_WORD})|(${REFUSED_WORD}))`, "giu");
+const NEGATION = /(?<![\p{L}])(?:not|never)(?![\p{L}])|n't(?![\p{L}])/iu;
+const ID_WORD = String.raw`(?<![\p{L}])(?:http|status|code|id|request|attempt|tab|port|line|version|step|number)`;
+const COUNT_NUMBER = new RegExp(
+  String.raw`(?<![\p{L}\p{N}_./\\#-])(?<!${ID_WORD}\s*)(\d+)(?![\p{L}\p{N}_/]|[.,:]\d)(?!\s*(?:ms|milliseconds?|s|secs?|seconds?|min|minutes?|h|hours?|%)(?![\p{L}]))`,
   "giu",
 );
 
+interface RaceCount {
+  outcome: "accepted" | "refused";
+  count: bigint;
+}
+
+/** The race count one clause states, or null when it states none or is ambiguous. */
+function clauseCount(clause: string): RaceCount | null {
+  const outcomes = [...clause.matchAll(OUTCOME_WORD)];
+  const numbers = [...clause.matchAll(COUNT_NUMBER)];
+  const [outcome] = outcomes;
+  const [number] = numbers;
+  if (outcomes.length !== 1 || numbers.length !== 1 || outcome === undefined || number === undefined || NEGATION.test(clause)) {
+    return null;
+  }
+  return { outcome: outcome[1] === undefined ? "refused" : "accepted", count: BigInt(number[1] ?? "") };
+}
+
 /** The race counts stated in `text`, in order, each with the outcome it is stated for. */
-function raceCounts(text: string): { outcome: "accepted" | "refused"; count: bigint }[] {
-  return [...text.replace(DATE_OR_TIME, " ").matchAll(RACE_COUNT)].map((match) => {
-    const [count, word] = match[1] === undefined ? [match[4], match[3]] : [match[1], match[2]];
-    return { outcome: (word ?? "").toLowerCase().startsWith("accept") ? "accepted" : "refused", count: BigInt(count ?? "") };
-  });
+function raceCounts(text: string): RaceCount[] {
+  return text
+    .replace(DATE_OR_TIME, " ")
+    .split(CLAUSE_BREAK)
+    .flatMap((clause) => {
+      const stated = clauseCount(clause);
+      if (stated !== null) {
+        return [stated];
+      }
+      const parts = clause.split(LABEL_BREAK);
+      return parts.length > 1 ? parts.flatMap((part) => clauseCount(part) ?? []) : [];
+    });
 }
 
 /** True when the accepted count, then the refused count, are each stated with their outcome. */

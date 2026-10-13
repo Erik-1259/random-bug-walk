@@ -266,7 +266,7 @@ A value with a `symptom_kind` field is parsed as a `RaceSymptom` instead (`src/r
 | `sequential_attempts` | the same code used twice one after the other, as attempts |
 | `doc_excerpts` | `{ text, source_url }` |
 
-The race prompt asks for the expected and observed counts as digits, accepted first, and forbids writing a backup code, a token or a password. The issue checks below apply with two differences: the numeric vectors are `[accepted, refused]` (expected in `expected_result`, observed in `actual_result`), and the hint words are `race`, `atomic`, `lock`, `transaction`, `mutex`, `compare-and-swap` and `check then write` (with their usual forms).
+The race prompt asks for the expected and observed counts as digits, accepted first, and forbids writing a backup code, a token or a password. The issue checks below apply with two differences: the numeric vectors are `[accepted, refused]` (expected in `expected_result`, observed in `actual_result`), and the hint words are `race`, `atomic`, `lock`, `transaction`, `mutex`, `compare-and-swap` and `check then write` (with their usual forms). A race count is read clause by clause (clauses end at sentence ends, semicolons, commas, `and`, `but`, `while`, `whereas`, and a colon or dash that does not lead into a number): a clause states a count only when it holds exactly one outcome word (accepted or succeeded; refused, rejected, denied, declined or failed) and exactly one count number, in either order and voice (`2 were accepted`, `the server accepted 2 requests`, `refused: 0`). A clause with two outcome words, two numbers or a negation states nothing, and timings (`0 ms`), paths, decimals, IDs and codes (`request 2`, `#2`, `HTTP 200`) are never counts.
 
 ## Issue checks and the check report
 

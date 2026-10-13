@@ -191,6 +191,40 @@ describe("the race issue checks", () => {
     expect(check({ actual_result: "Accepted by POST /api/2fa and refused by none." }).numeric?.violations).toEqual(missing);
   });
 
+  // Realistic model phrasings of the observed counts (2 accepted, 0 refused): active, passive,
+  // labels, compact forms and timings. `true` means the accepted count, then the refused count, are
+  // read from the sentence; `false` means no such statement is read.
+  const PHRASINGS: [string, boolean][] = [
+    ["2 were accepted and 0 refused.", true],
+    ["The server accepted 2 requests and refused 0.", true],
+    ["The server accepted 2 requests within 5 ms and rejected 0.", true],
+    ["Accepted: 2, refused: 0.", true],
+    ["accepted:2, refused:0", true],
+    ["accepted=2; refused=0", true],
+    ["Accepted (2), refused (0).", true],
+    ["Accepted - 2, refused - 0.", true],
+    ["Accepted requests were 2 and refused requests were 0.", true],
+    ["The number accepted was 2 and the number refused was 0.", true],
+    ["2 requests succeeded and 0 failed.", true],
+    ["Of the 2 requests, 2 of them were accepted and 0 were refused.", true],
+    ["Both were accepted within 5 ms: 2 accepted, 0 refused.", true],
+    ["Sent at 0 ms and 1 ms, 2 requests were accepted while 0 were denied.", true],
+    ["Request a was accepted with HTTP 200 at 87 ms; in total 2 were accepted but 0 were refused.", true],
+    ["0 were refused and 2 were accepted.", false],
+    ["Request a was sent at 0 ms and accepted; request b at 1 ms was refused.", false],
+    ["Accepted requests at 0 ms; refused requests at 1 ms.", false],
+    ["Accepted by POST /api/2fa and refused by none.", false],
+    ["Request #2 was accepted and request 0 was refused.", false],
+    ["2 accepted 0 refused", false],
+    ["2 were not accepted and 0 were refused.", false],
+    ["Accepted 2 requests and refused none.", false],
+    ["Both returned HTTP 200 and status 0 was never refused.", false],
+  ];
+  it.each(PHRASINGS)("read the observed counts from %j: %s", (actual, states) => {
+    const missing = check({ actual_result: actual }).numeric?.violations.some((item) => item.reason === "missing_observed_vector");
+    expect(missing).toBe(!states);
+  });
+
   it("reject a number the observation does not hold, such as a computed total", () => {
     expect(check({ environment: "Locale en-US; 3 sign-ins in total." }).numeric?.violations).toEqual([{ field: "environment", reason: "unsupported_number", number: "3" }]);
   });
