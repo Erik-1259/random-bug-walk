@@ -11,7 +11,7 @@ import { pickPhrases, prepareAttempt, runAttempt } from "../../src/attempt.ts";
 import type { AttemptOutcome } from "../../src/attempt.ts";
 import { runJob } from "../../src/controller.ts";
 import { PLACEHOLDER_PROJECT_ID } from "../../../local-runner/src/jobs.ts";
-import { SymptomUnavailable, buildSymptom } from "../../src/symptom.ts";
+import { SymptomUnavailable, TIME_ZONE_FAMILY, buildSymptom } from "../../src/symptom.ts";
 import { ATTEMPT_PROJECT_ID, DOC_PASSAGES, DOCS_QUERY, DOCS_URL, EXCLUDED_PASSAGE, MATCH_URL, SEARCH_KEY, SOURCE_URL, WRITER_KEY, attemptDeps, attemptFiles, attemptInputs, privateInput, syntheticIssue } from "../support/attempt.ts";
 import type { AttemptFiles, AttemptOptions, AttemptWorld } from "../support/attempt.ts";
 import { stage } from "../../../release/src/stage.ts";
@@ -145,7 +145,7 @@ describe("the observed symptom", () => {
 
   it("is a valid ObservedSymptom: the fixture's request, events and expected counts, and the observed counts of the recorded responses", () => {
     const fixture = loadFixture();
-    const symptom = buildSymptom(observeDir, prose);
+    const symptom = buildSymptom(observeDir, prose, TIME_ZONE_FAMILY);
     expect(assertRecord("ObservedSymptom", symptom)).toBe(symptom);
     const [, la, auckland, kolkata] = fixture.checks;
     const labels = fixture.bucket_labels.map((label) => label.slice(0, 10));
@@ -169,7 +169,7 @@ describe("the observed symptom", () => {
     const bytes = readFileSync(path);
     rmSync(path);
     try {
-      expect(() => buildSymptom(observeDir, prose)).toThrow(SymptomUnavailable);
+      expect(() => buildSymptom(observeDir, prose, TIME_ZONE_FAMILY)).toThrow(SymptomUnavailable);
     } finally {
       writeFileSync(path, bytes);
     }

@@ -468,6 +468,9 @@ importers:
       '@rbw/umami-fixture':
         specifier: workspace:*
         version: link:../../packages/umami-fixture
+      '@rbw/umami-fixture-rc1':
+        specifier: workspace:*
+        version: link:../../packages/umami-fixture-rc1
       '@rbw/writer':
         specifier: workspace:*
         version: link:../../packages/writer

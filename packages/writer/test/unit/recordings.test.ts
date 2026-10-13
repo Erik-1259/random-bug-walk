@@ -6,7 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { BASE_URL, MODEL_ID } from "../../src/config.ts";
 import { RequestNotSentError } from "../../src/http.ts";
 import { createReplayFetch, loadRecordings, makeRecording, requestKey } from "../../src/recording.ts";
-import { CARD_CASES, ISSUE_CASES, cardSource, symptom } from "../fixtures/cases.ts";
+import { CARD_CASES, ISSUE_CASES, RACE_ISSUE_CASES, cardSource, raceSymptom, symptom } from "../fixtures/cases.ts";
 import { RECORDINGS_DIR, committedRecordings, openDb, rig } from "../support.ts";
 
 let db: PGlite;
@@ -24,7 +24,7 @@ describe("committed recordings", () => {
   it("cover every synthetic case, each labelled synthetic", async () => {
     const files = (await readdir(RECORDINGS_DIR)).filter((f) => f.endsWith(".json")).sort();
     expect(files).toEqual(
-      [...CARD_CASES.map((c) => `card-${c}.json`), ...ISSUE_CASES.map((c) => `issue-${c}.json`)].sort(),
+      [...CARD_CASES.map((c) => `card-${c}.json`), ...ISSUE_CASES.map((c) => `issue-${c}.json`), ...RACE_ISSUE_CASES.map((c) => `issue-${c}.json`)].sort(),
     );
     for (const recording of await committedRecordings()) {
       expect(recording.provenance).toBe("synthetic");
@@ -47,6 +47,13 @@ describe("committed recordings", () => {
     const keys = new Set((await committedRecordings()).map((rec) => rec.request_sha256));
     for (const variant of ISSUE_CASES) {
       const preview = await r.writer.previewIssue(symptom(variant));
+      if (!preview.ok) {
+        throw new Error(preview.code);
+      }
+      expect(keys.has(requestKey(preview.request_body)), variant).toBe(true);
+    }
+    for (const variant of RACE_ISSUE_CASES) {
+      const preview = await r.writer.previewIssue(raceSymptom(variant));
       if (!preview.ok) {
         throw new Error(preview.code);
       }
