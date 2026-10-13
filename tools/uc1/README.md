@@ -30,7 +30,7 @@ Each step is its own command, so grade 2 (the only step that spends on Vercel Sa
    - Holds the development slot for the root (the solver loop needs it for every model call) and runs the attempts in index order, up to `--concurrency` (1 to 3) at once. Each attempt: a fresh session on the case's pinned kit image with the planted projection (`serverLogs` only in the on arm), `runAttempt` with the pre-registered prompt, tools, caps, temperature and seed (the attempt index), the diff on submit or at a cap, `close()`, then grade 1 on local Docker (the controller's in-memory ledger, $0). Every model call passes the spend guard first.
    - Releases the slot when the pass ends. The root stays `running` until `finalize`.
 2. **`grade2`: the protected regrade.** For every seeded round trip and every counted, graded attempt (the final run at its index), one controller `judge_verify` job on Vercel Sandbox, serially, on the development pool and slot under the root, each only when its worst case fits the allowance. A grade that stops for infrastructure reasons is retried as a grade only, up to 2 times. The slot must be free: the controller takes it for each job.
-3. **`finalize`: the records.** The analyzer's rows and its results record, the summary, the report, the publisher's staging directory, and the root's terminal status: `completed` when every planned index has a final status, `incomplete` when the run stopped, `needs_reconciliation` when the ledger shows an open or uncertain operation under the root. It refuses while any counted, graded attempt or seeded round trip has no finished grade 2.
+3. **`finalize`: the records.** The analyzer's rows and its results record, the summary, the report, the publisher's staging directory, and the root's terminal status: `completed` when every planned index has a final status and, in a pilot, both seeded round trips took their expected routes and passed both grades; `incomplete` otherwise (for example when the run stopped); `needs_reconciliation` when the ledger shows an open or uncertain operation under the root. It refuses while any counted, graded attempt or seeded round trip has no finished grade 2.
 
 An existing run directory resumes: `pilot` or `run` with the same `--name` continues at the first index without a final status, with the same root, model, case, policy and issue.
 
@@ -57,7 +57,7 @@ node packages/publisher/src/cli.ts publish --policy <runs>/pilot-01/policy.json 
 
 The counted run is the same with `run` in place of `pilot` and its own `--name` (for example `run --runs-dir <runs> --name race-01 --case <race-case.json> ...`): 40 attempts in ABBA blocks. `--model kimi` selects the Kimi fallback (its pilot is 2 attempts, off and on, under the $75 cap); the model cannot change after the first counted attempt.
 
-Exit codes: 0 the step finished with nothing left to do; 1 the step stopped or left work (a spend stop, a ledger uncertainty, an infrastructure error after its reruns, a seeded round trip on the wrong route, an incomplete root); 2 a usage error, a refusal before anything started, or a missing environment variable. Progress goes to stdout as `uc1 key=value` lines: IDs, outcomes, counts and amounts, never issue text or transcripts. The controller's own output goes to stderr.
+Exit codes: 0 the step finished with nothing left to do; 1 the step stopped or left work (a spend stop, a ledger uncertainty, an infrastructure error after its reruns, a grade still `infrastructure` after its retries, a seeded round trip on the wrong route or with a grade that did not pass, an incomplete root); 2 a usage error, a refusal before anything started, or a missing environment variable. Progress goes to stdout as `uc1 key=value` lines: IDs, outcomes, counts and amounts, never issue text or transcripts. The controller's own output goes to stderr.
 
 ## The case file
 
@@ -149,7 +149,7 @@ The Super pilot and the counted run together can reach about $42.81 at their cap
 | `stops.jsonl` | every stop, with its reason and time |
 | `results/rows.json` | the analyzer's input, one `AttemptRow` per index with a final status |
 | `results/analysis.json` | `resultsRecordJson(analyze(rows))`, canonical JSON |
-| `results/summary.json` | every attempt's numbers, the seeded round trips, grade disagreements, spend, stops |
+| `results/summary.json` | every attempt's numbers, the seeded round trips, grade disagreements, spend (this root's, and the ledger's settled and open amounts across every UC1 root under `<runs>`, which the cap covers), stops |
 | `staging/` | the publisher's layout: `report.md`, `results/` (rows, analysis, summary, each attempt and round trip record), `logs/` (each run's transcript), `inputs/screen-record.json`; no local path appears in a staged file |
 
 ## Rows for the analyzer

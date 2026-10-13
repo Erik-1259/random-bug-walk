@@ -34,6 +34,8 @@ export interface RunSummary {
     model_per_attempt_max_microusd: number | null;
     /** This root's operations in the ledger when the summary was written; null when not read. */
     ledger: { settled_microusd: string; open_microusd: string; uncertain: string[] } | null;
+    /** Every UC1 root under the runs directory (the roots the cap covers), from the ledger; null when not read. */
+    uc1_roots: { roots: number; settled_microusd: string; open_microusd: string } | null;
   };
   stops: StopRecord[];
   analysis: "results/analysis.json" | { error: string } | null;
@@ -72,7 +74,7 @@ function sum(tries: readonly GradeTry[]): number {
   return tries.reduce((total, item) => total + (item.settled_microusd ?? 0), 0);
 }
 
-export function buildSummary(run: RunRecord, records: readonly AttemptRecord[], seeded: readonly SeededRecord[], stops: readonly StopRecord[], ledger: LedgerView | null, analysis: RunSummary["analysis"]): RunSummary {
+export function buildSummary(run: RunRecord, records: readonly AttemptRecord[], seeded: readonly SeededRecord[], stops: readonly StopRecord[], ledger: LedgerView | null, analysis: RunSummary["analysis"], allRoots: { roots: number; view: LedgerView } | null = null): RunSummary {
   const attempts = run.plan.map((item): AttemptSummary => {
     const record = records.find((entry) => entry.index === item.index);
     const final = record?.runs.at(-1);
@@ -130,6 +132,7 @@ export function buildSummary(run: RunRecord, records: readonly AttemptRecord[], 
       model_per_attempt_mean_microusd: perAttempt.length === 0 ? null : Math.round(perAttempt.reduce((a, b) => a + b, 0) / perAttempt.length),
       model_per_attempt_max_microusd: perAttempt.length === 0 ? null : Math.max(...perAttempt),
       ledger: ledger === null ? null : { settled_microusd: ledger.settled_microusd.toString(), open_microusd: ledger.open_microusd.toString(), uncertain: ledger.uncertain },
+      uc1_roots: allRoots === null ? null : { roots: allRoots.roots, settled_microusd: allRoots.view.settled_microusd.toString(), open_microusd: allRoots.view.open_microusd.toString() },
     },
     stops: [...stops],
     analysis,
@@ -169,7 +172,13 @@ export function reportMarkdown(summary: RunSummary, analysis: ResultsRecord | nu
   lines.push("Grade 1 is a local Docker judge_verify run on a fresh copy; grade 2 is the protected fresh-copy regrade on Vercel Sandbox and is authoritative. Both are charged to the development pool and slot.", "");
   lines.push(summary.grade_disagreements.length === 0 ? "No attempt's grades disagree." : `Grades disagree on attempt indexes ${summary.grade_disagreements.join(", ")}.`, "");
   lines.push("## Spend", "");
-  lines.push(`- Model calls settled: ${usd(summary.spend.model_settled_microusd)}; grade 2 jobs settled: ${usd(summary.spend.grade2_settled_microusd)}; total ${usd(summary.spend.total_settled_microusd)} against the UC1 cap of ${usd(Number(summary.spend.cap_microusd))} (which covers every UC1 root).`);
+  lines.push(`- This run's model calls settled: ${usd(summary.spend.model_settled_microusd)}; grade 2 jobs settled: ${usd(summary.spend.grade2_settled_microusd)}; total ${usd(summary.spend.total_settled_microusd)}.`);
+  const all = summary.spend.uc1_roots;
+  lines.push(
+    all === null
+      ? `- The UC1 cap of ${usd(Number(summary.spend.cap_microusd))} covers every UC1 root; the spend across all roots was not read.`
+      : `- Every UC1 root under the runs directory (${String(all.roots)}, this one included): settled ${usd(Number(all.settled_microusd))}, open ${usd(Number(all.open_microusd))}, against the UC1 cap of ${usd(Number(summary.spend.cap_microusd))}.`,
+  );
   if (summary.spend.model_per_attempt_mean_microusd !== null) lines.push(`- Model spend per counted attempt: mean ${usd(summary.spend.model_per_attempt_mean_microusd)}, largest ${usd(summary.spend.model_per_attempt_max_microusd ?? 0)}.`);
   if (summary.spend.ledger !== null) lines.push(`- Ledger under this root: settled ${usd(Number(summary.spend.ledger.settled_microusd))}, open ${usd(Number(summary.spend.ledger.open_microusd))}, uncertain operations ${String(summary.spend.ledger.uncertain.length)}.`);
   lines.push("");

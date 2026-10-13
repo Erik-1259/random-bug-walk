@@ -210,11 +210,11 @@ async function seededGrades(ctx: RunContext): Promise<boolean> {
     const route = existing?.route ?? prepareGrade(bytes, target, join(dir, "fix"));
     const record: SeededRecord = existing ?? { schema_version: 1, label: seed.label, state: seed.state, expected_route: seed.route, route, route_matches: route.route === seed.route, grade1: [], grade2: [] };
     writeSeeded(ctx.runDir, record);
-    matches &&= record.route_matches;
     ctx.deps.report(`seeded=${seed.label} route=${route.route} expected=${seed.route}`);
     if (isGraded(route)) await grade1(ctx, route, join(dir, "grade"), seed.label, record.grade1, () => {
         writeSeeded(ctx.runDir, record);
       });
+    matches &&= record.route_matches && record.grade1.at(-1)?.result.state === "passed";
   }
   return matches;
 }
@@ -622,7 +622,7 @@ export async function runGrade2(options: { runDir: string }, deps: Uc1Deps): Pro
   writeProgress(runDir, run, null);
   const pending = items.filter((item) => needsGrade(item.tries) || item.tries.at(-1)?.result.state === "infrastructure").length;
   deps.report(`grade2 graded=${String(graded)} pending=${String(pending)} max_retries=${String(MAX_GRADE_RETRIES)}`);
-  return { exitCode: stop === null ? 0 : 1, graded, stop };
+  return { exitCode: stop === null && pending === 0 ? 0 : 1, graded, stop };
 }
 
 export interface FinalizeOutcome {
@@ -664,7 +664,9 @@ export async function finalize(options: { runDir: string }, deps: Pick<Uc1Deps, 
     }
   }
   const ledger = await deps.allowanceSource.view([run.root_execution_id]);
-  const summary = buildSummary(run, records, seeded, readStops(runDir), ledger, analysisRef);
+  const roots = uc1Roots(dirname(runDir));
+  const allRoots = await deps.allowanceSource.view(roots);
+  const summary = buildSummary(run, records, seeded, readStops(runDir), ledger, analysisRef, { roots: roots.length, view: allRoots });
   writeJson(join(runDir, "results", "rows.json"), rows);
   writeJson(join(runDir, "results", "summary.json"), summary);
   if (analysisJson !== null) writeFileSync(join(runDir, "results", "analysis.json"), analysisJson);
@@ -673,7 +675,8 @@ export async function finalize(options: { runDir: string }, deps: Pick<Uc1Deps, 
   writeStaging(runDir, { run, records, seeded, rows, analysisJson, summary, report, screenRecord: config.screen_record });
 
   const allFinal = run.plan.every((item) => records.some((record) => record.index === item.index && (record.status === "counted" || record.status === "infrastructure_error")));
-  const seededPassed = seeded.every((item) => item.route_matches);
+  // A seeded round trip demonstrates the grader only when it took the expected route and both grades passed.
+  const seededPassed = seeded.every((item) => item.route_matches && item.grade1.at(-1)?.result.state === "passed" && item.grade2.at(-1)?.result.state === "passed");
   const unresolved = ledger.uncertain.length > 0 || ledger.open_microusd > 0n || ledger.halted;
   const rootRun = unresolved ? writeRootRun(runDir, run, "needs_reconciliation", null) : writeRootRun(runDir, run, "terminal", allFinal && seededPassed ? "completed" : "incomplete");
   deps.report(`root=${run.root_execution_id} status=${rootRun.status} outcome=${rootRun.outcome ?? "-"} rows=${String(rows.length)} staging=${join(runDir, "staging")}`);

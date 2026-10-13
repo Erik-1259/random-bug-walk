@@ -301,4 +301,39 @@ describe("attempts, reruns and scope", () => {
     expect(rows.find((row) => row.index === 2)?.reruns).toBe(0);
     await w.close();
   });
+
+  it("leaves grade2 failing when a grade is still infrastructure after its retries", async () => {
+    const w = await world({ controller: (call) => (call.name.startsWith("grade-2-sandbox-off-001") ? "infrastructure" : "passed") });
+    const outcome = await runSessions(pilot(w), w.deps);
+    const graded = await runGrade2({ runDir: outcome.runDir }, w.deps);
+    expect(graded.stop).toBeNull();
+    expect(graded.exitCode).toBe(1);
+    await w.close();
+  });
+
+  it("does not complete a pilot whose seeded round trip took the expected route but failed a grade", async () => {
+    const w = await world({ controller: (call) => (call.name === "grade-2-sandbox-seed-clean-r0" ? "failed" : "passed") });
+    const outcome = await runSessions(pilot(w), w.deps);
+    await runGrade2({ runDir: outcome.runDir }, w.deps);
+    const done = await finalize({ runDir: outcome.runDir }, w.deps);
+    expect(done.rootRun).toMatchObject({ status: "terminal", outcome: "incomplete" });
+    expect(done.exitCode).toBe(1);
+    await w.close();
+  });
+
+  it("reports spend against the cap across every UC1 root under the runs directory, the pilot included", async () => {
+    const w = await world();
+    const first = await runSessions(pilot(w), w.deps);
+    await runGrade2({ runDir: first.runDir }, w.deps);
+    const second = await runSessions(pilot(w, { name: "pilot-02" }), w.deps);
+    await runGrade2({ runDir: second.runDir }, w.deps);
+    const done = await finalize({ runDir: second.runDir }, w.deps);
+    const both = await w.deps.allowanceSource.view([first.rootExecutionId, second.rootExecutionId]);
+    const own = await w.deps.allowanceSource.view([second.rootExecutionId]);
+    expect(both.settled_microusd).toBeGreaterThan(own.settled_microusd);
+    expect(done.summary.spend.uc1_roots).toEqual({ roots: 2, settled_microusd: both.settled_microusd.toString(), open_microusd: "0" });
+    const report = readFileSync(join(second.runDir, "staging", "report.md"), "utf8");
+    expect(report).toContain(`Every UC1 root under the runs directory (2, this one included): settled $${(Number(both.settled_microusd) / 1_000_000).toFixed(4)}, open $0.0000, against the UC1 cap of $40.0000.`);
+    await w.close();
+  });
 });
