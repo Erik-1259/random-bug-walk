@@ -85,7 +85,7 @@ describe("the replay control's status poll", () => {
 
 interface Element {
   type: unknown;
-  props: { status?: unknown; state?: string; disabled?: boolean; onClick?: () => void; children?: unknown };
+  props: { status?: unknown; state?: string; reason?: string; disabled?: boolean; onClick?: () => void; children?: unknown };
 }
 
 function find(node: unknown, match: (element: Element) => boolean): Element | null {
@@ -230,4 +230,43 @@ describe("the replay control's duplicate clicks", () => {
     expect(calls.filter((call) => call.method === "POST")).toHaveLength(1);
     expect(startButton(rendered)?.props.disabled).toBe(true);
   });
+});
+
+describe("the replay control's start without an answer", () => {
+  const failures: [string, () => Promise<unknown>][] = [
+    ["a network error", () => Promise.reject(new TypeError("synthetic: the network failed"))],
+    ["an answer that is not JSON", () => Promise.resolve({ ok: false, status: 504, json: () => Promise.reject(new SyntaxError("synthetic: a 504 page")) })],
+  ];
+  for (const [name, failure] of failures) {
+    it(`says so after ${name}, keeps the new request ID and polls its status`, async () => {
+      vi.useFakeTimers();
+      const previous = "00000000-0000-4000-8000-00000000b401";
+      const stored = new Map<string, string>([["rbw-judge-request-id", previous]]);
+      stubWindow(stored);
+      const calls: Call[] = [];
+      vi.stubGlobal(
+        "fetch",
+        vi.fn((url: string, init?: { method?: string }) => {
+          const method = init?.method ?? "GET";
+          calls.push({ url, method });
+          if (method === "POST") return failure();
+          return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ state: "unknown", message: "synthetic" }) });
+        }),
+      );
+      let rendered: unknown = null;
+      hooks.mount(() => (rendered = ReplayControl({ release: null, initial: { state: "ready", reason: "" } })));
+      await vi.advanceTimersByTimeAsync(0);
+      calls.length = 0;
+      startButton(rendered)?.props.onClick?.();
+      await vi.advanceTimersByTimeAsync(0);
+      const requestId = stored.get("rbw-judge-request-id");
+      expect(requestId).toBeDefined();
+      expect(requestId).not.toBe(previous);
+      expect((rendered as Element).props.state).toBe("starting");
+      expect((rendered as Element).props.reason).toBe("Could not reach the site. Your replay may still have started; the status updates below.");
+      expect(calls).toEqual([{ url: "/api/judge", method: "POST" }]);
+      await vi.advanceTimersByTimeAsync(15_000);
+      expect(calls.at(-1)).toEqual({ url: `/api/judge/status?request_id=${requestId ?? ""}`, method: "GET" });
+    });
+  }
 });

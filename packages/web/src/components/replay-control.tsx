@@ -9,6 +9,7 @@ import { ReplayPanel } from "./replay.tsx";
 
 const REQUEST_KEY = "rbw-judge-request-id";
 const POLL_MS = 15_000;
+const START_UNANSWERED = "Could not reach the site. Your replay may still have started; the status updates below.";
 
 interface Props {
   release: { release_id: string; created_at: string } | null;
@@ -95,8 +96,16 @@ export function ReplayControl({ release, initial }: Props) {
     // A new start drops the earlier replay's status, so a refusal shows its own reason.
     setStatus(null);
     setView({ state: "starting", reason: "" });
-    const response = await fetch("/api/judge", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ request_id: requestId }) });
-    const answer = (await response.json()) as Answer;
+    let answer: Answer;
+    try {
+      const response = await fetch("/api/judge", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ request_id: requestId }) });
+      answer = (await response.json()) as Answer;
+    } catch {
+      // No answer, or one that is not JSON (a platform error page): the replay may have started,
+      // so the new request ID stays and the status poll shows what happened.
+      setView({ state: "starting", reason: START_UNANSWERED });
+      return;
+    }
     if (["unavailable", "bad_request", "unauthorized"].includes(answer.state)) {
       if (previous === null) window.localStorage.removeItem(REQUEST_KEY);
       else window.localStorage.setItem(REQUEST_KEY, previous);
