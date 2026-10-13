@@ -2,10 +2,11 @@
   "name": "@rbw/solver-session",
   "version": "0.0.0",
   "private": true,
-  "description": "Solver sessions for the paired comparison: grading an attempt's fix through the trusted controller",
+  "description": "Solver sessions for the paired comparison: one attempt's session on a local Docker kit container (the planted projection, the cold-build reset, the log scrub, the server logs and the submitted diff), and grading an attempt's fix through the trusted controller",
   "license": "MIT",
   "type": "module",
   "exports": {
+    ".": "./src/index.ts",
     "./grade": "./src/grade.ts"
   },
   "engines": {
@@ -15,12 +16,15 @@
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint . --max-warnings 0",
-    "test": "vitest run"
+    "test": "vitest run",
+    "session": "node src/cli.ts"
   },
   "dependencies": {
     "@rbw/local-runner": "workspace:*",
     "@rbw/schema": "workspace:*",
-    "diff": "9.0.0"
+    "@rbw/solver": "workspace:*",
+    "diff": "9.0.0",
+    "tar-stream": "3.2.2"
   },
   "devDependencies": {
     "@types/node": "24.19.1",

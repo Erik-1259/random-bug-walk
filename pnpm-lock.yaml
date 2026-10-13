@@ -574,9 +574,15 @@ importers:
       '@rbw/schema':
         specifier: workspace:*
         version: link:../../packages/schema
+      '@rbw/solver':
+        specifier: workspace:*
+        version: link:../../packages/solver
       diff:
         specifier: 9.0.0
         version: 9.0.0
+      tar-stream:
+        specifier: 3.2.2
+        version: 3.2.2
     devDependencies:
       '@types/node':
         specifier: 24.19.1
