@@ -140,11 +140,11 @@ describe("orientation and clarity", () => {
   it("says the funnel counts only the factory runs published here", async () => {
     const release = await readResults(RELEASE);
     expect(funnelScope(release)).toBe(
-      "It counts only the factory runs in this site's results repository and its public store; judge replays and kit checks are counted apart below. Failed and incomplete factory attempts are not published here, so it is not a record of every attempt.",
+      "It counts only the factory runs in this site's results repository and its public store; judge replays, paired comparisons and kit checks are counted apart below. Failed and incomplete factory attempts are not published here, so it is not a record of every attempt.",
     );
     expect(text(renderToStaticMarkup(<CasePage results={release} />))).toContain(`Validated releases (ADM-09) 1 ${funnelScope(release)}`);
     expect(funnelScope(await readResults(NO_RELEASE))).toBe(
-      "It counts only the factory runs in this site's results repository and its public store; judge replays and kit checks are counted apart below. Attempts that were not published here are not counted, so it is not a record of every attempt.",
+      "It counts only the factory runs in this site's results repository and its public store; judge replays, paired comparisons and kit checks are counted apart below. Attempts that were not published here are not counted, so it is not a record of every attempt.",
     );
   });
 });

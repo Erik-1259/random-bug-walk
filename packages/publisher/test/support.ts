@@ -6,7 +6,7 @@ import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, expect } from "vitest";
 import { buildPolicy } from "@rbw/schema";
-import type { RootRun, RootRunOutcome, RootRunStatus, RunManifest } from "@rbw/schema";
+import type { RootRun, RootRunKind, RootRunOutcome, RootRunStatus, RunManifest } from "@rbw/schema";
 import { runCli, type CliDeps, type CliResult } from "../src/cli.ts";
 import { runProcess, type ProcessCall, type ProcessRunner } from "../src/process.ts";
 import type { BlobClient, BlobPutOptions } from "../src/store.ts";
@@ -216,7 +216,7 @@ export function createWorld(): World {
 
 export function writeRootRun(
   world: World,
-  options: { root?: string; status?: RootRunStatus; outcome?: RootRunOutcome | null; children?: string[]; name?: string } = {},
+  options: { root?: string; kind?: RootRunKind; status?: RootRunStatus; outcome?: RootRunOutcome | null; children?: string[]; name?: string } = {},
 ): string {
   const status = options.status ?? "terminal";
   const root: RootRun = {
@@ -224,7 +224,7 @@ export function writeRootRun(
     project_id: PROJECT_ID,
     root_execution_id: options.root ?? ROOT_ID,
     project_policy_sha256: world.policySha256,
-    kind: "factory",
+    kind: options.kind ?? "factory",
     declared_stages: ["prepare", "plant_bug", "judge_01"],
     child_execution_ids: options.children ?? [CHILD_ID],
     status,

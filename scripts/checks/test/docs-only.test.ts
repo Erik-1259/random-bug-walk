@@ -37,6 +37,7 @@ describe("docs-only classifier", () => {
     ["empty input", []],
     ["both sides of a rename from code to docs", ["src/notes.ts", "docs/notes.md"]],
     ["Markdown in a docs folder below the root", ["packages/example/docs/guide.md"]],
+    ["the UC1 pre-registration, which power.py --check reads", ["docs/uc1-preregistration.md"]],
   ])("prints false for %s", (_label, paths) => {
     expect(classify(paths)).toEqual({ status: 0, stdout: "false\n" });
   });

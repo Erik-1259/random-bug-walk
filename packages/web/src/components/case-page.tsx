@@ -249,7 +249,7 @@ function Provenance({ results }: { results: Results }) {
         </ul>
         <h3>The released run&apos;s files</h3>
         <RunSummary run={run} />
-        <DiagnosticArchive results={results} archives={diagnosticArchives(results)} empty="No other published runs." />
+        <DiagnosticArchive results={results} archives={diagnosticArchives(results)} empty="No other published factory runs." />
         <Replays replays={verificationReplays(results)} />
       </>
     );
@@ -275,7 +275,7 @@ function Provenance({ results }: { results: Results }) {
         </dl>
       )}
       <p>Release files: none, because there is no validated release.</p>
-      <DiagnosticArchive results={results} archives={run === null ? diagnosticArchives(results) : [run]} empty="No run has been published." />
+      <DiagnosticArchive results={results} archives={run === null ? diagnosticArchives(results) : [run]} empty="No factory run has been published." />
       <Replays replays={verificationReplays(results)} />
     </>
   );
@@ -324,7 +324,7 @@ function DiagnosticArchive({ results, archives, empty }: { results: Results; arc
 /** What the funnel counts: only the factory runs in this results directory, never every attempt. */
 export function funnelScope(results: Results): string {
   const unfinished = factoryRuns(results).some((run) => run.outcome === "failed" || run.outcome === "incomplete");
-  const scope = "It counts only the factory runs in this site's results repository and its public store; judge replays and kit checks are counted apart below.";
+  const scope = "It counts only the factory runs in this site's results repository and its public store; judge replays, paired comparisons and kit checks are counted apart below.";
   return unfinished
     ? `${scope} Attempts that were not published here are not counted, so it is not a record of every attempt.`
     : `${scope} Failed and incomplete factory attempts are not published here, so it is not a record of every attempt.`;
