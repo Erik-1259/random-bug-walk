@@ -1,30 +1,30 @@
 # UC1 pre-registration: server logs on versus off
 
-This document fixes the UC1 paired comparison before any counted run. UC1 is the use case "test a developer tool on your own app" (spec §2.3). The tool here is read access to the app's server logs, and the comparison is a small illustration (spec §2.4), not an estimate of the tool's effect.
+This document fixes the UC1 paired comparison before any counted run. UC1 is the use case "test a developer tool on your own app". The tool here is read access to the app's server logs, and the comparison is a small illustration, not an estimate of the tool's effect.
 
 Nothing in this document reports a result. No counted attempt has run when it is committed. The race-case screen record is a separate file written by the race-class work, at `docs/uc1-screen/<case-id>.json`, and this document only states what that record must contain (see "Bug selection"). The time-zone case's screen record is `docs/uc1-screen/umami-tz-arg-001.json`, committed with this document.
 
 ## Status and changes
 
 - **Committed:** Oct 13, 2026, before any counted attempt.
-- **One amendment window:** after the harness pilot (below) and before the first counted attempt of the main run, the per-attempt caps and the solver model may be changed once, in a committed amendment to this file that states the measured reason. The same amendment, or an earlier one, records the owner's answer on what the spending cap covers (see "Caps"), with its date. Nothing else changes after this commit. Nothing changes after the first counted attempt.
+- **One amendment window:** after the harness pilot (below) and before the first counted attempt of the main run, the per-attempt caps and the solver model may be changed once, in a committed amendment to this file that states the measured reason. The same amendment, or an earlier one, records the confirmed scope of the spending cap (see "Caps"), with the date it was settled. Nothing else changes after this commit. Nothing changes after the first counted attempt.
 - A change made outside that window is reported as a deviation next to the result, with its date and reason.
 
-## Owner decisions of Oct 13, 2026
+## Decisions fixed on Oct 13, 2026
 
-1. **Decision change.** The owner authorized the race class and UC1 together on Oct 13. Earlier, UC1 was to run only if the race class was dropped; now both run, and UC1 depends on an admitted, screened race case.
+1. **Decision change.** As of Oct 13, the race class and UC1 both go ahead. Earlier, UC1 was to run only if the race class was dropped; now both run, and UC1 depends on an admitted, screened race case.
 2. **Priority.** UC1 depends on the race class. Without an admitted race case that passes its screen, there is no UC1 run. If the two compete for build lanes, the development slot or supervised hours, the race class wins and UC1 is cut first.
 3. **Race family, ADM-06.** The race family records ADM-06 (partial-fix and stub-fix probe states) as not applicable, with the reason stated in the race family's own records. This document does not restate that reason.
-4. **RootRun kind.** A new RootRun kind, `paired_comparison`, is approved as an addition to the kinds listed in spec §9.9 (`factory`, `kit_check`, `judge_replay`). Every UC1 attempt, model reservation and grade sits under one such root per bug run.
-5. **Spending cap.** **$40** on Nemotron 3 Super, **$75** if the Kimi-K2.7-Code fallback is needed. The decision does not say what the cap covers; this document's reading is stated under "Caps", pending the owner's confirmation.
-6. **Fallback to the time-zone case: open until Oct 18, 2026 at noon.** The owner decides at that time whether UC1 falls back to the released time-zone case (`umami-tz-arg-001`) if no race case has been admitted and screened. Until then, nothing is built that assumes either answer. The two branches are pre-registered here so that the decision changes only which branch applies:
+4. **RootRun kind.** A new RootRun kind, `paired_comparison`, is added to the existing kinds (`factory`, `kit_check`, `judge_replay`). Every UC1 attempt, model reservation and grade sits under one such root per bug run.
+5. **Spending cap.** **$40** on Nemotron 3 Super, **$75** if the Kimi-K2.7-Code fallback is needed. The decision does not say what the cap covers; this document's reading is stated under "Caps", pending confirmation.
+6. **Fallback to the time-zone case: open until Oct 18, 2026 at noon.** Whether UC1 falls back to the released time-zone case (`umami-tz-arg-001`) if no race case has been admitted and screened is decided at that time. Until then, nothing is built that assumes either answer. The two branches are pre-registered here so that the decision changes only which branch applies:
    - **No fallback:** if no screened race case exists by Oct 18 at noon, UC1 is not run. The pilot stays development evidence only.
-   - **Fallback chosen:** the time-zone case runs under this same protocol, labeled throughout as a **low-headroom contrast**, never as a tool-effect illustration. That case fails the static-headroom screen of spec §8.3 (its mutation leaves the destructured `timezone` unused while the same file's ClickHouse branch still passes it; the binding judgment and its line references are in `docs/uc1-screen/umami-tz-arg-001.json`), so a result on it says nothing about how much logs help on bugs the source does not already reveal. Choosing this branch is an owner amendment to the rule that a UC1 bug must pass the screen, and it is recorded with the owner's decision.
+   - **Fallback chosen:** the time-zone case runs under this same protocol, labeled throughout as a **low-headroom contrast**, never as a tool-effect illustration. That case fails the static-headroom screen, which skips a bug whose omission is plain from the pre-fix source alone (its mutation leaves the destructured `timezone` unused while the same file's ClickHouse branch still passes it; the binding judgment and its line references are in `docs/uc1-screen/umami-tz-arg-001.json`), so a result on it says nothing about how much logs help on bugs the source does not already reveal. Choosing this branch is an amendment to the rule that a UC1 bug must pass the screen, and it is recorded in this file with the decision and its date.
 
 ## Bug selection
 
-- The bug is an admitted race-class case that passes the race class's binding screen record. It is chosen before any solver attempt runs on it and never on solver or tool results (spec §2.3, "What can go wrong").
-- The screen record must hold (a) a binding written judgment that the omission is not plain from the pre-fix source alone (spec §8.3) and (b) a check of what the issue text, the observe or writer evidence and the HTTP responses (for example `/api/send` under concurrency, as reachable in the off arm) already reveal, compared with the logs. A case whose issue or responses already carry the Prisma or Postgres error message fails as a log-tool case.
+- The bug is an admitted race-class case that passes the race class's binding screen record. It is chosen before any solver attempt runs on it and never on solver or tool results.
+- The screen record must hold (a) a binding written judgment that the omission is not plain from the pre-fix source alone and (b) a check of what the issue text, the observe or writer evidence and the HTTP responses (for example `/api/send` under concurrency, as reachable in the off arm) already reveal, compared with the logs. A case whose issue or responses already carry the Prisma or Postgres error message fails as a log-tool case.
 - The screen record is the file `docs/uc1-screen/<case-id>.json`, in the format of `docs/uc1-screen/umami-tz-arg-001.json`: `schema_version` (1), `case_id`, `recorded` (date), `recorded_by`, `target` (upstream, host commit, path, SHA-256 and mutation reference), `static_headroom` (`verdict` of `pass` or `fail`, the written `judgment` and its `reasons`), `leak_screen` (`verdict` of `pass`, `fail` or `not_assessed`, and what the issue text, the observe or writer evidence and the HTTP responses reveal compared with the logs) and `uc1_use`. A race case is eligible only when both verdicts are `pass`.
 - A second race bug is added only if one is admitted and screened in time and the supervised windows have room. It follows the same protocol and is reported separately.
 - `umami-tz-arg-001` is used only for the harness pilot, unless the fallback branch above is chosen. Its screen record (`docs/uc1-screen/umami-tz-arg-001.json`) fails it on static headroom.
@@ -36,7 +36,7 @@ Nothing in this document reports a result. No counted attempt has run when it is
 - **Attempts.** k = 20 per arm per bug, 40 in total.
 - **Independence.** The two arms are independent samples. A shared seed does not pair attempts, because the tool list changes the prompt. Pairing exists only at the bug level.
 - **Order.** Attempt indexes 1 to 40 follow ABBA blocks (off, on, on, off, repeated ten times), fixed in advance. Order is by index, never by finish time. Up to 3 sessions run at once on local Docker.
-- **Grading (R1, spec §8.3).** Each attempt's extracted fix is graded twice: grade 1 is a local Docker `judge_verify` run on a fresh copy, and grade 2 is a protected fresh-copy regrade on Vercel Sandbox. Grade 2 is authoritative. Both grades are charged to the development pool and slot, never the judge allocation. Every disagreement between the grades is published.
+- **Grading.** Each attempt's extracted fix is graded twice: grade 1 is a local Docker `judge_verify` run on a fresh copy, and grade 2 is a protected fresh-copy regrade on Vercel Sandbox. Grade 2 is authoritative. Both grades are charged to the development pool and slot, never the judge allocation. Every disagreement between the grades is published.
 - **Pilot (excluded from all results).** 2 off and 2 on attempts on `umami-tz-arg-001`, plus seeded grade round trips with no model. The pilot checks the harness, the tool calling and the cost per attempt. It is published only as "harness pilot; bug fails the static-headroom screen; not a UC1 result".
 
 ## Hypothesis
@@ -113,7 +113,7 @@ Three co-primary outcomes, with Holm's procedure across the three at a family al
 
 Every counted attempt enters all three outcomes; the futility rule (under "Stop and futility rules") changes only how the solve outcome is tested, not which attempts are graded or counted. An attempt that hits a cap is counted, with its capped token and turn values recorded as they are and its solve status from its grade (unsolved if it submitted nothing). An infrastructure error that survives its reruns is excluded from all three and reported (below).
 
-Also reported per arm, without tests: the solve count with a 95% Clopper–Pearson interval, the grade-1 result for every attempt, tool-call counts by tool, the contamination flag, out_of_scope and prohibited-edit counts (spec §8.3, R5), wall time, spend, and the infrastructure errors and reruns.
+Also reported per arm, without tests: the solve count with a 95% Clopper–Pearson interval, the grade-1 result for every attempt, tool-call counts by tool, the contamination flag, out_of_scope and prohibited-edit counts, wall time, spend, and the infrastructure errors and reruns.
 
 ## Caps
 
@@ -126,18 +126,18 @@ Per attempt (revisable once, in the amendment window, from pilot measurements):
 
 Per run:
 
-- The total UC1 spend cap is $40 on Nemotron 3 Super, or $75 if the Kimi-K2.7-Code fallback is adopted after the pilot (owner decision 5). Spend is reserved and settled per model call under the bug run's root.
-- **What the cap covers (this document's reading, pending the owner's confirmation).** Model calls, Sandbox regrades and reruns, including the pilot. The owner decision of Oct 13 does not state this. Until the owner confirms it, the run is held to this reading, which is the stricter one. If the owner states a different scope, the answer and its date are recorded in an amendment before the first counted attempt (see "Status and changes").
+- The total UC1 spend cap is $40 on Nemotron 3 Super, or $75 if the Kimi-K2.7-Code fallback is adopted after the pilot (decision 5). Spend is reserved and settled per model call under the bug run's root.
+- **What the cap covers (this document's reading, pending confirmation).** Model calls, Sandbox regrades and reruns, including the pilot. Decision 5 of Oct 13 does not state this. Until the scope is confirmed, the run is held to this reading, which is the stricter one. If a different scope is confirmed, it and its date are recorded in an amendment before the first counted attempt (see "Status and changes").
 
 ## Model
 
-Nemotron 3 Super, frozen after the pilot. Kimi-K2.7-Code is used only if the pilot shows Super's tool calling broken over Token Factory: it then gets 2 pilot attempts, and the model is frozen. No model switch happens after the first counted attempt. Every call is tagged with its model ID, endpoint and date (spec §8.3, R8).
+Nemotron 3 Super, frozen after the pilot. Kimi-K2.7-Code is used only if the pilot shows Super's tool calling broken over Token Factory: it then gets 2 pilot attempts, and the model is frozen. No model switch happens after the first counted attempt. Every call is tagged with its model ID, endpoint and date.
 
 ## Reruns and infrastructure errors
 
 - An infrastructure error is a failure outside the agent's control: the container fails to start, the kit build tooling fails on unchanged code, or the model endpoint fails or times out. A build that fails because of the agent's edit is not an infrastructure error.
 - An attempt that hits an infrastructure error is rerun from scratch at the same index, up to 2 times. After that, it counts as an infrastructure error: excluded from the outcomes and reported with its cause.
-- Infrastructure errors are always reported apart from failures (R8). A grade that fails for infrastructure reasons is retried as a grade only; the attempt is not rerun.
+- Infrastructure errors are always reported apart from failures. A grade that fails for infrastructure reasons is retried as a grade only; the attempt is not rerun.
 - No other reason permits a rerun.
 
 ## Checks
@@ -150,10 +150,10 @@ Nemotron 3 Super, frozen after the pilot. Kimi-K2.7-Code is used only if the pil
 ## Stop and futility rules
 
 - **Futility.** After the first 6 counted attempts in each arm (by index), if both arms are 0/6 or both are 6/6, the solve test stops: Fisher's test is not run, and its slot in Holm's procedure is fixed at p = 1, so the token and turn tests keep the same three-outcome thresholds. The remaining attempts still run and are still graded. The solve outcome is then reported over all counted attempts in each arm (denominator 20, or the actual arm size after infrastructure exclusions) as counts with Clopper–Pearson intervals, labeled a floor or a ceiling with the 6-attempt check that triggered the rule. This rule only stops; it never declares an effect, so it does not raise the false-positive rate.
-- **Spend.** If spend passes the cap (owner decision 5, with the coverage under "Caps"), or the ledger shows any uncertainty, the run stops and the ledger is reconciled before anything else happens.
-- **Schedule.** If the harness is not merged, or the pilot fails, by the end of Oct 15, UC1 is dropped and the pilot stays development evidence. If no screened race case exists by Oct 18 at noon, the fallback decision (owner decision 6) applies.
+- **Spend.** If spend passes the cap (decision 5, with the coverage under "Caps"), or the ledger shows any uncertainty, the run stops and the ledger is reconciled before anything else happens.
+- **Schedule.** If the harness is not merged, or the pilot fails, by the end of Oct 15, UC1 is dropped and the pilot stays development evidence. If no screened race case exists by Oct 18 at noon, the fallback decision (decision 6) applies.
 - **Tool calling.** If tool calling is broken on both Super and the single fallback, UC1 is dropped.
-- **Conflicts.** Any conflict with race-class lanes, the development slot or supervised hours cuts UC1 (owner decision 2).
+- **Conflicts.** Any conflict with race-class lanes, the development slot or supervised hours cuts UC1 (decision 2).
 - A stopped run is still published, with the reason it stopped.
 
 ## Claim wording
@@ -162,9 +162,9 @@ Nemotron 3 Super, frozen after the pilot. Kimi-K2.7-Code is used only if the pil
 - Results are reported per bug only. There is no pooled or clustered claim with fewer than 3 bugs, and pairing is at the bug level only.
 - Each bug gets a "made worse" statement: the off-minus-on solve rate, and the token ratio (on over off, from the Hodges–Lehmann shift on log tokens) with its interval. It says plainly whether the tool made this bug worse.
 - A non-detection is reported only as "inconclusive at this sample size", never as "no effect".
-- The result is never presented as an estimate of the tool's effect. About 30 bugs would be needed for a 15-point detectable difference (spec §2.3), there is no held-out split, and no tool-off calibration exists.
+- The result is never presented as an estimate of the tool's effect. About 30 bugs would be needed for a 15-point detectable difference, there is no held-out split, and no tool-off calibration exists.
 - On the fallback branch, every mention reads "low-headroom contrast" and states that the bug fails the static-headroom screen.
-- Every number on the result page traces to committed run records published under the `paired_comparison` root (spec §9.9).
+- Every number on the result page traces to committed run records published under the `paired_comparison` root.
 
 ## Reproducing the tables
 

@@ -13,7 +13,7 @@
     "mutation_id": "4c2531a343d8250607df3ab84491e2d7e655849c1dbcb477264a5c126b21ccca"
   },
   "static_headroom": {
-    "screen": "spec section 8.3: skip a bug whose omission is plain from the pre-fix source alone",
+    "screen": "static headroom: skip a bug whose omission is plain from the pre-fix source alone",
     "verdict": "fail",
     "judgment": "The omission is plain from the planted source alone. A reader of getPageviewStats.ts sees relationalQuery destructure a timezone it never uses, next to a ClickHouse branch that passes the same value to the same helper.",
     "reasons": [
@@ -26,5 +26,5 @@
     "verdict": "not_assessed",
     "reason": "The case already fails the static-headroom screen, so it cannot serve as a log-tool case whatever its issue text and responses reveal."
   },
-  "uc1_use": "Harness pilot only, published as \"harness pilot; bug fails the static-headroom screen; not a UC1 result\". If the owner chooses the fallback on Oct 18, 2026, it runs as a low-headroom contrast, never as a tool-effect illustration."
+  "uc1_use": "Harness pilot only, published as \"harness pilot; bug fails the static-headroom screen; not a UC1 result\". If the fallback is chosen on Oct 18, 2026, it runs as a low-headroom contrast, never as a tool-effect illustration."
 }
