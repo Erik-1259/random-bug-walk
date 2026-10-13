@@ -21,6 +21,7 @@
   "dependencies": {
     "@rbw/local-runner": "workspace:*",
     "@rbw/schema": "workspace:*",
+    "@rbw/solver": "workspace:*",
     "diff": "9.0.0",
     "tar-stream": "3.2.2"
   },

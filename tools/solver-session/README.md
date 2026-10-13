@@ -32,6 +32,17 @@ The kit image has no git (and no bash: commands run under BusyBox `sh`). The neu
 
 `Session.end("cap")` does the same extraction when the solver stops the attempt at a cap. The submission is `in_scope` when nothing but the target file changed (or nothing did) and `out_of_scope` otherwise. The build's own `tracked` outputs (`kit/umami/build-outputs.txt`) are left out of that comparison: the build regenerates them from other sources, so a fix upstream of a generator could change them, and the reset restores them before every build. The overlay check still covers them, before the first build; the files are `<work>/submission/{submission.json,target.bin,target.patch}`, and `target.bin` holds the bytes the grade step reads.
 
+## Running the solver loop
+
+`solverSession(session)` (`src/solver.ts`) returns the session as `packages/solver`'s `SolverSession`, the interface `runAttempt` takes. The solver keeps its own tool layer (input checks, byte caps, the rebuild cap and its runtime-log scrub); the adapter only maps calls and results:
+
+- `bash(command, { timeoutMs })` is `run(command, timeoutMs)`; the timeout can only shorten the session's own.
+- `readFile` and `writeFile` pass the session's refusal reason as the solver's `error`.
+- `rebuildRestart()` returns `rbw-build-app`'s own stdout and stderr (from `rebuildRestartWithBuild()`), which the solver cuts into its build sections, and the session's scrubbed `rbw-start` lines as the start's output, so no runtime log line reaches the solver. A tree still warm after the reset, or the session's own rebuild cap, comes back as a failed build (exit 1) with the reason as `rbw-build-app`'s message.
+- `serverLogs({ cursor, maxBytes })` reads both logs, each at most half of `maxBytes` less 256 bytes for the two headers, as one page with a `--- umami.stderr.log` and a `--- postgres.stderr.log` section. `next_cursor` is `<generation>.<umami offset>.<postgres offset>`; a cursor that does not parse reads the tail. `truncated` is set when either log restarted since the cursor. The session must be opened with `serverLogs` matching the solver's arm.
+
+The attempt's diff is taken after `runAttempt` returns, with `session.submit()` or `session.end("cap")`, and `close()` stays with the caller. `test/unit/solver.test.ts` drives each tool through the solver's own `runTool` over a session.
+
 ## The cold-build reset
 
 `rbw-build-app` refuses a warm build. Before each rebuild, `RESET_SCRIPT` (in `src/reset.ts`) restores every entry of `kit/umami/build-outputs.txt`:

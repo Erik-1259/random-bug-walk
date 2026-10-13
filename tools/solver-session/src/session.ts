@@ -127,6 +127,13 @@ function text(buffer: Buffer): string {
   return buffer.toString("utf8");
 }
 
+/** rbw-build-app's exit status and its own stdout and stderr, unscrubbed (it prints no runtime log). */
+export interface BuildStreams {
+  exit_code: number | null;
+  stdout: string;
+  stderr: string;
+}
+
 export interface OpenedSession {
   digest: string;
   audit: AuditResult;
@@ -269,7 +276,7 @@ export class Session implements SolverTools {
     if (changed.length > 0) throw new SessionError("overlay_mismatch", `the container's tracked files differ from the audited projection: ${changed.map((item) => item.path).join(", ")}`);
     await this.execOk("snapshot", scriptArgs(SNAPSHOT_SCRIPT, "rbw-snapshot"), SCRIPT_TIMEOUT_MS);
     this.event("overlaid", { target: this.target, planted_sha256: sha256Hex(planted), tracked: this.tracked.length });
-    const initial = await this.buildAndStart("initial", false);
+    const { result: initial } = await this.buildAndStart("initial", false);
     if (!initial.ok) throw new SessionError("initial_start_failed", initial.start?.output ?? initial.build.output);
     return initial;
   }
@@ -296,13 +303,14 @@ export class Session implements SolverTools {
     if (this.submitted !== null) throw new SessionError("session_ended", "the attempt was submitted");
   }
 
-  run(cmd: string): Promise<RunResult> {
-    return this.serial(() => this.runNow(cmd));
+  /** `timeoutMs` may only shorten the session's commandTimeoutMs. */
+  run(cmd: string, timeoutMs?: number): Promise<RunResult> {
+    return this.serial(() => this.runNow(cmd, timeoutMs));
   }
 
-  private async runNow(cmd: string): Promise<RunResult> {
+  private async runNow(cmd: string, timeoutMs: number | undefined): Promise<RunResult> {
     this.live();
-    const timeout = this.limits.commandTimeoutMs;
+    const timeout = Math.min(this.limits.commandTimeoutMs, Math.max(1, Math.floor(timeoutMs ?? this.limits.commandTimeoutMs)));
     const result = await this.exec(
       ["/opt/rbw/bin/rbw-launch", "--as", "app", "--cwd", APP_DIR, "--timeout-ms", String(timeout), "--max-stream-bytes", String(this.limits.outputBytes), "--", "/bin/sh", "-c", cmd],
       timeout,
@@ -365,7 +373,7 @@ export class Session implements SolverTools {
    * first build is an infrastructure error; before a rebuild it can come from what the agent left
    * (for example a pnpm store under /tmp), so it is the agent's failed rebuild, not an error.
    */
-  private async buildAndStart(label: string, byAgent: boolean): Promise<RebuildResult> {
+  private async buildAndStart(label: string, byAgent: boolean): Promise<{ result: RebuildResult; build: BuildStreams | null }> {
     // The files still hold the last start's logs until rbw-start truncates them; until then they are not served.
     this.logGeneration += 1;
     this.logsCurrent = false;
@@ -374,7 +382,7 @@ export class Session implements SolverTools {
       const found = text(cold.stdout).trim();
       this.event("build_start", { label, refused: "not_cold", exit_code: cold.code });
       if (!byAgent) throw new SessionError("not_cold", found);
-      return { ok: false, refused: "not_cold", build: { exit_code: null, output: tailText(`rbw-check-cold: the build would not be cold\n${found}\n`, this.limits.buildOutputBytes) }, start: null };
+      return { result: { ok: false, refused: "not_cold", build: { exit_code: null, output: tailText(`rbw-check-cold: the build would not be cold\n${found}\n`, this.limits.buildOutputBytes) }, start: null }, build: null };
     }
     const build = await this.exec(["/opt/rbw/bin/rbw-build-app"], BUILD_TIMEOUT_MS);
     const buildOutput = `${text(build.stdout)}${build.stderr}`;
@@ -394,18 +402,23 @@ export class Session implements SolverTools {
       start: start === null || scrubbed === null ? null : { exit_code: start.code, output: scrubbed.text, withheld_lines: scrubbed.withheld },
     };
     this.event("build_start", { label, ok: result.ok, build_exit: build.code, start_exit: start?.code ?? null, withheld_lines: scrubbed?.withheld ?? 0 });
-    return result;
+    return { result, build: { exit_code: build.code, stdout: text(build.stdout), stderr: build.stderr } };
   }
 
   rebuildRestart(): Promise<RebuildResult> {
+    return this.serial(async () => (await this.rebuildRestartNow()).result);
+  }
+
+  /** rebuildRestart(), with rbw-build-app's own stdout and stderr (null when no build ran), for packages/solver's report. */
+  rebuildRestartWithBuild(): Promise<{ result: RebuildResult; build: BuildStreams | null }> {
     return this.serial(() => this.rebuildRestartNow());
   }
 
-  private async rebuildRestartNow(): Promise<RebuildResult> {
+  private async rebuildRestartNow(): Promise<{ result: RebuildResult; build: BuildStreams | null }> {
     this.live();
     if (this.rebuilds >= this.limits.maxRebuilds) {
       this.event("rebuild_restart", { refused: "rebuild_cap" });
-      return { ok: false, refused: "rebuild_cap", build: { exit_code: null, output: "" }, start: null };
+      return { result: { ok: false, refused: "rebuild_cap", build: { exit_code: null, output: "" }, start: null }, build: null };
     }
     this.rebuilds += 1;
     await this.execOk("stop", ["/opt/rbw/bin/rbw-stop"], STOP_TIMEOUT_MS);
@@ -417,8 +430,7 @@ export class Session implements SolverTools {
   }
 
   /** A slice from `offset` (null: the tail); `stale` marks a cursor from before the last start, read from 0. */
-  private async slice(file: string, offset: number | null, stale: boolean): Promise<LogSlice & { next: number }> {
-    const max = this.limits.logBytes;
+  private async slice(file: string, offset: number | null, stale: boolean, max: number): Promise<LogSlice & { next: number }> {
     const result = await this.execOk("log_read", ["/bin/sh", "-c", LOG_SLICE_SCRIPT, "rbw-log", file, String(offset ?? -1), String(max)], 30_000);
     const newline = result.stdout.indexOf(0x0a);
     const [sizeText, startText] = text(result.stdout.subarray(0, newline)).split(" ");
@@ -428,11 +440,12 @@ export class Session implements SolverTools {
     return { text: text(body), size, more: start + body.length < size, restarted: stale || (offset !== null && offset > size), next: start + body.length };
   }
 
-  serverLogs(cursor: LogCursor | null = null): Promise<ServerLogsResult> {
-    return this.serial(() => this.serverLogsNow(cursor));
+  /** `maxBytes` (per log) may only lower the session's logBytes. */
+  serverLogs(cursor: LogCursor | null = null, maxBytes?: number): Promise<ServerLogsResult> {
+    return this.serial(() => this.serverLogsNow(cursor, Math.min(this.limits.logBytes, Math.max(0, Math.floor(maxBytes ?? this.limits.logBytes)))));
   }
 
-  private async serverLogsNow(cursor: LogCursor | null): Promise<ServerLogsResult> {
+  private async serverLogsNow(cursor: LogCursor | null, max: number): Promise<ServerLogsResult> {
     this.live();
     if (!this.options.serverLogs) {
       this.event("server_logs", { refused: "not_in_this_arm" });
@@ -445,8 +458,8 @@ export class Session implements SolverTools {
       const none: LogSlice = { text: "", size: 0, more: false, restarted: stale };
       return { ok: true, umami: none, postgres: { ...none }, cursor: { generation: this.logGeneration, umami: 0, postgres: 0 } };
     }
-    const umami = await this.slice(LOG_FILES.umami, stale ? 0 : (cursor?.umami ?? null), stale);
-    const postgres = await this.slice(LOG_FILES.postgres, stale ? 0 : (cursor?.postgres ?? null), stale);
+    const umami = await this.slice(LOG_FILES.umami, stale ? 0 : (cursor?.umami ?? null), stale, max);
+    const postgres = await this.slice(LOG_FILES.postgres, stale ? 0 : (cursor?.postgres ?? null), stale, max);
     this.event("server_logs", { umami_bytes: Buffer.byteLength(umami.text), postgres_bytes: Buffer.byteLength(postgres.text) });
     const { next: umamiNext, ...umamiSlice } = umami;
     const { next: postgresNext, ...postgresSlice } = postgres;

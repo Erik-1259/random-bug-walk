@@ -69,7 +69,7 @@ export interface SubmitResult {
 
 export interface SolverTools {
   /** `sh -c <cmd>` as the unprivileged app user (rbw-app) in /workspace/app, with a timeout. */
-  run(cmd: string): Promise<RunResult>;
+  run(cmd: string, timeoutMs?: number): Promise<RunResult>;
   /** A file as the app user can read it; a relative path is under /workspace/app. */
   readFile(path: string): Promise<ReadResult>;
   /** Writes a tracked file under the app tree, as root, keeping the file's owner and mode; not one the build regenerates. */
@@ -77,7 +77,7 @@ export interface SolverTools {
   /** rbw-stop, ending every rbw-app process, the cold-build reset, rbw-build-app, then rbw-start. */
   rebuildRestart(): Promise<RebuildResult>;
   /** A byte-capped slice of umami.stderr.log and postgres.stderr.log; refused in the off arm. */
-  serverLogs(cursor?: LogCursor | null): Promise<ServerLogsResult>;
+  serverLogs(cursor?: LogCursor | null, maxBytes?: number): Promise<ServerLogsResult>;
   /** Ends the attempt: extracts the diff against the neutral commit over tracked files. */
   submit(): Promise<SubmitResult>;
 }
