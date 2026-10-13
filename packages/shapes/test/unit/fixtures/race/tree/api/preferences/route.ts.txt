@@ -28,3 +28,11 @@ export async function resetPreferences(profileId: string) {
     db.client.preference.upsert({ where: { profileId }, update: { theme: null }, create: { profileId } }),
   ]);
 }
+
+export async function mergePreference(base: { select: { theme: true } }, profileId: string) {
+  return db.client.preference.upsert({ ...base, where: { profileId }, update: {}, create: { profileId } });
+}
+
+export async function readTheme(profileId: string, select: { theme: true }) {
+  return db.client.preference.upsert({ where: { profileId }, update: {}, create: { profileId }, select });
+}

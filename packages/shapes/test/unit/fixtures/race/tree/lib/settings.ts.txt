@@ -1,0 +1,18 @@
+import { db } from './db';
+
+// A request handler by its name, outside any api directory.
+export async function POST(request: Request) {
+  const { key, value } = await request.json();
+  await db.client.setting.upsert({ where: { key }, update: { value }, create: { key, value } });
+  return Response.json({ ok: true });
+}
+
+// A plain function whose create leaves out the key of a compound where.
+export async function saveScopedSetting(key: string, scope: string, value: string) {
+  return db.client.setting.upsert({ where: { key_scope: { key, scope } }, update: { value }, create: { key, value } });
+}
+
+// A where passed by name rather than as an object literal.
+export async function saveSetting(lookup: { key: string }, value: string) {
+  return db.client.setting.upsert({ where: lookup, update: { value }, create: { ...lookup, value } });
+}

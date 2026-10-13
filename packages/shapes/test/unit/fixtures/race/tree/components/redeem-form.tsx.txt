@@ -1,0 +1,18 @@
+import { db } from '@/lib/db';
+
+export function RedeemForm({ code }: { code: string }) {
+  return (
+    <form
+      action={async () => {
+        'use server';
+        const gift = await db.client.giftCard.findUnique({ where: { code } });
+        if (!gift || gift.used) {
+          return;
+        }
+        await db.client.giftCard.update({ where: { id: gift.id, used: false }, data: { used: true } });
+      }}
+    >
+      <button type="submit">Redeem</button>
+    </form>
+  );
+}

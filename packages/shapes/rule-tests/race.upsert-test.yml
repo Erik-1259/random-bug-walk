@@ -3,6 +3,10 @@ valid:
   - |
     await db.preference.upsert({ where: { profileId }, update: {}, create: { profileId }, select: { theme: true } });
   - |
+    await db.preference.upsert({ where: { profileId }, update: {}, create: { profileId }, select });
+  - |
+    await db.preference.upsert({ ...base, where: { profileId }, update: {}, create: { profileId } });
+  - |
     await db.preference.upsert({ where: { profileId }, create: { profileId } });
   - |
     await db.preference.findUnique({ where: { profileId } });

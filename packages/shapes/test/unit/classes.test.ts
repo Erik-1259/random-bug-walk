@@ -133,6 +133,40 @@ describe("find sites in one file", () => {
     }
   });
 
+  it("gives the full confidence for operator and version guards", () => {
+    expect(sitesIn("lib/quota.ts")[0]?.confidence).toEqual({
+      score: 0.9,
+      level: "high",
+      signals: { read_before_write: true, read_checks_guard: true, write_result_used: true, identity_from_read: true, await_between: false },
+    });
+    expect(sitesIn("lib/documents.ts").find((site) => site.function === "saveDocument")?.confidence).toEqual({
+      score: 0.8,
+      level: "high",
+      signals: { read_before_write: true, read_checks_guard: true, write_result_used: false, identity_from_read: true, await_between: true },
+    });
+  });
+
+  it("does not count identity from the read when the write's identity comes from a parameter", () => {
+    const site = sitesIn("lib/coupons.ts").find((found) => found.function === "applyCoupon");
+    expect(site?.matched).toBe("spent: false");
+    expect(site?.confidence).toEqual({
+      score: 0.55,
+      level: "medium",
+      signals: { read_before_write: true, read_checks_guard: true, write_result_used: false, identity_from_read: false, await_between: false },
+    });
+  });
+
+  it("scores against the last read of the model before the write", () => {
+    // The first read neither filters on the guard nor gives the write its identity; the second does both.
+    const site = sitesIn("lib/coupons.ts").find((found) => found.function === "claimPass");
+    expect(site?.matched).toBe("claimed: false");
+    expect(site?.confidence).toEqual({
+      score: 0.7,
+      level: "medium",
+      signals: { read_before_write: true, read_checks_guard: true, write_result_used: false, identity_from_read: true, await_between: false },
+    });
+  });
+
   it("scores a write whose only read of the model comes later as low", () => {
     const [site, ...rest] = sitesIn("lib/late-read.ts");
     expect(rest).toEqual([]);
@@ -150,9 +184,63 @@ describe("find sites in one file", () => {
       ["race.upsert", 19, "touchProfile"],
       ["race.upsert", 28, "resetPreferences"],
     ]);
+    expect(sites[1]?.confidence).toEqual({
+      score: 1,
+      level: "high",
+      signals: { not_in_batch_transaction: true, create_covers_where: true, where_is_object: true, request_handler: true },
+    });
     expect(applyPatch(source("api/preferences/route.ts"), sites[0]?.diff ?? "")).toBe(expected("route.planted.ts.txt"));
     expect(sites.every((site) => site.planted_form_confirmed)).toBe(true);
     expect(sites[0]?.confidence.level).toBe("high");
+  });
+
+  it("does not match an upsert with a spread or a shorthand key besides where, update and create", () => {
+    const functions = sitesIn("api/preferences/route.ts").map((site) => site.function);
+    expect(functions).not.toContain("mergePreference");
+    expect(functions).not.toContain("readTheme");
+  });
+
+  it("scores the upsert signals each on its own, outside any api directory", () => {
+    const sites = sitesIn("lib/settings.ts");
+    expect(sites.map((site) => [site.function, site.planted_form_confirmed, site.confidence])).toEqual([
+      [
+        "POST",
+        true,
+        {
+          score: 1,
+          level: "high",
+          signals: { not_in_batch_transaction: true, create_covers_where: true, where_is_object: true, request_handler: true },
+        },
+      ],
+      [
+        "saveScopedSetting",
+        true,
+        {
+          score: 0.5,
+          level: "medium",
+          signals: { not_in_batch_transaction: true, create_covers_where: false, where_is_object: true, request_handler: false },
+        },
+      ],
+      [
+        "saveSetting",
+        true,
+        {
+          score: 0.3,
+          level: "low",
+          signals: { not_in_batch_transaction: true, create_covers_where: false, where_is_object: false, request_handler: false },
+        },
+      ],
+    ]);
+  });
+
+  it("reads a .tsx file as TSX, finding a write inside a JSX attribute that a TypeScript parse misses", () => {
+    const tsx = source("components/redeem-form.tsx");
+    const sites = findSitesInSource(CLASSES, "components/redeem-form.tsx", tsx);
+    expect(sites.map((site) => [site.rule_id, site.line, site.function, site.matched, site.planted_form_confirmed])).toEqual([
+      ["race.guarded-write", 12, "RedeemForm", "used: false", true],
+    ]);
+    expect(sites[0]?.diff).toContain("+        await db.client.giftCard.update({ where: { id: gift.id }, data: { used: true } });\n");
+    expect(findSitesInSource(CLASSES, "components/redeem-form.ts", tsx)).toEqual([]);
   });
 
   it("lowers an upsert inside a batch transaction, where the split form would not run", () => {
@@ -172,20 +260,26 @@ describe("find sites in a tree", () => {
   it("lists every site in sorted order with the prefix, skipping dependencies, declarations and other files", () => {
     const root = materialize();
     const report = findSites(root, RULES, "src/");
-    expect(report.files_scanned).toBe(7);
+    expect(report.files_scanned).toBe(10);
     expect(report.classes).toEqual(["RACE.guarded-write", "RACE.check-then-act"]);
-    expect(report.site_count).toBe(10);
+    expect(report.site_count).toBe(16);
     expect(report.sites.map((site) => `${site.path}:${String(site.line)}`)).toEqual([
       "src/api/preferences/route.ts:6",
       "src/api/preferences/route.ts:19",
       "src/api/preferences/route.ts:28",
       "src/api/seats/hold.ts:13",
       "src/api/vouchers/redeem.ts:17",
+      "src/components/redeem-form.tsx:12",
+      "src/lib/coupons.ts:9",
+      "src/lib/coupons.ts:17",
       "src/lib/documents.ts:7",
       "src/lib/documents.ts:15",
       "src/lib/documents.ts:15",
       "src/lib/late-read.ts:5",
       "src/lib/quota.ts:12",
+      "src/lib/settings.ts:6",
+      "src/lib/settings.ts:12",
+      "src/lib/settings.ts:17",
     ]);
     expect(report.sites[4]?.diff).toContain("--- a/src/api/vouchers/redeem.ts\n");
     expect(JSON.stringify(findSites(root, RULES, "src/"))).toBe(JSON.stringify(report));
@@ -196,9 +290,9 @@ describe("find sites in a tree", () => {
     const out = join(scratch, "sites.json");
     const run = spawnSync(process.execPath, [CLI, "find-sites", "--root", root, "--record", out], { encoding: "utf8" });
     expect(run.status).toBe(0);
-    expect(run.stderr).toContain("find-sites: 10 sites in 7 files");
+    expect(run.stderr).toContain("find-sites: 16 sites in 10 files");
     const report = JSON.parse(readFileSync(out, "utf8")) as { site_count: number; sites: SiteRecord[] };
-    expect(report.site_count).toBe(10);
+    expect(report.site_count).toBe(16);
     expect(report.sites[0]?.path).toBe("api/preferences/route.ts");
     const missing = spawnSync(process.execPath, [CLI, "find-sites"], { encoding: "utf8" });
     expect(missing.status).toBe(2);

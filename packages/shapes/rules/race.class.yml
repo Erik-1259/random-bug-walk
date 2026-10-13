@@ -190,14 +190,20 @@ severity: info
 message: An upsert reads and writes the record in one statement.
 note: Split into a read followed by a create, two concurrent requests can both find no record and both create one.
 utils:
+  # Every entry must be a where, update or create pair: another pair, a spread (`...base`), a
+  # shorthand key (`select`) or a method would be dropped by the rewrite.
   only-upsert-keys:
     not:
       has:
-        kind: pair
-        not:
-          has:
-            field: key
-            regex: ^(where|update|create)$
+        any:
+          - kind: spread_element
+          - kind: shorthand_property_identifier
+          - kind: method_definition
+          - kind: pair
+            not:
+              has:
+                field: key
+                regex: ^(where|update|create)$
 rule:
   kind: call_expression
   all:
