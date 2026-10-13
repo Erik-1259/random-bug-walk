@@ -23,8 +23,9 @@ utils:
           has:
             field: property
             regex: ^(update|updateMany|delete|deleteMany)$
-      # The read is any call of a read method on the same model anywhere in the enclosing
-      # function. The method test sits inside the search, so the write itself never satisfies it.
+      # The read is any call of a read method on the same model in an enclosing function, outside
+      # any function nested in it: a read in a callback that may never run does not precede the
+      # write. The method test sits inside the search, so the write itself never satisfies it.
       - inside:
           any:
             - kind: function_declaration
@@ -33,7 +34,12 @@ utils:
             - kind: method_definition
           stopBy: end
           has:
-            stopBy: end
+            stopBy:
+              any:
+                - kind: function_declaration
+                - kind: function_expression
+                - kind: arrow_function
+                - kind: method_definition
             kind: call_expression
             all:
               - pattern: $RDB.$MODEL.$READ($$$)
@@ -174,7 +180,12 @@ rule:
                   - kind: method_definition
                 stopBy: end
                 has:
-                  stopBy: end
+                  stopBy:
+                    any:
+                      - kind: function_declaration
+                      - kind: function_expression
+                      - kind: arrow_function
+                      - kind: method_definition
                   kind: call_expression
                   all:
                     - pattern: $RDB.$MODEL.$READ($$$)
@@ -240,9 +251,11 @@ rule:
                   selector: pair
             - matches: only-upsert-keys
             # The rewrite moves the where, update and create values into a plain arrow callback that
-            # binds the read result as `found`. Refuse any argument whose meaning that move changes:
-            # a name `found` would read the new binding, and an `await` or `yield` cannot sit in a
-            # non-async, non-generator arrow.
+            # binds the read result as `found`, runs it after the read resolves, evaluates only one
+            # of update and create, and evaluates where twice. Refuse any argument whose meaning
+            # that move changes: a name `found` would read the new binding, an `await` or `yield`
+            # cannot sit in a non-async, non-generator arrow, and a call, `new`, assignment or
+            # increment would run later, not at all, or twice.
             - not:
                 has:
                   stopBy: end
@@ -253,6 +266,22 @@ rule:
                       regex: ^found$
                     - kind: await_expression
                     - kind: yield_expression
+                    - kind: call_expression
+                    - kind: new_expression
+                    - kind: assignment_expression
+                    - kind: augmented_assignment_expression
+                    - kind: update_expression
+    # The rewrite names the client three times, so a client computed by a call would run three times.
+    - has:
+        field: function
+        kind: member_expression
+        not:
+          has:
+            stopBy: end
+            any:
+              - kind: call_expression
+              - kind: new_expression
+              - kind: await_expression
 fix: "$DB.$MODEL.findUnique({ where: $WHERE }).then((found) => (found ? $DB.$MODEL.update({ where: $WHERE, data: $UPDATE }) : $DB.$MODEL.create({ data: $CREATE })))"
 metadata:
   class_id: RACE.check-then-act

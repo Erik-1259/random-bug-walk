@@ -369,6 +369,48 @@ describe("find sites in one file", () => {
     expect(findSitesInSource(CLASSES, "lib/prefs.ts", code)).toEqual([]);
   });
 
+  it("does not match an upsert whose argument or client would run at a different time or more often once split", () => {
+    const code = [
+      "export async function save(db, profileId, input, next) {",
+      "  await db.client.preference.upsert({ where: { profileId }, update: buildUpdate(input), create: { profileId } });",
+      "  await db.client.preference.upsert({ where: { profileId }, update: {}, create: { profileId, createdAt: new Date() } });",
+      "  await db.client.preference.upsert({ where: { profileId: next++ }, update: {}, create: { profileId } });",
+      "  await db.client.preference.upsert({ where: { profileId }, update: { value: (input = 1) }, create: { profileId } });",
+      "  await getDb().preference.upsert({ where: { profileId }, update: {}, create: { profileId } });",
+      "}",
+      "",
+    ].join("\n");
+    expect(findSitesInSource(CLASSES, "lib/prefs.ts", code)).toEqual([]);
+  });
+
+  it("does not take a read inside a nested callback as the read before an outer write", () => {
+    const code = [
+      "export async function close(db, id) {",
+      "  const later = async () => db.client.room.findFirst({ where: { id } });",
+      "  await db.client.room.update({ where: { id, active: true }, data: { active: false } });",
+      "}",
+      "",
+    ].join("\n");
+    expect(findSitesInSource(CLASSES, "lib/rooms.ts", code)).toEqual([]);
+  });
+
+  it("scores a write in a callback against the read of the function around it", () => {
+    const code = [
+      "export async function closeAll(db, id, items) {",
+      "  const room = await db.client.room.findFirst({ where: { id, active: true } });",
+      "  await Promise.all(items.map(async () => {",
+      "    const audit = async () => db.client.room.findFirst({ where: { id } });",
+      "    await db.client.room.update({ where: { id: room.id, active: true }, data: { active: false } });",
+      "  }));",
+      "}",
+      "",
+    ].join("\n");
+    const sites = findSitesInSource(CLASSES, "lib/rooms.ts", code);
+    expect(sites.map((site) => [site.line, site.confidence.signals])).toEqual([
+      [5, { read_before_write: true, read_checks_guard: true, write_result_used: false, identity_from_read: true, await_between: false }],
+    ]);
+  });
+
   it("gives each site a diff of that site alone", () => {
     for (const site of sitesIn("lib/documents.ts")) {
       const changed = site.diff.split("\n").filter((line) => /^[-+](?![-+])/.test(line));

@@ -2,6 +2,11 @@ id: race.guarded-write
 valid:
   - |
     async function close(id: string) {
+      const later = async () => db.ticket.findFirst({ where: { id } });
+      await db.ticket.update({ where: { id, open: true }, data: { open: false } });
+    }
+  - |
+    async function close(id: string) {
       const owner = await db.owner.findUnique({ where: { id } });
       await db.ticket.updateMany({ where: { id: owner.id, open: true }, data: { open: false } });
     }

@@ -29,6 +29,10 @@ snapshots:
       style: secondary
       start: 34
       end: 107
+    - source: db.client.preference.upsert
+      style: secondary
+      start: 6
+      end: 33
   ? |
     await tx.setting.upsert({
       where: { key: 'mode' },
@@ -96,6 +100,10 @@ snapshots:
       style: secondary
       start: 24
       end: 119
+    - source: tx.setting.upsert
+      style: secondary
+      start: 6
+      end: 23
   ? |
     return db.stat.upsert({ create: { profileId, visits: 1 }, where: { profileId }, update: { visits: { increment: 1 } } });
   : fixed: |
@@ -125,3 +133,7 @@ snapshots:
       style: secondary
       start: 22
       end: 118
+    - source: db.stat.upsert
+      style: secondary
+      start: 7
+      end: 21

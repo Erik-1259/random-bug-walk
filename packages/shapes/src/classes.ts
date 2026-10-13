@@ -155,10 +155,22 @@ function objectPairs(object: SgNode | null | undefined): SgNode[] {
   return (object?.children() ?? []).filter((child) => kindOf(child) === "pair");
 }
 
+/**
+ * Whether `node` runs in the same flow as `call`: its nearest enclosing function also encloses
+ * `call`. A node in a callback nested beside or below the write's scope (one that may never run)
+ * does not.
+ */
+function inFlowOf(node: SgNode, call: SgNode): boolean {
+  const fn = node.ancestors().find((ancestor) => FUNCTION_KINDS.has(kindOf(ancestor) ?? ""));
+  return fn !== undefined && fn.range().start.index <= call.range().start.index && call.range().end.index <= fn.range().end.index;
+}
+
 function guardedWriteSignals(guard: SgNode): Signals {
   const call = guard.ancestors().find((node) => kindOf(node) === "call_expression");
   const write = call === undefined ? undefined : modelCall(call);
-  const fn = guard.ancestors().find((node) => FUNCTION_KINDS.has(kindOf(node) ?? ""));
+  // The outermost enclosing function: a read in it, or in any function around the write, counts,
+  // but not one inside a callback the write does not run in.
+  const fn = guard.ancestors().filter((node) => FUNCTION_KINDS.has(kindOf(node) ?? "")).at(-1);
   if (call === undefined || write === undefined || fn === undefined) {
     return { read_before_write: false, read_checks_guard: false, write_result_used: false, identity_from_read: false, await_between: false };
   }
@@ -166,7 +178,7 @@ function guardedWriteSignals(guard: SgNode): Signals {
     .findAll({ rule: { kind: "call_expression" } })
     .filter((node) => {
       const read = modelCall(node);
-      return read?.model === write.model && READ_METHODS.has(read.method) && before(node, call);
+      return read?.model === write.model && READ_METHODS.has(read.method) && before(node, call) && inFlowOf(node, call);
     });
   const read = reads.at(-1);
   const key = pairKey(guard);
@@ -187,6 +199,7 @@ function guardedWriteSignals(guard: SgNode): Signals {
         (node) =>
           before(read, node) &&
           node.range().end.index <= call.range().end.index &&
+          inFlowOf(node, call) &&
           fieldOf(node, "property")?.text() === key &&
           readNames.includes(fieldOf(node, "object")?.text() ?? ""),
       );
@@ -203,11 +216,11 @@ function guardedWriteSignals(guard: SgNode): Signals {
       ) ?? false;
   const awaitBetween =
     read !== undefined &&
-    fn.findAll({ rule: { kind: "await_expression" } }).some((node) => before(read, node) && before(node, call));
+    fn.findAll({ rule: { kind: "await_expression" } }).some((node) => before(read, node) && before(node, call) && inFlowOf(node, call));
   return {
     read_before_write: read !== undefined,
     read_checks_guard: readFilters || testedInCode,
-    write_result_used: referencesAfter(fn, boundNames(call), call),
+    write_result_used: referencesAfter(guard.ancestors().find((node) => FUNCTION_KINDS.has(kindOf(node) ?? "")) ?? fn, boundNames(call), call),
     identity_from_read: identity,
     await_between: awaitBetween,
   };

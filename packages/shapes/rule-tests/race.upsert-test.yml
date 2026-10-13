@@ -1,6 +1,10 @@
 id: race.upsert
 valid:
   - |
+    await db.preference.upsert({ where: { profileId }, update: buildUpdate(input), create: { profileId } });
+  - |
+    await getDb().preference.upsert({ where: { profileId }, update: {}, create: { profileId } });
+  - |
     await db.preference.upsert({ where: { profileId }, update: {}, create: { profileId }, select: { theme: true } });
   - |
     await db.preference.upsert({ where: { profileId }, update: {}, create: { profileId }, select });
