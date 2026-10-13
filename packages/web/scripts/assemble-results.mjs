@@ -35,10 +35,11 @@ if (existsSync(out)) {
   process.exit(2);
 }
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
-async function fetchBytes(url) {
+async function fetchBytes(url, { missingOk = false } = {}) {
   for (let attempt = 1; ; attempt++) {
     const response = await fetch(url);
     if (response.ok) return Buffer.from(await response.arrayBuffer());
+    if (missingOk && response.status === 404) return null;
     if (attempt >= 3 || response.status < 500) throw new Error(`GET ${url}: HTTP ${response.status}`);
   }
 }
@@ -55,8 +56,9 @@ let objects = 0;
  */
 async function publishedStatus(root, attempts = 7, waitMs = 15_000) {
   for (let attempt = 1; ; attempt++) {
-    const bytes = await fetchBytes(new URL(`status/${root}.json`, base).href);
-    if (JSON.parse(bytes.toString("utf8")).publication_status === "published") return bytes;
+    // On a first publication the status object may not exist yet: a 404 is "not yet published".
+    const bytes = await fetchBytes(new URL(`status/${root}.json`, base).href, { missingOk: true });
+    if (bytes !== null && JSON.parse(bytes.toString("utf8")).publication_status === "published") return bytes;
     if (attempt >= attempts) throw new Error(`status/${root}.json does not say published after ${String(attempts)} fetches; retry in a few minutes`);
     console.log(`run ${root}: status not yet published, fetching again in ${String(waitMs / 1000)} s`);
     await new Promise((resolve) => setTimeout(resolve, waitMs));
