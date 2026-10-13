@@ -294,7 +294,7 @@ def doc_block(text: str) -> str | None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(description=(__doc__ or "UC1 power table").splitlines()[0])
     parser.add_argument("--check", action="store_true", help="compare with the doc's block")
     parser.add_argument(
         "--doc", type=Path, default=DOC, help="the doc to check (default: %(default)s)"
