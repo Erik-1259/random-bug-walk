@@ -440,3 +440,28 @@ describe("build: a failing check stores and writes nothing", () => {
   });
 });
 
+describe("build: the family the admitted run's records name", () => {
+  const RACE = { id: "race", adm06: { status: "not_applicable", reason: "Synthetic: a partial or stub fix of this race has no natural form." }, admission_copies: 11 };
+
+  /** The eligible published run with a family record added to its admission summary. */
+  function runWithFamily(family: Record<string, unknown>): string {
+    const runDir = join(tempDir(), "run");
+    cpSync(eligible.runDir, runDir, { recursive: true });
+    editJson(join(runDir, "results", factory.ids.executions.admission, "summary.json"), (summary) => ({ ...summary, family }));
+    return runDir;
+  }
+
+  it("refuses a recorded race latency that the admission's profile hash does not hold, before anything is built (run_family_mismatch)", async () => {
+    const opts = options({ run: runWithFamily({ ...RACE, race_latency_ms: 75 }) });
+    await expect(buildRelease(opts, deps())).rejects.toMatchObject({ code: "run_family_mismatch" });
+    expect(existsSync(opts.out)).toBe(false);
+    expect(existsSync(opts.localStore ?? "")).toBe(false);
+  });
+
+  it("refuses time-zone family inputs for a run whose records name the race family (family_conflict)", async () => {
+    const opts = options({ run: runWithFamily({ ...RACE, race_latency_ms: null }) });
+    await expect(buildRelease(opts, deps())).rejects.toMatchObject({ code: "family_conflict" });
+    expect(existsSync(opts.out)).toBe(false);
+  });
+});
+

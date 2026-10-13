@@ -28,6 +28,7 @@ import {
   expectedVectors,
   familyRecord,
   exportImage,
+  frozenJobFamily,
   importJob,
   inspectImage,
   loadCopyInputs,
@@ -503,8 +504,8 @@ async function build(inputs: JobInputs, deps: ControllerDeps, state: ControllerS
     vectors: expectedVectors(copyInputs.family.loadFixture(), copyInputs.probes),
     adm06: adm06For(copyInputs.probes),
     // A family without an alternative fix: a judge replay built here (`run --job-kind judge_verify
-    // --family race`) grades the reference fix as fixed-01. Prebuilt judge replays do not reach
-    // this build and are not wired for families yet: judge-run.ts passes no family.
+    // --family race`) grades the reference fix as fixed-01. A prebuilt judge replay does not reach
+    // this build: its family and latency come from its frozen job (withFrozenFamily).
     ...(copyInputs.alternative === null ? { judgeFixed: "fixed" as const } : {}),
     profileSha256: profileSha256(copyInputs.raceLatencyMs),
     deadlineAt: utcSeconds(deadlineMs),
@@ -779,8 +780,24 @@ async function interrupted(inputs: JobInputs, deps: ControllerDeps, state: Contr
   return summary;
 }
 
+/**
+ * A judge replay's family and race latency, read from its frozen job (frozenJobFamily), so the
+ * replay applies them the way a `run --family race --race-latency-ms` job does: the family's
+ * fixture and probe set, and the latency in every copy. Off the default family only, so a
+ * time-zone replay's inputs, and its fingerprint, are what they always were. A frozen job whose
+ * family cannot be read is refused before any copy.
+ */
+function withFrozenFamily(inputs: JobInputs): { inputs: JobInputs; refusal: string | null } {
+  if (inputs.prebuilt === undefined || inputs.family !== undefined || inputs.raceLatencyMs !== undefined) return { inputs, refusal: null };
+  const frozen = frozenJobFamily(inputs.prebuilt.job);
+  if (!frozen.ok) return { inputs, refusal: frozen.detail };
+  if (frozen.family === DEFAULT_FAMILY) return { inputs, refusal: null };
+  return { inputs: { ...inputs, family: frozen.family, ...(frozen.raceLatencyMs === null ? {} : { raceLatencyMs: frozen.raceLatencyMs }) }, refusal: null };
+}
+
 /** Runs one job end to end, or returns the job its work directory already holds. */
-export async function runJob(inputs: JobInputs, deps: ControllerDeps): Promise<JobOutcome> {
+export async function runJob(given: JobInputs, deps: ControllerDeps): Promise<JobOutcome> {
+  const { inputs, refusal: familyRefusal } = withFrozenFamily(given);
   if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(inputs.name)) throw new InputsError("the job name must be lowercase letters, digits and single hyphens");
   if (inputs.backend === "sandbox" && (deps.sandbox === undefined || inputs.sandboxImage === null)) throw new InputsError("the sandbox backend needs the SDK and --sandbox-image");
   const p = paths(inputs.work, inputs.name);
@@ -843,6 +860,7 @@ export async function runJob(inputs: JobInputs, deps: ControllerDeps): Promise<J
 
   let built: Built;
   try {
+    if (familyRefusal !== null) throw new JobRefusal(`family_unreadable: ${familyRefusal}`);
     built = inputs.prebuilt === undefined ? await build(inputs, deps, state, p, summary, deadline) : prebuiltBuild(inputs, inputs.prebuilt, deps, p, summary);
   } catch (error) {
     if (!(error instanceof PlanError || error instanceof ExportError || error instanceof CodeStateRefusal || error instanceof JobRefusal || error instanceof InputsError)) throw error;
