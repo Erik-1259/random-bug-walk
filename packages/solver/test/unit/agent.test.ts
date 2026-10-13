@@ -1,7 +1,9 @@
 import type { PGlite } from "@electric-sql/pglite";
 import type { Spend } from "@rbw/spend";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { attemptKey, NO_TOOL_CALL_REMINDER, runAttempt, SOLVER_SYSTEM_PROMPT, transcriptLine } from "../../src/agent.ts";
+import type { ModelMessage } from "ai";
+import { attemptKey, elideOldestToolResult, HISTORY_ELISION_NOTE, NO_TOOL_CALL_REMINDER, runAttempt, SOLVER_SYSTEM_PROMPT, transcriptLine } from "../../src/agent.ts";
+import { countSolverPromptBound } from "../../src/envelope.ts";
 import { CHAT_COMPLETIONS_URL, SUPER_SOLVER_PROFILE } from "../../src/profile.ts";
 import { attemptOptions, FakeSession, freshSpend, openDb, scriptedFetch, spySpend, steppingClock, withCaps } from "../support.ts";
 
@@ -271,6 +273,57 @@ describe("caps", () => {
     const result = await runAttempt(attemptOptions(spend, script.fetch, new FakeSession(), { profile, now: steppingClock(60_000) }).options);
     expect(result).toMatchObject({ outcome: "cap_reached", cap: "wall" });
     expect(script.bodies.length).toBeLessThan(3);
+  });
+
+  it.each(["off", "on"] as const)(
+    "keeps a 20-turn %s-arm session with many capped outputs under the per-call limit by eliding the oldest tool results",
+    async (arm) => {
+      const { spend } = await freshSpend(db);
+      // Realistic capped outputs: 16 KB of log-like lines on stdout and on stderr, and 16 KB pages of logs.
+      const lines = (label: string) => Array.from({ length: 400 }, (_, i) => `${label} line ${String(i)}: synthetic output text`).join("\n");
+      const session = new FakeSession();
+      session.bashResult = { exit_code: 1, stdout: lines("stdout"), stderr: lines("stderr"), timed_out: false };
+      session.logsPage = { text: lines("server log"), next_cursor: "c1", truncated: true };
+      const replies = Array.from({ length: 19 }, (_, i) =>
+        arm === "on" && i % 2 === 1 ? { calls: [{ name: "server_logs", input: {} }] } : { calls: [{ name: "bash", input: { command: `grep -rn synthetic src/${String(i)}` } }] },
+      );
+      const script = scriptedFetch([...replies, { calls: [SUBMIT] }]);
+      const run = attemptOptions(spend, script.fetch, session, { spec: { arm, index: 2, rerun: 0 } });
+      const result = await runAttempt(run.options);
+
+      expect(result).toMatchObject({ outcome: "submitted", cap: null, turns: 20 });
+      expect(script.bodies).toHaveLength(20);
+      for (const body of script.bodies) {
+        expect(countSolverPromptBound(body, SUPER_SOLVER_PROFILE)).toBeLessThanOrEqual(SUPER_SOLVER_PROFILE.hashed.max_input_tokens);
+      }
+      expect(result.elided_tool_results).toBeGreaterThan(0);
+      const elided = run.events.filter((e) => e.type === "history_elided");
+      expect(elided).toHaveLength(result.elided_tool_results);
+      // The newest result stays whole and the oldest is a stub.
+      const last = parse(script.bodies.at(-1) ?? "");
+      const tools = last.messages.filter((m) => m.role === "tool").map((m) => JSON.stringify(m.content));
+      expect(tools[0]).toContain(HISTORY_ELISION_NOTE);
+      expect(tools.at(-1)).not.toContain(HISTORY_ELISION_NOTE);
+      expect(tools.at(-1)).toContain("line 399: synthetic output text");
+    },
+  );
+
+  it("elides the oldest long result first, never a short one, a stub or the newest tool message", () => {
+    const result = (id: string, value: string) => ({ type: "tool-result" as const, toolCallId: id, toolName: "bash", output: { type: "text" as const, value } });
+    const long = "x".repeat(1000);
+    const messages: ModelMessage[] = [
+      { role: "user", content: "Bug report" },
+      { role: "tool", content: [result("short", "ok"), result("a", long)] },
+      { role: "tool", content: [result("b", long)] },
+      { role: "tool", content: [result("newest", long)] },
+    ];
+    expect(elideOldestToolResult(messages)).toEqual({ tool_call_id: "a", tool_name: "bash", bytes: 1000 });
+    expect(elideOldestToolResult(messages)).toEqual({ tool_call_id: "b", tool_name: "bash", bytes: 1000 });
+    expect(elideOldestToolResult(messages)).toBeNull();
+    const text = JSON.stringify(messages);
+    expect(text).toContain('"value":"ok"');
+    expect(text.split(HISTORY_ELISION_NOTE)).toHaveLength(3);
+    expect(JSON.stringify(messages[3])).toContain(long);
   });
 
   it("refuses a request over the per-call input limit without reserving", async () => {

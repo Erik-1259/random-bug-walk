@@ -171,6 +171,7 @@ function row(arm: Arm, index: number, solved: boolean, extra: Partial<AttemptRow
     tokens: 0,
     turns: 0,
     cap: null,
+    history_elisions: 0,
     tool_calls: { ...NO_TOOLS, server_logs: arm === "on" ? 2 : 0 },
     contaminated: false,
     ...extra,
@@ -282,10 +283,15 @@ describe("the per-bug analysis", () => {
     const rows = [
       row("off", 1, true, { grade1: "fail" }),
       row("off", 2, false, { contaminated: true, cap: "turns" }),
-      row("on", 3, false),
+      row("on", 3, false, { cap: "context_window", history_elisions: 7 }),
+      row("on", 4, false, { history_elisions: 2 }),
     ];
     const bug = analyzeBug("race-synthetic-1", rows);
     expect(bug.arms.off).toMatchObject({ grade_disagreements: 1, contaminated: 1, capped: 1, solved: 1 });
+    expect(bug.arms.off.caps).toEqual({ turns: 1, input_tokens: 0, wall: 0, context_window: 0 });
+    expect(bug.arms.on.caps).toEqual({ turns: 0, input_tokens: 0, wall: 0, context_window: 1 });
+    expect(bug.arms.on).toMatchObject({ attempts_with_elisions: 2, history_elisions: 9 });
+    expect(bug.arms.off).toMatchObject({ attempts_with_elisions: 0, history_elisions: 0 });
   });
 
   it("refuses a counted in-scope attempt without the authoritative grade", () => {

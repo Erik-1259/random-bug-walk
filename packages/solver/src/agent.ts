@@ -14,7 +14,7 @@ import { contaminationHits } from "./contamination.ts";
 import type { ContaminationHit } from "./contamination.ts";
 import { countSolverPromptBound, settlementLines, solverEnvelope, unsentLines, usageState } from "./envelope.ts";
 import { CHAT_COMPLETIONS_URL, SOLVER_KIND } from "./profile.ts";
-import type { SolverProfile } from "./profile.ts";
+import type { CapName, SolverProfile } from "./profile.ts";
 import { armToolNames, armToolSet, newToolState, runTool } from "./tools.ts";
 import type { Arm, SolverSession, ToolName, ToolOutcome } from "./tools.ts";
 
@@ -93,12 +93,14 @@ export type TranscriptEvent =
     }
   | { type: "tool_call"; turn: number; id: string; name: string; input: unknown; output: string; started_at: string; ended_at: string }
   | { type: "reminder"; turn: number; text: string }
+  /** The history policy replaced an earlier tool result with a stub before `turn`'s request. */
+  | { type: "history_elided"; turn: number; tool_call_id: string; tool_name: string; bytes: number }
   | { type: "attempt_end"; result: AttemptResult; ended_at: string };
 
 export type CallFailure = "http_status" | "invalid_output" | "request_not_sent" | "lost_response";
 
 export type AttemptOutcome = "submitted" | "cap_reached" | "spend_refused" | "infrastructure_error";
-export type CapName = "turns" | "input_tokens" | "wall" | "context_window";
+export type { CapName };
 
 export interface AttemptResult {
   attempt_key: string;
@@ -123,6 +125,8 @@ export interface AttemptResult {
   tool_calls: Record<ToolName, number>;
   invalid_tool_calls: number;
   rebuilds: number;
+  /** Tool results the history policy replaced with a stub. */
+  elided_tool_results: number;
   bash_commands: string[];
   contamination: ContaminationHit[];
   wall_ms: number;
@@ -439,6 +443,48 @@ function answeredBySdk(messages: readonly ModelMessage[], toolCallId: string): b
   );
 }
 
+/** The start of the stub that replaces a tool result the history policy elided. */
+export const HISTORY_ELISION_NOTE = "[an earlier tool result was elided to keep the request within the per-call limit; call the tool again to see it";
+
+const encoder = new TextEncoder();
+
+function elisionStub(bytes: number): string {
+  return `${HISTORY_ELISION_NOTE} (${String(bytes)} bytes)]`;
+}
+
+/**
+ * The history policy, the same in both arms: elide the oldest tool result that is not in the
+ * newest tool message, is not already a stub and is longer than its stub, by replacing its output
+ * with the stub. Returns what was elided, or null when nothing may be.
+ */
+export function elideOldestToolResult(messages: ModelMessage[]): { tool_call_id: string; tool_name: string; bytes: number } | null {
+  const newest = messages.findLastIndex((message) => message.role === "tool");
+  for (let i = 0; i < newest; i += 1) {
+    const message = messages[i];
+    if (message?.role !== "tool") {
+      continue;
+    }
+    for (const [j, part] of message.content.entries()) {
+      if (part.type !== "tool-result") {
+        continue;
+      }
+      if (part.output.type === "text" && part.output.value.startsWith(HISTORY_ELISION_NOTE)) {
+        continue;
+      }
+      const bytes = encoder.encode(part.output.type === "text" || part.output.type === "error-text" ? part.output.value : JSON.stringify(part.output)).length;
+      const stub = elisionStub(bytes);
+      if (bytes <= encoder.encode(stub).length) {
+        continue;
+      }
+      const content = [...message.content];
+      content[j] = { ...part, output: { type: "text", value: stub } };
+      messages[i] = { ...message, content };
+      return { tool_call_id: part.toolCallId, tool_name: part.toolName, bytes };
+    }
+  }
+  return null;
+}
+
 /**
  * Runs one attempt to its end and returns its result. Every transcript event is written before the
  * function returns, the last one being `attempt_end`.
@@ -484,6 +530,7 @@ export async function runAttempt(options: AttemptOptions): Promise<AttemptResult
     tool_calls: state.calls,
     invalid_tool_calls: 0,
     rebuilds: 0,
+    elided_tool_results: 0,
     bash_commands: state.bash_commands,
     contamination: [],
     wall_ms: 0,
@@ -534,7 +581,15 @@ export async function runAttempt(options: AttemptOptions): Promise<AttemptResult
     const requestedAt = now();
     const outcome = await meteredTurn(loop, turnNumber, messages, result.input_tokens);
     if (outcome.kind === "too_large") {
-      return stopOnCap("context_window");
+      // The history policy: elide the oldest tool result and render the request again. The turn
+      // is not launched, so the caps are checked again before the retry.
+      const elided = elideOldestToolResult(messages);
+      if (elided === null) {
+        return stopOnCap("context_window");
+      }
+      result.elided_tool_results += 1;
+      await options.transcript({ type: "history_elided", turn: turnNumber, ...elided });
+      continue;
     }
     if (outcome.kind === "attempt_input_cap") {
       return stopOnCap("input_tokens");

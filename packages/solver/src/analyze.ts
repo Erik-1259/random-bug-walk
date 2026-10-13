@@ -5,7 +5,8 @@
 // per-bug "made worse" statement; and the per-attempt table. The record is canonical JSON v1, so
 // every fraction is a decimal string.
 import { encodeCanonical } from "@rbw/schema";
-import type { CapName } from "./agent.ts";
+import { CAP_NAMES } from "./profile.ts";
+import type { CapName } from "./profile.ts";
 import type { Arm, ToolName } from "./tools.ts";
 import { TOOL_NAMES } from "./tools.ts";
 
@@ -303,6 +304,8 @@ export interface AttemptRow {
   tokens: number;
   turns: number;
   cap: CapName | null;
+  /** Tool results the history policy elided (AttemptResult.elided_tool_results). */
+  history_elisions: number;
   tool_calls: Record<ToolName, number>;
   contaminated: boolean;
 }
@@ -354,6 +357,11 @@ interface ArmSummary {
   prohibited_edits: number;
   contaminated: number;
   capped: number;
+  /** Counted attempts stopped by each cap, `context_window` included. */
+  caps: Record<CapName, number>;
+  /** Counted attempts in which the history policy elided at least one tool result, and the total elided. */
+  attempts_with_elisions: number;
+  history_elisions: number;
   /** Attempts that called server_logs at least once (the on arm's tool-use check). */
   used_server_logs: number;
   tool_calls: Record<ToolName, number>;
@@ -386,6 +394,9 @@ function summarize(rows: readonly AttemptRow[]): ArmSummary {
     prohibited_edits: counted.reduce((sum, row) => sum + row.prohibited_edits, 0),
     contaminated: counted.filter((row) => row.contaminated).length,
     capped: counted.filter((row) => row.cap !== null).length,
+    caps: Object.fromEntries(CAP_NAMES.map((name) => [name, counted.filter((row) => row.cap === name).length])) as Record<CapName, number>,
+    attempts_with_elisions: counted.filter((row) => row.history_elisions > 0).length,
+    history_elisions: counted.reduce((sum, row) => sum + row.history_elisions, 0),
     used_server_logs: counted.filter((row) => row.tool_calls.server_logs > 0).length,
     tool_calls: toolCalls,
     grade_disagreements: counted.filter((row) => row.grade1 !== null && row.grade2 !== null && row.grade1 !== row.grade2).length,

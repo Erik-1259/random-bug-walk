@@ -29,7 +29,7 @@ The fixed solver of the paired comparison (spec §2.3 UC1, §2.4): a small tool-
 
 ## Model profiles
 
-A profile reuses the writer's `ModelProfile` shape (`packages/writer/src/profile.ts`). Its hashed part is canonical JSON v1, and its digest is the `runtime_profile_sha256` of every call. The hashed part holds the model, the per-call limits, the prompt-bound method, the sampling settings, the attempt caps, the tool output caps and the request extras, so a change to any of them changes the digest.
+A profile reuses the writer's `ModelProfile` shape (`packages/writer/src/profile.ts`). Its hashed part is canonical JSON v1, and its digest is the `runtime_profile_sha256` of every call. The hashed part holds the model, the per-call limits, the prompt-bound method, the history policy, the sampling settings, the attempt caps, the tool output caps and the request extras, so a change to any of them changes the digest.
 
 | | Super (pre-registered) | Kimi (fallback only) |
 | --- | --- | --- |
@@ -40,7 +40,7 @@ A profile reuses the writer's `ModelProfile` shape (`packages/writer/src/profile
 | Output tokens per call | 8,192 | 16,384 |
 | Request timeout | 300,000 ms | 600,000 ms |
 | Temperature | 0.6 | 0.6 |
-| `runtime_profile_sha256` | `978b87fdd5815b13cd42e5226080060526c65ed37d5328dd50045a57fb2586d4` | `2e799c711837f0168afe24ae2e67b765f7680d06167254e21113a4d6bdad14e3` |
+| `runtime_profile_sha256` | `572e4f48907ccf7e905b00f24e7141dcad03c6a4e70b3f7b5544de8f5b6ed271` | `17386e61aed8cb33864c836b1e7efa269f3e1091cd5104e07cf7bcc7778d0ceb` |
 
 Both: provider `token-factory`, base URL `https://api.tokenfactory.nebius.com/v1/`, 0 retries, kind `solver.turn`, role `solver`, key variable `TOKEN_FACTORY_SOLVER_KEY`, seed = the attempt index.
 
@@ -54,8 +54,19 @@ The per-call limits, the timeouts and the temperature are predictions. The pilot
 | Input tokens | 1,500,000 summed | before each turn: reported input so far (the counted bound for a call that reported none) plus this turn's counted bound |
 | Wall time | 40 minutes | before each turn; a running tool is not interrupted |
 | `rebuild_restart` calls | 8 | the 9th call is answered with an error and never reaches the session |
+| Context window (`context_window`) | one request's counted bound at most 131,072 (UTF-8 bytes of the body plus framing) | before each turn, after the history policy below; reached only when a request is still over the limit with nothing left to elide |
 
-A capped attempt counts, with its values recorded as they are.
+A capped attempt counts, with its values recorded as they are. The analysis reports, per arm, how many counted attempts each cap stopped, `context_window` included.
+
+### History policy
+
+The per-call limit is counted in bytes, an upper bound on tokens, so it binds well below 131,072 real tokens (code and JSON run at several bytes per token; the pilot can measure the ratio). Without a policy, every tool result stays in every later request: two 64 KB file reads, or four `bash` calls with full 16 KB stdout and stderr, fill the limit, and in the synthetic 20-turn test the loop without the policy stopped on `context_window` at turn 4 (off arm) and turn 5 (on arm). That cap would bind long before the others, and sooner in the `on` arm, whose `server_logs` pages add to the history. So the history is kept within the limit, by the same rule in both arms:
+
+- Before each turn, while the request's counted bound is over the per-call limit, the oldest tool result outside the newest tool message is replaced by a stub: `[an earlier tool result was elided to keep the request within the per-call limit; call the tool again to see it (<n> bytes)]`. A result shorter than its stub, and one already a stub, are skipped. The newest tool results, the messages, the assistant's tool calls and the tool definitions are never changed.
+- The request is then rendered and counted again. Each elision is a `history_elided` transcript event, and the attempt's `elided_tool_results` counts them; the analysis reports the elisions per arm.
+- The policy is part of the hashed profile (`history_policy`), so it is frozen with the profile.
+
+The limit stays at 131,072 counted bytes: a byte count at or under it cannot be over the model's context in tokens, so the provider never rejects a request for its length and the reservation stays an upper bound. Raising it would need the pilot to measure the served context and the bytes per token first.
 
 ## Envelope and cost limits
 
@@ -103,18 +114,18 @@ A thrown error from the session is an infrastructure error: the attempt stops, t
 
 `runAttempt(options)` takes the ledger, the injected `fetch`, the profile, the run context (validated strictly), the pool, allocation and slot keys, the rate file's bytes, the attempt (`{ arm, index, rerun }`), the bug report text, the session, a transcript sink and an optional clock.
 
-Each turn: render the exact body (a preview that sends nothing), count its bound, stop on a cap, check that the context's root holds the slot, reserve, record launching, send, then record the terminal or uncertain state and settle. The call name is `solver.turn:<arm>-<index, 3 digits>-r<rerun>:<turn>`, such as `solver.turn:on-007-r0:12`, so each rerun at an index has its own operations. The loop then runs the turn's tool calls in order and sends their results in the next request. A reply without a tool call gets the fixed reminder as the next user message, and counts as a turn.
+Each turn: render the exact body (a preview that sends nothing), count its bound, apply the history policy while it is over the per-call limit, stop on a cap, check that the context's root holds the slot, reserve, record launching, send, then record the terminal or uncertain state and settle. The call name is `solver.turn:<arm>-<index, 3 digits>-r<rerun>:<turn>`, such as `solver.turn:on-007-r0:12`, so each rerun at an index has its own operations. The loop then runs the turn's tool calls in order and sends their results in the next request. A reply without a tool call gets the fixed reminder as the next user message, and counts as a turn.
 
 | Outcome | When |
 | --- | --- |
 | `submitted` | the model called `submit` |
-| `cap_reached` | a cap was reached (`turns`, `input_tokens`, `wall`, or `context_window` when one request is over the per-call limit) |
+| `cap_reached` | a cap was reached (`turns`, `input_tokens`, `wall`, or `context_window` when one request is still over the per-call limit after the history policy) |
 | `spend_refused` | the slot is not held, or the ledger refused the reservation or the launch; nothing was sent |
 | `infrastructure_error` | a lost response (the operation is left `uncertain` for the operator), an HTTP error, an unreadable response, a ledger refusal after launch, a ledger call that threw from the reservation on (`ledger_exception: <message>`, with the operation's ID for the operator), or a session error |
 
 ## Transcript
 
-The sink receives one event per step, and `transcriptLine` writes each as one JSONL line: `attempt_start` (arm, index, rerun, model, endpoint, profile and rate-file digests, tools, seed), `model_call` (turn, operation ID, the profile's model, the response's `model` field, endpoint, request and response times, payload SHA-256, counted bound, status, HTTP status, reported usage, settled amount, the reply's text and tool calls), `tool_call` (input, the output the model got, times), `reminder`, and `attempt_end` (the result). Request bodies are not stored: the events hold every message the loop added, and each call's payload hash identifies its exact body.
+The sink receives one event per step, and `transcriptLine` writes each as one JSONL line: `attempt_start` (arm, index, rerun, model, endpoint, profile and rate-file digests, tools, seed), `model_call` (turn, operation ID, the profile's model, the response's `model` field, endpoint, request and response times, payload SHA-256, counted bound, status, HTTP status, reported usage, settled amount, the reply's text and tool calls), `tool_call` (input, the output the model got, times), `reminder`, `history_elided` (the tool call ID and name whose result became a stub, and its size in bytes), and `attempt_end` (the result). Request bodies are not stored: the events hold every message the loop added, and each call's payload hash identifies its exact body.
 
 ## Contamination check
 
@@ -122,11 +133,11 @@ The sink receives one event per step, and `transcriptLine` writes each as one JS
 
 ## Analysis and the results record
 
-`analyze(rows)` takes one row per pre-registered attempt index (`AttemptRow`: arm, index, counted or infrastructure error, reruns, both grades, out of scope, prohibited edits, tokens, turns, cap, tool calls, contamination) and returns the record; `resultsRecordJson` writes it as canonical JSON v1 for the publisher. Fractions are decimal strings with six places; medians and Hodges–Lehmann values are exact.
+`analyze(rows)` takes one row per pre-registered attempt index (`AttemptRow`: arm, index, counted or infrastructure error, reruns, both grades, out of scope, prohibited edits, tokens, turns, cap, history elisions, tool calls, contamination) and returns the record; `resultsRecordJson` writes it as canonical JSON v1 for the publisher. Fractions are decimal strings with six places; medians and Hodges–Lehmann values are exact.
 
 - A solve is a counted, in-scope attempt whose grade 2 (the protected Sandbox regrade) passed. Out-of-scope attempts are unsolved and ungraded. A counted, in-scope row without grade 2 is refused.
 - Infrastructure errors are excluded from every outcome and reported per arm, with the rerun count.
-- Per arm: counts, the solve rate with its exact Clopper–Pearson 95% interval, tool calls, attempts that used `server_logs`, contamination, caps, out of scope, prohibited edits, grade 1 and grade 2 disagreements, and median tokens and turns.
+- Per arm: counts, the solve rate with its exact Clopper–Pearson 95% interval, tool calls, attempts that used `server_logs`, contamination, caps (in all and per cap name), attempts with history elisions and the elisions in all, out of scope, prohibited edits, grade 1 and grade 2 disagreements, and median tokens and turns.
 - Per bug: the off-minus-on solve rate with Fisher's exact two-sided p; for tokens and turns, the Hodges–Lehmann median of off-minus-on differences with its distribution-free (Moses) interval, and the exact permutation Wilcoxon–Mann–Whitney p (midranks for ties); Holm across the three.
 - The interval uses the no-ties null distribution, the one R's exact `wilcox.test` uses; with ties its stated level is nominal. The record carries the interval's level.
 - Futility: if the first 6 counted attempts of each arm by index are all unsolved in both arms, or all solved in both, the solve test is not run (`solve: null`), and it enters Holm as p = 1. Tokens and turns continue.

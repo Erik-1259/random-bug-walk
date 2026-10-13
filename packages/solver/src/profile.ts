@@ -32,6 +32,13 @@ export const ATTEMPT_CAPS: AttemptCaps = Object.freeze({
   max_rebuilds: 8,
 });
 
+/**
+ * The caps an attempt can stop on. `context_window`: one request stays over the per-call limit
+ * after the history policy has elided every tool result it may.
+ */
+export const CAP_NAMES = ["turns", "input_tokens", "wall", "context_window"] as const;
+export type CapName = (typeof CAP_NAMES)[number];
+
 /** Byte caps on what one tool result shows the model. */
 export const TOOL_OUTPUT_CAPS = Object.freeze({
   bash_output_bytes: 16_384,
@@ -53,9 +60,21 @@ export const PROMPT_BOUND = Object.freeze({
   per_request_framing_tokens: 256,
 });
 
+/**
+ * How the history is kept within the per-call limit, the same in both arms: while a request's
+ * counted bound is over `max_input_tokens`, the oldest tool result outside the newest tool message
+ * is replaced by a short stub, one at a time. Only when nothing more may be elided does the
+ * attempt stop on the `context_window` cap.
+ */
+export const HISTORY_POLICY = Object.freeze({
+  method: "elide_oldest_tool_result_while_over_per_call_limit",
+  keeps: "newest_tool_message",
+});
+
 /** What the hashed part holds beyond the writer's HashedProfile fields. */
 interface SolverHashedExtras {
   readonly kind: SolverKind;
+  readonly history_policy: typeof HISTORY_POLICY;
   /** Decimal strings: canonical JSON v1 carries safe integers only. */
   readonly sampling: { readonly temperature: string; readonly seed: "attempt_index" };
   readonly attempt_caps: AttemptCaps;
@@ -90,6 +109,7 @@ function profile(settings: ModelSettings): SolverProfile {
     max_retries: 0,
     request_timeout_ms: settings.request_timeout_ms,
     prompt_bound: PROMPT_BOUND,
+    history_policy: HISTORY_POLICY,
     sampling: Object.freeze({ temperature: String(settings.temperature), seed: "attempt_index" as const }),
     attempt_caps: ATTEMPT_CAPS,
     tool_output_caps: TOOL_OUTPUT_CAPS,

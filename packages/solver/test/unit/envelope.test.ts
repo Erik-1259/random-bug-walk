@@ -58,8 +58,8 @@ describe("the profiles", () => {
   });
 
   it("have the digests the README lists", () => {
-    expect(profileSha256(SUPER_SOLVER_PROFILE)).toBe("978b87fdd5815b13cd42e5226080060526c65ed37d5328dd50045a57fb2586d4");
-    expect(profileSha256(KIMI_SOLVER_PROFILE)).toBe("2e799c711837f0168afe24ae2e67b765f7680d06167254e21113a4d6bdad14e3");
+    expect(profileSha256(SUPER_SOLVER_PROFILE)).toBe("572e4f48907ccf7e905b00f24e7141dcad03c6a4e70b3f7b5544de8f5b6ed271");
+    expect(profileSha256(KIMI_SOLVER_PROFILE)).toBe("17386e61aed8cb33864c836b1e7efa269f3e1091cd5104e07cf7bcc7778d0ceb");
   });
 
   it("hash the attempt caps, so a changed cap changes runtime_profile_sha256", () => {
@@ -70,6 +70,13 @@ describe("the profiles", () => {
   it("carry the pre-registered caps", () => {
     expect(SUPER_SOLVER_PROFILE.hashed.attempt_caps).toEqual({ max_turns: 50, max_input_tokens: 1_500_000, max_wall_ms: 2_400_000, max_rebuilds: 8 });
     expect(SUPER_SOLVER_PROFILE.hashed.sampling.temperature).toBe(String(SUPER_SOLVER_PROFILE.temperature));
+  });
+
+  it("hash the history policy, the same in both profiles", () => {
+    expect(SUPER_SOLVER_PROFILE.hashed.history_policy).toEqual({ method: "elide_oldest_tool_result_while_over_per_call_limit", keeps: "newest_tool_message" });
+    expect(KIMI_SOLVER_PROFILE.hashed.history_policy).toEqual(SUPER_SOLVER_PROFILE.hashed.history_policy);
+    const changed = { ...SUPER_SOLVER_PROFILE, hashed: { ...SUPER_SOLVER_PROFILE.hashed, history_policy: { method: "none", keeps: "all" } } };
+    expect(profileSha256(changed)).not.toBe(profileSha256(SUPER_SOLVER_PROFILE));
   });
 });
 

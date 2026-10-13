@@ -1,5 +1,7 @@
 export {
   attemptKey,
+  elideOldestToolResult,
+  HISTORY_ELISION_NOTE,
   NO_TOOL_CALL_REMINDER,
   runAttempt,
   SOLVER_SYSTEM_PROMPT,
@@ -12,7 +14,6 @@ export type {
   AttemptResult,
   AttemptSpec,
   CallFailure,
-  CapName,
   TranscriptEvent,
 } from "./agent.ts";
 export {
