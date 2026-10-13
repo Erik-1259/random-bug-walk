@@ -1,6 +1,6 @@
 # Admission rules
 
-These rules define how the first admission profile admits a candidate. They describe what each rule requires. A rule marked `planned` is not yet implemented, and nothing here claims that any rule is enforced today.
+These rules define how the first admission profile admits a candidate. They describe what each rule requires. A rule's status records whether `main` holds a marked implementation and test for it (see [Status](#status) and [Tracing a rule ID](#tracing-a-rule-id)); it does not by itself claim that every part of the rule is enforced. [Coverage notes](#coverage-notes) says where an implemented rule is covered only in part.
 
 The first profile admits a candidate using **13 fresh app copies**: 1 clean, 5 fixed, 5 planted, 1 partial-fix and 1 stub-fix. Kit setup checks and the preliminary observation are separate operations and count as no admission evidence.
 
@@ -22,7 +22,7 @@ The pull request that adds an implementation and its tests changes the rule's st
 
 | ID | Status | Rule | Required work | Decision |
 |---|---|---|---|---|
-| ADM-01 | planned | Scope and setup | Pinned source, host and image; a source-only permitted change; no git history or answer-bearing artifacts in the solver-visible copy; the selected grader permissions in force | A copy with invalid scope or setup cannot be admitted |
+| ADM-01 | implemented | Scope and setup | Pinned source, host and image; a source-only permitted change; no git history or answer-bearing artifacts in the solver-visible copy; the selected grader permissions in force | A copy with invalid scope or setup cannot be admitted |
 | ADM-02 | implemented | Fresh copies and executions | Exactly one clean, five fixed and five planted fresh copies, plus the two probe copies in ADM-06. The original test suite runs once in each of the 13 copies, partial and stub included; the added checks run once in each, except for the repetitions in ADM-05. Every expected test must execute | A copy where an expected test did not execute is invalid |
 | ADM-03 | implemented | Fixed copies pass | All five fixed copies pass the added checks; the clean and fixed original-suite results pass | A valid failed check rejects the candidate; missing, skipped or uncollected checks are invalid |
 | ADM-04 | implemented | Planted copies fail as declared | All five planted copies fail the declared added assertions | An unexpected pass rejects the candidate; unrelated errors are invalid and are not evidence of the bug |
@@ -33,9 +33,14 @@ The pull request that adds an implementation and its tests changes the rule's st
 | ADM-09 | implemented | Release | The final mutation-family split, the current revision, required reviews resolved, and an immutable release manifest | The same eligibility rule applies to reports and bundles. An uncalibrated profile supports no calibrated claims |
 | ADM-10 | planned | Regrade for reported solves | A protected, passing regrade on a fresh copy for every solve that is ever reported | Required whenever calibration is enabled. The first profile records calibration as `not_requested`, with no solve denominator |
 
+## Coverage notes
+
+- ADM-01: the projection audit (`packages/projection`) checks that a copy holds the pinned source, minus approved whole-file exclusions, plus one source-only declared change, with a neutral single-commit history and no build output or answer-bearing artifacts. The local runner (`tools/local-runner`) runs the audit on every copy before the copy is built, in every job, including each of the 13 admission copies; the controller runs copies through the same path. A refused or unavailable audit stops the copy. A clean or fixed copy has no declared change, so its audit is recorded as `not_applicable`. Each copy runs from the kit image by its content digest. The admission importer (`packages/admission`) does not decide ADM-01 and lists it as not evaluated.
+- ADM-10: no solve is reported, because the first profile records calibration as `not_requested`.
+
 ## General rules
 
-- An expected failure means the assertion ran and produced the specified behavioural mismatch, not merely that the test runner exited non-zero.
+- An expected failure means the assertion ran and produced the specified behavioral mismatch, not merely that the test runner exited non-zero.
 - Positive and negative runs collect every expected execution and never stop at the first failure.
 - A valid unexpected outcome rejects the relevant claim. A missing execution or a setup failure is invalid or incomplete.
 - A later planted copy caught by the original suite also prevents release of the blind-spot claim, even if the first planted copy was missed.

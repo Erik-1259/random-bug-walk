@@ -101,7 +101,7 @@ The functions in `src/registry.ts` and `rbw_schema/registry.py` never change an 
 | `linkMutation(registry, familyId, mutationId, heldOut)` | Adds a mutation ID to a public family; it stays public |
 | `checkPublicDemoInput(registry, identity, heldOut)` | Accepts a registered identity for the public demo when neither it nor any identity of its family (family ID, source fixes, mutation IDs) is held out |
 
-Refusals raise `RegistryRefusal` with a code: `held_out_conflict` (checked first, and the identity is never relabelled), `unregistered`, `duplicate`, `unknown_family` or `invalid`. An identity is `{kind: "family", family_id}`, `{kind: "source_fix", upstream, commit}` or `{kind: "mutation", mutation_id}`. A held-out source fix matches by its commit ID alone, whatever its `upstream` label.
+Refusals raise `RegistryRefusal` with a code: `held_out_conflict` (checked first, and the identity is never relabeled), `unregistered`, `duplicate`, `unknown_family` or `invalid`. An identity is `{kind: "family", family_id}`, `{kind: "source_fix", upstream, commit}` or `{kind: "mutation", mutation_id}`. A held-out source fix matches by its commit ID alone, whatever its `upstream` label.
 
 ### Held-out identity list
 

@@ -14,7 +14,7 @@ export interface JudgeStore {
   list(prefix: string): Promise<string[]>;
 }
 
-/** The Dec 2–5 known condition, as the page states it. */
+/** The known condition on the 2nd to 5th of each month, as the page states it. */
 export const KNOWN_CONDITION_MESSAGE =
   "Two upstream revenue tests fail on the 2nd to the 5th of each month, a known date-dependent condition in Umami's own test data, not in this example. They are shown as failures and are not counted against this replay.";
 
@@ -58,7 +58,7 @@ export interface ReplayProgress {
   created_at: string;
   deadline_at: string;
   state: ProgressState;
-  /** Set with the final state: whether the Dec 2–5 condition explains the only unexpected cells. */
+  /** Set with the final state: whether the known condition (2nd to 5th of the month) explains the only unexpected cells. */
   known_condition: boolean | null;
   copies: { trial_id: string; status: CopyProgress; started_at: string | null }[];
   ended_at: string | null;

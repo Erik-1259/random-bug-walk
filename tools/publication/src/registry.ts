@@ -110,7 +110,7 @@ export async function validateEntry(value: unknown, cwd: string, env: Record<str
   const entry: WorktreeEntry = { path, remote, branch, approvedBase, identity: { name: identity.name, email: identity.email }, token };
   if (repository !== undefined) {
     if (typeof repository !== "string" || !REPOSITORY.test(repository)) return null;
-    // The repository must be the one a recognised GitHub remote names; a local remote is for tests.
+    // The repository must be the one a recognized GitHub remote names; a local remote is for tests.
     const github = githubRepository(remote);
     if (github === null ? localRemotePath(remote) === null : github.toLowerCase() !== repository.toLowerCase()) return null;
     entry.repository = repository;

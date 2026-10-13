@@ -68,7 +68,7 @@ const NEUTRAL_NAME = "blob";
 /**
  * Runs gitleaks over the blobs. Each blob is written as a new regular file at
  * `{dir}/content/<n>/<path>`, so no two blobs share a file even on file systems that
- * ignore case or Unicode normalisation, and path-based rules see the repository path.
+ * ignore case or Unicode normalization, and path-based rules see the repository path.
  * A second copy at `{dir}/content/<count + n>/blob` keeps content rules applied when
  * gitleaks' built-in path allowlist matches the repository path. Findings map back by
  * number. Any failure throws ScanUnavailable; nothing from gitleaks' own output is kept.

@@ -91,7 +91,7 @@ export function commandResult(overrides: Partial<CommandResult> = {}): CommandRe
 
 export type FakeBehaviour = (spec: CommandSpec) => CommandResult | Promise<CommandResult>;
 
-/** Records every command and answers with the behaviour the test supplies. */
+/** Records every command and answers with the behavior the test supplies. */
 export class FakeRunner implements ProcessRunner {
   readonly calls: CommandSpec[] = [];
   private readonly behaviour: FakeBehaviour;

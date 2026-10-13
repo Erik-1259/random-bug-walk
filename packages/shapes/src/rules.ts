@@ -12,7 +12,7 @@ export class RuleFileError extends Error {
 const LANGUAGES = { TypeScript: Lang.TypeScript, Tsx: Lang.Tsx } as const;
 type RuleLanguage = keyof typeof LANGUAGES;
 
-// Keys the CLI would honour but this loader would not are refused, so both engines read the same rule.
+// Keys the CLI would honor but this loader would not are refused, so both engines read the same rule.
 const ALLOWED_KEYS = new Set(["id", "language", "severity", "message", "note", "url", "rule", "constraints", "fix", "metadata"]);
 
 export interface LoadedRule {

@@ -1,5 +1,6 @@
 // The judge path (design note section 6): everything the judge routes use (judge-web.ts), and the
-// replay's verdict, with the Dec 2–5 known condition, which only the judge controller computes.
+// replay's verdict, with the known condition on the 2nd to 5th of each month, which only the judge
+// controller computes.
 import type { Evidence } from "@rbw/admission";
 import { revenueKnownLimit } from "@rbw/local-runner";
 import { JUDGE_TRIALS } from "./judge-web.ts";

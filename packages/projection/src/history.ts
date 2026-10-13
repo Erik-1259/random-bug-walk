@@ -418,7 +418,7 @@ function checkTree(
   }
   for (const path of files.keys()) if (!seen.has(path)) mismatch(path);
   // ADM-01: the tree object itself is the one the audited files give, so no mode spelling or other
-  // byte in a tree object can carry data that the listing above normalises away. Reported only when
+  // byte in a tree object can carry data that the listing above normalizes away. Reported only when
   // no differing path already explains it.
   const actual = gitOutput(["rev-parse", "--verify", "--quiet", `${commit}^{tree}`], options)?.toString("utf8").trim();
   if (mismatches === 0 && actual !== expectedTreeId(files, format)) add("git_tree_mismatch", ".git");
