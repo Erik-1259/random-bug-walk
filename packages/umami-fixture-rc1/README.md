@@ -24,6 +24,7 @@ This package is separate from `@rbw/umami-fixture` on purpose: the driver hashes
 - [Two-factor state and reset](#two-factor-state-and-reset)
 - [Staging](#staging)
 - [Local proof](#local-proof)
+- [Admission status](#admission-status)
 - [Tests](#tests)
 - [Not in this package](#not-in-this-package)
 
@@ -39,7 +40,7 @@ The file is canonical JSON (sorted keys, two-space indent, trailing newline). It
 - `two_factor`: the pinned migration's admin user ID, a synthetic row ID, a synthetic placeholder for the TOTP secret column (no check uses a TOTP code) and ten backup codes, each with a synthetic ID, a plaintext of the form `SYNTHETIC-RC1-CODE-NN` and its bcrypt hash at 10 rounds, the form Umami stores. A unit test checks every hash against its plaintext with bcryptjs 3.0.3, the version the pinned app uses;
 - `checks`: the serial control on code 01, then the race on code 10, the last code stored, so each racing request compares every unused code before its write;
 - `outcome_vectors` for `clean`, `fixed` and `planted`;
-- `adm05`: the declared vectors for the 20 repetitions in `fixed-01` and `planted-01`, equal to the fixed and planted vectors;
+- `adm05`: the declared vectors for the 20 repetitions in `fixed-01` and `planted-01`, equal to the fixed and planted vectors. The planted vector is **unproven**: at zero database delay the [local proof](#local-proof) met it in 17 of 30 rounds, so as committed it would fail ADM-05 (see [Admission status](#admission-status));
 - `adm06`: `not_applicable`, with the reason. A partial or stub fix of a lost-update race has no natural form; the owner recorded ADM-06 as not applicable for this family on Oct 13, 2026. There are no `partial` or `stub` states.
 
 ## Checks and outcomes
@@ -69,7 +70,14 @@ What the record proves, measured in the [local proof](#local-proof):
 - On a planted copy, two accepted requests prove the interleaving: the second read happened before the first write.
 - In-flight overlap is necessary but not sufficient. In 13 of 30 planted rounds both requests overlapped by at least 639 ms, yet only one was accepted, because the second request read the code after the first had marked it used. From outside the app, such a round looks the same as a clean round where the guard refused the second write: both answer `two-factor-error-invalid-backup-code`.
 
-So `overlap_ms > 0` is the grading condition, and the repeatability of the race at a chosen database delay has to come from the delay study and ADM-05. A record that shows the read-before-write order directly would need the database's own statement log, collected by the driver; that is not in this package.
+So `overlap_ms > 0` is the grading condition, and the repeatability of the race at a chosen database delay has to come from the delay study and ADM-05. Because each request spends hundreds of milliseconds in the app (bcrypt compares and database round trips), `overlap_ms > 0` holds in almost every round: in the local proof the 13 planted rounds where the race did not occur still overlapped by at least 639 ms. The overlap gate therefore almost never fires, and a `pass` on a clean or fixed copy does not show that either request read before the other wrote. This only partly meets spec §2.5.
+
+**Open owner decision, needed before the race family is admitted.** Choose one:
+
+- (a) add database-side ordering evidence that the driver collects: a Postgres statement log with process IDs and timestamps, or a per-request read and write timestamp; or
+- (b) accept the weaker, client-side evidence and say so in the family's public claims.
+
+The race wiring step (driver, admission and runners) carries this decision.
 
 ## Interface for the protected driver
 
@@ -103,13 +111,27 @@ The kit's app environment sets `TWO_FACTOR_ENCRYPTION_KEY` to a valid placeholde
 
 The checks grade as declared, but with no database delay the planted race is not repeatable enough for ADM-05, which needs 20 of 20. The delay study picks the database delay that makes it so.
 
+With no guard in the planted route, a refusal can only come from the branch where no unused code matched, so in the 13 lost planted rounds the second request read after the first wrote. The delay study has to measure that lag between the two requests and size the delay to cover it; the committed summary does not record it.
+
+## Admission status
+
+This fixture is **not ready to be wired or admitted**, and no paid run should use it yet:
+
+- At zero delay a planted copy shows `double_spend` in about 57% of rounds, so ADM-05's 20 of 20 on `planted-01` has a probability near 1e-5.
+- A single race round that passes is not evidence of a fix. A "fix" that changes nothing passes the race check in about 43% of rounds, because a lost race on a planted copy grades `pass` (a unit test shows this with an app that writes before the second read). A fixed verdict needs many race rounds, as ADM-05's 20 repetitions give; a trial that grades a solver's fix from fewer rounds must not rely on one race round.
+- The delay study has to show 20 of 20 planted `double_spend` and 20 of 20 clean `pass` at the chosen delay, on the released amd64 race image and not only on an arm64 build, with the result committed as evidence.
+- The driver must accept `double_spend` and `backup_code_reused` first (see [Not in this package](#not-in-this-package)), and one round must then run through the staged kit and the driver (`stage-kit --fixture-package`, then the driver), not through `host/live-proof.sh`, which calls the fixture and Playwright directly.
+- The owner decision on overlap evidence above is still open.
+
 ## Tests
 
-`pnpm test` runs the unit tests. They use an in-memory stand-in for the sign-in and verify routes (`test/fake-app.ts`) that reads the unused codes, yields, and writes with or without the guard, so the runner and the classifier are tested end to end on both variants without an app.
+`pnpm test` runs the unit tests. They use an in-memory stand-in for the sign-in and verify routes (`test/fake-app.ts`) that reads the unused codes, yields, and writes with or without the guard, so the runner and the classifier are tested end to end on both variants without an app. The stand-in can also hold the race's two reads until both have happened, or run verify requests one at a time; the second mode shows that a planted copy grades `pass` when the race is lost.
+
+`test/rounds.test.ts` runs real Playwright rounds of the staged files (`playwright.config.ts` and `checks/rc1.check.ts`), as the driver does, against the stand-in served on loopback. It checks `report.json`, the observation files, the race's response artifact and its overlap on clean and planted routes, `seed_failed` with no response file when sign-in returns no challenge, `auth_failed` when the connection drops, and the refusal of an output directory that is not empty.
 
 ## Not in this package
 
-- The schema and driver change that accepts `double_spend` and `backup_code_reused` as assertion failure codes.
+- The schema and driver change that accepts `double_spend` and `backup_code_reused` as assertion failure codes: both codes added to `AssertionFailureCode` in `packages/schema`, with the generated TypeScript and Python regenerated, and a driver test. Until then the driver's `parseFixtureOutcome` refuses every planted race outcome as an unknown assertion failure code. This must land before any delay study or kit check that runs through the driver.
 - The race kit image with a database delay, the delay study and the choice of delay.
 - The ast-grep rules and probe records for the RC-1 shape.
 - Wiring the family into the runners, the controller and admission, and the 11-copy profile without the two ADM-06 probes.

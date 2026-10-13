@@ -2,6 +2,21 @@ import type { Fixture, RequestContext, RequestOptions } from "../src/index.ts";
 
 export type CodeVariant = "clean" | "planted";
 
+export interface FakeAppOptions {
+  /**
+   * Holds each verify request for this backup code (plaintext) after its read until a second
+   * request for it has also read, so the two reads always come before either write. A loopback
+   * HTTP round needs this: two requests on separate connections need not interleave on their own.
+   */
+  pairReadsOf?: string;
+  /**
+   * Runs verify requests one at a time, so the first write lands before the second read. A
+   * planted route then refuses the second request, as in the 13 of 30 planted live rounds
+   * where the race did not occur.
+   */
+  serializeVerifies?: boolean;
+}
+
 export interface RecordedCall {
   url: string;
   method: string;
@@ -32,16 +47,25 @@ export class FakeApp {
   twoFactorEnabled = true;
   private readonly fixture: Fixture;
   private readonly variant: CodeVariant;
+  private readonly options: FakeAppOptions;
+  private pendingPair: (() => void) | null = null;
+  private verifyChain: Promise<unknown> = Promise.resolve();
 
-  constructor(fixture: Fixture, variant: CodeVariant) {
+  constructor(fixture: Fixture, variant: CodeVariant, options: FakeAppOptions = {}) {
     this.fixture = fixture;
     this.variant = variant;
+    this.options = options;
   }
 
   context(): RequestContext {
     return {
       fetch: (url: string, options: RequestOptions) => {
         this.calls.push({ url, method: options.method, headers: { ...options.headers }, data: options.data });
+        if (this.options.serializeVerifies === true && url === "/api/2fa/verify") {
+          const next = this.verifyChain.then(() => this.handle(url, options));
+          this.verifyChain = next.catch(() => undefined);
+          return next;
+        }
         return this.handle(url, options);
       },
     };
@@ -62,6 +86,9 @@ export class FakeApp {
     const input = (JSON.parse(options.data ?? "{}") as { backupCode: string }).backupCode.toUpperCase();
     const unused = this.fixture.two_factor.backup_codes.filter((code) => !this.used.has(code.id));
     await yieldToOthers();
+    if (this.options.pairReadsOf === input) {
+      await this.pairRead();
+    }
     const match = unused.find((code) => code.plaintext === input);
     await yieldToOthers();
     if (match === undefined) {
@@ -73,6 +100,19 @@ export class FakeApp {
       return reply(400, { error: { code: "two-factor-error-invalid-backup-code", message: "Invalid backup code", status: 400 } });
     }
     return reply(200, { token: "synthetic-full-token", user: { id: this.fixture.two_factor.user_id } });
+  }
+
+  /** Resolves for the first reader when a second one arrives, and at once for the second. */
+  private pairRead(): Promise<void> {
+    const waiting = this.pendingPair;
+    if (waiting !== null) {
+      this.pendingPair = null;
+      waiting();
+      return Promise.resolve();
+    }
+    return new Promise((resolve) => {
+      this.pendingPair = resolve;
+    });
   }
 }
 

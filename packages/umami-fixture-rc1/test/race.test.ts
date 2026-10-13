@@ -129,6 +129,16 @@ describe("runDoubleSpend against an app that follows the pinned verify route", (
     expect(classify(result.evidence)).toMatchObject({ observed: "assertion_fail", failure_code: "double_spend" });
   });
 
+  it("passes on the planted route when the first write lands before the second read, so one passing round is not evidence of a fix", async () => {
+    const app = new FakeApp(fixture, "planted", { serializeVerifies: true });
+    const result = await runDoubleSpend([app.context(), app.context()], fixture, raceCheck, credentials, steppingClock());
+    if (!result.ok) throw new Error(result.reason);
+    expect(result.evidence.attempts.map((item) => item.token_issued)).toEqual([true, false]);
+    expect(result.evidence.attempts[1]).toMatchObject({ status: 400, error_code: "two-factor-error-invalid-backup-code" });
+    expect(result.evidence.overlap_ms).toBeGreaterThan(0);
+    expect(classify(result.evidence)).toMatchObject({ observed: "pass", failure_code: null });
+  });
+
   it("stops at a failed sign-in and sends no verify request", async () => {
     const app = new FakeApp(fixture, "clean");
     app.twoFactorEnabled = false;
