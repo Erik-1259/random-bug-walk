@@ -158,6 +158,7 @@ export const REPLAY_UNAVAILABLE_TEXT = {
   release: "Unavailable: this site's release is not the configured release.",
   token: "Unavailable: the site could not get a fresh access token for a replay. Try again shortly.",
   ledger: "Unavailable: the spend ledger can't be reached right now. Try again shortly.",
+  halted: "Paused: spending is halted for an operator check. Try again later.",
 } as const;
 
 export type UnavailableReason = keyof typeof REPLAY_UNAVAILABLE_TEXT;
