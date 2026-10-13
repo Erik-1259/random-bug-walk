@@ -34,7 +34,7 @@ In real mode, `build` and `publish-replays` get the private store only from `pri
 
 Writes a terminal root's run directory as a new staging directory for `publish`. It works for a factory root and for a `judge_replay` root downloaded from `judge/<root>/`.
 
-- `generated/symptom.json`, `generated/card.json` and `generated/novelty.json` (factory roots only), from the optional flags. The novelty summary holds outcomes and times, never phrases.
+- `generated/symptom.json`, `generated/card.json` and `generated/novelty.json` (factory roots only), from the optional flags. The novelty summary holds outcomes and times, never phrases. The symptom is checked as its family's record, routed as the issue writer routes its input (`assertSymptom`): one with a `symptom_kind` field must be a `RaceSymptom`, any other an `ObservedSymptom`; a symptom that fails is refused as `symptom_invalid` and nothing is written.
 - Per job, with the controller's job directories flattened, because the publisher refuses a UUID-shaped segment below `<category>/<execution>/`: `results/<exec>/request.json`, `results/<exec>/expected-trials.json`, `results/<exec>/<trial>/...` (the record set), and `results/<exec>/evidence.json`, `decision.json` and the sanitized `summary.json`.
 - `report.md`, a short table of the root's jobs.
 - `omissions.json`: each missing generated file, evidence, decision or summary as `not_produced`, and, for a factory root, the issue, its check report, the phrase records, the source search records, the docs extract record, the writer recordings and the search recordings as `withheld_private` (`private_material`). `stage` never reads any of them, so none appears in a run record.
@@ -142,6 +142,8 @@ The judge job is stored with `@rbw/publisher/private-store`. Real mode builds th
 ## Fixture
 
 `fixtures/release/` is a synthetic results directory for the results site, made by `scripts/release-fixture.ts` from `fixtures/sources/` and the local runner's simulated kit: one completed factory root (`repository/runs/`), its release (`repository/releases/`), the store's status object (`store/`), its judge job in a local store (`private-store/`), and the inputs `checkRelease` reads (`inputs/`). The web's `readResults` reads it unchanged. Failed and incomplete roots are in `packages/web/fixtures`.
+
+That fixture is a time-zone case. `test/unit/race-release.test.ts` makes a race-family release the same way at test time, with `@rbw/schema`'s synthetic `RaceSymptom` fixture as the symptom: the release passes every check and the web's `readResults` reads the released run's `RaceSymptom`.
 
 ## What it does not do
 

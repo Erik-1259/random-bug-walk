@@ -9,5 +9,5 @@ export { INDEX_FILE, ISSUE_STYLE, JUDGE_PLACEHOLDERS, TIME_ZONE_FAMILY, buildJud
 export type { BuildSources, JudgeJob, JudgeJobFamily, JudgeJobOptions } from "./judge-job.ts";
 export { REPLAY_OBJECT_LIMIT_BYTES, publishReplays } from "./replays.ts";
 export type { ReplayDeps, ReplayOptions } from "./replays.ts";
-export { CARD_PATH, NOVELTY_PATH, SYMPTOM_PATH, stage } from "./stage.ts";
+export { CARD_PATH, NOVELTY_PATH, SYMPTOM_PATH, assertSymptom, stage } from "./stage.ts";
 export type { StageOptions, StageOutcome } from "./stage.ts";
