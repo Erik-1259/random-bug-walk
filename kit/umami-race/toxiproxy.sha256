@@ -1,0 +1,5 @@
+# toxiproxy-server v2.12.0 (MIT), the static Linux binaries from
+# https://github.com/Shopify/toxiproxy/releases/tag/v2.12.0. Each hash was computed from the
+# downloaded file on 2026-10-13 and matches the release's checksums.txt.
+556d891134a3c582dc1e1a3f7335fd55142e5965769855a00b944e13e48302fc  toxiproxy-server-linux-amd64
+53e770c1c3035b5a9f1bc629fce537db1f95f62b26f4ebe6e756afd701cf077c  toxiproxy-server-linux-arm64

@@ -168,7 +168,7 @@ export async function verifyKitIdentity(options: {
 export function parseProcStat(pid: number, stat: string): Omit<ProcessEntry, "uid"> | null {
   const close = stat.lastIndexOf(")");
   if (close < 0) return null;
-  // Fields after the parenthesised command name: state, ppid, pgrp, ...
+  // Fields after the parenthesized command name: state, ppid, pgrp, ...
   const fields = stat.slice(close + 2).split(" ");
   const state = fields[0] ?? "";
   const ppid = Number(fields[1]);

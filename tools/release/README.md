@@ -142,8 +142,7 @@ The judge job is stored with `@rbw/publisher/private-store`. Real mode builds th
 
 ## What it does not do
 
-- It runs no replay. The judge route, the controller sandbox and the per-replay overlay are planned (W2-8).
-- It has no Vercel client for the private store until the prerequisite merges.
+- It runs no replay. The judge route (`packages/web`) starts the controller (`tools/controller`) in its own sandbox, which overlays each replay's IDs and deadline on the frozen judge job.
 - It makes no calibrated claim: `calibration` is always `not_requested`.
 
 ## Tests

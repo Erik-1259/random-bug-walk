@@ -4,7 +4,7 @@ Tavily searches for one candidate bug: public reports of a bug shape, a groundin
 
 Every call goes through `@rbw/spend`: it is reserved against the spend pool before it starts and settled from the credits Tavily reports. Every query and result is frozen with the time it ran. A failed search is incomplete evidence, never "no public match".
 
-This package makes no live API calls in tests or in CI. Tests run against a local replay server that serves recorded responses. A live set of recordings is **planned**: the owner records it later through the `record` command below.
+This package makes no live API calls in tests or in CI. Tests run against a local replay server that serves recorded responses. Live calls run only outside public CI: through the `record` command below, and through the controller's candidate attempt (`tools/controller`), which keeps its search records private.
 
 ## Contents
 
@@ -94,7 +94,7 @@ Identity fields:
 - `operation_id` is `operationId` of `@rbw/schema` over the call's `OperationIdentity`: `schema_version` 1, project, policy hash, root, batch, task revision, kind, profile digest, call name and attempt ordinal.
 - `rate_sheet_sha256` is the SHA-256 of the rate sheet file's bytes.
 
-These live in `src/spend-identity.ts`. The shared schema package will supply them later.
+These live in `src/spend-identity.ts`; the operation ID and the call name come from `@rbw/schema`.
 
 ## Settlement
 
@@ -137,7 +137,7 @@ The SDK folds every failure into a plain `Error` and drops the cause, so the rea
 
 ## Input
 
-`src/search-input.ts` holds a strict Zod type for one candidate, with `schema_version` 1 and these required fields. The symptom words and docs query will later come from the shared schema's `ObservedSymptom`, and the phrases from the frozen issue revision.
+`src/search-input.ts` holds a strict Zod type for one candidate, with `schema_version` 1 and these required fields. The symptom words and docs query are the caller's. In the candidate attempt, the controller picks the phrases from the frozen issue (`tools/controller`).
 
 ```json
 {
@@ -174,7 +174,7 @@ The **run context** has the strict fields `project_id`, `project_policy_sha256`,
 }
 ```
 
-The **rate sheet** is a JSON array until the shared rate-sheet package exists. Tavily's published pay-as-you-go price is $0.008 per credit:
+The **rate sheet** is the searcher's own JSON array, separate from `@rbw/envelope`'s rate sheet. Tavily's published pay-as-you-go price is $0.008 per credit:
 
 ```json
 [{ "service": "tavily", "unit": "credit", "price": { "microusd": 8000, "per_units": 1 }, "source_url": "https://example.invalid/pricing" }]
@@ -194,11 +194,11 @@ Tests start an HTTP server on `127.0.0.1` on a random port and pass it as `apiBa
 
 `recordings/synthetic/` holds synthetic recordings shaped like Tavily's documented responses, with `example.invalid` URLs: a source search with results, an extract with passages, an extract with a failed URL, a phrase check with a match and one with zero results, a 429, a 500, a response with no `usage`, and an extract reporting 0 credits. `node test/support/generate-recordings.ts` regenerates them, and a test fails if the committed files differ from the generator.
 
-Live recordings are **planned**: the owner's first live set will be committed in a follow-up change.
+No live recording is committed in this repository.
 
 ## The `record` command
 
-The owner runs this later, from a private workflow. It cannot run in the development container, which has no Tavily key.
+The owner runs this with live credentials, outside public CI. It cannot run in the development container, which has no Tavily key.
 
 ```
 pnpm --filter @rbw/search run record -- --context <run-context.json> --rate-sheet <rates.json> --input <search-input.json> --out <dir> --slot-key <key> --pool <pool-key>
@@ -221,4 +221,4 @@ pnpm --filter @rbw/search run record -- --context <run-context.json> --rate-shee
 
 ## Not in this package
 
-The issue writer, the shared rate-sheet and envelope package, the shared schema types, the private workflow file, Tavily usage-endpoint reconciliation and caching across candidates are all planned elsewhere.
+The issue writer (`@rbw/writer`), the shared rate sheet and envelope (`@rbw/envelope`) and the shared schema types (`@rbw/schema`) are separate packages. Running `record` with live credentials happens outside this repository. Tavily usage-endpoint reconciliation and caching across candidates are not implemented.

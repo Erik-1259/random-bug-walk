@@ -111,7 +111,7 @@ The config sets no retries and no max-failures stop, and writes Playwright's JSO
 Outputs in `RBW_FIXTURE_OUTPUT_DIR`:
 
 - `responses/<check_id>.json`: the exact response body bytes, whenever a response arrived (whatever its status).
-- `observations/<check_id>.json`: one object per executed check with exactly `check_id`, `repeat_index`, `observed` (`pass`, `assertion_fail` or `setup_fail`), `failure_code` (nullable), `duration_ms`, `response_artifact_key` (`responses/<check_id>.json` or null) and `response_artifact_sha256` (or null). The last two are both set or both null. The field names follow the shared check-observation record; when the shared schema package gains that record (item W1-1), the type switches to it.
+- `observations/<check_id>.json`: one object per executed check with exactly `check_id`, `repeat_index`, `observed` (`pass`, `assertion_fail` or `setup_fail`), `failure_code` (nullable), `duration_ms`, `response_artifact_key` (`responses/<check_id>.json` or null) and `response_artifact_sha256` (or null). The last two are both set or both null. The field names follow the shared `CheckObservation` record in `@rbw/schema`; this package keeps its own type for the file it writes.
 - A check that never ran writes nothing; the driver records it as `not_run`. A round whose output directory is not empty stops when the config loads: it sends nothing and writes nothing, so an earlier round's files stay as they were.
 
 Library exports from `src/index.ts`: `loadFixture()` and `parseFixture()`, the request builders (`loginRequest`, `createWebsiteRequest`, `sendBody`, `sendRequests`, `queryString`, `queryRequests`), the setup steps (`login`, `seed`, `runSetup`), `classify`, `writeObservation`, `readFixtureEnv` and `resetFixture` with `createFixtureTemplate` (see below).
@@ -155,7 +155,7 @@ Each row matches the data file's `outcome_vectors`. In the revert run, with the 
 
 These are proof scaffolding, run by the conductor on a host with Docker; they are POSIX `sh`, pass `shellcheck`, use no `sudo` and print no credentials.
 
-- `host/prepare-copy.sh <clean|planted|partial|stub> <dir>` clones Umami, checks out the pinned commit, verifies the target file's SHA-256, applies the state's one-line edit, requires exactly one changed hunk in that one file, and prints the resulting SHA-256. The canonical rule and probe data belong to another package (item W1-6); the script switches to that data once it merges.
+- `host/prepare-copy.sh <clean|planted|partial|stub> <dir>` clones Umami, checks out the pinned commit, verifies the target file's SHA-256, applies the state's one-line edit, requires exactly one changed hunk in that one file, and prints the resulting SHA-256. The canonical rule and probe patches are in `@rbw/shapes` (`probes/dt-1.tz-arg/`); this proof script keeps its own one-line edits.
 - `host/stack.sh <up|down> <state> <dir> <port>` runs `docker-compose.test.yml` with the `postgres` profile, a per-state project name and image tag, and `UMAMI_TEST_PORT=<port>`. One stack runs at a time. With `RBW_FIXTURE_DB_PORT` set, `up` also applies `host/compose.db-port.yml`, which publishes Postgres on host loopback for the reset study.
 - `host/reset-study-fresh.sh <dir> <port> <rounds> <out>` runs the reset study's fresh-stack candidate.
 
@@ -171,4 +171,4 @@ Vitest collects only `test/**/*.test.ts`; the Playwright checks are named `*.che
 
 ## Not in this package
 
-The protected driver and its records (item W1-3), the kit image (W1-4), the shared job record types (W1-1), the rule confirmation and canonical probe patches (W1-6), and the issue writer.
+The protected driver and its records (`packages/umami-driver`), the kit image (`kit/umami`), the shared job record types (`packages/schema`), the rule confirmation and canonical probe patches (`packages/shapes`), and the issue writer (`packages/writer`).
