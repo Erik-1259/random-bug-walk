@@ -2,8 +2,8 @@
 // time-zone one: stage with a RaceSymptom, the real publisher, build with a local private store and
 // the publisher's release command; then the results site's reader reads the published directory.
 // The race symptom is @rbw/schema's synthetic fixture; the committed time-zone fixture is untouched.
-// Only the symptom is swapped: the run, kit, issue, recordings and judge job (jobContext still loads
-// the time-zone fixture, suite, vectors and probes) stay time-zone, so this checks the symptom's
+// Only the symptom is swapped: the run, kit, issue, recordings and judge job (built with no family
+// flag, so the time-zone fixture, suite, vectors and probes) stay time-zone, so this checks the symptom's
 // staging and reading, not a race-family judge job.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";

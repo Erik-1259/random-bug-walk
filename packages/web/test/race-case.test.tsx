@@ -1,7 +1,6 @@
 // A race-family case: the run's generated/symptom.json is a RaceSymptom (@rbw/schema's synthetic
-// fixture), and its admission evidence has 11 copies, with no partial-fix or stub-fix copy. That
-// evidence is made by hand: the admission importer still requires the fixed 13-copy profile, so no
-// real run produces it yet. It checks only that the page counts copies from the records it reads.
+// fixture), and its admission evidence has 11 copies, with no partial-fix or stub-fix copy: the real
+// importer and decide() over the admission package's race-family record set, whose ADM-06 is not applicable.
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it } from "vitest";
 import { encodeCanonical } from "@rbw/schema";
@@ -23,7 +22,7 @@ function text(html: string): string {
 }
 
 function raceCase(): ReturnType<typeof syntheticCase> {
-  return syntheticCase(undefined, { symptom: raceSymptomBytes(), withoutProbes: true });
+  return syntheticCase(undefined, { symptom: raceSymptomBytes(), raceFamily: true });
 }
 
 describe("reading a race-family run", () => {
