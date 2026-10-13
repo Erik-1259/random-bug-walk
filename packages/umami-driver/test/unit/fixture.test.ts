@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { loadFixture, readFixtureEnv, writeObservation } from "@rbw/umami-fixture";
+import { FAILURE_CODES as RACE_FAILURE_CODES, loadFixture as loadRaceFixture, writeObservation as writeRaceObservation } from "@rbw/umami-fixture-rc1";
 import { addedSuiteSha256, findCheckTest, fixtureCommand, loadFixtureModule, parseFixtureOutcome } from "../../src/fixture.ts";
 import { parsePlaywrightReport } from "../../src/playwright-report.ts";
 import { CHECKS, hex, playwrightReport, tempDir } from "../helpers.ts";
@@ -76,6 +77,37 @@ describe("fixture interface", () => {
     });
     const parsed = parseFixtureOutcome(readFileSync(join(dir, "observations", "tzarg.kolkata-day-counts.json")), "tzarg.kolkata-day-counts", 2);
     expect(parsed).toEqual({ ok: true, outcome: written });
+  });
+
+  it.each([
+    ["rc1.backup-code-concurrent-double-spend", "double_spend"],
+    ["rc1.backup-code-serial-reuse", "backup_code_reused"],
+  ] as const)("accepts the race fixture's own %s outcome with the assertion code %s", (checkId, code) => {
+    const dir = tempDir();
+    const written = writeRaceObservation(dir, {
+      check_id: checkId,
+      repeat_index: 4,
+      observed: "assertion_fail",
+      failure_code: code,
+      duration_ms: 812.4,
+      response_body: Buffer.from('{"overlap_ms":640}'),
+    });
+    const parsed = parseFixtureOutcome(readFileSync(join(dir, "observations", `${checkId}.json`)), checkId, 4);
+    expect(parsed).toEqual({ ok: true, outcome: written });
+  });
+
+  it("knows every assertion code the race fixture can write, and every one its outcome vectors declare", () => {
+    const setup = new Set<string>(["auth_failed", "seed_failed", "unrelated_failure"]);
+    const assertionCodes = RACE_FAILURE_CODES.filter((code) => !setup.has(code));
+    expect(assertionCodes).toEqual(["double_spend", "backup_code_reused"]);
+    const declared = Object.values(loadRaceFixture().outcome_vectors).flatMap((vector) => vector.flatMap((row) => (row.failure_code === null ? [] : [row.failure_code])));
+    for (const code of [...assertionCodes, ...declared]) {
+      expect(parseFixtureOutcome(outcome({ observed: "assertion_fail", failure_code: code }), "tzarg.la-day-counts", 3).ok).toBe(true);
+    }
+  });
+
+  it("still refuses an assertion code no fixture defines", () => {
+    expect(parseFixtureOutcome(outcome({ failure_code: "triple_spend" }), "tzarg.la-day-counts", 3)).toMatchObject({ ok: false });
   });
 
   it("accepts a well-formed outcome file for the expected check and round", () => {

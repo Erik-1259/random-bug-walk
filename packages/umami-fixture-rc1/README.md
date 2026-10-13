@@ -42,7 +42,7 @@ The file is canonical JSON (sorted keys, two-space indent, trailing newline). It
 - `checks`: the serial control on code 01, then the race on code 10, the last code stored, so each racing request compares every unused code before its write;
 - `outcome_vectors` for `clean`, `fixed` and `planted`;
 - `adm05`: the declared vectors for the 20 repetitions in `fixed-01` and `planted-01`, equal to the fixed and planted vectors. The planted vector is **unproven**: at zero database delay the [local proof](#local-proof) met it in 17 of 30 rounds, so as committed it would fail ADM-05 (see [Admission status](#admission-status));
-- `adm06`: `not_applicable`, with the reason. A partial or stub fix of a lost-update race has no natural form; the owner recorded ADM-06 as not applicable for this family on Oct 13, 2026. There are no `partial` or `stub` states.
+- `adm06`: `not_applicable`, with the reason. A partial or stub fix of a lost-update race has no natural form, so ADM-06 is recorded as not applicable for this family. There are no `partial` or `stub` states.
 
 ## Checks and outcomes
 
@@ -60,7 +60,7 @@ Grading, in `src/classify.ts`:
 
 A failed sign-in is `auth_failed`; a sign-in that returns a full session instead of a two-factor challenge means the baked state is missing and is `seed_failed`.
 
-`double_spend` and `backup_code_reused` are new assertion failure codes. The shared schema's `AssertionFailureCode` does not list them yet, and the driver refuses an outcome with a code it does not know; see [Not in this package](#not-in-this-package).
+`double_spend` and `backup_code_reused` are assertion failure codes of the shared schema's `AssertionFailureCode`, so the driver accepts an outcome file with either; a driver test parses the outcome this package's own writer produces for each.
 
 ## Overlap evidence
 
@@ -73,12 +73,12 @@ What the record proves, measured in the [local proof](#local-proof):
 
 So `overlap_ms > 0` is the grading condition, and the repeatability of the race at a chosen database delay has to come from the delay study and ADM-05. Because each request spends hundreds of milliseconds in the app (bcrypt compares and database round trips), `overlap_ms > 0` holds in almost every round: in the local proof the 13 planted rounds where the race did not occur still overlapped by at least 639 ms. The overlap gate therefore almost never fires, and a `pass` on a clean or fixed copy does not show that either request read before the other wrote. This only partly meets spec §2.5.
 
-**Open owner decision, needed before the race family is admitted.** Choose one:
+**Open question, to settle before the race family is admitted.** One of:
 
 - (a) add database-side ordering evidence that the driver collects: a Postgres statement log with process IDs and timestamps, or a per-request read and write timestamp; or
 - (b) accept the weaker, client-side evidence and say so in the family's public claims.
 
-The race wiring step (driver, admission and runners) carries this decision.
+The race wiring step (driver, admission and runners) has to settle this question.
 
 ## Interface for the protected driver
 
@@ -137,8 +137,8 @@ This fixture is **not ready to be wired or admitted**, and no paid run should us
 - At zero delay a planted copy shows `double_spend` in about half the rounds (9 of 20 in the [delay study](#delay-study), 17 of 30 in the earlier no-delay proof), so ADM-05's 20 of 20 on `planted-01` is far out of reach without a delay.
 - A single race round that passes is not evidence of a fix. A "fix" that changes nothing passes the race check in about half the no-delay rounds, because a lost race on a planted copy grades `pass` (a unit test shows this with an app that writes before the second read). A fixed verdict needs many race rounds, as ADM-05's 20 repetitions give; a trial that grades a solver's fix from fewer rounds must not rely on one race round.
 - The [delay study](#delay-study) shows 20 of 20 planted `double_spend` and 0 of 20 clean false positives at a 25 ms downstream latency toxic (and at 50, 100 and 200 ms), with the serial control passing throughout, on a native **arm64** race image. Before admission this must be re-measured on the released **amd64** image on native amd64 hardware, since the chosen delay depends on bcrypt and database timing and 25 ms has little margin over the flaky 0 ms cell.
-- The driver must accept `double_spend` and `backup_code_reused` first (see [Not in this package](#not-in-this-package)), and one round must then run through the staged kit and the driver (`stage-kit --fixture-package`, then the driver), not through `host/live-proof.sh`, which calls the fixture and Playwright directly.
-- The owner decision on overlap evidence above is still open.
+- The driver accepts `double_spend` and `backup_code_reused`. One round must still run through the staged kit and the driver (`stage-kit --fixture-package`, then the driver), not through `host/live-proof.sh`, which calls the fixture and Playwright directly.
+- The overlap-evidence question above is still open.
 
 ## Tests
 
@@ -148,7 +148,6 @@ This fixture is **not ready to be wired or admitted**, and no paid run should us
 
 ## Not in this package
 
-- The schema and driver change that accepts `double_spend` and `backup_code_reused` as assertion failure codes: both codes added to `AssertionFailureCode` in `packages/schema`, with the generated TypeScript and Python regenerated, and a driver test. Until then the driver's `parseFixtureOutcome` refuses every planted race outcome as an unknown assertion failure code. This must land before any kit check that runs through the driver; the delay study here calls the fixture and Playwright directly.
 - The race kit image itself (`kit/umami-race`), and the choice of delay for the released amd64 image. The arm64 [delay study](#delay-study) is in this package; its re-measurement on native amd64 is not.
 - The ast-grep rules and probe records for the RC-1 shape.
-- Wiring the family into the runners, the controller and admission, and the 11-copy profile without the two ADM-06 probes.
+- Wiring the family into the runners, the controller and admission, with the 11-copy profile without the two ADM-06 probes: `--family race` in `tools/local-runner` and `tools/controller` (see the local runner's README, Bug families). The candidate attempt still refuses the race family, because the issue writer's `ObservedSymptom` holds time-zone fields only.

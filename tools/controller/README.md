@@ -23,7 +23,7 @@ node tools/controller/src/cli.ts run --job-kind <kit_check|observe|admission|jud
   [--original-suite <file>] [--policy <file>] [--fix <dir>] [--name <job name>] \
   [--backend sandbox|docker] [--sandbox-image <repository>@sha256:<digest>] \
   [--trials <id,...>] [--ledger development|judge] [--ids <file>] [--project-policy <file>] \
-  [--judge-fixed fixed|alternative_fix]
+  [--judge-fixed fixed|alternative_fix] [--family time-zone|race] [--race-latency-ms <0-10000>]
 node tools/controller/src/cli.ts proof --work <run dir> --image ... --manifest ... --terms ... --kit-stage ... \
   [--original-suite <file>] [--policy <file>] [--backend sandbox|docker] [--sandbox-image ...]
 node tools/controller/src/cli.ts create-slot-key --slot-key <key>
@@ -36,13 +36,14 @@ node tools/controller/src/cli.ts run --job-kind judge_verify --request-id <uuid>
 
 - `--image`, `--manifest`, `--terms`, `--policy` and `--kit-stage` are the local runner's inputs (its README, Host commands). The kit image must be local, because each copy's source export and audit run on the host.
 - `--original-suite` is the driver's frozen original-suite manifest. Without it, the controller first runs one freeze copy on local Docker. That copy is free and not on the ledger.
-- `--fix` is for `judge_verify` only: the fix to grade as `fixed-01`, in the local runner's alternative-fix layout (`alternative-fix.json` and its patch). The default is the local runner's alternative fix.
+- `--fix` is for `judge_verify` only: the fix to grade as `fixed-01`, in the local runner's alternative-fix layout (`alternative-fix.json` and its patch). The default is the family's alternative fix. The race family has none, so `run --job-kind judge_verify --family race` without `--fix` grades the reference fix. Judge replays of a race release are not wired for families yet: a prebuilt replay (`--prebuilt`) and the release tool's judge job carry no family, so they would run as the time-zone family. Making them work needs the family (and the latency) carried in the prebuilt job index or source.
 - `--trials` runs only the named trials of the kind's profile, separated by commas (for example `--trials fixed-01`). An unknown trial refuses the job. The default is every trial.
 - `--ledger` picks where the job's spend and slot are recorded. Without it, `judge_verify` uses the judge-demo pool's `judge` allocation under the `judge` slot, and every other kind the `development` pool and slot. `--ledger development` runs `judge_verify` on the development pool and slot, so a solver grade never takes the slot live judges wait on or draws on the judge allocation. `--ledger judge` is for `judge_verify` only.
 - `--ids` is a JSON file holding a root's IDs (the local runner's `RunIds`: `run_tag`, `project_id`, `batch_id`, `root_execution_id`, `executions` and `release_id`), so every job of one root shares them. Without it, the job makes its own.
 - `--project-policy` is a canonical `ProjectPolicy` record. The job records its hash under the grading policy ID. It needs `--ids`, whose `project_id` must be the policy's, and it refuses the development placeholder project.
 - `--judge-fixed` is for `judge_verify` only: the code state `fixed-01` grades. `fixed` grades the reference fix, the clean file's exact bytes. A solver fix that equals the clean file is graded this way, because the alternative-fix layout refuses a fix equal to the clean file. The default, `alternative_fix`, grades `--fix` (or the local runner's alternative fix).
-- The judge controller (`--prebuilt`) refuses `--trials`, `--ledger`, `--ids`, `--project-policy`, `--judge-fixed` and `--fix`.
+- `--family` picks the bug family, as in the local runner (its README, Bug families): the fixture the kit stage must hold, the probe set, the kit image and the alternative fix. Without it the job is the time-zone family's, with the same fingerprint and request bytes as before families existed. A race admission job has 11 copies and records ADM-06 as `not_applicable`. `--race-latency-ms` (race only, 0 to 10000) is the latency every copy sets with `rbw-proxy set-latency`; absent, the image's default holds. A set latency is part of the hashed runtime profile (`runtime_profile_sha256` and the task revision's `environment_sha256`), so two latencies give two task revisions. A race job's `summary.json` has a `family` object: the family, ADM-06's status and reason, the admission copy count and `race_latency_ms` (null for the image default). Each copy that set a latency also has a `proxy` object in its copy summary with rbw-proxy's exit status and the latency and source it reported. `proof` takes neither, because its grader cases are the time-zone family's.
+- The judge controller (`--prebuilt`) refuses `--trials`, `--ledger`, `--ids`, `--project-policy`, `--judge-fixed`, `--fix`, `--family` and `--race-latency-ms`.
 - `--backend sandbox` is the default. It reads `DATABASE_URL`, `VERCEL_TOKEN`, `VERCEL_TEAM_ID` and `VERCEL_PROJECT_ID` from the environment, never from arguments, and prints none of them. A missing one is named and the command exits 2.
 - `--backend docker` runs the copies on local Docker with an in-memory PGlite ledger. That ledger has every `@rbw/spend` migration and both slot keys, as the local runner's recorded mode uses. It needs no credentials. Its amounts are what the same copies would reserve and settle on Sandbox.
 - `--prebuilt` is prebuilt mode, the judge controller: it runs the release's frozen judge job with no Docker and writes `judge/<root>/` in the private store (`BLOB_PRIVATE_STORE_ID` and `VERCEL_OIDC_TOKEN`, or a local store directory). The judge route starts it; `src/judge-run.ts` describes its checks and its end order. The route and the controller each compute the controller operation's ID and payload hash, so the judge web deploy must be built from the commit the controller image was built from, or from a later commit that leaves `tools/controller/src/{envelope,limits,judge-web}.ts` and `packages/envelope` (with its rate sheet) unchanged.
@@ -162,7 +163,8 @@ Different inputs under the same name are refused, and the command exits 2. A new
 ```sh
 node tools/controller/src/cli.ts attempt --work <new run dir> --policy <ProjectPolicy> --candidate <private input> \
   --writer-rates <file> --search-rates <file> --image <local kit image> --manifest <file> --terms <file> \
-  --audit-policy <file> --kit-stage <dir> --sandbox-image <repository>@sha256:<digest> [--original-suite <file>]
+  --audit-policy <file> --kit-stage <dir> --sandbox-image <repository>@sha256:<digest> [--original-suite <file>] \
+  [--family time-zone|race] [--race-latency-ms <0-10000>]
 ```
 
 - `--policy` is the `ProjectPolicy` record. Its `project_id` is the root's project, and the SHA-256 of the file's bytes is the root's `project_policy_sha256`. A policy that names the development placeholder project is refused.
@@ -170,6 +172,7 @@ node tools/controller/src/cli.ts attempt --work <new run dir> --policy <ProjectP
 - `--writer-rates` and `--search-rates` are the writer's and the searcher's rate files, in the formats their `record` commands take.
 - Credentials come only from the environment: `DATABASE_URL`, `VERCEL_TOKEN`, `VERCEL_TEAM_ID` and `VERCEL_PROJECT_ID` (as `run` reads them), plus `TOKEN_FACTORY_WRITER_KEY` and `TAVILY_API_KEY`. A missing one is named, and the command exits 2 before anything runs. The two keys are read once and removed from the environment before any child process starts. No key reaches a log line, a record or an error message.
 - `--work` must be absent or empty. An attempt never resumes: a retry is a new root in a new directory.
+- `--family` and `--race-latency-ms` are `run`'s. A race-family attempt is refused before anything runs (`symptom_unavailable`): the issue writer's only input, `ObservedSymptom`, holds time-zone fields (a zone, events and day buckets), so the attempt would pay for its kit check and observation and then stop at the write. A race-family symptom is not built yet.
 
 Exit codes: 0 when the root ends `terminal` and `completed`; 1 when `root-run.json` was written with any other state; 2 for a usage or input error, with nothing run.
 

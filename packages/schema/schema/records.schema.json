@@ -632,9 +632,9 @@
       ]
     },
     "AssertionFailureCode": {
-      "description": "Codes of the first fixture; a later fixture adds values here.",
+      "description": "Assertion failure codes of every fixture: the time-zone fixture's two, then the race fixture's two; a later fixture adds values here.",
       "type": "string",
-      "enum": ["local_day_counts_mismatch", "bucket_labels_mismatch"]
+      "enum": ["local_day_counts_mismatch", "bucket_labels_mismatch", "double_spend", "backup_code_reused"]
     },
     "CheckId": {
       "description": "Lowercase slugs joined by dots, with at least one dot, such as tzarg.la-day-counts.",

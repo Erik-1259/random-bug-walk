@@ -1,5 +1,5 @@
 import { canonicalDigest, type CanonicalDigest } from "./canonical.ts";
-import { TRIAL_PROFILES, jobOperationIdentity, jobPayloadDigest } from "./derive.ts";
+import { jobOperationIdentity, jobPayloadDigest, trialProfile, type Adm06Applicability } from "./derive.ts";
 import {
   FILE_MODE_VALUES,
   JOB_KIND_VALUES,
@@ -16,8 +16,8 @@ import {
 } from "./generated.ts";
 import { RecordError, assertRecord, validateRecord } from "./validate.ts";
 
-export { TRIAL_PROFILES, jobOperationIdentity } from "./derive.ts";
-export type { ProfileTrial, TrialProfile } from "./derive.ts";
+export { ADMISSION_WITHOUT_PROBES_PROFILE, TRIAL_PROFILES, allowedTrialProfiles, jobOperationIdentity, trialProfile } from "./derive.ts";
+export type { Adm06Applicability, ProfileTrial, TrialProfile } from "./derive.ts";
 
 /** Every JobRequest field except the two the builder computes. */
 export type JobRequestFields = Omit<JobRequest, "operation_id" | "payload_hash">;
@@ -40,6 +40,11 @@ export interface ExpectedTrialsInput {
   addedSuiteSha256: string;
   /** An expected-check vector for each code state the kind uses; others are ignored. */
   checks: Partial<Record<CodeState, readonly ExpectedCheck[]>>;
+  /**
+   * Admission only: "not_applicable" for a family whose probe set records ADM-06 as not
+   * applicable, which drops partial-01 and stub-01. Omitted means "required".
+   */
+  adm06?: Adm06Applicability;
 }
 
 export interface BuiltExpectedTrials {
@@ -122,11 +127,15 @@ export function buildJobRequest(fields: JobRequestFields): BuiltJobRequest {
 /**
  * Builds the expected-trial manifest of a job kind from the kind's trial profile and the given
  * hashes and check vectors. Throws RecordError with a build: code for a kind that is not a job
- * kind, a missing patch hash or check vector, or a missing original suite outside observe.
+ * kind, a missing patch hash or check vector, a missing original suite outside observe, or an
+ * ADM-06 choice other than "required" outside admission.
  */
 export function buildExpectedTrials(input: ExpectedTrialsInput): BuiltExpectedTrials {
   if (!(JOB_KIND_VALUES as readonly string[]).includes(input.kind)) throw new RecordError("ExpectedTrials", ["build:kind"]);
-  const profile = TRIAL_PROFILES[input.kind];
+  // Read as a string: a caller outside TypeScript may pass any value.
+  const adm06: string = input.adm06 ?? "required";
+  if (adm06 !== "required" && (adm06 !== "not_applicable" || input.kind !== "admission")) throw new RecordError("ExpectedTrials", ["build:adm06"]);
+  const profile = trialProfile(input.kind, adm06 === "not_applicable" ? "not_applicable" : "required");
   if (profile.originalSuite && input.originalSuiteSha256 === null) throw new RecordError("ExpectedTrials", ["build:original_suite_missing"]);
   const trials = profile.trials.map((trial): ExpectedTrial => {
     const patch = trial.code_state === "clean" ? null : input.patchSha256[trial.code_state];

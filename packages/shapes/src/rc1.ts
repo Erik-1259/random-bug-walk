@@ -22,8 +22,13 @@ export const RC1_FIXED_RULE_ID = "rc-1.atomic-backup-code";
 export const RC1_PLANTED_RULE_ID = "rc-1.atomic-backup-code.planted";
 export const RC1_SOURCE_RULE_ID = "rc-1.atomic-backup-code.source";
 
-/** The one added check the race fixture runs, and the reason it gives when a code is spent twice. */
-export const RC1_CHECK_ID = "rc1.backup-code-single-use";
+/**
+ * The race fixture's two added checks (packages/umami-fixture-rc1): the serial control, which
+ * passes on every copy, and the concurrent race, with the reason it gives when a code is spent twice.
+ */
+export const RC1_SERIAL_CHECK_ID = "rc1.backup-code-serial-reuse";
+export const RC1_CHECK_ID = "rc1.backup-code-concurrent-double-spend";
+export const RC1_CHECK_IDS = [RC1_SERIAL_CHECK_ID, RC1_CHECK_ID] as const;
 export const RC1_DOUBLE_SPEND_REASON = "double_spend";
 
 export interface Rc1TargetSpec {

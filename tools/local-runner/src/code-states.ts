@@ -149,8 +149,12 @@ function declaredMutation(path: string, hostCommit: string, clean: Buffer, resul
  * planted by the mutation patch; fixed by reversing it on the planted file, which must give the
  * clean bytes; partial and stub by their probe patches on their recorded bases; the alternative
  * fix by this package's patch on the planted file.
+ *
+ * A probe set that records ADM-06 as not applicable (and so holds the mutation alone) gives no
+ * partial or stub state; any other probe set must hold both, as before. A family without an
+ * alternative fix passes null and gets no alternative_fix state.
  */
-export function deriveCodeStates(clean: Buffer, probes: ProbeSet, alternative: AlternativeFix): Map<StateKey, StateFile> {
+export function deriveCodeStates(clean: Buffer, probes: ProbeSet, alternative: AlternativeFix | null): Map<StateKey, StateFile> {
   const { data } = probes;
   const target = data.target_path;
   const cleanSha = sha256Hex(clean);
@@ -208,13 +212,15 @@ export function deriveCodeStates(clean: Buffer, probes: ProbeSet, alternative: A
     [cleanSha, clean],
     [sha256Hex(planted), planted],
   ]);
-  for (const id of ["partial", "stub"] as const) {
+  const probeIds = data.adm_06 === undefined ? (["partial", "stub"] as const) : ([] as const);
+  for (const id of probeIds) {
     const { entry, text } = probe(id);
     const base = bases.get(entry.base_sha256);
     if (base === undefined) throw new CodeStateRefusal("base_hash_mismatch", `probe ${id} names a base that is neither the clean nor the planted file`);
     add(id, id, applyPatchChecked(base, text, { target, base_sha256: entry.base_sha256, result_sha256: entry.result_sha256 }), text);
   }
 
+  if (alternative === null) return states;
   if (alternative.target_path !== target) throw new CodeStateRefusal("patch_scope", `the alternative fix must change only ${target}`);
   const alternativeBytes = applyPatchChecked(planted, alternative.patch, {
     target,

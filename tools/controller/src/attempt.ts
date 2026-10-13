@@ -11,8 +11,8 @@
 // under jobs/ and never to a report line: the release tool publishes the issue later.
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { InputsError, loadCopyInputs, newRunIds } from "@rbw/local-runner";
-import type { RunIds } from "@rbw/local-runner";
+import { DEFAULT_FAMILY, InputsError, loadCopyInputs, newRunIds } from "@rbw/local-runner";
+import type { FamilyId, RunIds } from "@rbw/local-runner";
 import { CanonicalError, RecordError, assertRecord, encodeCanonical, parseRecord, sha256Hex, validateRecord } from "@rbw/schema";
 import type { DocExcerpt, ProjectPolicy, RootRun } from "@rbw/schema";
 import {
@@ -75,6 +75,10 @@ export interface AttemptInputs {
   kitStage: string;
   /** The frozen original suite; when null, the kit check's freeze copy makes it. */
   originalSuite: string | null;
+  /** The bug family; the time-zone family when absent. */
+  family?: FamilyId;
+  /** Race family only: the database latency each copy's Toxiproxy applies. */
+  raceLatencyMs?: number;
   probesDir?: string;
   alternativeDir?: string;
   backend: Backend;
@@ -229,14 +233,24 @@ export function prepareAttempt(inputs: AttemptInputs, env: Record<string, string
     throw error;
   }
   if (priceOf(searchRates, "tavily", "credit") === null) throw new InputsError("unknown_price: the search rate file has no tavily credit price");
-  loadCopyInputs({
+  const copyInputs = loadCopyInputs({
     manifest: inputs.manifest,
     terms: inputs.terms,
     policy: inputs.auditPolicy,
+    ...familyInputs(inputs),
     ...(inputs.probesDir === undefined ? {} : { probesDir: inputs.probesDir }),
     ...(inputs.alternativeDir === undefined ? {} : { alternativeDir: inputs.alternativeDir }),
   });
+  // The issue writer's only input, ObservedSymptom, holds time-zone fields (a zone, events and
+  // day buckets), so another family's attempt would pay for its kit check and observation and then
+  // stop at the write. It is refused here, before anything runs, until that family has a symptom.
+  if (copyInputs.family.id !== DEFAULT_FAMILY) throw new InputsError(`symptom_unavailable: the ${copyInputs.family.id} family has no ObservedSymptom for the issue writer yet, so its attempt cannot run`);
   return { inputs, policy, policySha256: sha256Hex(policyBytes), input, writerRates, searchRates, keys: { writer: writerKey, search: searchKey } };
+}
+
+/** The attempt's family inputs, passed on to every job and copy; none for the default family. */
+function familyInputs(inputs: AttemptInputs): { family?: FamilyId; raceLatencyMs?: number } {
+  return { ...(inputs.family === undefined ? {} : { family: inputs.family }), ...(inputs.raceLatencyMs === undefined ? {} : { raceLatencyMs: inputs.raceLatencyMs }) };
 }
 
 function clean(text: string): string {
@@ -503,6 +517,7 @@ async function stages(a: Attempt, projectPolicy: { sha256: string; policy_id: st
         policy: inputs.auditPolicy,
         kitStage: inputs.kitStage,
         originalSuite,
+        ...familyInputs(inputs),
         ...(inputs.probesDir === undefined ? {} : { probesDir: inputs.probesDir }),
         ...(inputs.alternativeDir === undefined ? {} : { alternativeDir: inputs.alternativeDir }),
         backend: inputs.backend,

@@ -7,6 +7,7 @@ import {
   canonicalDigest,
   parseRecord,
   sha256Hex,
+  type Adm06Applicability,
   type ArtifactEntry,
   type ArtifactManifest,
   type CheckObservation,
@@ -39,6 +40,25 @@ export const VECTORS: Record<CodeState, ExpectedCheck[]> = {
   partial: [pass(UTC), fail(LA, "local_day_counts_mismatch"), pass(AKL), fail(KOL, "local_day_counts_mismatch")],
   stub: [pass(UTC), fail(LA, "bucket_labels_mismatch"), fail(AKL, "bucket_labels_mismatch"), fail(KOL, "bucket_labels_mismatch")],
 };
+
+export const SERIAL = "rc1.backup-code-serial-reuse";
+export const RACE = "rc1.backup-code-concurrent-double-spend";
+
+/** The race family's check vectors: no partial or stub state, because it records ADM-06 as not applicable. */
+export const RACE_VECTORS: Partial<Record<CodeState, ExpectedCheck[]>> = {
+  clean: [pass(SERIAL), pass(RACE)],
+  fixed: [pass(SERIAL), pass(RACE)],
+  planted: [pass(SERIAL), fail(RACE, "double_spend")],
+};
+
+/** The family a synthetic record set stands for: the time-zone family by default, or the race family. */
+export interface DraftOptions {
+  adm06?: Adm06Applicability;
+  checks?: Partial<Record<CodeState, ExpectedCheck[]>>;
+}
+
+/** The race family's admission options: 11 copies and its two checks. */
+export const RACE_FAMILY: DraftOptions = { adm06: "not_applicable", checks: RACE_VECTORS };
 
 const EXECUTION_ID = "00000000-0000-4000-8000-000000000203";
 const ROOT_ID = "00000000-0000-4000-8000-000000000101";
@@ -143,7 +163,7 @@ function baselineObservations(trial: ExpectedTrial): { observations: CheckObserv
 }
 
 /** A complete, consistent record set of the given kind, before it is written. */
-export function baselineDraft(kind: JobKind = "admission"): RecordSetDraft {
+export function baselineDraft(kind: JobKind = "admission", options: DraftOptions = {}): RecordSetDraft {
   const built = buildExpectedTrials({
     kind,
     executionId: EXECUTION_ID,
@@ -152,7 +172,8 @@ export function baselineDraft(kind: JobKind = "admission"): RecordSetDraft {
     originalSuiteSha256: ORIGINAL_SUITE,
     originalTestIds: TEST_IDS,
     addedSuiteSha256: ADDED_SUITE,
-    checks: VECTORS,
+    checks: options.checks ?? VECTORS,
+    ...(options.adm06 === undefined ? {} : { adm06: options.adm06 }),
   });
   const fields = requestFields(kind, built.sha256);
   const request = buildJobRequest(fields).request;
@@ -297,8 +318,13 @@ export function writeRecordSet(draft: RecordSetDraft, dir = tempDir()): string {
 }
 
 /** A written record set: the baseline of a kind, changed by a mutator, then by a hook on the written files. */
-export function recordSet(mutate: (draft: RecordSetDraft) => void = () => undefined, after: (dir: string) => void = () => undefined, kind: JobKind = "admission"): string {
-  const draft = baselineDraft(kind);
+export function recordSet(
+  mutate: (draft: RecordSetDraft) => void = () => undefined,
+  after: (dir: string) => void = () => undefined,
+  kind: JobKind = "admission",
+  options: DraftOptions = {},
+): string {
+  const draft = baselineDraft(kind, options);
   mutate(draft);
   const dir = writeRecordSet(draft);
   after(dir);

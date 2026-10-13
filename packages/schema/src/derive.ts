@@ -38,6 +38,30 @@ export const TRIAL_PROFILES: Readonly<Record<JobKind, TrialProfile>> = {
   judge_verify: { trials: [...numbered("clean", 1, 1), ...numbered("planted", 1, 1), ...numbered("fixed", 1, 1)], originalSuite: true },
 };
 
+/**
+ * The admission profile of a family that records ADM-06 (the partial and stub probes) as not
+ * applicable: the admission trials without partial-01 and stub-01, 11 copies instead of 13.
+ * Only the trusted side chooses it, from the family's probe set; an admission manifest may follow
+ * either admission profile, and the admission decision then marks ADM-06 not applicable.
+ */
+export const ADMISSION_WITHOUT_PROBES_PROFILE: TrialProfile = {
+  trials: TRIAL_PROFILES.admission.trials.filter((trial) => trial.code_state !== "partial" && trial.code_state !== "stub"),
+  originalSuite: true,
+};
+
+/** Whether ADM-06's partial and stub probes are required, or recorded as not applicable for the family. */
+export type Adm06Applicability = "required" | "not_applicable";
+
+/** The trial profile of a job kind; only an admission job has the ADM-06 choice. */
+export function trialProfile(kind: JobKind, adm06: Adm06Applicability = "required"): TrialProfile {
+  return kind === "admission" && adm06 === "not_applicable" ? ADMISSION_WITHOUT_PROBES_PROFILE : TRIAL_PROFILES[kind];
+}
+
+/** Every profile a manifest of the kind may follow: both admission profiles, or the kind's one profile. */
+export function allowedTrialProfiles(kind: JobKind): readonly TrialProfile[] {
+  return kind === "admission" ? [TRIAL_PROFILES.admission, ADMISSION_WITHOUT_PROBES_PROFILE] : [TRIAL_PROFILES[kind]];
+}
+
 type JobIdentityFields = Pick<
   JobRequest,
   "project_id" | "project_policy_sha256" | "root_execution_id" | "batch_id" | "task_revision" | "kind" | "runtime_profile_sha256" | "attempt_ordinal"

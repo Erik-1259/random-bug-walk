@@ -32,6 +32,9 @@ function addedNotExecuted(trial: TrialEvidence): TrialRef | null {
   return notExecutedFinding(trial, ["import:check_missing"]) ?? (trial.status === "incomplete" && trial.stage === "outcomes" ? notRunObservation(trial) : null);
 }
 
+/** Whether the job's expected trials hold the ADM-06 probes; the evidence lists every expected trial. */
+const probesExpected = (trials: readonly TrialEvidence[]): boolean => trials.some((trial) => PROBES.includes(trial.trial_id));
+
 const failedOriginal = (trial: TrialEvidence): boolean => (trial.original?.failed_test_ids.length ?? 0) > 0;
 
 /** The trial IDs whose added checks, and those whose original suite, a rule reads. */
@@ -120,7 +123,7 @@ function comparison(trials: readonly TrialEvidence[]): { classification: Compari
   return { classification: "blind_spot_demonstrated", trials: trials.map((trial) => ref(trial, "trial_status")) };
 }
 
-/** A valid rejection is conclusive; otherwise invalid, then incomplete, then pass. */
+/** A valid rejection is conclusive; otherwise invalid, then incomplete, then pass. A not_applicable rule decides nothing. */
 function outcomeVerdict(decisions: readonly RuleDecision[]): RuleOutcome {
   for (const outcome of ["reject", "invalid", "incomplete"] as const) if (decisions.some((item) => item.decision === outcome)) return outcome;
   return "pass";
@@ -144,8 +147,12 @@ export function decide(evidence: Evidence): Decision {
     "ADM-04": decideRule(trials, { added: PLANTED, original: [] }),
     // ADM-05: fixed-01 and planted-01 hold in all 20 repetitions; one inconsistent repetition rejects.
     "ADM-05": decideRule(trials, { added: ["fixed-01", "planted-01"], original: [] }),
-    // ADM-06: each negative probe matches its own vector; a broken required probe leaves the rule incomplete.
-    "ADM-06": decideRule(trials, { added: PROBES, original: [], brokenIsIncomplete: true }),
+    // ADM-06: each negative probe matches its own vector; a broken required probe leaves the rule
+    // incomplete. A family that records ADM-06 as not applicable runs the 11-trial admission
+    // profile, whose expected trials hold neither probe; the rule is then not applicable. The
+    // schema's ExpectedTrials rules allow only the two admission profiles, so a manifest that
+    // drops one probe never gets here.
+    "ADM-06": probesExpected(trials) ? decideRule(trials, { added: PROBES, original: [], brokenIsIncomplete: true }) : { decision: "not_applicable" as const, trials: [] },
   };
   return {
     ...base,

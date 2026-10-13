@@ -13,6 +13,7 @@ from typing import TypedDict, cast
 from rbw_schema.canonical import JsonValue, canonical_digest
 from rbw_schema.derive import (
     TRIAL_PROFILES,
+    allowed_trial_profiles,
     job_operation_identity,
     job_payload_digest,
     utc_instant_key,
@@ -183,7 +184,17 @@ def _expected_trials_rules(manifest: ExpectedTrials, request: JobRequest | None)
         return errors
     if canonical_digest(manifest).sha256 != request["expected_trials_sha256"]:
         errors.append("request:expected_trials_sha256")
-    profile = TRIAL_PROFILES[request["kind"]]
+    # An admission manifest follows the full profile or, for a family without ADM-06 probes, the
+    # profile without them; the trial IDs pick the one it is checked against.
+    ids = [trial["trial_id"] for trial in trials]
+    profile = next(
+        (
+            item
+            for item in allowed_trial_profiles(request["kind"])
+            if [t.trial_id for t in item.trials] == ids
+        ),
+        TRIAL_PROFILES[request["kind"]],
+    )
     if profile.original_suite:
         if any(trial["original_suite_sha256"] is None for trial in trials):
             errors.append("trials:original_suite_missing")
