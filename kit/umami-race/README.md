@@ -127,13 +127,10 @@ docker run --rm --network none --security-opt no-new-privileges <tag> /opt/rbw/b
 docker run --rm --network none <tag> /opt/rbw/bin/rbw-race-selftest
 ```
 
-On 2026-10-13, on an Apple silicon laptop with Docker Desktop, the overlay built in 24 s for
-`linux/amd64` (under emulation) on the time-zone image `rbw-umami-kit@sha256:295433e5a8b0dc81e1492a4d18220f5e1d323a78bc38cbb5eca688efde7863ff`, and in 14 s
-for `linux/arm64`. The first 29 layers of the amd64 race image are the 29 layers of that base
-image. The arm64 race image passed every base and race self-test check. Under amd64 emulation the
-race checks passed and the base check `no-build-outputs-or-caches` failed on `/root/.cache/rosetta`,
-which the emulator creates in every container it runs; the released time-zone image fails the same
-way under emulation.
+Under `linux/amd64` emulation on Apple silicon, the base self-test check
+`no-build-outputs-or-caches` fails on `/root/.cache/rosetta`, which the emulator creates in every
+container it runs; the released time-zone image fails the same way under emulation. Run the
+self-tests on a native build to check an image.
 
 ## Tests
 
