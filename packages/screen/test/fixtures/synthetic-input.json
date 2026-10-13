@@ -1,0 +1,12 @@
+{
+  "format_version": 1,
+  "case": "synthetic-currency-001",
+  "case_status": "synthetic test case",
+  "shape": "SYN-1: the planted call drops its currency argument",
+  "host": "synthetic-host",
+  "host_commit": "0123456789abcdef0123456789abcdef01234567",
+  "source_read_from": "a temporary synthetic tree written by the tests from test/fixtures/synthetic-source.ts",
+  "target_path": "src/report.ts",
+  "files": ["src/report.ts", "src/format.ts"],
+  "symptom": "Synthetic report: with the currency set to euro, the report total shows a dollar sign, while the summary average shows the euro sign."
+}
