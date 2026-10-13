@@ -88,6 +88,17 @@ describe("call limits", () => {
     expect(world.server.requests).toHaveLength(1);
   });
 
+  it("runs the source searches and the extract without phrases, since they run before the issue is written; a phrase check still needs them", async () => {
+    world = await makeWorld({ recordings: ALL_OK });
+    const grounding: Record<string, unknown> = { ...SEARCH_INPUT };
+    delete grounding.phrases;
+    expect(recorded(await world.searcher.searchSource("source-1", grounding)).record.outcome).toBe("complete");
+    expect(recorded(await world.searcher.extractDocs("docs-1", grounding)).record.outcome).toBe("complete");
+    expectRefused(await world.searcher.checkPhrase("phrase-1", grounding), "invalid_input");
+    expectRefused(await world.searcher.searchSource("source-2", { ...grounding, phrases: ["a", "b"] }), "invalid_input");
+    expect(world.server.requests).toHaveLength(2);
+  });
+
   it("refuses an input that does not match the schema", async () => {
     world = await makeWorld({ recordings: ALL_OK });
     const bad = { ...SEARCH_INPUT, extra: true } as unknown as typeof SEARCH_INPUT;

@@ -25,8 +25,8 @@ import { priceOf } from "./rates.ts";
 import type { RateSheet } from "./rates.ts";
 import { freezeRecord, recordKey } from "./records.ts";
 import type { DocsResult, RecordKind, RecordStore, SearchRecord, SourceResult, UnhashedRecord } from "./records.ts";
-import { parseSearchInput } from "./search-input.ts";
-import type { SearchInput } from "./search-input.ts";
+import { parseGroundingInput, parseSearchInput } from "./search-input.ts";
+import type { GroundingInput, SearchInput } from "./search-input.ts";
 import {
   buildIdentity,
   buildProfile,
@@ -219,16 +219,19 @@ export function createSearcher(deps: SearcherDeps): Searcher {
     return null;
   };
 
-  const parseInput = (input: unknown): SearchInput | CallResult => {
+  /** The phrase checks need the phrases; the source searches and the extract run before the issue exists, so they may leave them out. */
+  function parseInput(input: unknown, parse: typeof parseSearchInput): SearchInput | CallResult;
+  function parseInput(input: unknown, parse: typeof parseGroundingInput): GroundingInput | CallResult;
+  function parseInput(input: unknown, parse: (value: unknown) => GroundingInput): GroundingInput | CallResult {
     try {
-      return parseSearchInput(input);
+      return parse(input);
     } catch (error) {
       if (error instanceof SearchError) {
         return refuse("invalid_input", error.message);
       }
       throw error;
     }
-  };
+  }
 
   async function execute(candidate: string, call: PlannedCall): Promise<CallResult> {
     const key = recordKey(candidate, call.name);
@@ -439,7 +442,7 @@ export function createSearcher(deps: SearcherDeps): Searcher {
 
   return {
     async searchSource(name, rawInput) {
-      const input = parseInput(rawInput);
+      const input = parseInput(rawInput, parseGroundingInput);
       if ("status" in input) {
         return input;
       }
@@ -464,7 +467,7 @@ export function createSearcher(deps: SearcherDeps): Searcher {
     },
 
     async extractDocs(name, rawInput) {
-      const input = parseInput(rawInput);
+      const input = parseInput(rawInput, parseGroundingInput);
       if ("status" in input) {
         return input;
       }
@@ -489,7 +492,7 @@ export function createSearcher(deps: SearcherDeps): Searcher {
     },
 
     async checkPhrase(name, rawInput) {
-      const input = parseInput(rawInput);
+      const input = parseInput(rawInput, parseSearchInput);
       if ("status" in input) {
         return input;
       }
