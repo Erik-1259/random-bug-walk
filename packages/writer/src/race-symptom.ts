@@ -1,11 +1,13 @@
-// A narrow local definition of the race family's issue-writer input, @rbw/schema's `RaceSymptom`
-// record, which the controller's candidate attempt builds from the observation.
+// The race family's issue-writer input: @rbw/schema's `RaceSymptom` record, which the controller's
+// candidate attempt builds from the observation. It is checked by the canonical validator and by
+// the stricter local rules below.
 //
 // It holds what a user could see: the action, the public request, two requests that spent the
 // same one-time code at the same time with their statuses, outcomes and times, the single
 // acceptance expected against the acceptances observed, a sequential reuse for contrast, and
 // user-documentation passages. Every object is strict, like ObservedSymptom, so a token, a code,
 // a check ID or a source path in an extra field is refused rather than passed on to the model.
+import { validateRecord } from "@rbw/schema";
 import { z } from "zod";
 import { ObservedSymptomSchema } from "./observed-symptom.ts";
 import type { ObservedSymptom } from "./observed-symptom.ts";
@@ -39,7 +41,7 @@ export const RaceSymptomSchema = z
     user_action: z.string().min(1),
     request: z
       .object({
-        method: z.string().regex(/^[A-Z]+$/),
+        method: z.enum(["GET", "POST"]),
         path: z.string().startsWith("/"),
         query: z.record(z.string(), z.string()),
       })
@@ -54,19 +56,12 @@ export const RaceSymptomSchema = z
     doc_excerpts: z.array(z.object({ text: z.string().min(1), source_url: z.url() }).strict()),
   })
   .strict()
-  .refine(
-    (symptom) =>
-      symptom.observed.accepted === symptom.concurrent_attempts.filter((attempt) => attempt.outcome === "accepted").length &&
-      symptom.observed.refused === symptom.concurrent_attempts.filter((attempt) => attempt.outcome === "refused").length,
-    "observed counts the outcomes of the concurrent attempts",
-  )
-  .refine(
-    (symptom) =>
-      symptom.overlap_ms ===
-      Math.min(...symptom.concurrent_attempts.map((attempt) => attempt.settled_ms)) -
-        Math.max(...symptom.concurrent_attempts.map((attempt) => attempt.sent_ms)),
-    "overlap_ms is the earlier settle time minus the later send time of the concurrent attempts",
-  )
+  // The canonical record is the contract: its request-method enum, path, locale, link and
+  // cross-field rules (observed counts, attempt times, overlap) apply here unchanged, so this
+  // parser never accepts a RaceSymptom that @rbw/schema refuses.
+  .superRefine((symptom, ctx) => {
+    for (const error of validateRecord("RaceSymptom", symptom)) ctx.addIssue({ code: "custom", message: `not a valid RaceSymptom record (${error})` });
+  })
   .brand<"RaceSymptom">();
 
 /** A validated race observation. The brand means only `parseWriterSymptom` can produce one. */

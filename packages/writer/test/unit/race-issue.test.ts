@@ -1,7 +1,7 @@
 // The race family's issue input, prompt and checks. The recorded cases replay committed synthetic
 // recordings (test/fixtures/recordings/issue-race-*.json); nothing calls a model.
 import type { PGlite } from "@electric-sql/pglite";
-import { assertRecord } from "@rbw/schema";
+import { assertRecord, validateRecord } from "@rbw/schema";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { checkIssue } from "../../src/issue-checks.ts";
 import { buildIssuePrompt } from "../../src/issue-prompt.ts";
@@ -67,7 +67,18 @@ describe("the race symptom input", () => {
     ["a zero overlap", () => ({ ...raceSymptom("valid"), overlap_ms: 0 })],
     ["a positive overlap that is not the earlier settle time minus the later send time", () => ({ ...raceSymptom("valid"), overlap_ms: 90 })],
     ["another symptom kind", () => ({ ...raceSymptom("valid"), symptom_kind: "synthetic_kind" })],
+    ["a request method other than GET or POST", () => ({ ...raceSymptom("valid"), request: { method: "PUT", path: "/api/synthetic/verify", query: {} } })],
+    ["a documentation link that is not HTTPS", () => ({
+      ...raceSymptom("valid"),
+      doc_excerpts: [{ text: "Synthetic excerpt.", source_url: "http://docs.example.invalid/two-step" }],
+    })],
   ];
+
+  it("accepts nothing the canonical RaceSymptom record refuses", () => {
+    for (const [, value] of bad) {
+      if (validateRecord("RaceSymptom", value()).length > 0) expect(parseWriterSymptom(value()).ok).toBe(false);
+    }
+  });
 
   it.each(bad)("refuses %s before reserving or calling", async (_name, value) => {
     expect(parseWriterSymptom(value()).ok).toBe(false);
