@@ -1,0 +1,68 @@
+{
+  "record": "uc1-static-headroom-screen",
+  "record_version": 1,
+  "case": "rc-1-backup-code-001",
+  "case_status": "candidate; not admitted, no issue written yet",
+  "shape": "RC-1 atomic backup-code consumption (race class)",
+  "screen": {
+    "source": "Product spec \u00a78.3, paragraph 'For UC1', and \u00a72.4 (UC1 row)",
+    "criterion": "Skip a UC1 candidate whose omission is plain from the pre-fix source alone.",
+    "binding": true,
+    "judged_on": "2026-10-13",
+    "judged_by": "builder lane race-screen (agent), written judgment from the pinned source; no model probe was run"
+  },
+  "subject": {
+    "host": "Umami",
+    "host_commit": "ec0ff50388c264ed8ce46f00967e92f7e71476ae",
+    "source_read_from": "kit image rbw-umami-kit:local, image id sha256:f987de0db4f62870d0dc479ea6bb4d03aa2e5544af34037ea16ea0ab451f1f75, path /workspace/app",
+    "source_check": "The same image's src/queries/sql/pageviews/getPageviewStats.ts hashes to 1f679f7a666f2ca7888b9094fb85a69a31b546566f194e27ac6eef2e9aef9b1b, the clean_sha256 in packages/shapes/probes/dt-1.tz-arg/probes.json, so the tree is the pinned one.",
+    "target_file": "src/app/api/2fa/verify/route.ts",
+    "clean_sha256": "3e766a0ba16e2547c234442176c04a0f2fd096d033a7079d21938dd9796acb87",
+    "planted_sha256": "30426f040a2c4ea1730827644b8947feed39dc8f2487fec1372139f5be9d66fb",
+    "planted_sha256_method": "The one-line mutation below applied to a temporary copy of the clean file; the bytes are otherwise identical.",
+    "mutation": "@@ -94,7 +94,7 @@\n     }\n \n     const consumed = await prisma.client.twoFactorBackupCode.updateMany({\n-      where: { id: unusedCodes[matchIndex].id, used: false },\n+      where: { id: unusedCodes[matchIndex].id },\n       data: { used: true },\n     });\n "
+  },
+  "verdict": "fail",
+  "verdict_summary": "A careful reader can find the omission from the planted source alone (the static tells below), so the case fails the \u00a78.3 screen and is not a UC1 subject. The case remains suitable for the race class and UC3. Separately, server logs would carry nothing either arm lacks; that point is the builder's inference in log_headroom_note and is not part of this verdict.",
+  "static_tells": [
+    {
+      "location": "src/app/api/2fa/verify/route.ts:96-108",
+      "kind": "near-dead guard",
+      "detail": "The result is named `consumed`, and the code rejects the request as an invalid backup code when `consumed.count === 0`. Without `used: false` in the where clause, the update matches the row it just read, so the count is 1 on every path the race drives. The only way the branch still runs is a concurrent delete of the row (2FA disable, setup confirm or the admin reset) between the read and the write. A check that can no longer fail for a used code shows the reader what the write was meant to guard."
+    },
+    {
+      "location": "src/app/api/2fa/verify/route.ts:81-83 against :96-99",
+      "kind": "in-file twin",
+      "detail": "The read at line 82 filters `where: { userId, used: false }`; the write at line 97 drops `used: false`. The missing condition sits 15 lines above the site, as the time-zone case's ClickHouse calls keep the argument its planted call lost."
+    },
+    {
+      "location": "src/app/api/2fa/verify/route.ts:81-99 and src/lib/two-factor/backup-codes.ts:22-31",
+      "kind": "textbook check-then-act",
+      "detail": "The handler reads the unused codes, awaits bcrypt.compare over each hash (verifyBackupCode), then writes by id with no transaction and no lock. A read-then-unconditional-write on a single-use credential is the standard time-of-check to time-of-use pattern and needs no runtime evidence to recognize."
+    },
+    {
+      "location": "issue to site",
+      "kind": "localization",
+      "detail": "Any honest symptom ('one backup code signs in twice when submitted at the same time') names backup codes and 2FA verification. Only one handler consumes backup codes (grep for `twoFactorBackupCode.update` finds line 96 alone), so the reader lands on a 150-line file whose fix is a single where-clause condition."
+    }
+  ],
+  "evidence_comparison": {
+    "note": "Required by the UC1 pre-registration: what each channel already reveals compared with the server logs. 'Server logs' here means Umami stderr plus Postgres stderr as the kit captures them (kit/umami/etc/app.environment sets no LOG_QUERY; kit/umami/etc/postgresql.rbw.conf sets no log_statement).",
+    "issue_text": "Not written yet. The symptom is two successful verifications from one code, which states the whole failure.",
+    "observe_and_writer_evidence": "The planted observation is two HTTP 200 responses with full tokens, from one backup code. Nothing in that evidence is a Prisma or Postgres message, because none is raised.",
+    "http_responses": "Off arm: both concurrent POST /api/2fa/verify requests return 200 with a token. On a clean copy one returns 400 two-factor-error-invalid-backup-code. The responses already show the full symptom.",
+    "server_logs": "Empty for this bug. The double spend is two successful requests: Umami logs nothing on the success path (route.ts:133-149), and Postgres logs nothing for successful statements at the default settings. The log tool has no evidence to add in either arm.",
+    "leak_judgment": "Not a leak failure: no Prisma or Postgres message reaches the issue or the responses, so the pre-registration's log-tool test does not fail this case."
+  },
+  "log_headroom_note": {
+    "status": "Builder's inference for the owner to weigh. Not part of the binding \u00a78.3 verdict, and neither spec \u00a78.3 nor the UC1 pre-registration states it as a rule.",
+    "note": "The server logs are empty for this bug in both arms, so the on arm would gain nothing to read even if the static tells were absent. The builder's view is that a UC1 race subject is more useful when it fails loudly in the server log and quietly in the response."
+  },
+  "consequences": [
+    "Do not reuse this case as the UC1 paired-comparison subject (race-class plan decision #4 'build once, reuse' does not hold).",
+    "The case still fits the race class and UC3: the original suite's src/app/api/2fa/verify/route.test.ts mocks updateMany and has no backup-code test, so the original suite is expected to pass on the planted copy (to be confirmed by the admission run).",
+    "Recommendation (builder's inference, see log_headroom_note; not a screen rule): prefer a UC1 race subject that fails loudly in the server log and quietly in the response. A backup-code double spend is a silent double success that logs nothing, whether or not the dead guard is also removed, so other variants at this site would likely give the on arm nothing to read either.",
+    "Whether UC1 falls back to the time-zone case is the owner's call on Oct 18 at noon; this record does not decide it."
+  ],
+  "optional_static_probe": "Not run. The pre-registration allows a 5-call static probe only as a supplement after the clean-equal grading fix; for RC-1 it would also face the R7 memorization risk, since the race-class design names upstream commit 3e165a8c as the public change that added this guard (not checked here)."
+}
