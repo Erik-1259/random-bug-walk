@@ -8,14 +8,18 @@ export const FIX_PARENT = "0a838649b773122cc68cbd0c3df78d4251b981c5";
 /** The first parent of FIX_PARENT; that pairing changes only pnpm-lock.yaml. */
 export const FIX_PARENT_FIRST_PARENT = "2260520ae58b7b79327f0f50e4d465931b07f41c";
 export const ROUTE_PATH = "src/app/api/websites/[websiteId]/pageviews/route.ts";
+/** Upstream 3e165a8c, the RC-1 source fix, and its only parent. */
+export const RC1_FIX_COMMIT = "3e165a8c6fea303250e626dc952a396e40887c71";
+export const RC1_FIX_PARENT = "b4bb9cc727cd0ec05dc233e3e1f506f2e3633e34";
 
 export const FETCHES = [
   { commit: HOST_COMMIT, depth: 1 },
   { commit: FIX_COMMIT, depth: 2 },
   { commit: FIX_PARENT, depth: 2 },
+  { commit: RC1_FIX_COMMIT, depth: 2 },
 ] as const;
 
-const REQUIRED = [HOST_COMMIT, FIX_COMMIT, FIX_PARENT, FIX_PARENT_FIRST_PARENT];
+const REQUIRED = [HOST_COMMIT, FIX_COMMIT, FIX_PARENT, FIX_PARENT_FIRST_PARENT, RC1_FIX_COMMIT, RC1_FIX_PARENT];
 
 function git(gitDir: string, args: string[]): { status: number | null; stdout: Buffer } {
   const result = spawnSync("git", ["--git-dir", gitDir, ...args], { maxBuffer: 64 * 1024 * 1024 });

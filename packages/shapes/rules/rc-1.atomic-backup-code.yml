@@ -1,0 +1,87 @@
+# Shape RC-1.atomic-backup-code: a backup code is read as unused, then, after an await (the bcrypt
+# compare), written back as used without checking that it is still unused, so two concurrent
+# requests can both spend it. The first rule matches the fixed form: the compare-and-swap `where`
+# of the updateMany that consumes the matched code, with its `used: false` guard. Its fix plants
+# the bug by dropping that guard. The second rule matches the planted, guardless form. Both are
+# scoped to the backup-code updateMany inside the POST handler.
+id: rc-1.atomic-backup-code
+language: TypeScript
+severity: info
+message: The backup-code updateMany in POST consumes the code only while it is still unused.
+note: "Without `used: false` the write no longer fails for a code another request already spent, so two concurrent requests can both succeed."
+rule:
+  all:
+    - pattern:
+        context: "x = { id: $ID, used: false }"
+        selector: object
+    - inside:
+        kind: pair
+        has:
+          field: key
+          regex: ^where$
+        inside:
+          kind: object
+          inside:
+            kind: arguments
+            inside:
+              kind: call_expression
+              has:
+                field: function
+                regex: ^prisma\.client\.twoFactorBackupCode\.updateMany$
+    - inside:
+        kind: function_declaration
+        stopBy: end
+        has:
+          field: name
+          regex: ^POST$
+constraints:
+  ID:
+    kind: member_expression
+    regex: ^unusedCodes\[matchIndex\]\.id$
+fix: "{ id: $ID }"
+metadata:
+  shape_id: RC-1.atomic-backup-code
+  form: fixed
+  keywords: [race condition, backup code, two-factor, double use, compare-and-swap, updateMany, lost update]
+  cwe: CWE-367 Time-of-check Time-of-use (TOCTOU) Race Condition
+  related_lint_rule: require-atomic-updates
+---
+id: rc-1.atomic-backup-code.planted
+language: TypeScript
+severity: info
+message: The backup-code updateMany in POST consumes the code without checking that it is still unused.
+rule:
+  all:
+    - pattern:
+        context: "x = { id: $ID }"
+        selector: object
+    - inside:
+        kind: pair
+        has:
+          field: key
+          regex: ^where$
+        inside:
+          kind: object
+          inside:
+            kind: arguments
+            inside:
+              kind: call_expression
+              has:
+                field: function
+                regex: ^prisma\.client\.twoFactorBackupCode\.updateMany$
+    - inside:
+        kind: function_declaration
+        stopBy: end
+        has:
+          field: name
+          regex: ^POST$
+constraints:
+  ID:
+    kind: member_expression
+    regex: ^unusedCodes\[matchIndex\]\.id$
+metadata:
+  shape_id: RC-1.atomic-backup-code
+  form: planted
+  keywords: [race condition, backup code, two-factor, double use, compare-and-swap, updateMany, lost update]
+  cwe: CWE-367 Time-of-check Time-of-use (TOCTOU) Race Condition
+  related_lint_rule: require-atomic-updates
