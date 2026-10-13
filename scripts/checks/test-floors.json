@@ -1,4 +1,31 @@
 {
-  "vitest": { ".": 21, "kit/umami": 57, "kit/umami-race": 97, "packages/admission": 125, "packages/envelope": 42, "packages/harvest": 102, "packages/harvest-review": 76, "packages/projection": 126, "packages/publisher": 181, "packages/schema": 910, "packages/search": 84, "packages/shapes": 61, "packages/spend": 344, "packages/umami-driver": 223, "packages/umami-fixture": 109, "packages/web": 143, "packages/writer": 188, "scripts/checks": 189, "tools/controller": 89, "tools/local-runner": 138, "tools/neon-ci": 98, "tools/publication": 166, "tools/release": 42 },
-  "pytest": { "python/schema": 879 }
+  "vitest": {
+    ".": 21,
+    "kit/umami": 57,
+    "kit/umami-race": 97,
+    "packages/admission": 125,
+    "packages/envelope": 42,
+    "packages/harvest": 102,
+    "packages/harvest-review": 76,
+    "packages/projection": 126,
+    "packages/publisher": 181,
+    "packages/schema": 910,
+    "packages/search": 84,
+    "packages/shapes": 61,
+    "packages/solver": 114,
+    "packages/spend": 344,
+    "packages/umami-driver": 223,
+    "packages/umami-fixture": 109,
+    "packages/web": 143,
+    "packages/writer": 188,
+    "scripts/checks": 189,
+    "tools/controller": 89,
+    "tools/local-runner": 138,
+    "tools/neon-ci": 98,
+    "tools/publication": 166,
+    "tools/release": 42
+  },
+  "pytest": {
+    "python/schema": 879
+  }
 }

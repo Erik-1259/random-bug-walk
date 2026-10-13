@@ -3,8 +3,8 @@ export type { CardSource, CodeOwnedField } from "./card-prompt.ts";
 export { BUG_CLASSES, CARD_FIELD_IDENTIFIERS, CardSchema, CODE_OWNED_FIELDS, RUNTIME_LEVERS } from "./card-schema.ts";
 export type { Card } from "./card-schema.ts";
 export * from "./config.ts";
-export { RequestNotSentError } from "./http.ts";
-export type { FetchFunction } from "./http.ts";
+export { ObservedFetch, RequestNotSentError } from "./http.ts";
+export type { Exchange, FetchFunction } from "./http.ts";
 export {
   canonicalJson,
   meteredOperationId,
@@ -26,12 +26,12 @@ export { profileSha256 } from "./profile.ts";
 export type { HashedProfile, ModelProfile, StructuredOutputMode } from "./profile.ts";
 export type { PromptMessages } from "./prompt.ts";
 export { countPromptBound } from "./prompt-bound.ts";
-export { actualMicrousd, buildEnvelope, parseRateSheet, rateSheetSha256 } from "./rates.ts";
+export { actualMicrousd, buildEnvelope, lineWorstCase, parseRateSheet, rateSheetSha256 } from "./rates.ts";
 export type { RateEntry } from "./rates.ts";
 export { runRecord } from "./record.ts";
 export type { RecordOptions } from "./record.ts";
-export { createReplayFetch, loadRecordings, makeRecording, requestKey, serializeRecording } from "./recording.ts";
-export type { Recording } from "./recording.ts";
+export { createReplayFetch, loadRecordings, makeRecording, reportedUsage, requestKey, serializeRecording } from "./recording.ts";
+export type { Recording, ReportedUsage } from "./recording.ts";
 export { createModelProvider, createWriter, createWriterProvider, meteredStructuredCall, WriterInterruptedError } from "./writer.ts";
 export type {
   CallRecord,
