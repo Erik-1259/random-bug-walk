@@ -254,6 +254,8 @@ interface Turn {
 
 type TurnOutcome =
   | { kind: "refused"; code: string; detail: string | null; operation_id: string | null }
+  /** A ledger call threw from the reservation on; the operation may need an operator. */
+  | { kind: "ledger_exception"; reason: string; operation_id: string }
   | { kind: "too_large"; bound: number }
   | { kind: "launched"; turn: Turn };
 
@@ -287,7 +289,11 @@ function generate(loop: Loop, messages: ModelMessage[]) {
 
 type Generated = Awaited<ReturnType<typeof generate>>;
 
-/** One metered model turn. Throws only on an infrastructure error before a reservation exists. */
+/**
+ * One metered model turn. Throws only on an infrastructure error before the reservation is
+ * requested; from the reservation on, a thrown ledger call ends as `ledger_exception` with the
+ * operation's id.
+ */
 async function meteredTurn(loop: Loop, turn: number, messages: ModelMessage[], inputCounted: number): Promise<TurnOutcome | { kind: "attempt_input_cap"; bound: number }> {
   const { options, context, provider, profileSha } = loop;
   const { spend, profile } = options;
@@ -329,6 +335,19 @@ async function meteredTurn(loop: Loop, turn: number, messages: ModelMessage[], i
     rate_sheet_sha256: loop.rateSha,
     envelope: loop.envelope,
   };
+  try {
+    return await reservedTurn(loop, turn, messages, body, bound, request);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    return { kind: "ledger_exception", reason: `ledger_exception: ${reason}`, operation_id: id };
+  }
+}
+
+/** The turn from the reservation on: reserve, launch, send once, then the terminal state and settlement. */
+async function reservedTurn(loop: Loop, turn: number, messages: ModelMessage[], body: string, bound: number, request: ReserveRequest): Promise<TurnOutcome> {
+  const { options, provider, profileSha } = loop;
+  const { spend, profile } = options;
+  const id = request.operation_id;
   const reserved = await spend.reserve(request);
   if (!reserved.ok) {
     return { kind: "refused", code: reserved.code, detail: reserved.detail ?? null, operation_id: null };
@@ -519,6 +538,9 @@ export async function runAttempt(options: AttemptOptions): Promise<AttemptResult
     }
     if (outcome.kind === "attempt_input_cap") {
       return stopOnCap("input_tokens");
+    }
+    if (outcome.kind === "ledger_exception") {
+      return infrastructure(outcome.reason, outcome.operation_id);
     }
     if (outcome.kind === "refused") {
       result.outcome = "spend_refused";

@@ -110,7 +110,7 @@ Each turn: render the exact body (a preview that sends nothing), count its bound
 | `submitted` | the model called `submit` |
 | `cap_reached` | a cap was reached (`turns`, `input_tokens`, `wall`, or `context_window` when one request is over the per-call limit) |
 | `spend_refused` | the slot is not held, or the ledger refused the reservation or the launch; nothing was sent |
-| `infrastructure_error` | a lost response (the operation is left `uncertain` for the operator), an HTTP error, an unreadable response, a ledger refusal after launch, or a session error |
+| `infrastructure_error` | a lost response (the operation is left `uncertain` for the operator), an HTTP error, an unreadable response, a ledger refusal after launch, a ledger call that threw from the reservation on (`ledger_exception: <message>`, with the operation's ID for the operator), or a session error |
 
 ## Transcript
 

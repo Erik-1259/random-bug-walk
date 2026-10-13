@@ -322,6 +322,27 @@ describe("spend refusals and infrastructure errors", () => {
     expect(result.settled_microusd).toBe(39_322 + 7_373);
   });
 
+  it.each([
+    ["the launch transition", "launching"],
+    ["the terminal transition", "terminal"],
+    ["the settlement", "settle"],
+  ])("ends with the operation's id when %s throws after the reservation", async (_label, step) => {
+    const { spend, schema } = await freshSpend(db);
+    const throwing: Spend = {
+      ...spend,
+      transition: (request) => (request.to_state === step ? Promise.reject(new Error("synthetic connection dropped")) : spend.transition(request)),
+      settle: (settlement) => (step === "settle" ? Promise.reject(new Error("synthetic connection dropped")) : spend.settle(settlement)),
+    };
+    const script = scriptedFetch([{ calls: [SUBMIT] }]);
+    const run = attemptOptions(throwing, script.fetch, new FakeSession());
+    const result = await runAttempt(run.options);
+    const ops = await db.query<{ operation_id: string }>(`SELECT operation_id FROM ${schema}.operations`);
+    expect(ops.rows).toHaveLength(1);
+    expect(result.outcome).toBe("infrastructure_error");
+    expect(result.infrastructure).toEqual({ reason: "ledger_exception: synthetic connection dropped", operation_id: ops.rows[0]?.operation_id });
+    expect(run.events.at(-1)?.type).toBe("attempt_end");
+  });
+
   it("stops as an infrastructure error when the session throws", async () => {
     const { spend } = await freshSpend(db);
     const script = scriptedFetch([{ calls: [{ name: "rebuild_restart", input: {} }] }]);
