@@ -89,7 +89,10 @@ TypeScript validates with Ajv (draft 2020-12, strict mode); Python with `jsonsch
 
 ## Family registry
 
-`registry/families.json` is the committed registry. It holds `umami-tz-arg-001`: public, not eligible for held-out use, with the source fix `umami` at `e6f3f3b4b40a490d5cb050471baa0999366dab2a` and one mutation ID, `4c2531a343d8250607df3ab84491e2d7e655849c1dbcb477264a5c126b21ccca`: the planted change in `src/queries/sql/pageviews/getPageviewStats.ts` at the pinned Umami commit, which the candidate attempt admitted.
+`registry/families.json` is the committed registry. It holds two public families, neither eligible for held-out use:
+
+- `umami-tz-arg-001`, with the source fix `umami` at `e6f3f3b4b40a490d5cb050471baa0999366dab2a` and one mutation ID, `4c2531a343d8250607df3ab84491e2d7e655849c1dbcb477264a5c126b21ccca`: the planted change in `src/queries/sql/pageviews/getPageviewStats.ts` at the pinned Umami commit, which the candidate attempt admitted.
+- `rc-1-backup-code-001`, the race family, with the source fix `umami` at `3e165a8c6fea303250e626dc952a396e40887c71` (the upstream change that replaced the backup-code `update` with an `updateMany` guarded on `used: false`, a compare-and-swap) and one mutation ID, `e58a281fa1ac6029095043858dcefd5b3e123b24c318b9da93d76ee334fb6ce7`: the one-line planted change in `src/app/api/2fa/verify/route.ts` at the pinned Umami commit that drops that guard. The mutation ID is the SHA-256 of the canonical `MutationIdentity` record whose single change records the clean file's SHA-256 (`3e766a0b…cb87`), the planted file's SHA-256 (`30426f04…66fb`) and mode `100644` for both, computed exactly as the candidate attempt computes it.
 
 The functions in `src/registry.ts` and `rbw_schema/registry.py` never change an entry's `exposure` or `held_out_eligible`; the schema only allows `public` and `false`.
 
