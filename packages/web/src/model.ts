@@ -1,7 +1,7 @@
 // What the pages show, derived from the published records only. Every count here is a count of
 // records in the results directory.
 import type { Cell, Comparison, RuleOutcome } from "@rbw/admission";
-import type { BucketCount, ObservedSymptom, RootRunKind } from "@rbw/schema";
+import type { BucketCount, CodeState, ObservedSymptom, RaceAttempt, RaceSymptom, RootRunKind } from "@rbw/schema";
 import type { AdmissionRecords, Results, Run } from "./release.ts";
 
 export const NO_VALIDATED_RESULT = "No validated blind-spot example yet";
@@ -104,6 +104,79 @@ export function countExamples(symptom: ObservedSymptom): CountExample[] {
     const rows = countRows(example.expected, example.observed);
     return { timezone: example.timezone, rows, differs: rows.some((row) => !row.matches) };
   });
+}
+
+export interface RaceAttemptRow {
+  label: string;
+  sentMs: number;
+  settledMs: number;
+  httpStatus: number;
+  outcome: string;
+  errorCode: string | null;
+}
+
+export interface RaceCountRow {
+  label: string;
+  expected: number;
+  observed: number;
+  matches: boolean;
+}
+
+const ATTEMPT_OUTCOME_TEXT: Record<RaceAttempt["outcome"], string> = { accepted: "Accepted", refused: "Refused" };
+
+/** A race symptom's attempts as table rows: times in milliseconds from the first request sent. */
+export function raceAttempts(attempts: readonly RaceAttempt[]): RaceAttemptRow[] {
+  return attempts.map((attempt) => ({
+    label: attempt.label,
+    sentMs: attempt.sent_ms,
+    settledMs: attempt.settled_ms,
+    httpStatus: attempt.http_status,
+    outcome: ATTEMPT_OUTCOME_TEXT[attempt.outcome],
+    errorCode: attempt.error_code,
+  }));
+}
+
+/** A race symptom's expected and observed acceptance and refusal counts for the concurrent attempts. */
+export function raceCounts(symptom: RaceSymptom): RaceCountRow[] {
+  return (["accepted", "refused"] as const).map((key) => ({
+    label: key === "accepted" ? "Accepted" : "Refused",
+    expected: symptom.expected[key],
+    observed: symptom.observed[key],
+    matches: symptom.expected[key] === symptom.observed[key],
+  }));
+}
+
+/** How each code state's copies are named in the method text, in the order the text lists them. */
+const COPY_STATE_TEXT: [CodeState, string][] = [
+  ["clean", "clean"],
+  ["fixed", "fixed"],
+  ["planted", "planted"],
+  ["partial", "partial-fix"],
+  ["stub", "stub-fix"],
+];
+
+export interface AdmissionCopies {
+  total: number;
+  /** "1 clean, 5 fixed, 5 planted, 1 partial-fix and 1 stub-fix": only code states with copies. */
+  breakdown: string;
+  /** Whether the run held negative-probe copies (partial-fix or stub-fix). */
+  probes: boolean;
+}
+
+function listText(items: string[]): string {
+  if (items.length <= 1) return items.join("");
+  return `${items.slice(0, -1).join(", ")} and ${items[items.length - 1] ?? ""}`;
+}
+
+/** The admission's fresh copies, counted from its evidence's trials; null without admission records. */
+export function admissionCopies(admission: AdmissionRecords | null): AdmissionCopies | null {
+  if (admission === null) return null;
+  const trials = admission.evidence.trials;
+  const parts = COPY_STATE_TEXT.flatMap(([state, label]) => {
+    const count = trials.filter((trial) => trial.code_state === state).length;
+    return count === 0 ? [] : [`${String(count)} ${label}`];
+  });
+  return { total: trials.length, breakdown: listText(parts), probes: trials.some((trial) => trial.code_state === "partial" || trial.code_state === "stub") };
 }
 
 export interface FunnelStep {

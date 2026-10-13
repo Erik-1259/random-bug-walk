@@ -7,7 +7,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { decide, importRecordSet, type Evidence } from "@rbw/admission";
 import { canonicalDigest, encodeCanonical, parseRecord, sha256Hex, type RunManifest, type RunManifestEntry } from "@rbw/schema";
-import { cleanupRecordSets, recordSet, type RecordSetDraft } from "../../../../packages/admission/test/support/record-set.ts";
+import { cleanupRecordSets, RACE_FAMILY, recordSet, type RecordSetDraft } from "../../../../packages/admission/test/support/record-set.ts";
 
 export const FIXTURES = fileURLToPath(new URL("../../fixtures/", import.meta.url));
 export const DEVELOPMENT = join(FIXTURES, "development-2026-10-06");
@@ -99,18 +99,36 @@ export interface SyntheticCase {
   evidence: Evidence;
 }
 
+/** @rbw/schema's synthetic RaceSymptom fixture: two concurrent uses of one code, both accepted. */
+export const RACE_SYMPTOM_SOURCE = fileURLToPath(new URL("../../../../packages/schema/fixtures/records/race-symptom-valid.json", import.meta.url));
+
+export interface SyntheticCaseOptions {
+  /** The run's generated/symptom.json bytes; the development fixture's time-zone symptom unless set. */
+  symptom?: Uint8Array;
+  /**
+   * Imports the admission package's race-family record set instead of the time-zone one: the 11-copy
+   * admission profile, with no partial-fix or stub-fix copy, for a family that records ADM-06 as not applicable.
+   */
+  raceFamily?: boolean;
+}
+
+/** The race symptom fixture in canonical bytes, as a release stages it. */
+export function raceSymptomBytes(): Uint8Array {
+  return canonicalDigest(JSON.parse(readFileSync(RACE_SYMPTOM_SOURCE, "utf8")) as never).bytes;
+}
+
 /**
  * A results directory with one published case run: the development fixture's symptom and an
  * admission job's evidence.json and decision.json, imported from a synthetic record set.
  */
-export function syntheticCase(mutate: (draft: RecordSetDraft) => void = () => undefined): SyntheticCase {
-  const evidence = importRecordSet(recordSet(mutate));
+export function syntheticCase(mutate: (draft: RecordSetDraft) => void = () => undefined, options: SyntheticCaseOptions = {}): SyntheticCase {
+  const evidence: Evidence = importRecordSet(recordSet(mutate, undefined, "admission", options.raceFamily === true ? RACE_FAMILY : {}));
   const decision = decide(evidence);
   const root = evidence.request.root_execution_id;
   const execution = evidence.request.execution_id;
   const dir = tempDir();
   mkdirSync(join(dir, "repository", "runs"), { recursive: true });
-  const symptom = readFileSync(join(runDir(DEVELOPMENT, DEVELOPMENT_ROOT), "generated", "symptom.json"));
+  const symptom = options.symptom ?? readFileSync(join(runDir(DEVELOPMENT, DEVELOPMENT_ROOT), "generated", "symptom.json"));
   const evidenceBytes = canonicalDigest(evidence).bytes;
   const decisionBytes = canonicalDigest(decision).bytes;
   const files: [string, string, Uint8Array][] = [

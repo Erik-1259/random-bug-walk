@@ -15,11 +15,13 @@ The results site: a Next.js app (App Router) that renders the case evidence page
 The case page opens with a short paragraph: what a blind-spot example is (a bug planted in a pinned copy of Umami that Umami's own original API suite does not catch, while added checks do), links to the code repository, the results repository and Umami, and the hosted services the code uses. Then its cells, in order:
 
 1. the plain-language symptom and the synthetic-task label;
-2. expected versus observed local-day counts for each time zone, with the source timestamps in a collapsed table;
+2. for a time-zone case, expected versus observed local-day counts for each time zone, with the source timestamps in a collapsed table; for a race case (a `RaceSymptom`), the two concurrent requests with their send and answer times, HTTP statuses, outcomes and error codes, the expected versus observed acceptance and refusal counts, and the same requests sent one after the other in a collapsed table;
 3. the original API suite and the added checks on the clean, planted and fixed copies (the six cells of ADM-08), each with a text status, a note on why the planted and fixed cells count 20 times the clean cell's executions (ADM-05), and what the rule codes ADM-02 to ADM-09 mean, with a link to `docs/admission-rules.md`;
 4. the verified replay button and its state;
 5. provenance (release, run, policy, task revision, kit version, family, human check, calibration) and downloads: the release's files, and for each published run one line with its file count, total size, `manifest.json`, `report.md` and a link to its file index page (`/runs/<root>`), never the full file list;
 6. the batch funnel of factory runs, a sentence that it counts only the factory runs published for this site (so it is not a record of every attempt), the runs counted apart from it (below), the limitations and the method.
+
+The method and the rule-code note count the case's fresh copies from its admission evidence, so each case shows its own count: 13 copies for the time-zone family, including a partial-fix and a stub-fix copy, and 11 for a family that records ADM-06 as not applicable (the race family), with no negative-probe copies. Without admission records they describe the full admission profile's 13 copies.
 
 ### Judge replays and kit checks
 
@@ -57,7 +59,7 @@ repository/releases/<release_id>/      the release (at most one): release.json a
 
 | Path | Record | Used for |
 |---|---|---|
-| `generated/symptom.json` | `ObservedSymptom` (`@rbw/schema`) | cells 1 and 2 |
+| `generated/symptom.json` | `ObservedSymptom`, or `RaceSymptom` when it has a `symptom_kind` field (`@rbw/schema`) | cells 1 and 2 |
 | `results/<execution>/evidence.json` and `decision.json` | the admission importer's outputs (`@rbw/admission`) | cell 3 and the funnel; the job whose decision kind is `admission`. A job whose two files were not both published has no records to show. |
 
 The case is the run with a symptom that got furthest: a demonstrated blind spot, then any admission decision, then a symptom alone; ties go to the first root execution ID. Every run stays in the catalog.
@@ -82,7 +84,7 @@ The symptom and admission paths are this app's reading convention. `tools/releas
 | `status_invalid` | A status object that fails `parseRecord("PublicRunStatus")`, is not canonical, or is named after another root |
 | `status_mismatch` | A status object that disagrees with the published manifest |
 | `run_missing` | A status object that says `published` for a run the repository does not hold |
-| `symptom_invalid` | A symptom that fails `parseRecord("ObservedSymptom")` |
+| `symptom_invalid` | A symptom with a `symptom_kind` field that fails `parseRecord("RaceSymptom")`, or any other symptom that fails `parseRecord("ObservedSymptom")` |
 | `admission_invalid` | Published evidence or a decision that is not canonical or fails its shape, or a second admission job in one run |
 | `admission_mismatch` | A decision whose `evidence_sha256` is not the evidence file's, or records of another root, execution or kind |
 | `release_invalid` | More than one release, an entry that is not a UUID-named directory, a `release.json` that is missing, fails `parseRecord("Release")`, is not canonical or names another release, or a file that is unlisted, absent or has another SHA-256 |
@@ -209,6 +211,7 @@ The live site is built from the published results, which are not in this reposit
 
 - `test/release.test.ts`: both fixtures and the release fixture (`tools/release/fixtures/release`, read in place) parse; every refusal above; the development fixture's symptom and responses equal their committed sources.
 - `test/page.test.tsx`: the six cells in order, their text statuses with and without admission records (evidence and decisions from the real importer over the admission package's synthetic record sets), the no-release and release states, the funnel and the catalog.
+- `test/race-case.test.tsx`: a case run whose symptom is `@rbw/schema`'s synthetic `RaceSymptom` fixture and whose admission evidence has 11 copies (the admission package's race-family record set, imported by the real importer) is read and rendered with its concurrent requests and acceptance counts, an invalid race symptom is refused as `symptom_invalid`, and the method counts 11 copies, or 13 for a time-zone admission, from the records.
 - `test/replays.test.tsx`: with synthetic judge replay roots added to the release fixture (`addJudgeReplay` in `test/support/results.ts`), the funnel counts only the factory run, the second table counts the replays by outcome with the note that the records hold no verdict, the case page lists the replays apart from the diagnostic archive, and the catalog and the replay's file index page label them as verification replays.
 - `test/route.test.ts`: the run and release file routes serve exactly the published files, byte for byte, and 404 otherwise.
 - `test/reads.test.ts`: a directory is checked once per process, and prerendering every file route reads each added published file exactly twice, so reads grow linearly with the number of files.

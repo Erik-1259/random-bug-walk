@@ -8,7 +8,7 @@ import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSyn
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { assertRecord, encodeCanonical, parseCanonical, parseRecord, RecordError, CanonicalError } from "@rbw/schema";
-import type { JobRequest, OmissionReason, RootRun, StagingOmissions } from "@rbw/schema";
+import type { JobRequest, ObservedSymptom, OmissionReason, RaceSymptom, RootRun, StagingOmissions } from "@rbw/schema";
 import { ReleaseInputError } from "./errors.ts";
 
 export const SYMPTOM_PATH = "generated/symptom.json";
@@ -34,6 +34,15 @@ export interface StageOptions {
 }
 
 export type StageOutcome = { ok: true; files: number; redactions: number; omissions: StagingOmissions } | { ok: false; code: "root_not_terminal" };
+
+/**
+ * Checks a generated symptom as its family's record, routed as the issue writer routes its input:
+ * a value with a `symptom_kind` field must be a RaceSymptom, and any other value an ObservedSymptom.
+ * Throws RecordError.
+ */
+export function assertSymptom(value: unknown): ObservedSymptom | RaceSymptom {
+  return typeof value === "object" && value !== null && "symptom_kind" in value ? assertRecord("RaceSymptom", value) : assertRecord("ObservedSymptom", value);
+}
 
 interface JobSummary {
   job?: { name?: unknown; kind?: unknown; execution_id?: unknown; status?: unknown };
@@ -194,7 +203,7 @@ export function stage(options: StageOptions): StageOutcome {
       const bytes = canonicalFile(source, `${basename(path, ".json")}_invalid`);
       if (path === SYMPTOM_PATH) {
         try {
-          assertRecord("ObservedSymptom", parseCanonical(bytes));
+          assertSymptom(parseCanonical(bytes));
         } catch (error) {
           if (error instanceof RecordError) throw new ReleaseInputError("symptom_invalid");
           throw error;
