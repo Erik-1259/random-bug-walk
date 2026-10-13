@@ -2,11 +2,12 @@
   "name": "@rbw/solver-session",
   "version": "0.0.0",
   "private": true,
-  "description": "One solver attempt's session on a local Docker kit container: the planted projection, the cold-build reset, the log scrub, the server logs and the submitted diff",
+  "description": "Solver sessions for the paired comparison: one attempt's session on a local Docker kit container (the planted projection, the cold-build reset, the log scrub, the server logs and the submitted diff), and grading an attempt's fix through the trusted controller",
   "license": "MIT",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./grade": "./src/grade.ts"
   },
   "engines": {
     "node": ">=24.21 <25"

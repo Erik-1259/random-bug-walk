@@ -21,7 +21,9 @@ Run from the repository root.
 node tools/controller/src/cli.ts run --job-kind <kit_check|observe|admission|judge_verify> --work <run dir> \
   --image <tag|digest> --manifest <file> --terms <file> --kit-stage <dir> \
   [--original-suite <file>] [--policy <file>] [--fix <dir>] [--name <job name>] \
-  [--backend sandbox|docker] [--sandbox-image <repository>@sha256:<digest>]
+  [--backend sandbox|docker] [--sandbox-image <repository>@sha256:<digest>] \
+  [--trials <id,...>] [--ledger development|judge] [--ids <file>] [--project-policy <file>] \
+  [--judge-fixed fixed|alternative_fix]
 node tools/controller/src/cli.ts proof --work <run dir> --image ... --manifest ... --terms ... --kit-stage ... \
   [--original-suite <file>] [--policy <file>] [--backend sandbox|docker] [--sandbox-image ...]
 node tools/controller/src/cli.ts create-slot-key --slot-key <key>
@@ -35,6 +37,12 @@ node tools/controller/src/cli.ts run --job-kind judge_verify --request-id <uuid>
 - `--image`, `--manifest`, `--terms`, `--policy` and `--kit-stage` are the local runner's inputs (its README, Host commands). The kit image must be local, because each copy's source export and audit run on the host.
 - `--original-suite` is the driver's frozen original-suite manifest. Without it, the controller first runs one freeze copy on local Docker. That copy is free and not on the ledger.
 - `--fix` is for `judge_verify` only: the fix to grade as `fixed-01`, in the local runner's alternative-fix layout (`alternative-fix.json` and its patch). The default is the local runner's alternative fix.
+- `--trials` runs only the named trials of the kind's profile, separated by commas (for example `--trials fixed-01`). An unknown trial refuses the job. The default is every trial.
+- `--ledger` picks where the job's spend and slot are recorded. Without it, `judge_verify` uses the judge-demo pool's `judge` allocation under the `judge` slot, and every other kind the `development` pool and slot. `--ledger development` runs `judge_verify` on the development pool and slot, so a solver grade never takes the slot live judges wait on or draws on the judge allocation. `--ledger judge` is for `judge_verify` only.
+- `--ids` is a JSON file holding a root's IDs (the local runner's `RunIds`: `run_tag`, `project_id`, `batch_id`, `root_execution_id`, `executions` and `release_id`), so every job of one root shares them. Without it, the job makes its own.
+- `--project-policy` is a canonical `ProjectPolicy` record. The job records its hash under the grading policy ID. It needs `--ids`, whose `project_id` must be the policy's, and it refuses the development placeholder project.
+- `--judge-fixed` is for `judge_verify` only: the code state `fixed-01` grades. `fixed` grades the reference fix, the clean file's exact bytes. A solver fix that equals the clean file is graded this way, because the alternative-fix layout refuses a fix equal to the clean file. The default, `alternative_fix`, grades `--fix` (or the local runner's alternative fix).
+- The judge controller (`--prebuilt`) refuses `--trials`, `--ledger`, `--ids`, `--project-policy`, `--judge-fixed` and `--fix`.
 - `--backend sandbox` is the default. It reads `DATABASE_URL`, `VERCEL_TOKEN`, `VERCEL_TEAM_ID` and `VERCEL_PROJECT_ID` from the environment, never from arguments, and prints none of them. A missing one is named and the command exits 2.
 - `--backend docker` runs the copies on local Docker with an in-memory PGlite ledger. That ledger has every `@rbw/spend` migration and both slot keys, as the local runner's recorded mode uses. It needs no credentials. Its amounts are what the same copies would reserve and settle on Sandbox.
 - `--prebuilt` is prebuilt mode, the judge controller: it runs the release's frozen judge job with no Docker and writes `judge/<root>/` in the private store (`BLOB_PRIVATE_STORE_ID` and `VERCEL_OIDC_TOKEN`, or a local store directory). The judge route starts it; `src/judge-run.ts` describes its checks and its end order. The route and the controller each compute the controller operation's ID and payload hash, so the judge web deploy must be built from the commit the controller image was built from, or from a later commit that leaves `tools/controller/src/{envelope,limits,judge-web}.ts` and `packages/envelope` (with its rate sheet) unchanged.
@@ -352,6 +360,7 @@ pnpm --filter @rbw/controller run test:integration
 The unit tests use a PGlite ledger with every spend migration, plus the local runner's test doubles: its fake Sandbox SDK, and its simulated kit image, whose copies run the real driver's `runTrial`. They start no container and use no network. They cover:
 - the ledger flow and its order against the SDK calls;
 - the judge pool;
+- the `run` command's options (`src/run-options.ts`): the trials, the ledger choice, the root's IDs, the project policy and the graded fixed state, and a `judge_verify` job on `--ledger development` that never takes the `judge` slot;
 - an uncertain create, and a lost create recovered by name;
 - both deadline stops, and the refusal at the create;
 - the Docker backend;

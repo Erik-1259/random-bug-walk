@@ -1,0 +1,70 @@
+id: rc-1.atomic-backup-code
+valid:
+  - |
+    export async function POST(request: Request) {
+      const consumed = await prisma.client.twoFactorBackupCode.updateMany({
+        where: { id: unusedCodes[matchIndex].id },
+        data: { used: true },
+      });
+      return consumed;
+    }
+  - |
+    export async function PUT(request: Request) {
+      const consumed = await prisma.client.twoFactorBackupCode.updateMany({
+        where: { id: unusedCodes[matchIndex].id, used: false },
+        data: { used: true },
+      });
+      return consumed;
+    }
+  - |
+    export async function POST(request: Request) {
+      const consumed = await prisma.client.syntheticCode.updateMany({
+        where: { id: unusedCodes[matchIndex].id, used: false },
+        data: { used: true },
+      });
+      return consumed;
+    }
+  - |
+    export async function POST(request: Request) {
+      const unusedCodes = await prisma.client.twoFactorBackupCode.findMany({
+        where: { id: unusedCodes[matchIndex].id, used: false },
+      });
+      return unusedCodes;
+    }
+  - |
+    export async function POST(request: Request) {
+      const consumed = await prisma.client.twoFactorBackupCode.updateMany({
+        where: { id: syntheticCodes[0].id, used: false },
+        data: { used: true },
+      });
+      return consumed;
+    }
+  - |
+    export async function POST(request: Request) {
+      const consumed = await prisma.client.twoFactorBackupCode.updateMany({
+        data: { id: unusedCodes[matchIndex].id, used: false },
+      });
+      return consumed;
+    }
+  - |
+    prisma.client.twoFactorBackupCode.updateMany({ where: { id: unusedCodes[matchIndex].id, used: false } });
+invalid:
+  - |
+    export async function POST(request: Request) {
+      const consumed = await prisma.client.twoFactorBackupCode.updateMany({
+        where: { id: unusedCodes[matchIndex].id, used: false },
+        data: { used: true },
+      });
+      return consumed;
+    }
+  - |
+    export async function POST(request: Request) {
+      if (body.backupCode) {
+        const matchIndex = await verifySyntheticCode(body.backupCode, hashes);
+        const consumed = await prisma.client.twoFactorBackupCode.updateMany({ where: { id: unusedCodes[matchIndex].id, used: false }, data: { used: true } });
+        if (consumed.count === 0) {
+          return badRequest();
+        }
+      }
+      return json({});
+    }
