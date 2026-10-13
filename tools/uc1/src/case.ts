@@ -3,6 +3,8 @@
 // are resolved against the current directory, as the other tools resolve theirs.
 import { lstatSync, readFileSync, readdirSync, readlinkSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { DEFAULT_FAMILY, FAMILY_IDS } from "@rbw/local-runner";
+import type { FamilyId } from "@rbw/local-runner";
 import { sha256Hex } from "@rbw/schema";
 import { PILOT_CASE_ID } from "./plan.ts";
 import type { RunMode } from "./plan.ts";
@@ -10,6 +12,8 @@ import type { RunMode } from "./plan.ts";
 export interface CaseConfig {
   /** The admitted case's ID, such as umami-tz-arg-001. */
   case_id: string;
+  /** The bug family (time-zone or race): the session's code states and both grades use its fixture, stage and probe checks. */
+  family: FamilyId;
   /** The case's screen record, docs/uc1-screen/<case-id>.json. */
   screen_record: string;
   /** The bug report, as released: the same text in every attempt of both arms. */
@@ -37,7 +41,7 @@ export class CaseError extends Error {
   override name = "CaseError";
 }
 
-const FIELDS = ["case_id", "screen_record", "issue", "image", "image_digest", "sandbox_image", "manifest", "terms", "audit_policy", "probes_dir", "reference_fix", "kit_stage", "original_suite"] as const;
+const FIELDS = ["case_id", "family", "screen_record", "issue", "image", "image_digest", "sandbox_image", "manifest", "terms", "audit_policy", "probes_dir", "reference_fix", "kit_stage", "original_suite"] as const;
 const NULLABLE = new Set<string>(["audit_policy", "probes_dir", "original_suite"]);
 const PATHS = new Set<string>(["screen_record", "issue", "manifest", "terms", "audit_policy", "probes_dir", "reference_fix", "kit_stage", "original_suite"]);
 const CASE_ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -70,6 +74,7 @@ export function parseCase(bytes: Uint8Array): CaseConfig {
   }
   const config = out as unknown as CaseConfig;
   if (!CASE_ID.test(config.case_id)) throw new CaseError("case_id must be lower-case letters, digits and single hyphens");
+  if (!(FAMILY_IDS as readonly string[]).includes(config.family)) throw new CaseError(`family must be one of ${FAMILY_IDS.join(", ")}`);
   if (!DIGEST.test(config.image_digest)) throw new CaseError("image_digest must be sha256:<64 hex>");
   if (!/@sha256:[0-9a-f]{64}$/.test(config.sandbox_image)) throw new CaseError("sandbox_image must be pinned by digest (<repository>@sha256:<64 hex>)");
   return config;
@@ -183,6 +188,7 @@ export function checkCaseForMode(mode: RunMode, config: CaseConfig, screen: Scre
  */
 export function controllerBase(config: CaseConfig): string[] {
   return [
+    ...(config.family === DEFAULT_FAMILY ? [] : ["--family", config.family]),
     "--image",
     config.image_digest,
     "--manifest",

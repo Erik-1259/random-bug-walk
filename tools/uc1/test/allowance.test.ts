@@ -79,6 +79,28 @@ describe("the UC1 allowance", () => {
     expect(inner).toMatchObject({ ok: false, reason: "allowance_exceeded" });
   });
 
+  it("holds an admitted rerun's whole worst case until it is released, so a second rerun starting at once does not fit", async () => {
+    const allowance = new Allowance(fixedSource({}), 1_500n, () => [ROOT_A]);
+    expect(await allowance.admit("rerun-a", 1_000n)).toMatchObject({ ok: true });
+    expect(await allowance.admit("rerun-b", 1_000n)).toMatchObject({ ok: false, reason: "allowance_exceeded" });
+    const released = new Allowance(fixedSource({}), 1_500n, () => [ROOT_A]);
+    expect(await released.admit("rerun-a", 1_000n)).toMatchObject({ ok: true });
+    released.release("rerun-a");
+    expect(await released.admit("rerun-b", 1_000n)).toMatchObject({ ok: true });
+  });
+
+  it("lets a held rerun's own model calls draw on its hold, which shrinks as they reserve", async () => {
+    const { db, spend } = await ledger();
+    const allowance = new Allowance(ledgerAllowanceSource(db, spend), 1_500n, () => [ROOT_A]);
+    expect(await allowance.admit("rerun-a", 1_000n)).toMatchObject({ ok: true });
+    // 600 fits the rerun's own hold, though not what is left beside it (500).
+    expect((await guardSpend(spend, allowance, "rerun-a").reserve(request(ROOT_A, 1, 600))).ok).toBe(true);
+    // Open 600 plus the hold's remaining 400 leave 500 for anyone else, not 600 + 1 000.
+    expect(await allowance.check(500n)).toMatchObject({ ok: true, remaining_microusd: 500n });
+    expect(await allowance.check(501n)).toMatchObject({ ok: false, reason: "allowance_exceeded" });
+    await db.close();
+  });
+
   it("refuses a model call before reserving it when it does not fit, and serializes concurrent reservations", async () => {
     const { db, spend } = await ledger();
     const source = ledgerAllowanceSource(db, spend);

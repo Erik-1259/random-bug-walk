@@ -43,6 +43,7 @@ describe("the pre-registered plan", () => {
 describe("case files and screen records", () => {
   const caseJson = {
     case_id: "umami-tz-arg-001",
+    family: "time-zone",
     screen_record: "docs/uc1-screen/umami-tz-arg-001.json",
     issue: "issue.txt",
     image: "rbw-umami-kit:local",
@@ -85,6 +86,16 @@ describe("case files and screen records", () => {
     const config = parseCase(Buffer.from(JSON.stringify({ ...caseJson, probes_dir: "packages/shapes/probes/rc-1" })));
     const base = controllerBase(config);
     expect(base[base.indexOf("--probes-dir") + 1]).toBe(config.probes_dir);
+  });
+
+  it("passes a race case's family to both grades with its probes, and refuses an unknown family", () => {
+    const race = controllerBase(parseCase(Buffer.from(JSON.stringify({ ...caseJson, family: "race", probes_dir: "packages/shapes/probes/rc-1" }))));
+    expect(race[race.indexOf("--family") + 1]).toBe("race");
+    expect(controllerBase(parseCase(Buffer.from(JSON.stringify(caseJson))))).not.toContain("--family");
+    expect(() => parseCase(Buffer.from(JSON.stringify({ ...caseJson, family: "sql" })))).toThrow("family");
+    const missing: Record<string, unknown> = { ...caseJson };
+    delete missing.family;
+    expect(() => parseCase(Buffer.from(JSON.stringify(missing)))).toThrow("family");
   });
 
   it("reads the committed time-zone screen record as failing, so only the pilot may run it", () => {

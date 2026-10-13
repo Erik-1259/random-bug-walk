@@ -31,6 +31,7 @@ function copyInputs(config: CaseConfig): CopyInputOptions {
     manifest: config.manifest,
     terms: config.terms,
     policy: config.audit_policy,
+    family: config.family,
     ...(config.probes_dir === null ? {} : { probesDir: config.probes_dir }),
     alternativeDir: config.reference_fix,
   };

@@ -399,8 +399,8 @@ export async function dryRunWorld(options: DryRunOptions): Promise<DryRunWorld> 
     leak_screen: { verdict: "pass" },
     uc1_use: "synthetic",
   });
-  const pilotCase = writeJson(join(inputs, "pilot-case.json"), { case_id: PILOT_CASE_ID, screen_record: fileURLToPath(PILOT_SCREEN_RECORD), ...base });
-  const raceCase = writeJson(join(inputs, "race-case.json"), { case_id: "umami-race-synthetic-001", screen_record: raceScreen, ...base });
+  const pilotCase = writeJson(join(inputs, "pilot-case.json"), { case_id: PILOT_CASE_ID, family: "time-zone", screen_record: fileURLToPath(PILOT_SCREEN_RECORD), ...base });
+  const raceCase = writeJson(join(inputs, "race-case.json"), { case_id: "umami-race-synthetic-001", family: "race", screen_record: raceScreen, ...base });
   const projectId = "00000000-0000-4000-8000-0000000000aa";
   const publicPolicy = buildPolicy({ projectId, outputRepository: "https://github.com/example/results", publicArtifactBaseUri: "https://example.invalid/artifacts/", policyVersion: 1 });
   const policy = join(inputs, "policy.json");

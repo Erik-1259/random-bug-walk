@@ -66,6 +66,7 @@ One JSON object; every field is required, unknown fields are refused, and paths 
 ```json
 {
   "case_id": "umami-tz-arg-001",
+  "family": "time-zone",
   "screen_record": "docs/uc1-screen/umami-tz-arg-001.json",
   "issue": "<the released bug report for umami-tz-arg-001, as plain text>",
   "image": "rbw-umami-kit:local",
@@ -84,6 +85,7 @@ One JSON object; every field is required, unknown fields are refused, and paths 
 - `image_digest` is the digest the time-zone case's screen record names (the local image ID). A session on any other digest is refused, both grades pass the controller this digest rather than the tag, and a resumed run first checks that `image` still resolves to it.
 - `issue` is the same text in every attempt of both arms; the run records its SHA-256.
 - `reference_fix` is the case's committed alternative fix. The session and the code states read it, and the clean-equal route passes it to the controller.
+- `family` is `time-zone` or `race`. The session, the code states and both grades use that family's fixture, kit stage and probe checks; a race case's grades pass the controller `--family race`.
 - `probes_dir` null uses the shapes package's probes, which are the time-zone case's. A race case names its probe directory; the session, the code states and both grades (the controller's `--probes-dir`) use it.
 - A counted run takes a race case's file with that case's screen record, which must have both `static_headroom.verdict` and `leak_screen.verdict` equal to `pass`.
 

@@ -277,8 +277,11 @@ function finishRun(pass: Pass, run: AttemptRun, opened: number): void {
   run.session_wall_ms = ended.getTime() - opened;
 }
 
-/** One run at an index: session, solver loop, diff, close, grade 1. */
-async function runOnce(pass: Pass, item: PlannedAttempt, record: AttemptRecord): Promise<void> {
+/**
+ * One run at an index: session, solver loop, diff, close, grade 1. `hold` is an admitted rerun's
+ * allowance hold: its model calls draw on it, and it ends when the session closes.
+ */
+async function runOnce(pass: Pass, item: PlannedAttempt, record: AttemptRecord, hold: string | null): Promise<void> {
   const { deps, run: runRecord } = pass;
   const rerun = record.runs.length;
   if (rerun > MAX_RERUN_KEY) {
@@ -344,7 +347,7 @@ async function runOnce(pass: Pass, item: PlannedAttempt, record: AttemptRecord):
     } else {
       const transcript = join(dir, "transcript.jsonl");
       const result = await runAttempt({
-        spend: guardSpend(deps.spend, pass.allowance),
+        spend: hold === null ? guardSpend(deps.spend, pass.allowance) : guardSpend(deps.spend, pass.allowance, hold),
         fetch: deps.fetch,
         ...(deps.apiKey === undefined ? {} : { apiKey: deps.apiKey }),
         profile: pass.profile,
@@ -396,6 +399,7 @@ async function runOnce(pass: Pass, item: PlannedAttempt, record: AttemptRecord):
     } catch (error) {
       run.close_error = message(error);
     }
+    if (hold !== null) pass.allowance.release(hold);
   }
   finishRun(pass, run, opened.getTime());
   record.status = attemptStatus(record.runs);
@@ -428,13 +432,19 @@ async function runIndex(pass: Pass, item: PlannedAttempt): Promise<void> {
     if (record.runs.length > 0) writeAttempt(pass.runDir, record);
     if (record.status === "counted" || record.status === "infrastructure_error") return;
     if (pass.stop !== null) return;
-    // A rerun is a whole new attempt, so its own worst case must fit before it starts.
-    const fits = await pass.allowance.check(record.runs.some(isInfrastructure) ? BigInt(pass.run.attempt_worst_case_microusd) : pass.turnWorst);
+    // A rerun is a whole new attempt, so its own worst case must fit before it starts, and it stays
+    // held until the rerun's session ends, so a rerun starting meanwhile cannot count on the same room.
+    const hold = record.runs.some(isInfrastructure) ? `rerun-${attemptKey({ arm: item.arm, index: item.index, rerun: record.runs.length })}` : null;
+    const fits = hold === null ? await pass.allowance.check(pass.turnWorst) : await pass.allowance.admit(hold, BigInt(pass.run.attempt_worst_case_microusd));
     if (!fits.ok) {
       pass.halt(fits.reason, fits.detail);
       return;
     }
-    await runOnce(pass, item, record);
+    try {
+      await runOnce(pass, item, record, hold);
+    } finally {
+      if (hold !== null) pass.allowance.release(hold);
+    }
   }
 }
 

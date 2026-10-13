@@ -60,8 +60,11 @@ export class Allowance {
     return next;
   }
 
-  /** Reads the ledger and decides whether `worstCase` fits. Call it inside exclusive(); a refusal stops the run. */
-  async decide(worstCase: bigint): Promise<Decision> {
+  /**
+   * Reads the ledger and decides whether `worstCase` fits. Call it inside exclusive(); a refusal stops
+   * the run. `own` names the hold the operation draws on (a rerun's model call), left out of the sum.
+   */
+  async decide(worstCase: bigint, own?: string): Promise<Decision> {
     if (this.stopped !== null) return { ok: false, ...this.stopped };
     const view = await this.source.view(this.roots());
     const refuse = (reason: StopReason, detail: string): Decision => {
@@ -70,7 +73,7 @@ export class Allowance {
     };
     if (view.halted) return refuse("ledger_halted", "new work is halted in the spend ledger; reconcile before anything else");
     if (view.uncertain.length > 0) return refuse("ledger_uncertain", `operations under the UC1 roots are uncertain: ${view.uncertain.join(", ")}; reconcile before anything else`);
-    const pending = [...this.pending.values()].reduce((sum, value) => sum + value, 0n);
+    const pending = [...this.pending].reduce((sum, [label, value]) => (label === own ? sum : sum + value), 0n);
     const remaining = this.cap_microusd - view.settled_microusd - view.open_microusd - pending;
     if (worstCase > remaining) {
       return refuse("allowance_exceeded", `worst case ${worstCase.toString()} micro-USD does not fit the remaining UC1 allowance of ${remaining.toString()} micro-USD (cap ${this.cap_microusd.toString()}, settled ${view.settled_microusd.toString()}, open ${view.open_microusd.toString()}, starting ${pending.toString()})`);
@@ -84,15 +87,34 @@ export class Allowance {
   }
 
   /**
-   * Starts an operation the ledger does not reserve before it begins (a regrade's controller job): if
-   * its worst case fits, it counts as open under `label` until `run` settles.
+   * Admits an operation whose whole worst case must fit before it starts (a rerun): if it fits, it
+   * counts as open under `label` until release(), so operations starting meanwhile see it.
    */
-  async withHold<T>(label: string, worstCase: bigint, run: () => Promise<T>): Promise<{ ok: true; value: T } | ({ ok: false } & AllowanceStop)> {
-    const decision = await this.exclusive(async () => {
+  admit(label: string, worstCase: bigint): Promise<Decision> {
+    return this.exclusive(async () => {
       const decided = await this.decide(worstCase);
       if (decided.ok) this.pending.set(label, worstCase);
       return decided;
     });
+  }
+
+  /** Ends a hold; releasing one that is gone does nothing. */
+  release(label: string): void {
+    this.pending.delete(label);
+  }
+
+  /** Shrinks a hold by an amount its operation has now reserved in the ledger, where it counts as open. */
+  consume(label: string, amount: bigint): void {
+    const held = this.pending.get(label);
+    if (held !== undefined) this.pending.set(label, held > amount ? held - amount : 0n);
+  }
+
+  /**
+   * Starts an operation the ledger does not reserve before it begins (a regrade's controller job): if
+   * its worst case fits, it counts as open under `label` until `run` settles.
+   */
+  async withHold<T>(label: string, worstCase: bigint, run: () => Promise<T>): Promise<{ ok: true; value: T } | ({ ok: false } & AllowanceStop)> {
+    const decision = await this.admit(label, worstCase);
     if (!decision.ok) return decision;
     try {
       return { ok: true, value: await run() };
@@ -105,18 +127,22 @@ export class Allowance {
 /**
  * The solver's ledger with every reservation checked against the allowance first, under the lock: a
  * model call whose worst case does not fit is refused before it is reserved, so it never starts.
+ * With `hold` (an admitted rerun's), the call draws on that hold, which shrinks by what it reserves.
  */
-export function guardSpend(spend: Spend, allowance: Allowance): Spend {
+export function guardSpend(spend: Spend, allowance: Allowance, hold?: string): Spend {
   return {
     ...spend,
     reserve: (request: ReserveRequest): Promise<Result<Reservation>> =>
       allowance.exclusive(async () => {
-        const decision = await allowance.decide(requestWorstCase(request));
+        const worstCase = requestWorstCase(request);
+        const decision = await allowance.decide(worstCase, hold);
         if (!decision.ok) {
           const refusal: Refusal = { ok: false, code: "insufficient_funds", detail: `uc1_${decision.reason}: ${decision.detail}` };
           return refusal;
         }
-        return spend.reserve(request);
+        const reserved = await spend.reserve(request);
+        if (reserved.ok && hold !== undefined) allowance.consume(hold, worstCase);
+        return reserved;
       }),
   };
 }
