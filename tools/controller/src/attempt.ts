@@ -1,9 +1,10 @@
 // The candidate attempt (W2-5): one factory root under a project policy. In order, each stage
 // gating the next: the kit check and the observation (runJob, sharing the root's IDs), the
-// symptom built from the observation, one card call and one issue call (@rbw/writer), the three
-// exact-phrase checks of phrases picked from the frozen issue (@rbw/search), and the admission
-// (runJob). Then it writes the RootRun that the release tool stages, publishes and builds from.
-// Nothing is retried; a retry is a new root in a new directory.
+// symptom built from the observation, the two source searches and the docs extract (@rbw/search,
+// spec section 5: the extract's passages become the symptom's doc excerpts), one card call and one
+// issue call (@rbw/writer), the three exact-phrase checks of phrases picked from the frozen issue,
+// and the admission (runJob). Then it writes the RootRun that the release tool stages, publishes
+// and builds from. Nothing is retried; a retry is a new root in a new directory.
 //
 // The writer and searcher run here against the controller's own ledger and development slot. The
 // issue, its phrases and the search records are written under <work>/candidate/ only, never
@@ -13,9 +14,25 @@ import { join } from "node:path";
 import { InputsError, loadCopyInputs, newRunIds } from "@rbw/local-runner";
 import type { RunIds } from "@rbw/local-runner";
 import { CanonicalError, RecordError, assertRecord, encodeCanonical, parseRecord, sha256Hex, validateRecord } from "@rbw/schema";
-import type { ObservedSymptom, ProjectPolicy, RootRun } from "@rbw/schema";
-import { SearchError, createDirectoryRecordStore, createSearcher, priceOf, searchInputSchema, settingsSchema, summarizeNovelty, parseRateSheet as parseSearchRates } from "@rbw/search";
-import type { RateSheet, SearchClient, SearchInput, SearchRecord, SearchSettings } from "@rbw/search";
+import type { DocExcerpt, ObservedSymptom, ProjectPolicy, RootRun } from "@rbw/schema";
+import {
+  DOCS_NAMES,
+  PHRASE_NAMES,
+  SOURCE_NAMES,
+  SearchError,
+  checkDocsUrl,
+  checkQuery,
+  checkSourceDomains,
+  createDirectoryRecordStore,
+  createSearcher,
+  priceOf,
+  searchInputSchema,
+  settingsSchema,
+  sourceQuery,
+  summarizeNovelty,
+  parseRateSheet as parseSearchRates,
+} from "@rbw/search";
+import type { CallResult, DocsResult, RateSheet, SearchClient, SearchInput, SearchRecord, SearchSettings, Searcher } from "@rbw/search";
 import type { Spend } from "@rbw/spend";
 import { CardSourceSchema, WriterInterruptedError, buildEnvelope, createWriter, createWriterProvider, makeRecording, serializeRecording, parseRateSheet as parseWriterRates } from "@rbw/writer";
 import type { CardOutcome, FetchFunction, IssueOutcome, IssueOutput, WriterProvider } from "@rbw/writer";
@@ -32,7 +49,6 @@ export const DECLARED_STAGES = ["kit_check", "observe", "write", "novelty", "adm
 export const KEY_VARIABLES = ["TOKEN_FACTORY_WRITER_KEY", "TAVILY_API_KEY"] as const;
 /** The development placeholder project that newRunIds names; an attempt never runs under it. */
 const PLACEHOLDER_PROJECT_ID = newRunIds(() => "00000000-0000-4000-8000-000000000000").project_id;
-const PHRASE_CALLS = ["phrase-1", "phrase-2", "phrase-3"] as const;
 const JOB_NAMES = ["kit-check", "observe", "admission"] as const;
 const ACTOR = "controller";
 const PHRASE_WORDS = 12;
@@ -158,6 +174,10 @@ function parsePrivateInput(bytes: Buffer): PrivateInput {
   if (!settings.success) return bad("search_settings is not SearchSettings");
   const search = searchInputSchema.omit({ phrases: true }).safeParse(value.search);
   if (!search.success || search.data.candidate !== candidate) return bad("search must be a SearchInput without phrases, for the same candidate");
+  // The searcher would refuse these at the call; refusing here stops a bad input before any paid job.
+  const queries = [...SOURCE_NAMES.map((name) => sourceQuery(name, search.data)), search.data.docs.query];
+  const refusal = checkSourceDomains(search.data, settings.data) ?? checkDocsUrl(search.data) ?? queries.map((query) => checkQuery(query, excluded)).find((code) => code !== null) ?? null;
+  if (refusal !== null) return bad(`search is refused by the search policy (${refusal})`);
   if (typeof action !== "string" || action === "" || typeof description !== "string" || description === "") return bad("user_action and fixture_description must be non-empty strings");
   if (locale !== null && validateRecord("LocaleTag", locale).length > 0) return bad("locale must be a language tag or null");
   if (!Array.isArray(excerpts) || excerpts.some((excerpt) => validateRecord("DocExcerpt", excerpt).length > 0)) return bad("doc_excerpts must be { text, source_url } items with https URLs");
@@ -280,10 +300,81 @@ function called(a: Attempt, kind: "card" | "issue", outcome: CardOutcome | Issue
   return null;
 }
 
-/** The card, the issue and the phrase checks; null when novelty is clear. */
-async function writeAndSearch(a: Attempt, spend: Spend, context: Record<string, string>, symptom: ObservedSymptom, operations: Operation[]): Promise<End | null> {
+/**
+ * Notes a source search's or the extract's operation and says whether the root stops. A failed call
+ * (an incomplete record) does not stop it: spec section 1 makes only the exact-phrase check an
+ * admission check. An uncertain call needs reconciliation; a ledger refusal stops the root as
+ * incomplete, as the search package's record command stops at the first spend refusal.
+ */
+function grounded(a: Attempt, name: string, result: CallResult, operations: Operation[], detail: (record: SearchRecord) => string): { end: End | null; record: SearchRecord | null } {
+  if (result.status === "refused") {
+    a.deps.report(`stage=write call=${name} refused=${result.code}`);
+    return { end: null, record: null };
+  }
+  const { record } = result;
+  operations.push({ kind: `search.${record.kind}`, operation_id: record.operation_id });
+  a.deps.report(`stage=write call=${name} outcome=${record.outcome} ${detail(record)}`);
+  if (result.stop === "uncertain") return { end: reconcile(`${name}_uncertain`), record };
+  if (result.stop === "spend_refused") return { end: incomplete(`${name}_spend_refused`), record };
+  return { end: null, record };
+}
+
+/**
+ * The extract's passages as doc excerpts, leaving out any that names an excluded identifier: the
+ * symptom holds no function name, source path or check ID (ObservedSymptom), and the writer must
+ * not be handed one to repeat.
+ */
+function passagesOf(record: SearchRecord | null, excluded: readonly string[]): DocExcerpt[] {
+  if (record?.outcome !== "complete") return [];
+  return (record.results as DocsResult[]).flatMap((result) =>
+    result.passages.map((text) => ({ text, source_url: result.url })).filter((excerpt) => validateRecord("DocExcerpt", excerpt).length === 0 && checkQuery(excerpt.text, excluded) === null),
+  );
+}
+
+/**
+ * The two source searches and the docs extract, before the writer (spec section 5: sources first,
+ * the extract while the issue is written). The extract's passages replace the input's doc excerpts;
+ * when it yields none, the input's excerpts stay. Returns the symptom the issue writer gets, or a stop.
+ */
+async function ground(a: Attempt, searcher: Searcher, symptom: ObservedSymptom, operations: Operation[]): Promise<{ end: End } | { symptom: ObservedSymptom }> {
+  const { input } = a.prepared;
+  for (const name of SOURCE_NAMES) {
+    const { end } = grounded(a, name, await searcher.searchSource(name, input.search), operations, (record) => `results=${String(record.results.length)}`);
+    if (end !== null) return { end };
+  }
+  const [docsName] = DOCS_NAMES;
+  const docs = grounded(a, docsName, await searcher.extractDocs(docsName, input.search), operations, (record) => {
+    const kept = passagesOf(record, input.excluded_identifiers).length;
+    return `passages=${String(kept)} doc_excerpts=${kept > 0 ? "extract" : "input"}`;
+  });
+  if (docs.end !== null) return { end: docs.end };
+  const excerpts = passagesOf(docs.record, input.excluded_identifiers);
+  return { symptom: assertRecord("ObservedSymptom", { ...symptom, doc_excerpts: excerpts.length > 0 ? excerpts : symptom.doc_excerpts }) };
+}
+
+/** The source searches, the extract, the card, the issue and the phrase checks; null when novelty is clear. */
+async function writeAndSearch(a: Attempt, spend: Spend, context: Record<string, string>, observed: ObservedSymptom, operations: Operation[]): Promise<End | null> {
   const { input } = a.prepared;
   const say = a.deps.report;
+  const searcher = createSearcher({
+    client: a.search,
+    spend,
+    context,
+    rates: a.prepared.searchRates,
+    poolKey: DEVELOPMENT.pool_key,
+    allocationKey: DEVELOPMENT.allocation_key,
+    slotKey: DEVELOPMENT.slot_key,
+    settings: input.search_settings,
+    excludedIdentifiers: input.excluded_identifiers,
+    store: createDirectoryRecordStore(join(a.dir, "search")),
+    clock: () => new Date(a.deps.clock.now()),
+    actorRole: ACTOR,
+  });
+  const grounding = await ground(a, searcher, observed, operations);
+  if ("end" in grounding) return grounding.end;
+  const { symptom } = grounding;
+  writeOnce(join(a.dir, "symptom.json"), encodeCanonical(symptom));
+
   const writer = createWriter({ spend, provider: a.provider, context, poolKey: DEVELOPMENT.pool_key, allocationKey: DEVELOPMENT.allocation_key, slotKey: DEVELOPMENT.slot_key, rateSheet: a.prepared.writerRates });
   mkdirSync(join(a.dir, "recordings"), { recursive: true });
 
@@ -307,23 +398,9 @@ async function writeAndSearch(a: Attempt, spend: Spend, context: Record<string, 
   if (issueEnd !== null) return issueEnd;
   if (frozen === null || check !== "ready_for_review") return failed("issue_not_ready");
 
-  const searcher = createSearcher({
-    client: a.search,
-    spend,
-    context,
-    rates: a.prepared.searchRates,
-    poolKey: DEVELOPMENT.pool_key,
-    allocationKey: DEVELOPMENT.allocation_key,
-    slotKey: DEVELOPMENT.slot_key,
-    settings: input.search_settings,
-    excludedIdentifiers: input.excluded_identifiers,
-    store: createDirectoryRecordStore(join(a.dir, "search")),
-    clock: () => new Date(a.deps.clock.now()),
-    actorRole: ACTOR,
-  });
   const phrases = pickPhrases(frozen.issue);
   const records: SearchRecord[] = [];
-  for (const name of PHRASE_CALLS) {
+  for (const name of PHRASE_NAMES) {
     const result = await searcher.checkPhrase(name, { ...input.search, phrases });
     if (result.status === "refused") {
       say(`stage=novelty call=${name} refused=${result.code}`);
@@ -454,7 +531,6 @@ async function stages(a: Attempt, projectPolicy: { sha256: string; policy_id: st
     return failed(error.code);
   }
   mkdirSync(a.dir, { recursive: true });
-  writeOnce(join(a.dir, "symptom.json"), encodeCanonical(symptom));
   const text = await candidateText(a, observe.summary.job.task_revision ?? "", symptom);
   if (text !== null) return text;
 

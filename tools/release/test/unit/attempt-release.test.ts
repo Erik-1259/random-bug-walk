@@ -99,10 +99,11 @@ describe("a candidate attempt, staged, published and built into a release", () =
     const staged = stage({ run: work, rootRun, out: staging, redactionsOut: redactions, symptom: join(candidate, "symptom.json"), card: join(candidate, "card.json"), novelty: join(candidate, "novelty.json") });
     expect(staged.ok).toBe(true);
     const issue = parseCanonical(readFileSync(join(candidate, "issue.json"))) as unknown as { title: string; expected_result: string; actual_result: string };
-    const phrases = readdirSync(join(candidate, "search")).map((file) => (JSON.parse(readFileSync(join(candidate, "search", file), "utf8")) as { request: { query: string } }).request.query.replace(/^"|"$/g, ""));
-    expect(phrases).toHaveLength(3);
+    // The six search records: two source searches, the docs extract and three phrase checks. Every query is private.
+    const queries = readdirSync(join(candidate, "search")).map((file) => (JSON.parse(readFileSync(join(candidate, "search", file), "utf8")) as { request: { query: string } }).request.query.replace(/^"|"$/g, ""));
+    expect(queries).toHaveLength(6);
     const stagedText = allFiles(staging).map((file) => readFileSync(file, "latin1"));
-    for (const secret of [issue.title, issue.expected_result, issue.actual_result, ...phrases]) for (const text of [...stagedText, lines.join("\n")]) expect(text).not.toContain(secret);
+    for (const secret of [issue.title, issue.expected_result, issue.actual_result, ...queries]) for (const text of [...stagedText, lines.join("\n")]) expect(text).not.toContain(secret);
 
     const pw = { ...w, policy: { file: files.policy.file, bytes: files.policy.bytes, sha256: files.policy.sha256 } };
     const d = destination(pw);
