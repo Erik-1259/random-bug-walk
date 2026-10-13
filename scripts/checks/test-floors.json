@@ -20,11 +20,12 @@
     "packages/web": 141,
     "packages/writer": 188,
     "scripts/checks": 189,
-    "tools/controller": 89,
+    "tools/controller": 105,
     "tools/local-runner": 138,
     "tools/neon-ci": 98,
     "tools/publication": 166,
-    "tools/release": 42
+    "tools/release": 42,
+    "tools/solver-session": 18
   },
   "pytest": {
     "python/schema": 878
