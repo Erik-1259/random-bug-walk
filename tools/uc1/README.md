@@ -26,8 +26,8 @@ Each step is its own command, so grade 2 (the only step that spends on Vercel Sa
    - Refuses anything the pre-registration does not allow (see [Refusals and stops](#refusals-and-stops)) before writing anything.
    - Derives the case's clean, planted and alternative-fix files from the pinned image (`tools/local-runner`'s export and code states) and checks that the image is the case's digest.
    - Creates the paired_comparison root under the public_demo project policy and writes `root-run.json` (status `prepared`, stages `solver_sessions`, `grade_1`, `grade_2`) before the first attempt or grade.
-   - The pilot then runs the two seeded grade round trips with no model: the alternative fix's bytes through the fix route (`--judge-fixed alternative_fix`) and the clean bytes through the clean-equal route (`--judge-fixed fixed`), grade 1 here and grade 2 in the next step.
-   - Holds the development slot for the root (the solver loop needs it for every model call) and runs the attempts in index order, up to `--concurrency` (1 to 3) at once. Each attempt: a fresh session on the case's pinned kit image with the planted projection (`serverLogs` only in the on arm), `runAttempt` with the pre-registered prompt, tools, caps, temperature and seed (the attempt index), the diff on submit or at a cap, `close()`, then grade 1 on local Docker (the controller's in-memory ledger, $0). Every model call passes the spend guard first.
+   - The pilot then runs, once the slot is held (next item), the two seeded grade round trips with no model: the alternative fix's bytes through the fix route (`--judge-fixed alternative_fix`) and the clean bytes through the clean-equal route (`--judge-fixed fixed`), grade 1 here and grade 2 in the next step.
+   - Holds the development slot for the root (the solver loop needs it for every model call), taking it before the seeded round trips, and runs the attempts in index order, up to `--concurrency` (1 to 3) at once. Each attempt: a fresh session on the case's pinned kit image with the planted projection (`serverLogs` only in the on arm), `runAttempt` with the pre-registered prompt, tools, caps, temperature and seed (the attempt index), the diff on submit or at a cap, `close()`, then grade 1 on local Docker (the controller's in-memory ledger, $0). Every model call passes the spend guard first.
    - Releases the slot when the pass ends. The root stays `running` until `finalize`.
 2. **`grade2`: the protected regrade.** For every seeded round trip and every counted, graded attempt (the final run at its index), one controller `judge_verify` job on Vercel Sandbox, serially, on the development pool and slot under the root, each only when its worst case fits the allowance. A grade that stops for infrastructure reasons is retried as a grade only, up to 2 times. The slot must be free: the controller takes it for each job.
 3. **`finalize`: the records.** The analyzer's rows and its results record, the summary, the report, the publisher's staging directory, and the root's terminal status: `completed` when every planned index has a final status (in a pilot, every planned attempt counted with its grading finished, so a pilot whose attempts ended infrastructure errors never completes) and, in a pilot, both seeded round trips took their expected routes and passed both grades; `incomplete` otherwise (for example when the run stopped); `needs_reconciliation` when the ledger shows an open or uncertain operation under the root. It refuses while any counted, graded attempt or seeded round trip has no finished grade 2.
@@ -87,7 +87,7 @@ One JSON object; every field is required, unknown fields are refused, and paths 
 - `reference_fix` is the case's committed alternative fix. The session and the code states read it, and the clean-equal route passes it to the controller.
 - `family` is `time-zone` or `race`. The session, the code states and both grades use that family's fixture, kit stage and probe checks; a race case's grades pass the controller `--family race`.
 - `probes_dir` null uses the shapes package's probes, which are the time-zone case's. A race case names its probe directory; the session, the code states and both grades (the controller's `--probes-dir`) use it.
-- A counted run takes a race case's file with that case's screen record, which must have both `static_headroom.verdict` and `leak_screen.verdict` equal to `pass`.
+- A counted run takes a race case's file (`family` `race`) with that case's screen record. The record must be in the pre-registered format, every field present and well formed: `schema_version` 1, `case_id`, `recorded` (YYYY-MM-DD), `recorded_by`, `target` (`upstream`, `host_commit`, `path`, `sha256` as 64 hex, `mutation`), `static_headroom` (`verdict`, a non-empty `judgment` and at least one entry in `reasons`), `leak_screen` (`verdict` and non-empty `issue_text`, `observe_and_writer_evidence`, `http_responses` and `server_logs`) and `uc1_use`; both verdicts must be `pass`.
 
 The policy file is a canonical `ProjectPolicy` with purpose `public_demo`, as the publisher's `policy` command writes it (`node packages/publisher/src/cli.ts policy ...`).
 
@@ -170,7 +170,8 @@ A run that stopped on spend at an index is not an infrastructure rerun; the next
 
 Refused before anything is written (exit 2):
 
-- a counted run whose screen record is not in the pre-registered format with both verdicts `pass`, which includes the time-zone case;
+- a counted run whose screen record is not in the pre-registered format (any field absent or malformed) with both verdicts `pass`, which includes the time-zone case;
+- a counted run on a case whose `family` is not `race`;
 - a pilot on any case but `umami-tz-arg-001`;
 - a counted run with no pilot on the same `--model` under `<runs>` that `finalize` made terminal with outcome `completed`;
 - a policy that is not `public_demo` and public;
@@ -180,7 +181,7 @@ Refused before anything is written (exit 2):
 - a `pilot`, `run` or `grade2` on a run whose root `finalize` already made terminal;
 - an image that resolves to another digest than the case's, on a new run or a resumed one.
 
-Stops during a step (exit 1, recorded in `stops.jsonl`): the allowance, an uncertain operation or a halted ledger, a session refused before its container (an audit or image mismatch: the run stops, nothing is rerun), the slot held by another root, and a slot that cannot be released (the root becomes `needs_reconciliation`).
+Stops during a step (exit 1, recorded in `stops.jsonl`): the allowance, an uncertain operation or a halted ledger, a session refused before its container (an audit or image mismatch: the run stops, nothing is rerun), the slot held by another root (`slot_held`, "slot busy": checked before any grade job, the pilot's seeded round trips included, so no grade retry is spent and the same command resumes once the slot is free), and a slot that cannot be released (the root becomes `needs_reconciliation`).
 
 An infrastructure error (the session cannot start, the model endpoint fails or times out, the diff cannot be read, or a process interrupted mid-run) is rerun from scratch at the same index, up to 2 times, with a new session, execution and rerun number. A lost model response leaves its operation `uncertain`, so the guard stops the run before that rerun until the ledger is reconciled.
 
@@ -190,7 +191,7 @@ An infrastructure error (the session cannot start, the model endpoint fails or t
 
 ## Known limits
 
-- After an interruption (the process or the machine stops mid-step), resume with the same command and `--name`. A run the process lost before saving its result is rerun as an infrastructure error, and a grade job that ended without a summary is retried. The ledger is authoritative for spend: what an interrupted run settled is counted from the ledger under that run's execution, so the summary and the report never show it as zero.
+- After an interruption (the process or the machine stops mid-step), resume with the same command and `--name`. A run the process lost before saving its result is rerun as an infrastructure error, and a grade job that ended without a summary is retried. A grade 2 job that wrote its summary before the process saved its try is replayed from that summary on resume without a new allowance hold, since its spend has already settled. The ledger is authoritative for spend: what an interrupted run settled is counted from the ledger under that run's execution, so the summary and the report never show it as zero.
 
 ## Not built here
 

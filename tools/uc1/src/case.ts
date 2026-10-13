@@ -141,15 +141,55 @@ export function changedCaseInputs(recorded: Readonly<Record<string, string | nul
 /** What a screen record says about using its case in a UC1 run. */
 export interface ScreenStatus {
   case_id: string | null;
-  /** Both verdicts of the race-class format are `pass`. */
+  /** The record has every pre-registered field, well formed, and both verdicts are `pass`. */
   eligible: boolean;
   detail: string;
 }
 
+const DATE = /^\d{4}-\d{2}-\d{2}$/;
+const SHA256 = /^[0-9a-f]{64}$/;
+
+function text(value: unknown): boolean {
+  return typeof value === "string" && value.trim() !== "";
+}
+
 /**
- * Reads a screen record. A case is eligible only in the pre-registered format with both
- * `static_headroom.verdict` and `leak_screen.verdict` equal to `pass`; anything else (the
- * time-zone case's record, whose verdict is `fail`, included) is not.
+ * The fields of the pre-registered screen format (docs/uc1-preregistration.md, "Bug selection")
+ * that are absent or malformed, by dotted name. The verdicts are checked separately.
+ */
+function screenShapeProblems(data: Record<string, unknown>): string[] {
+  const problems: string[] = [];
+  const need = (ok: boolean, field: string) => {
+    if (!ok) problems.push(field);
+  };
+  need(data.schema_version === 1, "schema_version");
+  need(typeof data.case_id === "string" && CASE_ID.test(data.case_id), "case_id");
+  need(typeof data.recorded === "string" && DATE.test(data.recorded), "recorded");
+  need(text(data.recorded_by), "recorded_by");
+  if (isRecord(data.target)) {
+    for (const field of ["upstream", "host_commit", "path", "mutation"]) need(text(data.target[field]), `target.${field}`);
+    need(typeof data.target.sha256 === "string" && SHA256.test(data.target.sha256), "target.sha256");
+  } else problems.push("target");
+  if (isRecord(data.static_headroom)) {
+    const { verdict, judgment, reasons } = data.static_headroom;
+    need(verdict === "pass" || verdict === "fail", "static_headroom.verdict");
+    need(text(judgment), "static_headroom.judgment");
+    need(Array.isArray(reasons) && reasons.length > 0 && reasons.every(text), "static_headroom.reasons");
+  } else problems.push("static_headroom");
+  if (isRecord(data.leak_screen)) {
+    const leak = data.leak_screen;
+    need(leak.verdict === "pass" || leak.verdict === "fail" || leak.verdict === "not_assessed", "leak_screen.verdict");
+    for (const field of ["issue_text", "observe_and_writer_evidence", "http_responses", "server_logs"]) need(text(leak[field]), `leak_screen.${field}`);
+  } else problems.push("leak_screen");
+  need(text(data.uc1_use), "uc1_use");
+  return problems;
+}
+
+/**
+ * Reads a screen record. A case is eligible only when the record has every field of the
+ * pre-registered format, each well formed, with both `static_headroom.verdict` and
+ * `leak_screen.verdict` equal to `pass`; anything else (the time-zone case's record, whose
+ * verdict is `fail`, included) is not.
  */
 export function screenStatus(bytes: Uint8Array): ScreenStatus {
   let data: unknown;
@@ -160,18 +200,19 @@ export function screenStatus(bytes: Uint8Array): ScreenStatus {
   }
   if (!isRecord(data)) return { case_id: null, eligible: false, detail: "the screen record is not an object" };
   const caseId = typeof data.case_id === "string" ? data.case_id : typeof data.case === "string" ? data.case : null;
-  const headroom = isRecord(data.static_headroom) ? data.static_headroom.verdict : undefined;
-  const leak = isRecord(data.leak_screen) ? data.leak_screen.verdict : undefined;
-  if (data.schema_version === 1 && headroom === "pass" && leak === "pass") return { case_id: caseId, eligible: true, detail: "static headroom pass, leak screen pass" };
   if (typeof data.verdict === "string") return { case_id: caseId, eligible: false, detail: `the screen record's verdict is ${data.verdict}` };
-  const label = (value: unknown) => (typeof value === "string" ? value : "missing");
-  return { case_id: caseId, eligible: false, detail: `static headroom ${label(headroom)}, leak screen ${label(leak)}` };
+  const problems = screenShapeProblems(data);
+  if (problems.length > 0) return { case_id: caseId, eligible: false, detail: `the screen record is not in the pre-registered format: missing or malformed ${problems.join(", ")}` };
+  const headroom = (data.static_headroom as Record<string, unknown>).verdict as string;
+  const leak = (data.leak_screen as Record<string, unknown>).verdict as string;
+  if (headroom === "pass" && leak === "pass") return { case_id: caseId, eligible: true, detail: "static headroom pass, leak screen pass" };
+  return { case_id: caseId, eligible: false, detail: `static headroom ${headroom}, leak screen ${leak}` };
 }
 
 /**
  * Whether a mode may run this case. The pilot runs only the time-zone case, whose record fails it;
- * a counted run needs an eligible screen record for the same case. The fallback branch (decision 6)
- * is an amendment to the pre-registration and is not built in.
+ * a counted run needs a race-class case and an eligible screen record for the same case. The
+ * time-zone fallback branch is an amendment to the pre-registration and is not built in.
  */
 export function checkCaseForMode(mode: RunMode, config: CaseConfig, screen: ScreenStatus): void {
   if (screen.case_id !== config.case_id) throw new CaseError(`the screen record is for ${String(screen.case_id)}, not ${config.case_id}`);
@@ -180,6 +221,7 @@ export function checkCaseForMode(mode: RunMode, config: CaseConfig, screen: Scre
     return;
   }
   if (!screen.eligible) throw new CaseError(`${config.case_id} is not eligible for a counted UC1 run: ${screen.detail}`);
+  if (config.family !== "race") throw new CaseError(`a counted UC1 run takes only a race-class case; ${config.case_id} is family ${config.family}`);
 }
 
 /**

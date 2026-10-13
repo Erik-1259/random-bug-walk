@@ -304,6 +304,47 @@ describe("attempts, reruns and scope", () => {
     await w.close();
   });
 
+  it("runs no seeded grade while another root holds the slot, and a resume after its release completes the pilot", async () => {
+    const w = await world();
+    const other = "00000000-0000-4000-8000-00000000beef";
+    const hold = await w.spend.acquireSlot({ slot_key: "development", root_execution_id: other, actor_role: "test" });
+    expect(hold.ok).toBe(true);
+    const first = await runSessions(pilot(w), w.deps);
+    expect(first.exitCode).toBe(1);
+    expect(first.stop).toMatchObject({ reason: "slot_held" });
+    expect(first.stop?.detail).toContain("slot busy");
+    expect(w.controllerCalls).toHaveLength(0);
+    expect(w.sessions).toHaveLength(0);
+    for (const label of ["seed-alternative-fix", "seed-clean"]) {
+      const path = join(first.runDir, "seeded", label, "seeded.json");
+      if (existsSync(path)) expect(json(path).grade1).toEqual([]);
+    }
+    await w.spend.releaseSlot({ slot_key: "development", root_execution_id: other, actor_role: "test", evidence: null, reason: null });
+    const second = await runSessions(pilot(w), w.deps);
+    expect(second.exitCode).toBe(0);
+    expect(second.rootExecutionId).toBe(first.rootExecutionId);
+    await w.close();
+  });
+
+  it("replays a grade 2 job that settled before its try was saved, without a new hold, even near the cap", async () => {
+    let tight = false;
+    const w = await world({ view: (view) => (tight ? { ...view, settled_microusd: 40_000_000n - view.open_microusd - BigInt(DRY_COPY_MICROUSD) + 1n } : view) });
+    const outcome = await runSessions(pilot(w), w.deps);
+    expect((await runGrade2({ runDir: outcome.runDir }, w.deps)).exitCode).toBe(0);
+    // The process stopped after the seed-clean job settled and wrote its summary, before the try was saved.
+    const path = join(outcome.runDir, "seeded", "seed-clean", "seeded.json");
+    const saved = json(path);
+    writeFileSync(path, `${JSON.stringify({ ...saved, grade2: [] }, null, 2)}\n`);
+    tight = true;
+    const calls = w.controllerCalls.length;
+    const resumed = await runGrade2({ runDir: outcome.runDir }, w.deps);
+    expect(resumed.stop).toBeNull();
+    expect(resumed.exitCode).toBe(0);
+    expect(w.controllerCalls.slice(calls).map((call) => call.name)).toEqual(["grade-2-sandbox-seed-clean-r0"]);
+    expect((json(path).grade2 as { result: { state: string } }[]).map((item) => item.result.state)).toEqual(["passed"]);
+    await w.close();
+  });
+
   it("refuses to finalize while a counted attempt still waits for grade 2", async () => {
     const w = await world();
     const outcome = await runSessions(pilot(w), w.deps);

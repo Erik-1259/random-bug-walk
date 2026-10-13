@@ -6,6 +6,22 @@ import { CaseError, checkCaseForMode, controllerBase, parseCase, screenStatus } 
 import { PILOT_SCREEN_RECORD } from "../src/fakes.ts";
 import { ABBA_BLOCK, MAIN_ATTEMPTS, PILOT_LABEL, SPEND_CAPS_MICROUSD, attemptPlan } from "../src/plan.ts";
 
+/** A race screen record with every field the pre-registration lists, both verdicts pass. */
+const SCREEN = {
+  schema_version: 1,
+  case_id: "umami-race-001",
+  recorded: "2026-10-14",
+  recorded_by: "race-class screen",
+  target: { upstream: "umami", host_commit: "ec0ff50388c264ed8ce46f00967e92f7e71476ae", path: "src/app/api/send/route.ts", sha256: "a".repeat(64), mutation: "packages/shapes/probes/rc-x/mutation.patch" },
+  static_headroom: { verdict: "pass", judgment: "The omission is not plain from the pre-fix source alone.", reasons: ["No in-file twin."] },
+  leak_screen: { verdict: "pass", issue_text: "No error text.", observe_and_writer_evidence: "No error text.", http_responses: "HTTP 500 with no body.", server_logs: "The Postgres error." },
+  uc1_use: "UC1 subject",
+};
+
+function fullScreen(change: Record<string, unknown> = {}): Record<string, unknown> {
+  return { ...SCREEN, ...change };
+}
+
 describe("the pre-registered plan", () => {
   it("orders the 40 attempts in ABBA blocks, ten times, with 20 per arm", () => {
     const plan = attemptPlan("run");
@@ -117,10 +133,10 @@ describe("case files and screen records", () => {
     const dir = mkdtempSync(join(tmpdir(), "rbw-uc1-screen-"));
     const record = (headroom: string, leak: string) => {
       const path = join(dir, `${headroom}-${leak}.json`);
-      writeFileSync(path, JSON.stringify({ schema_version: 1, case_id: "umami-race-001", static_headroom: { verdict: headroom }, leak_screen: { verdict: leak } }));
+      writeFileSync(path, JSON.stringify(fullScreen({ static_headroom: { ...SCREEN.static_headroom, verdict: headroom }, leak_screen: { ...SCREEN.leak_screen, verdict: leak } })));
       return screenStatus(readFileSync(path));
     };
-    const config = parseCase(Buffer.from(JSON.stringify({ ...caseJson, case_id: "umami-race-001" })));
+    const config = parseCase(Buffer.from(JSON.stringify({ ...caseJson, case_id: "umami-race-001", family: "race" })));
     const check = (mode: "pilot" | "run", caseConfig: typeof config, screen: ReturnType<typeof record>) => () => {
       checkCaseForMode(mode, caseConfig, screen);
     };
@@ -128,6 +144,45 @@ describe("case files and screen records", () => {
     expect(check("run", config, record("pass", "not_assessed"))).toThrow("leak screen not_assessed");
     expect(check("run", config, record("fail", "pass"))).toThrow("static headroom fail");
     expect(check("pilot", config, record("pass", "pass"))).toThrow("runs only umami-tz-arg-001");
-    expect(check("run", parseCase(Buffer.from(JSON.stringify({ ...caseJson, case_id: "umami-race-002" }))), record("pass", "pass"))).toThrow("is for umami-race-001");
+    expect(check("run", parseCase(Buffer.from(JSON.stringify({ ...caseJson, case_id: "umami-race-002", family: "race" }))), record("pass", "pass"))).toThrow("is for umami-race-001");
+  });
+
+  it("refuses a counted run on a case whose family is not race, even with a passing screen record", () => {
+    const screen = screenStatus(Buffer.from(JSON.stringify(fullScreen())));
+    expect(screen.eligible).toBe(true);
+    const timeZone = parseCase(Buffer.from(JSON.stringify({ ...caseJson, case_id: "umami-race-001", family: "time-zone" })));
+    expect(() => {
+      checkCaseForMode("run", timeZone, screen);
+    }).toThrow("only a race-class case");
+    const race = parseCase(Buffer.from(JSON.stringify({ ...caseJson, case_id: "umami-race-001", family: "race" })));
+    expect(() => {
+      checkCaseForMode("run", race, screen);
+    }).not.toThrow();
+  });
+
+  it("finds a screen record ineligible unless every pre-registered field is present and well formed", () => {
+    expect(screenStatus(Buffer.from(JSON.stringify(fullScreen()))).eligible).toBe(true);
+    // Only the two verdicts and the identifiers: the judgment, target, reasons and evidence comparison are absent.
+    const bare = { schema_version: 1, case_id: "umami-race-001", static_headroom: { verdict: "pass" }, leak_screen: { verdict: "pass" } };
+    const status = screenStatus(Buffer.from(JSON.stringify(bare)));
+    expect(status).toMatchObject({ case_id: "umami-race-001", eligible: false });
+    expect(status.detail).toContain("recorded");
+    const broken: [string, Record<string, unknown>][] = [
+      ["recorded", { recorded: "Oct 13" }],
+      ["recorded_by", { recorded_by: "" }],
+      ["target", { target: {} }],
+      ["target.sha256", { target: { ...SCREEN.target, sha256: "abc" } }],
+      ["target.mutation", { target: { ...SCREEN.target, mutation: 1 } }],
+      ["static_headroom.judgment", { static_headroom: { ...SCREEN.static_headroom, judgment: "" } }],
+      ["static_headroom.reasons", { static_headroom: { ...SCREEN.static_headroom, reasons: [] } }],
+      ["leak_screen.server_logs", { leak_screen: { verdict: "pass", issue_text: "x", observe_and_writer_evidence: "x", http_responses: "x" } }],
+      ["uc1_use", { uc1_use: null }],
+      ["schema_version", { schema_version: 2 }],
+    ];
+    for (const [field, change] of broken) {
+      const result = screenStatus(Buffer.from(JSON.stringify(fullScreen(change))));
+      expect(result.eligible, field).toBe(false);
+      expect(result.detail, field).toContain(field);
+    }
   });
 });

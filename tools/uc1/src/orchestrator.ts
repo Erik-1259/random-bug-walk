@@ -625,14 +625,15 @@ export async function runSessions(options: SessionsOptions, deps: Uc1Deps): Prom
     },
   };
 
-  const seededOk = run.mode === "pilot" ? await seededGrades(pass) : true;
-
+  // The slot is taken before any grade job, the pilot's seeded round trips included: a slot another
+  // root holds stops the pass before any job runs, so no grade retry is spent on the contention and
+  // a later resume continues where this one stopped.
   const slot = { slot_key: DEVELOPMENT_SLOT, root_execution_id: run.root_execution_id, actor_role: ACTOR };
   const status = await deps.spend.slotStatus({ slot_key: DEVELOPMENT_SLOT });
   let held = false;
   if (!status.ok) pass.halt("slot_unavailable", status.code);
   else if (status.holder === run.root_execution_id) held = true;
-  else if (status.holder !== null) pass.halt("slot_held", `the development slot is held by ${status.holder}`);
+  else if (status.holder !== null) pass.halt("slot_held", `slot busy: the development slot is held by ${status.holder}; resume with the same command once it is free`);
   else {
     const hold = await deps.spend.acquireSlot(slot);
     if (hold.ok) held = true;
@@ -640,6 +641,7 @@ export async function runSessions(options: SessionsOptions, deps: Uc1Deps): Prom
   }
   writeRootRun(runDir, run, "running", null);
 
+  let seededOk = run.mode !== "pilot";
   if (held) {
     const queue = run.plan.filter((item) => {
       const record = readAttempt(runDir, item);
@@ -656,6 +658,7 @@ export async function runSessions(options: SessionsOptions, deps: Uc1Deps): Prom
       }
     };
     try {
+      if (run.mode === "pilot") seededOk = await seededGrades(pass);
       await Promise.all(Array.from({ length: options.concurrency }, () => worker()));
     } finally {
       // Released even when a step threw, so a harness fault never leaves the development slot held.
@@ -735,7 +738,11 @@ export async function runGrade2(options: { runDir: string }, deps: Uc1Deps): Pro
   outer: for (const item of items) {
     while (needsGrade(item.tries)) {
       const retry = item.tries.length;
-      const held = await allowance.withHold(`${item.label}-r${String(retry)}`, deps.grade2WorstCaseMicrousd, () => gradeTry(ctx, item.route, 2, item.work, item.label, retry));
+      const grade = () => gradeTry(ctx, item.route, 2, item.work, item.label, retry);
+      // A job that already wrote its summary (the process stopped before its try was saved) has
+      // settled: the controller replays it with no new spend, so it takes no allowance hold.
+      const settled = existsSync(join(item.work, "jobs", jobName(2, item.label, retry), "summary.json"));
+      const held = settled ? { ok: true as const, value: await grade() } : await allowance.withHold(`${item.label}-r${String(retry)}`, deps.grade2WorstCaseMicrousd, grade);
       if (!held.ok) {
         stop = { reason: held.reason, detail: held.detail, at: deps.now().toISOString() };
         appendStop(runDir, stop);

@@ -404,9 +404,9 @@ export async function dryRunWorld(options: DryRunOptions): Promise<DryRunWorld> 
     case_id: "umami-race-synthetic-001",
     recorded: "2026-10-13",
     recorded_by: "synthetic",
-    target: {},
-    static_headroom: { verdict: "pass", judgment: "synthetic", reasons: [] },
-    leak_screen: { verdict: "pass" },
+    target: { upstream: "synthetic", host_commit: "synthetic", path: DRY_TARGET, sha256: sha256Hex(Buffer.from(DRY_CLEAN)), mutation: "synthetic" },
+    static_headroom: { verdict: "pass", judgment: "synthetic", reasons: ["synthetic"] },
+    leak_screen: { verdict: "pass", issue_text: "synthetic", observe_and_writer_evidence: "synthetic", http_responses: "synthetic", server_logs: "synthetic" },
     uc1_use: "synthetic",
   });
   const pilotCase = writeJson(join(inputs, "pilot-case.json"), { case_id: PILOT_CASE_ID, family: "time-zone", screen_record: fileURLToPath(PILOT_SCREEN_RECORD), ...base });
