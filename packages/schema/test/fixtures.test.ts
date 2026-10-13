@@ -87,6 +87,7 @@ describe("record fixtures", () => {
       "TrialObservations",
       "TrialResult",
       "ObservedSymptom",
+      "RaceSymptom",
       "OperationIdentity",
       "MutationIdentity",
       "TaskRevisionIdentity",

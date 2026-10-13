@@ -22,6 +22,8 @@ export { IssueOutputSchema } from "./issue-schema.ts";
 export type { IssueOutput } from "./issue-schema.ts";
 export { ObservedSymptomSchema, parseObservedSymptom } from "./observed-symptom.ts";
 export type { ObservedSymptom } from "./observed-symptom.ts";
+export { isRaceSymptom, parseWriterSymptom, RACE_SYMPTOM_KIND, RaceSymptomSchema } from "./race-symptom.ts";
+export type { ParsedWriterSymptom, RaceSymptom, WriterSymptom } from "./race-symptom.ts";
 export { profileSha256 } from "./profile.ts";
 export type { HashedProfile, ModelProfile, StructuredOutputMode } from "./profile.ts";
 export type { PromptMessages } from "./prompt.ts";

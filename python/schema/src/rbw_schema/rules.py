@@ -29,6 +29,7 @@ from rbw_schema.generated import (
     ObservedSymptom,
     ProjectPolicy,
     PublicationRecord,
+    RaceSymptom,
     RootRun,
     RunManifest,
     StagingOmissions,
@@ -53,6 +54,45 @@ def _strictly_sorted(values: Sequence[str]) -> bool:
 
 def _has_duplicates(values: Sequence[str]) -> bool:
     return len(set(values)) != len(values)
+
+
+def _race_symptom_rules(symptom: RaceSymptom) -> list[str]:
+    """A race symptom's counts, times and overlap follow from its attempts.
+
+    It records a double acceptance against one expected acceptance, beside a genuine sequential
+    reuse.
+    """
+    errors: list[str] = []
+    attempts = symptom["concurrent_attempts"]
+    accepted = sum(1 for attempt in attempts if attempt["outcome"] == "accepted")
+    refused = sum(1 for attempt in attempts if attempt["outcome"] == "refused")
+    observed = symptom["observed"]
+    if observed["accepted"] != accepted or observed["refused"] != refused:
+        errors.append("race_symptom:observed_counts")
+    every = [*attempts, *symptom["sequential_attempts"]]
+    if any(attempt["settled_ms"] < attempt["sent_ms"] for attempt in every):
+        errors.append("race_symptom:attempt_times")
+    settled = min(attempt["settled_ms"] for attempt in attempts)
+    overlap = settled - max(attempt["sent_ms"] for attempt in attempts)
+    if symptom["overlap_ms"] != overlap:
+        errors.append("race_symptom:overlap")
+    # The family's symptom: one acceptance is expected, and both concurrent uses were accepted.
+    expected = symptom["expected"]
+    if expected["accepted"] != 1 or expected["refused"] != 1:
+        errors.append("race_symptom:expected")
+    if observed["accepted"] != 2 or observed["refused"] != 0:
+        errors.append("race_symptom:observed")
+    # The control: an accepted first use, then a reuse sent after it settled that was refused.
+    sequential = symptom["sequential_attempts"]
+    genuine = (
+        len(sequential) == 2
+        and sequential[0]["outcome"] == "accepted"
+        and sequential[1]["outcome"] == "refused"
+        and sequential[1]["sent_ms"] >= sequential[0]["settled_ms"]
+    )
+    if not genuine:
+        errors.append("race_symptom:sequential")
+    return errors
 
 
 def _registry_rules(registry: FamilyRegistry) -> list[str]:
@@ -275,6 +315,8 @@ def check_rules(type_name: str, value: JsonValue, context: RecordContext) -> lis
             events = cast(ObservedSymptom, value)["events"]
             if any(utc_seconds(e["utc_instant"]) != e["timestamp_seconds"] for e in events):
                 errors.append("symptom:event_instant")
+        case "RaceSymptom":
+            errors.extend(_race_symptom_rules(cast(RaceSymptom, value)))
         case "MutationIdentity":
             errors.extend(_mutation_rules(cast(MutationIdentity, value)))
         case _:

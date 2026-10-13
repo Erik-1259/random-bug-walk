@@ -127,6 +127,50 @@ export const ISSUE_OUTPUTS: Record<IssueCase, unknown> = {
   "http-500": null,
 };
 
+/** The race family's recorded cases, kept apart from the time-zone cases above. */
+export const RACE_ISSUE_CASES = ["race-valid", "race-numeric-mismatch"] as const;
+export type RaceIssueCase = (typeof RACE_ISSUE_CASES)[number];
+
+/** A synthetic race observation: two requests spending one code at once, both accepted. */
+export function raceSymptom(variant: string): Record<string, unknown> {
+  return {
+    schema_version: 1,
+    symptom_kind: "concurrent_double_acceptance",
+    user_action: `Signed in from two browser tabs and entered the same unused backup code in both at the same moment (synthetic case ${variant}).`,
+    request: { method: "POST", path: "/api/synthetic/verify", query: {} },
+    locale: "en-US",
+    fixture_description: "One synthetic account with two-step sign-in and ten unused backup codes.",
+    concurrent_attempts: [
+      { label: "request a", sent_ms: 0, settled_ms: 87, http_status: 200, outcome: "accepted", error_code: null },
+      { label: "request b", sent_ms: 1, settled_ms: 92, http_status: 200, outcome: "accepted", error_code: null },
+    ],
+    overlap_ms: 86,
+    expected: { accepted: 1, refused: 1 },
+    observed: { accepted: 2, refused: 0 },
+    sequential_attempts: [
+      { label: "first use", sent_ms: 0, settled_ms: 64, http_status: 200, outcome: "accepted", error_code: null },
+      { label: "reuse after the first use finished", sent_ms: 130, settled_ms: 171, http_status: 400, outcome: "refused", error_code: "synthetic-invalid-code" },
+    ],
+    doc_excerpts: [{ text: "Synthetic excerpt: each backup code can be used once.", source_url: "https://docs.example.invalid/two-step" }],
+  };
+}
+
+const VALID_RACE_ISSUE = {
+  title: "One backup code signs in twice when it is entered in two tabs at the same time",
+  reproduction_steps: [
+    "Sign in to an account with two-step sign-in in two browser tabs until each asks for a code.",
+    "Enter the same unused backup code in both tabs and submit them at the same moment.",
+  ],
+  expected_result: "Of the two requests sent at the same time, one should be accepted and the other refused.\nExpected: accepted=1, refused=1",
+  actual_result: "Both requests returned HTTP 200 and each tab was signed in.\nObserved: accepted=2, refused=0",
+  environment: "Locale en-US; the concurrent requests returned 200 and 200, a later reuse returned 400.",
+};
+
+export const RACE_ISSUE_OUTPUTS: Record<RaceIssueCase, unknown> = {
+  "race-valid": VALID_RACE_ISSUE,
+  "race-numeric-mismatch": { ...VALID_RACE_ISSUE, actual_result: "Both tabs were signed in.\nObserved: accepted=1, refused=1" },
+};
+
 /** Card input: public source-fix information plus the caller's shape confirmation. */
 export function cardSource(variant: string): Record<string, unknown> {
   return {
