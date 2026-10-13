@@ -47,11 +47,11 @@
     }
   ],
   "evidence_comparison": {
-    "note": "What each channel already reveals compared with the server logs. 'Server logs' here means Umami stderr plus Postgres stderr as the kit captures them (kit/umami/etc/app.environment sets no LOG_QUERY; kit/umami/etc/postgresql.rbw.conf sets no log_statement).",
+    "note": "What each channel would reveal compared with the server logs, as expected from reading the pinned source (no run of this case is committed yet). 'Server logs' here means Umami stderr plus Postgres stderr as the kit captures them (kit/umami/etc/app.environment sets no LOG_QUERY; kit/umami/etc/postgresql.rbw.conf sets no log_statement).",
     "issue_text": "Not written yet. The symptom is two successful verifications from one code, which states the whole failure.",
-    "observe_and_writer_evidence": "The planted observation is two HTTP 200 responses with full tokens, from one backup code. Nothing in that evidence is a Prisma or Postgres message, because none is raised.",
-    "http_responses": "Off arm: both concurrent POST /api/2fa/verify requests return 200 with a token. On a clean copy one returns 400 two-factor-error-invalid-backup-code. The responses already show the full symptom.",
-    "server_logs": "Empty for this bug. The double spend is two successful requests: Umami logs nothing on the success path (route.ts:133-149), and Postgres logs nothing for successful statements at the default settings. The log tool has no evidence to add in either arm.",
+    "observe_and_writer_evidence": "Expected (not yet observed in a committed run): the planted observation would be two HTTP 200 responses with full tokens from one backup code. No Prisma or Postgres message is raised on that path.",
+    "http_responses": "Expected from the source (not yet observed in a committed run): in the off arm, both concurrent POST /api/2fa/verify requests would return 200 with a token; on a clean copy one would return 400 two-factor-error-invalid-backup-code. The responses would already show the full symptom.",
+    "server_logs": "Expected to be empty for this bug: the double spend is two successful requests, Umami logs nothing on the success path (route.ts:133-149), and Postgres logs nothing for successful statements at the default settings.",
     "leak_judgment": "Not a leak failure: no Prisma or Postgres message reaches the issue or the responses, so the log tool's evidence does not fail this case."
   },
   "log_headroom_note": {
