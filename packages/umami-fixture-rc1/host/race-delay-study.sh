@@ -7,7 +7,7 @@
 # control run in one Playwright run per round.
 #
 # Runs as root inside the race kit image, with this package mounted read-only at /rc1 and a writable
-# output directory at /out:
+# output directory at /out (the script refuses to start if /out/study-<variant> is not empty):
 #
 #   docker run --rm --cpus 4 --memory 6g \
 #     -v "<repo>/packages/umami-fixture-rc1:/rc1:ro" -v "<out>:/out" \
@@ -29,6 +29,10 @@ NODE=/opt/rbw/verifier/node/bin/node
 FIX=/opt/rbw/verifier/kit/umami-fixture-rc1
 OWNER='postgresql://umami_owner@localhost/umami?host=/run/rbw-pg'
 OUT=/out/study-$variant
+if [ -d "$OUT" ] && [ -n "$(ls -A "$OUT")" ]; then
+  echo "refusing: $OUT is not empty; an earlier run's round outputs would be read as this run's. Mount a fresh /out." >&2
+  exit 1
+fi
 mkdir -p "$OUT"
 JSONL=$OUT/rounds.jsonl
 : > "$JSONL"

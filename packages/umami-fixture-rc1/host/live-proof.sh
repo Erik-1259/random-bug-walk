@@ -2,7 +2,8 @@
 # One local proof copy of the rc-1 fixture in a kit image: optionally plant the RC-1 line,
 # build, start, bake the template, then run ROUNDS rounds, each after a template reset and the
 # grants the driver restores after one. Runs as root inside the kit image, with this package
-# mounted read-only at /rc1 and a writable output directory at /out:
+# mounted read-only at /rc1 and a writable output directory at /out (the script refuses to start
+# if /out/live-<state> is not empty):
 #
 #   docker run --rm --cpus 4 --memory 6g \
 #     -v "<repo>/packages/umami-fixture-rc1:/rc1:ro" -v "<out>:/out" \
@@ -20,6 +21,10 @@ NODE=/opt/rbw/verifier/node/bin/node
 FIX=/opt/rbw/verifier/kit/umami-fixture-rc1
 OWNER='postgresql://umami_owner@localhost/umami?host=/run/rbw-pg'
 OUT=/out/live-$variant
+if [ -d "$OUT" ] && [ -n "$(ls -A "$OUT")" ]; then
+  echo "refusing: $OUT is not empty; an earlier run's round outputs would be read as this run's. Mount a fresh /out." >&2
+  exit 1
+fi
 mkdir -p "$OUT"
 
 echo "route.ts sha256: $(sha256sum "$ROUTE" | cut -d' ' -f1)"

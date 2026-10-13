@@ -116,7 +116,7 @@ With no guard in the planted route, a refusal can only come from the branch wher
 
 ## Delay study
 
-`host/race-delay-study.sh` runs the same single-copy flow in a **race** kit image (`kit/umami-race`, the kit with Toxiproxy between Umami and Postgres) and sweeps the downstream latency toxic. It builds once, starts, bakes the template, then for each delay sets the latency with `rbw-proxy set-latency`, checks the proxy before and after every round, and runs the rounds, each after a reset. It writes one JSON line per check per round to `study-<variant>/rounds.jsonl` (delay, round, outcome, the two verify attempts, overlap, round time) and prints a line per check per round. `evidence/rc-1-race-study.json` summarizes a run of Oct 13, 2026, 20 planted and 20 clean rounds at each delay, on a race kit image built locally for arm64 (4 CPUs, 6 GB):
+`host/race-delay-study.sh` runs the same single-copy flow in a **race** kit image (`kit/umami-race`, the kit with Toxiproxy between Umami and Postgres) and sweeps the downstream latency toxic. It builds once, starts, bakes the template, then for each delay sets the latency with `rbw-proxy set-latency`, checks the proxy before and after every round, and runs the rounds, each after a reset. It writes one JSON line per check per round to `study-<variant>/rounds.jsonl` (delay, round, outcome, the two verify attempts, overlap, round time) and prints a line per check per round. Like `host/live-proof.sh`, it refuses to start when its output directory is not empty, so an earlier run's round files are never read as this run's. `evidence/rc-1-race-study.json` summarizes a run of Oct 13, 2026, 20 planted and 20 clean rounds at each delay, on a race kit image built locally for arm64 (4 CPUs, 6 GB):
 
 | Delay | Planted race | Clean race (false positives) | Serial control | Planted overlap (median) |
 | --- | --- | --- | --- | --- |
@@ -148,7 +148,7 @@ This fixture is **not ready to be wired or admitted**, and no paid run should us
 
 ## Not in this package
 
-- The schema and driver change that accepts `double_spend` and `backup_code_reused` as assertion failure codes: both codes added to `AssertionFailureCode` in `packages/schema`, with the generated TypeScript and Python regenerated, and a driver test. Until then the driver's `parseFixtureOutcome` refuses every planted race outcome as an unknown assertion failure code. This must land before any delay study or kit check that runs through the driver.
-- The race kit image with a database delay, the delay study and the choice of delay.
+- The schema and driver change that accepts `double_spend` and `backup_code_reused` as assertion failure codes: both codes added to `AssertionFailureCode` in `packages/schema`, with the generated TypeScript and Python regenerated, and a driver test. Until then the driver's `parseFixtureOutcome` refuses every planted race outcome as an unknown assertion failure code. This must land before any kit check that runs through the driver; the delay study here calls the fixture and Playwright directly.
+- The race kit image itself (`kit/umami-race`), and the choice of delay for the released amd64 image. The arm64 [delay study](#delay-study) is in this package; its re-measurement on native amd64 is not.
 - The ast-grep rules and probe records for the RC-1 shape.
 - Wiring the family into the runners, the controller and admission, and the 11-copy profile without the two ADM-06 probes.
