@@ -565,3 +565,66 @@ describe("resumes, reruns and exit codes", () => {
     await w.close();
   });
 });
+
+describe("the ledger is the source of truth for spend", () => {
+  it("counts the settled spend of a run that ended without its result, so an interrupted run's spend is never zero", async () => {
+    const w = await world();
+    // The first model call settles in the ledger, then the attempt dies before the solver returns its result.
+    const spend = w.deps.spend;
+    const now = w.deps.now.bind(w.deps);
+    let armed = false;
+    let fired = false;
+    w.deps.spend = {
+      ...spend,
+      settle: async (request) => {
+        const settled = await spend.settle(request);
+        if (!fired) armed = true;
+        return settled;
+      },
+    };
+    w.deps.now = () => {
+      if (armed) {
+        armed = false;
+        fired = true;
+        throw new Error("synthetic stop after a model call settled");
+      }
+      return now();
+    };
+    const outcome = await runSessions(pilot(w), w.deps);
+    w.deps.spend = spend;
+    const first = runs(outcome.runDir, "001-off");
+    expect(first[0]?.result).toBeNull();
+    await runGrade2({ runDir: outcome.runDir }, w.deps);
+    const done = await finalize({ runDir: outcome.runDir }, w.deps);
+    const own = await w.deps.allowanceSource.view([outcome.rootExecutionId]);
+    expect(own.settled_microusd).toBeGreaterThan(0n);
+    expect(done.summary.spend.total_settled_microusd).toBe(Number(own.settled_microusd));
+    const later = (first.at(-1)?.result as { settled_microusd: number }).settled_microusd;
+    expect(done.summary.attempts[0]?.model_settled_microusd).toBeGreaterThan(later);
+    await w.close();
+  });
+});
+
+describe("a controller job that ended without a summary", () => {
+  it("grades it infrastructure and retries it, never as a missing (unsolved) grade", async () => {
+    const w = await world();
+    const controller = w.deps.runController.bind(w.deps);
+    let fault = true;
+    w.deps.runController = (args) => {
+      if (fault && args.includes("grade-2-sandbox-off-001-r0-r0")) {
+        fault = false;
+        return Promise.resolve(1);
+      }
+      return controller(args);
+    };
+    const outcome = await runSessions(pilot(w), w.deps);
+    const graded = await runGrade2({ runDir: outcome.runDir }, w.deps);
+    expect(graded.exitCode).toBe(0);
+    const grade2 = runs(outcome.runDir, "001-off")[0]?.grade2 as { result: { state: string; job: string } }[];
+    expect(grade2.map((item) => [item.result.job, item.result.state])).toEqual([
+      ["grade-2-sandbox-off-001-r0-r0", "infrastructure"],
+      ["grade-2-sandbox-off-001-r0-r1", "passed"],
+    ]);
+    await w.close();
+  });
+});

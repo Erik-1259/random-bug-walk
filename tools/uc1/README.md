@@ -151,7 +151,7 @@ The Super pilot and the counted run together can reach about $42.81 at their cap
 | `stops.jsonl` | every stop, with its reason and time |
 | `results/rows.json` | the analyzer's input, one `AttemptRow` per index with a final status |
 | `results/analysis.json` | `resultsRecordJson(analyze(rows))`, canonical JSON |
-| `results/summary.json` | every attempt's numbers, the seeded round trips, grade disagreements, spend (this root's, and the ledger's settled and open amounts across every UC1 root under `<runs>`, which the cap covers), stops |
+| `results/summary.json` | every attempt's numbers, the seeded round trips, grade disagreements, spend (this root's, and the ledger's settled and open amounts across every UC1 root under `<runs>`, which the cap covers), stops. Every spend figure is read from the ledger's settled operations by execution (each attempt run's execution for model calls, each grade 2 try's for grade 2), not from the records' in-memory results |
 | `staging/` | the publisher's layout: `report.md`, `results/` (rows, analysis, summary, each attempt and round trip record), `logs/` (each run's transcript), `inputs/screen-record.json`; no local path appears in a staged file |
 
 ## Rows for the analyzer
@@ -161,7 +161,7 @@ One row per index whose status is final:
 - **Counted** (submit or a cap): tokens are input plus output over every call, turns are model calls, the cap and history elisions as the solver recorded them.
 - **Out of scope** (a tracked file besides the target changed): `out_of_scope`, no grades, unsolved. `prohibited_edits` counts the changed files besides the target.
 - **No gradeable change** (the target unchanged, or not a single-file patch): `fail` in both grades, unsolved.
-- **Graded:** grade 1 is `pass`, `fail`, or null when it never reached a verdict. Grade 2 is `pass` only when it passed; a missing, invalid or (after its retries) infrastructure grade is `fail`, as the pre-registration counts it unsolved.
+- **Graded:** grade 1 is `pass`, `fail`, or null when it never reached a verdict. Grade 2 is `pass` only when it passed; an invalid or (after its retries) infrastructure grade is `fail`, as the pre-registration counts it unsolved. A controller job that ended without a summary (any exit without a verdict, for example after an interruption) is an `infrastructure` grade and is retried within the retry limit, never a missing, unsolved grade.
 - **Infrastructure error** (every allowed rerun failed): `infrastructure_error`, no grades; `reruns` counts the infrastructure reruns before the reported run.
 
 A run that stopped on spend at an index is not an infrastructure rerun; the next pass reruns that index from scratch.
@@ -187,6 +187,10 @@ An infrastructure error (the session cannot start, the model endpoint fails or t
 ## Tests
 
 `pnpm --filter @rbw/uc1 test` runs the orchestrator in the dry-run world (`src/fakes.ts`): a PGlite ledger with the `@rbw/spend` migrations, a scripted model behind the injected fetch, fake sessions, and a fake controller that writes grade summaries and, for grade 2, reserves and settles one Sandbox copy under the root as the controller does. No test makes a live call. They cover the order, arms and seeds in the requests, the root before the first attempt, the seeded round trips' routes with no model, grade 2 as its own step, the run directory and the staged files, the spend guard (before an attempt, mid-attempt, for regrades, with concurrent sessions, on uncertainty), every refusal, infrastructure reruns, the scope rule, grade retries, resuming, and the command line's exit codes.
+
+## Known limits
+
+- After an interruption (the process or the machine stops mid-step), resume with the same command and `--name`. A run the process lost before saving its result is rerun as an infrastructure error, and a grade job that ended without a summary is retried. The ledger is authoritative for spend: what an interrupted run settled is counted from the ledger under that run's execution, so the summary and the report never show it as zero.
 
 ## Not built here
 

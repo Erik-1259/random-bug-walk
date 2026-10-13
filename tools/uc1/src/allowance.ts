@@ -11,6 +11,8 @@ import { lineWorstCase } from "@rbw/writer";
 export interface LedgerView {
   settled_microusd: bigint;
   open_microusd: bigint;
+  /** The settled amount per execution under the roots: the source of every spend figure in the records and the report. */
+  settled_by_execution: ReadonlyMap<string, bigint>;
   /** Operations under the roots in the `uncertain` state. */
   uncertain: string[];
   halted: boolean;
@@ -161,25 +163,31 @@ export function ledgerAllowanceSource(client: SqlClient, spend: Spend, schema = 
     async view(roots) {
       const halt = await spend.haltStatus();
       if (!halt.ok) throw new Error(`the spend ledger's halt status is unavailable (${halt.code})`);
-      const rows = roots.length === 0 ? [] : (await client.query(`SELECT operation_id FROM ${schema}.operations WHERE root_execution_id = ANY($1::text[]) ORDER BY operation_id`, [[...roots]])).rows;
+      const rows = roots.length === 0 ? [] : (await client.query(`SELECT operation_id, execution_id FROM ${schema}.operations WHERE root_execution_id = ANY($1::text[]) ORDER BY operation_id`, [[...roots]])).rows;
       let settled = 0n;
       let open = 0n;
+      const byExecution = new Map<string, bigint>();
+      const add = (execution: string, amount: bigint) => {
+        settled += amount;
+        byExecution.set(execution, (byExecution.get(execution) ?? 0n) + amount);
+      };
       const uncertain: string[] = [];
       for (const row of rows) {
         const id = String(row.operation_id);
+        const execution = String(row.execution_id);
         const cached = settledFinal.get(id);
         if (cached !== undefined) {
-          settled += cached;
+          add(execution, cached);
           continue;
         }
         const status = await spend.operationStatus({ operation_id: id });
         if (!status.ok) throw new Error(`the spend ledger has no status for operation ${id} (${status.code})`);
-        settled += status.settled_microusd;
+        add(execution, status.settled_microusd);
         open += status.open_microusd;
         if (status.state === "uncertain") uncertain.push(id);
         if (FINAL_STATES.has(status.state) && status.open_microusd === 0n) settledFinal.set(id, status.settled_microusd);
       }
-      return { settled_microusd: settled, open_microusd: open, uncertain, halted: halt.halted };
+      return { settled_microusd: settled, open_microusd: open, settled_by_execution: byExecution, uncertain, halted: halt.halted };
     },
   };
 }

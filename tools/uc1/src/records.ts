@@ -59,7 +59,7 @@ export interface StatesRecord {
 export interface GradeTry {
   result: GradeResult;
   execution_id: string;
-  /** The controller summary's settled spend (grade 2 on the ledger; grade 1's in-memory ledger is $0). */
+  /** The controller summary's settled spend, kept as evidence; spend totals read the ledger by execution_id instead. */
   settled_microusd: number | null;
 }
 
@@ -230,7 +230,7 @@ function grade1Value(tries: readonly GradeTry[]): Grade | null {
   return null;
 }
 
-/** Grade 2, authoritative: passed only when it passed; a missing, invalid or (after its retries) infrastructure grade is unsolved. */
+/** Grade 2, authoritative: passed only when it passed; an invalid or (after its retries) infrastructure grade is unsolved. A job without a summary is graded infrastructure and retried. */
 function grade2Value(tries: readonly GradeTry[]): Grade {
   return lastState(tries) === "passed" ? "pass" : "fail";
 }
@@ -280,17 +280,26 @@ export function attemptRow(caseId: string, targetPath: string, record: AttemptRe
   return { ...base, status: "counted", grade1: grade1Value(final.grade1), grade2: grade2Value(final.grade2), out_of_scope: false, prohibited_edits: prohibited };
 }
 
-/** Sums of what a run settled, from its records: model calls and grade 2 jobs. */
-export function settledTotals(records: readonly AttemptRecord[], seeded: readonly SeededRecord[]): { model: number; grade2: number } {
-  let model = 0;
-  let grade2 = 0;
-  const gradeSum = (tries: readonly GradeTry[]) => tries.reduce((sum, item) => sum + (item.settled_microusd ?? 0), 0);
-  for (const record of records) {
-    for (const run of record.runs) {
-      model += run.result?.settled_microusd ?? 0;
-      grade2 += gradeSum(run.grade2);
-    }
-  }
-  for (const item of seeded) grade2 += gradeSum(item.grade2);
+/**
+ * What the ledger settled under these executions, each counted once. The ledger is the only source
+ * of spend figures: a run the process lost before its result was saved still has its settled calls
+ * there, under the execution the record named before the first call.
+ */
+export function ledgerSettled(byExecution: ReadonlyMap<string, bigint>, executions: Iterable<string>): number {
+  let total = 0n;
+  for (const id of new Set(executions)) total += byExecution.get(id) ?? 0n;
+  return Number(total);
+}
+
+/** Every grade 2 execution of an attempt run's or seeded round trip's tries. */
+export function grade2Executions(tries: readonly GradeTry[]): string[] {
+  return tries.map((item) => item.execution_id);
+}
+
+/** Sums of what a run settled, from the ledger by execution: model calls (each attempt run) and grade 2 jobs. */
+export function settledTotals(records: readonly AttemptRecord[], seeded: readonly SeededRecord[], byExecution: ReadonlyMap<string, bigint>): { model: number; grade2: number } {
+  const runs = records.flatMap((record) => record.runs);
+  const model = ledgerSettled(byExecution, runs.map((run) => run.execution_id));
+  const grade2 = ledgerSettled(byExecution, [...runs.flatMap((run) => grade2Executions(run.grade2)), ...seeded.flatMap((item) => grade2Executions(item.grade2))]);
   return { model, grade2 };
 }

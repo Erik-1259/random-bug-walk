@@ -237,6 +237,10 @@ async function gradeTry(ctx: RunContext, route: Exclude<GradeRoute, { route: "no
     // The controller refused the job's inputs (for example a job its work directory holds under other inputs):
     // any summary there is not this grade's, so it is an infrastructure grade, retried as its own job.
     result = { grade, job: result.job, state: "infrastructure", detail: `controller: refused the job's inputs (exit ${String(CONTROLLER_REFUSED)}); see its error output`, summary_sha256: null, trial: null };
+  } else if (result.state === "missing") {
+    // The job ended without a summary (for example a job interrupted before it wrote one, whose next
+    // invocation exits without a verdict): no verdict on the attempt, so an infrastructure grade, retried.
+    result = { grade, job: result.job, state: "infrastructure", detail: `controller: the job ended without a summary (exit ${exit === null ? "none" : String(exit)})`, summary_sha256: null, trial: null };
   }
   const executionId = (readJson(ids[grade]) as RunIds).executions["alternative-fix"];
   const summaryPath = join(work, "jobs", result.job, "summary.json");
@@ -663,7 +667,7 @@ export async function runSessions(options: SessionsOptions, deps: Uc1Deps): Prom
     }
   }
 
-  writeProgress(runDir, run, null);
+  await writeProgress(runDir, run, deps);
   const finals = run.plan.map((item) => readAttempt(runDir, item));
   const allCounted = finals.every((record) => record?.status === "counted" && !gradingPending(record));
   // An attempt that ended an infrastructure error after its reruns, or whose grade 1 did after its retries, is final but still exits 1.
@@ -671,11 +675,19 @@ export async function runSessions(options: SessionsOptions, deps: Uc1Deps): Prom
   return { exitCode: pass.stop === null && allCounted && graded1 && seededOk ? 0 : 1, runDir, rootExecutionId: run.root_execution_id, stop: pass.stop };
 }
 
-/** results/summary.json as it stands, without the analysis (a progress view between steps). */
-function writeProgress(runDir: string, run: RunRecord, ledger: Parameters<typeof buildSummary>[4]): RunSummary {
-  const summary = buildSummary(run, readAttempts(runDir, run), readSeeded(runDir), readStops(runDir), ledger, null);
-  writeJson(join(runDir, "results", "summary.json"), summary);
-  return summary;
+/**
+ * results/summary.json as it stands, without the analysis (a progress view between steps). Its spend
+ * figures come from the ledger; when the ledger cannot be read, the progress view is left as it was.
+ */
+async function writeProgress(runDir: string, run: RunRecord, deps: Pick<Uc1Deps, "allowanceSource" | "report">): Promise<void> {
+  let ledger;
+  try {
+    ledger = await deps.allowanceSource.view([run.root_execution_id]);
+  } catch (error) {
+    deps.report(`progress=skipped detail=the ledger could not be read: ${message(error)}`);
+    return;
+  }
+  writeJson(join(runDir, "results", "summary.json"), buildSummary(run, readAttempts(runDir, run), readSeeded(runDir), readStops(runDir), ledger, null));
 }
 
 export interface Grade2Outcome {
@@ -735,7 +747,7 @@ export async function runGrade2(options: { runDir: string }, deps: Uc1Deps): Pro
       graded += 1;
     }
   }
-  writeProgress(runDir, run, null);
+  await writeProgress(runDir, run, deps);
   const pending = items.filter((item) => needsGrade(item.tries) || item.tries.at(-1)?.result.state === "infrastructure").length;
   deps.report(`grade2 graded=${String(graded)} pending=${String(pending)} max_retries=${String(MAX_GRADE_RETRIES)}`);
   return { exitCode: stop === null && pending === 0 ? 0 : 1, graded, stop };

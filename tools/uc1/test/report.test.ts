@@ -57,7 +57,7 @@ function summary(mode: RunSummary["mode"]): RunSummary {
     attempts: [],
     seeded: [],
     grade_disagreements: [],
-    spend: { cap_microusd: "0", model_settled_microusd: 0, grade2_settled_microusd: 0, total_settled_microusd: 0, model_per_attempt_mean_microusd: null, model_per_attempt_max_microusd: null, ledger: null, uc1_roots: null },
+    spend: { cap_microusd: "0", model_settled_microusd: 0, grade2_settled_microusd: 0, total_settled_microusd: 0, model_per_attempt_mean_microusd: null, model_per_attempt_max_microusd: null, ledger: { settled_microusd: "0", open_microusd: "0", uncertain: [] }, uc1_roots: null },
     stops: [],
     analysis: "results/analysis.json",
   };

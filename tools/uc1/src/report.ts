@@ -1,11 +1,12 @@
 // The run's summary, its report and the publisher's staging directory. The summary holds every
-// number the report shows, each traced to an attempt record; the staging layout is the
+// number the report shows, each traced to an attempt record (and every spend figure to the ledger's
+// settled operations under that record's executions); the staging layout is the
 // publisher's (inputs/, logs/, results/, report.md), with no local path in any staged file.
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AttemptRow, ResultsRecord } from "@rbw/solver";
 import type { LedgerView } from "./allowance.ts";
-import { attemptDirName, settledTotals, writeJson } from "./records.ts";
+import { attemptDirName, grade2Executions, ledgerSettled, settledTotals, writeJson } from "./records.ts";
 import type { AttemptRecord, GradeTry, RunRecord, SeededRecord, StopRecord } from "./records.ts";
 
 export interface RunSummary {
@@ -32,8 +33,8 @@ export interface RunSummary {
     /** Model spend per counted attempt: mean and largest, in micro-USD. */
     model_per_attempt_mean_microusd: number | null;
     model_per_attempt_max_microusd: number | null;
-    /** This root's operations in the ledger when the summary was written; null when not read. */
-    ledger: { settled_microusd: string; open_microusd: string; uncertain: string[] } | null;
+    /** This root's operations in the ledger when the summary was written: the source of every figure above. */
+    ledger: { settled_microusd: string; open_microusd: string; uncertain: string[] };
     /** Every UC1 root under the runs directory (the roots the cap covers), from the ledger; null when not read. */
     uc1_roots: { roots: number; settled_microusd: string; open_microusd: string } | null;
   };
@@ -70,11 +71,14 @@ function state(tries: readonly GradeTry[]): string | null {
   return tries.at(-1)?.result.state ?? null;
 }
 
-function sum(tries: readonly GradeTry[]): number {
-  return tries.reduce((total, item) => total + (item.settled_microusd ?? 0), 0);
-}
-
-export function buildSummary(run: RunRecord, records: readonly AttemptRecord[], seeded: readonly SeededRecord[], stops: readonly StopRecord[], ledger: LedgerView | null, analysis: RunSummary["analysis"], allRoots: { roots: number; view: LedgerView } | null = null): RunSummary {
+/**
+ * The summary. Every spend figure is read from `ledger` (this root's view) by execution_id, never
+ * from the records' in-memory results, so a run the process lost before its result was saved still
+ * shows what it settled.
+ */
+export function buildSummary(run: RunRecord, records: readonly AttemptRecord[], seeded: readonly SeededRecord[], stops: readonly StopRecord[], ledger: LedgerView, analysis: RunSummary["analysis"], allRoots: { roots: number; view: LedgerView } | null = null): RunSummary {
+  const byExecution = ledger.settled_by_execution;
+  const sum = (tries: readonly GradeTry[]): number => ledgerSettled(byExecution, grade2Executions(tries));
   const attempts = run.plan.map((item): AttemptSummary => {
     const record = records.find((entry) => entry.index === item.index);
     const final = record?.runs.at(-1);
@@ -96,7 +100,7 @@ export function buildSummary(run: RunRecord, records: readonly AttemptRecord[], 
       contamination: result === null ? null : result.contamination.length,
       wall_ms: result?.wall_ms ?? null,
       session_wall_ms: final?.session_wall_ms ?? null,
-      model_settled_microusd: record === undefined ? null : record.runs.reduce((total, entry) => total + (entry.result?.settled_microusd ?? 0), 0),
+      model_settled_microusd: record === undefined ? null : ledgerSettled(byExecution, record.runs.map((entry) => entry.execution_id)),
       scope: final?.submission?.scope ?? null,
       route: final?.route?.route ?? null,
       grade1: final === undefined ? null : state(final.grade1),
@@ -104,7 +108,7 @@ export function buildSummary(run: RunRecord, records: readonly AttemptRecord[], 
       grade2_settled_microusd: final === undefined ? 0 : sum(final.grade2),
     };
   });
-  const totals = settledTotals(records, seeded);
+  const totals = settledTotals(records, seeded, byExecution);
   const counted = attempts.filter((item) => item.status === "counted" && item.model_settled_microusd !== null);
   const perAttempt = counted.map((item) => item.model_settled_microusd ?? 0);
   const terminal = new Set(["passed", "failed", "missing", "invalid"]);
@@ -131,7 +135,7 @@ export function buildSummary(run: RunRecord, records: readonly AttemptRecord[], 
       total_settled_microusd: totals.model + totals.grade2,
       model_per_attempt_mean_microusd: perAttempt.length === 0 ? null : Math.round(perAttempt.reduce((a, b) => a + b, 0) / perAttempt.length),
       model_per_attempt_max_microusd: perAttempt.length === 0 ? null : Math.max(...perAttempt),
-      ledger: ledger === null ? null : { settled_microusd: ledger.settled_microusd.toString(), open_microusd: ledger.open_microusd.toString(), uncertain: ledger.uncertain },
+      ledger: { settled_microusd: ledger.settled_microusd.toString(), open_microusd: ledger.open_microusd.toString(), uncertain: ledger.uncertain },
       uc1_roots: allRoots === null ? null : { roots: allRoots.roots, settled_microusd: allRoots.view.settled_microusd.toString(), open_microusd: allRoots.view.open_microusd.toString() },
     },
     stops: [...stops],
@@ -244,7 +248,7 @@ export function reportMarkdown(summary: RunSummary, analysis: ResultsRecord | nu
       : `- Every UC1 root under the runs directory (${String(all.roots)}, this one included): settled ${usd(Number(all.settled_microusd))}, open ${usd(Number(all.open_microusd))}, against the UC1 cap of ${usd(Number(summary.spend.cap_microusd))}.`,
   );
   if (summary.spend.model_per_attempt_mean_microusd !== null) lines.push(`- Model spend per counted attempt: mean ${usd(summary.spend.model_per_attempt_mean_microusd)}, largest ${usd(summary.spend.model_per_attempt_max_microusd ?? 0)}.`);
-  if (summary.spend.ledger !== null) lines.push(`- Ledger under this root: settled ${usd(Number(summary.spend.ledger.settled_microusd))}, open ${usd(Number(summary.spend.ledger.open_microusd))}, uncertain operations ${String(summary.spend.ledger.uncertain.length)}.`);
+  lines.push(`- Ledger under this root: settled ${usd(Number(summary.spend.ledger.settled_microusd))}, open ${usd(Number(summary.spend.ledger.open_microusd))}, uncertain operations ${String(summary.spend.ledger.uncertain.length)}.`);
   lines.push("");
   if (summary.stops.length > 0) {
     lines.push("## Stops", "");

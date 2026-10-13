@@ -40,7 +40,7 @@ function fixedSource(view: Partial<LedgerView>): AllowanceSource & { reads: numb
     reads: 0,
     view: () => {
       source.reads += 1;
-      return Promise.resolve({ settled_microusd: 0n, open_microusd: 0n, uncertain: [], halted: false, ...view });
+      return Promise.resolve({ settled_microusd: 0n, open_microusd: 0n, settled_by_execution: new Map(), uncertain: [], halted: false, ...view });
     },
   };
   return source;
@@ -133,8 +133,8 @@ describe("the UC1 allowance", () => {
     await spend.transition({ operation_id: a, from_state: "prepared", to_state: "launching", actor_role: "test", slot_key: "development" });
     await spend.transition({ operation_id: a, from_state: "launching", to_state: "uncertain", actor_role: "test", uncertainty: "lost_response" });
     const view = await ledgerAllowanceSource(db, spend).view([ROOT_A, ROOT_B]);
-    expect(view).toEqual({ settled_microusd: 0n, open_microusd: 2_000n, uncertain: [a], halted: false });
-    expect(await ledgerAllowanceSource(db, spend).view([])).toEqual({ settled_microusd: 0n, open_microusd: 0n, uncertain: [], halted: false });
+    expect(view).toEqual({ settled_microusd: 0n, open_microusd: 2_000n, settled_by_execution: view.settled_by_execution, uncertain: [a], halted: false });
+    expect(await ledgerAllowanceSource(db, spend).view([])).toEqual({ settled_microusd: 0n, open_microusd: 0n, settled_by_execution: new Map(), uncertain: [], halted: false });
     expect(() => ledgerAllowanceSource(db, spend, "public; drop")).toThrow("plain lower-case identifier");
     await db.close();
   });
