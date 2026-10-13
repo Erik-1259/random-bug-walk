@@ -100,4 +100,4 @@ No Umami source file is committed. The probe patches carry a few lines of contex
 - Building or running Umami, and the added checks themselves.
 - Mutation IDs and task revisions (the schema package computes identity hashes).
 - Other shapes and other candidates.
-- The race fixture's concurrent check itself. It is planned and not yet implemented; no race fixture package exists yet (`kit/umami-race` holds only the proxy infrastructure).
+- The race fixture's concurrent check: it lives in `packages/umami-fixture-rc1`, with the race kit image in `kit/umami-race`.
