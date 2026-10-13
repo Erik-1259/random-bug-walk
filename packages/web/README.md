@@ -8,25 +8,26 @@ The results site: a Next.js app (App Router) that renders the case evidence page
 |---|---|
 | `/` | The case page, with its six cells in a fixed order (below) |
 | `/catalog` | Every run with its recorded status, and each published run's manifest entries |
+| `/runs/<root>` | A published run's file index: its file count and total size, and every manifest entry with its outcome, size and SHA-256, linking the files below |
 | `/runs/<root>/<path>` | A published run's files and its `manifest.json`, at the paths they have in the results repository |
 | `/releases/<release_id>/<path>` | The release's `release.json` and the files its record lists, at the paths they have in the results repository |
 
-The case page's cells, in order:
+The case page opens with a short paragraph: what a blind-spot example is (a bug planted in a pinned copy of Umami that Umami's own original API suite does not catch, while added checks do), links to the code repository, the results repository and Umami, and the hosted services the code uses. Then its cells, in order:
 
 1. the plain-language symptom and the synthetic-task label;
 2. expected versus observed local-day counts for each time zone, with the source timestamps in a collapsed table;
-3. the original API suite and the added checks on the clean, planted and fixed copies (the six cells of ADM-08), each with a text status;
+3. the original API suite and the added checks on the clean, planted and fixed copies (the six cells of ADM-08), each with a text status, a note on why the planted and fixed cells count 20 times the clean cell's executions (ADM-05), and what the rule codes ADM-02 to ADM-09 mean, with a link to `docs/admission-rules.md`;
 4. the verified replay button and its state;
-5. provenance (release, run, policy, task revision, kit version, family, human check, calibration) and downloads;
-6. the batch funnel, the limitations and the method.
+5. provenance (release, run, policy, task revision, kit version, family, human check, calibration) and downloads: the release's files, and for each published run one line with its file count, total size, `manifest.json`, `report.md` and a link to its file index page (`/runs/<root>`), never the full file list;
+6. the batch funnel, a sentence that it counts only the runs published for this site (so it is not a record of every attempt), the limitations and the method.
 
-The page names the measured original **API** suite and says that other upstream tests were not evaluated. Calibration is shown as "Not requested", never as a solve count. On narrow screens the suite matrix stacks its six cells, each with its row and column label. Every status is written in text; color only repeats it.
+The page names the measured original **API** suite and says that other upstream tests were not evaluated. Calibration is shown as "Not requested", never as a solve count. On narrow screens the suite matrix and the replay's six cells stack, each cell with its row and column label, and a file index table stacks its rows. Long identifiers (hashes, UUIDs, image references, paths) wrap anywhere, so no page scrolls sideways at a 375 px viewport; the catalog's run table scrolls inside its own box. Every status is written in text; color only repeats it.
 
 ### With and without a release
 
-With a release (ADM-09), the page shows "Validated blind-spot example". The case is the released run, labeled "Validated release, synthetic planted bug". Provenance comes from `release.json`, and the validated-task downloads list `release.json`, the release's files and the released run's files. Other published runs stay in the diagnostic archive, each labeled "not validated". The funnel counts 1 validated release. The catalog marks the released run.
+With a release (ADM-09), the page shows "Validated blind-spot example". The case is the released run, labeled "Validated release, synthetic planted bug". Provenance comes from `release.json`, and "Release files" lists `release.json` and the release's files, followed by the released run's file summary. Other published runs stay in the diagnostic archive, each labeled "not validated"; one whose admission passed with a blind spot demonstrated also says that no release names it and which run the one published release is for. The funnel counts 1 validated release. The catalog marks the released run.
 
-Without a release, the page shows "No validated blind-spot example yet", provenance says "Release: None published yet.", validated-task downloads are disabled, and the funnel counts 0 validated releases. A run that holds an observed symptom is shown as the case, labeled "Development evidence, not validated", and published runs are downloadable as diagnostic archives.
+Without a release, the page shows "No validated blind-spot example yet", provenance says "Release: None published yet.", "Release files" says there are none, and the funnel counts 0 validated releases. A run that holds an observed symptom is shown as the case, labeled "Development evidence, not validated", and published runs are downloadable as diagnostic archives.
 
 Without a release, or when the judge routes are not configured for the release, the replay control is disabled. Otherwise it shows a passcode field and the "Plant and verify this example" button (see Judge routes).
 
@@ -200,7 +201,8 @@ The live site is built from the published results, which are not in this reposit
 - `test/page.test.tsx`: the six cells in order, their text statuses with and without admission records (evidence and decisions from the real importer over the admission package's synthetic record sets), the no-release and release states, the funnel and the catalog.
 - `test/route.test.ts`: the run and release file routes serve exactly the published files, byte for byte, and 404 otherwise.
 - `test/reads.test.ts`: a directory is checked once per process, and prerendering every file route reads each added published file exactly twice, so reads grow linearly with the number of files.
-- `test/build.test.ts`: `next build` succeeds for the two fixtures and the release fixture and prerenders the pages and files.
+- `test/layout.test.tsx`: the case page summarizes each run's files and links its index page instead of listing them; the run index page lists every entry; the opening paragraph and its links; the rule codes and the execution-count note beside the matrix; why another passing run is not validated; the funnel's scope; the replay's labeled six cells and its announced status line.
+- `test/build.test.ts`: `next build` succeeds for the two fixtures and the release fixture and prerenders the pages, each run's index page and the files.
 
 ## What it does not do
 
