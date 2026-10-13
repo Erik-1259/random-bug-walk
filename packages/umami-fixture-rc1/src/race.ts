@@ -2,7 +2,7 @@ import { backupCodeFor, type Fixture, type FixtureCheck } from "./fixture.ts";
 import { execute, type HttpResult, type RequestContext } from "./http.ts";
 import { errorSummary, isRecord, parseJsonBody } from "./json.ts";
 import { loginRequest, verifyBackupCodeRequest, type Credentials } from "./requests.ts";
-import { fireConcurrent, fireSequential, overlapOf } from "./template/index.ts";
+import { fireConcurrent, fireOne, fireSequential, overlapOf } from "./template/index.ts";
 import type { AttemptTiming, RequestOutcome, RequestPlan } from "./template/index.ts";
 
 export type SetupFailureCode = "auth_failed" | "seed_failed";
@@ -57,10 +57,6 @@ export type Evidence = SerialReuseEvidence | DoubleSpendEvidence;
 export type RoundResult<E extends Evidence> = { ok: true; evidence: E } | (SetupFailure & { evidence?: E });
 
 export type Clock = () => number;
-
-function milliseconds(value: number): number {
-  return Math.round(value * 1000) / 1000;
-}
 
 function errorCode(result: HttpResult): string | null {
   const parsed = parseJsonBody(result.body);
@@ -136,6 +132,12 @@ interface VerifyState {
   backupCode: string;
 }
 
+/** Which verify request to fire for a signed-in state, and how to record its answer. */
+const verifyRequest: Pick<RequestPlan<VerifyState, VerifyAttempt, SetupFailure>, "request" | "record"> = {
+  request: (state) => verifyBackupCodeRequest(state.partialToken, state.backupCode),
+  record: recordAttempt,
+};
+
 /** The request plan for a backup-code check: sign in for a challenge, then verify the check's code. */
 function verifyPlan(fixture: Fixture, check: FixtureCheck, credentials: Credentials): RequestPlan<VerifyState, VerifyAttempt, SetupFailure> {
   const backupCode = backupCodeFor(fixture, check).plaintext;
@@ -144,23 +146,16 @@ function verifyPlan(fixture: Fixture, check: FixtureCheck, credentials: Credenti
       const challenge = await loginForChallenge(context, credentials);
       return challenge.ok ? { ok: true, state: { partialToken: challenge.partialToken, backupCode } } : challenge;
     },
-    request: (state) => verifyBackupCodeRequest(state.partialToken, state.backupCode),
-    record: recordAttempt,
+    ...verifyRequest,
   };
 }
 
-/** Sends one verify request, without retries, and records when it was sent and when it settled. */
+/**
+ * Sends one verify request, without retries, and records when it was sent and when it settled.
+ * It fires through the same template step and record as the race and the control.
+ */
 export async function attemptVerify(context: RequestContext, partialToken: string, backupCode: string, now: Clock, origin: number): Promise<VerifyAttempt> {
-  const sent = now();
-  const state: VerifyState = { partialToken, backupCode };
-  try {
-    const result = await execute(context, verifyBackupCodeRequest(partialToken, backupCode));
-    const settled = now();
-    return recordAttempt({ settled: true, result }, { sent_ms: milliseconds(sent - origin), settled_ms: milliseconds(settled - origin) }, state);
-  } catch (error) {
-    const settled = now();
-    return recordAttempt({ settled: false, error }, { sent_ms: milliseconds(sent - origin), settled_ms: milliseconds(settled - origin) }, state);
-  }
+  return (await fireOne(context, { partialToken, backupCode }, verifyRequest, now, origin)).attempt;
 }
 
 /**

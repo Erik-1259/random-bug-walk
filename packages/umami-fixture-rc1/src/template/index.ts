@@ -6,7 +6,7 @@
 // template-guide.md at the package root for how to define a new candidate's checks.
 
 export { classifyConcurrent, classifyReuse, type RaceGrading, type ReuseGrading } from "./classify.ts";
-export { fireConcurrent, fireSequential, overlapOf } from "./fire.ts";
+export { fireConcurrent, fireOne, fireSequential, overlapOf } from "./fire.ts";
 export type {
   ApiRequest,
   AttemptTiming,

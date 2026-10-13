@@ -191,7 +191,48 @@ describe("fireConcurrent", () => {
   });
 });
 
+/** A context whose every send rejects, as a reset connection does. */
+function rejecting(): RequestContext {
+  return { fetch: () => Promise.reject(new Error("reset by peer")) };
+}
+
+describe("fireConcurrent when a request throws", () => {
+  it("keeps both records: the thrown one unsettled with its error, the other as answered", async () => {
+    const app = new ClaimApp(true, false);
+    const burst = await fireConcurrent([app.context(), rejecting()], plan(), steppingClock());
+    if (!burst.ok) throw new Error(burst.failure.reason);
+    expect(burst.attempts).toHaveLength(2);
+    expect(burst.attempts[0]).toMatchObject({ status: 200, applied: true, failure: null });
+    expect(burst.attempts[1]).toMatchObject({ status: null, applied: false, failure: "reset by peer" });
+    expect(classifyConcurrent(burst.attempts, burst.overlap_ms, raceGrading(1, 2))).toMatchObject({ observed: "setup_fail", failure_code: "unrelated" });
+  });
+});
+
 describe("fireSequential", () => {
+  it("records a thrown first request and fires no follow-up when repeatAfter refuses it", async () => {
+    const sequence = await fireSequential(rejecting(), plan(), (first) => first.applied, steppingClock());
+    if (!sequence.ok) throw new Error(sequence.failure.reason);
+    expect(sequence.attempts).toEqual([{ sent_ms: 1, settled_ms: 2, status: null, applied: false, failure: "reset by peer" }]);
+    expect(classifyReuse(sequence.attempts, reuseGrading())).toMatchObject({ failure_code: "unrelated", detail: "first transport: reset by peer" });
+  });
+
+  it("records a thrown follow-up after an applied first request", async () => {
+    const app = new ClaimApp(true, false);
+    const appContext = app.context();
+    let sends = 0;
+    const context: RequestContext = {
+      fetch: (path, options) => {
+        sends += 1;
+        return sends === 2 ? Promise.reject(new Error("reset by peer")) : appContext.fetch(path, options);
+      },
+    };
+    const sequence = await fireSequential(context, plan(), (first) => first.applied, steppingClock());
+    if (!sequence.ok) throw new Error(sequence.failure.reason);
+    expect(sequence.attempts).toHaveLength(2);
+    expect(sequence.attempts[0]).toMatchObject({ status: 200, applied: true });
+    expect(sequence.attempts[1]).toMatchObject({ status: null, applied: false, failure: "reset by peer" });
+  });
+
   it("fires a follow-up on the same origin only when repeatAfter says so", async () => {
     const app = new ClaimApp(true, false);
     const sequence = await fireSequential(app.context(), plan(), (first) => first.applied, steppingClock());
@@ -243,10 +284,19 @@ describe("classifyConcurrent", () => {
     expect(classifyConcurrent([didApply(), didApply()], 0, raceGrading(1, 2)).detail).toContain("the requests did not overlap");
   });
 
-  it("generalizes past two requests: a count between clean and planted is unrelated", () => {
+  it("generalizes past two requests: any count above clean, up to planted, is planted", () => {
     expect(classifyConcurrent([didApply(), didApply(), didApply()], 5, raceGrading(1, 3))).toMatchObject({ failure_code: "double_applied" });
     expect(classifyConcurrent([didApply(), refused(), refused()], 5, raceGrading(1, 3))).toMatchObject({ observed: "pass" });
-    expect(classifyConcurrent([didApply(), didApply(), refused()], 5, raceGrading(1, 3))).toMatchObject({ observed: "setup_fail", failure_code: "unrelated" });
+    expect(classifyConcurrent([didApply(), didApply(), refused()], 5, raceGrading(1, 3))).toMatchObject({ observed: "assertion_fail", failure_code: "double_applied" });
+  });
+
+  it("is unrelated when more requests applied than the planted count allows", () => {
+    expect(classifyConcurrent([didApply(), didApply(), didApply()], 5, raceGrading(1, 2))).toMatchObject({ observed: "setup_fail", failure_code: "unrelated" });
+  });
+
+  it("never grades planted when the planted count equals the clean count", () => {
+    expect(classifyConcurrent([didApply(), refused()], 5, raceGrading(1, 1))).toMatchObject({ observed: "pass", failure_code: null });
+    expect(classifyConcurrent([didApply(), didApply()], 5, raceGrading(1, 1))).toMatchObject({ observed: "setup_fail", failure_code: "unrelated" });
   });
 
   it("uses custom no-overlap and seed-failed detail wrappers when given", () => {

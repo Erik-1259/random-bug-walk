@@ -8,7 +8,10 @@ import type { Graded, Verdict } from "./types.ts";
 /**
  * How a race check reads its attempts and what it expects. `cleanApplied` and `plantedApplied`
  * are how many of the concurrent requests take effect on a correct app and on the planted app
- * (for a lost-update double-apply, 1 and 2). The four grades are the host's own enum values.
+ * (for a lost-update double-apply, 1 and 2). A planted race is nondeterministic, so any count
+ * above `cleanApplied` and up to `plantedApplied` grades as planted: with three requests and
+ * counts 1 and 3, a round where two apply still shows the bug. The four grades are the host's own
+ * enum values.
  */
 export interface RaceGrading<Attempt, Observed, Failure> {
   verdictOf(attempt: Attempt): Verdict;
@@ -32,11 +35,12 @@ export interface RaceGrading<Attempt, Observed, Failure> {
  *    unexpected status). The round says nothing either way.
  * 2. unrelated: the requests never overlapped in flight (overlap <= 0), so the race was not
  *    exercised.
- * 3. planted: as many requests applied as the planted app would allow, and that differs from the
- *    clean count. The bug is shown.
+ * 3. planted: more requests applied than a correct app allows, and no more than the planted app
+ *    would allow (cleanApplied < applied <= plantedApplied). The bug is shown. When the two counts
+ *    are equal this range is empty, so nothing grades as planted.
  * 4. clean: as many applied as a correct app allows.
  * 5. seedFailed: none applied, so the setup or the seeded state is wrong.
- * 6. unrelated: any other count.
+ * 6. unrelated: any other count (for example, more than plantedApplied).
  */
 export function classifyConcurrent<Attempt, Observed, Failure>(
   attempts: readonly Attempt[],
@@ -53,7 +57,7 @@ export function classifyConcurrent<Attempt, Observed, Failure>(
     return { ...grading.unrelated, detail: wrap(detail) };
   }
   const applied = verdicts.filter((verdict) => verdict === "applied").length;
-  if (applied === grading.plantedApplied && grading.plantedApplied !== grading.cleanApplied) {
+  if (applied > grading.cleanApplied && applied <= grading.plantedApplied) {
     return { ...grading.planted, detail };
   }
   if (applied === grading.cleanApplied) {

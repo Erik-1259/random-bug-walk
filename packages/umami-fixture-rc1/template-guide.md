@@ -48,14 +48,19 @@ The template takes a description with four parts:
 - `classifyConcurrent(attempts, overlapMs, grading)` returns `{ observed, failure_code, detail }`:
   1. any attempt whose verdict is `unexpected` → `unrelated` (the round proves nothing);
   2. `overlapMs <= 0` → `unrelated` (the race was not exercised);
-  3. applied count equals `plantedApplied` (and differs from `cleanApplied`) → `planted`;
+  3. applied count above `cleanApplied` and at most `plantedApplied` → `planted`;
   4. applied count equals `cleanApplied` → `clean`;
   5. nothing applied → `seedFailed`;
-  6. any other count → `unrelated`.
+  6. any other count (more than `plantedApplied`) → `unrelated`.
 
   `verdictOf(attempt)` returns `"applied"` (the shared operation took effect), `"rejected"` (the
   app correctly refused), or `"unexpected"` (a transport failure or an answer you did not expect).
   `cleanApplied`/`plantedApplied` are counts, so this works for more than two concurrent requests.
+  A planted race need not let every request through: with three requests and counts 1 and 3, a
+  round where two apply is still graded `planted`. If the two counts are equal, nothing grades
+  as `planted`.
+  A request whose send throws is still recorded (as unsettled, through your `record`), so the
+  other requests' records are kept; have `verdictOf` call it `unexpected`.
   `detail(attempts, overlapMs)` builds the message; `noOverlapDetail` and `seedFailedDetail`
   optionally wrap it for those two cases.
 

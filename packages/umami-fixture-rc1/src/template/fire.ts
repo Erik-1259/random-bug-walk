@@ -12,10 +12,15 @@ function elapsed(now: number, origin: number): number {
   return Math.round((now - origin) * 1000) / 1000;
 }
 
-async function fireOne<State, Attempt, Failure extends { ok: false }>(
+/**
+ * Fires one request, without retries, timed from `origin`, and records it through the plan. A
+ * thrown send is recorded as unsettled rather than rejected, so one failed request in a burst
+ * never drops the others' records. The bursts and sequences below fire every request through it.
+ */
+export async function fireOne<State, Attempt>(
   context: RequestContext,
   state: State,
-  plan: RequestPlan<State, Attempt, Failure>,
+  plan: Pick<RequestPlan<State, Attempt, never>, "request" | "record">,
   now: Clock,
   origin: number,
 ): Promise<{ attempt: Attempt; timing: AttemptTiming }> {
