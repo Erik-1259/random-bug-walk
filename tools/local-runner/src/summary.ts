@@ -115,8 +115,8 @@ export interface Summary {
     kill_grace_ms: number;
   };
   image: { reference: string; digest: string | null; kit_sha256: string | null };
-  /** The bug family, its ADM-06 record (with the reason when not applicable) and the admission job's copy count. */
-  family: { id: string; adm06: { status: string; reason: string | null }; admission_copies: number };
+  /** Only for a family other than the default: the family, its ADM-06 record (with the reason when not applicable) and the admission job's copy count. */
+  family?: { id: string; adm06: { status: string; reason: string | null }; admission_copies: number };
   inputs: Record<string, string | Record<string, string> | null>;
   original_suite: { sha256: string; test_count: number } | null;
   code_states: { state: StateKey; code_state: CodeState; sha256: string; patch_sha256: string | null }[];
@@ -142,8 +142,8 @@ export function summaryText(summary: Summary): string {
     `run ${summary.run.run_tag} started ${summary.run.started_at} ended ${summary.run.ended_at} concurrency ${String(summary.run.concurrency)}`,
     `date ${summary.run.run_date_utc} revenue_known_limit ${summary.run.revenue_tests_known_limit.applies ? "applies" : "does_not_apply"}`,
     `image ${cell(summary.image.digest)}`,
-    `family ${summary.family.id} admission_copies ${String(summary.family.admission_copies)} adm06 ${summary.family.adm06.status}`,
   ];
+  if (summary.family !== undefined) lines.push(`family ${summary.family.id} admission_copies ${String(summary.family.admission_copies)} adm06 ${summary.family.adm06.status}`);
   if (summary.failure !== null) lines.push(`stopped at ${summary.failure.step}: ${summary.failure.detail}`);
   for (const job of summary.jobs) {
     lines.push(`job ${job.label} ${job.kind} evidence ${cell(job.import.evidence_sha256)} decision ${cell(job.import.decision_sha256)}${job.refusal === null ? "" : ` refused ${job.refusal.reason}`}`);

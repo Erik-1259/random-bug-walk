@@ -348,6 +348,7 @@ describe("the race family", () => {
     expect(written(at50).copies.map((copy) => copy.copy?.proxy)).toEqual(Array.from({ length: 5 }, () => ({ exit: 0, latency_ms: 50, source: "override" })));
     expect(written(at75).copies.map((copy) => copy.copy?.proxy)).toEqual(Array.from({ length: 5 }, () => ({ exit: 0, latency_ms: 75, source: "override" })));
     expect(written(imageDefault).copies.every((copy) => copy.copy?.proxy === undefined)).toBe(true);
+    expect(new Set([at50, at75, imageDefault].map((outcome) => outcome.summary.job.task_revision)).size).toBe(3);
   });
 
   it("records the family in the summary of a retried job whose earlier run stopped before its summary", async () => {

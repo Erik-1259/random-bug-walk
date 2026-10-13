@@ -33,8 +33,13 @@ export const COPY_PROFILE = {
   kill_grace_ms: KILL_GRACE_MS,
 };
 
-export function profileSha256(): string {
-  return canonicalDigest(COPY_PROFILE).sha256;
+/**
+ * The profile's hash, which jobs carry as the runtime profile and the task revision's environment.
+ * A race-family run that sets a database latency adds it, so runs at different latencies get
+ * different task revisions; without one the hash is the plain profile's, as before families existed.
+ */
+export function profileSha256(raceLatencyMs: number | null = null): string {
+  return canonicalDigest(raceLatencyMs === null ? COPY_PROFILE : { ...COPY_PROFILE, proxy_latency_ms: raceLatencyMs }).sha256;
 }
 
 /** The image's content digest (`docker image inspect`), which every copy then runs by. */

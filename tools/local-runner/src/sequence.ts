@@ -206,7 +206,8 @@ export async function runSequence(options: SequenceOptions, deps: SequenceDeps):
       kill_grace_ms: KILL_GRACE_MS,
     },
     image: { reference: options.image, digest: null, kit_sha256: null },
-    family: familyRecord(inputs.family, inputs.probes),
+    // Only another family records itself, so the default run keeps its summary keys.
+    ...(inputs.family.id === DEFAULT_FAMILY ? {} : { family: familyRecord(inputs.family, inputs.probes) }),
     inputs: inputHashes(inputs, { kitSha256: null, originalSuiteSha256: null }),
     original_suite: null,
     code_states: [],
@@ -293,7 +294,7 @@ export async function runSequence(options: SequenceOptions, deps: SequenceDeps):
       states,
       vectors: expectedVectors(inputs.fixture, inputs.probes),
       adm06: adm06For(inputs.probes),
-      profileSha256: profileSha256(),
+      profileSha256: profileSha256(inputs.raceLatencyMs),
       deadlineAt: utcSeconds(started + 86_400_000),
     };
     const kit = buildJob("kit-check", ctx);

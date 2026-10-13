@@ -506,7 +506,7 @@ async function build(inputs: JobInputs, deps: ControllerDeps, state: ControllerS
     // --family race`) grades the reference fix as fixed-01. Prebuilt judge replays do not reach
     // this build and are not wired for families yet: judge-run.ts passes no family.
     ...(copyInputs.alternative === null ? { judgeFixed: "fixed" as const } : {}),
-    profileSha256: profileSha256(),
+    profileSha256: profileSha256(copyInputs.raceLatencyMs),
     deadlineAt: utcSeconds(deadlineMs),
     ...(inputs.projectPolicy === undefined ? {} : { projectPolicy: inputs.projectPolicy }),
     ...(inputs.judgeFixed === undefined ? {} : { judgeFixed: inputs.judgeFixed }),

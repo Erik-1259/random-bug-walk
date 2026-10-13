@@ -110,6 +110,12 @@ describe("the full local sequence over the real driver code paths, without Docke
     expect(Object.keys(placed).some((name) => name.includes("clean-"))).toBe(false);
   });
 
+  it("keeps the default run's summary shape: no family record and no family line", async () => {
+    const { summary } = await sequence();
+    expect(Object.keys(summary)).not.toContain("family");
+    expect(summaryText(summary)).not.toMatch(/^family /m);
+  });
+
   it("labels the summary development evidence and records the run date, the known limit, the image and every input hash", async () => {
     const { summary } = await sequence();
     expect(summary).toMatchObject({ label: "development_evidence", admission_claim: false, published: false });
@@ -391,6 +397,17 @@ describe("the race family: 11 admission copies, ADM-06 not applicable, a databas
     expect(summary.candidate_text).toMatchObject({ status: "not_run", code: "symptom_unavailable" });
     expect(existsSync(join(result.summaryPath, "..", "candidate-text"))).toBe(false);
     expect(summaryText(summary)).toContain("candidate text not_run symptom_unavailable");
+  });
+
+  it("names the selected latency in the runtime profile and task revision, so runs at different latencies get different revisions", async () => {
+    const request = async (raceLatencyMs: number | null) => {
+      const { result } = await sequence({ family: "race" }, raceOverrides({ raceLatencyMs }));
+      expect(result.exitCode).toBe(0);
+      return parseCanonical(readFileSync(join(result.summaryPath, "..", "jobs", "admission", "job", "request.json"))) as { task_revision: string; runtime_profile_sha256: string };
+    };
+    const [at50, at75, imageDefault] = [await request(50), await request(75), await request(null)];
+    expect(new Set([at50.task_revision, at75.task_revision, imageDefault.task_revision]).size).toBe(3);
+    expect(new Set([at50.runtime_profile_sha256, at75.runtime_profile_sha256, imageDefault.runtime_profile_sha256]).size).toBe(3);
   });
 
   it("passes no latency argument when the run keeps the race image's default", async () => {
