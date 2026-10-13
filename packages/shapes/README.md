@@ -49,7 +49,7 @@ In `RevenuePage`, counting calls in nested callbacks too, the before side must h
 
 `probes.json` also records each probe's expected outcome vector for the added checks. It records that a build error, crash, timeout, missing result or setup failure on a probe copy makes the run invalid; such a run is never an effective negative probe.
 
-A shape may record ADM-06 (the partial and stub probes) as not applicable with an `adm_06` entry: `{"reason": …, "status": "not_applicable"}`. Its probe set must then hold the mutation probe alone, and the confirmed record carries the same entry. A probe set without `adm_06` is unchanged.
+A shape may record ADM-06 (the partial and stub probes) as not applicable with an `adm_06` entry: `{"reason": …, "status": "not_applicable"}`. Its probe set must then hold the mutation probe alone, and the confirmed record carries the same entry. A probe set without `adm_06` is unchanged. The admission profile ([ADM-06](../../docs/admission-rules.md)) and the local runner's code-state derivation still require the partial and stub probes, so a probe set with this entry cannot yet be selected for a run; making them accept it is separate, planned work.
 
 ## RC-1.atomic-backup-code
 
