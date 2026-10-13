@@ -87,14 +87,14 @@ A judge replay plants and verifies the released case again: three fresh copies (
 
 | Route | Request | Answer |
 |---|---|---|
-| `POST /api/judge/session` | `{ passcode }` | A correct passcode sets the session cookie (HttpOnly, Secure, SameSite=Strict, an HMAC keyed with the passcode, so a new passcode ends every session); a wrong or missing one gives 401 |
-| `GET /api/judge/session` | | 200 while the session cookie is valid, 401 otherwise, so a reloaded page shows the start button without a new sign-in |
+| `POST /api/judge/session` | `{ passcode }` | A correct passcode sets the session cookie (HttpOnly, Secure, SameSite=Strict, an HMAC keyed with the passcode, so a new passcode ends every session); a wrong or missing one gives 401, and the page then says "That passcode is not right" and puts focus back on the field; a correct one moves focus to the start button |
+| `GET /api/judge/session` | | 200 with `ready` while the session cookie is valid and `signed_out` otherwise (every page load asks, so neither is an error), so a reloaded page shows the start button without a new sign-in |
 | `POST /api/judge` | exactly `{ request_id }`, a UUID the browser makes and keeps | `starting`, the replay's status when the request ID already has one (nothing new is written, reserved or created), or `unavailable` with a reason |
 | `GET /api/judge/status?request_id=<uuid>` | | The replay's state, the copies' progress, the measured duration apart from the 35-minute hard cap, and at the end the six cells with their failing tests |
 
-The judge routes refuse a request without the session cookie before any ledger, Blob or Sandbox call. The release comes from the build, not the request. The start button is disabled while a start is in flight or a replay runs.
+The judge routes refuse a request without the session cookie before any ledger, Blob or Sandbox call. The release comes from the build, not the request. The start button is disabled while a start is in flight or a replay runs. While a replay starts or runs, the page asks the status route every 15 seconds; an `unavailable` answer then (the ledger or the access token, for a moment) says nothing about the replay, so the page shows it, keeps asking after 15, 30 and then every 60 seconds, and keeps the start button disabled until a final state or `unknown` arrives. The first status check after a reload is treated the same way, since the stored replay may still be running.
 
-The budget: a replay reserves on the `judge-demo` pool's `judge` allocation, which is protected for judges; the `public` allocation is for anonymous use, and using it up never blocks a replay. Before it takes the slot, the POST checks that both the `judge` allocation and the pool as a whole can cover the job; when either cannot, it answers `unavailable` (budget) with no ledger write, no slot and no sandbox. The spend ledger's connection retries its first connect twice (see `tools/controller`); when it still fails, both routes answer `unavailable` (the ledger) rather than a server error.
+The budget: a replay reserves on the `judge-demo` pool's `judge` allocation, which is protected for judges; the `public` allocation is for anonymous use, and using it up never blocks a replay. Before it takes the slot, the POST checks that both the `judge` allocation and the pool as a whole can cover the job; when either cannot, it answers `unavailable` (budget) with no ledger write, no slot and no sandbox. An operation settled over its envelope anywhere halts all spend until an operator resumes it; the POST reads the ledger's halt status before it takes the slot and then answers `unavailable` (halted, "Paused: spending is halted for an operator check") the same way, and a reservation refused for a halt that began after that check also answers halted, after the slot is released. The spend ledger's connection retries its first connect twice (see `tools/controller`); when it still fails, both routes answer `unavailable` (the ledger) rather than a server error.
 
 The states, each written in text; the page adds a plain explanation under `not_reproduced`, `incomplete`, `needs_reconciliation` and `unknown`, and each `unavailable` answer shows its reason's text:
 
@@ -102,13 +102,13 @@ The states, each written in text; the page adds a plain explanation under `not_r
 |---|---|
 | `disabled` | No release, or the judge routes are not configured for it |
 | `ready` | The control can start a replay |
-| `starting` | The controller sandbox was created and no copy has started |
+| `starting` | The controller sandbox was created and no copy has started; also shown, with "Could not reach the site", when the start request got no answer or one that was not JSON, since the replay may have started: the browser keeps the new request ID and the 15-second status check shows what happened |
 | `running` | A copy has started |
 | `verified` | All six cells came out as the release's did |
 | `not_reproduced` | At least one cell did not |
 | `incomplete` | The replay ended without a result, or ran past its timeout with nothing left open |
 | `needs_reconciliation` | A launch or the end of the replay is not confirmed; the operator checks the ledger, and the judge can try again later |
-| `unavailable` | Busy (another replay runs: try again shortly), the budget, the hold, the release, the access token, the spend ledger, or a start that failed before anything ran |
+| `unavailable` | Busy (another replay runs: try again shortly), the budget, a spend halt (an operator check: try again later), the hold, the release, the access token, the spend ledger, or a start that failed before anything ran |
 
 The hold: after two `not_reproduced` replays in a row (`incomplete` ones do not count), new replays are `unavailable` ("held for inspection") until `RBW_JUDGE_HOLD_CLEARED_AT` is set to a later time.
 
