@@ -161,14 +161,14 @@ const VALID_RACE_ISSUE = {
     "Sign in to an account with two-step sign-in in two browser tabs until each asks for a code.",
     "Enter the same unused backup code in both tabs and submit them at the same moment.",
   ],
-  expected_result: "Of the two requests sent at the same time, 1 should be accepted and 1 refused.",
-  actual_result: "2 were accepted and 0 refused: both requests returned HTTP 200 and each tab was signed in.",
+  expected_result: "Of the two requests sent at the same time, one should be accepted and the other refused.\nExpected: accepted=1, refused=1",
+  actual_result: "Both requests returned HTTP 200 and each tab was signed in.\nObserved: accepted=2, refused=0",
   environment: "Locale en-US; the concurrent requests returned 200 and 200, a later reuse returned 400.",
 };
 
 export const RACE_ISSUE_OUTPUTS: Record<RaceIssueCase, unknown> = {
   "race-valid": VALID_RACE_ISSUE,
-  "race-numeric-mismatch": { ...VALID_RACE_ISSUE, actual_result: "1 was accepted and 1 refused, but both tabs were signed in." },
+  "race-numeric-mismatch": { ...VALID_RACE_ISSUE, actual_result: "Both tabs were signed in.\nObserved: accepted=1, refused=1" },
 };
 
 /** Card input: public source-fix information plus the caller's shape confirmation. */

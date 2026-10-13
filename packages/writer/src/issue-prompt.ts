@@ -26,8 +26,9 @@ Rules:
 - Do not guess at an internal cause and do not suggest a fix. Write "one backup code signs in twice when it is entered in two places at the same time", not how the code should change.
 - Never write a backup code, a token or a password.
 - Use only numbers that appear in the observation. Do not compute totals, differences or new times.
-- expected_result states, in this order and as digits, how many of the requests sent at the same time should be accepted and how many refused, taken from the observation's expected counts, for example "Of the two requests sent at the same time, 1 should be accepted and 1 refused."
-- actual_result states, in this order and as digits, how many of them were accepted and how many refused, taken from the observation's observed counts. It may add each request's status and timing.
+- expected_result says in a short sentence what should happen to the requests sent at the same time, then ends with exactly one line of its own that reads \`Expected: accepted=<n>, refused=<n>\`, with the observation's expected counts as digits, for example "Of the two requests sent at the same time, one should be accepted and the other refused.\\nExpected: accepted=1, refused=1".
+- actual_result says in a short sentence what happened, and may add each request's status and timing, then ends with exactly one line of its own that reads \`Observed: accepted=<n>, refused=<n>\`, with the observation's observed counts as digits, for example "Both requests returned HTTP 200 and each tab was signed in.\\nObserved: accepted=2, refused=0".
+- Write those two lines exactly in that form: the same words and capital letters, no spaces around "=", nothing before or after on the line, and no other line that starts with "Expected:" or "Observed:".
 - reproduction_steps is a list of short steps a user can follow.
 - environment names the locale and the response statuses.
 Answer with JSON that matches the schema.`;

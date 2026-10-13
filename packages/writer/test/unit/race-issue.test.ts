@@ -127,10 +127,11 @@ describe("the race symptom input", () => {
 });
 
 describe("the race issue prompt", () => {
-  it("asks for the accepted and refused counts as digits and never for the code, and carries the observation", () => {
+  it("asks for one fixed count line in each result field and never for the code, and carries the observation", () => {
     const race = RACE();
     const prompt = buildIssuePrompt(race);
-    expect(prompt.system).toContain("how many of the requests sent at the same time should be accepted and how many refused");
+    expect(prompt.system).toContain("`Expected: accepted=<n>, refused=<n>`");
+    expect(prompt.system).toContain("`Observed: accepted=<n>, refused=<n>`");
     expect(prompt.system).toContain("Never write a backup code, a token or a password.");
     expect(prompt.system).not.toContain("time zone");
     expect(prompt.user).toBe(`Observation:\n${JSON.stringify(race, null, 2)}`);
@@ -150,87 +151,39 @@ describe("the race issue checks", () => {
     expect(report.status).toBe("ready_for_review");
   });
 
-  it("need the expected accepted count, then the refused count, in expected_result", () => {
-    expect(check({ expected_result: "Only one of them should go through." }).numeric?.violations).toEqual([{ field: "expected_result", reason: "missing_expected_vector", number: null }]);
-    expect(check({ expected_result: "1 should be refused." }).numeric?.violations).toEqual([{ field: "expected_result", reason: "missing_expected_vector", number: null }]);
+  const missingExpected = [{ field: "expected_result", reason: "missing_expected_vector", number: null }];
+  const missingObserved = [{ field: "actual_result", reason: "missing_observed_vector", number: null }];
+
+  it("need the exact Expected line in expected_result", () => {
+    expect(check({ expected_result: "Of the two requests sent at the same time, 1 should be accepted and 1 refused." }).numeric?.violations).toEqual(missingExpected);
+    expect(check({ expected_result: "One should go through.\nExpected: accepted=2, refused=0" }).numeric?.violations).toEqual(missingExpected);
+    expect(check({ expected_result: "Expected: accepted=1, refused=1" }).numeric?.ok).toBe(true);
   });
 
-  it("need the observed accepted count, then the refused count, in actual_result", () => {
-    const report = check({ actual_result: "0 were refused and 2 were accepted." });
-    expect(report.status).toBe("rejected");
-    expect(report.numeric?.violations).toEqual([{ field: "actual_result", reason: "missing_observed_vector", number: null }]);
-  });
-
-  it("count only digits stated next to an accepted or refused outcome, not endpoint, status or time digits", () => {
-    const missing = [{ field: "actual_result", reason: "missing_observed_vector", number: null }];
-    const digitPath = parsed({ ...raceSymptom("checks"), request: { method: "POST", path: "/api/2fa/verify", query: {} } });
-    const actual = "POST /api/2fa/verify at 0 ms behaved unexpectedly.";
-    expect(checkIssue({ ...VALID, actual_result: actual }, digitPath, EXCLUDED_IDENTIFIERS).numeric?.violations).toEqual(missing);
-    expect(check({ actual_result: "Request b returned 200 at 0 ms and both tabs were signed in." }).numeric?.violations).toEqual(missing);
-    expect(check({ actual_result: "Request a was sent at 0 ms and accepted; request b at 1 ms was refused." }).numeric?.violations).toEqual(missing);
-    expect(check({ actual_result: "Accepted: 2, refused: 0." }).numeric?.ok).toBe(true);
-    expect(check({ actual_result: "accepted:2, refused:0" }).numeric?.ok).toBe(true);
-    expect(check({ actual_result: "accepted=2, refused=0" }).numeric?.ok).toBe(true);
-    expect(check({ actual_result: "Of the 2 requests, 2 of them were accepted and 0 were refused." }).numeric?.ok).toBe(true);
-  });
-
-  it("count an outcome label with a noun, a bracket, a dash or a linking verb before its number", () => {
-    const missing = [{ field: "actual_result", reason: "missing_observed_vector", number: null }];
-    for (const actual of [
-      "Accepted requests: 2; refused requests: 0.",
-      "Accepted request count = 2, refused request count = 0.",
-      "Accepted (2), refused (0).",
-      "Accepted - 2, refused - 0.",
-      "The number accepted was 2 and the number refused was 0.",
-      "Accepted requests were 2 and refused requests were 0.",
-    ]) {
-      expect(check({ actual_result: actual }).numeric?.ok, actual).toBe(true);
-    }
-    expect(check({ actual_result: "Accepted requests: 1; refused requests: 1." }).numeric?.violations).toEqual(missing);
-    expect(check({ actual_result: "Accepted requests at 0 ms; refused requests at 1 ms." }).numeric?.violations).toEqual(missing);
-    expect(check({ actual_result: "Accepted by POST /api/2fa and refused by none." }).numeric?.violations).toEqual(missing);
-  });
-
-  // Realistic model phrasings of the observed counts (2 accepted, 0 refused): active, passive,
-  // labels, compact forms and timings. `true` means the accepted count, then the refused count, are
-  // read from the sentence; `false` means no such statement is read.
-  const PHRASINGS: [string, boolean][] = [
-    ["2 were accepted and 0 refused.", true],
-    ["The server accepted 2 requests and refused 0.", true],
-    ["The server accepted 2 requests within 5 ms and rejected 0.", true],
-    ["Accepted: 2, refused: 0.", true],
-    ["accepted:2, refused:0", true],
-    ["accepted=2; refused=0", true],
-    ["Accepted (2), refused (0).", true],
-    ["Accepted - 2, refused - 0.", true],
-    ["Accepted requests were 2 and refused requests were 0.", true],
-    ["The number accepted was 2 and the number refused was 0.", true],
-    ["2 requests succeeded and 0 failed.", true],
-    ["Of the 2 requests, 2 of them were accepted and 0 were refused.", true],
-    ["Both were accepted within 5 ms: 2 accepted, 0 refused.", true],
-    ["Sent at 0 ms and 1 ms, 2 requests were accepted while 0 were denied.", true],
-    ["Request a was accepted with HTTP 200 at 87 ms; in total 2 were accepted but 0 were refused.", true],
-    ["0 were refused and 2 were accepted.", false],
-    ["Request a was sent at 0 ms and accepted; request b at 1 ms was refused.", false],
-    ["Accepted requests at 0 ms; refused requests at 1 ms.", false],
-    ["Accepted by POST /api/2fa and refused by none.", false],
-    ["Request #2 was accepted and request 0 was refused.", false],
-    ["2 accepted / 0 refused", true],
-    ["Accepted: 2\nRefused: 0", true],
-    ["- 2 accepted\n- 0 refused", true],
-    ["2 accepted | 0 refused", true],
-    ["2 accepted,0 refused", true],
-    ["2 accepted;0 refused", true],
-    ["2 requests were successfully accepted, while 0 were refused.", true],
-    ["2 accepted then failed, 0 refused.", false],
-    ["2 accepted 0 refused", false],
-    ["2 were not accepted and 0 were refused.", false],
-    ["Accepted 2 requests and refused none.", false],
-    ["Both returned HTTP 200 and status 0 was never refused.", false],
+  // The observed counts (2 accepted, 0 refused) are read only from one line that reads exactly
+  // `Observed: accepted=<n>, refused=<n>`. `true` means the counts are read and match.
+  const OBSERVED_LINES: [string, string, boolean][] = [
+    ["the exact line after prose", "Both requests returned HTTP 200.\nObserved: accepted=2, refused=0", true],
+    ["the exact line alone", "Observed: accepted=2, refused=0", true],
+    ["the exact line with a CRLF break", "Both tabs were signed in.\r\nObserved: accepted=2, refused=0", true],
+    ["no line", "Both requests returned HTTP 200 and each tab was signed in.", false],
+    ["a duplicated line", "Observed: accepted=2, refused=0\nObserved: accepted=2, refused=0", false],
+    ["a second, malformed Observed line", "Observed: accepted=2, refused=0\nObserved: both tabs were signed in", false],
+    ["spaces around the equals signs", "Observed: accepted = 2, refused = 0", false],
+    ["a lowercase label", "observed: accepted=2, refused=0", false],
+    ["a capitalized key", "Observed: Accepted=2, refused=0", false],
+    ["the keys in the other order", "Observed: refused=0, accepted=2", false],
+    ["a count in words", "Observed: accepted=two, refused=0", false],
+    ["a trailing period", "Observed: accepted=2, refused=0.", false],
+    ["trailing text", "Observed: accepted=2, refused=0 (both 200)", false],
+    ["leading whitespace", "  Observed: accepted=2, refused=0", false],
+    ["the line inside a sentence", "Both were signed in. Observed: accepted=2, refused=0", false],
+    ["wrong counts", "Observed: accepted=1, refused=1", false],
+    ["free-text counts without the line", "2 were accepted and 0 refused.", false],
+    ["labeled free-text counts without the line", "Accepted: 2, refused: 0.", false],
   ];
-  it.each(PHRASINGS)("read the observed counts from %j: %s", (actual, states) => {
-    const missing = check({ actual_result: actual }).numeric?.violations.some((item) => item.reason === "missing_observed_vector");
-    expect(missing).toBe(!states);
+  it.each(OBSERVED_LINES)("read the observed counts from %s", (_name, actual, states) => {
+    expect(check({ actual_result: actual }).numeric?.violations).toEqual(states ? [] : missingObserved);
   });
 
   it("reject a number the observation does not hold, such as a computed total", () => {

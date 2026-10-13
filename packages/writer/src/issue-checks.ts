@@ -57,71 +57,22 @@ function countRuns(text: string): bigint[] {
   return digitRuns(text.replace(DATE_OR_TIME, " ")).map(BigInt);
 }
 
-// A race count is read clause by clause. The text is split into clauses at sentence ends,
-// semicolons, commas (except a comma between two digits), line breaks, a spaced `/` or `|`, `and`,
-// `but`, `while` and `whereas`, and at a colon or dash that does not lead into a number (so
-// `accepted: 2` and `accepted - 2` stay one clause); a clause that is ambiguous as a whole is split
-// again at any colon or dash ("both were accepted in 5 ms: 2 accepted"). A clause states a count
-// only when its outcome words are all of one kind (accepted or refused) and it holds exactly one
-// count number, in either order and in any voice: "2 were accepted", "the server accepted 2
-// requests", "2 were successfully accepted", "refused: 0", "0 failed". A clause with outcome words
-// of both kinds, two count numbers or a negation (`not`, `never`, `n't`) is ambiguous and states
-// nothing. A number is never a count when it is a timing (`0 ms`, `5 s`), a percentage, part of a
-// path, word, decimal or date, or an ID or code (`request 2`, `#2`, `HTTP 200`, `status 400`).
-const CLAUSE_BREAK =
-  /[.!?](?=\s|$)|;|(?<!\d),|,(?!\d)|[:\u2013\u2014](?!\s*\d)|\s-\s(?!\s*\d)|\s[/|]\s|\r?\n|(?<![\p{L}])(?:and|but|while|whereas)(?![\p{L}])/giu;
-const LABEL_BREAK = /[:=\u2013\u2014]|\s-\s/u;
-const ACCEPTED_WORD = String.raw`accept\p{L}*|succe(?:ss|ed)\p{L}*`;
-const REFUSED_WORD = String.raw`refus\p{L}*|reject\p{L}*|denied|deny|denies|declin\p{L}*|fail\p{L}*`;
-const OUTCOME_WORD = new RegExp(`(?<![\\p{L}])(?:(${ACCEPTED_WORD})|(${REFUSED_WORD}))`, "giu");
-const NEGATION = /(?<![\p{L}])(?:not|never)(?![\p{L}])|n't(?![\p{L}])/iu;
-const ID_WORD = String.raw`(?<![\p{L}])(?:http|status|code|id|request|attempt|tab|port|line|version|step|number)`;
-const COUNT_NUMBER = new RegExp(
-  String.raw`(?<![\p{L}\p{N}_./\\#-])(?<!${ID_WORD}\s*)(\d+)(?![\p{L}\p{N}_/]|[.,:]\d)(?!\s*(?:ms|milliseconds?|s|secs?|seconds?|min|minutes?|h|hours?|%)(?![\p{L}]))`,
-  "giu",
-);
+// A race issue states its counts on one fixed line per result field: `Expected: accepted=<n>,
+// refused=<n>` in expected_result and `Observed: accepted=<n>, refused=<n>` in actual_result. The
+// line must be a whole line, exactly as written (case-sensitive keys, ASCII digits, no other
+// spacing or punctuation). Free-text counts elsewhere are never read. The field states its counts
+// only when exactly one line starts with the label, that line is the exact form, and its counts
+// equal the observation's.
+const RACE_LABEL = { expected: "Expected", observed: "Observed" } as const;
 
-interface RaceCount {
-  outcome: "accepted" | "refused";
-  count: bigint;
-}
-
-/** The race count one clause states, or null when it states none or is ambiguous. */
-function clauseCount(clause: string): RaceCount | null {
-  const kinds = new Set([...clause.matchAll(OUTCOME_WORD)].map((word) => (word[1] === undefined ? "refused" : "accepted")));
-  const numbers = [...clause.matchAll(COUNT_NUMBER)];
-  const [outcome] = kinds;
-  const [number] = numbers;
-  if (kinds.size !== 1 || numbers.length !== 1 || outcome === undefined || number === undefined || NEGATION.test(clause)) {
-    return null;
-  }
-  return { outcome, count: BigInt(number[1] ?? "") };
-}
-
-/** The race counts stated in `text`, in order, each with the outcome it is stated for. */
-function raceCounts(text: string): RaceCount[] {
-  return text
-    .replace(DATE_OR_TIME, " ")
-    .split(CLAUSE_BREAK)
-    .flatMap((clause) => {
-      const stated = clauseCount(clause);
-      if (stated !== null) {
-        return [stated];
-      }
-      const parts = clause.split(LABEL_BREAK);
-      return parts.length > 1 ? parts.flatMap((part) => clauseCount(part) ?? []) : [];
-    });
-}
-
-/** True when the accepted count, then the refused count, are each stated with their outcome. */
-function statesRaceCounts(text: string, counts: { accepted: number; refused: number }): boolean {
-  let next: "accepted" | "refused" | null = "accepted";
-  for (const stated of raceCounts(text)) {
-    if (next !== null && stated.outcome === next && stated.count === BigInt(counts[next])) {
-      next = next === "accepted" ? "refused" : null;
-    }
-  }
-  return next === null;
+/** True when `text` holds exactly one `<Label>: accepted=<n>, refused=<n>` line with these counts. */
+function statesRaceCounts(text: string, key: "expected" | "observed", counts: { accepted: number; refused: number }): boolean {
+  const label = RACE_LABEL[key];
+  const labelLine = new RegExp(`^\\s*${label}\\s*:`, "i");
+  const exactLine = new RegExp(`^${label}: accepted=([0-9]+), refused=([0-9]+)$`);
+  const lines = text.split(/\r?\n/).filter((line) => labelLine.test(line));
+  const match = lines.length === 1 ? exactLine.exec(lines[0] ?? "") : null;
+  return match !== null && BigInt(match[1] ?? "") === BigInt(counts.accepted) && BigInt(match[2] ?? "") === BigInt(counts.refused);
 }
 
 /** Every string and number value in the observation (never its keys). */
@@ -163,9 +114,9 @@ function checkNumbers(issue: IssueOutput, symptom: WriterSymptom): NumericViolat
     }
   }
   // The time-zone family's vectors are its bucket counts in bucket order; the race family's are
-  // the accepted count, then the refused count, each stated with its outcome.
+  // the accepted and refused counts on the fixed Expected and Observed lines.
   const states = isRaceSymptom(symptom)
-    ? (text: string, key: "expected" | "observed") => statesRaceCounts(text, symptom[key])
+    ? (text: string, key: "expected" | "observed") => statesRaceCounts(text, key, symptom[key])
     : (text: string, key: "expected" | "observed") => containsInOrder(countRuns(text), symptom[key].map((b) => BigInt(b.count)));
   if (!states(issue.expected_result, "expected")) {
     violations.push({ field: "expected_result", reason: "missing_expected_vector", number: null });
