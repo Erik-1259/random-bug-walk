@@ -159,11 +159,11 @@ Nemotron 3 Super, frozen after the pilot. Kimi-K2.7-Code is used only if the pil
 
 ## Claim wording
 
-- The headline is "Illustration on N bug(s), k = 20 per arm", followed by the detectable difference from the table for the observed off-arm rate.
+- The headline is "Illustration on N bug(s), k = <off-arm size> off and <on-arm size> on", using the actual counted attempts per arm. When both arms have 20 counted attempts, it is followed by the detectable difference from the table for the observed off-arm rate. When attempts were excluded, the detectable difference is recomputed with `docs/uc1-preregistration/power.py` for the actual arm sizes, or omitted with a note saying so.
 - Results are reported per bug only. There is no pooled or clustered claim with fewer than 3 bugs, and pairing is at the bug level only.
 - Each bug gets a "made worse" statement: the off-minus-on solve rate, and the token ratio (on over off, from the Hodges–Lehmann shift on log tokens) with its interval. It says plainly whether the tool made this bug worse.
 - A non-detection is reported only as "inconclusive at this sample size", never as "no effect".
-- The result is never presented as an estimate of the tool's effect. About 30 bugs would be needed for a 15-point detectable difference, there is no held-out split, and no tool-off calibration exists.
+- The result is never presented as an estimate of the tool's effect. It covers too few bugs to estimate an effect, there is no held-out split, and no tool-off calibration exists.
 - On the fallback branch, every mention reads "low-headroom contrast" and states that the bug fails the static-headroom screen.
 - Every number on the result page traces to committed run records published under the `paired_comparison` root.
 
