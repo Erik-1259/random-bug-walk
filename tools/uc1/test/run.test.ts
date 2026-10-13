@@ -350,6 +350,26 @@ describe("attempts, reruns and scope", () => {
     await w.close();
   });
 
+  it("does not complete a pilot whose attempts all exhausted their infrastructure reruns, and the counted run stays refused", async () => {
+    const w = await world({ sessionFault: () => "error" });
+    const outcome = await runSessions(pilot(w), w.deps);
+    for (const dir of readdirSync(join(outcome.runDir, "attempts"))) expect(json(join(outcome.runDir, "attempts", dir, "attempt.json")).status).toBe("infrastructure_error");
+    await runGrade2({ runDir: outcome.runDir }, w.deps);
+    const done = await finalize({ runDir: outcome.runDir }, w.deps);
+    expect(done.rootRun).toMatchObject({ status: "terminal", outcome: "incomplete" });
+    expect(done.exitCode).toBe(1);
+    await expect(runSessions(counted(w), w.deps)).rejects.toThrow("needs a finalized, completed harness pilot on super");
+    await w.close();
+  });
+
+  it("does not complete a pilot when one attempt ended an infrastructure error, even with the rest counted", async () => {
+    const w = await world({ sessionFault: (request) => (request.id.includes("on-003-") ? "error" : null) });
+    const outcome = await runSessions(pilot(w), w.deps);
+    await runGrade2({ runDir: outcome.runDir }, w.deps);
+    expect((await finalize({ runDir: outcome.runDir }, w.deps)).rootRun.outcome).toBe("incomplete");
+    await w.close();
+  });
+
   it("reports spend against the cap across every UC1 root under the runs directory, the pilot included", async () => {
     const w = await world();
     const first = await runSessions(pilot(w), w.deps);

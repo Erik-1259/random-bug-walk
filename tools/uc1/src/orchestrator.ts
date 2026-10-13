@@ -747,6 +747,30 @@ export interface FinalizeOutcome {
   summary: RunSummary;
 }
 
+/**
+ * Whether a settled root's attempts and seeded round trips let finalize call it completed. A counted
+ * run completes when every planned attempt is final (counted, or an infrastructure error after its
+ * reruns, which the analysis excludes). A pilot is the counted run's prerequisite, so it completes
+ * only when every planned attempt was counted with its grading finished, and every seeded round trip
+ * exists, took its expected route and passed both grades.
+ */
+function rootCompleted(run: RunRecord, records: readonly AttemptRecord[], seeded: readonly SeededRecord[]): boolean {
+  const final = (index: number) => records.find((record) => record.index === index);
+  if (run.mode === "run") return run.plan.every((item) => {
+    const status = final(item.index)?.status;
+    return status === "counted" || status === "infrastructure_error";
+  });
+  const attemptsCounted = run.plan.every((item) => {
+    const record = final(item.index);
+    return record?.status === "counted" && !gradingPending(record);
+  });
+  const seededPassed = SEEDED_ROUND_TRIPS.every((seed) => {
+    const item = seeded.find((entry) => entry.label === seed.label);
+    return item !== undefined && item.route_matches && item.grade1.at(-1)?.result.state === "passed" && item.grade2.at(-1)?.result.state === "passed";
+  });
+  return attemptsCounted && seededPassed;
+}
+
 /** Step 3: the analyzer's rows and results record, the summary and report, the staging directory and the root's terminal status. */
 export async function finalize(options: { runDir: string }, deps: Pick<Uc1Deps, "allowanceSource" | "now" | "report">): Promise<FinalizeOutcome> {
   const { runDir } = options;
@@ -791,11 +815,8 @@ export async function finalize(options: { runDir: string }, deps: Pick<Uc1Deps, 
   const config = readJson(join(runDir, "case.json")) as CaseConfig;
   writeStaging(runDir, { run, records, seeded, rows, analysisJson, summary, report, screenRecord: config.screen_record });
 
-  const allFinal = run.plan.every((item) => records.some((record) => record.index === item.index && (record.status === "counted" || record.status === "infrastructure_error")));
-  // A seeded round trip demonstrates the grader only when it took the expected route and both grades passed.
-  const seededPassed = seeded.every((item) => item.route_matches && item.grade1.at(-1)?.result.state === "passed" && item.grade2.at(-1)?.result.state === "passed");
   const unresolved = ledger.uncertain.length > 0 || ledger.open_microusd > 0n || ledger.halted;
-  const rootRun = unresolved ? writeRootRun(runDir, run, "needs_reconciliation", null) : writeRootRun(runDir, run, "terminal", allFinal && seededPassed ? "completed" : "incomplete");
+  const rootRun = unresolved ? writeRootRun(runDir, run, "needs_reconciliation", null) : writeRootRun(runDir, run, "terminal", rootCompleted(run, records, seeded) ? "completed" : "incomplete");
   deps.report(`root=${run.root_execution_id} status=${rootRun.status} outcome=${rootRun.outcome ?? "-"} rows=${String(rows.length)} staging=${join(runDir, "staging")}`);
   return { exitCode: rootRun.status === "terminal" && rootRun.outcome === "completed" ? 0 : 1, rootRun, summary };
 }
