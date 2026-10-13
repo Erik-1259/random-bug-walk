@@ -85,10 +85,11 @@ export function ReplayControl({ release, initial }: Props) {
   };
 
   // After a reload the HttpOnly session cookie may still be valid: the stored replay's status
-  // shows it, or with no stored replay the session check does.
+  // shows it, or with no stored replay the session check does. The stored replay may still be
+  // running, so an outage on this first check is retried like one during a poll.
   useEffect(() => {
     const requestId = enabled ? window.localStorage.getItem(REQUEST_KEY) : null;
-    if (requestId !== null) void refresh(requestId, false);
+    if (requestId !== null) void refresh(requestId, true);
     else if (enabled) void checkSession();
   }, [enabled]);
 

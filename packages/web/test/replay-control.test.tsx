@@ -214,16 +214,19 @@ describe("the replay control's session after a reload", () => {
     expect(calls).toEqual([]);
   });
 
-  it("stays signed in when the stored replay's status is unavailable, which only a valid session gets", async () => {
+  it("stays signed in, and keeps checking, when the stored replay's status is unavailable after a reload", async () => {
     vi.useFakeTimers();
     stubWindow(new Map([["rbw-judge-request-id", "00000000-0000-4000-8000-00000000b301"]]));
-    stubFetch({ "GET /api/judge/status": { status: 200, body: { state: "unavailable", reason: "ledger", message: "Unavailable: the spend ledger can't be reached right now. Try again shortly." } } });
+    const calls = stubFetch({ "GET /api/judge/status": { status: 200, body: { state: "unavailable", reason: "ledger", message: "Unavailable: the spend ledger can't be reached right now. Try again shortly." } } });
     let rendered: unknown = null;
     hooks.mount(() => (rendered = ReplayControl({ release: null, initial: { state: "ready", reason: "" } })));
     await vi.advanceTimersByTimeAsync(0);
+    // Only a valid session gets this answer, and the stored replay may still be running.
     expect((rendered as Element).props.state).toBe("unavailable");
     expect(passcodeForm(rendered)).toBeNull();
-    expect(startButton(rendered)?.props.disabled).toBe(false);
+    expect(startButton(rendered)?.props.disabled).toBe(true);
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(calls.filter((call) => call.method === "GET" && call.url.startsWith("/api/judge/status"))).toHaveLength(2);
   });
 });
 
