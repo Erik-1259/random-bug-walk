@@ -137,12 +137,15 @@ export function jobName(grade: GradeNumber, attempt: string, retry = 0): string 
 
 /**
  * Writes one ids file per grade into `dir`: the root's IDs with a fresh alternative-fix execution, so
- * both grades of every attempt share the root and policy but record under their own execution.
+ * both grades of every attempt share the root and policy but record under their own execution. A file
+ * already written for the same grade, attempt and retry is kept, never regenerated: the ids are part
+ * of the controller job's inputs, so a resumed grade replays the job that ran instead of being refused.
  */
 export function writeGradeIds(root: RunIds, dir: string, attempt: string, uuid: () => string, retry = 0): Record<GradeNumber, string> {
   mkdirSync(dir, { recursive: true });
   const file = (grade: GradeNumber): string => {
     const path = join(dir, `${jobName(grade, attempt, retry)}.ids.json`);
+    if (existsSync(path)) return path;
     const ids: RunIds = { ...root, executions: { ...root.executions, "alternative-fix": uuid() } };
     writeFileSync(path, `${JSON.stringify(ids, null, 2)}\n`);
     return path;

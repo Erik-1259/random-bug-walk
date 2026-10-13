@@ -200,7 +200,13 @@ interface RunContext {
   deps: Uc1Deps;
 }
 
-/** One grade of a prepared route: its own ids file (a fresh execution under the root), the controller job, its summary. */
+/** The controller's exit code when it refuses a job's inputs before running anything. */
+const CONTROLLER_REFUSED = 2;
+
+/**
+ * One grade of a prepared route: its own ids file (a fresh execution under the root, written once and
+ * kept on resume), the controller job, its summary.
+ */
 async function gradeTry(ctx: RunContext, route: Exclude<GradeRoute, { route: "not_graded" }>, grade: GradeNumber, work: string, label: string, retry: number): Promise<GradeTry> {
   const ids = writeGradeIds(ctx.ids, join(work, "ids", `grade-${String(grade)}`), label, () => ctx.deps.uuid(), retry);
   const command: GradeCommand = {
@@ -214,16 +220,28 @@ async function gradeTry(ctx: RunContext, route: Exclude<GradeRoute, { route: "no
     projectPolicy: join(ctx.runDir, "policy.json"),
   };
   let result: GradeResult;
+  let exit = null as number | null;
   try {
-    result = await runGrade(route, grade, command, { runController: (args) => ctx.deps.runController(args) });
+    result = await runGrade(route, grade, command, {
+      runController: async (args) => {
+        exit = await ctx.deps.runController(args);
+        return exit;
+      },
+    });
   } catch (error) {
     // The controller could not be started: no verdict on the attempt, so an infrastructure grade, retried as a grade only.
     result = { grade, job: jobName(grade, label, retry), state: "infrastructure", detail: `controller: ${message(error)}`, summary_sha256: null, trial: null };
   }
+  const refused = exit === CONTROLLER_REFUSED;
+  if (refused) {
+    // The controller refused the job's inputs (for example a job its work directory holds under other inputs):
+    // any summary there is not this grade's, so it is an infrastructure grade, retried as its own job.
+    result = { grade, job: result.job, state: "infrastructure", detail: `controller: refused the job's inputs (exit ${String(CONTROLLER_REFUSED)}); see its error output`, summary_sha256: null, trial: null };
+  }
   const executionId = (readJson(ids[grade]) as RunIds).executions["alternative-fix"];
   const summaryPath = join(work, "jobs", result.job, "summary.json");
   let settled: number | null = null;
-  if (existsSync(summaryPath)) {
+  if (!refused && existsSync(summaryPath)) {
     try {
       const value = (readJson(summaryPath) as { spend?: { settled_microusd?: unknown } }).spend?.settled_microusd;
       settled = typeof value === "number" ? value : null;
@@ -231,7 +249,7 @@ async function gradeTry(ctx: RunContext, route: Exclude<GradeRoute, { route: "no
       settled = null;
     }
   }
-  ctx.deps.report(`grade=${String(grade)} job=${result.job} state=${result.state}${settled === null ? "" : ` settled_microusd=${String(settled)}`}`);
+  ctx.deps.report(`grade=${String(grade)} job=${result.job} state=${result.state}${settled === null ? "" : ` settled_microusd=${String(settled)}`}${refused ? " refused=inputs" : ""}`);
   return { result, execution_id: executionId, settled_microusd: settled };
 }
 

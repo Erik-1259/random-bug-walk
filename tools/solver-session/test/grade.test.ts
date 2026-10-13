@@ -211,6 +211,21 @@ describe("the grade commands", () => {
     expect(files[1]).not.toBe(files[2]);
   });
 
+  it("keeps an ids file already written for the same grade, attempt and retry, so a resumed grade replays its controller job", () => {
+    const root = newRunIds(() => "11111111-1111-4111-8111-111111111111");
+    let next = 0;
+    const uuid = () => `33333333-3333-4333-8333-${String(next++).padStart(12, "0")}`;
+    const dir = temp();
+    const files = writeGradeIds(root, dir, ATTEMPT, uuid, 1);
+    const before = [readFileSync(files[1], "utf8"), readFileSync(files[2], "utf8")];
+    const again = writeGradeIds(root, dir, ATTEMPT, uuid, 1);
+    expect(again).toEqual(files);
+    expect([readFileSync(again[1], "utf8"), readFileSync(again[2], "utf8")]).toEqual(before);
+    // Another retry is another job, with fresh executions.
+    const retry = writeGradeIds(root, dir, ATTEMPT, uuid, 2);
+    expect(readFileSync(retry[1], "utf8")).not.toBe(before[0]);
+  });
+
   it("runs one grade on its own, so the runner can run grade 2 serially after concurrent sessions", async () => {
     const work = temp();
     const route = prepareGrade(Buffer.from(ALTERNATIVE), target(), join(work, "fix"));

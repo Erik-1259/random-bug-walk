@@ -3,7 +3,7 @@
 // grade 2, reserves and settles a Sandbox copy under the root, as the controller does), synthetic
 // case files and a public_demo policy. The tests and `--dry-run` use it; it makes no live call.
 // No value here was observed from a real system.
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { PGlite } from "@electric-sql/pglite";
@@ -282,6 +282,18 @@ export function fakeController(spend: Spend, calls: ControllerCall[], outcome: (
     const grade = backend === "docker" ? 1 : 2;
     const call: ControllerCall = { args: [...args], grade, name };
     calls.push(call);
+    // A job its work directory already holds replays when the inputs match and is refused (exit 2) when
+    // they do not, as the controller does: the ids file is part of the job's inputs.
+    const dir = join(work, "jobs", name);
+    const inputs = JSON.stringify([...args, readFileSync(required(args, "--ids"), "utf8")]);
+    const statePath = join(dir, "fake-state.json");
+    if (existsSync(statePath)) {
+      if (readFileSync(statePath, "utf8") !== inputs) return 2;
+      const held = JSON.parse(readFileSync(join(dir, "summary.json"), "utf8")) as { status: string };
+      return held.status === "complete" ? 0 : 1;
+    }
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(statePath, inputs);
     const fix = required(args, "--fix");
     const placed =
       required(args, "--judge-fixed") === "fixed"
@@ -311,8 +323,6 @@ export function fakeController(spend: Spend, calls: ControllerCall[], outcome: (
       import: state === "infrastructure" ? { refusal: null, trials: [] } : { refusal: null, trials: [trial] },
       spend: { reserved_microusd: settled, settled_microusd: settled, open_microusd: 0 },
     };
-    const dir = join(work, "jobs", name);
-    mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, "summary.json"), JSON.stringify(summary));
     return state === "passed" ? 0 : 1;
   };

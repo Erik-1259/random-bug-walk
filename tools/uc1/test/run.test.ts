@@ -485,6 +485,48 @@ describe("resumes, reruns and exit codes", () => {
     await w.close();
   });
 
+  /** Stops the process after the controller wrote grade 1's summary for off-001 but before its grade was saved. */
+  async function stopAfterGrade1(w: DryRunWorld): Promise<string> {
+    const report = w.deps.report.bind(w.deps);
+    let fault = true;
+    w.deps.report = (line) => {
+      if (fault && line.startsWith("grade=1 job=grade-1-docker-off-001-r0-r0 ")) {
+        fault = false;
+        throw new Error("synthetic stop after the controller job");
+      }
+      report(line);
+    };
+    await expect(runSessions(pilot(w), w.deps)).rejects.toThrow("synthetic stop");
+    const runDir = join(w.runsDir, "pilot-01");
+    expect(runs(runDir, "001-off")[0]?.grade1).toEqual([]);
+    return join(runDir, "attempts", "001-off", "r0", "grade", "ids", "grade-1", "grade-1-docker-off-001-r0-r0.ids.json");
+  }
+
+  it("reuses a grade's ids on resume, so the controller replays the job that ran and its execution is the one recorded", async () => {
+    const w = await world();
+    const idsFile = await stopAfterGrade1(w);
+    const ran = (json(idsFile).executions as Record<string, string>)["alternative-fix"];
+    const outcome = await runSessions(pilot(w), w.deps);
+    expect(outcome.exitCode).toBe(0);
+    const grade1 = runs(outcome.runDir, "001-off")[0]?.grade1 as { execution_id: string; result: { state: string; job: string } }[];
+    expect(grade1.map((item) => [item.result.job, item.result.state, item.execution_id])).toEqual([["grade-1-docker-off-001-r0-r0", "passed", ran]]);
+    await w.close();
+  });
+
+  it("records a controller that refuses a resumed grade's inputs as an infrastructure grade, not the earlier job's verdict", async () => {
+    const w = await world();
+    const idsFile = await stopAfterGrade1(w);
+    const ids = json(idsFile);
+    writeFileSync(idsFile, `${JSON.stringify({ ...ids, executions: { ...(ids.executions as Record<string, string>), "alternative-fix": "00000000-0000-4000-8000-00000000dead" } }, null, 2)}\n`);
+    const outcome = await runSessions(pilot(w), w.deps);
+    const grade1 = runs(outcome.runDir, "001-off")[0]?.grade1 as { result: { state: string; job: string; detail: string | null } }[];
+    expect(grade1[0]?.result.state).toBe("infrastructure");
+    expect(grade1[0]?.result.detail).toContain("refused");
+    expect(grade1.map((item) => item.result.job)).toEqual(["grade-1-docker-off-001-r0-r0", "grade-1-docker-off-001-r0-r1"]);
+    expect(grade1[1]?.result.state).toBe("passed");
+    await w.close();
+  });
+
   it("exits 1 when a counted attempt's grade 1 is still infrastructure after its retries", async () => {
     const w = await world({ controller: (call) => (call.name.startsWith("grade-1-docker-off-001") ? "infrastructure" : "passed") });
     const outcome = await runSessions(pilot(w), w.deps);
