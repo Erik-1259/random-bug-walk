@@ -65,7 +65,7 @@ export interface World {
   kit: KitImage;
   docker: FakeDocker;
   clock: FakeClock;
-  sources: BuildSources & { family: JudgeJobFamily };
+  sources: BuildSources & { family: JudgeJobFamily & { alternativeDir: string } };
   policy: { file: string; bytes: Uint8Array; sha256: string };
   patterns: string;
   gitleaks: string;

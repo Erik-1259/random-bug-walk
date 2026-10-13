@@ -13,7 +13,8 @@ import type { DefName, DefTypes, Family, JsonValue, ProjectPolicy, Release, Rele
 import { RELEASE_FILE, admissionExecution, checkRelease } from "./check.ts";
 import type { PublishedRun } from "./check.ts";
 import { ReleaseInputError } from "./errors.ts";
-import { buildJudgeJob, storeJudgeJob } from "./judge-job.ts";
+import { recordedFamily, sourcesForFamily } from "./family.ts";
+import { buildJudgeJob, checkRaceLatency, storeJudgeJob } from "./judge-job.ts";
 import type { BuildSources, JudgeJob } from "./judge-job.ts";
 import { LocalPrivateStore } from "@rbw/publisher/private-store";
 import type { PrivateStore } from "@rbw/publisher/private-store";
@@ -177,6 +178,9 @@ export async function buildRelease(options: BuildOptions, deps: BuildDeps): Prom
   if (admission === null) return { ok: false, codes: ["admission_missing"], issueSha256 };
   const reservation = judgeReservation(deps.rates);
   if (!reservation.ok) throw new ReleaseInputError("reservation_unpriced", reservation.code);
+  // The judge job is the admitted run's own family, at the latency its admission was graded under.
+  const sources = sourcesForFamily(options.sources, recordedFamily(options.run, admission));
+  checkRaceLatency(sources);
 
   const work = mkdtempSync(join(tmpdir(), "rbw-release-build-"));
   const cleanup = [work];
@@ -185,7 +189,7 @@ export async function buildRelease(options: BuildOptions, deps: BuildDeps): Prom
     let job: JudgeJob;
     let repoDigests: string[];
     try {
-      job = await buildJudgeJob(deps.docker, options.sources, {
+      job = await buildJudgeJob(deps.docker, sources, {
         releaseId: options.releaseId,
         projectId: policy.project_id,
         policy: { sha256: sha256Hex(policyBytes), policy_id: admission.request.policy_id },
@@ -193,10 +197,10 @@ export async function buildRelease(options: BuildOptions, deps: BuildDeps): Prom
         reservationMicrousd: Number(reservation.reserved_microusd),
         exportDir: join(work, "source"),
       });
-      repoDigests = await inspectRepoDigests(deps.docker, options.sources.image);
+      repoDigests = await inspectRepoDigests(deps.docker, sources.image);
     } catch (error) {
       if (error instanceof PlanError || error instanceof ExportError || error instanceof CodeStateRefusal || error instanceof InputsError) {
-        deps.log(`build judge_job_unbuildable ${error.name}`);
+        deps.log(`build judge_job_unbuildable ${error.name}: ${error.message}`);
         return { ok: false, codes: ["judge_job_unbuildable"], issueSha256 };
       }
       throw error;
