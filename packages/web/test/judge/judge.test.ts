@@ -375,6 +375,45 @@ describe("the judge POST", () => {
     expect(w.sdk.creates).toEqual([]);
   });
 
+  it("is unavailable as halted, with no ledger write, slot or sandbox, while an over-envelope settlement has halted all spend", async () => {
+    const w = await world();
+    await halt(w.spend);
+    w.events.length = 0;
+    w.reserves.length = 0;
+    w.touched.length = 0;
+    const body = await json(await postJudge(post("/api/judge", { request_id: REQUEST }, await login(w)), w.server));
+    expect(body).toMatchObject({ state: "unavailable", reason: "halted", message: "Paused: spending is halted for an operator check. Try again later." });
+    expect(w.events).toEqual([]);
+    expect(w.reserves).toEqual([]);
+    expect(w.touched).not.toContain("sandbox");
+    expect(await slotHolder(w)).toBeNull();
+    expect(w.sdk.creates).toEqual([]);
+    expect(await w.store.list("judge/")).toEqual([]);
+  });
+
+  it("releases the slot and answers halted when spend halts between the check and the reservation", async () => {
+    const w = await world();
+    const open = w.server.ledger;
+    w.server.ledger = async () => {
+      const ledger = await open();
+      return {
+        ...ledger,
+        spend: {
+          ...ledger.spend,
+          reserve: async (request) => {
+            await halt(w.spend);
+            return ledger.spend.reserve(request);
+          },
+        },
+      };
+    };
+    const body = await json(await postJudge(post("/api/judge", { request_id: REQUEST }, await login(w)), w.server));
+    expect(body).toMatchObject({ state: "unavailable", reason: "halted", message: REPLAY_UNAVAILABLE_TEXT.halted });
+    expect(w.events).toContain("ledger:releaseSlot");
+    expect(await slotHolder(w)).toBeNull();
+    expect(w.sdk.creates).toEqual([]);
+  });
+
   it("is unavailable when the configured release ID or hash differs from the frozen release", async () => {
     const envs: Record<string, string>[] = [{ RBW_JUDGE_RELEASE_ID: "00000000-0000-4000-8000-000000000699" }, { RBW_JUDGE_RELEASE_SHA256: "0".repeat(64) }, { RBW_JUDGE_RELEASE_ID: "" }];
     for (const env of envs) {
@@ -543,6 +582,59 @@ async function drain(spend: Spend, amount: number, allocation = "judge"): Promis
     envelope: [{ service: "synthetic", unit: "allowance", limit: amount, enforced_by: "fixed_allowance", price: { microusd: 1, per_units: 1 } }],
   });
   if (!result.ok) throw new Error(`synthetic: the drain was refused (${result.code})`);
+}
+
+/** Settles a public operation above its envelope, which halts new spend in every pool until an operator resumes it. */
+async function halt(spend: Spend): Promise<void> {
+  const op = sha256Hex(Buffer.from(`synthetic-overrun-${String(Math.random())}`));
+  const root = "00000000-0000-4000-8000-00000000e201";
+  const steps = [
+    () => spend.createSlotKey({ slot_key: "synthetic-overrun", actor_role: "owner", reason: "synthetic overrun" }),
+    () => spend.acquireSlot({ slot_key: "synthetic-overrun", root_execution_id: root, actor_role: "workflow" }),
+    () =>
+      spend.reserve({
+        operation_id: op,
+        payload_hash: op,
+        attempt_ordinal: 1,
+        previous_operation_id: null,
+        project_id: "00000000-0000-4000-8000-000000000001",
+        project_policy_sha256: "1".repeat(64),
+        batch_id: null,
+        task_revision: "2".repeat(64),
+        root_execution_id: root,
+        execution_id: root,
+        parent_execution_id: null,
+        kind: "synthetic.overrun",
+        call_name: "synthetic.overrun:1",
+        provider: "synthetic",
+        provider_replay_key: null,
+        pool_key: "judge-demo",
+        allocation_key: "public",
+        runtime_profile_sha256: "3".repeat(64),
+        rate_sheet_sha256: "4".repeat(64),
+        envelope: [{ service: "synthetic", unit: "input_token", limit: 1000, enforced_by: "request_parameter", price: { microusd: 1, per_units: 1 } }],
+      }),
+    () => spend.transition({ operation_id: op, from_state: "prepared", to_state: "launching", actor_role: "workflow", slot_key: "synthetic-overrun" }),
+    () => spend.transition({ operation_id: op, from_state: "launching", to_state: "terminal", actor_role: "workflow", terminal_status: "completed" }),
+    () =>
+      spend.settle({
+        schema_version: 1,
+        operation_id: op,
+        runtime_profile_sha256: "3".repeat(64),
+        rate_sheet_sha256: "4".repeat(64),
+        reserved_microusd: 1000,
+        service_lines: [{ service: "synthetic", unit: "input_token", actual_quantity: 1000, actual_microusd: 1001, retained_microusd: 0 }],
+        usage_state: "known",
+        terminal_evidence_key: null,
+        terminal_evidence_sha256: null,
+      }),
+  ];
+  for (const [index, step] of steps.entries()) {
+    const result = await step();
+    if (!result.ok) throw new Error(`synthetic: overrun step ${String(index)} was refused (${JSON.stringify(result)})`);
+  }
+  const status = await spend.haltStatus();
+  if (!status.ok || !status.halted) throw new Error("synthetic: spend did not halt");
 }
 
 async function put(w: World, key: string, value: unknown): Promise<void> {
