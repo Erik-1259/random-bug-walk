@@ -1,0 +1,18 @@
+#!/bin/sh
+# Race kit self-test: the time-zone kit's self-test, kept as rbw-kit-selftest-base, which now starts
+# Postgres through the race rbw-start and so connects the app role through the proxy, then the race
+# checks in rbw-race-selftest. Exit status 0 when both pass, 2 when not run as root, else 1.
+set -u
+BIN=/opt/rbw/bin
+
+[ "$(id -u)" = 0 ] || { echo "rbw-kit-selftest: must run as root" >&2; exit 2; }
+"$BIN/rbw-kit-selftest-base"
+base=$?
+"$BIN/rbw-race-selftest"
+race=$?
+if [ "$base" -eq 0 ] && [ "$race" -eq 0 ]; then
+  echo "race selftest: all checks passed"
+  exit 0
+fi
+echo "race selftest: failed (base $base, race $race)"
+exit 1

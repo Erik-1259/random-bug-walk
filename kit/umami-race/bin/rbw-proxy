@@ -1,0 +1,130 @@
+#!/bin/sh
+# Toxiproxy in front of Postgres, for the race kit image. Run as root.
+#
+#   rbw-proxy start   starts toxiproxy-server as rbw-db with its API on 127.0.0.1:8474, creates the
+#                     "postgres" proxy (127.0.0.1:5433 -> 127.0.0.1:5432) and sets the latency
+#                     toxic from /opt/rbw/etc/race.environment, then runs "check"
+#   rbw-proxy check   exits 0 only when the running proxy and its toxics are exactly as configured
+#   rbw-proxy stop    stops toxiproxy-server's launcher and waits for it
+#
+# The API has no authentication, and every local user can reach it on loopback, rbw-app included.
+# "check" is how a caller confirms that nothing changed the proxy or its toxic.
+set -u
+LAUNCH=/opt/rbw/bin/rbw-launch
+NODE=/opt/rbw/verifier/node/bin/node
+CONFIG=/opt/rbw/etc/race.environment
+LOGS=/var/lib/rbw/logs
+RUN=/run/rbw
+LOG_BYTES=16777216
+API_HOST=127.0.0.1
+API_PORT=8474
+API=http://$API_HOST:$API_PORT
+PROXY=postgres
+LISTEN=127.0.0.1:5433
+UPSTREAM=127.0.0.1:5432
+TOXIC=latency_downstream
+MAX_LATENCY_MS=10000
+
+fail() {
+  echo "rbw-proxy: $1" >&2
+  exit 1
+}
+
+running() {
+  [ -f "$RUN/toxiproxy.pid" ] && kill -0 "$(cat "$RUN/toxiproxy.pid")" 2>/dev/null
+}
+
+api() {
+  curl -fsS --max-time 5 -H 'Content-Type: application/json' "$@"
+}
+
+# The configured latency in milliseconds: a whole number from 0 to MAX_LATENCY_MS, no leading zero.
+configured_latency() {
+  value=$(sed -n 's/^RBW_RACE_LATENCY_MS=//p' "$CONFIG" 2>/dev/null)
+  case $value in
+    '' | 0?* | *[!0-9]*) echo "rbw-proxy: $CONFIG has no valid RBW_RACE_LATENCY_MS" >&2; return 1 ;;
+  esac
+  [ "${#value}" -le 5 ] && [ "$value" -le "$MAX_LATENCY_MS" ] || { echo "rbw-proxy: latency $value ms is above $MAX_LATENCY_MS" >&2; return 1; }
+  echo "$value"
+}
+
+check() {
+  latency=$(configured_latency) || return 1
+  proxies=$(api "$API/proxies") || { echo "rbw-proxy: the Toxiproxy API does not answer" >&2; return 1; }
+  # The verifier's Node parses the API's JSON; the image has no jq.
+  # shellcheck disable=SC2016 # JavaScript template literals, not shell expansions
+  printf '%s' "$proxies" | env -i "$NODE" --input-type=module -e '
+    const [name, listen, upstream, toxic, latency] = process.argv.slice(1);
+    let text = "";
+    for await (const chunk of process.stdin) text += chunk;
+    const proxies = JSON.parse(text);
+    const problems = [];
+    const names = Object.keys(proxies);
+    if (names.length !== 1 || names[0] !== name) problems.push(`proxies are ${JSON.stringify(names)}, expected only ${name}`);
+    const proxy = proxies[name] ?? {};
+    if (proxy.listen !== listen) problems.push(`listen is ${proxy.listen}, expected ${listen}`);
+    if (proxy.upstream !== upstream) problems.push(`upstream is ${proxy.upstream}, expected ${upstream}`);
+    if (proxy.enabled !== true) problems.push("the proxy is disabled");
+    const toxics = proxy.toxics ?? [];
+    const expected = { name: toxic, type: "latency", stream: "downstream", toxicity: 1, attributes: { latency: Number(latency), jitter: 0 } };
+    const actual = toxics.length === 1 ? toxics[0] : undefined;
+    const same = actual !== undefined && actual.name === expected.name && actual.type === expected.type &&
+      actual.stream === expected.stream && actual.toxicity === expected.toxicity &&
+      JSON.stringify(Object.entries(actual.attributes ?? {}).sort()) === JSON.stringify(Object.entries(expected.attributes).sort());
+    if (!same) problems.push(`toxics are ${JSON.stringify(toxics)}, expected [${JSON.stringify(expected)}]`);
+    for (const problem of problems) console.error(`rbw-proxy: ${problem}`);
+    process.exitCode = problems.length === 0 ? 0 : 1;
+  ' "$PROXY" "$LISTEN" "$UPSTREAM" "$TOXIC" "$latency"
+}
+
+start() {
+  latency=$(configured_latency) || exit 1
+  install -d -o root -g root -m 0700 "$RUN" "$LOGS"
+  if ! running; then
+    "$LAUNCH" --as db --max-stream-bytes "$LOG_BYTES" \
+      --stdout "$LOGS/toxiproxy.stdout.log" --stderr "$LOGS/toxiproxy.stderr.log" -- \
+      /usr/local/bin/toxiproxy-server -host "$API_HOST" -port "$API_PORT" -seed 1 \
+      < /dev/null > /dev/null 2>> "$LOGS/toxiproxy.launcher.log" &
+    echo $! > "$RUN/toxiproxy.pid"
+  fi
+  tries=0
+  until api -o /dev/null "$API/version" 2>/dev/null; do
+    tries=$((tries + 1))
+    running || fail "toxiproxy-server exited before its API answered"
+    [ "$tries" -le 100 ] || fail "the Toxiproxy API did not answer within 10 s"
+    sleep 0.1
+  done
+  if ! api -o /dev/null "$API/proxies/$PROXY" 2>/dev/null; then
+    api -o /dev/null -X POST "$API/proxies" \
+      -d "{\"name\":\"$PROXY\",\"listen\":\"$LISTEN\",\"upstream\":\"$UPSTREAM\",\"enabled\":true}" ||
+      fail "could not create the $PROXY proxy"
+  fi
+  # Replaces the toxic, so a restart always applies the configured latency.
+  api -o /dev/null -X DELETE "$API/proxies/$PROXY/toxics/$TOXIC" 2>/dev/null
+  api -o /dev/null -X POST "$API/proxies/$PROXY/toxics" \
+    -d "{\"name\":\"$TOXIC\",\"type\":\"latency\",\"stream\":\"downstream\",\"toxicity\":1,\"attributes\":{\"latency\":$latency,\"jitter\":0}}" ||
+    fail "could not set the latency toxic"
+  check || fail "the proxy does not match its configuration"
+  echo "proxy_ready listen=$LISTEN upstream=$UPSTREAM latency_ms=$latency"
+}
+
+stop() {
+  [ -f "$RUN/toxiproxy.pid" ] || return 0
+  pid=$(cat "$RUN/toxiproxy.pid")
+  kill -s TERM "$pid" 2>/dev/null
+  tenths=0
+  while kill -0 "$pid" 2>/dev/null; do
+    [ "$tenths" -lt 300 ] || fail "toxiproxy did not stop"
+    sleep 0.1
+    tenths=$((tenths + 1))
+  done
+  rm -f "$RUN/toxiproxy.pid"
+}
+
+[ "$(id -u)" = 0 ] || fail "must run as root"
+case ${1-} in
+  start) start ;;
+  check) check ;;
+  stop) stop ;;
+  *) echo "usage: rbw-proxy start|check|stop" >&2; exit 2 ;;
+esac
