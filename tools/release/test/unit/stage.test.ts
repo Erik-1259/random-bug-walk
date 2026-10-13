@@ -61,7 +61,7 @@ describe("stage", () => {
     expect(readFileSync(join(out, "results", exec, "evidence.json"))).toEqual(readFileSync(join(factory.admission.jobDir, "evidence.json")));
 
     const declared = omissions(out);
-    expect(declared.entries.filter((entry) => entry.outcome === "withheld_private")).toHaveLength(5);
+    expect(declared.entries.filter((entry) => entry.outcome === "withheld_private")).toHaveLength(7);
     expect(declared.entries.every((entry) => entry.outcome === "withheld_private" && entry.reason === "private_material")).toBe(true);
 
     const d = destination(w);
@@ -90,17 +90,21 @@ describe("stage", () => {
     expect(bytes.includes(Buffer.from("[redacted:provider_identifier]"))).toBe(true);
   });
 
-  it("withholds the issue, its check report, the phrase records and the writer and search recordings from the run record", async () => {
+  it("withholds the issue, its check report, the phrase, source search and docs extract records and the writer and search recordings from the run record", async () => {
     const dir = tempDir();
     const issueText = ["synthetic", "issue", "title", "text"].join("-");
     const phrase = ["synthetic", "phrase", "words"].join("-");
     const prompt = ["synthetic", "writer", "prompt"].join("-");
+    const sourceQuery = ["synthetic", "source", "query"].join("-");
+    const docsQuery = ["synthetic", "docs", "query"].join("-");
     // A factory run directory may hold the private material beside the jobs; stage never takes it.
     write(join(factory.run, "candidate", "issue.json"), JSON.stringify({ title: issueText }));
     write(join(factory.run, "candidate", "issue-check.json"), JSON.stringify({ status: "ready_for_review", note: issueText }));
     write(join(factory.run, "candidate", "phrases", "phrase-1.json"), JSON.stringify({ phrase }));
     write(join(factory.run, "candidate", "recordings", "issue-1.recording.json"), JSON.stringify({ prompt }));
     write(join(factory.run, "candidate", "search", "phrase-1.recording.json"), JSON.stringify({ phrase }));
+    write(join(factory.run, "candidate", "search", "synthetic-candidate-1.source-1.record.json"), JSON.stringify({ request: { query: sourceQuery } }));
+    write(join(factory.run, "candidate", "search", "synthetic-candidate-1.docs-1.record.json"), JSON.stringify({ request: { query: docsQuery } }));
     const out = join(dir, "staging");
     const redactions = join(dir, "private", "redactions.txt");
     try {
@@ -108,12 +112,12 @@ describe("stage", () => {
       const d = destination(w);
       expect((await publish(w, d, { rootRun: factory.rootRunFile, staging: out, redactions })).result.code).toBe(0);
       const repository = git(d.remote, ["cat-file", "--batch-all-objects", "--batch"]);
-      for (const value of [issueText, phrase, prompt]) {
+      for (const value of [issueText, phrase, prompt, sourceQuery, docsQuery]) {
         expect(allBytes(out).includes(Buffer.from(value))).toBe(false);
         expect(repository.includes(Buffer.from(value))).toBe(false);
       }
       const manifest = parseRecord("RunManifest", git(d.remote, ["cat-file", "blob", `refs/heads/main:runs/${factory.ids.root_execution_id}/manifest.json`]));
-      expect(manifest.entries.filter((entry) => entry.outcome === "withheld_private").map((entry) => entry.reason)).toEqual(Array<string>(5).fill("private_material"));
+      expect(manifest.entries.filter((entry) => entry.outcome === "withheld_private").map((entry) => entry.reason)).toEqual(Array<string>(7).fill("private_material"));
     } finally {
       rmSync(join(factory.run, "candidate"), { recursive: true, force: true });
     }

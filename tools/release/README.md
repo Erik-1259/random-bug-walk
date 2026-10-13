@@ -36,7 +36,7 @@ Writes a terminal root's run directory as a new staging directory for `publish`.
 - `generated/symptom.json`, `generated/card.json` and `generated/novelty.json` (factory roots only), from the optional flags. The novelty summary holds outcomes and times, never phrases.
 - Per job, with the controller's job directories flattened, because the publisher refuses a UUID-shaped segment below `<category>/<execution>/`: `results/<exec>/request.json`, `results/<exec>/expected-trials.json`, `results/<exec>/<trial>/...` (the record set), and `results/<exec>/evidence.json`, `decision.json` and the sanitized `summary.json`.
 - `report.md`, a short table of the root's jobs.
-- `omissions.json`: each missing generated file, evidence, decision or summary as `not_produced`, and, for a factory root, the issue, its check report, the phrase records, the writer recordings and the search recordings as `withheld_private` (`private_material`). `stage` never reads any of them, so none appears in a run record.
+- `omissions.json`: each missing generated file, evidence, decision or summary as `not_produced`, and, for a factory root, the issue, its check report, the phrase records, the source search records, the docs extract record, the writer recordings and the search recordings as `withheld_private` (`private_material`). `stage` never reads any of them, so none appears in a run record.
 - Provider resource IDs (each copy's child resource, container and sandbox name) go to `--redactions-out` as `provider_identifier` lines for the publisher's `--redaction-values`. The file must be outside the staging directory and this repository.
 
 A root that is not `terminal` is refused (`root_not_terminal`) and nothing is written.

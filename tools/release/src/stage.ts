@@ -1,8 +1,8 @@
 // stage: a terminal root's run directory as a publisher staging directory (design note section 7).
 // It uses the web's paths and flattens each controller job directory below results/<execution>/,
 // because the publisher refuses a UUID-shaped segment deeper than <category>/<execution>/. The
-// issue, its check report, the phrase records and the writer and search recordings are never
-// read: a factory root declares them withheld_private. Provider resource IDs go to a private
+// issue, its check report, the phrase, source search and docs extract records and the writer and
+// search recordings are never read: a factory root declares them withheld_private. Provider resource IDs go to a private
 // redaction file outside the staging directory, for the publisher to replace.
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
@@ -15,7 +15,7 @@ export const SYMPTOM_PATH = "generated/symptom.json";
 export const CARD_PATH = "generated/card.json";
 export const NOVELTY_PATH = "generated/novelty.json";
 /** What a factory root holds privately until a release; none of it is ever read here. */
-const WITHHELD = ["issue", "issue check report", "phrase records", "writer recordings", "search recordings"] as const;
+const WITHHELD = ["issue", "issue check report", "phrase records", "source search records", "docs extract record", "writer recordings", "search recordings"] as const;
 const JOB_OUTPUTS = ["evidence.json", "decision.json", "summary.json"] as const;
 
 const repositoryRoot = fileURLToPath(new URL("../../../", import.meta.url));
@@ -129,7 +129,7 @@ function report(root: RootRun, jobs: readonly StagedJob[], verdicts: ReadonlyMap
     }),
     "",
   ];
-  if (root.kind === "factory") lines.push("The issue, its check report, the phrase records and the writer and search recordings are private; a release publishes the issue, the check report and the writer's recordings.", "");
+  if (root.kind === "factory") lines.push("The issue, its check report, the phrase, source search and docs extract records and the writer and search recordings are private; a release publishes the issue, the check report and the writer's recordings.", "");
   return lines.join("\n");
 }
 
