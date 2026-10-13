@@ -200,6 +200,37 @@ describe("the per-bug analysis", () => {
     const adjusted = holm(p);
     expect(bug.solve?.holm_p).toBe(adjusted[0]?.toFixed(6));
     expect(bug.tokens?.holm_p).toBe(adjusted[1]?.toFixed(6));
+    expect(bug.turns?.holm_p).toBe(adjusted[2]?.toFixed(6));
+  });
+
+  it("reports the turns shift worked out by hand", () => {
+    // Off turns are 10 + i and on turns 30 − j (i, j = 0..19), so each off-minus-on difference is
+    // s − 20 with s = i + j. The count of pairs with s ≤ k is (k + 1)(k + 2) / 2 for k ≤ 19, and
+    // the counts are symmetric about s = 19, so the median difference is 19 − 20 = −1. R's exact
+    // interval takes the 128th and 273rd smallest differences (qwilcox(0.025, 20, 20) = 128): the
+    // 128th has s = 15 (120 pairs have s ≤ 14, 136 have s ≤ 15) and the 273rd has s = 23 (264
+    // have s ≤ 22, 280 have s ≤ 23), so the interval is −5 to 3.
+    const bug = analyzeBug("race-synthetic-1", worseRows());
+    expect(bug.turns).toMatchObject({ hodges_lehmann_off_minus_on: "-1", interval: ["-5", "3"] });
+  });
+
+  it("enters a solve test the futility rule stopped into Holm as p = 1", () => {
+    // Both arms 0/6, with the reference token samples and distinct turn counts.
+    const rows: AttemptRow[] = [];
+    for (let i = 0; i < 6; i += 1) {
+      rows.push(row("off", 2 * i + 1, false, { tokens: ON_TOKENS[i] ?? 0, turns: 10 + i }));
+      rows.push(row("on", 2 * i + 2, false, { tokens: OFF_TOKENS[i] ?? 0, turns: 30 - i }));
+    }
+    const bug = analyzeBug("race-synthetic-1", rows);
+    expect(bug.futility).toEqual({ triggered: true, extreme: "floor" });
+    const sample = (arm: Arm, field: "tokens" | "turns") => rows.filter((r) => r.arm === arm).map((r) => r[field]);
+    const pTokens = mannWhitneyExact(sample("off", "tokens"), sample("on", "tokens"));
+    // The turns are fully separated: 2 of the C(12, 6) = 924 splits are as extreme.
+    const pTurns = mannWhitneyExact(sample("off", "turns"), sample("on", "turns"));
+    expect(pTurns).toBeCloseTo(2 / 924, 12);
+    const adjusted = holm([1, pTokens, pTurns]);
+    expect(bug.tokens?.holm_p).toBe(adjusted[1]?.toFixed(6));
+    expect(bug.turns?.holm_p).toBe(adjusted[2]?.toFixed(6));
   });
 
   it("says the tool made the bug worse when the on arm did worse and Holm rejects", () => {
@@ -208,6 +239,16 @@ describe("the per-bug analysis", () => {
     expect(bug.made_worse.tokens).toBe("worse");
     expect(bug.made_worse.statement).toContain("the on arm solved fewer");
     expect(bug.made_worse.statement).toContain("the on arm used more tokens");
+  });
+
+  it("says not worse when the on arm did better and Holm rejects", () => {
+    const swapped = worseRows().map((r) => ({ ...r, arm: r.arm === "off" ? ("on" as const) : ("off" as const) }));
+    const bug = analyzeBug("race-synthetic-1", swapped);
+    expect(bug.arms.on).toMatchObject({ counted: 20, solved: 10 });
+    expect(bug.made_worse.solve).toBe("not_worse");
+    expect(bug.made_worse.tokens).toBe("not_worse");
+    expect(bug.made_worse.statement).toContain("the on arm solved more");
+    expect(bug.made_worse.statement).toContain("the on arm used fewer tokens");
   });
 
   it("calls a difference that Holm does not reject inconclusive, never a null", () => {
@@ -225,6 +266,10 @@ describe("the per-bug analysis", () => {
     const rows = [...worseRows(), row("on", 99, true, { status: "infrastructure_error", reruns: 2, grade1: null, grade2: null, tokens: 1 })];
     const bug = analyzeBug("race-synthetic-1", rows);
     expect(bug.arms.on).toMatchObject({ attempts: 21, counted: 20, solved: 2, infrastructure_errors: 1, reruns: 2 });
+    const without = analyzeBug("race-synthetic-1", worseRows());
+    expect(bug.solve).toEqual(without.solve);
+    expect(bug.tokens).toEqual(without.tokens);
+    expect(bug.turns).toEqual(without.turns);
   });
 
   it("counts an out-of-scope attempt as unsolved and reports it", () => {
@@ -274,9 +319,11 @@ describe("the futility rule", () => {
   });
 
   it("skips infrastructure errors when taking the first 6", () => {
-    const rows = [1, 2, 3, 4, 5, 6].flatMap((i) => [row("off", i, false), row("on", 10 + i, false)]);
-    rows.push(row("on", 9, true, { status: "infrastructure_error", grade1: null, grade2: null }));
-    expect(futility(rows.filter((r) => r.arm === "off"), rows.filter((r) => r.arm === "on"))).toEqual({ triggered: true, extreme: "floor" });
+    // Both arms 6/6. Taken among the on arm's first 6 (indexes 11 to 16), the never-solved
+    // infrastructure row at index 9 would leave that arm at 5/6 and the rule untriggered.
+    const rows = [1, 2, 3, 4, 5, 6].flatMap((i) => [row("off", i, true), row("on", 10 + i, true)]);
+    rows.push(row("on", 9, false, { status: "infrastructure_error", grade1: null, grade2: null }));
+    expect(futility(rows.filter((r) => r.arm === "off"), rows.filter((r) => r.arm === "on"))).toEqual({ triggered: true, extreme: "ceiling" });
   });
 });
 
