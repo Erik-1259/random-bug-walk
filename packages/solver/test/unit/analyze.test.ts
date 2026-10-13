@@ -168,8 +168,8 @@ function row(arm: Arm, index: number, solved: boolean, extra: Partial<AttemptRow
     grade2: grade,
     out_of_scope: false,
     prohibited_edits: 0,
-    tokens: 0,
-    turns: 0,
+    tokens: 1000,
+    turns: 1,
     cap: null,
     history_elisions: 0,
     tool_calls: { ...NO_TOOLS, server_logs: arm === "on" ? 2 : 0 },
@@ -195,8 +195,9 @@ describe("the per-bug analysis", () => {
     expect(bug.arms.on).toMatchObject({ counted: 20, solved: 2, solve_rate: "0.100000", used_server_logs: 20 });
     expect(bug.arms.on.clopper_pearson_95).toEqual(["0.012349", "0.316983"]);
     expect(bug.solve).toMatchObject({ off_minus_on_rate: "0.400000", fisher_p: "0.013814" });
-    // Off tokens are the on reference sample and vice versa, so the shift is −172928.5.
-    expect(bug.tokens).toMatchObject({ hodges_lehmann_off_minus_on: "-172928.5", interval: ["-269778", "-84691"], mann_whitney_p: "0.000258" });
+    // Off tokens are the on reference sample and vice versa; the token estimate is the on/off ratio
+    // (worked out under "the registered token ratio" below).
+    expect(bug.tokens).toMatchObject({ ratio_on_over_off: "1.244383", ratio_interval_on_over_off: ["1.113242", "1.383191"], mann_whitney_p: "0.000258" });
     const p = [0.013814147852, 0.000257973808, Number(bug.turns?.mann_whitney_p)];
     const adjusted = holm(p);
     expect(bug.solve?.holm_p).toBe(adjusted[0]?.toFixed(6));
@@ -204,15 +205,49 @@ describe("the per-bug analysis", () => {
     expect(bug.turns?.holm_p).toBe(adjusted[2]?.toFixed(6));
   });
 
-  it("reports the turns shift worked out by hand", () => {
-    // Off turns are 10 + i and on turns 30 − j (i, j = 0..19), so each off-minus-on difference is
-    // s − 20 with s = i + j. The count of pairs with s ≤ k is (k + 1)(k + 2) / 2 for k ≤ 19, and
-    // the counts are symmetric about s = 19, so the median difference is 19 − 20 = −1. R's exact
-    // interval takes the 128th and 273rd smallest differences (qwilcox(0.025, 20, 20) = 128): the
-    // 128th has s = 15 (120 pairs have s ≤ 14, 136 have s ≤ 15) and the 273rd has s = 23 (264
-    // have s ≤ 22, 280 have s ≤ 23), so the interval is −5 to 3.
+  it("reports the turns shift on minus off, as registered, worked out by hand", () => {
+    // Pre-registration, Outcomes 3: "the Hodges–Lehmann shift on raw turns, on minus off, in turns,
+    // with its 95% interval". On turns are 30 − j and off turns 10 + i (i, j = 0..19), so each
+    // on-minus-off difference is 20 − s with s = i + j. The count of pairs with s ≤ k is
+    // (k + 1)(k + 2) / 2 for k ≤ 19, and the counts are symmetric about s = 19, so the median is
+    // 20 − 19 = +1: the on arm took one more turn. The registered interval runs from the 128th to
+    // the 273rd of the 400 ordered differences. 20 − s falls as s rises, so the 128th smallest
+    // difference has the 273rd smallest s, which is 23 (264 pairs have s ≤ 22, 280 have s ≤ 23),
+    // and the 273rd smallest difference has the 128th smallest s, which is 15 (120 have s ≤ 14,
+    // 136 have s ≤ 15). The interval is 20 − 23 = −3 to 20 − 15 = 5.
     const bug = analyzeBug("race-synthetic-1", worseRows());
-    expect(bug.turns).toMatchObject({ hodges_lehmann_off_minus_on: "-1", interval: ["-5", "3"] });
+    expect(bug.turns).toMatchObject({ hodges_lehmann_on_minus_off: "1", interval_on_minus_off: ["-3", "5"] });
+    expect(bug.turns).not.toHaveProperty("hodges_lehmann_off_minus_on");
+    // Off turns are 10..29 and on turns 11..30, so the arms share values and the interval's
+    // coverage is approximate, which the record says next to it.
+    expect(bug.turns?.interval_coverage_approximate).toBe(true);
+  });
+
+  it("reports the turns shift by hand on 3 against 3", () => {
+    // On turns [3, 5, 9], off turns [1, 2, 4]: the on-minus-off differences sorted are
+    // −1, 1, 1, 2, 3, 4, 5, 7, 8, so the median is 3; at 3 against 3, k = 1, so the interval is
+    // [D(1), D(9)] = [−1, 8] at level 0.9. No value is shared, so the coverage is exact.
+    const rows = [
+      row("on", 1, false, { turns: 3 }),
+      row("on", 2, false, { turns: 5 }),
+      row("on", 3, false, { turns: 9 }),
+      row("off", 4, false, { turns: 1 }),
+      row("off", 5, false, { turns: 2 }),
+      row("off", 6, false, { turns: 4 }),
+    ];
+    expect(analyzeBug("race-synthetic-1", rows).turns).toMatchObject({
+      hodges_lehmann_on_minus_off: "3",
+      interval_on_minus_off: ["-1", "8"],
+      interval_level: "0.900000",
+      interval_coverage_approximate: false,
+    });
+  });
+
+  it("marks the coverage approximate when a value repeats within one arm only", () => {
+    // Off turns [1, 1] repeat inside the off arm, and no value is shared with on [2, 3]: the
+    // no-ties distribution still does not hold, so the coverage is approximate.
+    const rows = [row("on", 1, false, { turns: 2 }), row("on", 2, false, { turns: 3 }), row("off", 3, false, { turns: 1 }), row("off", 4, false, { turns: 1 })];
+    expect(analyzeBug("race-synthetic-1", rows).turns?.interval_coverage_approximate).toBe(true);
   });
 
   it("enters a solve test the futility rule stopped into Holm as p = 1", () => {
@@ -296,6 +331,88 @@ describe("the per-bug analysis", () => {
 
   it("refuses a counted in-scope attempt without the authoritative grade", () => {
     expect(() => analyzeBug("race-synthetic-1", [row("off", 1, true, { grade2: null })])).toThrow("has no grade 2");
+  });
+});
+
+/** Rows for one bug with the given token counts per arm (all unsolved, one turn each). */
+function tokenRows(off: readonly number[], on: readonly number[]): AttemptRow[] {
+  return [
+    ...off.map((tokens, i) => row("off", i + 1, false, { tokens })),
+    ...on.map((tokens, i) => row("on", 100 + i, false, { tokens })),
+  ];
+}
+
+describe("the registered token ratio", () => {
+  // Pre-registration, Outcomes 2: "Estimate: the Hodges–Lehmann shift on natural-log tokens, on
+  // minus off, reported as the ratio exp(shift) with its 95% interval (the exponentiated interval
+  // endpoints)." Each log difference ln(on) − ln(off) is ln(on / off), so the ratio is the median
+  // of the pairwise ratios on / off (the geometric mean of the two middle ones for an even count),
+  // and the interval ends are pairwise ratios.
+
+  it("is the median pairwise ratio on over off, by hand on 3 against 3", () => {
+    // Off [100, 200, 400], on [50, 100, 200]. The nine ratios on / off, sorted:
+    // 0.125, 0.25, 0.25, 0.5, 0.5, 0.5, 1, 1, 2. The median (5th) is 0.5. At 3 against 3, k = 1,
+    // so the interval is [R(1), R(9)] = [0.125, 2] at level 0.9. A raw-token shift would give
+    // −100 here (the median of the raw differences), never a ratio. 100 and 200 appear in both
+    // arms, so the coverage is approximate.
+    const tokens = analyzeBug("race-synthetic-1", tokenRows([100, 200, 400], [50, 100, 200])).tokens;
+    expect(tokens).toMatchObject({
+      ratio_on_over_off: "0.500000",
+      ratio_interval_on_over_off: ["0.125000", "2.000000"],
+      interval_level: "0.900000",
+      interval_coverage_approximate: true,
+    });
+    expect(tokens).not.toHaveProperty("hodges_lehmann_off_minus_on");
+  });
+
+  it("takes the geometric mean of the two middle ratios for an even count, by hand", () => {
+    // Off [100, 400], on [100]: ratios 0.25 and 1. The log median is (ln 0.25 + ln 1) / 2, so the
+    // ratio is √0.25 = 0.5 (a raw-token median would be −150). At 1 against 2, P(U = 0) = 1/3, so
+    // k = 1 and the interval is [0.25, 1] at level 1 − 2/3.
+    expect(analyzeBug("race-synthetic-1", tokenRows([100, 400], [100])).tokens).toMatchObject({
+      ratio_on_over_off: "0.500000",
+      ratio_interval_on_over_off: ["0.250000", "1.000000"],
+      interval_level: "0.333333",
+    });
+  });
+
+  it("reads 0.75 for an on arm that uses exactly 25% fewer tokens", () => {
+    // On = 0.75 × off, value by value. The ratios are 0.75 × off(i) / off(j); the log terms
+    // ln(off(i) / off(j)) are symmetric about 0 (i = j gives 0), so the median ratio is exactly
+    // 0.75, the registered 25% reduction, and the interval ends multiply to 0.75².
+    const off = [400, 800, 1200, 2000, 2400, 3200, 4000, 6000];
+    const on = off.map((value) => (value * 3) / 4);
+    const tokens = analyzeBug("race-synthetic-1", tokenRows(off, on)).tokens;
+    expect(tokens?.ratio_on_over_off).toBe("0.750000");
+    const [lower, upper] = (tokens?.ratio_interval_on_over_off ?? ["0", "0"]).map(Number);
+    expect((lower ?? 0) * (upper ?? 0)).toBeCloseTo(0.5625, 5);
+    expect(lower).toBeLessThan(0.75);
+    expect(upper).toBeGreaterThan(0.75);
+  });
+
+  it("takes the registered 128th and 273rd of the 400 ordered ratios on 20 against 20", () => {
+    // In worseRows the on arm's tokens are OFF_TOKENS and the off arm's ON_TOKENS. Sorting the 400
+    // ratios on / off: the 128th is 980765 / 880999 = 1.113242, the 273rd is 1100234 / 795432 =
+    // 1.383191, and the middle two (200th and 201st) are 1020456 / 820456 and 870654 / 699321,
+    // whose geometric mean is 1.244383. The same values by brute force first.
+    const ratios = OFF_TOKENS.flatMap((on) => ON_TOKENS.map((off) => on / off)).sort((a, b) => a - b);
+    const bug = analyzeBug("race-synthetic-1", worseRows());
+    expect(bug.tokens).toMatchObject({
+      ratio_on_over_off: Math.sqrt((ratios[199] ?? 0) * (ratios[200] ?? 0)).toFixed(6),
+      ratio_interval_on_over_off: [(ratios[127] ?? 0).toFixed(6), (ratios[272] ?? 0).toFixed(6)],
+    });
+    expect(bug.tokens).toMatchObject({ ratio_on_over_off: "1.244383", ratio_interval_on_over_off: ["1.113242", "1.383191"] });
+    expect(bug.tokens?.interval_coverage_approximate).toBe(false);
+    expect(Number(bug.tokens?.interval_level)).toBeGreaterThanOrEqual(0.95);
+  });
+
+  it("states the token figure as a ratio on over off", () => {
+    const bug = analyzeBug("race-synthetic-1", worseRows());
+    expect(bug.made_worse.statement).toContain("token ratio on over off 1.244383, interval 1.113242 to 1.383191");
+  });
+
+  it("refuses a counted attempt with no tokens, which has no logarithm", () => {
+    expect(() => analyzeBug("race-synthetic-1", tokenRows([0, 100], [100]))).toThrow("positive token count");
   });
 });
 

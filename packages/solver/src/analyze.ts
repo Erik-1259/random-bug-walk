@@ -1,7 +1,8 @@
 // The paired comparison's analysis and results record. Per bug and arm: solve counts with exact
-// (Clopper–Pearson) intervals; the off-minus-on solve difference with Fisher's exact p; Hodges–
-// Lehmann median differences of tokens and turns with their exact (Moses) intervals and exact
-// permutation Mann–Whitney p; Holm across the three co-primary outcomes; the futility rule; a
+// (Clopper–Pearson) intervals; the off-minus-on solve difference with Fisher's exact p; the
+// registered estimates for tokens (the on/off ratio exp(HL shift of ln on − ln off) with its
+// exponentiated interval) and turns (the HL shift on minus off in turns with its interval), each
+// with the exact permutation Mann–Whitney p; Holm across the three co-primary outcomes; the futility rule; a
 // per-bug "made worse" statement; and the per-attempt table. The record is canonical JSON v1, so
 // every fraction is a decimal string.
 import { encodeCanonical } from "@rbw/schema";
@@ -433,14 +434,31 @@ export function futility(off: readonly AttemptRow[], on: readonly AttemptRow[]):
   return { triggered: false };
 }
 
-interface ShiftResult {
-  /** Hodges–Lehmann estimate of off minus on. Positive: the off arm used more. */
-  hodges_lehmann_off_minus_on: string;
-  interval: [string, string];
+/** What the token and turn results share: the interval's level, the test and Holm. */
+interface RankTest {
+  /** The interval's coverage under the no-ties null distribution. */
   interval_level: string;
+  /** True when any value repeats in the pooled samples: the coverage is then approximate. */
+  interval_coverage_approximate: boolean;
   mann_whitney_p: string;
   holm_p: string;
   holm_reject: boolean;
+}
+
+/**
+ * Tokens per attempt, as registered: the Hodges–Lehmann shift of ln(on) − ln(off), reported as
+ * the ratio exp(shift) with its interval ends exponentiated. Below 1: the on arm used fewer
+ * tokens; 0.75 is the registered 25% reduction.
+ */
+interface TokenRatioResult extends RankTest {
+  ratio_on_over_off: string;
+  ratio_interval_on_over_off: [string, string];
+}
+
+/** Turns per attempt, as registered: the Hodges–Lehmann shift on raw turns, on minus off. Positive: the on arm took more turns. */
+interface TurnShiftResult extends RankTest {
+  hodges_lehmann_on_minus_off: string;
+  interval_on_minus_off: [string, string];
 }
 
 interface SolveResult {
@@ -458,20 +476,45 @@ export interface BugAnalysis {
   futility: Futility;
   /** Null when the futility rule stopped the solve analysis or an arm has no counted attempt. */
   solve: SolveResult | null;
-  tokens: ShiftResult | null;
-  turns: ShiftResult | null;
+  tokens: TokenRatioResult | null;
+  turns: TurnShiftResult | null;
   made_worse: { solve: Verdict; tokens: Verdict; statement: string };
 }
 
-function shift(off: readonly number[], on: readonly number[]): Omit<ShiftResult, "holm_p" | "holm_reject"> & { p: number } {
-  const hl = hodgesLehmann(off, on, ALPHA);
-  const p = mannWhitneyExact(off, on);
+/** The shift on minus off with the rank test, before Holm. */
+interface Shift {
+  hl: HodgesLehmann;
+  p: number;
+  ties: boolean;
+}
+
+function shiftOnMinusOff(off: readonly number[], on: readonly number[]): Shift {
+  // Any repeated value in the pooled samples breaks the no-ties distribution, within an arm or across arms.
+  const pooled = [...off, ...on];
   return {
-    hodges_lehmann_off_minus_on: exact(hl.estimate),
-    interval: [exact(hl.lower), exact(hl.upper)],
-    interval_level: decimal(hl.level),
-    mann_whitney_p: decimal(p),
-    p,
+    hl: hodgesLehmann(on, off, ALPHA),
+    // The registered statistic is the on arm's rank sum; the two-sided p is the same either way.
+    p: mannWhitneyExact(on, off),
+    ties: new Set(pooled).size < pooled.length,
+  };
+}
+
+function logTokens(rows: readonly AttemptRow[]): number[] {
+  return rows.map((row) => {
+    if (!(row.tokens > 0)) {
+      throw new Error(`attempt ${row.bug_id} ${row.arm} ${String(row.index)} needs a positive token count for the log-token estimate`);
+    }
+    return Math.log(row.tokens);
+  });
+}
+
+function rankTest(s: Shift, adjustedP: number): RankTest {
+  return {
+    interval_level: decimal(s.hl.level),
+    interval_coverage_approximate: s.ties,
+    mann_whitney_p: decimal(s.p),
+    holm_p: decimal(adjustedP),
+    holm_reject: adjustedP <= ALPHA,
   };
 }
 
@@ -501,15 +544,16 @@ function solveSentence(off: ArmSummary, on: ArmSummary, solve: SolveResult | nul
   return `Solves: ${counts}; the on arm solved ${direction} (Fisher p ${solve.fisher_p}, Holm-adjusted ${solve.holm_p}).`;
 }
 
-function tokenSentence(tokens: ShiftResult | null): string {
+function tokenSentence(tokens: TokenRatioResult | null, logShift: number): string {
   if (tokens === null) {
     return "Tokens were not tested: an arm has no counted attempt.";
   }
-  const detail = `median difference off minus on ${tokens.hodges_lehmann_off_minus_on} tokens, interval ${tokens.interval[0]} to ${tokens.interval[1]} at level ${tokens.interval_level}, Holm-adjusted p ${tokens.holm_p}`;
+  const approximate = tokens.interval_coverage_approximate ? " (approximate with ties)" : "";
+  const detail = `token ratio on over off ${tokens.ratio_on_over_off}, interval ${tokens.ratio_interval_on_over_off[0]} to ${tokens.ratio_interval_on_over_off[1]} at level ${tokens.interval_level}${approximate}, Holm-adjusted p ${tokens.holm_p}`;
   if (!tokens.holm_reject) {
     return `Tokens: ${detail}; inconclusive at this sample size.`;
   }
-  const direction = Number(tokens.hodges_lehmann_off_minus_on) < 0 ? "more" : "fewer";
+  const direction = logShift > 0 ? "more" : "fewer";
   return `Tokens: ${detail}; the on arm used ${direction} tokens.`;
 }
 
@@ -529,8 +573,10 @@ export function analyzeBug(bugId: string, rows: readonly AttemptRow[]): BugAnaly
   const fisherP = testable && !fut.triggered
     ? fisherExact(offSummary.solved, offSummary.counted - offSummary.solved, onSummary.solved, onSummary.counted - onSummary.solved)
     : null;
-  const tokens = testable ? shift(offCounted.map((r) => r.tokens), onCounted.map((r) => r.tokens)) : null;
-  const turns = testable ? shift(offCounted.map((r) => r.turns), onCounted.map((r) => r.turns)) : null;
+  // Tokens: the shift of natural-log tokens (ln is one-to-one, so the ranks, ties and p are those
+  // of the raw counts). Turns: the shift of raw turns. Both on minus off.
+  const tokens = testable ? shiftOnMinusOff(logTokens(offCounted), logTokens(onCounted)) : null;
+  const turns = testable ? shiftOnMinusOff(offCounted.map((r) => r.turns), onCounted.map((r) => r.turns)) : null;
   // Holm runs across all three outcomes. A solve test the futility rule stopped enters as p = 1,
   // which never makes the other two easier to reject than with three tests.
   const adjusted = holm([fisherP ?? 1, tokens?.p ?? 1, turns?.p ?? 1]);
@@ -543,21 +589,22 @@ export function analyzeBug(bugId: string, rows: readonly AttemptRow[]): BugAnaly
           holm_p: decimal(at(adjusted, 0)),
           holm_reject: at(adjusted, 0) <= ALPHA,
         };
-  const finish = (s: ReturnType<typeof shift> | null, adjustedP: number): ShiftResult | null => {
-    if (s === null) {
-      return null;
-    }
-    return {
-      hodges_lehmann_off_minus_on: s.hodges_lehmann_off_minus_on,
-      interval: s.interval,
-      interval_level: s.interval_level,
-      mann_whitney_p: s.mann_whitney_p,
-      holm_p: decimal(adjustedP),
-      holm_reject: adjustedP <= ALPHA,
-    };
-  };
-  const tokenResult = finish(tokens, at(adjusted, 1));
-  const turnResult = finish(turns, at(adjusted, 2));
+  const tokenResult: TokenRatioResult | null =
+    tokens === null
+      ? null
+      : {
+          ratio_on_over_off: decimal(Math.exp(tokens.hl.estimate)),
+          ratio_interval_on_over_off: [decimal(Math.exp(tokens.hl.lower)), decimal(Math.exp(tokens.hl.upper))],
+          ...rankTest(tokens, at(adjusted, 1)),
+        };
+  const turnResult: TurnShiftResult | null =
+    turns === null
+      ? null
+      : {
+          hodges_lehmann_on_minus_off: exact(turns.hl.estimate),
+          interval_on_minus_off: [exact(turns.hl.lower), exact(turns.hl.upper)],
+          ...rankTest(turns, at(adjusted, 2)),
+        };
 
   const solveVerdict: Verdict =
     solve === null
@@ -567,9 +614,10 @@ export function analyzeBug(bugId: string, rows: readonly AttemptRow[]): BugAnaly
           offSummary.solved / offSummary.counted < onSummary.solved / onSummary.counted,
           solve.holm_reject,
         );
-  const tokenEstimate = tokenResult === null ? 0 : Number(tokenResult.hodges_lehmann_off_minus_on);
+  // The log shift on minus off: positive (a ratio above 1) means the on arm used more tokens.
+  const logShift = tokens === null ? 0 : tokens.hl.estimate;
   const tokenVerdict: Verdict =
-    tokenResult === null ? "not_tested" : verdict(tokenEstimate < 0, tokenEstimate > 0, tokenResult.holm_reject);
+    tokenResult === null ? "not_tested" : verdict(logShift > 0, logShift < 0, tokenResult.holm_reject);
   return {
     bug_id: bugId,
     arms: { off: offSummary, on: onSummary },
@@ -580,7 +628,7 @@ export function analyzeBug(bugId: string, rows: readonly AttemptRow[]): BugAnaly
     made_worse: {
       solve: solveVerdict,
       tokens: tokenVerdict,
-      statement: `${solveSentence(offSummary, onSummary, solve, fut)} ${tokenSentence(tokenResult)}`,
+      statement: `${solveSentence(offSummary, onSummary, solve, fut)} ${tokenSentence(tokenResult, logShift)}`,
     },
   };
 }
