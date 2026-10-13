@@ -45,8 +45,14 @@ utils:
   guard-pair:
     kind: pair
     all:
+      # A comma before the pair, past any comments between them, so the guard is not first. The fix
+      # removes the comma only when it is the pair's neighbor (the ast-grep CLI widens the edit over
+      # one sibling at most); after a comment it keeps the comment and leaves a trailing comma.
       - follows:
           pattern: ","
+          stopBy:
+            not:
+              kind: comment
       - has:
           field: key
           kind: property_identifier
@@ -134,10 +140,14 @@ utils:
               field: key
               regex: ^(version|revision|updatedAt|updated_at|etag)$
 rule:
+  # A spread (`...expected`) can carry a guard this rule cannot see, so a where with one is never
+  # confirmed as the planted form.
   kind: object
   not:
     has:
-      matches: guard-pair
+      any:
+        - matches: guard-pair
+        - kind: spread_element
   inside:
     kind: pair
     has:

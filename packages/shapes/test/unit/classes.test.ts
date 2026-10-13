@@ -147,6 +147,35 @@ describe("find sites in one file", () => {
     expect(sites[0]?.confidence.level).toBe("low");
   });
 
+  it("marks the planted form unconfirmed when the where spreads a filter that can hold another guard", () => {
+    const text = [
+      "export async function redeem(code: string) {",
+      "  const row = await db.client.voucher.findFirst({ where: { code } });",
+      "  const expected = { id: row.id, used: false };",
+      "  await db.client.voucher.update({ where: { ...expected, version: row.version }, data: { used: true } });",
+      "}",
+      "",
+    ].join("\n");
+    const sites = findSitesInSource(CLASSES, "lib/redeem.ts", text);
+    expect(sites.map((site) => site.matched)).toEqual(["version: row.version"]);
+    expect(sites[0]?.planted_form_confirmed).toBe(false);
+    expect(sites[0]?.confidence.level).toBe("low");
+  });
+
+  it("finds a guard after a comment and removes the guard, keeping the comment and a trailing comma", () => {
+    const text = [
+      "export async function redeem(code: string) {",
+      "  const row = await db.client.voucher.findFirst({ where: { code } });",
+      "  await db.client.voucher.update({ where: { id: row.id, /* CAS */ used: false }, data: { used: true } });",
+      "}",
+      "",
+    ].join("\n");
+    const sites = findSitesInSource(CLASSES, "lib/redeem.ts", text);
+    expect(sites.map((site) => site.matched)).toEqual(["used: false"]);
+    expect(sites[0]?.planted_form_confirmed).toBe(true);
+    expect(sites[0]?.diff).toContain("+  await db.client.voucher.update({ where: { id: row.id, /* CAS */  }, data: { used: true } });\n");
+  });
+
   it("gives the full confidence for operator and version guards", () => {
     expect(sitesIn("lib/quota.ts")[0]?.confidence).toEqual({
       score: 0.9,
