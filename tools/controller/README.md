@@ -174,7 +174,7 @@ node tools/controller/src/cli.ts attempt --work <new run dir> --policy <ProjectP
 - `--work` must be absent or empty. An attempt never resumes: a retry is a new root in a new directory.
 - `--family` and `--race-latency-ms` are `run`'s, and every job of the attempt gets both. The family also picks the symptom the issue writer gets (below): a `RaceSymptom` for `--family race`, whose admission runs 11 copies with ADM-06 not applicable. Without `--family`, or with `--family time-zone`, the attempt writes the same job, symptom and issue bytes as before the family was an attempt input.
 - The private input's fields are the same for every family; for a race attempt, its prose, search words and excluded identifiers describe the race candidate. The card writer reads only `card_source`, so it needs nothing family-specific.
-- `tools/release stage` still validates `symptom.json` as an `ObservedSymptom`, so it refuses a race attempt's symptom (`symptom_invalid`) until the release tool accepts a `RaceSymptom`. Its jobs stage without it.
+- `tools/release stage` routes `symptom.json` by `symptom_kind`, so a race attempt's `RaceSymptom` stages and releases like a time-zone symptom.
 
 Exit codes: 0 when the root ends `terminal` and `completed`; 1 when `root-run.json` was written with any other state; 2 for a usage or input error, with nothing run.
 
