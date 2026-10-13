@@ -222,11 +222,20 @@ The attempt makes one `RunIds` with the policy's `project_id`. Every stage runs 
 
 `runJob` takes two optional `JobInputs` fields for this, `ids` and `projectPolicy`. Both go into the job's fingerprint. Without them a job's bytes are what they were before.
 
-**The symptom** (`src/symptom.ts`, spec §9.6) is a schema-valid `ObservedSymptom`:
+**The symptom** (`src/symptom.ts`, spec §9.6) depends on the family, which `buildSymptom(observeJobDir, prose, family)` takes as a parameter (`TIME_ZONE_FAMILY` or `RACE_FAMILY`, named by fixture ID). The attempt passes the time-zone family until the family is an attempt input.
+
+For the time-zone family (`umami-tz-arg-001`) it is a schema-valid `ObservedSymptom`:
 - from the fixture: the request (its path; `startAt`, `endAt`, `unit` and `timezone` as strings), the time zone, the events (labeled `pageview <id>`) and every expected count, labeled by the date part of each bucket label;
 - from the observation: every observed count, read from the observe copy's recorded response body for that check, parsed as `classify` parses it, and `http_status` 200;
 - the first non-UTC check in fixture order is the primary zone, the other non-UTC checks are `follow_up_examples`, and the UTC control is left out;
 - a non-UTC check with no recorded response, or one that `classify` does not grade `local_day_counts_mismatch`, refuses the symptom (`symptom_unavailable`).
+
+For the race family (`rc-1-backup-code-001`, `@rbw/umami-fixture-rc1`) it is a schema-valid `RaceSymptom`:
+- the concurrent example is the first observation, in trial and observation order, that graded the double-spend check `double_spend`. Its recorded evidence (the two verify requests with their times) must grade `double_spend` again under the fixture's `classifyDoubleSpend`. Each request becomes `{ label, sent_ms, settled_ms, http_status, outcome, error_code }`, with times rounded to whole milliseconds, and `overlap_ms` is the earlier settle minus the later send of the rounded times;
+- `expected` is one acceptance and one refusal (the fixture's pass verdict), and `observed` counts the concurrent outcomes;
+- the sequential example is the serial control of the same trial and repeat, which must have passed (first use accepted, reuse refused);
+- the request is the public verify endpoint with no query; no backup code, token or check ID is copied;
+- no such observation, a missing or ungradable recording, a missing or failed control, or an overlap under a whole millisecond refuses the symptom (`symptom_unavailable`).
 
 **The source searches and the docs extract** (spec §5: sources at the start, the extract while the issue is written) run before the card, in the search package's plan order:
 - `source-1` and `source-2` search the shape keywords and symptom words in both orders, limited to `include_domains` and the date range. Their records are evidence for the operator only. A hit has not passed the shape's rules (spec §3.7), so nothing from it reaches the card, whose source stays the confirmed fix in `card_source`.

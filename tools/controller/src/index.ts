@@ -12,5 +12,6 @@ export type { LaunchDecision, LedgerTarget } from "./limits.ts";
 export { RATE_SHEET_PATH } from "./rate-sheet.ts";
 export { PROOF_DIR, ProofInputError, loadProofInputs, runProof } from "./proof.ts";
 export type { ProofCase, ProofInputs, ProofOptions, ProofResult } from "./proof.ts";
-export { SymptomUnavailable, buildSymptom } from "./symptom.ts";
+export { RACE_FAMILY, SYMPTOM_FAMILIES, SymptomUnavailable, TIME_ZONE_FAMILY, buildRaceSymptom, buildSymptom, buildTimeZoneSymptom } from "./symptom.ts";
+export type { CandidateSymptom, SymptomFamily } from "./symptom.ts";
 export type { SymptomProse } from "./symptom.ts";

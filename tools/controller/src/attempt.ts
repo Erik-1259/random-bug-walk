@@ -14,7 +14,7 @@ import { join } from "node:path";
 import { InputsError, loadCopyInputs, newRunIds } from "@rbw/local-runner";
 import type { RunIds } from "@rbw/local-runner";
 import { CanonicalError, RecordError, assertRecord, encodeCanonical, parseRecord, sha256Hex, validateRecord } from "@rbw/schema";
-import type { DocExcerpt, ObservedSymptom, ProjectPolicy, RootRun } from "@rbw/schema";
+import type { DocExcerpt, ProjectPolicy, RootRun } from "@rbw/schema";
 import {
   DOCS_NAMES,
   PHRASE_NAMES,
@@ -39,8 +39,8 @@ import type { CardOutcome, FetchFunction, IssueOutcome, IssueOutput, WriterProvi
 import { runJob } from "./controller.ts";
 import type { Backend, ControllerDeps, JobOutcome } from "./controller.ts";
 import { DEVELOPMENT } from "./limits.ts";
-import { SymptomUnavailable, buildSymptom } from "./symptom.ts";
-import type { SymptomProse } from "./symptom.ts";
+import { SymptomUnavailable, TIME_ZONE_FAMILY, buildSymptom } from "./symptom.ts";
+import type { CandidateSymptom, SymptomProse } from "./symptom.ts";
 
 /** The admission policy a release is graded under; the release check requires it, and ProjectPolicy has no such field. */
 export const GRADING_POLICY_ID = "umami-uc3-v1";
@@ -321,7 +321,7 @@ function grounded(a: Attempt, name: string, result: CallResult, operations: Oper
 
 /**
  * The extract's passages as doc excerpts, leaving out any that names an excluded identifier: the
- * symptom holds no function name, source path or check ID (ObservedSymptom), and the writer must
+ * symptom holds no function name, source path or check ID (ObservedSymptom, RaceSymptom), and the writer must
  * not be handed one to repeat.
  */
 function passagesOf(record: SearchRecord | null, excluded: readonly string[]): DocExcerpt[] {
@@ -336,7 +336,7 @@ function passagesOf(record: SearchRecord | null, excluded: readonly string[]): D
  * the extract while the issue is written). The extract's passages replace the input's doc excerpts;
  * when it yields none, the input's excerpts stay. Returns the symptom the issue writer gets, or a stop.
  */
-async function ground(a: Attempt, searcher: Searcher, symptom: ObservedSymptom, operations: Operation[]): Promise<{ end: End } | { symptom: ObservedSymptom }> {
+async function ground(a: Attempt, searcher: Searcher, symptom: CandidateSymptom, operations: Operation[]): Promise<{ end: End } | { symptom: CandidateSymptom }> {
   const { input } = a.prepared;
   for (const name of SOURCE_NAMES) {
     const { end } = grounded(a, name, await searcher.searchSource(name, input.search), operations, (record) => `results=${String(record.results.length)}`);
@@ -349,11 +349,12 @@ async function ground(a: Attempt, searcher: Searcher, symptom: ObservedSymptom, 
   });
   if (docs.end !== null) return { end: docs.end };
   const excerpts = passagesOf(docs.record, input.excluded_identifiers);
-  return { symptom: assertRecord("ObservedSymptom", { ...symptom, doc_excerpts: excerpts.length > 0 ? excerpts : symptom.doc_excerpts }) };
+  const docExcerpts = excerpts.length > 0 ? excerpts : symptom.doc_excerpts;
+  return { symptom: "symptom_kind" in symptom ? assertRecord("RaceSymptom", { ...symptom, doc_excerpts: docExcerpts }) : assertRecord("ObservedSymptom", { ...symptom, doc_excerpts: docExcerpts }) };
 }
 
 /** The source searches, the extract, the card, the issue and the phrase checks; null when novelty is clear. */
-async function writeAndSearch(a: Attempt, spend: Spend, context: Record<string, string>, observed: ObservedSymptom, operations: Operation[]): Promise<End | null> {
+async function writeAndSearch(a: Attempt, spend: Spend, context: Record<string, string>, observed: CandidateSymptom, operations: Operation[]): Promise<End | null> {
   const { input } = a.prepared;
   const say = a.deps.report;
   const searcher = createSearcher({
@@ -437,7 +438,7 @@ async function ledgerEntries(spend: Spend, operations: readonly Operation[]) {
 }
 
 /** The candidate text, in this process, under the root's development slot; null when the admission may run. */
-async function candidateText(a: Attempt, taskRevision: string, symptom: ObservedSymptom): Promise<End | null> {
+async function candidateText(a: Attempt, taskRevision: string, symptom: CandidateSymptom): Promise<End | null> {
   const { ids } = a;
   const spend = guarded(a.deps.spend);
   const root = ids.root_execution_id;
@@ -522,9 +523,10 @@ async function stages(a: Attempt, projectPolicy: { sha256: string; policy_id: st
   const observeEnd = jobEnd(a, "observe", observe);
   if (observeEnd !== null) return observeEnd;
 
-  let symptom: ObservedSymptom;
+  let symptom: CandidateSymptom;
   try {
-    symptom = buildSymptom(observe.jobDir, a.prepared.input);
+    // The attempt runs the time-zone family until the family is an attempt input.
+    symptom = buildSymptom(observe.jobDir, a.prepared.input, TIME_ZONE_FAMILY);
   } catch (error) {
     if (!(error instanceof SymptomUnavailable)) throw error;
     a.deps.report(`stage=write status=failed reason=${error.code}`);
