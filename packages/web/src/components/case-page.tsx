@@ -1,8 +1,9 @@
 // The one case page. Its six cells keep a fixed order: symptom, counts, suite matrix, replay,
 // provenance and downloads, funnel and limitations.
 import type { ReactNode } from "react";
-import type { ObservedSymptom } from "@rbw/schema";
+import type { ObservedSymptom, RaceSymptom } from "@rbw/schema";
 import {
+  admissionCopies,
   COLUMN_LABEL,
   COMPARISON_TEXT,
   countExamples,
@@ -15,6 +16,8 @@ import {
   NOT_IN_RECORDS,
   originalSuiteSize,
   otherRuns,
+  raceAttempts,
+  raceCounts,
   releaseHref,
   REPLAY_VERDICT_NOTE,
   replayState,
@@ -28,7 +31,7 @@ import {
 } from "../model.ts";
 import { ReplayControl } from "./replay-control.tsx";
 import { RunSummary } from "./run-summary.tsx";
-import { releaseFiles, type AdmissionRecords, type PublishedRelease, type Results, type Run } from "../release.ts";
+import { isRaceSymptom, releaseFiles, type AdmissionRecords, type CaseSymptom, type PublishedRelease, type Results, type Run } from "../release.ts";
 
 function Cell({ index, title, children }: { index: number; title: string; children: ReactNode }) {
   return (
@@ -41,8 +44,35 @@ function Cell({ index, title, children }: { index: number; title: string; childr
   );
 }
 
-function Symptom({ symptom, validated }: { symptom: ObservedSymptom | null; validated: boolean }) {
+function plural(count: number, one: string, many: string): string {
+  return `${String(count)} ${count === 1 ? one : many}`;
+}
+
+function Symptom({ symptom, validated }: { symptom: CaseSymptom | null; validated: boolean }) {
   if (symptom === null) return <p>No published run holds an observed symptom yet.</p>;
+  if (isRaceSymptom(symptom)) return <RaceSymptomSummary symptom={symptom} validated={validated} />;
+  return <TimeZoneSymptom symptom={symptom} validated={validated} />;
+}
+
+function RaceSymptomSummary({ symptom, validated }: { symptom: RaceSymptom; validated: boolean }) {
+  const { expected, observed } = symptom;
+  return (
+    <>
+      <p className="label">{validated ? "Validated release, synthetic planted bug" : "Development evidence, not validated"}</p>
+      <p>
+        Synthetic task: the bug in this case was planted on purpose in a copy of Umami, an open-source web analytics app. It is not a real Umami bug.
+      </p>
+      <p>{symptom.user_action}</p>
+      <p>
+        {String(symptom.concurrent_attempts.length)} requests sent at the same time overlapped for {String(symptom.overlap_ms)} ms. Expected{" "}
+        {plural(expected.accepted, "acceptance", "acceptances")} and {plural(expected.refused, "refusal", "refusals")}; observed {plural(observed.accepted, "acceptance", "acceptances")}{" "}
+        and {plural(observed.refused, "refusal", "refusals")}.
+      </p>
+    </>
+  );
+}
+
+function TimeZoneSymptom({ symptom, validated }: { symptom: ObservedSymptom; validated: boolean }) {
   const examples = countExamples(symptom);
   const differing = examples.filter((example) => example.differs).length;
   return (
@@ -59,8 +89,78 @@ function Symptom({ symptom, validated }: { symptom: ObservedSymptom | null; vali
   );
 }
 
-function Counts({ symptom }: { symptom: ObservedSymptom | null }) {
+function AttemptTable({ caption, attempts }: { caption: string; attempts: RaceSymptom["concurrent_attempts"] }) {
+  return (
+    <table className="attempts">
+      <caption>{caption}</caption>
+      <thead>
+        <tr>
+          <th scope="col">Request</th>
+          <th scope="col">Sent (ms)</th>
+          <th scope="col">Answered (ms)</th>
+          <th scope="col">HTTP status</th>
+          <th scope="col">Outcome</th>
+          <th scope="col">Error code</th>
+        </tr>
+      </thead>
+      <tbody>
+        {raceAttempts(attempts).map((attempt) => (
+          <tr key={attempt.label}>
+            <th scope="row">{attempt.label}</th>
+            <td>{String(attempt.sentMs)}</td>
+            <td>{String(attempt.settledMs)}</td>
+            <td>{String(attempt.httpStatus)}</td>
+            <td>{attempt.outcome}</td>
+            <td>{attempt.errorCode ?? "none"}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function RaceCounts({ symptom }: { symptom: RaceSymptom }) {
+  return (
+    <>
+      <p>{symptom.fixture_description}</p>
+      <p>
+        Request: <code>{`${symptom.request.method} ${symptom.request.path}`}</code>
+      </p>
+      <AttemptTable caption={`Concurrent requests, overlapping for ${String(symptom.overlap_ms)} ms (times from the first request sent)`} attempts={symptom.concurrent_attempts} />
+      <table className="counts">
+        <caption>Outcomes of the concurrent requests</caption>
+        <thead>
+          <tr>
+            <th scope="col">Outcome</th>
+            <th scope="col">Expected</th>
+            <th scope="col">Observed</th>
+            <th scope="col">Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {raceCounts(symptom).map((row) => (
+            <tr key={row.label}>
+              <th scope="row">{row.label}</th>
+              <td>{String(row.expected)}</td>
+              <td>{String(row.observed)}</td>
+              <td className={row.matches ? "status status-pass" : "status status-fail"}>{row.matches ? "Matches" : "Differs"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {symptom.sequential_attempts.length === 0 ? null : (
+        <details>
+          <summary>The same requests one after the other ({String(symptom.sequential_attempts.length)} requests)</summary>
+          <AttemptTable caption="Sequential requests, for contrast (times from the first request sent)" attempts={symptom.sequential_attempts} />
+        </details>
+      )}
+    </>
+  );
+}
+
+function Counts({ symptom }: { symptom: CaseSymptom | null }) {
   if (symptom === null) return <p>No counts to show.</p>;
+  if (isRaceSymptom(symptom)) return <RaceCounts symptom={symptom} />;
   return (
     <>
       <p>{symptom.fixture_description}</p>
@@ -115,6 +215,26 @@ function Counts({ symptom }: { symptom: ObservedSymptom | null }) {
   );
 }
 
+/** The copies the admission rules covered: counted from the run's admission records, or the policy's 13 without them. */
+function copiesPhrase(admission: AdmissionRecords | null): string {
+  const copies = admissionCopies(admission);
+  return copies === null ? "the 13 fresh copies of an admission" : `this run's ${String(copies.total)} fresh copies`;
+}
+
+/**
+ * How a candidate is admitted. With the case run's admission records, the copies are counted from
+ * them; without, the text describes the admission policy's 13 copies.
+ */
+export function methodText(admission: AdmissionRecords | null): string {
+  const copies = admissionCopies(admission);
+  if (copies === null) {
+    return "A candidate is admitted using 13 fresh app copies: 1 clean, 5 fixed, 5 planted, 1 partial-fix and 1 stub-fix. The original API suite runs once in each copy, and the added checks run in each, 20 times in the first fixed and the first planted copy. The six cells above come from the first clean, planted and fixed copies. A blind spot is shown only when the original suite passes in all 13 copies while the added checks pass on clean and fixed copies and fail as declared on planted and probe copies.";
+  }
+  const total = String(copies.total);
+  const failing = copies.probes ? "planted and probe copies" : "planted copies";
+  return `This case's admission used ${total} fresh app copies: ${copies.breakdown}. The original API suite runs once in each copy, and the added checks run in each, 20 times in the first fixed and the first planted copy. The six cells above come from the first clean, planted and fixed copies. A blind spot is shown only when the original suite passes in all ${total} copies while the added checks pass on clean and fixed copies and fail as declared on ${failing}.`;
+}
+
 function Matrix({ admission }: { admission: AdmissionRecords | null }) {
   const cells = suiteMatrix(admission);
   const size = originalSuiteSize(admission);
@@ -167,8 +287,8 @@ function Matrix({ admission }: { admission: AdmissionRecords | null }) {
         </ul>
       )}
       <p className="rule-codes">
-        Rule codes refer to the <a href={ADMISSION_RULES}>admission rules</a>: ADM-02 to ADM-06 cover the 13 fresh copies, the fixed copies passing, the planted copies failing as
-        declared, stability and the negative probes; ADM-07 the card, issue and leak checks with a human check; ADM-08 this original-suite comparison; ADM-09 the release.
+        Rule codes refer to the <a href={ADMISSION_RULES}>admission rules</a>: ADM-02 to ADM-06 cover {copiesPhrase(admission)}, the fixed copies passing, the planted copies failing
+        as declared, stability and the negative probes{admissionCopies(admission)?.probes === false ? " (this run has no negative-probe copies)" : ""}; ADM-07 the card, issue and leak checks with a human check; ADM-08 this original-suite comparison; ADM-09 the release.
       </p>
     </>
   );
@@ -367,11 +487,7 @@ function FunnelAndLimitations({ results }: { results: Results }) {
         <li>This is a hackathon prototype.</li>
       </ul>
       <h3>Method</h3>
-      <p>
-        A candidate is admitted using 13 fresh app copies: 1 clean, 5 fixed, 5 planted, 1 partial-fix and 1 stub-fix. The original API suite runs once in each copy, and the added checks
-        run in each, 20 times in the first fixed and the first planted copy. The six cells above come from the first clean, planted and fixed copies. A blind spot is shown only when the
-        original suite passes in all 13 copies while the added checks pass on clean and fixed copies and fail as declared on planted and probe copies.
-      </p>
+      <p>{methodText(results.caseRun?.admission ?? null)}</p>
     </>
   );
 }
@@ -405,7 +521,7 @@ export function CasePage({ results, judgeEnabled = false }: { results: Results; 
       <Cell index={1} title="Symptom">
         <Symptom symptom={run?.symptom ?? null} validated={results.release !== null} />
       </Cell>
-      <Cell index={2} title="Expected and observed local-day counts">
+      <Cell index={2} title={run?.symptom != null && isRaceSymptom(run.symptom) ? "Concurrent requests and expected and observed acceptances" : "Expected and observed local-day counts"}>
         <Counts symptom={run?.symptom ?? null} />
       </Cell>
       <Cell index={3} title="Original API suite and added checks on clean, planted and fixed copies">
