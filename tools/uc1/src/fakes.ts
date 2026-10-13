@@ -299,6 +299,8 @@ export function fakeController(spend: Spend, calls: ControllerCall[], outcome: (
       required(args, "--judge-fixed") === "fixed"
         ? sha256Hex(Buffer.from(DRY_CLEAN))
         : (JSON.parse(readFileSync(join(fix, "alternative-fix.json"), "utf8")) as { result_sha256: string }).result_sha256;
+    // Grade 1 leaves `spend` alone: the live controller's docker backend opens its own in-memory
+    // ledger, so its slot acquire and release never reach the development ledger the run holds.
     let state = outcome(call);
     let settled = 0;
     let reason: string | null = state === "infrastructure" ? "launch_failed" : null;

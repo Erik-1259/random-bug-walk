@@ -628,6 +628,8 @@ export async function runSessions(options: SessionsOptions, deps: Uc1Deps): Prom
   // The slot is taken before any grade job, the pilot's seeded round trips included: a slot another
   // root holds stops the pass before any job runs, so no grade retry is spent on the contention and
   // a later resume continues where this one stopped.
+  // Grade 1 jobs run the controller on --backend docker, which opens its own in-memory ledger per
+  // job, so their slot acquire and release never touch this hold on the development ledger.
   const slot = { slot_key: DEVELOPMENT_SLOT, root_execution_id: run.root_execution_id, actor_role: ACTOR };
   const status = await deps.spend.slotStatus({ slot_key: DEVELOPMENT_SLOT });
   let held = false;
