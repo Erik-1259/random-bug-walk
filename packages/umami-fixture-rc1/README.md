@@ -24,6 +24,7 @@ This package is separate from `@rbw/umami-fixture` on purpose: the driver hashes
 - [Two-factor state and reset](#two-factor-state-and-reset)
 - [Staging](#staging)
 - [Local proof](#local-proof)
+- [Delay study](#delay-study)
 - [Admission status](#admission-status)
 - [Tests](#tests)
 - [Not in this package](#not-in-this-package)
@@ -109,17 +110,33 @@ The kit's app environment sets `TWO_FACTOR_ENCRYPTION_KEY` to a valid placeholde
 | clean | 25 | 25 pass | 25 pass |
 | planted | 30 | 30 pass | 17 `double_spend`, 13 pass |
 
-The checks grade as declared, but with no database delay the planted race is not repeatable enough for ADM-05, which needs 20 of 20. The delay study picks the database delay that makes it so.
+The checks grade as declared, but with no database delay the planted race is not repeatable enough for ADM-05, which needs 20 of 20. The delay study picks a database delay that gives 20 of 20 on a planted copy, ahead of the ADM-05 run itself.
 
-With no guard in the planted route, a refusal can only come from the branch where no unused code matched, so in the 13 lost planted rounds the second request read after the first wrote. The delay study has to measure that lag between the two requests and size the delay to cover it; the committed summary does not record it.
+With no guard in the planted route, a refusal can only come from the branch where no unused code matched, so in the 13 lost planted rounds the second request read after the first wrote. The delay study sizes a database delay to cover that lag.
+
+## Delay study
+
+`host/race-delay-study.sh` runs the same single-copy flow in a **race** kit image (`kit/umami-race`, the kit with Toxiproxy between Umami and Postgres) and sweeps the downstream latency toxic. It builds once, starts, bakes the template, then for each delay sets the latency once with `rbw-proxy set-latency`, checks the proxy once after setting it and again after every round, and runs the rounds, each after a reset. It writes one JSON line per check per round to `study-<variant>/rounds.jsonl` (delay, round, outcome, the two verify attempts, overlap, round time) and prints a line per check per round. Like `host/live-proof.sh`, it refuses to start when its output directory is not empty, so an earlier run's round files are never read as this run's. `evidence/rc-1-race-study.json` summarizes a run of Oct 13, 2026, 20 planted and 20 clean rounds at each delay, on a race kit image built locally for arm64 (4 CPUs, 6 GB):
+
+| Delay | Planted race | Clean race (false positives) | Serial control | Planted overlap (median) |
+| --- | --- | --- | --- | --- |
+| 0 ms | 9/20 `double_spend` | 0/20 | 40/40 pass | 881 ms |
+| 25 ms | 20/20 `double_spend` | 0/20 | 40/40 pass | 1266 ms |
+| 50 ms | 20/20 `double_spend` | 0/20 | 40/40 pass | 1507 ms |
+| 100 ms | 20/20 `double_spend` | 0/20 | 40/40 pass | 2001 ms |
+| 200 ms | 20/20 `double_spend` | 0/20 | 40/40 pass | 3186 ms |
+
+The smallest delay giving 20/20 planted `double_spend` and 0/20 clean on arm64 is **25 ms**. This is a pre-admission repeatability result on the planted and clean copies; it is not ADM-05, which needs 20 repetitions on `fixed-01` and `planted-01`. The delay widens the window between each request's read and the first request's write; the clean copy overlaps by the same amount but the guard still refuses the second write, so it stays 0/20 at every delay. At 0 ms the planted race was 9/20, so 25 ms has little margin.
+
+This result is from a native arm64 build. The released image is amd64, and bcrypt and database timing differ by arch, so the chosen delay must be re-measured on the released amd64 image on native amd64 hardware before the family is admitted; a release targeting amd64 may prefer 50 ms for margin. The amd64 race kit built from this source passes all ten in-image race self-tests under `linux/amd64` emulation (the latency toxic, per-container `set-latency`, the API-change audit and the timed database-through-proxy check), so the delay mechanism itself works on amd64, but the per-round app build cannot run under emulation: `rbw-build-app`'s cold-build check refuses the `/root/.cache` that Rosetta recreates on every emulated process, the same limitation this image's README records for the base self-test.
 
 ## Admission status
 
 This fixture is **not ready to be wired or admitted**, and no paid run should use it yet:
 
-- At zero delay a planted copy shows `double_spend` in about 57% of rounds, so ADM-05's 20 of 20 on `planted-01` has a probability near 1e-5.
-- A single race round that passes is not evidence of a fix. A "fix" that changes nothing passes the race check in about 43% of rounds, because a lost race on a planted copy grades `pass` (a unit test shows this with an app that writes before the second read). A fixed verdict needs many race rounds, as ADM-05's 20 repetitions give; a trial that grades a solver's fix from fewer rounds must not rely on one race round.
-- The delay study has to show 20 of 20 planted `double_spend` and 20 of 20 clean `pass` at the chosen delay, on the released amd64 race image and not only on an arm64 build, with the result committed as evidence.
+- At zero delay a planted copy shows `double_spend` in about half the rounds (9 of 20 in the [delay study](#delay-study), 17 of 30 in the earlier no-delay proof), so ADM-05's 20 of 20 on `planted-01` is far out of reach without a delay.
+- A single race round that passes is not evidence of a fix. A "fix" that changes nothing passes the race check in about half the no-delay rounds, because a lost race on a planted copy grades `pass` (a unit test shows this with an app that writes before the second read). A fixed verdict needs many race rounds, as ADM-05's 20 repetitions give; a trial that grades a solver's fix from fewer rounds must not rely on one race round.
+- The [delay study](#delay-study) shows 20 of 20 planted `double_spend` and 0 of 20 clean false positives at a 25 ms downstream latency toxic (and at 50, 100 and 200 ms), with the serial control passing throughout, on a native **arm64** race image. Before admission this must be re-measured on the released **amd64** image on native amd64 hardware, since the chosen delay depends on bcrypt and database timing and 25 ms has little margin over the flaky 0 ms cell.
 - The driver must accept `double_spend` and `backup_code_reused` first (see [Not in this package](#not-in-this-package)), and one round must then run through the staged kit and the driver (`stage-kit --fixture-package`, then the driver), not through `host/live-proof.sh`, which calls the fixture and Playwright directly.
 - The owner decision on overlap evidence above is still open.
 
@@ -131,7 +148,7 @@ This fixture is **not ready to be wired or admitted**, and no paid run should us
 
 ## Not in this package
 
-- The schema and driver change that accepts `double_spend` and `backup_code_reused` as assertion failure codes: both codes added to `AssertionFailureCode` in `packages/schema`, with the generated TypeScript and Python regenerated, and a driver test. Until then the driver's `parseFixtureOutcome` refuses every planted race outcome as an unknown assertion failure code. This must land before any delay study or kit check that runs through the driver.
-- The race kit image with a database delay, the delay study and the choice of delay.
+- The schema and driver change that accepts `double_spend` and `backup_code_reused` as assertion failure codes: both codes added to `AssertionFailureCode` in `packages/schema`, with the generated TypeScript and Python regenerated, and a driver test. Until then the driver's `parseFixtureOutcome` refuses every planted race outcome as an unknown assertion failure code. This must land before any kit check that runs through the driver; the delay study here calls the fixture and Playwright directly.
+- The race kit image itself (`kit/umami-race`), and the choice of delay for the released amd64 image. The arm64 [delay study](#delay-study) is in this package; its re-measurement on native amd64 is not.
 - The ast-grep rules and probe records for the RC-1 shape.
 - Wiring the family into the runners, the controller and admission, and the 11-copy profile without the two ADM-06 probes.

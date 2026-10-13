@@ -2,14 +2,16 @@
 # One local proof copy of the rc-1 fixture in a kit image: optionally plant the RC-1 line,
 # build, start, bake the template, then run ROUNDS rounds, each after a template reset and the
 # grants the driver restores after one. Runs as root inside the kit image, with this package
-# mounted read-only at /rc1 and a writable output directory at /out:
+# mounted read-only at /rc1 and a writable output directory at /out (the script refuses to start
+# if /out/live-<state> is not empty):
 #
 #   docker run --rm --cpus 4 --memory 6g \
 #     -v "<repo>/packages/umami-fixture-rc1:/rc1:ro" -v "<out>:/out" \
 #     <kit image> /rc1/host/live-proof.sh clean|planted ROUNDS
 #
 # Each round's report, observations and evidence land in /out/live-<state>/round-<n>/, and the
-# script prints one line per check and round. evidence/live-proof.json summarizes the runs of
+# script prints one line per check and round. A round that does not leave an observation for every
+# check the data file names stops the run with an error. evidence/live-proof.json summarizes the runs of
 # Oct 13, 2026. The planted line is the one the data file's target names.
 set -eu
 variant=$1
@@ -20,12 +22,17 @@ NODE=/opt/rbw/verifier/node/bin/node
 FIX=/opt/rbw/verifier/kit/umami-fixture-rc1
 OWNER='postgresql://umami_owner@localhost/umami?host=/run/rbw-pg'
 OUT=/out/live-$variant
+if [ -d "$OUT" ] && [ -n "$(ls -A "$OUT")" ]; then
+  echo "refusing: $OUT is not empty; an earlier run's round outputs would be read as this run's. Mount a fresh /out." >&2
+  exit 1
+fi
 mkdir -p "$OUT"
 
 echo "route.ts sha256: $(sha256sum "$ROUTE" | cut -d' ' -f1)"
 echo "guarded line count: $(grep -c 'where: { id: unusedCodes\[matchIndex\].id, used: false },' "$ROUTE")"
 mkdir -p "$FIX"
 for part in package.json playwright.config.ts src checks data; do cp -a "/rc1/$part" "$FIX/$part"; done
+CHECKS=$($NODE -e "console.log(require('$FIX/data/rc-1-backup-code-001.v1.json').checks.map(c=>c.check_id).join(' '))")
 
 if [ "$variant" = planted ]; then
   sed -i 's/where: { id: unusedCodes\[matchIndex\]\.id, used: false },/where: { id: unusedCodes[matchIndex].id },/' "$ROUTE"
@@ -67,7 +74,11 @@ await c.end();
     RBW_FIXTURE_BASE_URL=http://127.0.0.1:3000 RBW_FIXTURE_REPEAT_INDEX="$i" RBW_FIXTURE_OUTPUT_DIR="$dir" \
     RBW_FIXTURE_ADMIN_USERNAME=admin RBW_FIXTURE_ADMIN_PASSWORD=umami \
     $NODE /opt/rbw/verifier/node_modules/@playwright/test/cli.js test --config "$FIX/playwright.config.ts" --workers=1 --retries=0 > "$OUT/round-$i.log" 2>&1 || true
-  for obs in "$dir"/observations/*.json; do
+  for check in $CHECKS; do
+    [ -f "$dir/observations/$check.json" ] || { echo "round $i: no observation for $check (see $OUT/round-$i.log)" >&2; exit 1; }
+  done
+  for check in $CHECKS; do
+    obs="$dir/observations/$check.json"
     $NODE -e "const o=require('$obs'); let e=null; try { e=require('$dir/'+o.response_artifact_key) } catch {} ; console.log('round $i', o.check_id, o.observed, o.failure_code, e && e.attempts ? e.attempts.map(a=>a.status+(a.error_code?':'+a.error_code:'')+' '+a.sent_ms+'-'+a.settled_ms).join(' | ') : '', e && 'overlap_ms' in e ? 'overlap '+e.overlap_ms : '')"
   done
   i=$((i + 1))
