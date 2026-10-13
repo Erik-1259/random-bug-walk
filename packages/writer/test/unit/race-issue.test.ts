@@ -174,6 +174,23 @@ describe("the race issue checks", () => {
     expect(check({ actual_result: "Of the 2 requests, 2 of them were accepted and 0 were refused." }).numeric?.ok).toBe(true);
   });
 
+  it("count an outcome label with a noun, a bracket, a dash or a linking verb before its number", () => {
+    const missing = [{ field: "actual_result", reason: "missing_observed_vector", number: null }];
+    for (const actual of [
+      "Accepted requests: 2; refused requests: 0.",
+      "Accepted request count = 2, refused request count = 0.",
+      "Accepted (2), refused (0).",
+      "Accepted - 2, refused - 0.",
+      "The number accepted was 2 and the number refused was 0.",
+      "Accepted requests were 2 and refused requests were 0.",
+    ]) {
+      expect(check({ actual_result: actual }).numeric?.ok, actual).toBe(true);
+    }
+    expect(check({ actual_result: "Accepted requests: 1; refused requests: 1." }).numeric?.violations).toEqual(missing);
+    expect(check({ actual_result: "Accepted requests at 0 ms; refused requests at 1 ms." }).numeric?.violations).toEqual(missing);
+    expect(check({ actual_result: "Accepted by POST /api/2fa and refused by none." }).numeric?.violations).toEqual(missing);
+  });
+
   it("reject a number the observation does not hold, such as a computed total", () => {
     expect(check({ environment: "Locale en-US; 3 sign-ins in total." }).numeric?.violations).toEqual([{ field: "environment", reason: "unsupported_number", number: "3" }]);
   });

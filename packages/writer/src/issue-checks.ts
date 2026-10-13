@@ -58,14 +58,18 @@ function countRuns(text: string): bigint[] {
 }
 
 // A race count is a standalone number stated with its outcome: "2 were accepted", "1 refused",
-// "2 of them were accepted" or "accepted: 2". A digit run inside a path or word (`/api/2fa`), or
-// one followed by a unit or another number (`0 ms`, `1.5`), is never a count. After an outcome
-// and its `:` or `=`, the digit run's start is already bounded, so `accepted:2` is a count.
+// "2 of them were accepted", or an outcome label before the number: "accepted: 2",
+// "accepted requests: 2", "accepted (2)", "accepted - 2", "the number accepted was 2". A label may
+// hold up to three words between the outcome and its `:`, `=`, bracket, dash or linking verb, but
+// never a digit or other punctuation. A digit run inside a path or word (`/api/2fa`), or one
+// followed by a unit or another number (`0 ms`, `1.5`), is never a count. After a label's
+// separator, the digit run's start is already bounded, so `accepted:2` is a count.
 const COUNT = String.raw`(\d+)(?![\p{L}\p{N}_]|[.,:]\d)(?!\s*(?:ms|milliseconds?|seconds?|s|%)(?![\p{L}]))`;
 const STANDALONE = String.raw`(?<![\p{L}\p{N}_./:-])${COUNT}`;
 const OUTCOME = String.raw`(accept\p{L}*|refus\p{L}*|reject\p{L}*)`;
+const LABEL_SEPARATOR = String.raw`(?:\s*[:=(\-\u2013\u2014]|\s+(?:was|were|is|are))\s*`;
 const RACE_COUNT = new RegExp(
-  `${STANDALONE}\\s+(?:\\p{L}+\\s+){0,3}?${OUTCOME}(?![\\p{L}])|(?<![\\p{L}])${OUTCOME}\\s*[:=]\\s*${COUNT}`,
+  `${STANDALONE}\\s+(?:\\p{L}+\\s+){0,3}?${OUTCOME}(?![\\p{L}])|(?<![\\p{L}])${OUTCOME}(?:\\s+\\p{L}+){0,3}?${LABEL_SEPARATOR}${COUNT}`,
   "giu",
 );
 
