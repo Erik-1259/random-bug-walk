@@ -33,7 +33,7 @@ select = ["E", "F", "I", "B", "UP", "SIM", "BLE", "S", "RUF"]
 "**/tests/**" = ["S101"]
 
 [tool.pyright]
-include = ["python"]
+include = ["python", "docs/uc1-preregistration"]
 pythonVersion = "3.12"
 typeCheckingMode = "strict"
 
