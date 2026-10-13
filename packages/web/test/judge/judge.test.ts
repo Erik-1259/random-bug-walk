@@ -10,7 +10,8 @@ import type { PrivateStore } from "@rbw/publisher/private-store";
 import { encodeCanonical, parseRecord, sha256Hex } from "@rbw/schema";
 import type { ReserveRequest, Spend } from "@rbw/spend";
 import { loadJudgeConfig } from "../../src/config.ts";
-import { getStatus, postJudge, postSession, SESSION_COOKIE } from "../../src/judge/handlers.ts";
+import { REPLAY_UNAVAILABLE_TEXT } from "../../src/model.ts";
+import { getSession, getStatus, postJudge, postSession, SESSION_COOKIE } from "../../src/judge/handlers.ts";
 import type { JudgeServer } from "../../src/judge/handlers.ts";
 import { pgliteLedger } from "../../../../tools/controller/test/support/harness.ts";
 import { FakeClock } from "../../../../tools/local-runner/test/support/fakes.ts";
@@ -206,6 +207,21 @@ describe("the passcode session", () => {
     expect([...w.touched, ...rotated.touched]).toEqual([]);
   });
 
+  it("answers a session check with 200 for a valid cookie and 401 otherwise, before any call", async () => {
+    const w = await world();
+    const check = (cookie: string | null) => getSession(new Request("https://example.invalid/api/judge/session", { headers: cookie === null ? {} : { cookie } }), w.server);
+    const valid = check(await login(w));
+    expect(valid.status).toBe(200);
+    expect(await json(valid)).toEqual({ state: "ready" });
+    expect(valid.headers.get("set-cookie")).toBeNull();
+    for (const cookie of [null, `${SESSION_COOKIE}=synthetic-forged`]) {
+      const refused = check(cookie);
+      expect(refused.status).toBe(401);
+      expect(await json(refused)).toMatchObject({ state: "unauthorized" });
+    }
+    expect(w.touched).toEqual([]);
+  });
+
   it("puts the passcode in no response or log", async () => {
     const w = await world();
     const cookie = await login(w);
@@ -267,6 +283,32 @@ describe("the judge POST", () => {
     expect(w.reserves).toHaveLength(1);
   });
 
+  it("answers a repeated POST with one request ID with that replay's status, and writes, reserves and creates nothing more", async () => {
+    const w = await world();
+    const cookie = await login(w);
+    expect((await postJudge(post("/api/judge", { request_id: REQUEST }, cookie), w.server)).status).toBe(202);
+    w.events.length = 0;
+    const again = await postJudge(post("/api/judge", { request_id: REQUEST }, cookie), w.server);
+    expect(again.status).toBe(200);
+    expect(await json(again)).toMatchObject({ state: "starting", request_id: REQUEST, release_id: RELEASE_ID });
+    expect(w.events).toEqual([]);
+    expect(w.reserves).toHaveLength(1);
+    expect(w.sdk.creates).toHaveLength(1);
+  });
+
+  it("refuses a second start with another request ID as busy, with its text, while the first replay runs", async () => {
+    const w = await world();
+    const cookie = await login(w);
+    await postJudge(post("/api/judge", { request_id: REQUEST }, cookie), w.server);
+    w.events.length = 0;
+    const body = await json(await postJudge(post("/api/judge", { request_id: OTHER }, cookie), w.server));
+    expect(body).toEqual({ state: "unavailable", request_id: OTHER, reason: "busy", message: "Busy: another replay is running. Try again shortly." });
+    expect(w.events).toEqual(["ledger:acquireSlot"]);
+    expect(w.reserves).toHaveLength(1);
+    expect(w.sdk.creates).toHaveLength(1);
+    expect(await w.store.list(`judge/${judge.judgeIds(OTHER).root}/`)).toEqual([]);
+  });
+
   it("starts one of two POSTs with different request IDs; the other is busy and writes, reserves and creates nothing", async () => {
     const w = await world();
     const cookie = await login(w);
@@ -298,8 +340,11 @@ describe("the judge POST", () => {
     if (!pool.ok) throw new Error("synthetic: no pool");
     const available = pool.allocations.find((item) => item.allocation_key === "judge")?.available_microusd ?? 0n;
     await drain(w.spend, Number(available) - 600_000);
+    w.events.length = 0;
     const body = await json(await postJudge(post("/api/judge", { request_id: REQUEST }, await login(w)), w.server));
-    expect(body).toMatchObject({ state: "unavailable", reason: "budget" });
+    expect(body).toMatchObject({ state: "unavailable", reason: "budget", message: "Unavailable: the judge budget cannot cover a replay." });
+    expect(w.events).toEqual([]);
+    expect(w.touched).not.toContain("sandbox");
     expect(await slotHolder(w)).toBeNull();
     expect(w.sdk.creates).toEqual([]);
     expect(await w.store.list("judge/")).toEqual([]);
@@ -365,6 +410,53 @@ describe("the judge POST", () => {
     expect(pool.allocations.find((item) => item.allocation_key === "public")?.committed_microusd).toBe(0n);
   });
 
+  it("starts a replay when the public allocation is used up", async () => {
+    const w = await world();
+    await drain(w.spend, 50_000_000, "public");
+    const pool = await w.spend.poolStatus({ pool_key: "judge-demo" });
+    if (!pool.ok) throw new Error("synthetic: no pool");
+    expect(pool.allocations.find((item) => item.allocation_key === "public")?.available_microusd).toBe(0n);
+    const response = await postJudge(post("/api/judge", { request_id: REQUEST }, await login(w)), w.server);
+    expect(response.status).toBe(202);
+    expect(w.sdk.creates).toHaveLength(1);
+    expect(w.reserves.at(-1)).toMatchObject({ allocation_key: "judge" });
+  });
+
+  it("is unavailable for budget, with no ledger write, when the pool as a whole cannot cover the job though the judge allocation could", async () => {
+    // Possible only after a public operation settled over its envelope: the pool cap then binds first.
+    const w = await world();
+    const open = w.server.ledger;
+    w.server.ledger = async () => {
+      const ledger = await open();
+      return {
+        ...ledger,
+        spend: {
+          ...ledger.spend,
+          poolStatus: async (request) => {
+            const pool = await ledger.spend.poolStatus(request);
+            return pool.ok ? { ...pool, available_microusd: 1_000n } : pool;
+          },
+        },
+      };
+    };
+    const body = await json(await postJudge(post("/api/judge", { request_id: REQUEST }, await login(w)), w.server));
+    expect(body).toMatchObject({ state: "unavailable", reason: "budget" });
+    expect(w.events).toEqual([]);
+    expect(await slotHolder(w)).toBeNull();
+    expect(w.sdk.creates).toEqual([]);
+  });
+
+  it("answers unavailable, not a server error, when the ledger can't be reached for a start, and writes nothing", async () => {
+    const w = await world();
+    const cookie = await login(w);
+    w.server.ledger = () => Promise.reject(new Error("synthetic: the database is unreachable"));
+    const response = await postJudge(post("/api/judge", { request_id: REQUEST }, cookie), w.server);
+    expect(response.status).toBe(200);
+    expect(await json(response)).toMatchObject({ state: "unavailable", reason: "ledger" });
+    expect(await w.store.list("judge/")).toEqual([]);
+    expect(w.sdk.creates).toEqual([]);
+  });
+
   it("records a failed create as uncertain, shows needs_reconciliation and does not retry", async () => {
     const w = await world();
     w.sdk.fail = true;
@@ -425,8 +517,8 @@ describe("the judge POST", () => {
   });
 });
 
-/** Reserves `amount` on the judge allocation for another root, leaving less for a replay. */
-async function drain(spend: Spend, amount: number): Promise<void> {
+/** Reserves `amount` on a judge-demo allocation for another root, leaving less for a replay. */
+async function drain(spend: Spend, amount: number, allocation = "judge"): Promise<void> {
   const op = sha256Hex(Buffer.from(`synthetic-drain-${String(amount)}-${String(Math.random())}`));
   const result = await spend.reserve({
     operation_id: op,
@@ -445,7 +537,7 @@ async function drain(spend: Spend, amount: number): Promise<void> {
     provider: "synthetic",
     provider_replay_key: null,
     pool_key: "judge-demo",
-    allocation_key: "judge",
+    allocation_key: allocation,
     runtime_profile_sha256: "3".repeat(64),
     rate_sheet_sha256: "4".repeat(64),
     envelope: [{ service: "synthetic", unit: "allowance", limit: amount, enforced_by: "fixed_allowance", price: { microusd: 1, per_units: 1 } }],
@@ -558,7 +650,7 @@ describe("the hold, through the POST", () => {
       await put(w, `judge/${root}/progress.json`, judge.progressBytes({ ...judge.newProgress(root, Date.parse(created), Date.parse(created) + 1_980_000), state: "not_reproduced", known_condition: false }));
     }
     const held = await json(await postJudge(post("/api/judge", { request_id: REQUEST }, await login(w)), w.server));
-    expect(held).toMatchObject({ state: "unavailable", reason: "held", message: "Held for inspection." });
+    expect(held).toMatchObject({ state: "unavailable", reason: "held", message: REPLAY_UNAVAILABLE_TEXT.held });
     expect(await slotHolder(w)).toBeNull();
     const cleared = await world({ RBW_JUDGE_HOLD_CLEARED_AT: "2026-12-02T12:00:00Z" });
     cleared.server.store = w.server.store;

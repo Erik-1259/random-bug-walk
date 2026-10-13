@@ -102,6 +102,8 @@ The operator then follows `@rbw/spend`'s procedures:
 
 A ledger call that fails (a dropped connection) is handled the same way: the job stops with `ledger_unavailable` and the slot is not released.
 
+Only the first connect to the database is retried, because a suspended Neon compute can refuse it while it wakes: `databaseLedger` (`src/database-ledger.ts`) makes at most three attempts, waiting 1 s and then 2 s, each with a fresh client. It retries only a transient failure: a Node network code (`ECONNREFUSED`, `ECONNRESET`, `ETIMEDOUT`, `EPIPE`, `EAI_AGAIN`, `EHOSTUNREACH`, `ENETUNREACH`), a server that is shutting down or starting up (SQLSTATE `57P01`, `57P02`, `57P03`), a connection exception (`08000`, `08001`, `08003`, `08006`), or pg's code-less "Connection terminated unexpectedly" or "timeout expired". Each attempt has a 10 s connect timeout, so a connect that hangs is retried too, and the three attempts end within about 33 s. An authentication error or any other error fails at once. No ledger query or write is ever retried. The error names only `DATABASE_URL` and the last driver code. The judge web routes open the ledger through the same function. A controller image built before this change keeps its single connect.
+
 ### The per-copy envelope
 
 `@rbw/envelope` prices whole jobs (a controller sandbox plus its copies). This controller runs on the conductor's host and reserves each copy on its own, so `src/envelope.ts` builds one copy's envelope from the same rate sheet and fixed limits. It passes the result to `toReserveRequest`.

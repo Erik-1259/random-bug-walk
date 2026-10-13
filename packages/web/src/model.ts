@@ -141,6 +141,27 @@ export const REPLAY_STATE_TEXT: Record<ReplayStateName, string> = {
   unknown: "No replay with this request",
 };
 
+/** What a terminal or uncertain state means for the judge, shown under the status line. */
+export const REPLAY_STATE_HELP: Partial<Record<ReplayStateName, string>> = {
+  not_reproduced: "The three fresh copies did not show the released result. After two such replays in a row, replays are held until the operator has inspected the case.",
+  incomplete: "The replay stopped before it had a result for every copy, so it gives no verdict either way. You can start another replay.",
+  needs_reconciliation: "The operator checks the spend ledger to confirm how this replay ended. Please try again later.",
+  unknown: "The server has no replay for the request this browser remembers. You can start a new replay.",
+};
+
+/** Why the routes answer unavailable; each message is the page's explanation. */
+export const REPLAY_UNAVAILABLE_TEXT = {
+  busy: "Busy: another replay is running. Try again shortly.",
+  budget: "Unavailable: the judge budget cannot cover a replay.",
+  error: "Unavailable: the replay could not start. Try again shortly.",
+  held: "Held for inspection: the last two replays did not reproduce the released result, so the operator checks the case before another replay starts.",
+  release: "Unavailable: this site's release is not the configured release.",
+  token: "Unavailable: the site could not get a fresh access token for a replay. Try again shortly.",
+  ledger: "Unavailable: the spend ledger can't be reached right now. Try again shortly.",
+} as const;
+
+export type UnavailableReason = keyof typeof REPLAY_UNAVAILABLE_TEXT;
+
 export interface ReplayState {
   state: ReplayStateName;
   reason: string;

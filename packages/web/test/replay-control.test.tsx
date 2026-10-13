@@ -85,7 +85,7 @@ describe("the replay control's status poll", () => {
 
 interface Element {
   type: unknown;
-  props: { status?: unknown; onClick?: () => void; children?: unknown };
+  props: { status?: unknown; state?: string; disabled?: boolean; onClick?: () => void; children?: unknown };
 }
 
 function find(node: unknown, match: (element: Element) => boolean): Element | null {
@@ -126,5 +126,108 @@ describe("the replay control's start", () => {
     button?.props.onClick?.();
     await vi.advanceTimersByTimeAsync(0);
     expect((rendered as Element).props.status).toBeNull();
+  });
+});
+
+interface Call {
+  url: string;
+  method: string;
+}
+
+/** A window with the given stored request ID and fake-timer timers. */
+function stubWindow(stored: Map<string, string>): void {
+  vi.stubGlobal("window", {
+    localStorage: { getItem: (key: string) => stored.get(key) ?? null, setItem: (key: string, value: string) => stored.set(key, value), removeItem: (key: string) => stored.delete(key) },
+    setTimeout: (fn: () => void, ms: number) => setTimeout(fn, ms),
+    clearTimeout: (timer: ReturnType<typeof setTimeout>) => {
+      clearTimeout(timer);
+    },
+  });
+}
+
+/** fetch answering by method and path; a missing answer stays pending, as a request in flight. */
+function stubFetch(answers: Record<string, { status: number; body: unknown }>): Call[] {
+  const calls: Call[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn((url: string, init?: { method?: string }) => {
+      const method = init?.method ?? "GET";
+      calls.push({ url, method });
+      const answer = answers[`${method} ${url.split("?")[0] ?? url}`];
+      if (answer === undefined) return new Promise(() => undefined);
+      return Promise.resolve({ ok: answer.status >= 200 && answer.status < 300, status: answer.status, json: () => Promise.resolve(answer.body) });
+    }),
+  );
+  return calls;
+}
+
+
+function startButton(rendered: unknown): Element | null {
+  return find(rendered, (element) => element.type === "button" && element.props.onClick !== undefined);
+}
+
+function passcodeForm(rendered: unknown): Element | null {
+  return find(rendered, (element) => element.type === "form");
+}
+
+describe("the replay control's session after a reload", () => {
+  it("finds a still valid session cookie with no stored replay and enables the start button", async () => {
+    vi.useFakeTimers();
+    stubWindow(new Map());
+    const calls = stubFetch({ "GET /api/judge/session": { status: 200, body: { state: "ready" } } });
+    let rendered: unknown = null;
+    hooks.mount(() => (rendered = ReplayControl({ release: null, initial: { state: "ready", reason: "" } })));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(calls).toEqual([{ url: "/api/judge/session", method: "GET" }]);
+    expect(passcodeForm(rendered)).toBeNull();
+    expect(startButton(rendered)?.props.disabled).toBe(false);
+  });
+
+  it("keeps the passcode form and the disabled button when the session check answers unauthorized", async () => {
+    vi.useFakeTimers();
+    stubWindow(new Map());
+    stubFetch({ "GET /api/judge/session": { status: 401, body: { state: "unauthorized", message: "Enter the judge passcode." } } });
+    let rendered: unknown = null;
+    hooks.mount(() => (rendered = ReplayControl({ release: null, initial: { state: "ready", reason: "" } })));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(passcodeForm(rendered)).not.toBeNull();
+    expect(startButton(rendered)?.props.disabled).toBe(true);
+  });
+
+  it("makes no session check when the control is disabled", async () => {
+    vi.useFakeTimers();
+    stubWindow(new Map());
+    const calls = stubFetch({});
+    hooks.mount(() => ReplayControl({ release: null, initial: { state: "disabled", reason: "" } }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(calls).toEqual([]);
+  });
+
+  it("stays signed in when the stored replay's status is unavailable, which only a valid session gets", async () => {
+    vi.useFakeTimers();
+    stubWindow(new Map([["rbw-judge-request-id", "00000000-0000-4000-8000-00000000b301"]]));
+    stubFetch({ "GET /api/judge/status": { status: 200, body: { state: "unavailable", reason: "ledger", message: "Unavailable: the spend ledger can't be reached right now. Try again shortly." } } });
+    let rendered: unknown = null;
+    hooks.mount(() => (rendered = ReplayControl({ release: null, initial: { state: "ready", reason: "" } })));
+    await vi.advanceTimersByTimeAsync(0);
+    expect((rendered as Element).props.state).toBe("unavailable");
+    expect(passcodeForm(rendered)).toBeNull();
+    expect(startButton(rendered)?.props.disabled).toBe(false);
+  });
+});
+
+describe("the replay control's duplicate clicks", () => {
+  it("disables the start button while a start is in flight", async () => {
+    vi.useFakeTimers();
+    stubWindow(new Map());
+    // The POST never answers here, so the start stays in flight.
+    const calls = stubFetch({ "GET /api/judge/session": { status: 200, body: { state: "ready" } } });
+    let rendered: unknown = null;
+    hooks.mount(() => (rendered = ReplayControl({ release: null, initial: { state: "ready", reason: "" } })));
+    await vi.advanceTimersByTimeAsync(0);
+    startButton(rendered)?.props.onClick?.();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(calls.filter((call) => call.method === "POST")).toHaveLength(1);
+    expect(startButton(rendered)?.props.disabled).toBe(true);
   });
 });
