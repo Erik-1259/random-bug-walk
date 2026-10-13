@@ -1341,6 +1341,18 @@
       "rule": "assertion failure code"
     },
     {
+      "name": "assertion-failure-code-double-spend",
+      "type": "AssertionFailureCode",
+      "expect": "valid",
+      "rule": "assertion failure code"
+    },
+    {
+      "name": "assertion-failure-code-backup-code-reused",
+      "type": "AssertionFailureCode",
+      "expect": "valid",
+      "rule": "assertion failure code"
+    },
+    {
       "name": "assertion-failure-code-unknown",
       "type": "AssertionFailureCode",
       "expect": "invalid",
@@ -1939,6 +1951,37 @@
         "request": "job-request-for-expected-trials-admission-missing-trial"
       },
       "error": "trials:trial_list"
+    },
+    {
+      "name": "job-request-for-expected-trials-admission-without-probes",
+      "type": "JobRequest",
+      "expect": "valid",
+      "rule": "request for expected-trials-admission-without-probes"
+    },
+    {
+      "name": "expected-trials-admission-without-probes",
+      "type": "ExpectedTrials",
+      "expect": "valid",
+      "rule": "admission without the ADM-06 probes, for a family that records them as not applicable",
+      "context": {
+        "request": "job-request-for-expected-trials-admission-without-probes"
+      }
+    },
+    {
+      "name": "job-request-for-expected-trials-admission-without-probes-wrong-repeat",
+      "type": "JobRequest",
+      "expect": "valid",
+      "rule": "request for expected-trials-admission-without-probes-wrong-repeat"
+    },
+    {
+      "name": "expected-trials-admission-without-probes-wrong-repeat",
+      "type": "ExpectedTrials",
+      "expect": "invalid",
+      "rule": "repeat count follows the admission profile without probes",
+      "context": {
+        "request": "job-request-for-expected-trials-admission-without-probes-wrong-repeat"
+      },
+      "error": "trials:repeat_count"
     },
     {
       "name": "job-request-for-expected-trials-admission-reordered",

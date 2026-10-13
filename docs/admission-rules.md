@@ -4,6 +4,8 @@ These rules define how the first admission profile admits a candidate. They desc
 
 The first profile admits a candidate using **13 fresh app copies**: 1 clean, 5 fixed, 5 planted, 1 partial-fix and 1 stub-fix. Kit setup checks and the preliminary observation are separate operations and count as no admission evidence.
 
+A family may record ADM-06 as not applicable, with its reason, when a partial or stub fix of its bug has no natural form. The race family (shape RC-1.atomic-backup-code) does: its fix is one guard, present or absent. Such a family is admitted on **11 fresh app copies**, the same profile without the partial-fix and stub-fix copies; ADM-02 to ADM-05 and ADM-08 apply to those 11 copies unchanged, and the admission decision records ADM-06 as `not_applicable`. The family's probe set carries the record, and the runner builds the 11-copy profile only from a probe set that has it, so the time-zone family keeps all 13 copies.
+
 ## Stability
 
 Rule IDs never change meaning. A retired rule keeps its ID and is marked `retired`, and its number is never reused. A new rule takes the next unused number.
@@ -36,6 +38,7 @@ The pull request that adds an implementation and its tests changes the rule's st
 ## Coverage notes
 
 - ADM-01: the projection audit (`packages/projection`) checks that a copy holds the pinned source, minus approved whole-file exclusions, plus one source-only declared change, with a neutral single-commit history and no build output or answer-bearing artifacts. The local runner (`tools/local-runner`) runs the audit on every copy before the copy is built, in every job, including each of the 13 admission copies; the controller runs copies through the same path. A refused or unavailable audit stops the copy. A clean or fixed copy has no declared change, so its audit is recorded as `not_applicable`. Each copy runs from the kit image by its content digest. The admission importer (`packages/admission`) does not decide ADM-01 and lists it as not evaluated.
+- ADM-06: for a family that records it as not applicable, the probe set's `adm_06` entry holds the reason, the admission job's expected trials follow the 11-copy profile, and `packages/admission` reports ADM-06 as `not_applicable` with no trials. A 13-copy job with a missing or broken probe stays `incomplete`.
 - ADM-10: no solve is reported, because the first profile records calibration as `not_requested`.
 
 ## General rules

@@ -49,7 +49,7 @@ In `RevenuePage`, counting calls in nested callbacks too, the before side must h
 
 `probes.json` also records each probe's expected outcome vector for the added checks. It records that a build error, crash, timeout, missing result or setup failure on a probe copy makes the run invalid; such a run is never an effective negative probe.
 
-A shape may record ADM-06 (the partial and stub probes) as not applicable with an `adm_06` entry: `{"reason": …, "status": "not_applicable"}`. Its probe set must then hold the mutation probe alone, and the confirmed record carries the same entry. A probe set without `adm_06` is unchanged. The admission profile ([ADM-06](../../docs/admission-rules.md)) and the local runner's code-state derivation still require the partial and stub probes, so a probe set with this entry cannot yet be selected for a run; making them accept it is separate, planned work.
+A shape may record ADM-06 (the partial and stub probes) as not applicable with an `adm_06` entry: `{"reason": …, "status": "not_applicable"}`. Its probe set must then hold the mutation probe alone, and the confirmed record carries the same entry. A probe set without `adm_06` is unchanged. For such a probe set the local runner derives only the clean, planted and fixed states and builds the admission job from the 11-trial profile without `partial-01` and `stub-01` (`ADMISSION_WITHOUT_PROBES_PROFILE` in `@rbw/schema`); `@rbw/admission` then records ADM-06 as `not_applicable`. A probe set without the entry still needs both probes, and its runs keep all 13 copies.
 
 ## RC-1.atomic-backup-code
 
@@ -64,7 +64,7 @@ The planted file hashes to `30426f04…66fb`. Between the `findMany` that reads 
 
 - `rc-1.atomic-backup-code` matches the `where` object `{ id: unusedCodes[matchIndex].id, used: false }` passed to `prisma.client.twoFactorBackupCode.updateMany` inside `POST`. Its fix, `{ id: $ID }`, drops the guard. `rc-1.atomic-backup-code.planted` matches the guardless object in the same place.
 - `rc-1.atomic-backup-code.source` anchors the upstream fix, commit `3e165a8c6fea303250e626dc952a396e40887c71` ("fix(2FA): backup code double-use race condition") with its only parent `b4bb9cc727cd0ec05dc233e3e1f506f2e3633e34`. It finds `prisma.client.twoFactorBackupCode.update(…)` before the fix and `.updateMany(…)` after it. `src/rc1.ts` pins both blobs.
-- `probes.json` holds the mutation alone. Its one check, `rc1.backup-code-single-use`, is expected to fail on the planted copy with the reason `double_spend`. ADM-06 is recorded as not applicable, with the reason.
+- `probes.json` holds the mutation alone. It names the race fixture's two checks (`packages/umami-fixture-rc1`): the serial control `rc1.backup-code-serial-reuse`, expected to pass on the planted copy, and the race `rc1.backup-code-concurrent-double-spend`, expected to fail there with the reason `double_spend`. The local runner refuses a run whose fixture vector differs from this one. ADM-06 is recorded as not applicable, with the reason.
 
 The label is `partial_reversion`, tier `A`: the source fix and the target are the same handler, through the same Prisma API, and the mutation reverts only the fix's `used: false` guard. It keeps the fix's `updateMany` and its `consumed.count === 0` branch, which the planted code can no longer reach. That dead branch is visible to anyone reading the planted file.
 

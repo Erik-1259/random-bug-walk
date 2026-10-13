@@ -103,17 +103,19 @@ A trial's added-check verdict combines its observations: any `reject`, else any 
 
 | Rule | Reads | Decision |
 |---|---|---|
-| ADM-02 | all 13 trials | `invalid` when an expected original test or added check did not execute (absent, skipped or `not_run`, codes `import:test_missing`, `import:test_skipped`, `import:check_missing` and `import:outcome_not_run`), an observation is `setup_fail`, or `results/` holds an unexpected trial; otherwise, for any other trial that fails stages 1–4 or that the driver failed (a missing result included), that trial's status; otherwise `pass` |
+| ADM-02 | every expected trial (13, or 11 without the probes) | `invalid` when an expected original test or added check did not execute (absent, skipped or `not_run`, codes `import:test_missing`, `import:test_skipped`, `import:check_missing` and `import:outcome_not_run`), an observation is `setup_fail`, or `results/` holds an unexpected trial; otherwise, for any other trial that fails stages 1–4 or that the driver failed (a missing result included), that trial's status; otherwise `pass` |
 | ADM-03 | added checks of `fixed-01`…`fixed-05`; original suite of `clean-01` and the fixed copies | `reject` on a valid added-check or original-test failure; otherwise `invalid` for a fixed copy whose added check is missing, skipped or `not_run`, or the status of any other broken trial; otherwise `pass` |
 | ADM-04 | added checks of `planted-01`…`planted-05` | `reject` on a valid mismatch (unexpected pass, failing control); otherwise the status of a broken trial (an unrelated code or setup failure is `invalid`); otherwise `pass` |
 | ADM-05 | added checks of `fixed-01` and `planted-01`, all 20 repetitions | `reject` on one valid inconsistent repetition; `incomplete` for a missing repetition |
-| ADM-06 | added checks of `partial-01` and `stub-01` | `reject` on a valid mismatch with the probe's own vector; a probe trial that is `invalid` or `incomplete` is a broken required probe and leaves the rule `incomplete` |
+| ADM-06 | added checks of `partial-01` and `stub-01` | `reject` on a valid mismatch with the probe's own vector; a probe trial that is `invalid` or `incomplete` is a broken required probe and leaves the rule `incomplete`; `not_applicable`, with no trials, when the expected trials hold neither probe |
 
 A trial counts as broken for a rule when it is not `complete` and the rule reads its added checks, or it stopped before the outcomes stage. So a setup failure in `clean-01`'s added checks does not affect ADM-03, which reads only its original suite.
 
 The trial's own status in the evidence does not change: a trial with an absent or skipped test stays `incomplete` there, and ADM-02 and ADM-03 report it as `invalid`, with basis `execution`. ADM-04 and ADM-05 keep the trial's status, and ADM-06 stays `incomplete` for any broken probe.
 
-`outcome_verdict`: any `reject` among ADM-02 to ADM-06 gives `reject` (a valid rejection is conclusive); otherwise any `invalid` gives `invalid`; otherwise any `incomplete` gives `incomplete`; otherwise `pass`. The ADM-08 classification is reported next to it and does not enter it. ADM-01, ADM-07 and ADM-09 are decided elsewhere (the projection audit in `@rbw/projection`, which the local runner runs on every copy; the writer's and searcher's checks with the release step's approval check; and the release step, `tools/release`), and ADM-10 is planned; all four are listed in `not_evaluated_here`.
+A family whose probe set records ADM-06 as not applicable (the race family) runs the 11-trial admission profile of `@rbw/schema` (`ADMISSION_WITHOUT_PROBES_PROFILE`): no `partial-01` or `stub-01`. ADM-06 is then `not_applicable`, and the evidence lists the 11 trials. The schema's `ExpectedTrials` rules accept only the full profile or this one, so a 13-trial job whose probe results are missing still leaves ADM-06 `incomplete`.
+
+`outcome_verdict`: any `reject` among ADM-02 to ADM-06 gives `reject` (a valid rejection is conclusive); otherwise any `invalid` gives `invalid`; otherwise any `incomplete` gives `incomplete`; otherwise `pass`; a `not_applicable` rule decides nothing. The ADM-08 classification is reported next to it and does not enter it. ADM-01, ADM-07 and ADM-09 are decided elsewhere (the projection audit in `@rbw/projection`, which the local runner runs on every copy; the writer's and searcher's checks with the release step's approval check; and the release step, `tools/release`), and ADM-10 is planned; all four are listed in `not_evaluated_here`.
 
 For other job kinds, `decisions`, `comparison` and `outcome_verdict` are `null`.
 
@@ -123,7 +125,7 @@ The cells are computed whenever the manifest has `clean-01`, `planted-01` and `f
 
 The comparison, for admission jobs, first match wins:
 
-1. any of the 13 trials `invalid` → `invalid`; otherwise any `incomplete` → `incomplete`;
+1. any expected trial `invalid` → `invalid`; otherwise any `incomplete` → `incomplete`;
 2. any original-test failure, or added checks not matching, on a clean or fixed copy → `not_demonstrated`;
 3. any original-test failure on any planted copy → `caught_by_original_suite`, even when `planted-01` was missed;
 4. any planted or probe copy not matching its declared vector, or any original-test failure on a probe copy → `not_demonstrated`;
@@ -155,4 +157,4 @@ pnpm --filter @rbw/admission test
 RBW_ADMISSION_RECORDS_DIR=<dir> pnpm --filter @rbw/admission test
 ```
 
-`test/support/record-set.ts` writes synthetic record sets (13-trial admission, `kit_check` and `judge_verify`) from `buildJobRequest` and `buildExpectedTrials`, and each test case is a mutator over that baseline. `test/real-records.test.ts` imports the directory in `RBW_ADMISSION_RECORDS_DIR` and prints its decisions; it is skipped when the variable is unset and asserts no particular verdict.
+`test/support/record-set.ts` writes synthetic record sets (13-trial admission, 11-trial race-family admission, `kit_check` and `judge_verify`) from `buildJobRequest` and `buildExpectedTrials`, and each test case is a mutator over that baseline. `test/real-records.test.ts` imports the directory in `RBW_ADMISSION_RECORDS_DIR` and prints its decisions; it is skipped when the variable is unset and asserts no particular verdict.

@@ -59,7 +59,7 @@ Grading, in `src/classify.ts`:
 
 A failed sign-in is `auth_failed`; a sign-in that returns a full session instead of a two-factor challenge means the baked state is missing and is `seed_failed`.
 
-`double_spend` and `backup_code_reused` are new assertion failure codes. The shared schema's `AssertionFailureCode` does not list them yet, and the driver refuses an outcome with a code it does not know; see [Not in this package](#not-in-this-package).
+`double_spend` and `backup_code_reused` are assertion failure codes of the shared schema's `AssertionFailureCode`, so the driver accepts an outcome file with either; a driver test parses the outcome this package's own writer produces for each.
 
 ## Overlap evidence
 
@@ -120,7 +120,7 @@ This fixture is **not ready to be wired or admitted**, and no paid run should us
 - At zero delay a planted copy shows `double_spend` in about 57% of rounds, so ADM-05's 20 of 20 on `planted-01` has a probability near 1e-5.
 - A single race round that passes is not evidence of a fix. A "fix" that changes nothing passes the race check in about 43% of rounds, because a lost race on a planted copy grades `pass` (a unit test shows this with an app that writes before the second read). A fixed verdict needs many race rounds, as ADM-05's 20 repetitions give; a trial that grades a solver's fix from fewer rounds must not rely on one race round.
 - The delay study has to show 20 of 20 planted `double_spend` and 20 of 20 clean `pass` at the chosen delay, on the released amd64 race image and not only on an arm64 build, with the result committed as evidence.
-- The driver must accept `double_spend` and `backup_code_reused` first (see [Not in this package](#not-in-this-package)), and one round must then run through the staged kit and the driver (`stage-kit --fixture-package`, then the driver), not through `host/live-proof.sh`, which calls the fixture and Playwright directly.
+- The driver accepts `double_spend` and `backup_code_reused`. One round must still run through the staged kit and the driver (`stage-kit --fixture-package`, then the driver), not through `host/live-proof.sh`, which calls the fixture and Playwright directly.
 - The owner decision on overlap evidence above is still open.
 
 ## Tests
@@ -131,7 +131,6 @@ This fixture is **not ready to be wired or admitted**, and no paid run should us
 
 ## Not in this package
 
-- The schema and driver change that accepts `double_spend` and `backup_code_reused` as assertion failure codes: both codes added to `AssertionFailureCode` in `packages/schema`, with the generated TypeScript and Python regenerated, and a driver test. Until then the driver's `parseFixtureOutcome` refuses every planted race outcome as an unknown assertion failure code. This must land before any delay study or kit check that runs through the driver.
 - The race kit image with a database delay, the delay study and the choice of delay.
 - The ast-grep rules and probe records for the RC-1 shape.
-- Wiring the family into the runners, the controller and admission, and the 11-copy profile without the two ADM-06 probes.
+- Wiring the family into the runners, the controller and admission, with the 11-copy profile without the two ADM-06 probes: `--family race` in `tools/local-runner` and `tools/controller` (see the local runner's README, Bug families). The candidate attempt still refuses the race family, because the issue writer's `ObservedSymptom` holds time-zone fields only.

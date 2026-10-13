@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Final, cast
+from typing import Final, Literal, cast
 
 from rbw_schema.canonical import CanonicalDigest, canonical_digest
 from rbw_schema.generated import CodeState, JobKind, OperationIdentity
@@ -53,6 +53,38 @@ TRIAL_PROFILES: Final[Mapping[JobKind, TrialProfile]] = {
         original_suite=True,
     ),
 }
+
+
+# The admission profile of a family that records ADM-06 (the partial and stub probes) as not
+# applicable: the admission trials without partial-01 and stub-01, 11 copies instead of 13. Only
+# the trusted side chooses it, from the family's probe set; an admission manifest may follow either
+# admission profile, and the admission decision then marks ADM-06 not applicable.
+ADMISSION_WITHOUT_PROBES_PROFILE: Final[TrialProfile] = TrialProfile(
+    tuple(
+        trial
+        for trial in TRIAL_PROFILES["admission"].trials
+        if trial.code_state not in ("partial", "stub")
+    ),
+    original_suite=True,
+)
+
+# Whether ADM-06's partial and stub probes are required, or recorded as not applicable.
+Adm06Applicability = Literal["required", "not_applicable"]
+
+
+def trial_profile(kind: JobKind, adm06: Adm06Applicability = "required") -> TrialProfile:
+    """The trial profile of a job kind; only an admission job has the ADM-06 choice."""
+    if kind == "admission" and adm06 == "not_applicable":
+        return ADMISSION_WITHOUT_PROBES_PROFILE
+    return TRIAL_PROFILES[kind]
+
+
+def allowed_trial_profiles(kind: JobKind) -> tuple[TrialProfile, ...]:
+    """Every profile a manifest of the kind may follow: both admission profiles, or the kind's
+    one profile."""
+    if kind == "admission":
+        return (TRIAL_PROFILES["admission"], ADMISSION_WITHOUT_PROBES_PROFILE)
+    return (TRIAL_PROFILES[kind],)
 
 
 def job_operation_identity(fields: Mapping[str, object]) -> OperationIdentity:

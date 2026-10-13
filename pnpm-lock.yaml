@@ -270,6 +270,9 @@ importers:
       '@rbw/umami-fixture':
         specifier: workspace:*
         version: link:../umami-fixture
+      '@rbw/umami-fixture-rc1':
+        specifier: workspace:*
+        version: link:../umami-fixture-rc1
       '@types/node':
         specifier: 24.19.1
         version: 24.19.1
@@ -476,6 +479,9 @@ importers:
       '@rbw/umami-fixture':
         specifier: workspace:*
         version: link:../../packages/umami-fixture
+      '@rbw/umami-fixture-rc1':
+        specifier: workspace:*
+        version: link:../../packages/umami-fixture-rc1
       '@rbw/writer':
         specifier: workspace:*
         version: link:../../packages/writer

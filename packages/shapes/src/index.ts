@@ -3,12 +3,14 @@ export { ProbeDataError, checkProbes, loadProbeSet } from "./probes.ts";
 export type { Adm06NotApplicable, ExpectedCheck, ProbeData, ProbeEntry, ProbeOutcome, ProbeRecord, ProbeSet } from "./probes.ts";
 export {
   RC1_CHECK_ID,
+  RC1_CHECK_IDS,
   RC1_DOUBLE_SPEND_REASON,
   RC1_FIDELITY,
   RC1_FIXED_RULE_ID,
   RC1_PLANTED_RULE_ID,
   RC1_PROBE_DIR,
   RC1_RULE_FILE,
+  RC1_SERIAL_CHECK_ID,
   RC1_SHAPE_ID,
   RC1_SOURCE,
   RC1_SOURCE_RULE_FILE,

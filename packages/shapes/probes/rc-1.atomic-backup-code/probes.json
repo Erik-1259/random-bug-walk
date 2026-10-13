@@ -3,7 +3,7 @@
     "reason": "Owner decision (Oct 13, 2026): this race family is admitted on its clean, fixed and planted copies only (ADM-02 to ADM-05). A partial or stub fix of a lost-update race on one at-most-once check has no meaningful in-between form: any change that keeps two concurrent requests from both spending the code is a full fix, so partial and stub probes would be artificial. ADM-06 is recorded as not applicable for this family.",
     "status": "not_applicable"
   },
-  "checks": ["rc1.backup-code-single-use"],
+  "checks": ["rc1.backup-code-serial-reuse", "rc1.backup-code-concurrent-double-spend"],
   "clean_sha256": "3e766a0ba16e2547c234442176c04a0f2fd096d033a7079d21938dd9796acb87",
   "fixed_reference": {
     "base_sha256": "30426f040a2c4ea1730827644b8947feed39dc8f2487fec1372139f5be9d66fb",
@@ -22,7 +22,8 @@
       "base_sha256": "3e766a0ba16e2547c234442176c04a0f2fd096d033a7079d21938dd9796acb87",
       "description": "Clean to planted: line 97 drops used: false from the backup-code updateMany, so two concurrent requests can both spend one code.",
       "expected": {
-        "rc1.backup-code-single-use": { "outcome": "assertion_fail", "reason": "double_spend" }
+        "rc1.backup-code-concurrent-double-spend": { "outcome": "assertion_fail", "reason": "double_spend" },
+        "rc1.backup-code-serial-reuse": { "outcome": "pass" }
       },
       "id": "mutation",
       "patch": "mutation.patch",

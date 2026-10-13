@@ -265,7 +265,7 @@ export type TrialStatus = (typeof TRIAL_STATUS_VALUES)[number];
 export const TRIAL_REASON_VALUES = ["scope_violation", "build_failed", "startup_failed", "auth_failed", "seed_failed", "timeout", "artifact_missing", "artifact_hash_mismatch", "test_missing", "test_skipped", "unrelated_failure", "provider_uncertain", "limit_exceeded"] as const;
 export type TrialReason = (typeof TRIAL_REASON_VALUES)[number];
 
-export const ASSERTION_FAILURE_CODE_VALUES = ["local_day_counts_mismatch", "bucket_labels_mismatch"] as const;
+export const ASSERTION_FAILURE_CODE_VALUES = ["local_day_counts_mismatch", "bucket_labels_mismatch", "double_spend", "backup_code_reused"] as const;
 export type AssertionFailureCode = (typeof ASSERTION_FAILURE_CODE_VALUES)[number];
 
 export type CheckId = string;

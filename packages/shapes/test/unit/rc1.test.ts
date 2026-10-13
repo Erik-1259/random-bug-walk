@@ -8,11 +8,13 @@ import { afterAll, describe, expect, it } from "vitest";
 import { ProbeDataError, checkProbes, loadProbeSet } from "../../src/probes.ts";
 import {
   RC1_CHECK_ID,
+  RC1_CHECK_IDS,
   RC1_DOUBLE_SPEND_REASON,
   RC1_FIXED_RULE_ID,
   RC1_PLANTED_RULE_ID,
   RC1_PROBE_DIR,
   RC1_RULE_FILE,
+  RC1_SERIAL_CHECK_ID,
   RC1_SHAPE_ID,
   RC1_SOURCE_RULE_FILE,
   RC1_SOURCE_RULE_ID,
@@ -132,9 +134,11 @@ describe("committed probe data for RC-1.atomic-backup-code", () => {
     expect(set.data.adm_06?.reason).toMatch(/not applicable/);
   });
 
-  it("expects the single-use check to fail on the planted copy with a double spend", () => {
-    expect(set.data.checks).toEqual([RC1_CHECK_ID]);
+  it("names the race fixture's two checks: the serial control passes and the race fails with a double spend on the planted copy", () => {
+    expect(set.data.checks).toEqual([...RC1_CHECK_IDS]);
+    expect(RC1_CHECK_IDS).toEqual([RC1_SERIAL_CHECK_ID, RC1_CHECK_ID]);
     expect(set.data.probes[0]?.expected).toEqual({
+      [RC1_SERIAL_CHECK_ID]: { outcome: "pass" },
       [RC1_CHECK_ID]: { outcome: "assertion_fail", reason: RC1_DOUBLE_SPEND_REASON },
     });
     expect(set.data.invalid_outcomes.outcomes).toEqual(["build_error", "crash", "missing_result", "setup_failure", "timeout"]);
