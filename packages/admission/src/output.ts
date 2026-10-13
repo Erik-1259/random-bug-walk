@@ -93,6 +93,11 @@ export const OBSERVATION_CLASS_VALUES = ["positive", "negative_control", "reject
 export const ADDED_VERDICT_VALUES = ["match", "reject", "invalid", "incomplete"] as const;
 export const CELL_STATE_VALUES = ["not_run", "pass", "fail", "invalid", "incomplete"] as const;
 export const RULE_DECISION_VALUES = ["pass", "reject", "invalid", "incomplete"] as const;
+/**
+ * A rule's decision: a rule outcome, or not_applicable for ADM-06 when the family records its
+ * partial and stub probes as not applicable and the job's expected trials hold neither.
+ */
+export const ADM_DECISION_VALUES = [...RULE_DECISION_VALUES, "not_applicable"] as const;
 export const COMPARISON_VALUES = ["invalid", "incomplete", "not_demonstrated", "caught_by_original_suite", "blind_spot_demonstrated"] as const;
 export const BASIS_VALUES = ["trial_status", "execution", "added_checks", "original_suite", "unexpected_result"] as const;
 export const OUTCOME_FILE_VALUES = ["passed", "failed", "skipped"] as const;
@@ -177,7 +182,7 @@ const trialRef = obj({
   code: nullable(oneOf(IMPORT_CODE_VALUES)),
 });
 
-const rule = obj({ decision: oneOf(RULE_DECISION_VALUES), trials: arrayOf(trialRef) });
+const rule = obj({ decision: oneOf(ADM_DECISION_VALUES), trials: arrayOf(trialRef) });
 
 export const DECISION_SHAPE = obj({
   schema_version: int,

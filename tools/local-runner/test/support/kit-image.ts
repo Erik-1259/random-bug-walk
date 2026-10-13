@@ -10,6 +10,7 @@ import type { ExpectedCheck } from "@rbw/schema";
 import { addedSuiteSha256, loadJob, runTrial } from "@rbw/umami-driver";
 import type { TrialOptions } from "@rbw/umami-driver";
 import { writeObservation } from "@rbw/umami-fixture";
+import { writeObservation as writeRaceObservation } from "@rbw/umami-fixture-rc1";
 import { CANNED_TESTS, FakeRunner, FakeTimers, commandResult, playwrightReport } from "../../../../packages/umami-driver/test/helpers.ts";
 import type { CannedTest } from "../../../../packages/umami-driver/test/helpers.ts";
 import { cannedResponse } from "../../../../packages/umami-driver/test/fixture-round/index.ts";
@@ -17,7 +18,9 @@ import { FIXTURE_DIR, FakeStack, NODE_VERSION, verifier, write } from "../../../
 import type { StackPlan } from "../../../../packages/umami-driver/test/trial-harness.ts";
 import type { CommandResult, RunOptions } from "../../src/docker.ts";
 import { FakeDocker, failed, ok } from "./fakes.ts";
-import { ALTERNATIVE, CLEAN, PARTIAL, PLANTED, STUB, appTree, sha256, tarOf, tempDir, writeKitStage } from "./synthetic.ts";
+import { RACE_IMAGE_SCHEMA } from "../../src/family.ts";
+import type { FamilyId } from "../../src/family.ts";
+import { ALTERNATIVE, CLEAN, PARTIAL, PLANTED, RACE_CHECK, SERIAL_CHECK, STUB, appTree, sha256, tarOf, tempDir, writeKitStage } from "./synthetic.ts";
 
 export const IMAGE_ID = `sha256:${"9".repeat(64)}`;
 
@@ -35,13 +38,22 @@ const BEHAVIOUR_BY_FILE = new Map<string, Behaviour>([
 const PASS = { observed: "pass", code: null } as const;
 const COUNTS = { observed: "assertion_fail", code: "local_day_counts_mismatch" } as const;
 const LABELS = { observed: "assertion_fail", code: "bucket_labels_mismatch" } as const;
-type Outcome = typeof PASS | typeof COUNTS | typeof LABELS;
+const DOUBLE_SPEND = { observed: "assertion_fail", code: "double_spend" } as const;
+type Outcome = typeof PASS | typeof COUNTS | typeof LABELS | typeof DOUBLE_SPEND;
 
 const APP: Record<Behaviour, Record<string, Outcome>> = {
   clean: { "tzarg.utc-day-counts": PASS, "tzarg.la-day-counts": PASS, "tzarg.auckland-day-counts": PASS, "tzarg.kolkata-day-counts": PASS },
   planted: { "tzarg.utc-day-counts": PASS, "tzarg.la-day-counts": COUNTS, "tzarg.auckland-day-counts": COUNTS, "tzarg.kolkata-day-counts": COUNTS },
   partial: { "tzarg.utc-day-counts": PASS, "tzarg.la-day-counts": COUNTS, "tzarg.auckland-day-counts": PASS, "tzarg.kolkata-day-counts": COUNTS },
   stub: { "tzarg.utc-day-counts": PASS, "tzarg.la-day-counts": LABELS, "tzarg.auckland-day-counts": LABELS, "tzarg.kolkata-day-counts": LABELS },
+};
+
+/** The race family's simulated app: the serial control always passes; the race fails only on the planted file. */
+const RACE_APP: Record<Behaviour, Record<string, Outcome>> = {
+  clean: { [SERIAL_CHECK]: PASS, [RACE_CHECK]: PASS },
+  planted: { [SERIAL_CHECK]: PASS, [RACE_CHECK]: DOUBLE_SPEND },
+  partial: { [SERIAL_CHECK]: PASS, [RACE_CHECK]: DOUBLE_SPEND },
+  stub: { [SERIAL_CHECK]: PASS, [RACE_CHECK]: DOUBLE_SPEND },
 };
 
 const SAMPLE_SOURCES = {
@@ -56,6 +68,10 @@ export interface KitImageOptions {
   hang?: readonly string[];
   /** Called when a hung container is being waited on, so the test can let the outer limit pass. */
   onHang?: () => void;
+  /** The family the image is built for: its image manifest schema, its staged fixture and its app's answers. Time zone by default. */
+  family?: FamilyId;
+  /** The family the image manifest's schema names, when a test needs it to differ from the staged fixture's. */
+  imageFamily?: FamilyId;
 }
 
 interface Container {
@@ -64,6 +80,8 @@ interface Container {
   runnerDir: string;
   jobDir: string | null;
   placed: Buffer | null;
+  /** The copy script's latency argument, given only for a race-family copy with a latency. */
+  latency: string | null;
   exit: number | null;
   running: boolean;
   wake: (() => void) | null;
@@ -72,7 +90,7 @@ interface Container {
 export class KitImage {
   readonly root = tempDir("rbw-local-runner-kit-");
   readonly suite = verifier(join(this.root, "verifier-root"));
-  readonly kitStage = writeKitStage(this.root);
+  readonly kitStage: string;
   readonly containers = new Map<string, Container>();
   readonly created: string[] = [];
   readonly docker: FakeDocker;
@@ -81,6 +99,7 @@ export class KitImage {
 
   constructor(options: KitImageOptions = {}) {
     this.options = options;
+    this.kitStage = writeKitStage(this.root, options.family ?? "time-zone");
     this.docker = new FakeDocker((args, runOptions) => this.handle(args, runOptions));
   }
 
@@ -102,7 +121,8 @@ export class KitImage {
     const modeIndex = args.indexOf("rbw-copy");
     const mode = modeIndex === -1 ? null : args[modeIndex + 1];
     if (mode === "trial" || mode === "freeze") {
-      this.containers.set(name, { mode, trialId: String(args[modeIndex + 2]), runnerDir: join(this.root, "containers", name), jobDir: null, placed: null, exit: null, running: false, wake: null });
+      const latency = args[modeIndex + 3] ?? null;
+      this.containers.set(name, { mode, trialId: String(args[modeIndex + 2]), runnerDir: join(this.root, "containers", name), jobDir: null, placed: null, latency, exit: null, running: false, wake: null });
     }
     return ok();
   }
@@ -112,7 +132,9 @@ export class KitImage {
     if (from === undefined || to === undefined) return failed(1);
     if (to === "-") {
       const stream = options.stdout as Writable;
-      const bytes = from.endsWith(":/workspace/app") ? await appTree() : await tarOf([{ name: "image-manifest.json", content: '{"synthetic":"image manifest"}', mode: 0o600 }]);
+      // A time-zone image keeps the manifest bytes it had before families existed; a race image names its schema.
+      const manifest = (this.options.imageFamily ?? this.options.family) === "race" ? JSON.stringify({ schema: RACE_IMAGE_SCHEMA, synthetic: "image manifest" }) : '{"synthetic":"image manifest"}';
+      const bytes = from.endsWith(":/workspace/app") ? await appTree() : await tarOf([{ name: "image-manifest.json", content: manifest, mode: 0o600 }]);
       stream.end(bytes);
       return ok();
     }
@@ -171,6 +193,13 @@ export class KitImage {
   private async runInside(container: Container): Promise<number> {
     const dir = container.runnerDir;
     mkdirSync(dir, { recursive: true });
+    if (container.latency !== null) {
+      // rbw-proxy set-latency, as the copy script runs it: a latency above 10000 ms is refused.
+      const accepted = Number(container.latency) <= 10000;
+      writeFileSync(join(dir, "proxy.exit"), accepted ? "0\n" : "1\n");
+      if (!accepted) return 91;
+      writeFileSync(join(dir, "proxy.stdout"), `proxy_latency latency_ms=${container.latency} source=override\n`);
+    }
     writeFileSync(join(dir, "freeze.exit"), "0\n");
     if (container.mode === "freeze") {
       writeFileSync(join(dir, "original-suite.json"), this.suite.encoded.bytes);
@@ -185,7 +214,7 @@ export class KitImage {
   private async runDriver(container: Container, jobDir: string, outDir: string): Promise<number> {
     const job = loadJob(jobDir, container.trialId);
     const placedSha = container.placed === null ? sha256(CLEAN) : sha256Hex(container.placed);
-    const app = APP[BEHAVIOUR_BY_FILE.get(placedSha) ?? "clean"];
+    const app = (this.options.family === "race" ? RACE_APP : APP)[BEHAVIOUR_BY_FILE.get(placedSha) ?? "clean"];
     const timers = new FakeTimers();
     const runner = new FakeRunner((spec) => {
       if (spec.args.includes("--config=rbw-api.config.ts")) {
@@ -227,14 +256,20 @@ function writeRound(outputDir: string, repeatIndex: number, checks: readonly Exp
   for (const check of checks) {
     const outcome = app[check.check_id] ?? PASS;
     tests.push({ id: `synthetic-${check.check_id}`, file: "tzarg.check.ts", title: check.check_id, result: outcome.observed === "pass" ? "passed" : "failed", duration: 25 });
-    writeObservation(outputDir, {
-      check_id: check.check_id,
-      repeat_index: repeatIndex,
-      observed: outcome.observed,
-      failure_code: outcome.code,
-      duration_ms: 25,
-      response_body: cannedResponse(check.check_id),
-    });
+    if (outcome.code === "double_spend" || check.check_id.startsWith("rc1.")) {
+      // The race fixture's own writer, with its own failure codes.
+      const code = outcome.code === "double_spend" ? outcome.code : null;
+      writeRaceObservation(outputDir, { check_id: check.check_id, repeat_index: repeatIndex, observed: outcome.observed, failure_code: code, duration_ms: 25, response_body: Buffer.from('{"synthetic":"race evidence"}') });
+    } else {
+      writeObservation(outputDir, {
+        check_id: check.check_id,
+        repeat_index: repeatIndex,
+        observed: outcome.observed,
+        failure_code: outcome.code,
+        duration_ms: 25,
+        response_body: cannedResponse(check.check_id),
+      });
+    }
   }
   writeFileSync(join(outputDir, "report.json"), playwrightReport(tests));
 }

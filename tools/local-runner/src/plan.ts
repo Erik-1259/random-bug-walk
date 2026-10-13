@@ -7,7 +7,7 @@ import type { CodeState } from "@rbw/schema";
 import { DEFAULT_PHASE_LIMITS } from "@rbw/umami-driver";
 import { stateForPatch } from "./code-states.ts";
 import type { CodeStates, StateFile } from "./code-states.ts";
-import { COPY_OUTER_LIMIT_MS, COPY_RESOURCES, KILL_GRACE_MS } from "./copy.ts";
+import { COPY_OUTER_LIMIT_MS, COPY_RESOURCES, KILL_GRACE_MS, proxyReport } from "./copy.ts";
 import type { CopyPlan, CopyResult } from "./copy.ts";
 import type { Docker } from "./docker.ts";
 import type { CopyInputs } from "./inputs.ts";
@@ -33,8 +33,13 @@ export const COPY_PROFILE = {
   kill_grace_ms: KILL_GRACE_MS,
 };
 
-export function profileSha256(): string {
-  return canonicalDigest(COPY_PROFILE).sha256;
+/**
+ * The profile's hash, which jobs carry as the runtime profile and the task revision's environment.
+ * A race-family run that sets a database latency adds it, so runs at different latencies get
+ * different task revisions; without one the hash is the plain profile's, as before families existed.
+ */
+export function profileSha256(raceLatencyMs: number | null = null): string {
+  return canonicalDigest(raceLatencyMs === null ? COPY_PROFILE : { ...COPY_PROFILE, proxy_latency_ms: raceLatencyMs }).sha256;
 }
 
 /** The image's content digest (`docker image inspect`), which every copy then runs by. */
@@ -95,6 +100,7 @@ export function planCopy(trial: TrialRef, p: CopyPlanInputs): CopyPlan {
     work_dir: join(p.work, "copies", p.label, trial.trial_id),
     job_dir: p.jobDir,
     placement: state.key === "clean" ? null : { path: state.path, bytes: state.bytes, sha256: state.sha256 },
+    ...(p.inputs.raceLatencyMs === null ? {} : { proxy_latency_ms: p.inputs.raceLatencyMs }),
     audit: () =>
       Promise.resolve(
         auditCopy({
@@ -111,6 +117,8 @@ export function planCopy(trial: TrialRef, p: CopyPlanInputs): CopyPlan {
 
 export function copySummary(copy: CopyResult, codeState: CodeState, merged: MergedTrial | undefined): CopySummary {
   const measured = measure(copy.records_dir, copy.trial_id);
+  // Only a race-family copy that set a latency has a proxy report, so other copies' summaries are unchanged.
+  const proxy = proxyReport(copy.collected_dir);
   return {
     trial_id: copy.trial_id,
     state: copy.state,
@@ -129,6 +137,7 @@ export function copySummary(copy: CopyResult, codeState: CodeState, merged: Merg
     driver_phases: measured.driver_phases,
     tests_phase: measured.tests_phase,
     artifact_bytes: measured.artifact_bytes,
+    ...(proxy === null ? {} : { proxy }),
   };
 }
 

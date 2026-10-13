@@ -18,6 +18,7 @@ The planted bug is synthetic, labeled as such everywhere, and never filed upstre
 | [`packages/projection`](packages/projection/README.md) | Audits a solver-visible copy: pinned source, one declared change, no history or answer-bearing files (part of ADM-01, ADM-07's scan) |
 | [`packages/publisher`](packages/publisher/README.md) | Trusted publisher of runs and releases to the results repository and the public store |
 | [`packages/schema`](packages/schema/README.md) | Shared record schema, canonical JSON and job contracts (TypeScript, with the Python package in `python/schema`) |
+| [`packages/screen`](packages/screen/README.md) | Automated static-headroom screen: bounded model probes that try to locate a planted bug from the source alone |
 | [`packages/search`](packages/search/README.md) | Tavily searches, including the exact-phrase checks on issue text |
 | [`packages/shapes`](packages/shapes/README.md) | The bug shape as ast-grep rules, with the planted mutation and probe patches |
 | [`packages/spend`](packages/spend/README.md) | Postgres spend pools and the serial execution slot |

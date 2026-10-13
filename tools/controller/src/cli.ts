@@ -4,13 +4,14 @@
 //         --manifest <file> --terms <file> --kit-stage <dir> [--original-suite <file>] [--policy <file>]
 //         [--fix <dir>] [--name <job name>] [--backend sandbox|docker] [--sandbox-image <repository>@sha256:<digest>]
 //         [--trials <id,...>] [--ledger development|judge] [--ids <RunIds JSON>] [--project-policy <ProjectPolicy>]
-//         [--judge-fixed fixed|alternative_fix] [--probes-dir <dir>]
+//         [--judge-fixed fixed|alternative_fix] [--family time-zone|race] [--race-latency-ms <0-10000>] [--probes-dir <dir>]
 //   proof --work <run dir> --image ... --manifest ... --terms ... --kit-stage ... [--original-suite <file>]
 //         [--policy <file>] [--backend sandbox|docker] [--sandbox-image ...]
 //   create-slot-key --slot-key <development|judge>
 //   attempt --work <new run dir> --policy <ProjectPolicy> --candidate <private input> --writer-rates <file>
 //         --search-rates <file> --image <local kit image> --manifest <file> --terms <file> --audit-policy <file>
 //         --kit-stage <dir> --sandbox-image <repository>@sha256:<digest> [--original-suite <file>]
+//         [--family time-zone|race] [--race-latency-ms <0-10000>]
 //   run   --job-kind judge_verify --request-id <uuid> --prebuilt <local store dir | judge job index key>
 //         --release <release.json> --deadline-at <UTC time> [--backend sandbox] [--sandbox-image <kit image>] [--work <dir>]
 //
@@ -37,7 +38,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { loadRateSheet } from "@rbw/envelope";
-import { CodeStateRefusal, InputsError, createDocker, createSandboxSdk, realClock } from "@rbw/local-runner";
+import { CodeStateRefusal, FamilyError, InputsError, createDocker, createSandboxSdk, realClock } from "@rbw/local-runner";
 import { InvalidInput, LocalPrivateStore, privateStoreFromEnv } from "@rbw/publisher/private-store";
 import { CanonicalError, RecordError, parseRecord } from "@rbw/schema";
 import { createTavilyClient } from "@rbw/search";
@@ -50,20 +51,20 @@ import { LedgerError, databaseLedger, inMemoryLedger } from "./ledger.ts";
 import type { Ledger } from "./ledger.ts";
 import { PROOF_DIR, ProofInputError, runProof } from "./proof.ts";
 import { RATE_SHEET_PATH } from "./rate-sheet.ts";
-import { JOB_OPTIONS, NOT_FOR_PREBUILT, RUN_OPTIONS, UsageError, common, path, required, runJobInputs } from "./run-options.ts";
+import { FAMILY_OPTIONS, JOB_OPTIONS, NOT_FOR_PREBUILT, RUN_OPTIONS, UsageError, common, familyOptions, path, required, runJobInputs } from "./run-options.ts";
 import type { Values } from "./run-options.ts";
 
 const USAGE = `usage:
   node src/cli.ts run --job-kind <kit_check|observe|admission|judge_verify> --work <run dir> --image <tag|digest> --manifest <file> --terms <file> --kit-stage <dir>
                       [--original-suite <file>] [--policy <file>] [--fix <dir>] [--name <job name>] [--backend sandbox|docker] [--sandbox-image <repository>@sha256:<digest>]
                       [--trials <id,...>] [--ledger development|judge] [--ids <file>] [--project-policy <file>] [--judge-fixed fixed|alternative_fix]
-                      [--probes-dir <dir>]
+                      [--family time-zone|race] [--race-latency-ms <0-10000>] [--probes-dir <dir>]
   node src/cli.ts proof --work <run dir> --image <tag|digest> --manifest <file> --terms <file> --kit-stage <dir>
                         [--original-suite <file>] [--policy <file>] [--backend sandbox|docker] [--sandbox-image <repository>@sha256:<digest>]
   node src/cli.ts create-slot-key --slot-key <key>
   node src/cli.ts attempt --work <new run dir> --policy <ProjectPolicy> --candidate <private input> --writer-rates <file> --search-rates <file>
                           --image <local kit image> --manifest <file> --terms <file> --audit-policy <file> --kit-stage <dir>
-                          --sandbox-image <repository>@sha256:<digest> [--original-suite <file>]
+                          --sandbox-image <repository>@sha256:<digest> [--original-suite <file>] [--family time-zone|race] [--race-latency-ms <0-10000>]
   node src/cli.ts run --job-kind judge_verify --request-id <uuid> --prebuilt <local store dir|index key> --release <file> --deadline-at <UTC time>
                       [--backend sandbox] [--sandbox-image <kit image>] [--work <dir>]
 `;
@@ -169,6 +170,7 @@ async function attemptCommand(args: string[]): Promise<number> {
     allowPositionals: false,
     options: {
       ...JOB_OPTIONS,
+      ...FAMILY_OPTIONS,
       candidate: { type: "string" },
       "writer-rates": { type: "string" },
       "search-rates": { type: "string" },
@@ -190,6 +192,7 @@ async function attemptCommand(args: string[]): Promise<number> {
     originalSuite: path(values, "original-suite"),
     backend: "sandbox" as const,
     sandboxImage: required(values, "sandbox-image"),
+    ...familyOptions(values),
   };
   for (const name of [...SANDBOX_VARIABLES, ...KEY_VARIABLES]) env(name);
   const prepared = prepareAttempt(inputs, process.env);
@@ -206,7 +209,7 @@ async function attemptCommand(args: string[]): Promise<number> {
   return outcome.exitCode;
 }
 
-const KNOWN = [UsageError, InputsError, CodeStateRefusal, LedgerError, ProofInputError, InvalidInput, RecordError, CanonicalError];
+const KNOWN = [UsageError, InputsError, FamilyError, CodeStateRefusal, LedgerError, ProofInputError, InvalidInput, RecordError, CanonicalError];
 
 async function main(argv: string[]): Promise<number> {
   const [command, ...rest] = argv;

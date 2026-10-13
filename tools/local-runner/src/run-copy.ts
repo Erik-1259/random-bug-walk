@@ -14,6 +14,7 @@ import type { Clock } from "./clock.ts";
 import { runCopy } from "./copy.ts";
 import type { CopyResult } from "./copy.ts";
 import type { Docker } from "./docker.ts";
+import { FamilyError, checkFamilyImage } from "./family.ts";
 import { loadCopyInputs } from "./inputs.ts";
 import type { CopyInputOptions } from "./inputs.ts";
 import { JOB_KINDS, JOB_LABELS, checkBaseline, runTag } from "./jobs.ts";
@@ -109,7 +110,14 @@ export async function runCopyCommand(options: RunCopyOptions, deps: RunCopyDeps)
         const pushed = (await inspectRepoDigests(deps.docker, options.image)).some((item) => item.endsWith(`@${target.digest}`));
         if (!pushed) return refused("sandbox_image_mismatch", `${options.image} has no repository digest ${target.digest}, so the VCR image is not the job's image`);
       }
-      sourceDir = (await exportImage(deps.docker, { image: digest, container: `rbw-${tag}-${label}-${trial.trial_id}-export`, dest: join(options.work, "source") })).source_dir;
+      const exported = await exportImage(deps.docker, { image: digest, container: `rbw-${tag}-${label}-${trial.trial_id}-export`, dest: join(options.work, "source") });
+      try {
+        checkFamilyImage(inputs.family, exported.image_manifest);
+      } catch (error) {
+        if (error instanceof FamilyError) return refused("image_family_mismatch", error.message);
+        throw error;
+      }
+      sourceDir = exported.source_dir;
     }
     const states = deriveCodeStates(readFileSync(join(sourceDir, inputs.probes.data.target_path)), inputs.probes, inputs.alternative);
     const plan = planCopy(trial, { tag, label, image: digest, work: options.work, jobDir: options.job, sourceDir, states, inputs });

@@ -144,6 +144,59 @@ def test_lists_the_admission_trials_in_order() -> None:
     ]
 
 
+def test_builds_the_admission_manifest_without_probes_when_adm06_is_not_applicable() -> None:
+    committed = record("expected-trials-admission-without-probes")
+    first = committed["trials"][0]
+    given: ExpectedTrialsInput = {
+        "kind": "admission",
+        "execution_id": committed["execution_id"],
+        "task_revision": committed["task_revision"],
+        "patch_sha256": {"fixed": "c" * 64, "planted": "d" * 64},
+        "original_suite_sha256": first["original_suite_sha256"],
+        "original_test_ids": first["original_test_ids"],
+        "added_suite_sha256": first["added_suite_sha256"],
+        "checks": {t["code_state"]: t["expected_checks"] for t in committed["trials"]},
+        "adm06": "not_applicable",
+    }
+    built = build_expected_trials(given)
+    assert [t["trial_id"] for t in built.manifest["trials"]] == [
+        "clean-01",
+        "fixed-01",
+        "fixed-02",
+        "fixed-03",
+        "fixed-04",
+        "fixed-05",
+        "planted-01",
+        "planted-02",
+        "planted-03",
+        "planted-04",
+        "planted-05",
+    ]
+    assert built.data == committed_bytes("expected-trials-admission-without-probes")
+    assert built.sha256 == committed_sha("expected-trials-admission-without-probes")
+
+
+def test_keeps_the_full_admission_manifest_when_adm06_is_required() -> None:
+    given = trials_input("admission", "admission")
+    given["adm06"] = "required"
+    built = build_expected_trials(given)
+    assert len(built.manifest["trials"]) == 13
+    assert built.sha256 == committed_sha("expected-trials-admission")
+
+
+def test_refuses_an_adm06_choice_outside_admission_or_an_unknown_one() -> None:
+    judge = trials_input("judge_verify", "judge-verify")
+    judge["adm06"] = "not_applicable"
+    with pytest.raises(RecordError) as errors:
+        build_expected_trials(judge)
+    assert refusal(errors) == ["build:adm06"]
+    unknown = trials_input("admission", "admission")
+    unknown["adm06"] = cast(Any, "optional")
+    with pytest.raises(RecordError) as errors:
+        build_expected_trials(unknown)
+    assert refusal(errors) == ["build:adm06"]
+
+
 def test_ignores_original_suite_inputs_for_observe() -> None:
     built = build_expected_trials(trials_input("observe", "observe"))
     assert built.manifest["trials"][0]["original_suite_sha256"] is None

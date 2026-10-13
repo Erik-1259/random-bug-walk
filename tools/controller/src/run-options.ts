@@ -2,8 +2,8 @@
 // check what a `run` command would do. cli.ts parses the arguments and runs the job.
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { newRunIds, runTag } from "@rbw/local-runner";
-import type { RunIds } from "@rbw/local-runner";
+import { FamilyError, familyFor, newRunIds, raceLatency, runTag } from "@rbw/local-runner";
+import type { FamilyId, RunIds } from "@rbw/local-runner";
 import { CanonicalError, JOB_KIND_VALUES, RecordError, parseRecord, sha256Hex } from "@rbw/schema";
 import type { JobKind } from "@rbw/schema";
 import { GRADING_POLICY_ID } from "./attempt.ts";
@@ -38,9 +38,25 @@ export const JOB_OPTIONS = {
   "sandbox-image": { type: "string" },
 } as const;
 
+/** The family options of run and attempt; proof has none, because its grader cases are the time-zone family's. */
+export const FAMILY_OPTIONS = { family: { type: "string" }, "race-latency-ms": { type: "string" } } as const;
+
+/** The bug family and its latency from the command line: none given is the time-zone family, as before. */
+export function familyOptions(values: Values): { family?: FamilyId; raceLatencyMs?: number } {
+  try {
+    const family = familyFor(values.family);
+    const latency = raceLatency(family, values["race-latency-ms"]);
+    return { ...(values.family === undefined ? {} : { family: family.id }), ...(latency === null ? {} : { raceLatencyMs: latency }) };
+  } catch (error) {
+    if (error instanceof FamilyError) throw new UsageError(error.message);
+    throw error;
+  }
+}
+
 /** The `run` command's own options beyond JOB_OPTIONS, including the judge controller's. */
 export const RUN_OPTIONS = {
   ...JOB_OPTIONS,
+  ...FAMILY_OPTIONS,
   "job-kind": { type: "string" },
   fix: { type: "string" },
   name: { type: "string" },
@@ -57,7 +73,7 @@ export const RUN_OPTIONS = {
 } as const;
 
 /** The run options that only a factory or grade job takes; the judge controller refuses them. */
-export const NOT_FOR_PREBUILT = ["trials", "ledger", "ids", "project-policy", "judge-fixed", "fix", "probes-dir"] as const;
+export const NOT_FOR_PREBUILT = ["trials", "ledger", "ids", "project-policy", "judge-fixed", "fix", "probes-dir", "family", "race-latency-ms"] as const;
 
 export type CommonInputs = Omit<JobInputs, "kind" | "name" | "trials" | "alternativeDir" | "ledger">;
 
@@ -180,6 +196,7 @@ export function runJobInputs(values: Values): JobInputs {
   const probes = path(values, "probes-dir");
   return {
     ...inputs,
+    ...familyOptions(values),
     kind: jobKind,
     name: values.name ?? label,
     trials: parseTrials(values.trials),

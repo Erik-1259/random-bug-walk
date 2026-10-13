@@ -1,11 +1,15 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseCanonical, sha256Hex } from "@rbw/schema";
+import { deriveCodeStates } from "@rbw/local-runner";
 import type { Docker } from "@rbw/local-runner";
+import { loadProbeSet } from "@rbw/shapes";
 import { runJob } from "../../src/controller.ts";
 import { JUDGE } from "../../src/limits.ts";
 import { FakeClock, FakeDocker } from "../../../local-runner/test/support/fakes.ts";
+import type { JobInputs } from "../../src/controller.ts";
+import { CLEAN, writeProbeDir, writeRaceProbeDir } from "../../../local-runner/test/support/synthetic.ts";
 import { jobInputs, world } from "../support/harness.ts";
 import type { LedgerCall, World } from "../support/harness.ts";
 import { SERIAL_CHECKS } from "../support/serial-checks.ts";
@@ -299,4 +303,122 @@ describe("a copy that fails after its container was made", () => {
 
 describe("serial-run checks (spec §6.1) on PGlite", () => {
   for (const [name, check] of Object.entries(SERIAL_CHECKS)) it(name, () => check(world));
+});
+
+describe("the race family", () => {
+  const race = (w: World, overrides: Partial<JobInputs> = {}): JobInputs =>
+    jobInputs(w, { family: "race", raceLatencyMs: 75, probesDir: writeRaceProbeDir(), alternativeDir: undefined, backend: "docker", sandboxImage: null, ...overrides });
+
+  it("runs an 11-copy admission on the race image, with ADM-06 not applicable and the latency in every copy", async () => {
+    const w = await world({ kit: { family: "race" } });
+    const kit = await runJob(race(w, { kind: "kit_check", name: "kit-check" }), w.deps);
+    expect(kit.status).toBe("complete");
+    const outcome = await runJob(race(w, { kind: "admission", name: "admission", originalSuite: join(kit.jobDir, "freeze", "collected", "original-suite.json") }), w.deps);
+    expect(outcome.status).toBe("complete");
+    expect(outcome.summary.copies.map((copy) => copy.trial_id)).toEqual([
+      "clean-01",
+      "fixed-01",
+      "fixed-02",
+      "fixed-03",
+      "fixed-04",
+      "fixed-05",
+      "planted-01",
+      "planted-02",
+      "planted-03",
+      "planted-04",
+      "planted-05",
+    ]);
+    const decision = parseCanonical(readFileSync(join(outcome.jobDir, "decision.json"))) as { decisions: Record<string, { decision: string }>; outcome_verdict: string };
+    expect(decision.decisions["ADM-06"]?.decision).toBe("not_applicable");
+    expect(decision.outcome_verdict).toBe("pass");
+    expect([...w.kit.containers.values()].every((container) => container.latency === "75")).toBe(true);
+  });
+
+  it("records the family, ADM-06's reason, the copy count and the latency in summary.json, so two latencies give different published records", async () => {
+    const w = await world({ kit: { family: "race" } });
+    const at50 = await runJob(race(w, { kind: "kit_check", name: "kit-check", raceLatencyMs: 50, work: join(w.dir, "run-50") }), w.deps);
+    const at75 = await runJob(race(w, { kind: "kit_check", name: "kit-check", raceLatencyMs: 75, work: join(w.dir, "run-75") }), w.deps);
+    const imageDefault = await runJob(race(w, { kind: "kit_check", name: "kit-check", raceLatencyMs: null, work: join(w.dir, "run-default") }), w.deps);
+    for (const outcome of [at50, at75, imageDefault]) expect(outcome.status).toBe("complete");
+    const written = (outcome: { jobDir: string }) => parseCanonical(readFileSync(join(outcome.jobDir, "summary.json"))) as { family?: unknown; copies: { copy: { proxy?: unknown } | null }[] };
+    const reason = "Synthetic: a partial or stub fix of this race has no natural form.";
+    expect(written(at50).family).toEqual({ id: "race", adm06: { status: "not_applicable", reason }, admission_copies: 11, race_latency_ms: 50 });
+    expect(written(at75).family).toEqual({ id: "race", adm06: { status: "not_applicable", reason }, admission_copies: 11, race_latency_ms: 75 });
+    expect(written(imageDefault).family).toEqual({ id: "race", adm06: { status: "not_applicable", reason }, admission_copies: 11, race_latency_ms: null });
+    expect(written(at50).copies.map((copy) => copy.copy?.proxy)).toEqual(Array.from({ length: 5 }, () => ({ exit: 0, latency_ms: 50, source: "override" })));
+    expect(written(at75).copies.map((copy) => copy.copy?.proxy)).toEqual(Array.from({ length: 5 }, () => ({ exit: 0, latency_ms: 75, source: "override" })));
+    expect(written(imageDefault).copies.every((copy) => copy.copy?.proxy === undefined)).toBe(true);
+    expect(new Set([at50, at75, imageDefault].map((outcome) => outcome.summary.job.task_revision)).size).toBe(3);
+  });
+
+  it("records the family in the summary of a retried job whose earlier run stopped before its summary", async () => {
+    const w = await world({ kit: { family: "race" } });
+    const inputs = race(w, { kind: "kit_check", name: "kit-check", raceLatencyMs: 50 });
+    const first = await runJob(inputs, w.deps);
+    expect(first.status).toBe("complete");
+    unlinkSync(join(first.jobDir, "summary.json"));
+    const retried = await runJob(inputs, w.deps);
+    expect(retried).toMatchObject({ replay: true, status: "needs_reconciliation", summary: { reason: "interrupted" } });
+    expect(retried.summary.family).toEqual({ id: "race", adm06: { status: "not_applicable", reason: "Synthetic: a partial or stub fix of this race has no natural form." }, admission_copies: 11, race_latency_ms: 50 });
+  });
+
+  it("writes no family record for a time-zone job", async () => {
+    const w = await world();
+    const outcome = await runJob(jobInputs(w, { kind: "kit_check", name: "kit-check", backend: "docker", sandboxImage: null, trials: ["clean-01"] }), w.deps);
+    expect(outcome.status).toBe("complete");
+    expect("family" in (parseCanonical(readFileSync(join(outcome.jobDir, "summary.json"))) as object)).toBe(false);
+  });
+
+  it("runs a race judge replay that grades the reference fix as fixed-01, since the family has no alternative fix", async () => {
+    // A clock that moves only when released: three simulated copies would otherwise use up the judge job's deadline.
+    const w = await world({ kit: { family: "race" }, clock: new FakeClock({ manual: true }) });
+    const probesDir = writeRaceProbeDir();
+    const outcome = await runJob(race(w, { kind: "judge_verify", name: "judge", ledger: JUDGE, probesDir }), w.deps);
+    expect(outcome.status).toBe("complete");
+    expect(outcome.summary.copies.map((copy) => [copy.trial_id, copy.status])).toEqual([
+      ["clean-01", "complete"],
+      ["planted-01", "complete"],
+      ["fixed-01", "complete"],
+    ]);
+    const request = parseCanonical(readFileSync(join(outcome.jobDir, "job", "request.json"))) as { expected_trials_key: string };
+    const expected = parseCanonical(readFileSync(join(outcome.jobDir, "job", ...request.expected_trials_key.split("/")))) as { trials: { trial_id: string; patch_sha256: string | null }[] };
+    const reference = deriveCodeStates(Buffer.from(CLEAN), loadProbeSet(probesDir), null).get("fixed")?.patch_sha256;
+    expect(reference).toMatch(/^[0-9a-f]{64}$/);
+    expect(expected.trials.find((trial) => trial.trial_id === "fixed-01")?.patch_sha256).toBe(reference);
+  });
+
+  it("refuses a race job on a kit stage that holds the time-zone fixture, before the export or any copy", async () => {
+    const w = await world({ kit: { family: "time-zone", imageFamily: "race" } });
+    const outcome = await runJob(race(w, { kind: "kit_check", name: "kit-check" }), w.deps);
+    expect(outcome.summary).toMatchObject({ status: "refused", reason: "cannot_build" });
+    expect(outcome.summary.detail).toContain("kit stage holds no rc-1-backup-code-001.v1.json");
+    expect(outcome.summary.copies).toEqual([]);
+    expect(w.kit.created).toEqual([]);
+  });
+
+  it("refuses a race job given the time-zone probe set, before the export or any copy", async () => {
+    const w = await world({ kit: { family: "race" } });
+    const outcome = await runJob(race(w, { kind: "kit_check", name: "kit-check", probesDir: writeProbeDir() }), w.deps);
+    expect(outcome.summary).toMatchObject({ status: "refused", reason: "cannot_build" });
+    expect(outcome.summary.detail).toContain("but its probe set needs clean,fixed,partial,planted,stub");
+    expect(outcome.summary.copies).toEqual([]);
+    expect(w.kit.created).toEqual([]);
+  });
+
+  it("refuses, rather than replays, a race job rerun under the same name with another latency", async () => {
+    const w = await world({ kit: { family: "race" } });
+    const inputs = race(w, { kind: "kit_check", name: "kit-check", raceLatencyMs: 50 });
+    expect((await runJob(inputs, w.deps)).status).toBe("complete");
+    expect((await runJob(inputs, w.deps)).replay).toBe(true);
+    await expect(runJob({ ...inputs, raceLatencyMs: 75 }, w.deps)).rejects.toThrow(/holds another job/);
+    await expect(runJob({ ...inputs, raceLatencyMs: null }, w.deps)).rejects.toThrow(/holds another job/);
+  });
+
+  it("refuses a race job on a time-zone kit image before any copy", async () => {
+    const w = await world({ kit: { family: "race", imageFamily: "time-zone" } });
+    const outcome = await runJob(race(w, { kind: "kit_check", name: "kit-check" }), w.deps);
+    expect(outcome.status).not.toBe("complete");
+    expect(outcome.summary.detail).toContain("rbw-umami-race-kit-image-manifest/1");
+    expect(outcome.summary.copies).toEqual([]);
+  });
 });
