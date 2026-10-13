@@ -127,6 +127,7 @@ Per attempt (revisable once, in the amendment window, from pilot measurements):
 Per run:
 
 - The total UC1 spend cap is $40 on Nemotron 3 Super, or $75 if the Kimi-K2.7-Code fallback is adopted after the pilot (decision 5). Spend is reserved and settled per model call under the bug run's root.
+- **The cap is checked before work starts, not after.** No billable operation (a model call, a regrade or a rerun) starts unless its worst-case cost fits the remaining UC1 allowance: the cap minus settled spend minus every open reservation under the UC1 roots. This holds with 3 sessions running at once, so concurrent work cannot carry the run past the cap. The development pool's own limit does not enforce this cap.
 - **What the cap covers (this document's reading, pending confirmation).** Model calls, Sandbox regrades and reruns, including the pilot. Decision 5 of Oct 13 does not state this. Until the scope is confirmed, the run is held to this reading, which is the stricter one. If a different scope is confirmed, it and its date are recorded in an amendment before the first counted attempt (see "Status and changes").
 
 ## Model
@@ -150,7 +151,7 @@ Nemotron 3 Super, frozen after the pilot. Kimi-K2.7-Code is used only if the pil
 ## Stop and futility rules
 
 - **Futility.** After the first 6 counted attempts in each arm (by index), if both arms are 0/6 or both are 6/6, the solve test stops: Fisher's test is not run, and its slot in Holm's procedure is fixed at p = 1, so the token and turn tests keep the same three-outcome thresholds. The remaining attempts still run and are still graded. The solve outcome is then reported over all counted attempts in each arm (denominator 20, or the actual arm size after infrastructure exclusions) as counts with Clopper–Pearson intervals, labeled a floor or a ceiling with the 6-attempt check that triggered the rule. This rule only stops; it never declares an effect, so it does not raise the false-positive rate.
-- **Spend.** If spend passes the cap (decision 5, with the coverage under "Caps"), or the ledger shows any uncertainty, the run stops and the ledger is reconciled before anything else happens.
+- **Spend.** If the next billable operation's worst-case cost does not fit the remaining allowance (decision 5, with the coverage and the check under "Caps"), or the ledger shows any uncertainty, the run stops and the ledger is reconciled before anything else happens.
 - **Schedule.** If the harness is not merged, or the pilot fails, by the end of Oct 15, UC1 is dropped and the pilot stays development evidence. If no screened race case exists by Oct 18 at noon, the fallback decision (decision 6) applies.
 - **Tool calling.** If tool calling is broken on both Super and the single fallback, UC1 is dropped.
 - **Conflicts.** Any conflict with race-class lanes, the development slot or supervised hours cuts UC1 (decision 2).
