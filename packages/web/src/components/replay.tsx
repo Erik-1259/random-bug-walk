@@ -40,7 +40,7 @@ export function ReplayPanel({ release, state, reason, status, children }: Replay
         </dl>
       </div>
       {children}
-      <p id="replay-status" className={`status status-replay-${state}`}>
+      <p id="replay-status" className={`status status-replay-${state}`} role="status" aria-live="polite">
         Replay status: {REPLAY_STATE_TEXT[state]}. {message}
       </p>
       {help === undefined ? null : <p className="replay-help">{help}</p>}
@@ -68,16 +68,38 @@ function ReplayDetail({ status }: { status: ReplayStatus }) {
       {status.cells.length === 0 ? null : (
         <table className="matrix">
           <caption>The replay&apos;s six cells</caption>
+          <thead>
+            <tr>
+              <td />
+              {MATRIX_COLUMNS.map((column) => (
+                <th key={column} scope="col">
+                  {COLUMN_LABEL[column]}
+                </th>
+              ))}
+            </tr>
+          </thead>
           <tbody>
             {(["original", "added"] as const).map((suite) => (
               <tr key={suite}>
                 <th scope="row">{ROW_LABEL[suite]}</th>
                 {MATRIX_COLUMNS.map((column) => {
                   const cell = status.cells.find((item) => item.suite === suite && TRIAL_COLUMN[item.trial_id] === COLUMN_LABEL[column]);
-                  if (cell === undefined) return <td key={column}>No record</td>;
+                  const label = (
+                    <span className="cell-label">
+                      {ROW_LABEL[suite]}, {COLUMN_LABEL[column]}
+                    </span>
+                  );
+                  if (cell === undefined)
+                    return (
+                      <td key={column} data-replay-row={suite} data-replay-column={column}>
+                        {label}
+                        <span className="status status-no_record">No record</span>
+                      </td>
+                    );
                   const failing = [...new Set(cell.failing.map((item) => item.id))];
                   return (
                     <td key={column} data-replay-row={suite} data-replay-column={column}>
+                      {label}
                       <span className={`status status-${cell.state}`}>
                         {cell.state}, {cell.matches_expectation ? "as expected" : "not as expected"}
                       </span>

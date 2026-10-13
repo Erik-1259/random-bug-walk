@@ -3,7 +3,8 @@
 import { ENTRY_OUTCOME_TEXT, fileHref, runStatusText } from "../model.ts";
 import type { Results, Run } from "../release.ts";
 
-function RunFiles({ run }: { run: Run }) {
+/** A published run's manifest entries with their outcome, size and SHA-256; the catalog and the run's file index page show it. */
+export function RunFiles({ run }: { run: Run }) {
   if (run.manifest === null) return <p>No files: the run has not been published.</p>;
   const root = run.rootExecutionId;
   return (
@@ -53,38 +54,40 @@ export function Catalog({ results }: { results: Results }) {
     <main>
       <h1>Diagnostic catalog</h1>
       <p>{`Every run in the published records, with its recorded status. ${releaseSentence(results)}`}</p>
-      <table className="runs">
-        <thead>
-          <tr>
-            <th scope="col">Root execution</th>
-            <th scope="col">Kind</th>
-            <th scope="col">Status</th>
-            <th scope="col">Outcome</th>
-            <th scope="col">Publication</th>
-            <th scope="col">Stages</th>
-            <th scope="col">Child executions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {results.runs.map((run) => {
-            const text = runStatusText(run);
-            return (
-              <tr key={run.rootExecutionId}>
-                <th scope="row">
-                  <a href={`#run-${run.rootExecutionId}`}>{run.rootExecutionId}</a>
-                  {released?.run.root_execution_id === run.rootExecutionId ? <span className="label">{`Validated release ${released.release_id}`}</span> : null}
-                </th>
-                <td>{run.kind}</td>
-                <td>{text.status}</td>
-                <td>{text.outcome}</td>
-                <td>{text.publication}</td>
-                <td>{String(run.declaredStageCount)}</td>
-                <td>{String(run.childExecutionCount)}</td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+      <div className="table-scroll">
+        <table className="runs">
+          <thead>
+            <tr>
+              <th scope="col">Root execution</th>
+              <th scope="col">Kind</th>
+              <th scope="col">Status</th>
+              <th scope="col">Outcome</th>
+              <th scope="col">Publication</th>
+              <th scope="col">Stages</th>
+              <th scope="col">Child executions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {results.runs.map((run) => {
+              const text = runStatusText(run);
+              return (
+                <tr key={run.rootExecutionId}>
+                  <th scope="row">
+                    <a href={`#run-${run.rootExecutionId}`}>{run.rootExecutionId}</a>
+                    {released?.run.root_execution_id === run.rootExecutionId ? <span className="label">{`Validated release ${released.release_id}`}</span> : null}
+                  </th>
+                  <td>{run.kind}</td>
+                  <td>{text.status}</td>
+                  <td>{text.outcome}</td>
+                  <td>{text.publication}</td>
+                  <td>{String(run.declaredStageCount)}</td>
+                  <td>{String(run.childExecutionCount)}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
       {results.runs.map((run) => (
         <section key={run.rootExecutionId} id={`run-${run.rootExecutionId}`}>
           <h2>{run.rootExecutionId}</h2>

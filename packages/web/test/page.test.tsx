@@ -72,7 +72,7 @@ describe("case page from the development fixture", () => {
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Plant and verify this example<\/button>/);
     const page = text(html);
     expect(page).toContain(`Replay status: ${REPLAY_STATE_TEXT.disabled}`);
-    expect(page).toContain("Validated-task downloads: disabled, because there is no validated release");
+    expect(page).toContain("Release files: none, because there is no validated release");
     expect(page).toContain("Diagnostic archive (not validated)");
     expect(html).toContain(`href="/runs/${DEVELOPMENT_ROOT}/report.md"`);
     expect(html).toContain(`href="/runs/${DEVELOPMENT_ROOT}/manifest.json"`);
@@ -154,7 +154,7 @@ describe("no-release state", () => {
     const html = renderToStaticMarkup(<CasePage results={results} />);
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Plant and verify this example<\/button>/);
     const page = text(html);
-    expect(page).toContain("Validated-task downloads: disabled, because there is no validated release");
+    expect(page).toContain("Release files: none, because there is no validated release");
     expect(page).toContain("00000000-0000-4000-8000-000000002001 failed, not validated");
     expect(page).toContain("00000000-0000-4000-8000-000000002003 incomplete, not validated");
     expect(html).toContain('href="/runs/00000000-0000-4000-8000-000000002001/manifest.json"');
@@ -230,7 +230,7 @@ describe("case page with a published release", () => {
     expect(html).toContain(`href="/runs/${RELEASE_ROOT}/manifest.json"`);
     expect(html).toContain(`href="/runs/${RELEASE_ROOT}/report.md"`);
     const page = text(html);
-    expect(page).not.toContain("Validated-task downloads: disabled");
+    expect(page).not.toContain("Release files: none");
     expect(page).toContain("Diagnostic archive (not validated) No other published runs.");
     expect(page).not.toContain(`${RELEASE_ROOT} completed, not validated`);
   });
@@ -317,7 +317,7 @@ describe("the replay cell", () => {
     expect(page).toContain(`Replay status: ${REPLAY_STATE_TEXT.verified}. ${KNOWN_CONDITION_MESSAGE}`);
     expect(page).toContain("Measured duration: 21 min 5 s. Hard cap: 35 minutes.");
     expect(page).toContain("clean copy: done planted copy: done fixed copy: done");
-    expect(page).toContain("Original API suite fail, not as expected 3 of 3 executed; failing: synthetic-spec-0001, synthetic-spec-0002");
+    expect(page).toContain("Original API suite, clean copy fail, not as expected 3 of 3 executed; failing: synthetic-spec-0001, synthetic-spec-0002");
   });
 
   it("shows a not_reproduced replay in text", () => {
