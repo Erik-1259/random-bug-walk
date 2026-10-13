@@ -1060,7 +1060,7 @@
       }
     },
     "RaceSymptom": {
-      "description": "The issue writer's input for the race family: two requests that spend the same one-time code at the same time, the single acceptance expected and the acceptances observed, the sequential reuse for contrast, and user-documentation passages. Like ObservedSymptom it allows no other field. observed counts the outcomes of concurrent_attempts, and overlap_ms is the earlier settle minus the later send (both checked in code).",
+      "description": "The issue writer's input for the race family: two requests that spend the same one-time code at the same time, the single acceptance expected and the acceptances observed, the sequential reuse for contrast, and user-documentation passages. Like ObservedSymptom it allows no other field. expected is 1 accepted and 1 refused, observed is 2 accepted and 0 refused and counts the outcomes of concurrent_attempts, overlap_ms is the earlier settle minus the later send, and sequential_attempts is a first use that was accepted and a reuse, sent after it settled, that was refused (all checked in code).",
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -1088,7 +1088,7 @@
         "overlap_ms": { "$ref": "#/$defs/PositiveInteger" },
         "expected": { "$ref": "#/$defs/AcceptanceCounts" },
         "observed": { "$ref": "#/$defs/AcceptanceCounts" },
-        "sequential_attempts": { "type": "array", "items": { "$ref": "#/$defs/RaceAttempt" } },
+        "sequential_attempts": { "type": "array", "minItems": 2, "maxItems": 2, "items": { "$ref": "#/$defs/RaceAttempt" } },
         "doc_excerpts": { "type": "array", "items": { "$ref": "#/$defs/DocExcerpt" } }
       }
     },

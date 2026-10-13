@@ -22,9 +22,9 @@
       "label": "request b",
       "sent_ms": 1,
       "settled_ms": 92,
-      "http_status": 200,
-      "outcome": "accepted",
-      "error_code": null
+      "http_status": 400,
+      "outcome": "refused",
+      "error_code": "synthetic-invalid-code"
     }
   ],
   "overlap_ms": 86,
@@ -33,8 +33,8 @@
     "refused": 1
   },
   "observed": {
-    "accepted": 1,
-    "refused": 1
+    "accepted": 2,
+    "refused": 0
   },
   "sequential_attempts": [
     {

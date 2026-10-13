@@ -2636,6 +2636,53 @@
       "error": "race_symptom:overlap"
     },
     {
+      "name": "race-symptom-pass-outcome",
+      "type": "RaceSymptom",
+      "expect": "invalid",
+      "rule": "the concurrent attempts show a double acceptance: observed is 2 accepted and 0 refused",
+      "error": "race_symptom:observed"
+    },
+    {
+      "name": "race-symptom-expected-not-one-each",
+      "type": "RaceSymptom",
+      "expect": "invalid",
+      "rule": "expected is 1 accepted and 1 refused",
+      "error": "race_symptom:expected"
+    },
+    {
+      "name": "race-symptom-no-sequential",
+      "type": "RaceSymptom",
+      "expect": "invalid",
+      "rule": "exactly two sequential attempts"
+    },
+    {
+      "name": "race-symptom-three-sequential",
+      "type": "RaceSymptom",
+      "expect": "invalid",
+      "rule": "exactly two sequential attempts"
+    },
+    {
+      "name": "race-symptom-sequential-overlap",
+      "type": "RaceSymptom",
+      "expect": "invalid",
+      "rule": "the sequential reuse is sent after the first use settled",
+      "error": "race_symptom:sequential"
+    },
+    {
+      "name": "race-symptom-sequential-reuse-accepted",
+      "type": "RaceSymptom",
+      "expect": "invalid",
+      "rule": "the sequential reuse is refused",
+      "error": "race_symptom:sequential"
+    },
+    {
+      "name": "race-symptom-sequential-first-refused",
+      "type": "RaceSymptom",
+      "expect": "invalid",
+      "rule": "the sequential first use is accepted",
+      "error": "race_symptom:sequential"
+    },
+    {
       "name": "release-valid",
       "type": "Release",
       "expect": "valid",

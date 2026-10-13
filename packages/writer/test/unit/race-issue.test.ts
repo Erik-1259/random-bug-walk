@@ -68,6 +68,35 @@ describe("the race symptom input", () => {
     ["a positive overlap that is not the earlier settle time minus the later send time", () => ({ ...raceSymptom("valid"), overlap_ms: 90 })],
     ["another symptom kind", () => ({ ...raceSymptom("valid"), symptom_kind: "synthetic_kind" })],
     ["a request method other than GET or POST", () => ({ ...raceSymptom("valid"), request: { method: "PUT", path: "/api/synthetic/verify", query: {} } })],
+    ["a pass outcome: one acceptance and one refusal, observed equal to expected", () => ({
+      ...raceSymptom("valid"),
+      concurrent_attempts: [
+        { label: "request a", sent_ms: 0, settled_ms: 87, http_status: 200, outcome: "accepted", error_code: null },
+        { label: "request b", sent_ms: 1, settled_ms: 92, http_status: 400, outcome: "refused", error_code: "synthetic-invalid-code" },
+      ],
+      observed: { accepted: 1, refused: 1 },
+    })],
+    ["expected counts other than one acceptance and one refusal", () => ({ ...raceSymptom("valid"), expected: { accepted: 2, refused: 0 } })],
+    ["no sequential attempts", () => ({ ...raceSymptom("valid"), sequential_attempts: [] })],
+    ["three sequential attempts", () => {
+      const value = raceSymptom("valid");
+      return { ...value, sequential_attempts: [...attempts(value, "sequential_attempts"), attempts(value, "sequential_attempts")[1]] };
+    }],
+    ["a sequential reuse sent before the first use settled", () => {
+      const value = raceSymptom("valid");
+      (attempts(value, "sequential_attempts")[1] as Record<string, unknown>).sent_ms = 10;
+      return value;
+    }],
+    ["a sequential reuse that was accepted", () => {
+      const value = raceSymptom("valid");
+      Object.assign(attempts(value, "sequential_attempts")[1] as Record<string, unknown>, { http_status: 200, outcome: "accepted", error_code: null });
+      return value;
+    }],
+    ["a sequential first use that was refused", () => {
+      const value = raceSymptom("valid");
+      Object.assign(attempts(value, "sequential_attempts")[0] as Record<string, unknown>, { http_status: 400, outcome: "refused", error_code: "synthetic-invalid-code" });
+      return value;
+    }],
     ["a documentation link that is not HTTPS", () => ({
       ...raceSymptom("valid"),
       doc_excerpts: [{ text: "Synthetic excerpt.", source_url: "http://docs.example.invalid/two-step" }],
