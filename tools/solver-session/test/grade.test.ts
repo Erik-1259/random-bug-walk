@@ -178,7 +178,7 @@ describe("the grade commands", () => {
     }
     expect([option(first, "--backend"), option(first, "--sandbox-image")]).toEqual(["docker", undefined]);
     expect([option(second, "--backend"), option(second, "--sandbox-image")]).toEqual(["sandbox", command("w").sandboxImage]);
-    expect([option(first, "--name"), option(second, "--name")]).toEqual(["grade-1-docker-a01", "grade-2-sandbox-a01"]);
+    expect([option(first, "--name"), option(second, "--name")]).toEqual(["grade-1-docker-a01-r0", "grade-2-sandbox-a01-r0"]);
   });
 
   it("names each attempt's grades apart, so attempts under one root never share a call name or operation", () => {
@@ -296,6 +296,31 @@ describe("reading a grade", () => {
     expect(decide(t, route, [result(1, "passed"), result(2, "infrastructure")])).toMatchObject({ solved: false, infrastructure: true, disagreement: false });
     expect(decide(t, route, [result(1, "infrastructure"), result(2, "failed")])).toMatchObject({ solved: false, infrastructure: false, disagreement: false });
     expect(decide(t, route, [result(1, "passed"), result(2, "failed")])).toMatchObject({ infrastructure: false, disagreement: true });
+  });
+
+  it("gives a rerun of an infrastructure grade its own job, so the controller does not replay the refused one", async () => {
+    const work = temp();
+    // A controller that, like runJob, returns a job's stored summary when the named job already ran.
+    const outcomes = [summary(2, route, { status: "refused", reason: "slot_busy", placed: null, trial: null })];
+    const names: string[] = [];
+    const runController = (args: readonly string[]) => {
+      const name = option(args, "--name") ?? "";
+      names.push(name);
+      const file = join(work, "jobs", name, "summary.json");
+      if (!existsSync(file)) {
+        mkdirSync(join(work, "jobs", name), { recursive: true });
+        writeFileSync(file, JSON.stringify({ ...(outcomes.shift() ?? summary(2, route)), job: { name, kind: "judge_verify", trials: [GRADED_TRIAL] } }));
+      }
+      return Promise.resolve(0);
+    };
+    const first = await runGrade(route, 2, command(work), { runController });
+    expect(first.state).toBe("infrastructure");
+    expect((await runGrade(route, 2, command(work), { runController })).state).toBe("infrastructure");
+    const rerun = await runGrade(route, 2, { ...command(work), retry: 1 }, { runController });
+    expect(rerun).toMatchObject({ state: "passed", job: jobName(2, ATTEMPT, 1) });
+    expect(new Set(names).size).toBe(2);
+    expect(jobName(2, ATTEMPT, 1)).not.toBe(jobName(2, `${ATTEMPT}-r1`, 0));
+    for (const retry of [-1, 1.5]) expect(() => jobName(2, ATTEMPT, retry)).toThrow("retry");
   });
 
   it("does not trust the controller's exit code: a zero exit with no summary is unsolved", async () => {

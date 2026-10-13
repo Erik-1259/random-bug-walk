@@ -19,7 +19,8 @@
 // from a wrong fix and rerunnable (R8). A disagreement between two verdicts is recorded for publication.
 //
 // Attempts graded under one root (the design's shared root and policy) stay apart in the ledger: each
-// grade's job name carries the attempt label, so its call name and operation ID are its own, and each
+// grade's job name carries the attempt label and the retry number, so its call name and operation ID
+// are its own (a rerun of an infrastructure grade is a fresh job, never the stored refusal), and each
 // grade gets its own ids file (writeGradeIds) with the root's IDs and a fresh alternative-fix
 // execution. Grade 1 and grade 2 are separate calls (runGrade), so a runner can run grade 1 as each
 // session ends and grade 2 serially, since every grade 2 takes the one development slot.
@@ -103,6 +104,11 @@ export interface GradeCommand {
    * graded under one root. It names the grade jobs, and so their call names and operation IDs.
    */
   attempt: string;
+  /**
+   * The grade's retry number: 0 (the default) for the first run, and one more for each rerun of an
+   * infrastructure grade, so the rerun is its own controller job instead of a replay of the refused one.
+   */
+  retry?: number;
   /** The case's controller options: --image, --manifest, --terms, --kit-stage, --original-suite, and any the case needs. */
   base: readonly string[];
   /** Grade 2's kit image in VCR, pinned by digest. */
@@ -122,19 +128,21 @@ export interface GradeCommand {
 
 const ATTEMPT_LABEL = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
-export function jobName(grade: GradeNumber, attempt: string): string {
+/** The grade's controller job name; the retry number always ends it, so no label and retry pair collides with another. */
+export function jobName(grade: GradeNumber, attempt: string, retry = 0): string {
   if (!ATTEMPT_LABEL.test(attempt)) throw new Error("the attempt label must be lowercase letters, digits and single hyphens");
-  return `${grade === 1 ? "grade-1-docker" : "grade-2-sandbox"}-${attempt}`;
+  if (!Number.isSafeInteger(retry) || retry < 0) throw new Error("the retry number must be a whole number from 0");
+  return `${grade === 1 ? "grade-1-docker" : "grade-2-sandbox"}-${attempt}-r${String(retry)}`;
 }
 
 /**
  * Writes one ids file per grade into `dir`: the root's IDs with a fresh alternative-fix execution, so
  * both grades of every attempt share the root and policy but record under their own execution.
  */
-export function writeGradeIds(root: RunIds, dir: string, attempt: string, uuid: () => string): Record<GradeNumber, string> {
+export function writeGradeIds(root: RunIds, dir: string, attempt: string, uuid: () => string, retry = 0): Record<GradeNumber, string> {
   mkdirSync(dir, { recursive: true });
   const file = (grade: GradeNumber): string => {
-    const path = join(dir, `${jobName(grade, attempt)}.ids.json`);
+    const path = join(dir, `${jobName(grade, attempt, retry)}.ids.json`);
     const ids: RunIds = { ...root, executions: { ...root.executions, "alternative-fix": uuid() } };
     writeFileSync(path, `${JSON.stringify(ids, null, 2)}\n`);
     return path;
@@ -158,7 +166,7 @@ export function gradeArgs(route: GradeRoute, grade: GradeNumber, command: GradeC
     route.route === "clean_equal"
       ? ["--judge-fixed", "fixed", "--fix", command.referenceFix]
       : ["--judge-fixed", "alternative_fix", "--fix", route.fix_dir];
-  return ["run", "--job-kind", "judge_verify", "--ledger", "development", "--trials", GRADED_TRIAL, "--name", jobName(grade, command.attempt), "--work", command.work, ...backend, ...fix, ...ids, ...command.base];
+  return ["run", "--job-kind", "judge_verify", "--ledger", "development", "--trials", GRADED_TRIAL, "--name", jobName(grade, command.attempt, command.retry), "--work", command.work, ...backend, ...fix, ...ids, ...command.base];
 }
 
 /** `infrastructure`: the job stopped before a verdict on the attempt; unsolved, reported apart, rerunnable. */
@@ -194,8 +202,8 @@ function num(value: unknown): number | null {
  * attempt. Passed only when every check holds; a missing or malformed summary is `missing` or
  * `invalid`, and a summary for other bytes, another trial set or the judge slot is `invalid`.
  */
-export function readGrade(work: string, grade: GradeNumber, route: GradeRoute, attempt: string): GradeResult {
-  const job = jobName(grade, attempt);
+export function readGrade(work: string, grade: GradeNumber, route: GradeRoute, attempt: string, retry = 0): GradeResult {
+  const job = jobName(grade, attempt, retry);
   const result = (state: GradeState, detail: string | null, summarySha: string | null = null, trial: GradeResult["trial"] = null): GradeResult => ({ grade, job, state, detail, summary_sha256: summarySha, trial });
   const file = join(work, "jobs", job, "summary.json");
   if (!existsSync(file)) return result("missing", "no controller summary");
@@ -286,7 +294,7 @@ export interface GradeDeps {
 /** Runs one grade of a prepared attempt and reads its summary. */
 export async function runGrade(route: GradeRoute, grade: GradeNumber, command: GradeCommand, deps: GradeDeps): Promise<GradeResult> {
   await deps.runController(gradeArgs(route, grade, command));
-  return readGrade(command.work, grade, route, command.attempt);
+  return readGrade(command.work, grade, route, command.attempt, command.retry);
 }
 
 /** Decides the attempt from the grades that ran and writes `<work>/grade.json`. */
