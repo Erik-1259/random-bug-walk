@@ -73,7 +73,10 @@ export const StaticProbeSchema = z.strictObject({
     worst_case_microusd_per_call: Microusd,
     reserved_microusd: Microusd,
     settled_microusd: Microusd,
-    /** Launched calls without a settlement; their cost is not in settled_microusd. */
+    /**
+     * Launched calls without a settlement, plus an operation interrupted after its reservation was
+     * requested; their cost is not in settled_microusd, and the interrupted one's is not in reserved_microusd.
+     */
     unsettled_operation_ids: z.array(z.string()),
   }),
   stopped: StoppedSchema.nullable(),

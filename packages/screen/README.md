@@ -122,7 +122,7 @@ The profiles are constants in `src/profiles.ts`. Each profile's hashed part (its
 | Money | The budget check before the run, then `@rbw/spend` reserving each call's worst case against the pool; a refusal stops the run | Before the run and before each call |
 | Retries | None: `max_retries: 0`, and the writer's fetch wrapper sends one request per call | At the request |
 
-The metered values the record carries per attempt: `reserved_microusd`, `settled_microusd`, `prompt_tokens`, `completion_tokens`, `input_token_bound` and `prompt_within_bound`. The run's `cost` sums them and lists any launched call that has no settlement.
+The metered values the record carries per attempt: `reserved_microusd`, `settled_microusd`, `prompt_tokens`, `completion_tokens`, `input_token_bound` and `prompt_within_bound`. The run's `cost` sums them and lists any launched call that has no settlement. An operation interrupted by an error after its reservation was requested has no attempt entry and unknown amounts: `cost` lists it as unsettled and leaves it out of both sums.
 
 The limits are predictions sized for a few source files and one symptom, not measurements; a live run measures them, and any change changes the profile digest.
 

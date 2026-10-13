@@ -169,6 +169,13 @@ export async function executeScreen(options: ScreenOptions, run: ScreenRun): Pro
   const attempts: Attempt[] = [];
   const answers: AnswerEntry[] = [];
 
+  // An operation interrupted after its reservation was requested has no attempt entry; its amounts are
+  // unknown, so it is listed as unsettled and stays out of the reserved and settled sums.
+  const unsettled = (stopped: Stopped | null): string[] => {
+    const ids = attempts.filter((attempt) => attempt.settled_microusd === null).map((attempt) => attempt.operation_id);
+    const interrupted = stopped?.reason === "error" ? stopped.operation_id : null;
+    return interrupted === null || attempts.some((attempt) => attempt.operation_id === interrupted) ? ids : [...ids, interrupted];
+  };
   const probe = (stopped: Stopped | null): StaticProbe => {
     const settled = attempts.flatMap((attempt) => (attempt.settled_microusd === null ? [] : [attempt.settled_microusd]));
     return {
@@ -193,7 +200,7 @@ export async function executeScreen(options: ScreenOptions, run: ScreenRun): Pro
         worst_case_microusd_per_call: worst.per_call_microusd,
         reserved_microusd: attempts.reduce((sum, attempt) => sum + attempt.reserved_microusd, 0),
         settled_microusd: settled.reduce((sum, amount) => sum + amount, 0),
-        unsettled_operation_ids: attempts.filter((attempt) => attempt.settled_microusd === null).map((attempt) => attempt.operation_id),
+        unsettled_operation_ids: unsettled(stopped),
       },
       stopped,
       attempts: [...attempts],

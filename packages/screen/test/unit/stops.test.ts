@@ -133,6 +133,8 @@ describe("stop paths after the slot is held", () => {
     expect(verdict).toBe("inconclusive");
     expect(probe.stopped).toMatchObject({ reason: "error", attempt: 1, detail: "Error" });
     expect(probe.stopped?.operation_id).toMatch(/.+/);
+    expect(probe.attempts).toHaveLength(0);
+    expect(probe.cost.unsettled_operation_ids).toEqual([probe.stopped?.operation_id]);
     expect(releases).toBe(1);
     const text = output.join("");
     expect(text).toContain("screen: stopped on an unexpected error (Error, code ECONNRESET)");
