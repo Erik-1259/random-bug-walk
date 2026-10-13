@@ -85,7 +85,18 @@ describe("the replay control's status poll", () => {
 
 interface Element {
   type: unknown;
-  props: { status?: unknown; state?: string; reason?: string; disabled?: boolean; onClick?: () => void; children?: unknown };
+  props: {
+    status?: unknown;
+    state?: string;
+    reason?: string;
+    id?: string;
+    style?: Record<string, unknown>;
+    disabled?: boolean;
+    onClick?: () => void;
+    onSubmit?: (event: { preventDefault: () => void }) => void;
+    onChange?: (event: { target: { value: string } }) => void;
+    children?: unknown;
+  };
 }
 
 function find(node: unknown, match: (element: Element) => boolean): Element | null {
@@ -183,10 +194,10 @@ describe("the replay control's session after a reload", () => {
     expect(startButton(rendered)?.props.disabled).toBe(false);
   });
 
-  it("keeps the passcode form and the disabled button when the session check answers unauthorized", async () => {
+  it("keeps the passcode form and the disabled button when the session check answers signed_out", async () => {
     vi.useFakeTimers();
     stubWindow(new Map());
-    stubFetch({ "GET /api/judge/session": { status: 401, body: { state: "unauthorized", message: "Enter the judge passcode." } } });
+    stubFetch({ "GET /api/judge/session": { status: 200, body: { state: "signed_out" } } });
     let rendered: unknown = null;
     hooks.mount(() => (rendered = ReplayControl({ release: null, initial: { state: "ready", reason: "" } })));
     await vi.advanceTimersByTimeAsync(0);
@@ -229,6 +240,104 @@ describe("the replay control's duplicate clicks", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(calls.filter((call) => call.method === "POST")).toHaveLength(1);
     expect(startButton(rendered)?.props.disabled).toBe(true);
+  });
+});
+
+describe("the replay control's status poll during a temporary outage", () => {
+  it("keeps polling, with a back-off, and keeps the start button disabled after an unavailable status while a replay runs", async () => {
+    vi.useFakeTimers();
+    stubWindow(new Map([["rbw-judge-request-id", "00000000-0000-4000-8000-00000000b501"]]));
+    const ledger = { state: "unavailable", reason: "ledger", message: "Unavailable: the spend ledger can't be reached right now. Try again shortly." };
+    const verified = { state: "verified", release_id: "00000000-0000-4000-8000-000000000601", message: "Verified.", cells: [] };
+    const answers: unknown[] = [{ state: "running" }, ledger, ledger, verified];
+    let calls = 0;
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(answers[calls++]) })));
+    let rendered: unknown = null;
+    hooks.mount(() => (rendered = ReplayControl({ release: null, initial: { state: "ready", reason: "" } })));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(calls).toBe(1);
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(calls).toBe(2);
+    expect((rendered as Element).props.reason).toContain("the spend ledger can't be reached");
+    expect(startButton(rendered)?.props.disabled).toBe(true);
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(calls).toBe(3);
+    expect(startButton(rendered)?.props.disabled).toBe(true);
+    // The back-off doubles: the next check comes 30 s later, not 15 s.
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(calls).toBe(3);
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(calls).toBe(4);
+    expect((rendered as Element).props.state).toBe("verified");
+    expect(startButton(rendered)?.props.disabled).toBe(false);
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(calls).toBe(4);
+  });
+});
+
+/** A document whose passcode field and start button record focus calls. */
+function stubDocument(): string[] {
+  const focused: string[] = [];
+  vi.stubGlobal("document", {
+    getElementById: (id: string) => ({
+      focus: () => {
+        focused.push(id);
+      },
+    }),
+  });
+  return focused;
+}
+
+async function submitPasscode(rendered: () => unknown, passcode: string): Promise<void> {
+  const input = find(rendered(), (element) => element.type === "input");
+  input?.props.onChange?.({ target: { value: passcode } });
+  await vi.advanceTimersByTimeAsync(0);
+  passcodeForm(rendered())?.props.onSubmit?.({ preventDefault: () => undefined });
+  await vi.advanceTimersByTimeAsync(0);
+}
+
+describe("the replay control's sign-in", () => {
+  it("says a wrong passcode is not right and puts focus back on the passcode field", async () => {
+    vi.useFakeTimers();
+    stubWindow(new Map());
+    const focused = stubDocument();
+    stubFetch({
+      "GET /api/judge/session": { status: 200, body: { state: "signed_out" } },
+      "POST /api/judge/session": { status: 401, body: { state: "unauthorized", message: "Enter the judge passcode." } },
+    });
+    let rendered: unknown = null;
+    hooks.mount(() => (rendered = ReplayControl({ release: null, initial: { state: "ready", reason: "" } })));
+    await vi.advanceTimersByTimeAsync(0);
+    await submitPasscode(() => rendered, "synthetic-wrong");
+    expect((rendered as Element).props.reason).toBe("That passcode is not right. Try again.");
+    expect(passcodeForm(rendered)).not.toBeNull();
+    expect(focused).toEqual(["judge-passcode"]);
+  });
+
+  it("moves focus to the start button after a successful sign-in", async () => {
+    vi.useFakeTimers();
+    stubWindow(new Map());
+    const focused = stubDocument();
+    stubFetch({
+      "GET /api/judge/session": { status: 200, body: { state: "signed_out" } },
+      "POST /api/judge/session": { status: 200, body: { state: "ready" } },
+    });
+    let rendered: unknown = null;
+    hooks.mount(() => (rendered = ReplayControl({ release: null, initial: { state: "ready", reason: "" } })));
+    await vi.advanceTimersByTimeAsync(0);
+    await submitPasscode(() => rendered, "synthetic-right");
+    expect(startButton(rendered)?.props.disabled).toBe(false);
+    expect(startButton(rendered)?.props.id).toBe("replay-start");
+    expect(focused).toEqual(["replay-start"]);
+  });
+
+  it("styles the passcode field like the buttons", () => {
+    stubWindow(new Map());
+    stubFetch({});
+    let rendered: unknown = null;
+    hooks.mount(() => (rendered = ReplayControl({ release: null, initial: { state: "ready", reason: "" } })));
+    const input = find(rendered, (element) => element.type === "input");
+    expect(input?.props.style).toMatchObject({ font: "inherit", borderRadius: "6px", padding: "0.5rem 0.75rem" });
   });
 });
 

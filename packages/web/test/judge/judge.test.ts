@@ -207,7 +207,7 @@ describe("the passcode session", () => {
     expect([...w.touched, ...rotated.touched]).toEqual([]);
   });
 
-  it("answers a session check with 200 for a valid cookie and 401 otherwise, before any call", async () => {
+  it("answers a session check with 200, ready for a valid cookie and signed_out otherwise, before any call", async () => {
     const w = await world();
     const check = (cookie: string | null) => getSession(new Request("https://example.invalid/api/judge/session", { headers: cookie === null ? {} : { cookie } }), w.server);
     const valid = check(await login(w));
@@ -215,9 +215,11 @@ describe("the passcode session", () => {
     expect(await json(valid)).toEqual({ state: "ready" });
     expect(valid.headers.get("set-cookie")).toBeNull();
     for (const cookie of [null, `${SESSION_COOKIE}=synthetic-forged`]) {
-      const refused = check(cookie);
-      expect(refused.status).toBe(401);
-      expect(await json(refused)).toMatchObject({ state: "unauthorized" });
+      // A public page checks on every load, so a missing session is an answer, not an error.
+      const signedOut = check(cookie);
+      expect(signedOut.status).toBe(200);
+      expect(await json(signedOut)).toEqual({ state: "signed_out" });
+      expect(signedOut.headers.get("set-cookie")).toBeNull();
     }
     expect(w.touched).toEqual([]);
   });

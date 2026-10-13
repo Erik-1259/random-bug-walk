@@ -92,9 +92,12 @@ export async function postSession(request: Request, server: JudgeServer): Promis
   return respond(200, { state: "ready" }, { "set-cookie": cookie });
 }
 
-/** GET /api/judge/session: 200 while the session cookie is valid, 401 otherwise, so a reloaded page knows it is signed in. */
+/**
+ * GET /api/judge/session: ready while the session cookie is valid, signed_out otherwise, so a
+ * reloaded page knows it is signed in. Every public page load asks, so both answers are 200.
+ */
 export function getSession(request: Request, server: JudgeServer): Response {
-  return hasSession(request, server.config) ? respond(200, { state: "ready" }) : unauthorized();
+  return respond(200, { state: hasSession(request, server.config) ? "ready" : "signed_out" });
 }
 
 interface Context {
