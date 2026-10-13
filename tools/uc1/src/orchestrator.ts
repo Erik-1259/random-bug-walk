@@ -84,6 +84,8 @@ export interface SessionsOutcome {
 const ACTOR = "uc1";
 const NAME = /^[a-z0-9][a-z0-9-]{0,40}$/;
 const MAX_RERUN_KEY = 9;
+/** The submitted target file's bytes, under the run's directory. */
+const TARGET_FILE = "target.bin";
 
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -337,7 +339,6 @@ async function runOnce(pass: Pass, item: PlannedAttempt, record: AttemptRecord, 
     deps.report(`attempt=${key} status=${run.ended}`);
     return;
   }
-  let target: Buffer | null = null;
   try {
     const states = readJson(join(pass.runDir, "states.json")) as StatesRecord;
     if (session.planted_sha256 !== states.planted_sha256 || session.digest !== pass.config.image_digest) {
@@ -383,7 +384,8 @@ async function runOnce(pass: Pass, item: PlannedAttempt, record: AttemptRecord, 
         try {
           const ended = await session.end(result.outcome === "submitted" ? "submit" : "cap");
           run.submission = ended.submission;
-          target = ended.target;
+          // Kept beside the record before the run is saved as counted, so a stop before grade 1 finishes can grade these bytes on resume.
+          if (ended.target !== null) writeFileSync(join(dir, TARGET_FILE), ended.target);
         } catch (error) {
           run.ended = "infrastructure_error";
           run.infrastructure = `submission: ${message(error)}`;
@@ -407,15 +409,39 @@ async function runOnce(pass: Pass, item: PlannedAttempt, record: AttemptRecord, 
   const result = run.result;
   deps.report(`attempt=${key} status=${run.ended} turns=${String(result?.turns ?? 0)} tokens=${String(result === null ? 0 : result.input_tokens + result.output_tokens)} settled_microusd=${String(result?.settled_microusd ?? 0)}`);
 
-  if (run.submission === null || (run.ended !== "submitted" && run.ended !== "cap_reached")) return;
-  if (run.submission.scope === "out_of_scope") return;
-  const route: GradeRoute =
-    target === null
-      ? { route: "not_graded", attempt_sha256: "missing", clean_equal: false, reason: "invalid_fix", detail: "the target file is missing" }
-      : prepareGrade(target, gradeTarget(pass.runDir), join(dir, "grade", "fix"));
-  run.route = route;
-  save();
-  if (isGraded(route)) await grade1(pass, route, join(dir, "grade"), key, run.grade1, save);
+  await gradeFinal(pass, record);
+}
+
+/** Whether a counted attempt's final run still owes its route or grade 1 (the process stopped between them). */
+function gradingPending(record: AttemptRecord): boolean {
+  const final = record.runs.at(-1);
+  const scope = final?.submission?.scope;
+  if (record.status !== "counted" || final === undefined || scope === undefined || scope === "out_of_scope") return false;
+  return final.route === null || (isGraded(final.route) && needsGrade(final.grade1));
+}
+
+/** The route and grade 1 of a counted attempt's final run, from its saved target bytes; resumable at either step. */
+async function gradeFinal(pass: Pass, record: AttemptRecord): Promise<void> {
+  const run = record.runs.at(-1);
+  if (run === undefined || !gradingPending(record)) return;
+  const dir = join(pass.runDir, "attempts", attemptDirName(record), `r${String(run.rerun)}`);
+  const save = () => {
+    writeAttempt(pass.runDir, record);
+  };
+  if (run.route === null) {
+    const targetPath = join(dir, TARGET_FILE);
+    run.route = existsSync(targetPath)
+      ? prepareGrade(readFileSync(targetPath), gradeTarget(pass.runDir), join(dir, "grade", "fix"))
+      : { route: "not_graded", attempt_sha256: "missing", clean_equal: false, reason: "invalid_fix", detail: "the target file is missing" };
+    save();
+  }
+  if (isGraded(run.route)) await grade1(pass, run.route, join(dir, "grade"), run.attempt_key, run.grade1, save);
+}
+
+/** Whether grade 1 of a counted attempt's final run ended in infrastructure after its retries. */
+function grade1Infrastructure(record: AttemptRecord | null): boolean {
+  const final = record?.runs.at(-1);
+  return record?.status === "counted" && final !== undefined && isGraded(final.route) && final.grade1.at(-1)?.result.state === "infrastructure";
 }
 
 /** Runs an index to a final status (with its reruns), unless the pass stops. */
@@ -430,7 +456,11 @@ async function runIndex(pass: Pass, item: PlannedAttempt): Promise<void> {
   for (;;) {
     record.status = attemptStatus(record.runs);
     if (record.runs.length > 0) writeAttempt(pass.runDir, record);
-    if (record.status === "counted" || record.status === "infrastructure_error") return;
+    if (record.status === "counted") {
+      await gradeFinal(pass, record);
+      return;
+    }
+    if (record.status === "infrastructure_error") return;
     if (pass.stop !== null) return;
     // A rerun is a whole new attempt, so its own worst case must fit before it starts, and it stays
     // held until the rerun's session ends, so a rerun starting meanwhile cannot count on the same room.
@@ -591,7 +621,7 @@ export async function runSessions(options: SessionsOptions, deps: Uc1Deps): Prom
   if (held) {
     const queue = run.plan.filter((item) => {
       const record = readAttempt(runDir, item);
-      return record === null || (record.status !== "counted" && record.status !== "infrastructure_error");
+      return record === null || gradingPending(record) || (record.status !== "counted" && record.status !== "infrastructure_error");
     });
     let next = 0;
     const worker = async (): Promise<void> => {
@@ -617,9 +647,10 @@ export async function runSessions(options: SessionsOptions, deps: Uc1Deps): Prom
 
   writeProgress(runDir, run, null);
   const finals = run.plan.map((item) => readAttempt(runDir, item));
-  const allCounted = finals.every((record) => record?.status === "counted");
-  // An attempt that ended an infrastructure error after its reruns is final but still exits 1.
-  return { exitCode: pass.stop === null && allCounted && seededOk ? 0 : 1, runDir, rootExecutionId: run.root_execution_id, stop: pass.stop };
+  const allCounted = finals.every((record) => record?.status === "counted" && !gradingPending(record));
+  // An attempt that ended an infrastructure error after its reruns, or whose grade 1 did after its retries, is final but still exits 1.
+  const graded1 = !finals.some(grade1Infrastructure);
+  return { exitCode: pass.stop === null && allCounted && graded1 && seededOk ? 0 : 1, runDir, rootExecutionId: run.root_execution_id, stop: pass.stop };
 }
 
 /** results/summary.json as it stands, without the analysis (a progress view between steps). */

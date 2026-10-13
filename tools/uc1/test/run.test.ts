@@ -458,6 +458,42 @@ describe("resumes, reruns and exit codes", () => {
     await w.close();
   });
 
+  it("resumes the grading of a counted attempt the process stopped before its route or grade 1 was saved", async () => {
+    const w = await world();
+    const report = w.deps.report.bind(w.deps);
+    let fault = true;
+    w.deps.report = (line) => {
+      if (fault && line.startsWith("attempt=off-001-r0 status=submitted ")) {
+        fault = false;
+        throw new Error("synthetic stop after the attempt was saved");
+      }
+      report(line);
+    };
+    await expect(runSessions(pilot(w), w.deps)).rejects.toThrow("synthetic stop");
+    const stopped = runs(join(w.runsDir, "pilot-01"), "001-off")[0] ?? {};
+    expect(stopped.ended).toBe("submitted");
+    expect(stopped.route).toBeNull();
+    const sessions = w.sessions.length;
+    const outcome = await runSessions(pilot(w), w.deps);
+    expect(outcome.exitCode).toBe(0);
+    const resumed = runs(outcome.runDir, "001-off");
+    expect(resumed).toHaveLength(1);
+    expect((resumed[0]?.route as { route: string }).route).not.toBe("not_graded");
+    expect((resumed[0]?.grade1 as { result: { state: string } }[]).map((item) => item.result.state)).toEqual(["passed"]);
+    // The resume grades the saved fix; it does not open the attempt's session again.
+    expect(w.sessions.slice(sessions).some((session) => session.request.id.endsWith("off-001-r0"))).toBe(false);
+    await w.close();
+  });
+
+  it("exits 1 when a counted attempt's grade 1 is still infrastructure after its retries", async () => {
+    const w = await world({ controller: (call) => (call.name.startsWith("grade-1-docker-off-001") ? "infrastructure" : "passed") });
+    const outcome = await runSessions(pilot(w), w.deps);
+    expect(outcome.stop).toBeNull();
+    expect(json(join(outcome.runDir, "attempts", "001-off", "attempt.json")).status).toBe("counted");
+    expect(outcome.exitCode).toBe(1);
+    await w.close();
+  });
+
   it("exits 1 when an attempt ends an infrastructure error after its reruns", async () => {
     const w = await world({ sessionFault: (request) => (request.id.includes("on-003-") ? "error" : null) });
     const outcome = await runSessions(pilot(w), w.deps);
