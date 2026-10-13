@@ -1,6 +1,6 @@
 {
   "adm_06": {
-    "reason": "Owner decision (Oct 13, 2026): this race family is admitted on its clean, fixed and planted copies only (ADM-02 to ADM-05). A partial or stub fix of a lost-update race on one at-most-once check has no meaningful in-between form: any change that keeps two concurrent requests from both spending the code is a full fix, so partial and stub probes would be artificial. ADM-06 is recorded as not applicable for this family.",
+    "reason": "This race family is admitted on its clean, fixed and planted copies only (ADM-02 to ADM-05). A partial or stub fix of a lost-update race on one at-most-once check has no meaningful in-between form: any change that keeps two concurrent requests from both spending the code is a full fix, so partial and stub probes would be artificial. ADM-06 is recorded as not applicable for this family.",
     "status": "not_applicable"
   },
   "checks": ["rc1.backup-code-serial-reuse", "rc1.backup-code-concurrent-double-spend"],

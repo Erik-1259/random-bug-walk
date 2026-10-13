@@ -41,7 +41,7 @@ The file is canonical JSON (sorted keys, two-space indent, trailing newline). It
 - `checks`: the serial control on code 01, then the race on code 10, the last code stored, so each racing request compares every unused code before its write;
 - `outcome_vectors` for `clean`, `fixed` and `planted`;
 - `adm05`: the declared vectors for the 20 repetitions in `fixed-01` and `planted-01`, equal to the fixed and planted vectors. The planted vector is **unproven**: at zero database delay the [local proof](#local-proof) met it in 17 of 30 rounds, so as committed it would fail ADM-05 (see [Admission status](#admission-status));
-- `adm06`: `not_applicable`, with the reason. A partial or stub fix of a lost-update race has no natural form; the owner recorded ADM-06 as not applicable for this family on Oct 13, 2026. There are no `partial` or `stub` states.
+- `adm06`: `not_applicable`, with the reason. A partial or stub fix of a lost-update race has no natural form, so ADM-06 is recorded as not applicable for this family. There are no `partial` or `stub` states.
 
 ## Checks and outcomes
 
@@ -72,12 +72,12 @@ What the record proves, measured in the [local proof](#local-proof):
 
 So `overlap_ms > 0` is the grading condition, and the repeatability of the race at a chosen database delay has to come from the delay study and ADM-05. Because each request spends hundreds of milliseconds in the app (bcrypt compares and database round trips), `overlap_ms > 0` holds in almost every round: in the local proof the 13 planted rounds where the race did not occur still overlapped by at least 639 ms. The overlap gate therefore almost never fires, and a `pass` on a clean or fixed copy does not show that either request read before the other wrote. This only partly meets spec §2.5.
 
-**Open owner decision, needed before the race family is admitted.** Choose one:
+**Open question, to settle before the race family is admitted.** One of:
 
 - (a) add database-side ordering evidence that the driver collects: a Postgres statement log with process IDs and timestamps, or a per-request read and write timestamp; or
 - (b) accept the weaker, client-side evidence and say so in the family's public claims.
 
-The race wiring step (driver, admission and runners) carries this decision.
+The race wiring step (driver, admission and runners) has to settle this question.
 
 ## Interface for the protected driver
 
@@ -121,7 +121,7 @@ This fixture is **not ready to be wired or admitted**, and no paid run should us
 - A single race round that passes is not evidence of a fix. A "fix" that changes nothing passes the race check in about 43% of rounds, because a lost race on a planted copy grades `pass` (a unit test shows this with an app that writes before the second read). A fixed verdict needs many race rounds, as ADM-05's 20 repetitions give; a trial that grades a solver's fix from fewer rounds must not rely on one race round.
 - The delay study has to show 20 of 20 planted `double_spend` and 20 of 20 clean `pass` at the chosen delay, on the released amd64 race image and not only on an arm64 build, with the result committed as evidence.
 - The driver accepts `double_spend` and `backup_code_reused`. One round must still run through the staged kit and the driver (`stage-kit --fixture-package`, then the driver), not through `host/live-proof.sh`, which calls the fixture and Playwright directly.
-- The owner decision on overlap evidence above is still open.
+- The overlap-evidence question above is still open.
 
 ## Tests
 

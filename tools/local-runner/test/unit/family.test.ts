@@ -1,9 +1,9 @@
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { loadProbeSet } from "@rbw/shapes";
 import { DEFAULT_FAMILY, FAMILIES, FamilyError, checkFamilyImage, checkFamilyProbes, checkKitStage, familyFor, familyRecord, raceLatency } from "../../src/family.ts";
-import { buildJob, expectedVectors, newRunIds } from "../../src/jobs.ts";
+import { JobRefusal, buildJob, expectedVectors, newRunIds } from "../../src/jobs.ts";
 import { deriveCodeStates } from "../../src/code-states.ts";
 import { CLEAN, stageFixtureData, tempDir, writeKitStage, writeRaceProbeDir } from "../support/synthetic.ts";
 
@@ -50,6 +50,30 @@ describe("the committed race probe set and the race fixture", () => {
   it("record ADM-06 as not applicable, with the reason, and 11 admission copies", () => {
     expect(familyRecord(race, probes)).toMatchObject({ id: "race", adm06: { status: "not_applicable" }, admission_copies: 11 });
     expect(familyRecord(race, probes).adm06.reason).toMatch(/not applicable/);
+  });
+
+  it("give a reason that run summaries can carry: no role credit and no decision date", () => {
+    const reason = familyRecord(race, probes).adm06.reason ?? "";
+    expect(reason).toMatch(/^This race family is admitted on its clean, fixed and planted copies only/);
+    expect(reason).not.toMatch(/owner|decision|\b20\d\d\b/i);
+  });
+
+  it("are refused when the race probe set's recorded mutation vector disagrees with the race fixture", () => {
+    const dir = writeRaceProbeDir();
+    const file = join(dir, "probes.json");
+    const data = JSON.parse(readFileSync(file, "utf8")) as { checks: string[]; probes: { expected: Record<string, unknown> }[] };
+    const mutation = data.probes[0];
+    if (mutation === undefined) throw new Error("synthetic race probe set has no mutation probe");
+    // An old check ID the race fixture does not declare.
+    data.checks = ["rc1.backup-code-serial-reuse", "rc1.backup-code-single-use"];
+    mutation.expected = { "rc1.backup-code-single-use": { outcome: "assertion_fail", reason: "double_spend" }, "rc1.backup-code-serial-reuse": { outcome: "pass" } };
+    writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`);
+    expect(() => expectedVectors(race.loadFixture(), loadProbeSet(dir))).toThrow(JobRefusal);
+    // The right check IDs, but the race check's reason is the serial check's failure code.
+    data.checks = ["rc1.backup-code-serial-reuse", "rc1.backup-code-concurrent-double-spend"];
+    mutation.expected = { "rc1.backup-code-concurrent-double-spend": { outcome: "assertion_fail", reason: "backup_code_reused" }, "rc1.backup-code-serial-reuse": { outcome: "pass" } };
+    writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`);
+    expect(() => expectedVectors(race.loadFixture(), loadProbeSet(dir))).toThrow(JobRefusal);
   });
 
   it("are refused against the time-zone fixture, and the time-zone probes against the race fixture", () => {
