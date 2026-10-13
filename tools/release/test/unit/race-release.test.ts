@@ -5,7 +5,7 @@
 // Only the symptom is swapped: the run, kit, issue, recordings and judge job (built with no family
 // flag, so the time-zone fixture, suite, vectors and probes) stay time-zone, so this checks the symptom's
 // staging and reading, not a race-family judge job.
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 import { RATE_SHEET_PATH } from "@rbw/controller";
@@ -76,6 +76,8 @@ describe("stage with a race symptom", () => {
     const out = join(dir, "staging");
     const invalid = { ...RACE_SYMPTOM, overlap_ms: 5 };
     expect(refusalCode(() => stage({ run: factory.run, rootRun: factory.rootRunFile, out, redactionsOut: join(dir, "private", "redactions.txt"), ...raceGenerated(dir, invalid) }))).toBe("symptom_invalid");
+    expect(existsSync(out)).toBe(false);
+    expect(existsSync(join(dir, "private", "redactions.txt"))).toBe(false);
   });
 });
 
