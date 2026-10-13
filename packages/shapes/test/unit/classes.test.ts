@@ -274,6 +274,21 @@ describe("find sites in one file", () => {
     });
   });
 
+  it("counts a bound write result used later as shorthand", () => {
+    const code = [
+      "export async function claimSeat(seatId: string) {",
+      "  const { id } = await db.client.seat.findFirst({ where: { id: seatId, taken: false } });",
+      "  const result = await db.client.seat.updateMany({ where: { id, taken: false }, data: { taken: true } });",
+      "  return { result };",
+      "}",
+      "",
+    ].join("\n");
+    const [site, ...rest] = findSitesInSource(CLASSES, "lib/seats.ts", code);
+    expect(rest).toEqual([]);
+    expect(site?.matched).toBe("taken: false");
+    expect(site?.confidence.signals).toMatchObject({ write_result_used: true });
+  });
+
   it("scores a write whose only read of the model comes later as low", () => {
     const [site, ...rest] = sitesIn("lib/late-read.ts");
     expect(rest).toEqual([]);

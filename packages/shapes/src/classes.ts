@@ -142,7 +142,9 @@ function boundNames(call: SgNode): string[] {
 function referencesAfter(scope: SgNode, names: readonly string[], after: SgNode): boolean {
   return names.some((name) =>
     scope
-      .findAll({ rule: { kind: "identifier", regex: `^${name.replace(/\$/g, "\\$")}$` } })
+      .findAll({
+        rule: { any: [{ kind: "identifier" }, { kind: "shorthand_property_identifier" }], regex: `^${name.replace(/\$/g, "\\$")}$` },
+      })
       .some((node) => node.range().start.index >= after.range().end.index),
   );
 }
