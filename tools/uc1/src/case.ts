@@ -14,9 +14,9 @@ export interface CaseConfig {
   screen_record: string;
   /** The bug report, as released: the same text in every attempt of both arms. */
   issue: string;
-  /** The local kit image (tag or digest) the sessions and grade 1 run. */
+  /** The local kit image (tag or digest) the sessions run; it must resolve to image_digest. */
   image: string;
-  /** The content digest the case admits; a session on any other digest is refused. */
+  /** The content digest the case admits (the local image ID); grade 1 runs it, and a session on any other digest is refused. */
   image_digest: string;
   /** Grade 2's kit image in the registry, pinned by digest (the controller's --sandbox-image). */
   sandbox_image: string;
@@ -177,11 +177,14 @@ export function checkCaseForMode(mode: RunMode, config: CaseConfig, screen: Scre
   if (!screen.eligible) throw new CaseError(`${config.case_id} is not eligible for a counted UC1 run: ${screen.detail}`);
 }
 
-/** The controller options of the case that both grades share. */
+/**
+ * The controller options of the case that both grades share. The kit image goes by the case's
+ * content digest, not its tag, so a grade runs the image the case admits even if the tag moved.
+ */
 export function controllerBase(config: CaseConfig): string[] {
   return [
     "--image",
-    config.image,
+    config.image_digest,
     "--manifest",
     config.manifest,
     "--terms",
@@ -190,5 +193,6 @@ export function controllerBase(config: CaseConfig): string[] {
     config.kit_stage,
     ...(config.original_suite === null ? [] : ["--original-suite", config.original_suite]),
     ...(config.audit_policy === null ? [] : ["--policy", config.audit_policy]),
+    ...(config.probes_dir === null ? [] : ["--probes-dir", config.probes_dir]),
   ];
 }

@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { readSolverRateSheet, solverEnvelope, SUPER_SOLVER_PROFILE } from "@rbw/solver";
 import { describe, expect, it } from "vitest";
-import { DRY_CLEAN, DRY_COPY_MICROUSD, DRY_OTHER, DRY_TARGET, defaultScript, dryRunWorld } from "../src/fakes.ts";
+import { DRY_CLEAN, DRY_COPY_MICROUSD, DRY_DIGEST, DRY_OTHER, DRY_TARGET, defaultScript, dryRunWorld } from "../src/fakes.ts";
 import type { DryRunOptions, DryRunWorld } from "../src/fakes.ts";
 import { RunRefusal, finalize, runGrade2, runSessions } from "../src/orchestrator.ts";
 import type { SessionsOptions } from "../src/orchestrator.ts";
@@ -440,6 +440,21 @@ describe("resumes, reruns and exit codes", () => {
     writeFileSync(join(inputs, "reference-fix", "extra.ts"), "export {};\n");
     await expect(runSessions(pilot(w), w.deps)).rejects.toThrow("the case's reference_fix changed since the run started");
     expect(w.sessions).toHaveLength(0);
+    await w.close();
+  });
+
+  it("refuses to resume a run once the case's image tag no longer resolves to the recorded digest", async () => {
+    let tight = true;
+    let digest = DRY_DIGEST;
+    const w = await world({ view: (view) => (tight ? { ...view, settled_microusd: view.settled_microusd + 40_000_000n - TURN_WORST + 1n } : view), imageDigest: () => digest });
+    const first = await runSessions(pilot(w), w.deps);
+    expect(first.stop).toMatchObject({ reason: "allowance_exceeded" });
+    tight = false;
+    digest = `sha256:${"0e".repeat(32)}`;
+    await expect(runSessions(pilot(w), w.deps)).rejects.toThrow(`resolves to ${digest}, not the case's ${DRY_DIGEST}`);
+    expect(w.sessions).toHaveLength(0);
+    digest = DRY_DIGEST;
+    expect((await runSessions(pilot(w), w.deps)).exitCode).toBe(0);
     await w.close();
   });
 

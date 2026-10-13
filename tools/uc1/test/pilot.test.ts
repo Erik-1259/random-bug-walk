@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseRecord } from "@rbw/schema";
 import { describe, expect, it } from "vitest";
-import { DRY_ALTERNATIVE, DRY_CLEAN, DRY_COPY_MICROUSD, dryRunWorld } from "../src/fakes.ts";
+import { DRY_ALTERNATIVE, DRY_CLEAN, DRY_COPY_MICROUSD, DRY_DIGEST, dryRunWorld } from "../src/fakes.ts";
 import type { DryRunOptions, DryRunWorld } from "../src/fakes.ts";
 import { finalize, runGrade2, runSessions } from "../src/orchestrator.ts";
 import type { SessionsOptions } from "../src/orchestrator.ts";
@@ -117,6 +117,7 @@ describe("the harness pilot", () => {
     expect(cleanCall?.args[cleanCall.args.indexOf("--judge-fixed") + 1]).toBe("fixed");
     const altCall = w.controllerCalls.find((call) => call.name === "grade-1-docker-seed-alternative-fix-r0");
     expect(altCall?.args[altCall.args.indexOf("--judge-fixed") + 1]).toBe("alternative_fix");
+    for (const call of w.controllerCalls) expect(call.args[call.args.indexOf("--image") + 1]).toBe(DRY_DIGEST);
     // The 4 attempts made every model call: 5 turns in the on arm, 4 in the off arm, none for the seeded grades.
     expect(turns).toBe(18);
     await w.close();

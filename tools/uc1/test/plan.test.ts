@@ -73,9 +73,18 @@ describe("case files and screen records", () => {
   it("passes the case's controller options to both grades", () => {
     const config = parseCase(Buffer.from(JSON.stringify({ ...caseJson, original_suite: "suite.json" })));
     const base = controllerBase(config);
-    expect(base.slice(0, 2)).toEqual(["--image", "rbw-umami-kit:local"]);
+    // The kit image by the case's content digest, never by its tag, so a retagged image cannot be graded.
+    expect(base.slice(0, 2)).toEqual(["--image", `sha256:${"f9".repeat(32)}`]);
+    expect(base).not.toContain("rbw-umami-kit:local");
     expect(base).toContain("--original-suite");
     expect(base).not.toContain("--policy");
+    expect(base).not.toContain("--probes-dir");
+  });
+
+  it("passes the case's probe directory to both grades, so they grade the same probes the session planted", () => {
+    const config = parseCase(Buffer.from(JSON.stringify({ ...caseJson, probes_dir: "packages/shapes/probes/rc-1" })));
+    const base = controllerBase(config);
+    expect(base[base.indexOf("--probes-dir") + 1]).toBe(config.probes_dir);
   });
 
   it("reads the committed time-zone screen record as failing, so only the pilot may run it", () => {

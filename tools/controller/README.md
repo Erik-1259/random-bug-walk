@@ -23,7 +23,7 @@ node tools/controller/src/cli.ts run --job-kind <kit_check|observe|admission|jud
   [--original-suite <file>] [--policy <file>] [--fix <dir>] [--name <job name>] \
   [--backend sandbox|docker] [--sandbox-image <repository>@sha256:<digest>] \
   [--trials <id,...>] [--ledger development|judge] [--ids <file>] [--project-policy <file>] \
-  [--judge-fixed fixed|alternative_fix]
+  [--judge-fixed fixed|alternative_fix] [--probes-dir <dir>]
 node tools/controller/src/cli.ts proof --work <run dir> --image ... --manifest ... --terms ... --kit-stage ... \
   [--original-suite <file>] [--policy <file>] [--backend sandbox|docker] [--sandbox-image ...]
 node tools/controller/src/cli.ts create-slot-key --slot-key <key>
@@ -42,7 +42,8 @@ node tools/controller/src/cli.ts run --job-kind judge_verify --request-id <uuid>
 - `--ids` is a JSON file holding a root's IDs (the local runner's `RunIds`: `run_tag`, `project_id`, `batch_id`, `root_execution_id`, `executions` and `release_id`), so every job of one root shares them. Without it, the job makes its own.
 - `--project-policy` is a canonical `ProjectPolicy` record. The job records its hash under the grading policy ID. It needs `--ids`, whose `project_id` must be the policy's, and it refuses the development placeholder project.
 - `--judge-fixed` is for `judge_verify` only: the code state `fixed-01` grades. `fixed` grades the reference fix, the clean file's exact bytes. A solver fix that equals the clean file is graded this way, because the alternative-fix layout refuses a fix equal to the clean file. The default, `alternative_fix`, grades `--fix` (or the local runner's alternative fix).
-- The judge controller (`--prebuilt`) refuses `--trials`, `--ledger`, `--ids`, `--project-policy`, `--judge-fixed` and `--fix`.
+- `--probes-dir` is the probe set the job derives its code states from (a shapes package probe directory, such as a race case's). The default is the local runner's probe set. A grade passes the probe set its case's session planted, or the controller refuses the mismatched fix.
+- The judge controller (`--prebuilt`) refuses `--trials`, `--ledger`, `--ids`, `--project-policy`, `--judge-fixed`, `--fix` and `--probes-dir`.
 - `--backend sandbox` is the default. It reads `DATABASE_URL`, `VERCEL_TOKEN`, `VERCEL_TEAM_ID` and `VERCEL_PROJECT_ID` from the environment, never from arguments, and prints none of them. A missing one is named and the command exits 2.
 - `--backend docker` runs the copies on local Docker with an in-memory PGlite ledger. That ledger has every `@rbw/spend` migration and both slot keys, as the local runner's recorded mode uses. It needs no credentials. Its amounts are what the same copies would reserve and settle on Sandbox.
 - `--prebuilt` is prebuilt mode, the judge controller: it runs the release's frozen judge job with no Docker and writes `judge/<root>/` in the private store (`BLOB_PRIVATE_STORE_ID` and `VERCEL_OIDC_TOKEN`, or a local store directory). The judge route starts it; `src/judge-run.ts` describes its checks and its end order. The route and the controller each compute the controller operation's ID and payload hash, so the judge web deploy must be built from the commit the controller image was built from, or from a later commit that leaves `tools/controller/src/{envelope,limits,judge-web}.ts` and `packages/envelope` (with its rate sheet) unchanged.

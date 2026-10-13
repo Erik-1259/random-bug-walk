@@ -328,6 +328,8 @@ export interface DryRunOptions {
   /** Changes what the ledger shows (for example spend already settled under the roots). */
   view?: (real: LedgerView) => LedgerView;
   sessionDelayMs?: number;
+  /** What the case's image tag resolves to now; the case's digest by default. */
+  imageDigest?: () => string;
 }
 
 export interface DryRunWorld {
@@ -430,6 +432,7 @@ export async function dryRunWorld(options: DryRunOptions): Promise<DryRunWorld> 
     },
     deriveStates: (config: CaseConfig): Promise<CaseStates> =>
       Promise.resolve({ target_path: DRY_TARGET, digest: config.image_digest, clean: Buffer.from(DRY_CLEAN), planted: Buffer.from(DRY_PLANTED), alternative: Buffer.from(DRY_ALTERNATIVE) }),
+    resolveImage: () => Promise.resolve(options.imageDigest?.() ?? DRY_DIGEST),
     runController: fakeController(spend, controllerCalls, options.controller ?? (() => "passed")),
     grade2WorstCaseMicrousd: BigInt(DRY_COPY_MICROUSD),
     uuid: () => {

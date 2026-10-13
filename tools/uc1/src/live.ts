@@ -127,6 +127,7 @@ export async function liveDeps(options: LiveOptions, report: (line: string) => v
     ...(apiKey === undefined ? {} : { apiKey }),
     openSession,
     deriveStates,
+    resolveImage: (image) => inspectImage(createDocker(), image),
     runController,
     grade2WorstCaseMicrousd: envelope.reserved_microusd,
     uuid: () => crypto.randomUUID(),

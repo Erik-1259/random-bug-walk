@@ -174,6 +174,17 @@ function refuseFinalized(runDir: string, name: string): void {
   }
 }
 
+/** Refuses a resume once the case's image no longer resolves to the digest the run started on (the sessions run it by that reference). */
+async function refuseMovedImage(config: CaseConfig, deps: Uc1Deps): Promise<void> {
+  let digest: string;
+  try {
+    digest = await deps.resolveImage(config.image);
+  } catch (error) {
+    throw new RunRefusal(`the case's image ${config.image} cannot be inspected: ${message(error)}`);
+  }
+  if (digest !== config.image_digest) throw new RunRefusal(`the image resolves to ${digest}, not the case's ${config.image_digest}`);
+}
+
 function gradeTarget(runDir: string): GradeTarget {
   const states = readJson(join(runDir, "states.json")) as StatesRecord;
   return { target_path: states.target_path, clean_sha256: states.clean_sha256, planted: readFileSync(join(runDir, "states", "planted.bin")) };
@@ -473,6 +484,7 @@ export async function runSessions(options: SessionsOptions, deps: Uc1Deps): Prom
     }
     refuseFinalized(runDir, options.name);
     refuseChangedInputs(runDir, existing);
+    await refuseMovedImage(config, deps);
   } else if (existsSync(runDir) && readdirSync(runDir).length > 0) {
     throw new RunRefusal(`${runDir} exists and is not a UC1 run`);
   }

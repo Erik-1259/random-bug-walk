@@ -152,6 +152,61 @@ function turnsSentence(turns: ResultsRecord["bugs"][number]["turns"]): string {
   return `${detail}; the on arm took ${Number(turns.hodges_lehmann_on_minus_off) > 0 ? "more" : "fewer"} turns.`;
 }
 
+/** Both arms need this many counted attempts for the pre-registered detectable-difference table to apply. */
+export const TABLE_ARM_SIZE = 20;
+
+/**
+ * The pre-registration's generated solve table (docs/uc1-preregistration.md, "Detectable
+ * difference"): the smallest detectable difference in percentage points at 80% power, k = 20 per
+ * arm, at alpha 0.05 and 0.0167, indexed by the off arm's solved count (0 to 20, so the off-arm
+ * rate is 5 times the index, already on the table's 5-point grid). `none` means no difference is
+ * detectable in that direction. The tests check it against the document's table.
+ */
+export const DETECTABLE_DIFFERENCE: readonly { increase: readonly [string, string]; decrease: readonly [string, string] }[] = [
+  { increase: ["34", "43"], decrease: ["none", "none"] },
+  { increase: ["40", "48"], decrease: ["none", "none"] },
+  { increase: ["43", "51"], decrease: ["none", "none"] },
+  { increase: ["46", "53"], decrease: ["none", "none"] },
+  { increase: ["48", "54"], decrease: ["none", "none"] },
+  { increase: ["49", "54"], decrease: ["none", "none"] },
+  { increase: ["48", "54"], decrease: ["none", "none"] },
+  { increase: ["47", "53"], decrease: ["35", "none"] },
+  { increase: ["46", "51"], decrease: ["38", "none"] },
+  { increase: ["44", "49"], decrease: ["40", "44"] },
+  { increase: ["42", "47"], decrease: ["42", "47"] },
+  { increase: ["40", "44"], decrease: ["44", "49"] },
+  { increase: ["38", "none"], decrease: ["46", "51"] },
+  { increase: ["35", "none"], decrease: ["47", "53"] },
+  { increase: ["none", "none"], decrease: ["48", "54"] },
+  { increase: ["none", "none"], decrease: ["49", "54"] },
+  { increase: ["none", "none"], decrease: ["48", "54"] },
+  { increase: ["none", "none"], decrease: ["46", "53"] },
+  { increase: ["none", "none"], decrease: ["43", "51"] },
+  { increase: ["none", "none"], decrease: ["40", "48"] },
+  { increase: ["none", "none"], decrease: ["34", "43"] },
+];
+
+function direction(name: "an increase" | "a decrease", [low, high]: readonly [string, string]): string | null {
+  if (low === "none") return null;
+  return `${name} of ${low} percentage points at alpha 0.05 and ${high} at alpha 0.0167`;
+}
+
+/**
+ * The sentence after a counted run's headline: the detectable difference for the observed off-arm
+ * rate when both arms have 20 counted attempts, or the note that it is omitted.
+ */
+export function detectableSentence(offSolved: number, offCounted: number, onCounted: number): string {
+  const entry = DETECTABLE_DIFFERENCE[offSolved];
+  if (offCounted !== TABLE_ARM_SIZE || onCounted !== TABLE_ARM_SIZE || entry === undefined) {
+    return `The detectable difference is omitted: the pre-registered table assumes ${String(TABLE_ARM_SIZE)} counted attempts per arm.`;
+  }
+  const increase = direction("an increase", entry.increase);
+  const decrease = direction("a decrease", entry.decrease);
+  const detectable =
+    increase !== null && decrease !== null ? `${increase}, or ${decrease}` : increase !== null ? `${increase}; no decrease is detectable` : decrease !== null ? `no increase is detectable; ${decrease}` : "no difference is detectable";
+  return `Detectable difference (calculated, 80% power, ${String(TABLE_ARM_SIZE)} counted attempts per arm) at the observed off-arm rate of ${String(offSolved * 5)}% (${String(offSolved)}/${String(offCounted)}): ${detectable}.`;
+}
+
 /** The run's report: the label, the plan, every attempt, both grades, spend and the analysis statements. */
 export function reportMarkdown(summary: RunSummary, analysis: ResultsRecord | null): string {
   const lines: string[] = [];
@@ -203,7 +258,8 @@ export function reportMarkdown(summary: RunSummary, analysis: ResultsRecord | nu
     for (const bug of analysis.bugs) {
       const off = bug.arms.off;
       const on = bug.arms.on;
-      lines.push(summary.mode === "pilot" ? `Harness pilot, k = ${String(off.counted)} off and ${String(on.counted)} on; not a UC1 result.` : `Illustration on 1 bug, k = ${String(off.counted)} off and ${String(on.counted)} on.`, "");
+      if (summary.mode === "pilot") lines.push(`Harness pilot, k = ${String(off.counted)} off and ${String(on.counted)} on; not a UC1 result.`, "");
+      else lines.push(`Illustration on 1 bug, k = ${String(off.counted)} off and ${String(on.counted)} on.`, "", detectableSentence(off.solved, off.counted, on.counted), "");
       lines.push(bug.made_worse.statement, "", turnsSentence(bug.turns), "");
     }
     lines.push(analysis.claim_scope, "");

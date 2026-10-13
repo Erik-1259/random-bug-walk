@@ -4,7 +4,7 @@
 //         --manifest <file> --terms <file> --kit-stage <dir> [--original-suite <file>] [--policy <file>]
 //         [--fix <dir>] [--name <job name>] [--backend sandbox|docker] [--sandbox-image <repository>@sha256:<digest>]
 //         [--trials <id,...>] [--ledger development|judge] [--ids <RunIds JSON>] [--project-policy <ProjectPolicy>]
-//         [--judge-fixed fixed|alternative_fix]
+//         [--judge-fixed fixed|alternative_fix] [--probes-dir <dir>]
 //   proof --work <run dir> --image ... --manifest ... --terms ... --kit-stage ... [--original-suite <file>]
 //         [--policy <file>] [--backend sandbox|docker] [--sandbox-image ...]
 //   create-slot-key --slot-key <development|judge>
@@ -57,6 +57,7 @@ const USAGE = `usage:
   node src/cli.ts run --job-kind <kit_check|observe|admission|judge_verify> --work <run dir> --image <tag|digest> --manifest <file> --terms <file> --kit-stage <dir>
                       [--original-suite <file>] [--policy <file>] [--fix <dir>] [--name <job name>] [--backend sandbox|docker] [--sandbox-image <repository>@sha256:<digest>]
                       [--trials <id,...>] [--ledger development|judge] [--ids <file>] [--project-policy <file>] [--judge-fixed fixed|alternative_fix]
+                      [--probes-dir <dir>]
   node src/cli.ts proof --work <run dir> --image <tag|digest> --manifest <file> --terms <file> --kit-stage <dir>
                         [--original-suite <file>] [--policy <file>] [--backend sandbox|docker] [--sandbox-image <repository>@sha256:<digest>]
   node src/cli.ts create-slot-key --slot-key <key>

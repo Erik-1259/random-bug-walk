@@ -91,6 +91,23 @@ describe("--trials", () => {
   });
 });
 
+describe("--probes-dir", () => {
+  it("passes the case's probe directory to the job, which grades with it", async () => {
+    const w = await testWorld();
+    const probes = jobInputs(w).probesDir;
+    if (probes === undefined) throw new Error("the synthetic world names a probe directory");
+    const job = runJobInputs(values(w, { "job-kind": "judge_verify", ledger: "development", trials: "fixed-01", "judge-fixed": "fixed", "probes-dir": probes }));
+    expect(job.probesDir).toBe(probes);
+    const outcome = await runJob({ ...job, alternativeDir: jobInputs(w).alternativeDir }, w.deps);
+    expect(outcome.status).toBe("complete");
+  });
+
+  it("leaves the local runner's default probe set when absent", async () => {
+    const w = await testWorld();
+    expect(runJobInputs(values(w, { "job-kind": "kit_check" }))).not.toHaveProperty("probesDir");
+  });
+});
+
 describe("--ids and --project-policy", () => {
   it("shares the root's IDs with the job", async () => {
     const w = await testWorld();
@@ -168,7 +185,7 @@ describe("--judge-fixed", () => {
 
 describe("the command line", () => {
   it("refuses the new options for the judge controller, exiting 2 before anything runs", () => {
-    for (const extra of [["--ledger", "development"], ["--trials", "fixed-01"], ["--ids", "ids.json"], ["--project-policy", "policy.json"], ["--judge-fixed", "fixed"]]) {
+    for (const extra of [["--ledger", "development"], ["--trials", "fixed-01"], ["--ids", "ids.json"], ["--project-policy", "policy.json"], ["--judge-fixed", "fixed"], ["--probes-dir", "probes"]]) {
       const result = spawnSync(process.execPath, [CLI, "run", "--job-kind", "judge_verify", "--prebuilt", "store", ...extra], { encoding: "utf8", env: {} });
       expect(result.status).toBe(2);
       expect(result.stderr).toContain(`${extra[0] ?? ""} is not for the judge controller`);

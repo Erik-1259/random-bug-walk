@@ -81,10 +81,10 @@ One JSON object; every field is required, unknown fields are refused, and paths 
 }
 ```
 
-- `image_digest` is the digest the time-zone case's screen record names; a session on any other digest is refused.
+- `image_digest` is the digest the time-zone case's screen record names (the local image ID). A session on any other digest is refused, both grades pass the controller this digest rather than the tag, and a resumed run first checks that `image` still resolves to it.
 - `issue` is the same text in every attempt of both arms; the run records its SHA-256.
 - `reference_fix` is the case's committed alternative fix. The session and the code states read it, and the clean-equal route passes it to the controller.
-- `probes_dir` null uses the shapes package's probes, which are the time-zone case's.
+- `probes_dir` null uses the shapes package's probes, which are the time-zone case's. A race case names its probe directory; the session, the code states and both grades (the controller's `--probes-dir`) use it.
 - A counted run takes a race case's file with that case's screen record, which must have both `static_headroom.verdict` and `leak_screen.verdict` equal to `pass`.
 
 The policy file is a canonical `ProjectPolicy` with purpose `public_demo`, as the publisher's `policy` command writes it (`node packages/publisher/src/cli.ts policy ...`).
@@ -176,7 +176,7 @@ Refused before anything is written (exit 2):
 - a different `--model` after the first counted attempt under `<runs>`, or a resumed run on another model, case, policy, issue, runtime profile or rate sheet;
 - a `pilot`, `run`, `grade2` or `finalize` on a run after a file or directory its case names (the screen record, issue, manifest, terms, audit policy, probes, reference fix, kit stage or original suite) changed content since the run started;
 - a `pilot`, `run` or `grade2` on a run whose root `finalize` already made terminal;
-- an image that resolves to another digest than the case's.
+- an image that resolves to another digest than the case's, on a new run or a resumed one.
 
 Stops during a step (exit 1, recorded in `stops.jsonl`): the allowance, an uncertain operation or a halted ledger, a session refused before its container (an audit or image mismatch: the run stops, nothing is rerun), the slot held by another root, and a slot that cannot be released (the root becomes `needs_reconciliation`).
 
@@ -189,6 +189,6 @@ An infrastructure error (the session cannot start, the model endpoint fails or t
 ## Not built here
 
 - The fallback branch (decision 6): running the time-zone case as a counted low-headroom contrast is an amendment to the pre-registration, so `run` refuses it until the amendment and a code change say otherwise.
-- The futility rule, the analysis and the claim wording are `packages/solver`'s `analyze`; this tool supplies its rows. The detectable-difference sentence from the pre-registration's table is not added to the report.
+- The futility rule, the analysis and the claim wording are `packages/solver`'s `analyze`; this tool supplies its rows. The report adds the headline and, for a counted run, the detectable difference from the pre-registration's table (`DETECTABLE_DIFFERENCE` in `src/report.ts`, checked against the table by the tests), or the note that it is omitted when an arm has fewer than 20 counted attempts.
 - The ledger reconciliation after a stop, the confirmation of what the cap covers, and the model decision after the pilot are operator steps.
 - `host-health.sh` between batches of sessions is not run by the orchestrator.

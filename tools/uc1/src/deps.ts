@@ -56,6 +56,8 @@ export interface Uc1Deps {
   apiKey?: string;
   openSession(request: SessionRequest): Promise<AttemptSession>;
   deriveStates(config: CaseConfig, work: string): Promise<CaseStates>;
+  /** The content digest (local image ID) a local image reference resolves to now. */
+  resolveImage(image: string): Promise<string>;
   /** Runs the controller with these `run` arguments; only its summary is trusted, never its exit code. */
   runController(args: readonly string[]): Promise<number>;
   /** The worst case of one grade 2 job (one Sandbox copy) from the committed rate sheet. */
