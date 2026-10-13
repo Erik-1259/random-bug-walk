@@ -332,6 +332,29 @@ describe("find sites in one file", () => {
     expect(sites.map((site) => site.confidence.signals.read_checks_guard)).toEqual([false]);
   });
 
+  it("counts only direct fields of the read's where, not a nested relation filter", () => {
+    const code = [
+      "export async function close(db, id) {",
+      "  const room = await db.client.room.findFirst({ where: { id, owner: { active: true } } });",
+      "  await db.client.room.update({ where: { id: room.id, active: true }, data: { active: false } });",
+      "}",
+      "",
+    ].join("\n");
+    const sites = findSitesInSource(CLASSES, "lib/rooms.ts", code);
+    expect(sites.map((site) => site.confidence.signals.read_checks_guard)).toEqual([false]);
+  });
+
+  it("does not match an upsert whose argument names found, which the split callback would shadow", () => {
+    const code = [
+      "export async function claim(db, found, profileId) {",
+      "  await db.client.preference.upsert({ where: { profileId }, update: { ownerId: found.id }, create: { profileId } });",
+      "  await db.client.preference.upsert({ where: { profileId }, update: {}, create: { profileId, found } });",
+      "}",
+      "",
+    ].join("\n");
+    expect(findSitesInSource(CLASSES, "lib/prefs.ts", code)).toEqual([]);
+  });
+
   it("gives each site a diff of that site alone", () => {
     for (const site of sitesIn("lib/documents.ts")) {
       const changed = site.diff.split("\n").filter((line) => /^[-+](?![-+])/.test(line));

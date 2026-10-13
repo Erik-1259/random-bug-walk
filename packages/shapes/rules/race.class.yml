@@ -239,6 +239,16 @@ rule:
                   context: "({ create: $CREATE })"
                   selector: pair
             - matches: only-upsert-keys
+            # The rewrite binds the read result as `found` around the update and create values, so
+            # an argument that already names `found` would read the new binding instead.
+            - not:
+                has:
+                  stopBy: end
+                  any:
+                    - kind: identifier
+                      regex: ^found$
+                    - kind: shorthand_property_identifier
+                      regex: ^found$
 fix: "$DB.$MODEL.findUnique({ where: $WHERE }).then((found) => (found ? $DB.$MODEL.update({ where: $WHERE, data: $UPDATE }) : $DB.$MODEL.create({ data: $CREATE })))"
 metadata:
   class_id: RACE.check-then-act

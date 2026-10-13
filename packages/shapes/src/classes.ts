@@ -171,10 +171,12 @@ function guardedWriteSignals(guard: SgNode): Signals {
   const read = reads.at(-1);
   const key = pairKey(guard);
   const value = fieldOf(guard, "value")?.text().replace(/\s+/g, " ");
-  // Only the read's own `where` filters; a `select` or `include` naming the field does not.
+  // Only direct fields of the read's own `where` filter the written model; a `select` or `include`
+  // naming the field, or a nested relation filter (`owner: { active: true }`), does not.
   const readWhere = read === undefined ? undefined : objectPairs(fieldOf(read, "arguments")?.children().find((child) => kindOf(child) === "object")).find((pair) => pairKey(pair) === "where");
-  const readFilters =
-    readWhere?.findAll({ rule: { kind: "pair" } }).some((pair) => pairKey(pair) === key && fieldOf(pair, "value")?.text().replace(/\s+/g, " ") === value) ?? false;
+  const readFilters = objectPairs(fieldOf(readWhere, "value")).some(
+    (pair) => pairKey(pair) === key && fieldOf(pair, "value")?.text().replace(/\s+/g, " ") === value,
+  );
   const readNames = read === undefined ? [] : boundNames(read);
   // The code tests the guarded field of what it read (`if (seat.status !== 'open')`) before writing.
   const testedInCode =
