@@ -1,7 +1,7 @@
 // Results directories for tests: copies of the committed fixtures, and synthetic case runs whose
 // admission evidence and decision come from the real importer over the admission package's
 // synthetic record sets.
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -134,4 +134,66 @@ export function syntheticCase(mutate: (draft: RecordSetDraft) => void = () => un
     entries: files.map(([path, owner, bytes]) => publishedEntry(path, owner, bytes)),
   });
   return { dir, root, execution, evidence };
+}
+
+export interface JudgeReplayOptions {
+  /** The replay root's recorded outcome; null for one that has not finished. */
+  outcome: "completed" | "failed" | "incomplete" | "cancelled" | null;
+  /** Whether the run's files are published, or it has only a status object. */
+  published: boolean;
+}
+
+/**
+ * Adds a judge replay root (RootRun kind judge_replay) to a results directory, shaped like the ones
+ * `tools/release publish-replays` publishes: one judge_verify child, a report.md and a status object.
+ * Its policy hash is the first published run's, so it passes the status check.
+ */
+export function addJudgeReplay(results: string, root: string, { outcome, published }: JudgeReplayOptions): void {
+  const [first] = readdirSync(join(results, "repository", "runs")).sort();
+  if (first === undefined) throw new Error("synthetic: the results directory holds no published run to take a policy from");
+  const policy = readManifest(results, first).project_policy_sha256;
+  const child = `${root.slice(0, -4)}f001`;
+  if (published) {
+    if (outcome === null) throw new Error("synthetic: a published run has an outcome");
+    const report = new TextEncoder().encode(`# Run ${root}\n\nKind: judge_replay. Outcome: ${outcome}. The planted bug is synthetic.\n`);
+    writeFile(join(runDir(results, root), "report.md"), report);
+    writeManifest(results, {
+      schema_version: 1,
+      project_id: "00000000-0000-4000-8000-000000000001",
+      project_policy_sha256: policy,
+      root_execution_id: root,
+      kind: "judge_replay",
+      declared_stages: ["judge_verify"],
+      outcome,
+      executions: [
+        { execution_id: root, parent_execution_id: null },
+        { execution_id: child, parent_execution_id: root },
+      ],
+      entries: [publishedEntry("report.md", root, report, "text/markdown")],
+    });
+  }
+  const status = encodeCanonical({
+    schema_version: 1,
+    root_execution_id: root,
+    kind: "judge_replay",
+    status: outcome === null ? "running" : "terminal",
+    outcome,
+    publication_status: published ? "published" : null,
+    project_policy_sha256: policy,
+    declared_stage_count: 1,
+    child_execution_count: 1,
+  });
+  parseRecord("PublicRunStatus", status);
+  writeFile(join(results, "store", "status", `${root}.json`), status);
+}
+
+/** The release fixture with three judge replays: two published and completed, one still running with only a status object. */
+export const REPLAY_ROOTS = ["00000000-0000-4000-8200-000000000001", "00000000-0000-4000-8200-000000000002", "00000000-0000-4000-8200-000000000003"] as const;
+
+export function releaseWithReplays(): string {
+  const dir = copyRelease();
+  addJudgeReplay(dir, REPLAY_ROOTS[0], { outcome: "completed", published: true });
+  addJudgeReplay(dir, REPLAY_ROOTS[1], { outcome: "completed", published: true });
+  addJudgeReplay(dir, REPLAY_ROOTS[2], { outcome: null, published: false });
+  return dir;
 }

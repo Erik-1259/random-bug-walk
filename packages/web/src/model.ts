@@ -1,7 +1,7 @@
 // What the pages show, derived from the published records only. Every count here is a count of
 // records in the results directory.
 import type { Cell, Comparison, RuleOutcome } from "@rbw/admission";
-import type { BucketCount, ObservedSymptom } from "@rbw/schema";
+import type { BucketCount, ObservedSymptom, RootRunKind } from "@rbw/schema";
 import type { AdmissionRecords, Results, Run } from "./release.ts";
 
 export const NO_VALIDATED_RESULT = "No validated blind-spot example yet";
@@ -111,18 +111,54 @@ export interface FunnelStep {
   count: number;
 }
 
+/** How each root kind is named on the pages: judge replays are verification runs, never factory runs. */
+export const RUN_KIND_TEXT: Record<RootRunKind, string> = { factory: "Factory run", kit_check: "Kit check", judge_replay: "Verification replay (judge)" };
+
+/** The factory runs: the funnel counts only these, and kit checks and judge replays apart (otherRuns). */
+export function factoryRuns(results: Results): Run[] {
+  return results.runs.filter((run) => run.kind === "factory");
+}
+
 export function funnel(results: Results): FunnelStep[] {
-  const decided = results.runs.flatMap((run) => (run.admission === null ? [] : [run.admission.decision]));
+  const runs = factoryRuns(results);
+  const decided = runs.flatMap((run) => (run.admission === null ? [] : [run.admission.decision]));
   return [
-    { label: "Runs recorded", count: results.runs.length },
-    { label: "Runs finished", count: results.runs.filter((run) => run.status === "terminal").length },
-    { label: "Runs published", count: results.runs.filter((run) => run.manifest !== null).length },
-    { label: "Runs with an observed symptom", count: results.runs.filter((run) => run.symptom !== null).length },
-    { label: "Runs with an admission decision", count: decided.length },
+    { label: "Factory runs recorded", count: runs.length },
+    { label: "Factory runs finished", count: runs.filter((run) => run.status === "terminal").length },
+    { label: "Factory runs published", count: runs.filter((run) => run.manifest !== null).length },
+    { label: "Factory runs with an observed symptom", count: runs.filter((run) => run.symptom !== null).length },
+    { label: "Factory runs with an admission decision", count: decided.length },
     { label: "Admission verdict pass", count: decided.filter((decision) => decision.outcome_verdict === "pass").length },
     { label: "Blind spot demonstrated (ADM-08)", count: decided.filter((decision) => decision.comparison?.classification === "blind_spot_demonstrated").length },
     { label: "Validated releases (ADM-09)", count: results.release === null ? 0 : 1 },
   ];
+}
+
+/** Published judge replays, which the case page lists apart from the diagnostic archive. */
+export function verificationReplays(results: Results): Run[] {
+  return results.runs.filter((run) => run.kind === "judge_replay" && run.manifest !== null);
+}
+
+/**
+ * Why the replay lines count outcomes, not verdicts: a published judge_replay run's decision.json has
+ * no outcome_verdict, and its verified or not-reproduced state is not in the public records.
+ */
+export const REPLAY_VERDICT_NOTE =
+  "A replay's published records do not include its verdict (verified or not reproduced), so the replay lines count each replay's recorded outcome only: completed means the replay's run ended, not that it reproduced the release.";
+
+/**
+ * The runs counted apart from the factory funnel: every judge replay, with a line for each recorded
+ * outcome that some replay has (and for replays not finished yet), then the kit checks when there are any.
+ */
+export function otherRuns(results: Results): FunnelStep[] {
+  const replays = results.runs.filter((run) => run.kind === "judge_replay");
+  const outcomes = (Object.keys(OUTCOME_WORDS) as (keyof typeof OUTCOME_WORDS)[]).map((outcome) => ({
+    label: `Replays ${OUTCOME_WORDS[outcome].toLowerCase()}`,
+    count: replays.filter((run) => run.outcome === outcome).length,
+  }));
+  const unfinished = { label: "Replays not finished", count: replays.filter((run) => run.outcome === null).length };
+  const kitChecks = { label: "Kit checks", count: results.runs.filter((run) => run.kind === "kit_check").length };
+  return [{ label: "Verification replays (judge)", count: replays.length }, ...[...outcomes, unfinished, kitChecks].filter((step) => step.count > 0)];
 }
 
 /** The replay control's states (design note section 6). Every state is written in text; color only repeats it. */
@@ -206,10 +242,10 @@ export interface ReplayStatus {
   cells: ReplayCell[];
 }
 
-/** Published runs whose files remain downloadable as diagnostic archives: every one but the released run. */
+/** Published runs whose files remain downloadable as diagnostic archives: every one but the released run and the judge replays. */
 export function diagnosticArchives(results: Results): Run[] {
   const released = results.release?.record.run.root_execution_id;
-  return results.runs.filter((run) => run.manifest !== null && run.rootExecutionId !== released);
+  return results.runs.filter((run) => run.manifest !== null && run.kind !== "judge_replay" && run.rootExecutionId !== released);
 }
 
 const PUBLICATION_TEXT = { prepared: "Prepared", published: "Published", blocked: "Blocked", failed: "Publication failed" } as const;
