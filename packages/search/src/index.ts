@@ -7,9 +7,16 @@ export {
   CALL_NAMES,
   CREDIT_LIMIT_PER_CALL,
   DEFAULT_SETTINGS,
+  DOCS_NAMES,
+  PHRASE_NAMES,
+  SOURCE_NAMES,
+  checkDocsUrl,
+  checkQuery,
+  checkSourceDomains,
   settingsSchema,
+  sourceQuery,
 } from "./plan.ts";
-export type { CallName, SearchSettings } from "./plan.ts";
+export type { CallName, PolicyRefusal, SearchSettings } from "./plan.ts";
 export { loadRateSheet, parseRateSheet, priceOf } from "./rates.ts";
 export type { RateEntry, RateSheet } from "./rates.ts";
 export { runRecord } from "./record.ts";
@@ -32,8 +39,8 @@ export type {
   SourceResult,
   UnhashedRecord,
 } from "./records.ts";
-export { parseSearchInput, searchInputSchema } from "./search-input.ts";
-export type { SearchInput } from "./search-input.ts";
+export { groundingInputSchema, parseGroundingInput, parseSearchInput, searchInputSchema } from "./search-input.ts";
+export type { GroundingInput, SearchInput } from "./search-input.ts";
 export { createSearcher } from "./searcher.ts";
 export type { CallResult, LocalRefusalCode, Searcher, SearcherDeps, SpendOutcome, StopReason } from "./searcher.ts";
 export { buildIdentity, buildProfile, buildReserveRequest, creditEnvelope, parseRunContext } from "./spend-identity.ts";

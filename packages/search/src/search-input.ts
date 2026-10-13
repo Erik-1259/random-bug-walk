@@ -40,8 +40,21 @@ export const searchInputSchema = z.strictObject({
 
 export type SearchInput = z.infer<typeof searchInputSchema>;
 
+/** The source searches and the docs extract run before the issue is written, so their input may leave out the phrases. */
+export const groundingInputSchema = searchInputSchema.partial({ phrases: true });
+
+export type GroundingInput = z.infer<typeof groundingInputSchema>;
+
 export function parseSearchInput(value: unknown): SearchInput {
-  const parsed = searchInputSchema.safeParse(value);
+  return parseWith(searchInputSchema, value);
+}
+
+export function parseGroundingInput(value: unknown): GroundingInput {
+  return parseWith(groundingInputSchema, value);
+}
+
+function parseWith<T>(schema: z.ZodType<T>, value: unknown): T {
+  const parsed = schema.safeParse(value);
   if (!parsed.success) {
     const paths = parsed.error.issues.map((issue) => issue.path.join(".") || "(root)");
     throw new SearchError("invalid_input", paths.join(", "));

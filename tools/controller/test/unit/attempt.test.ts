@@ -12,8 +12,9 @@ import type { AttemptOutcome } from "../../src/attempt.ts";
 import { runJob } from "../../src/controller.ts";
 import { PLACEHOLDER_PROJECT_ID } from "../../../local-runner/src/jobs.ts";
 import { SymptomUnavailable, buildSymptom } from "../../src/symptom.ts";
-import { ATTEMPT_PROJECT_ID, MATCH_URL, SEARCH_KEY, WRITER_KEY, attemptDeps, attemptFiles, attemptInputs, privateInput, syntheticIssue } from "../support/attempt.ts";
-import type { AttemptFiles, AttemptWorld, IssueMode, PhraseAnswer } from "../support/attempt.ts";
+import { ATTEMPT_PROJECT_ID, DOC_PASSAGES, DOCS_QUERY, DOCS_URL, EXCLUDED_PASSAGE, MATCH_URL, SEARCH_KEY, SOURCE_URL, WRITER_KEY, attemptDeps, attemptFiles, attemptInputs, privateInput, syntheticIssue } from "../support/attempt.ts";
+import type { AttemptFiles, AttemptOptions, AttemptWorld } from "../support/attempt.ts";
+import { stage } from "../../../release/src/stage.ts";
 import { jobInputs, uuids, world } from "../support/harness.ts";
 import { FakeClock } from "../../../local-runner/test/support/fakes.ts";
 import type { LedgerCall, World } from "../support/harness.ts";
@@ -37,7 +38,7 @@ interface Run {
 }
 
 /** One attempt on a world whose clock moves only when released: each simulated copy would otherwise take its whole outer limit, and 13 of them overrun the admission's deadline. */
-async function attempt(options: { issue?: IssueMode; phrases?: readonly PhraseAnswer[] } = {}): Promise<Run> {
+async function attempt(options: AttemptOptions = {}): Promise<Run> {
   const w = await world({ clock: new FakeClock({ manual: true }) });
   const files = attemptFiles(w.dir);
   const inputs = attemptInputs(w, files);
@@ -53,6 +54,32 @@ function files(dir: string): string[] {
 
 function reserves(calls: readonly LedgerCall[]): { call_name: string; kind: string; project_id: string; project_policy_sha256: string; root_execution_id: string; task_revision: string }[] {
   return calls.filter((call) => call.method === "reserve").map((call) => call.request as never);
+}
+
+interface LedgerFile {
+  operations: { operation_id: string; kind: string; state: string | null; reserved_microusd: number | null; settled_microusd: number | null }[];
+}
+
+function ledgerOf(run: Run): LedgerFile {
+  return JSON.parse(readFileSync(join(run.work, "candidate", "ledger.json"), "utf8")) as LedgerFile;
+}
+
+function searchRecord(run: Run, name: string): { kind: string; outcome: string; reason: string | null; results: unknown[]; operation_id: string; request: { query: string } } {
+  return JSON.parse(readFileSync(join(run.work, "candidate", "search", `synthetic-candidate-1.${name}.record.json`), "utf8")) as never;
+}
+
+/** The operation IDs of the attempt's search calls, from its ledger file. */
+function searchIds(run: Run): Set<string> {
+  return new Set(ledgerOf(run).operations.filter((operation) => operation.kind.startsWith("search.")).map((operation) => operation.operation_id));
+}
+
+function symptomOf(run: Run) {
+  return parseRecord("ObservedSymptom", readFileSync(join(run.work, "candidate", "symptom.json")));
+}
+
+/** The source queries the fake search received, the docs query, and the source result URL: private search material. */
+function searchSecrets(run: Run): string[] {
+  return [...run.aw.search.sourceQueries, DOCS_QUERY, SOURCE_URL];
 }
 
 function issueOf(run: Run): string[] {
@@ -190,13 +217,16 @@ describe("one attempt: a root under the policy, start to finish", () => {
     run = await attempt();
   });
 
-  it("runs the kit check, the observation, the card, the issue, phrase-1 to phrase-3 and the admission, in that order, under one root", () => {
+  it("runs the kit check, the observation, source-1, source-2, docs-1, the card, the issue, phrase-1 to phrase-3 and the admission, in that order, under one root", () => {
     expect(run.outcome.exitCode).toBe(0);
     const names = reserves(run.w.ledgerCalls).map((reserve) => reserve.call_name.replace(/^(sandbox\.copy:[a-z-]+):.*$/, "$1"));
     const collapsed = names.filter((name, index) => name !== names[index - 1]);
     expect(collapsed).toEqual([
       "sandbox.copy:kit-check",
       "sandbox.copy:observe",
+      "search.source:synthetic-candidate-1:source-1",
+      "search.source:synthetic-candidate-1:source-2",
+      "search.docs:synthetic-candidate-1:docs-1",
       "writer.card:synthetic-candidate-1:1",
       "writer.issue:synthetic-candidate-1:2",
       "search.phrase:synthetic-candidate-1:phrase-1",
@@ -239,22 +269,69 @@ describe("one attempt: a root under the policy, start to finish", () => {
     const symptom = parseRecord("ObservedSymptom", readFileSync(join(dir, "symptom.json")));
     expect(parseCanonical(readFileSync(join(dir, "issue.json")))).toEqual(syntheticIssue(symptom));
     expect(readdirSync(join(dir, "recordings")).sort()).toEqual(["card-1.recording.json", "issue-2.recording.json"]);
-    expect(readdirSync(join(dir, "search")).sort()).toEqual(["phrase-1", "phrase-2", "phrase-3"].map((name) => `synthetic-candidate-1.${name}.record.json`));
-    const ledger = JSON.parse(readFileSync(join(dir, "ledger.json"), "utf8")) as { operations: { operation_id: string; kind: string; state: string; reserved_microusd: number; settled_microusd: number }[] };
+    expect(readdirSync(join(dir, "search")).sort()).toEqual(["docs-1", "phrase-1", "phrase-2", "phrase-3", "source-1", "source-2"].map((name) => `synthetic-candidate-1.${name}.record.json`));
+    const ledger = ledgerOf(run);
     expect(ledger.operations.map((operation) => [operation.kind, operation.state])).toEqual([
+      ["search.source", "reconciled"],
+      ["search.source", "reconciled"],
+      ["search.docs", "reconciled"],
       ["writer.card", "reconciled"],
       ["writer.issue", "reconciled"],
       ["search.phrase", "reconciled"],
       ["search.phrase", "reconciled"],
       ["search.phrase", "reconciled"],
     ]);
-    expect(ledger.operations.every((operation) => operation.settled_microusd > 0 && operation.settled_microusd <= operation.reserved_microusd)).toBe(true);
+    expect(ledger.operations.every((operation) => (operation.settled_microusd ?? 0) > 0 && (operation.settled_microusd ?? 0) <= (operation.reserved_microusd ?? 0))).toBe(true);
     expect(new Set(ledger.operations.map((operation) => operation.operation_id))).toEqual(new Set(reserves(run.w.ledgerCalls).filter((reserve) => !reserve.call_name.startsWith("sandbox.copy")).map((reserve) => (reserve as unknown as { operation_id: string }).operation_id)));
   });
 
-  it("acquires the development slot for the root before the card, releases it after the last phrase check, and leaves it free", async () => {
+  it("meters every search on the ledger: six calls at most, each reserved at 2 credits before its request and settled once after it, 12 credits in all", () => {
+    const ids = [...searchIds(run)];
+    expect(ids).toHaveLength(6);
+    const ledger = ledgerOf(run).operations.filter((operation) => operation.kind.startsWith("search."));
+    // 2 credits at the rate file's 8,000 micro-USD per credit: 16,000 per call, 96,000 for the six.
+    expect(ledger.map((operation) => operation.reserved_microusd)).toEqual(Array<number>(6).fill(16_000));
+    expect(ledger.reduce((sum, operation) => sum + (operation.reserved_microusd ?? 0), 0)).toBe(12 * 8_000);
+    for (const id of ids) {
+      const steps = run.w.ledgerCalls.filter((call) => (call.request as { operation_id?: string }).operation_id === id).map((call) => call.method);
+      // The last read is the attempt's ledger file.
+      expect(steps).toEqual(["reserve", "transition", "transition", "settle", "operationStatus"]);
+    }
+    expect(run.aw.search.calls).toEqual(["search.source", "search.source", "search.docs", "search.phrase", "search.phrase", "search.phrase"]);
+    // Each call settled from its reported credit (8,000 micro-USD) and released the rest.
+    expect(ledger.map((operation) => operation.settled_microusd)).toEqual([8_000, 8_000, 8_000, 8_000, 8_000, 8_000]);
+  });
+
+  it("writes the source and docs records, and hands the extract's passages to the issue writer as the symptom's doc excerpts", () => {
+    for (const name of ["source-1", "source-2"]) expect(searchRecord(run, name)).toMatchObject({ kind: "source", outcome: "complete", results: [{ url: SOURCE_URL }] });
+    expect(run.aw.search.sourceQueries).toEqual(["synthetic timezone daily counts", "daily counts synthetic timezone"]);
+    expect(searchRecord(run, "docs-1")).toMatchObject({ kind: "docs", outcome: "complete", results: [{ url: DOCS_URL, passages: [...DOC_PASSAGES] }] });
+    expect(run.aw.search.extracts).toEqual([{ urls: [DOCS_URL], query: DOCS_QUERY }]);
+    expect(symptomOf(run).doc_excerpts).toEqual(DOC_PASSAGES.map((text) => ({ text, source_url: DOCS_URL })));
+    const issueRequest = run.aw.writer.calls.find((call) => call.kind === "issue")?.body ?? "";
+    for (const passage of DOC_PASSAGES) expect(issueRequest).toContain(passage);
+    expect(issueRequest).not.toContain("Synthetic excerpt: reports group pageviews");
+    expect(run.aw.lines).toContain("stage=write call=docs-1 outcome=complete passages=2 doc_excerpts=extract");
+    expect(run.aw.lines).toContain("stage=write call=source-1 outcome=complete results=1");
+  });
+
+  it("stages nothing private: no source query, docs query, source URL, issue text or phrase reaches the staging directory, and the source and docs records are declared withheld", () => {
+    const out = join(mkdtempSync(join(tmpdir(), "rbw-attempt-stage-")), "staged");
+    const redactionsOut = join(mkdtempSync(join(tmpdir(), "rbw-attempt-redactions-")), "redactions.tsv");
+    const dir = join(run.work, "candidate");
+    const staged = stage({ run: run.work, rootRun: join(run.work, "root-run.json"), out, redactionsOut, symptom: join(dir, "symptom.json"), card: join(dir, "card.json"), novelty: join(dir, "novelty.json") });
+    expect(staged.ok).toBe(true);
+    if (!staged.ok) return;
+    expect(staged.omissions.entries.filter((entry) => entry.outcome === "withheld_private")).toHaveLength(7);
+    const texts = files(out).map((file) => readFileSync(file, "latin1"));
+    expect(texts.some((text) => text.includes(DOC_PASSAGES[0]))).toBe(true);
+    for (const secret of [...searchSecrets(run), ...issueOf(run)]) for (const text of texts) expect(text).not.toContain(secret);
+    expect(files(out).some((file) => file.includes("search") || file.endsWith(".record.json"))).toBe(false);
+  });
+
+  it("acquires the development slot for the root before the first search, releases it after the last phrase check, and leaves it free", async () => {
     const methods = run.w.ledgerCalls.map((call) => `${call.method}:${(call.request as { call_name?: string }).call_name ?? ""}`);
-    const card = methods.indexOf("reserve:writer.card:synthetic-candidate-1:1");
+    const card = methods.indexOf("reserve:search.source:synthetic-candidate-1:source-1");
     const lastPhrase = methods.indexOf("reserve:search.phrase:synthetic-candidate-1:phrase-3");
     const firstAdmission = methods.findIndex((method) => method.startsWith("reserve:sandbox.copy:admission"));
     const acquires = methods.flatMap((method, index) => (method.startsWith("acquireSlot") ? [index] : []));
@@ -264,9 +341,10 @@ describe("one attempt: a root under the policy, start to finish", () => {
     expect(await slotHolder(run.w)).toBeNull();
   });
 
-  it("prints outcomes only: no issue text, phrase or URL reaches a report line, a log line, a job directory or the RootRun", () => {
-    const secrets = issueOf(run);
-    expect(run.aw.search.queries.map((query) => query.replace(/^"|"$/g, ""))).toEqual(secrets.slice(3));
+  it("prints outcomes only: no issue text, phrase, search query, passage or URL reaches a report line, a log line, a job directory or the RootRun", () => {
+    const phrases = issueOf(run);
+    expect(run.aw.search.queries.map((query) => query.replace(/^"|"$/g, ""))).toEqual(phrases.slice(3));
+    const secrets = [...phrases, ...searchSecrets(run), ...DOC_PASSAGES];
     const lines = [...run.aw.lines, ...run.w.logs].join("\n");
     expect(run.aw.lines.some((line) => line.startsWith("stage=admission") && line.includes("outcome_verdict=pass"))).toBe(true);
     expect(run.aw.lines.some((line) => line.includes("issue_check=ready_for_review"))).toBe(true);
@@ -293,7 +371,7 @@ describe("one attempt: a root under the policy, start to finish", () => {
 });
 
 describe("the attempt's stops", () => {
-  it("stops a root whose issue is not ready_for_review: no search, no admission, failed, and the slot is released", async () => {
+  it("stops a root whose issue is not ready_for_review: no phrase check, no admission, failed, and the slot is released", async () => {
     const run = await attempt({ issue: "rejected" });
     expect(run.outcome.exitCode).toBe(1);
     expect(run.outcome.rootRun).toMatchObject({ status: "terminal", outcome: "failed" });
@@ -330,9 +408,74 @@ describe("the attempt's stops", () => {
     expect(await slotHolder(run.w)).toBe(run.outcome.rootRun.root_execution_id);
     const ledger = JSON.parse(readFileSync(join(run.work, "candidate", "ledger.json"), "utf8")) as { operations: { kind: string; state: string }[] };
     expect(ledger.operations.map((operation) => [operation.kind, operation.state])).toEqual([
+      ["search.source", "reconciled"],
+      ["search.source", "reconciled"],
+      ["search.docs", "reconciled"],
       ["writer.card", "reconciled"],
       ["writer.issue", "uncertain"],
     ]);
+  });
+});
+
+describe("a failed source search or docs extract", () => {
+  it("records a failed source search and a failed extract as incomplete and continues: the issue is grounded in the input's excerpts and the root is admitted", async () => {
+    const run = await attempt({ sources: ["error", "results"], docs: "error" });
+    expect(run.outcome).toMatchObject({ exitCode: 0, rootRun: { status: "terminal", outcome: "completed" } });
+    expect(searchRecord(run, "source-1")).toMatchObject({ outcome: "incomplete", reason: "provider_error", results: [] });
+    expect(searchRecord(run, "source-2")).toMatchObject({ outcome: "complete" });
+    expect(searchRecord(run, "docs-1")).toMatchObject({ outcome: "incomplete", reason: "provider_error" });
+    expect(symptomOf(run).doc_excerpts).toEqual(privateInput().doc_excerpts);
+    expect(run.aw.lines).toContain("stage=write call=docs-1 outcome=incomplete passages=0 doc_excerpts=input");
+    expect(run.aw.search.queries).toHaveLength(3);
+    expect(existsSync(join(run.work, "jobs", "admission"))).toBe(true);
+    expect(ledgerOf(run).operations.slice(0, 3).map((operation) => [operation.kind, operation.state])).toEqual([
+      ["search.source", "terminal"],
+      ["search.source", "reconciled"],
+      ["search.docs", "terminal"],
+    ]);
+  });
+
+  it("falls back to the input's excerpts when the extract reports its URL failed", async () => {
+    const run = await attempt({ docs: "failed_url" });
+    expect(run.outcome.exitCode).toBe(0);
+    expect(searchRecord(run, "docs-1")).toMatchObject({ outcome: "incomplete", reason: "provider_error" });
+    expect(symptomOf(run).doc_excerpts).toEqual(privateInput().doc_excerpts);
+  });
+
+  it("never hands the writer a passage that names an excluded identifier", async () => {
+    const run = await attempt({ docs: "excluded" });
+    expect(run.outcome.exitCode).toBe(0);
+    expect(symptomOf(run).doc_excerpts).toEqual([{ text: DOC_PASSAGES[0], source_url: DOCS_URL }]);
+    expect(run.aw.writer.calls.find((call) => call.kind === "issue")?.body).not.toContain(EXCLUDED_PASSAGE);
+    expect(run.aw.lines).toContain("stage=write call=docs-1 outcome=complete passages=1 doc_excerpts=extract");
+  });
+
+  it("stops at an uncertain source search: needs_reconciliation, the slot held, and no extract, writer call or phrase check", async () => {
+    const run = await attempt({ sources: ["lost"] });
+    expect(run.outcome).toMatchObject({ exitCode: 1, rootRun: { status: "needs_reconciliation", outcome: null } });
+    expect(run.aw.search.calls).toEqual(["search.source"]);
+    expect(run.aw.writer.calls).toEqual([]);
+    expect(existsSync(join(run.work, "jobs", "admission"))).toBe(false);
+    expect(await slotHolder(run.w)).toBe(run.outcome.rootRun.root_execution_id);
+    expect(ledgerOf(run).operations.map((operation) => [operation.kind, operation.state])).toEqual([["search.source", "uncertain"]]);
+  });
+
+  it("stops at an uncertain extract: needs_reconciliation, and no writer call", async () => {
+    const run = await attempt({ docs: "lost" });
+    expect(run.outcome.rootRun).toMatchObject({ status: "needs_reconciliation", outcome: null });
+    expect(run.aw.search.calls).toEqual(["search.source", "search.source", "search.docs"]);
+    expect(run.aw.writer.calls).toEqual([]);
+    expect(await slotHolder(run.w)).toBe(run.outcome.rootRun.root_execution_id);
+  });
+
+  it("stops when the ledger refuses a source search: incomplete, with no request, no writer call and the slot released", async () => {
+    const run = await attempt({ refuseReserve: "search.source" });
+    expect(run.outcome).toMatchObject({ exitCode: 1, rootRun: { status: "terminal", outcome: "incomplete" } });
+    expect(run.aw.search.calls).toEqual([]);
+    expect(run.aw.writer.calls).toEqual([]);
+    expect(run.aw.lines.some((line) => line.includes("reason=source-1_spend_refused"))).toBe(true);
+    expect(existsSync(join(run.work, "jobs", "admission"))).toBe(false);
+    expect(await slotHolder(run.w)).toBeNull();
   });
 });
 
@@ -354,6 +497,21 @@ describe("the attempt's inputs", () => {
     const files = attemptFiles(w.dir, { ...privateInput(), candidate: "x".repeat(41) });
     const aw = attemptDeps(w, join(w.dir, "attempt"));
     expect(() => prepareAttempt(attemptInputs(w, files), aw.env)).toThrow(InputsError);
+    expect(w.ledgerCalls).toEqual([]);
+  });
+});
+
+describe("the attempt's search inputs", () => {
+  const search = privateInput().search as { docs: { url: string; query: string }; source: Record<string, unknown> };
+  it.each([
+    ["an off-domain docs URL", { ...search, docs: { ...search.docs, url: "https://other.example.invalid/reports" } }, "docs_domain_not_allowed"],
+    ["a source domain outside the allowed hosts", { ...search, source: { ...search.source, include_domains: ["forum.example.invalid"] } }, "source_domain_not_allowed"],
+    ["a docs query that names an excluded identifier", { ...search, docs: { ...search.docs, query: "syntheticRangeHelper counts" } }, "excluded_identifier"],
+  ])("refuses %s before anything runs, naming only the policy code", async (_what, bad, code) => {
+    const w = await world();
+    const files = attemptFiles(w.dir, { ...privateInput(), search: bad });
+    const aw = attemptDeps(w, join(w.dir, "attempt"));
+    expect(() => prepareAttempt(attemptInputs(w, files), aw.env)).toThrow(new RegExp(`search policy \\(${code}\\)`));
     expect(w.ledgerCalls).toEqual([]);
   });
 });

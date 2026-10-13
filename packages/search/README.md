@@ -31,7 +31,7 @@ At most 6 calls and 12 credits per candidate. The six names are a closed list. A
 | 3 | `docs-1` | `extractDocs` | `extract` | Exactly one URL on the app user-docs domain |
 | 4–6 | `phrase-1` … `phrase-3` | `checkPhrase` | `search` | One quoted phrase from the frozen issue text each |
 
-The caller sequences the calls: source searches, then the extract, then (after the issue text is written and frozen) the phrase checks.
+The caller sequences the calls: source searches, then the extract, then (after the issue text is written and frozen) the phrase checks. The controller's candidate attempt makes all six in this order (`tools/controller`, "The candidate attempt").
 
 The frozen issue text and its phrases never enter this public repository, before or after the phrase checks. Text committed here can be matched by the checks (blocking the candidate) or be searched before it is indexed (wrongly reporting no public match), and a held-out issue must never be public at all. They are kept in the private repository, and the private `record` workflow reads them from there. When a candidate's family allows publication, its issue is published only through the release path, never by committing it here.
 
@@ -157,6 +157,8 @@ The SDK folds every failure into a plain `Error` and drops the cause, so the rea
 ```
 
 `candidate` is lowercase letters, digits, `_` and `-`, at most 40 characters, because it is part of the spend call name. A phrase may not contain a double quote, because the query quotes it.
+
+`searchSource` and `extractDocs` also take the input without `phrases` (`groundingInputSchema`), because they run before the issue text exists; `phrases`, when present, is still checked. `checkPhrase` requires them. The domain and query checks (`checkSourceDomains`, `checkDocsUrl`, `checkQuery`, with `sourceQuery`) are exported, so a caller can refuse a bad input before it starts paid work.
 
 The **run context** has the strict fields `project_id`, `project_policy_sha256`, `batch_id` (required, because the schema's `OperationIdentity` requires a batch ID), `task_revision`, `root_execution_id`, `execution_id` and `parent_execution_id` (nullable). IDs are lowercase UUIDs and hashes are 64 lowercase hex characters:
 

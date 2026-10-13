@@ -60,7 +60,7 @@ const USAGE = `usage:
                       [--backend sandbox] [--sandbox-image <kit image>] [--work <dir>]
 `;
 
-/** The Tavily API the attempt's phrase checks call. */
+/** The Tavily API the attempt's source searches, docs extract and phrase checks call. */
 const TAVILY_BASE_URL = "https://api.tavily.com";
 const SANDBOX_VARIABLES = ["DATABASE_URL", "VERCEL_TOKEN", "VERCEL_TEAM_ID", "VERCEL_PROJECT_ID"] as const;
 

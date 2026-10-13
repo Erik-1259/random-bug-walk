@@ -11,7 +11,7 @@ It reuses the existing packages and does not re-implement them:
 - **The money:** `@rbw/spend` for the ledger, and `@rbw/envelope`'s rate sheet, fixed limits and `toReserveRequest`.
 - **The candidate text:** `@rbw/writer` for the card and the issue, and `@rbw/search` for the phrase checks and the novelty summary.
 
-The new code is the orchestration between them (the ledger flow, the deadlines, replay and the grader proof), which no existing package does. That is why it is more than 200 lines. The candidate attempt (`src/attempt.ts` and `src/symptom.ts`) adds about 560 lines for the same reason: nothing else runs the jobs, the writer and the searcher as one root, builds the symptom from an observation, or picks the phrases from the issue.
+The new code is the orchestration between them (the ledger flow, the deadlines, replay and the grader proof), which no existing package does. That is why it is more than 200 lines. The candidate attempt (`src/attempt.ts` and `src/symptom.ts`) adds about 650 lines for the same reason: nothing else runs the jobs, the writer and the searcher as one root, builds the symptom from an observation and the docs extract, or picks the phrases from the issue.
 
 ## Commands
 
@@ -200,15 +200,15 @@ Exit codes: 0 when the root ends `terminal` and `completed`; 1 when `root-run.js
 - `candidate`: lowercase letters, digits, `_` and `-`, at most 40 characters; one name for the writer and the searcher.
 - `card_source`: the writer's `CardSource`.
 - `excluded_identifiers`: one list, for the writer's identifier scan and the searcher's query check.
-- `search_settings` and `search`: the searcher's `SearchSettings`, and its `SearchInput` without `phrases`, for the same `candidate`. Only the three phrase checks run, so the source and docs parts are validated but not searched.
-- `user_action`, `locale`, `fixture_description` and `doc_excerpts`: the symptom's prose. Its numbers come only from the fixture and the observation.
+- `search_settings` and `search`: the searcher's `SearchSettings`, and its `SearchInput` without `phrases`, for the same `candidate`. `source` drives the two source searches and `docs` the docs extract. The searcher's domain and query checks run here too, so a source domain outside GitHub, Stack Overflow and `project_docs_domains`, a docs URL outside `docs_policy`, or a source or docs query that contains an excluded identifier is refused before anything runs (the error names the search policy code, never the value).
+- `user_action`, `locale`, `fixture_description` and `doc_excerpts`: the symptom's prose. Its numbers come only from the fixture and the observation. `doc_excerpts` is the fallback for the docs extract: the issue writer gets it only when the extract returns no usable passage.
 
 ### The stages
 
 The attempt makes one `RunIds` with the policy's `project_id`. Every stage runs under that root, in this order, and each one gates the next:
 
 1. **`kit_check` and `observe`:** `runJob` with the root's IDs and the policy, `policy_id` `umami-uc3-v1` (the release check requires it, and `ProjectPolicy` has no such field), on the development pool and slot. Without `--original-suite`, the kit check's freeze copy makes it, and every later job takes that same file.
-2. **`write`:** the symptom, then one card call and one issue call. There are no repairs.
+2. **`write`:** the symptom, the two source searches (`source-1`, `source-2`) and the docs extract (`docs-1`), then one card call and one issue call. There are no repairs.
 3. **`novelty`:** the three exact-phrase checks, then `summarizeNovelty`.
 4. **`admission`:** `runJob`, 13 copies, with the same IDs, policy and original suite.
 
@@ -220,9 +220,27 @@ The attempt makes one `RunIds` with the policy's `project_id`. Every stage runs 
 - the first non-UTC check in fixture order is the primary zone, the other non-UTC checks are `follow_up_examples`, and the UTC control is left out;
 - a non-UTC check with no recorded response, or one that `classify` does not grade `local_day_counts_mismatch`, refuses the symptom (`symptom_unavailable`).
 
+**The source searches and the docs extract** (spec §5: sources at the start, the extract while the issue is written) run before the card, in the search package's plan order:
+- `source-1` and `source-2` search the shape keywords and symptom words in both orders, limited to `include_domains` and the date range. Their records are evidence for the operator only. A hit has not passed the shape's rules (spec §3.7), so nothing from it reaches the card, whose source stays the confirmed fix in `card_source`.
+- `docs-1` extracts the docs URL with the docs query. Its passages become the symptom's `doc_excerpts`, each with the URL Tavily reports, and replace the input's `doc_excerpts`. A passage that contains an excluded identifier is left out, because the symptom must not hand the writer a function name, source path or check ID. When the extract is incomplete or leaves no passage, the input's `doc_excerpts` stay.
+- `symptom.json` is written after the extract, so it holds exactly what the issue writer got.
+
+A failed source search or extract (an `incomplete` record: a provider error, a failed URL or a malformed response) is recorded, and the attempt continues. Spec §1 lists the exact-phrase check as Tavily's only admission check, and §5 counts only novelty rejections in the funnel, so missing source evidence or grounding does not block admission by itself. An uncertain call stops the root for reconciliation, and a spend refusal stops it as `incomplete`, as the search package's `record` command stops at the first spend refusal.
+
 **The phrases** are picked by code from the frozen issue: the `title`, the first sentence of `expected_result` and the first sentence of `actual_result`. Each has its double quotes removed and its whitespace collapsed, and is cut to at most 12 words. When a first sentence has fewer than 6 words, its phrase is the start of the field instead, up to 12 words: a shorter phrase matches almost any page.
 
 **The candidate text** runs in the attempt's process, against the controller's own ledger. Its run context is the admission's: the policy's project and hash, the batch, the observation's candidate `task_revision`, the root, and the `candidate-text` execution with the root as parent. It acquires the development slot for the root first, and releases it at the end when nothing blocks it. The writer and the searcher use the development pool, so their own caps (12 writer calls and 6 searches per candidate) and the ledger are the controls.
+
+**What the candidate text reserves.** Each call reserves its worst case before it starts and settles from the usage the provider reports. At the committed rates (`packages/envelope/rate-sheets/v1.json`, copied into `tools/local-runner/candidates/umami-tz-arg-001/`):
+
+| Calls | Per call | Total |
+|---|---|---|
+| 2 writer calls (card, issue) | `ceil(32,768 × 60,000 ÷ 1,000,000)` + `ceil(8,192 × 240,000 ÷ 1,000,000)` = 3,934 micro-USD | 7,868 micro-USD |
+| 2 source searches and 1 docs extract | 2 credits × 8,000 = 16,000 micro-USD | 48,000 micro-USD |
+| 3 phrase checks | 2 credits × 8,000 = 16,000 micro-USD | 48,000 micro-USD |
+| All 8 | | 103,868 micro-USD ($0.103868) |
+
+The six Tavily calls are the search package's closed plan: each name once, at most 6 calls and 12 credits (96,000 micro-USD) per candidate, as spec §9.4 caps them. The source searches and the extract add 48,000 micro-USD to the attempt's reservation. A basic search or extract reports 1 credit, so a clean run settles about 8,000 micro-USD per call. The jobs' copy reservations are unchanged.
 
 ### Outputs
 
@@ -230,16 +248,16 @@ The attempt makes one `RunIds` with the policy's `project_id`. Every stage runs 
 
 | File | Content | Read by |
 |---|---|---|
-| `symptom.json`, `card.json`, `novelty.json` | the symptom, the writer's card, and the novelty summary with `issue_sha256` | `tools/release stage` |
+| `symptom.json`, `card.json`, `novelty.json` | the symptom the issue writer got (with the extract's passages as `doc_excerpts`), the writer's card, and the novelty summary with `issue_sha256` | `tools/release stage` |
 | `issue.json`, `issue-check.json`, `recordings/` | the frozen issue (canonical), the writer's check report with `issue_sha256`, and the card and issue recordings (provenance `live`) | `tools/release build` |
-| `search/` | the three phrase records | |
+| `search/` | the two source search records, the docs extract record and the three phrase records | |
 | `ledger.json` | each writer and search operation's ID, kind, state, and reserved and settled micro-USD | the conductor |
 
-`issue_sha256` is the SHA-256 of `issue.json`'s bytes, so a check report or a novelty summary of another issue fails the release check. Nothing of the candidate text goes under `jobs/`, so `stage` never reads it. The issue text, its phrases and the search records stay under `candidate/`: they never reach a report line, a log line or a run record.
+`issue_sha256` is the SHA-256 of `issue.json`'s bytes, so a check report or a novelty summary of another issue fails the release check. Nothing of the candidate text goes under `jobs/`, so `stage` never reads it. The issue text, its phrases and the search records (their queries, URLs and results) stay under `candidate/`: they never reach a report line, a log line or a run record, and `stage` declares them `withheld_private`. The extract's passages are public user documentation, and they are published only inside `symptom.json`.
 
 `root-run.json` is the canonical `RootRun`: the policy's `project_id` and hash, `kind: "factory"`, `declared_stages` `kit_check`, `observe`, `write`, `novelty` and `admission`, and `child_execution_ids` for the jobs that have a job directory. The candidate-text execution has none, so it is not a child.
 
-The command prints one line per stage: its status and reason, each job's settled micro-USD, the card and issue call outcomes, the issue check status, each phrase check's outcome, the novelty status and the admission's `outcome_verdict`. It never prints issue text, phrases or URLs.
+The command prints one line per stage: its status and reason, each job's settled micro-USD, each source search's outcome and result count, the extract's outcome, its kept passage count and whether the excerpts came from the extract or the input, the card and issue call outcomes, the issue check status, each phrase check's outcome, the novelty status and the admission's `outcome_verdict`. It never prints issue text, phrases, queries, passages or URLs.
 
 ### Stops
 
@@ -248,8 +266,8 @@ Nothing is retried, and every stop still writes `root-run.json`. The admission d
 | Cause | Root |
 |---|---|
 | A job `refused`, `symptom_unavailable`, a refused or failed writer call, an issue check other than `ready_for_review`, novelty `blocked` | `terminal`, `failed` |
-| A job `incomplete`, novelty `incomplete` | `terminal`, `incomplete` |
-| A job `needs_reconciliation`, an `uncertain` writer call, a search call left uncertain, an operation left unresolved in the ledger, a ledger call that failed, a slot release that was refused | `needs_reconciliation` (outcome `null`); the slot stays held and nothing more runs |
+| A job `incomplete`, novelty `incomplete`, a spend refusal of a source search or the extract | `terminal`, `incomplete` |
+| A job `needs_reconciliation`, an `uncertain` writer call, a search call left uncertain (a source search, the extract or a phrase check), an operation left unresolved in the ledger, a ledger call that failed, a slot release that was refused | `needs_reconciliation` (outcome `null`); the slot stays held and nothing more runs |
 
 ## Summary
 
@@ -340,7 +358,7 @@ The unit tests use a PGlite ledger with every spend migration, plus the local ru
 - replay;
 - the per-copy envelope;
 - the committed proof inputs, and the grader proof against the fake backend;
-- the candidate attempt: `runJob` with shared IDs and a policy, the symptom, the phrase picker, the order and identity of one root, its four stops, no resume, the keys and the privacy of the issue text, and the command's missing variable. These tests run on the Docker backend with a fake writer `fetch` and a search client answered in process. They replace the driver's canned response bodies with an Umami-shaped one, and use a fake clock that moves only when released, so 13 simulated copies fit the admission's deadline.
+- the candidate attempt: `runJob` with shared IDs and a policy, the symptom, the phrase picker, the order and identity of one root, the metering of all six searches, the source and docs records and the doc excerpts, staging without private material, its stops, a failed or uncertain source search or extract, the search policy checks on the input, no resume, the keys and the privacy of the issue text, and the command's missing variable. These tests run on the Docker backend with a fake writer `fetch` and a search client answered in process. They replace the driver's canned response bodies with an Umami-shaped one, and use a fake clock that moves only when released, so 13 simulated copies fit the admission's deadline.
 
 Spec §6.1's four serial-run checks are in `test/support/serial-checks.ts`:
 - a replay creates no second job;
@@ -353,7 +371,7 @@ They run on PGlite in the unit tests, and on the Postgres in `DATABASE_URL` in `
 ## What it does not do
 
 - It is not the web route that starts a judge replay (`packages/web`).
-- The candidate attempt runs no source search, docs extract or writer repair, and publishes nothing: `tools/release` stages, publishes and builds from its root.
+- The candidate attempt runs no writer repair, puts no source search hit on the card, and publishes nothing: `tools/release` stages, publishes and builds from its root.
 - It never retries a launch, a copy or a job, and it never reconciles or releases a slot after an uncertain launch. Both are the operator's recorded actions.
 - It does not shorten a copy below the driver's 600 s: when the child deadline is shorter, the copy does not start.
 - It does not calibrate anything, and its summaries are not admissions.
