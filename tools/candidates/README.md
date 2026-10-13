@@ -16,7 +16,7 @@ The types are in `src/types.ts`. Until a real implementation lands, `src/wiring.
 1. Calls `findSites` once. Exact duplicates (same file, line and diff) are collapsed. Sites are ordered by confidence, highest first, then by file and line.
 2. Checks each site and plants it in memory: the path must stay inside the host, the line must be a positive integer, the confidence must be from 0 to 1, the file must be a regular file, and the diff must name only that file, apply exactly and change it. A site that fails is recorded as `invalid_site` or `plant_failed` with a reason code, and does not count toward the candidate cap. The first `--max-candidates` sites that plant become candidates; the rest are recorded as `over_candidate_cap`.
 3. For each candidate in order, copies the host tree into a fresh directory under the run's own scratch directory (leaving out `.git` and `node_modules`), writes the planted file, and calls `screen`. Screens run one at a time.
-4. Before each screen, checks that one whole per-screen budget still fits in what is left of the total spend cap. If it does not, that candidate and the rest are recorded as `skipped_spend_cap`. A screen that throws or returns a malformed result is recorded as `screen_error` and charged its whole budget, because its real cost is unknown. A screen that reports spending more than its budget is recorded, and no further screens start (`skipped_after_overspend`).
+4. Before each screen, checks that one whole per-screen budget still fits in what is left of the total spend cap. If it does not, that candidate and the rest are recorded as `skipped_spend_cap`. A screen that throws or returns a malformed result is recorded as `screen_error` and charged its whole budget, because its real cost is unknown; a malformed result that reports a cost above the budget is charged that cost instead. A screen that reports spending more than its budget, malformed or not, is recorded, and no further screens start (`skipped_after_overspend`). If the run itself fails after screening begins (for example a scratch directory cannot be made or removed), the candidates not yet screened are recorded as `skipped_after_error`, the scratch directory is removed, and the record of the spend so far is still written, with stop reason `pipeline_error`.
 5. Ranks the survivors (`not_located`): more attempts first (more independent misses is stronger evidence that the bug cannot be found by reading), then higher finder confidence, then file and line.
 6. Removes each scratch copy after its screen unless `--keep-scratch` is given. The host tree is never written.
 
@@ -26,7 +26,7 @@ A dry run does steps 1 and 2 only: it makes no copies, calls no screen and spend
 
 The record is canonical JSON (`@rbw/schema`'s `encodeCanonical`: sorted keys, integers only). It holds the record kind `candidate_run` and version 1, the run ID and time, whether it was a dry run, the rule's ID and SHA-256, the host commit when given, the symptom's SHA-256 (not its text), the finder and screen implementation names, the caps, every site with its status, reason, confidence in parts per million, diff, screen result, amount charged and rank, the ranking of survivor IDs, why screening stopped (if it did), and totals. A candidate's ID is the SHA-256 of its file, line and diff. See `RunRecord` in `src/pipeline.ts`.
 
-The record lists candidate sites in the host, and a list of sites in a real host is private. The command line refuses an `--out` path inside this repository, and never overwrites an existing file. Tests use a synthetic host tree only.
+The record lists candidate sites in the host, and a list of sites in a real host is private. The command line refuses an `--out` path inside this repository, and never overwrites an existing file. It claims the `--out` file before the pipeline runs, so an existing file or a missing directory is refused before any screen spends. If the record cannot be encoded as canonical JSON, it is kept as plain JSON; if it cannot be written to `--out`, it is written to a new file in the `--scratch` directory. Either way the spend is printed. Tests use a synthetic host tree only.
 
 ## Command line
 
@@ -48,7 +48,7 @@ node tools/candidates/src/cli.ts --rule <class rule file> --host <host tree> --s
 
 Amounts are decimal USD with at most six decimals and are held as integer micro-USD. A run without `--dry-run` is refused while the screen is not wired. It prints a short summary and the record's path.
 
-Exit codes: 0 the run finished and the record was written; 1 the pipeline could not run (an implementation is not wired, or the finder failed), nothing written; 2 a usage or input error, nothing written.
+Exit codes: 0 the run finished and the record was written; 1 the pipeline could not run or finish (an implementation is not wired, the finder failed, or the run failed after screening began), and once screening has begun the record of the spend so far is still kept and its path printed; 2 a usage or input error found before anything ran (including an `--out` that exists or sits in a missing directory, or a `--scratch` that is not a directory), nothing written.
 
 ## Tests
 

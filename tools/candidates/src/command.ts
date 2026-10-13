@@ -1,16 +1,18 @@
 // The command line, as a function the tests can call with fake implementations.
-// Exit codes: 0 the run finished and the record was written; 1 the pipeline could not run (an
-// implementation is not wired, or the finder or a setup step failed), nothing written;
-// 2 a usage or input error, nothing written.
+// Exit codes: 0 the run finished and the record was written; 1 the pipeline could not run or
+// finish (an implementation is not wired, the finder or a setup step failed, or the run failed
+// after screening began), and once screening has begun the record of the spend so far is still
+// kept and its path printed; 2 a usage or input error found before anything ran, nothing written.
+// The --out file is claimed before the pipeline runs, so a bad --out never costs a screen.
 import { randomUUID } from "node:crypto";
-import { readFileSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, openSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, relative, resolve, sep, isAbsolute } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { encodeCanonical } from "@rbw/schema";
 import { implementationName, isWired } from "./not-wired.ts";
-import { PipelineError, runPipeline, type RunRecord } from "./pipeline.ts";
+import { formatUsd, PipelineError, runPipeline, type RunRecord } from "./pipeline.ts";
 import type { FindSites, Screen } from "./types.ts";
 
 export const USAGE = `usage: cli.ts --rule <class rule file> --host <host tree> --symptom <symptom file> --out <new record file>
@@ -71,8 +73,53 @@ function isInside(root: string, path: string): boolean {
   return rel === "" || (!isAbsolute(rel) && rel !== ".." && !rel.startsWith(`..${sep}`));
 }
 
-function usd(microusd: number): string {
-  return `$${(microusd / 1_000_000).toFixed(2)}`;
+
+function isDirectory(path: string): boolean {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Writes the record into the claimed file. A record that is not canonical JSON is kept as plain
+ * JSON; if the claimed file cannot be written, the record goes to a new file in the scratch base.
+ * Either way the record of the spend is kept and the result says where.
+ */
+function saveRecord(fd: number, outPath: string, record: RunRecord, scratchBase: string, runId: string): { ok: boolean; note: string } {
+  const spent = `spent ${formatUsd(record.totals.spend_microusd)}`;
+  let bytes: Uint8Array | string;
+  let canonical = true;
+  let problem = "";
+  try {
+    bytes = encodeCanonical(record);
+  } catch (error) {
+    canonical = false;
+    problem = error instanceof Error ? error.message : "encoding failed";
+    bytes = `${JSON.stringify(record)}\n`;
+  }
+  try {
+    writeFileSync(fd, bytes);
+    closeSync(fd);
+  } catch {
+    try {
+      closeSync(fd);
+    } catch {
+      // Already closed or never usable; the fallback below still keeps the record.
+    }
+    const fallback = join(scratchBase, `rbw-candidates-record-${runId}.json`);
+    try {
+      writeFileSync(fallback, bytes, { flag: "wx" });
+      return { ok: false, note: `could not write --out; ${spent}; record kept at ${fallback}\n` };
+    } catch {
+      return { ok: false, note: `could not write --out or a fallback record; ${spent}; record follows\n${JSON.stringify(record)}\n` };
+    }
+  }
+  if (!canonical) {
+    return { ok: false, note: `the record is not canonical JSON (${problem}); ${spent}; kept as plain JSON at ${outPath}\n` };
+  }
+  return { ok: true, note: `${spent}; record: ${outPath}\n` };
 }
 
 function summary(record: RunRecord, out: string): string {
@@ -80,8 +127,8 @@ function summary(record: RunRecord, out: string): string {
   const lines = [
     `${record.dry_run ? "dry run" : "run"} ${record.run_id}: ${String(totals.sites_found)} sites, ${String(totals.duplicates)} duplicates, ${String(totals.planted)} planted`,
     record.dry_run
-      ? `would screen ${String(totals.planted)} candidates; most the screens could spend under the caps: ${usd(totals.max_spend_microusd)}`
-      : `screened ${String(totals.screened)}: ${String(totals.survivors)} survived, ${String(totals.located)} located, ${String(totals.inconclusive)} inconclusive; spent ${usd(totals.spend_microusd)}`,
+      ? `would screen ${String(totals.planted)} candidates; most the screens could spend under the caps: ${formatUsd(totals.max_spend_microusd)}`
+      : `screened ${String(totals.screened)}: ${String(totals.survivors)} survived, ${String(totals.located)} located, ${String(totals.inconclusive)} inconclusive; spent ${formatUsd(totals.spend_microusd)}`,
   ];
   if (record.stop_reason !== null) {
     lines.push(`stopped screening: ${record.stop_reason}`);
@@ -120,13 +167,7 @@ export async function runCommand(argv: readonly string[], deps: CommandDeps, io:
     if (isInside(resolve(deps.repoRoot ?? REPO_ROOT), outPath)) {
       throw new UsageError("--out must be outside the repository: the record lists candidate sites in the host");
     }
-    let hostIsDir = false;
-    try {
-      hostIsDir = statSync(host).isDirectory();
-    } catch {
-      hostIsDir = false;
-    }
-    if (!hostIsDir) {
+    if (!isDirectory(host)) {
       throw new UsageError("--host must be a directory");
     }
     const hostCommit = values["host-commit"];
@@ -151,25 +192,50 @@ export async function runCommand(argv: readonly string[], deps: CommandDeps, io:
     if (!dryRun && !isWired(deps.screen)) {
       throw new PipelineError("screen is not wired yet: use --dry-run, or bind the screen in tools/candidates/src/wiring.ts");
     }
-    const { record } = await runPipeline({
-      rule: { id: ruleId, path: rulePath, text: ruleText },
-      hostDir: resolve(host),
-      symptom: { text: symptomText },
-      findSites: deps.findSites,
-      screen: deps.screen,
-      caps,
-      dryRun,
-      scratchBase: values.scratch ?? tmpdir(),
-      keepScratch: values["keep-scratch"],
-      hostCommit: hostCommit ?? null,
-      runId: (deps.runId ?? randomUUID)(),
-      now: deps.now ?? (() => new Date()),
-      implementations: { findSites: implementationName(deps.findSites), screen: dryRun ? "none" : implementationName(deps.screen) },
-    });
+    const scratchBase = values.scratch ?? tmpdir();
+    if (!dryRun && !isDirectory(scratchBase)) {
+      throw new UsageError("--scratch must be a directory");
+    }
+    // Claim the record file before anything runs, so a bad --out fails before any screen spends.
+    let fd: number;
     try {
-      writeFileSync(outPath, encodeCanonical(record), { flag: "wx" });
+      fd = openSync(outPath, "wx");
     } catch {
       throw new UsageError("cannot write --out: it must be a new file in an existing directory");
+    }
+    const runId = (deps.runId ?? randomUUID)();
+    let record: RunRecord;
+    try {
+      ({ record } = await runPipeline({
+        rule: { id: ruleId, path: rulePath, text: ruleText },
+        hostDir: resolve(host),
+        symptom: { text: symptomText },
+        findSites: deps.findSites,
+        screen: deps.screen,
+        caps,
+        dryRun,
+        scratchBase,
+        keepScratch: values["keep-scratch"],
+        hostCommit: hostCommit ?? null,
+        runId,
+        now: deps.now ?? (() => new Date()),
+        implementations: { findSites: implementationName(deps.findSites), screen: dryRun ? "none" : implementationName(deps.screen) },
+      }));
+    } catch (error) {
+      if (error instanceof PipelineError && error.record !== null) {
+        const where = saveRecord(fd, outPath, error.record, scratchBase, runId);
+        io.err(`candidates: ${error.message}\n${where.note}`);
+        return 1;
+      }
+      // Nothing ran that spent: release the claimed (still empty) record file.
+      closeSync(fd);
+      unlinkSync(outPath);
+      throw error;
+    }
+    const where = saveRecord(fd, outPath, record, scratchBase, runId);
+    if (!where.ok) {
+      io.err(`candidates: ${where.note}`);
+      return 1;
     }
     io.out(summary(record, outPath));
     return 0;

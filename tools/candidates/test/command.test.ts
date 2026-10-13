@@ -1,11 +1,11 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { parseCanonical } from "@rbw/schema";
 import { describe, expect, it } from "vitest";
 import { parseUsd, REPO_ROOT, runCommand, type CommandDeps } from "../src/command.ts";
 import { notWired } from "../src/not-wired.ts";
 import * as wiring from "../src/wiring.ts";
-import { finder, makeHost, miss, scripted, tempDir, threeSites } from "./support.ts";
+import { finder, makeHost, miss, scripted, site, tempDir, threeSites } from "./support.ts";
 
 interface Run {
   code: number;
@@ -23,13 +23,13 @@ function files(): { rule: string; symptom: string; outFile: string; scratch: str
   return { rule, symptom, outFile: join(dir, "record.json"), scratch: tempDir("rbw-candidates-cli-scratch-") };
 }
 
-async function run(extra: string[], deps: CommandDeps, outFile?: string): Promise<Run> {
+async function run(extra: string[], deps: CommandDeps, outFile?: string, scratch?: string): Promise<Run> {
   const paths = files();
   const target = outFile ?? paths.outFile;
   let out = "";
   let err = "";
   const code = await runCommand(
-    ["--rule", paths.rule, "--host", makeHost(), "--symptom", paths.symptom, "--out", target, "--scratch", paths.scratch, ...extra],
+    ["--rule", paths.rule, "--host", makeHost(), "--symptom", paths.symptom, "--out", target, "--scratch", scratch ?? paths.scratch, ...extra],
     { now: () => new Date("2026-10-13T12:00:00.000Z"), runId: () => "11111111-1111-4111-8111-111111111111", ...deps },
     { out: (text) => (out += text), err: (text) => (err += text) },
   );
@@ -104,6 +104,84 @@ describe("command line", () => {
     expect(result.code).toBe(2);
     expect(result.err).toMatch(/outside the repository/);
     expect(existsSync(inside)).toBe(false);
+  });
+
+  it("pins the repository root to the real root", () => {
+    expect(REPO_ROOT).toBe(resolve(import.meta.dirname, "../../.."));
+    expect(existsSync(join(REPO_ROOT, "pnpm-workspace.yaml"))).toBe(true);
+  });
+
+  it("refuses a record path at the repository root", async () => {
+    const inside = join(REPO_ROOT, "never-written.json");
+    const result = await run(["--dry-run"], { findSites: finder(threeSites()), screen: wiring.screen }, inside);
+    expect(result.code).toBe(2);
+    expect(result.err).toMatch(/outside the repository/);
+    expect(existsSync(inside)).toBe(false);
+  });
+
+  it("refuses an existing --out on a real run before any screen runs", async () => {
+    const paths = files();
+    writeFileSync(paths.outFile, "keep");
+    const screen = scripted([miss(), miss(), miss()]);
+    const result = await run([], { findSites: finder(threeSites()), screen }, paths.outFile);
+    expect(result.code).toBe(2);
+    expect(result.err).toMatch(/cannot write --out/);
+    expect(screen.calls).toHaveLength(0);
+    expect(readFileSync(paths.outFile, "utf8")).toBe("keep");
+  });
+
+  it("refuses an --out in a missing directory before any screen runs", async () => {
+    const target = join(tempDir("rbw-candidates-cli-"), "missing", "record.json");
+    const screen = scripted([miss(), miss(), miss()]);
+    const result = await run([], { findSites: finder(threeSites()), screen }, target);
+    expect(result.code).toBe(2);
+    expect(result.err).toMatch(/cannot write --out/);
+    expect(screen.calls).toHaveLength(0);
+    expect(existsSync(dirname(target))).toBe(false);
+  });
+
+  it("refuses a missing --scratch directory before any screen runs, and writes nothing", async () => {
+    const screen = scripted([miss(), miss(), miss()]);
+    const result = await run([], { findSites: finder(threeSites()), screen }, undefined, join(tempDir("rbw-candidates-cli-"), "missing"));
+    expect(result.code).toBe(2);
+    expect(result.err).toMatch(/--scratch must be a directory/);
+    expect(screen.calls).toHaveLength(0);
+    expect(existsSync(result.outFile)).toBe(false);
+  });
+
+  it("leaves no empty record behind when the site finder fails on a real run", async () => {
+    const broken = () => {
+      throw new Error("rule did not compile");
+    };
+    const result = await run([], { findSites: broken, screen: scripted([]) });
+    expect(result.code).toBe(1);
+    expect(existsSync(result.outFile)).toBe(false);
+  });
+
+  it("writes the partial record and reports the spend when the pipeline fails after screens ran", async () => {
+    const screen = Object.assign(
+      function strayScreen(tree: string) {
+        writeFileSync(join(dirname(tree), "stray"), "x");
+        return miss(3, 100_000);
+      },
+      {},
+    );
+    const result = await run([], { findSites: finder(threeSites()), screen });
+    expect(result.code).toBe(1);
+    expect(result.err).toMatch(/spent \$0\.30/);
+    expect(readRecord(result.outFile)).toMatchObject({ stop_reason: "pipeline_error", totals: { spend_microusd: 300_000 } });
+  });
+
+  it("keeps a record that is not canonical as plain JSON and reports it", async () => {
+    // A lone surrogate in a finder-supplied diff cannot be encoded as canonical JSON.
+    const odd = site("src/gamma.ts", "filter(Boolean)", "filter(\ud800)", 0.7, 1);
+    const screen = scripted([miss(3, 100_000)]);
+    const result = await run([], { findSites: finder([odd]), screen });
+    expect(screen.calls).toHaveLength(1);
+    expect(result.code).toBe(1);
+    expect(result.err).toMatch(/not canonical JSON/);
+    expect(result.err).toMatch(/spent \$0\.10/);
+    expect(JSON.parse(readFileSync(result.outFile, "utf8"))).toMatchObject({ totals: { spend_microusd: 100_000 } });
   });
 
   it("does not overwrite an existing record", async () => {

@@ -1,9 +1,10 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { encodeCanonical } from "@rbw/schema";
 import { describe, expect, it } from "vitest";
-import { runPipeline, screenResultProblem, type Caps, type PipelineInput } from "../src/pipeline.ts";
+import { PipelineError, runPipeline, screenResultProblem, type Caps, type PipelineInput } from "../src/pipeline.ts";
 import type { FindSites, Screen, Site } from "../src/types.ts";
-import { CLEAN, RULE, SYMPTOM, finder, hit, makeHost, miss, scripted, site, tempDir, threeSites } from "./support.ts";
+import { CLEAN, RULE, SYMPTOM, diffFor, finder, hit, makeHost, miss, scripted, site, tempDir, threeSites } from "./support.ts";
 
 const CAPS: Caps = { maxCandidates: 10, maxScreenSpendMicrousd: 2_000_000, screenBudget: { maxAttempts: 3, maxCostMicrousd: 250_000 } };
 
@@ -94,6 +95,22 @@ describe("planting", () => {
     expect(record.totals.planted).toBe(1);
   });
 
+  it("refuses a diff over two files, a diff that changes nothing and a backslash path", async () => {
+    const twoFiles: Site = { ...site("src/beta.ts", "  store.lock(id);\n", "", 0.9), diff: diffFor("src/beta.ts", "  store.lock(id);\n", "") + diffFor("src/gamma.ts", "filter(Boolean)", "filter(x)") };
+    // A hunk whose removed and added lines are the same text.
+    const noChange: Site = { file: "src/gamma.ts", line: 1, confidence: 0.8, diff: "" };
+    noChange.diff = ["--- a/src/gamma.ts", "+++ b/src/gamma.ts", "@@ -1,1 +1,1 @@", `-${(CLEAN["src/gamma.ts"] ?? "").trimEnd()}`, `+${(CLEAN["src/gamma.ts"] ?? "").trimEnd()}`, ""].join("\n");
+    const backslash: Site = { ...site("src/alpha.ts", "  store.lock(id);\n", "", 0.7, 3), file: "src\\alpha.ts" };
+    const screen = scripted([]);
+    const { record } = await runPipeline(input(finder([twoFiles, noChange, backslash]), screen));
+    expect(screen.calls).toHaveLength(0);
+    expect(record.candidates.map((entry) => [entry.status, entry.reason])).toEqual([
+      ["plant_failed", "not_one_file"],
+      ["plant_failed", "no_change"],
+      ["invalid_site", "bad_path"],
+    ]);
+  });
+
   it("collapses duplicate sites", async () => {
     const [first] = threeSites();
     if (first === undefined) throw new Error("fixture");
@@ -157,6 +174,16 @@ describe("caps", () => {
     expect(record.ranking).toEqual([]);
   });
 
+  it("charges a malformed result's reported cost when it is over budget, and stops screening", async () => {
+    const screen = scripted([{ verdict: "not_located", hits: 0, attempts: 99, costMicrousd: 50_000_000 }, miss(), miss()]);
+    const { record } = await runPipeline(input(finder(threeSites()), screen, { caps: { ...CAPS, maxScreenSpendMicrousd: 1_000_000 } }));
+    expect(screen.calls).toHaveLength(1);
+    expect(record.candidates[0]).toMatchObject({ status: "screen_error", charged_microusd: 50_000_000 });
+    expect(record.stop_reason).toBe("screen_overspent");
+    expect(record.candidates.map((entry) => entry.status)).toEqual(["screen_error", "skipped_after_overspend", "skipped_after_overspend"]);
+    expect(record.totals.spend_microusd).toBe(50_000_000);
+  });
+
   it("stops screening after a screen spends more than its budget", async () => {
     const screen = scripted([miss(3, 300_000), miss(), miss()]);
     const { record } = await runPipeline(input(finder(threeSites()), screen));
@@ -187,6 +214,51 @@ describe("ranking", () => {
     ]);
     expect(record.candidates.map((entry) => entry.rank)).toEqual([2, null, 1, null]);
     expect(record.totals).toMatchObject({ screened: 4, survivors: 2, located: 1, inconclusive: 1 });
+  });
+
+  it("breaks a tie in attempts by finder confidence, then by file and line", async () => {
+    const sites = [...threeSites(), site("src/alpha.ts", "return row;", "return null;", 0.5, 4)];
+    // Order screened: beta 0.9, gamma 0.7, alpha line 3 at 0.5, alpha line 4 at 0.5; all miss three times.
+    const screen = scripted([miss(3), miss(3), miss(3), miss(3)]);
+    const { record } = await runPipeline(input(finder(sites), screen));
+    const byId = (id: string) => record.candidates.find((entry) => entry.candidate_id === id);
+    expect(record.ranking.map((id) => [byId(id)?.file, byId(id)?.line])).toEqual([
+      ["src/beta.ts", 2],
+      ["src/gamma.ts", 1],
+      ["src/alpha.ts", 3],
+      ["src/alpha.ts", 4],
+    ]);
+  });
+
+});
+
+describe("unexpected failures", () => {
+  it("removes the scratch directory and throws a pipeline error that carries the record of the spend so far", async () => {
+    // The screen leaves a stray file in the run's scratch directory, so the final removal fails.
+    const screen = Object.assign(
+      function strayScreen(tree: string) {
+        writeFileSync(join(dirname(tree), "stray"), "x");
+        return miss(3, 100_000);
+      },
+      {},
+    );
+    const run = input(finder(threeSites()), screen);
+    const error: unknown = await runPipeline(run).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(PipelineError);
+    const record = (error as PipelineError).record;
+    expect(record).toMatchObject({ stop_reason: "pipeline_error", totals: { screened: 3, spend_microusd: 300_000 } });
+    expect((error as PipelineError).message).toMatch(/\$0\.30/);
+    expect(readdirSync(run.scratchBase)).toEqual([]);
+  });
+
+  it("marks the candidates it never reached when the scratch directory cannot be made", async () => {
+    const screen = scripted([]);
+    const run = input(finder(threeSites()), screen, { scratchBase: join(tempDir("rbw-candidates-gone-"), "missing") });
+    const error: unknown = await runPipeline(run).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(PipelineError);
+    expect(screen.calls).toHaveLength(0);
+    expect((error as PipelineError).record?.candidates.map((entry) => entry.status)).toEqual(["skipped_after_error", "skipped_after_error", "skipped_after_error"]);
+    expect((error as PipelineError).record?.totals.spend_microusd).toBe(0);
   });
 });
 

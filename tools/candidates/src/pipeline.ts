@@ -47,7 +47,8 @@ export type CandidateStatus =
   | "screened"
   | "screen_error"
   | "skipped_spend_cap"
-  | "skipped_after_overspend";
+  | "skipped_after_overspend"
+  | "skipped_after_error";
 
 export interface ScreenRecord {
   verdict: ScreenResult["verdict"];
@@ -71,7 +72,7 @@ export interface CandidateRecord {
   rank: number | null;
 }
 
-export type StopReason = "spend_cap" | "screen_overspent" | null;
+export type StopReason = "spend_cap" | "screen_overspent" | "pipeline_error" | null;
 
 export interface RunRecord {
   record: typeof RECORD_KIND;
@@ -113,10 +114,19 @@ export interface PipelineOutcome {
 }
 
 export class PipelineError extends Error {
-  constructor(message: string) {
+  /** The record of the run so far, when the failure came after screening began. */
+  readonly record: RunRecord | null;
+
+  constructor(message: string, record: RunRecord | null = null) {
     super(message);
     this.name = "PipelineError";
+    this.record = record;
   }
+}
+
+/** Formats micro-USD as dollars and cents. */
+export function formatUsd(microusd: number): string {
+  return `$${(microusd / 1_000_000).toFixed(2)}`;
 }
 
 function isNonNegativeInteger(value: unknown): value is number {
@@ -261,59 +271,89 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineOutcome
   let spent = 0;
   let stopReason: StopReason = null;
   let scratchDir: string | null = null;
+  let failure: unknown = null;
+  // Candidates whose outcome (and charge) is settled; after an unexpected error the rest are marked.
+  const settled = new Set<CandidateRecord>();
   if (!input.dryRun && planted.length > 0) {
-    scratchDir = mkdtempSync(join(input.scratchBase, "rbw-candidates-"));
-    for (const [index, { site, record }] of planted.entries()) {
-      if (stopReason !== null) {
-        record.status = stopReason === "spend_cap" ? "skipped_spend_cap" : "skipped_after_overspend";
-        continue;
-      }
-      if (caps.maxScreenSpendMicrousd - spent < caps.screenBudget.maxCostMicrousd) {
-        stopReason = "spend_cap";
-        record.status = "skipped_spend_cap";
-        continue;
-      }
-      const copy = join(scratchDir, copyName(index, record.candidate_id));
-      const budget: ScreenBudget = { ...caps.screenBudget };
-      try {
-        plantCopy(input.hostDir, site, copy);
-      } catch (error) {
-        record.status = "plant_failed";
-        record.reason = error instanceof PlantError ? error.reason : shortMessage(error);
-        rmSync(copy, { recursive: true, force: true });
-        continue;
-      }
-      try {
-        const result: unknown = await input.screen(copy, input.symptom, budget);
-        const problem = screenResultProblem(result, budget);
-        if (problem !== null) {
-          // The cost of a malformed result is unknown, so the whole budget is charged.
-          record.status = "screen_error";
-          record.reason = problem;
-          record.charged_microusd = budget.maxCostMicrousd;
-        } else {
-          const ok = result as ScreenResult;
-          record.screen = { verdict: ok.verdict, hits: ok.hits, attempts: ok.attempts, cost_microusd: ok.costMicrousd };
-          record.charged_microusd = ok.costMicrousd;
-          if (ok.costMicrousd > budget.maxCostMicrousd) {
-            record.reason = "screen spent more than its budget";
-            stopReason = "screen_overspent";
-          }
+    try {
+      scratchDir = mkdtempSync(join(input.scratchBase, "rbw-candidates-"));
+      for (const [index, { site, record }] of planted.entries()) {
+        if (stopReason !== null) {
+          record.status = stopReason === "spend_cap" ? "skipped_spend_cap" : "skipped_after_overspend";
+          settled.add(record);
+          continue;
         }
-      } catch (error) {
-        record.status = "screen_error";
-        record.reason = shortMessage(error);
-        record.charged_microusd = budget.maxCostMicrousd;
-      } finally {
+        if (caps.maxScreenSpendMicrousd - spent < caps.screenBudget.maxCostMicrousd) {
+          stopReason = "spend_cap";
+          record.status = "skipped_spend_cap";
+          settled.add(record);
+          continue;
+        }
+        const copy = join(scratchDir, copyName(index, record.candidate_id));
+        const budget: ScreenBudget = { ...caps.screenBudget };
+        try {
+          plantCopy(input.hostDir, site, copy);
+        } catch (error) {
+          record.status = "plant_failed";
+          record.reason = error instanceof PlantError ? error.reason : shortMessage(error);
+          settled.add(record);
+          rmSync(copy, { recursive: true, force: true });
+          continue;
+        }
+        try {
+          const result: unknown = await input.screen(copy, input.symptom, budget);
+          const problem = screenResultProblem(result, budget);
+          if (problem !== null) {
+            // A malformed result's cost is not trusted below the budget, so at least the whole
+            // budget is charged; a reported cost above the budget is charged in full and stops the run.
+            const reported = (result as { costMicrousd?: unknown } | null)?.costMicrousd;
+            record.status = "screen_error";
+            record.reason = problem;
+            record.charged_microusd = budget.maxCostMicrousd;
+            if (isNonNegativeInteger(reported) && reported > budget.maxCostMicrousd) {
+              record.charged_microusd = reported;
+              stopReason = "screen_overspent";
+            }
+          } else {
+            const ok = result as ScreenResult;
+            record.screen = { verdict: ok.verdict, hits: ok.hits, attempts: ok.attempts, cost_microusd: ok.costMicrousd };
+            record.charged_microusd = ok.costMicrousd;
+            if (ok.costMicrousd > budget.maxCostMicrousd) {
+              record.reason = "screen spent more than its budget";
+              stopReason = "screen_overspent";
+            }
+          }
+        } catch (error) {
+          record.status = "screen_error";
+          record.reason = shortMessage(error);
+          record.charged_microusd = budget.maxCostMicrousd;
+        }
+        spent += record.charged_microusd;
+        settled.add(record);
         if (input.keepScratch !== true) {
           rmSync(copy, { recursive: true, force: true });
         }
       }
-      spent += record.charged_microusd;
-    }
-    if (input.keepScratch !== true) {
-      rmdirSync(scratchDir);
-      scratchDir = null;
+      if (input.keepScratch !== true) {
+        rmdirSync(scratchDir);
+        scratchDir = null;
+      }
+    } catch (error) {
+      failure = error;
+      stopReason = "pipeline_error";
+      for (const { record } of planted) {
+        if (!settled.has(record)) {
+          record.status = "skipped_after_error";
+        }
+      }
+      if (scratchDir !== null && input.keepScratch !== true) {
+        try {
+          rmSync(scratchDir, { recursive: true, force: true });
+          scratchDir = null;
+        } catch {
+          // The error message below names the directory that was left.
+        }
+      }
     }
   }
 
@@ -360,5 +400,9 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineOutcome
       max_spend_microusd: projected,
     },
   };
+  if (failure !== null) {
+    const left = scratchDir === null ? "" : `; scratch directory left at ${scratchDir}`;
+    throw new PipelineError(`the run failed after screening began (spent ${formatUsd(spent)}): ${shortMessage(failure)}${left}`, record);
+  }
   return { record, scratchDir };
 }
