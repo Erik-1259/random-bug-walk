@@ -4,7 +4,8 @@
 // The race symptom is @rbw/schema's synthetic fixture; the committed time-zone fixture is untouched.
 // Only the symptom is swapped: the run, kit, issue, recordings and judge job (built with no family
 // flag, so the time-zone fixture, suite, vectors and probes) stay time-zone, so this checks the symptom's
-// staging and reading, not a race-family judge job.
+// staging and reading, not a race-family judge job (judge-job-race.test.ts checks that job, built
+// with no family flag from a run whose records carry the race family).
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
