@@ -113,7 +113,7 @@ describe("stop paths after the slot is held", () => {
     expect(output.join("")).toContain("the ledger refused a write after launch (invalid_request)");
   });
 
-  it("stops inconclusive when the reported prompt tokens exceed the counted bound, even on a hit", async () => {
+  it("stops inconclusive when the reported prompt tokens exceed the counted bound, and does not count its hit", async () => {
     const spend = await freshSpend(db);
     const fake = scriptedFetch([LOCATED_AND_FIXED, LOCATED_AND_FIXED], { prompt_tokens: 10_000_000, completion_tokens: 80 });
     const out = join(tempDir(), "out");
@@ -125,7 +125,11 @@ describe("stop paths after the slot is held", () => {
     expect(verdict).toBe("inconclusive");
     expect(probe.stopped).toMatchObject({ reason: "bound_exceeded", attempt: 1, detail: "prompt_tokens_over_bound" });
     expect(probe.attempts).toHaveLength(1);
-    expect(probe.attempts[0]?.prompt_within_bound).toBe(false);
+    expect(probe.attempts[0]).toMatchObject({ prompt_within_bound: false, outcome: "no_answer", miss_kind: null, hit_range: null });
+    expect(probe.hits).toBe(0);
+    expect(probe.answered).toBe(0);
+    const record = ScreenRecordSchema.parse(JSON.parse(readFileSync(join(out, "screen.json"), "utf8")));
+    expect(record.static_tells).toEqual([]);
     expect(probe.cost.unsettled_operation_ids).toEqual([]);
     expect(output.join("")).toContain("screen: bound exceeded: reported prompt tokens 10000000 exceed the counted bound");
     expect(await slotHolder(spend)).toBeNull();

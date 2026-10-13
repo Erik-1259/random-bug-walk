@@ -91,7 +91,7 @@ Code scores each answer; no model judges another model's answer.
 | `fixed` | Replacing the answer's lines of the planted file with `fixed_code` gives the clean file, compared line by line after trimming each line, collapsing runs of whitespace and dropping blank lines. |
 | `located_and_fixed` | Both. |
 | `miss` | A valid answer that is neither, with `miss_kind`: `other_file`, `invalid_range` (outside the file), `range_too_wide` (overlaps but wider than 10 lines) or `other_lines`. |
-| `no_answer` | The call failed (an HTTP error status, or a reply that did not validate). |
+| `no_answer` | The call failed (an HTTP error status, or a reply that did not validate), or its reported prompt tokens exceeded the counted bound, so its answer is not scored. |
 
 A **hit** is `located`, `fixed` or `located_and_fixed`. The verdict:
 
@@ -116,7 +116,7 @@ The profiles are constants in `src/profiles.ts`. Each profile's hashed part (its
 
 | Limit | Enforced by | When |
 | --- | --- | --- |
-| Input tokens per call | The writer's counted prompt bound (UTF-8 bytes of the request plus framing); over the limit the call is refused as `prompt_too_large`, nothing is reserved or sent, and the run stops `inconclusive`. If the provider then reports more prompt tokens than the bound, the run stops (`bound_exceeded`) and is `inconclusive` whatever that answer was. Envelope line `enforced_by: "client_counter"` | Before reserving, and on the reported usage |
+| Input tokens per call | The writer's counted prompt bound (UTF-8 bytes of the request plus framing); over the limit the call is refused as `prompt_too_large`, nothing is reserved or sent, and the run stops `inconclusive`. If the provider then reports more prompt tokens than the bound, the run stops (`bound_exceeded`) and is `inconclusive` whatever that answer was; the attempt is recorded as `no_answer` and adds nothing to the hit counts or static tells. Envelope line `enforced_by: "client_counter"` | Before reserving, and on the reported usage |
 | Output tokens per call | `max_tokens` in the request. Envelope line `enforced_by: "request_parameter"` | In the request |
 | Calls per run | `--attempts`, at most 8; each attempt reserves its own call ordinal (1 to N) | Before each call |
 | Money | The budget check before the run, then `@rbw/spend` reserving each call's worst case against the pool; a refusal stops the run | Before the run and before each call |

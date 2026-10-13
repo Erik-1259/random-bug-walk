@@ -84,7 +84,10 @@ function safeNumber(value: bigint): number {
   return Number(value);
 }
 
-function attemptOf(index: number, call: CallRecord<ScreenKind>, answer: ScreenAnswer | null, subject: ScreenSubject): Attempt {
+function attemptOf(index: number, call: CallRecord<ScreenKind>, output: ScreenAnswer | null, subject: ScreenSubject): Attempt {
+  // A call whose reported prompt exceeded the counted bound is kept for the audit, but its answer is
+  // not scored, so it adds nothing to the answered and hit counts or the static tells.
+  const answer = call.prompt_within_bound === false ? null : output;
   const score =
     answer === null ? null : scoreAnswer(answer, subject.input.target_path, subject.site, subject.planted_text, subject.clean_text);
   const outcome = score?.outcome ?? "no_answer";
