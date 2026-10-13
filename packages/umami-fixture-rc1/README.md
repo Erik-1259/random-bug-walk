@@ -127,7 +127,7 @@ This fixture is **not ready to be wired or admitted**, and no paid run should us
 
 `pnpm test` runs the unit tests. They use an in-memory stand-in for the sign-in and verify routes (`test/fake-app.ts`) that reads the unused codes, yields, and writes with or without the guard, so the runner and the classifier are tested end to end on both variants without an app. The stand-in can also hold the race's two reads until both have happened, or run verify requests one at a time; the second mode shows that a planted copy grades `pass` when the race is lost.
 
-`test/rounds.test.ts` runs real Playwright rounds of the staged files (`playwright.config.ts` and `checks/rc1.check.ts`), as the driver does, against the stand-in served on loopback. It checks `report.json`, the observation files, the race's response artifact and its overlap on clean and planted routes, `seed_failed` with no response file when sign-in returns no challenge, `auth_failed` when the connection drops, and the refusal of an output directory that is not empty.
+`test/rounds.test.ts` runs real Playwright rounds of the staged files (`playwright.config.ts` and `checks/rc1.check.ts`), as the driver does, against the stand-in served on loopback. It checks `report.json`, the observation files, the race's response artifact and its overlap on clean and planted routes, `seed_failed` with no response file when sign-in returns no challenge, `auth_failed` when the connection drops, the serial control's response file when only its follow-up sign-in drops, and the refusal of an output directory that is not empty.
 
 ## Not in this package
 

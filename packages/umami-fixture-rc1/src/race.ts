@@ -48,7 +48,11 @@ export interface DoubleSpendEvidence {
 
 export type Evidence = SerialReuseEvidence | DoubleSpendEvidence;
 
-export type RoundResult<E extends Evidence> = { ok: true; evidence: E } | SetupFailure;
+/**
+ * A setup failure keeps the evidence of any verify request already sent, so the round still
+ * writes it as the check's response artifact.
+ */
+export type RoundResult<E extends Evidence> = { ok: true; evidence: E } | (SetupFailure & { evidence?: E });
 
 export type Clock = () => number;
 
@@ -151,7 +155,7 @@ export async function runSerialReuse(
   if (attempts[0]?.token_issued === true) {
     const second = await loginForChallenge(context, credentials);
     if (!second.ok) {
-      return second;
+      return { ...second, evidence: { check_id: check.check_id, kind: "serial_reuse", attempts } };
     }
     attempts.push(await attemptVerify(context, second.partialToken, code, now, origin));
   }

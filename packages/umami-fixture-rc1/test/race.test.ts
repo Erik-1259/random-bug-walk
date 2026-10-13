@@ -176,6 +176,27 @@ describe("runSerialReuse", () => {
     expect(logins).toBe(1);
     expect(classify(result.evidence)).toMatchObject({ observed: "setup_fail", failure_code: "seed_failed" });
   });
+
+  it("keeps the first use as evidence when the follow-up sign-in fails", async () => {
+    const app = new FakeApp(fixture, "clean");
+    const appContext = app.context();
+    let logins = 0;
+    const context: RequestContext = {
+      fetch: (url, options) => {
+        if (url === "/api/auth/login") {
+          logins += 1;
+          if (logins === 2) return answering(401, { error: { code: "incorrect-username-password" } }).fetch(url, options);
+        }
+        return appContext.fetch(url, options);
+      },
+    };
+    const result = await runSerialReuse(context, fixture, serialCheck, credentials, steppingClock());
+    expect(result).toMatchObject({ ok: false, failure_code: "auth_failed", reason: "login: HTTP 401" });
+    if (result.ok) throw new Error("expected a setup failure");
+    expect(result.evidence).toMatchObject({ check_id: serialCheck.check_id, kind: "serial_reuse" });
+    expect(result.evidence?.attempts).toHaveLength(1);
+    expect(result.evidence?.attempts[0]).toMatchObject({ status: 200, token_issued: true });
+  });
 });
 
 describe("encodeEvidence", () => {

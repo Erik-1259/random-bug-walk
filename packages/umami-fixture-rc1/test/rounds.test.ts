@@ -203,6 +203,25 @@ describe("a Playwright round of the staged checks against a fake Umami", () => {
     assertOutputContract(round);
   });
 
+  it("keeps the serial control's first use as its response file when the follow-up sign-in drops", async () => {
+    const app = serving(new FakeApp(fixture, "clean", { pairReadsOf: RACE_CODE }));
+    let logins = 0;
+    const round = await runRound((call) => {
+      if (call.url === "/api/auth/login") {
+        logins += 1;
+        if (logins === 2) return "drop";
+      }
+      return app(call);
+    });
+    expect(round.exitCode).toBe(1);
+    expect(outcomes(round)).toEqual(["setup_fail:auth_failed", "pass:null"]);
+    const [serialId] = CHECK_IDS;
+    const saved = JSON.parse(readFileSync(join(round.outputDir, "responses", `${String(serialId)}.json`), "utf8")) as { kind: string; attempts: { token_issued: boolean }[] };
+    expect(saved.kind).toBe("serial_reuse");
+    expect(saved.attempts.map((attempt) => attempt.token_issued)).toEqual([true]);
+    assertOutputContract(round);
+  });
+
   it("refuses an output directory that is not empty, sending nothing and overwriting nothing", async () => {
     const round = await runRound(serving(new FakeApp(fixture, "clean")), (outputDir) => {
       writeFileSync(join(outputDir, "report.json"), "synthetic earlier report");

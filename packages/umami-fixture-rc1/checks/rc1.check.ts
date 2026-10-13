@@ -59,7 +59,7 @@ for (const check of fixture.checks) {
       observed: classification.observed,
       failure_code: classification.failure_code,
       duration_ms: performance.now() - started,
-      response_body: result.ok ? encodeEvidence(result.evidence) : null,
+      response_body: result.evidence === undefined ? null : encodeEvidence(result.evidence),
     });
     expect({ observed: classification.observed, failure_code: classification.failure_code }, `${check.check_id}: ${classification.detail}`).toEqual({
       observed: "pass",
