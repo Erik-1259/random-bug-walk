@@ -1,0 +1,56 @@
+{
+  "record": "uc1-static-headroom-screen",
+  "record_version": 1,
+  "case": "umami-tz-arg-001",
+  "case_status": "released and judge-verified (time-zone family, DT-1.tz-arg)",
+  "shape": "DT-1.tz-arg: the planted call drops its time-zone argument",
+  "screen": {
+    "source": "UC1 static-headroom screen, stated in full in `criterion`",
+    "criterion": "Skip a UC1 candidate whose omission is plain from the pre-fix source alone.",
+    "binding": true,
+    "judged_on": "2026-10-13",
+    "judged_by": "Written judgment from the pinned source; no model probe was run"
+  },
+  "subject": {
+    "host": "Umami",
+    "host_commit": "ec0ff50388c264ed8ce46f00967e92f7e71476ae",
+    "source_read_from": "kit image rbw-umami-kit:local, image id sha256:f987de0db4f62870d0dc479ea6bb4d03aa2e5544af34037ea16ea0ab451f1f75, path /workspace/app",
+    "target_file": "src/queries/sql/pageviews/getPageviewStats.ts",
+    "clean_sha256": "1f679f7a666f2ca7888b9094fb85a69a31b546566f194e27ac6eef2e9aef9b1b",
+    "planted_sha256": "7cb3219367fc73838d6ddc849e5d0b334fc6de4ad7a56bd3c593f35778d84b6c",
+    "hashes_from": "packages/shapes/probes/dt-1.tz-arg/probes.json; the clean hash matches the file read from the image",
+    "mutation": "packages/shapes/probes/dt-1.tz-arg/mutation.patch: line 28 `${getDateSQL('website_event.created_at', unit, timezone)} x,` -> `${getDateSQL('website_event.created_at', unit)} x,`"
+  },
+  "verdict": "fail",
+  "verdict_summary": "The omission is plain from the planted file alone: the function reads `timezone` and never uses it, and the same file's ClickHouse query still passes it. Not a UC1 tool-effect subject; it suits UC3.",
+  "static_tells": [
+    {
+      "location": "src/queries/sql/pageviews/getPageviewStats.ts:17",
+      "kind": "unused binding",
+      "detail": "`const { timezone = 'utc', unit = 'day' } = filters;` still destructures `timezone` with a default, and after the mutation nothing in relationalQuery reads it. A variable read and dropped points at the call that should take it."
+    },
+    {
+      "location": "src/queries/sql/pageviews/getPageviewStats.ts:66 and :86 against :28",
+      "kind": "in-file twin",
+      "detail": "Both branches of the ClickHouse query in the same file call `getDateSQL('website_event.created_at', unit, timezone)`; the planted Postgres call at line 28 passes only two arguments. The fix is to copy the third argument across."
+    },
+    {
+      "location": "issue to site",
+      "kind": "localization",
+      "detail": "A day-count symptom for a non-UTC time zone leads to the pageview-stats query, and the 102-line file holds both tells above."
+    }
+  ],
+  "evidence_comparison": {
+    "note": "What each channel already reveals compared with the server logs (Umami stderr plus Postgres stderr as the kit captures them).",
+    "issue_text": "Describes wrong per-day pageview counts under a non-UTC time zone. It carries no Prisma or Postgres message, because the planted path raises none.",
+    "observe_and_writer_evidence": "The planted copy's recorded responses for the four checks (tools/local-runner/candidates/umami-tz-arg-001/observed/): day buckets that differ from the expected local-day counts. No error text.",
+    "http_responses": "HTTP 200 with UTC-bucketed counts; the responses already show the symptom.",
+    "server_logs": "Nothing relevant: the query succeeds, so neither Umami nor Postgres logs an error, and query logging is off (no LOG_QUERY in kit/umami/etc/app.environment).",
+    "leak_judgment": "No leak, but the log tool has nothing to add, on top of the static tells."
+  },
+  "consequences": [
+    "Use this case only as an excluded UC1 harness pilot (2 off and 2 on attempts), published as 'harness pilot; bug fails static-headroom screen; not a UC1 result'.",
+    "Running it at full size as a labeled low-headroom contrast is the owner's decision, as is any time-zone fallback; this record does not decide either."
+  ],
+  "optional_static_probe": "Not run."
+}
