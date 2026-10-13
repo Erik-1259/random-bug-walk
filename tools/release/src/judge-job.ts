@@ -45,9 +45,9 @@ export interface BuildSources {
 }
 
 /**
- * The fields W2-8's per-replay overlay replaces, frozen as fixed placeholders. operation_id and
- * payload_hash are derived from them by buildJobRequest, and expected_trials_key from the
- * execution ID.
+ * The fields the controller's per-replay overlay (`overlayJudgeJob`) replaces, frozen as fixed
+ * placeholders. operation_id and payload_hash are derived from them by buildJobRequest, and
+ * expected_trials_key from the execution ID.
  */
 export const JUDGE_PLACEHOLDERS = {
   root_execution_id: "00000000-0000-4000-8000-00000000a001",
