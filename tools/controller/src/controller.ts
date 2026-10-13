@@ -765,8 +765,9 @@ function writeSummary(p: Paths, summary: ControllerSummary): ControllerSummary {
 }
 
 /** A job directory with a controller record but no summary: an earlier run stopped part-way, or is still running. Nothing is launched. */
-async function interrupted(inputs: JobInputs, deps: ControllerDeps, state: ControllerState): Promise<ControllerSummary> {
+async function interrupted(inputs: JobInputs, deps: ControllerDeps, state: ControllerState, family: FamilySummary | null): Promise<ControllerSummary> {
   const summary = emptySummary(inputs, deps, state, utcSeconds(deps.clock.now()));
+  if (family !== null) summary.family = family;
   summary.status = "needs_reconciliation";
   summary.reason = "interrupted";
   summary.detail = "an earlier run of this job has no summary: it stopped part-way or is still running; nothing was launched";
@@ -821,7 +822,7 @@ export async function runJob(inputs: JobInputs, deps: ControllerDeps): Promise<J
       const summary = parseCanonical(readFileSync(p.summary)) as unknown as ControllerSummary;
       return { exitCode: exitCode(summary.status), replay: true, status: summary.status, summary, work: inputs.work, jobDir: p.base };
     }
-    const summary = await interrupted(inputs, deps, state);
+    const summary = await interrupted(inputs, deps, state, familySummary(copyInputs));
     return { exitCode: 1, replay: true, status: summary.status, summary, work: inputs.work, jobDir: p.base };
   }
   if (existsSync(p.base) && readdirSync(p.base).length > 0) throw new InputsError(`jobs/${inputs.name} is not empty and holds no controller record`);

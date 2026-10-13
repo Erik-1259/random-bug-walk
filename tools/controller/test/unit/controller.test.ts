@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseCanonical, sha256Hex } from "@rbw/schema";
@@ -348,6 +348,17 @@ describe("the race family", () => {
     expect(written(at50).copies.map((copy) => copy.copy?.proxy)).toEqual(Array.from({ length: 5 }, () => ({ exit: 0, latency_ms: 50, source: "override" })));
     expect(written(at75).copies.map((copy) => copy.copy?.proxy)).toEqual(Array.from({ length: 5 }, () => ({ exit: 0, latency_ms: 75, source: "override" })));
     expect(written(imageDefault).copies.every((copy) => copy.copy?.proxy === undefined)).toBe(true);
+  });
+
+  it("records the family in the summary of a retried job whose earlier run stopped before its summary", async () => {
+    const w = await world({ kit: { family: "race" } });
+    const inputs = race(w, { kind: "kit_check", name: "kit-check", raceLatencyMs: 50 });
+    const first = await runJob(inputs, w.deps);
+    expect(first.status).toBe("complete");
+    unlinkSync(join(first.jobDir, "summary.json"));
+    const retried = await runJob(inputs, w.deps);
+    expect(retried).toMatchObject({ replay: true, status: "needs_reconciliation", summary: { reason: "interrupted" } });
+    expect(retried.summary.family).toEqual({ id: "race", adm06: { status: "not_applicable", reason: "Synthetic: a partial or stub fix of this race has no natural form." }, admission_copies: 11, race_latency_ms: 50 });
   });
 
   it("writes no family record for a time-zone job", async () => {

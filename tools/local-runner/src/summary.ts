@@ -93,7 +93,9 @@ export type CandidateTextSummary =
       novelty: string;
       ledger: unknown;
     }
-  | { status: "failed"; code: string; detail: string };
+  | { status: "failed"; code: string; detail: string }
+  /** A family whose recorded inputs do not exist yet: no card, issue or search runs. */
+  | { status: "not_run"; code: "symptom_unavailable"; detail: string };
 
 export interface Summary {
   schema_version: 1;
@@ -170,7 +172,8 @@ export function summaryText(summary: Summary): string {
   }
   if (summary.alternative_fix !== null) lines.push(`alternative fix ${summary.alternative_fix.status} passes_every_check=${summary.alternative_fix.passes_every_check ? "yes" : "no"}`);
   if (summary.candidate_text !== null) {
-    lines.push(summary.candidate_text.status === "complete" ? `candidate text complete novelty ${summary.candidate_text.novelty}` : `candidate text failed ${summary.candidate_text.code}`);
+    const text = summary.candidate_text;
+    lines.push(text.status === "complete" ? `candidate text complete novelty ${text.novelty}` : `candidate text ${text.status} ${text.code}`);
   }
   return `${lines.join("\n")}\n`;
 }

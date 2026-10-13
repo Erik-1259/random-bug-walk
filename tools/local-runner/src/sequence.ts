@@ -15,7 +15,7 @@ import { utcSeconds } from "./clock.ts";
 import { COPY_OUTER_LIMIT_MS, KILL_GRACE_MS, runCopies, runCopy } from "./copy.ts";
 import type { CopyPlan, CopyResult } from "./copy.ts";
 import type { Docker } from "./docker.ts";
-import { FamilyError, adm06For, checkFamilyImage, familyRecord } from "./family.ts";
+import { DEFAULT_FAMILY, FamilyError, adm06For, checkFamilyImage, familyRecord } from "./family.ts";
 import { InputsError, inputHashes, loadRunInputs } from "./inputs.ts";
 import type { RunInputOptions, RunInputs } from "./inputs.ts";
 import { BASELINE_KEY, JobRefusal, buildJob, checkBaseline, expectedVectors, newRunIds, writeJobDir } from "./jobs.ts";
@@ -130,6 +130,11 @@ function admissionSummary(imported: ImportOutcome): AdmissionSummary | null {
 }
 
 async function candidateText(env: Env, admission: BuiltJob): Promise<CandidateTextSummary> {
+  // The recorded inputs describe the time-zone bug; another family's card, issue and searches
+  // would describe the wrong bug, so none run until that family has its own recorded inputs.
+  if (env.inputs.family.id !== DEFAULT_FAMILY) {
+    return { status: "not_run", code: "symptom_unavailable", detail: `the ${env.inputs.family.id} family has no recorded inputs for the card, issue and searches yet` };
+  }
   const context = {
     project_id: env.ids.project_id,
     project_policy_sha256: admission.request.project_policy_sha256,
@@ -216,7 +221,7 @@ export async function runSequence(options: SequenceOptions, deps: SequenceDeps):
     summary.run.ended_at = utcSeconds(deps.clock.now());
     const written = writeSummary(options.work, summary);
     const copiesComplete = summary.jobs.every((job) => job.refusal === null && job.import.refusal === null && job.copies.every((copy) => copy.status === "complete"));
-    const exitCode = complete && summary.failure === null && copiesComplete && summary.candidate_text?.status === "complete" ? 0 : 1;
+    const exitCode = complete && summary.failure === null && copiesComplete && (summary.candidate_text?.status === "complete" || summary.candidate_text?.status === "not_run") ? 0 : 1;
     return { summary, ...written, exitCode };
   };
   const fail = (step: string, error: unknown): SequenceResult => {

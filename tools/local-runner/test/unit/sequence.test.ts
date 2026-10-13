@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { encodeCanonical, parseCanonical, sha256Hex } from "@rbw/schema";
@@ -383,6 +383,14 @@ describe("the race family: 11 admission copies, ADM-06 not applicable, a databas
     expect(latencies.length).toBe(1 + 5 + 1 + 11);
     expect(latencies.every((latency) => latency === "50")).toBe(true);
     expect(summaryText(summary)).toContain("family race admission_copies 11 adm06 not_applicable");
+  });
+
+  it("runs no candidate text: the recorded inputs describe the time-zone bug, so no card, issue or search reaches the race task revision", async () => {
+    const { summary, result } = await sequence({ family: "race" }, raceOverrides());
+    expect(result.exitCode).toBe(0);
+    expect(summary.candidate_text).toMatchObject({ status: "not_run", code: "symptom_unavailable" });
+    expect(existsSync(join(result.summaryPath, "..", "candidate-text"))).toBe(false);
+    expect(summaryText(summary)).toContain("candidate text not_run symptom_unavailable");
   });
 
   it("passes no latency argument when the run keeps the race image's default", async () => {
