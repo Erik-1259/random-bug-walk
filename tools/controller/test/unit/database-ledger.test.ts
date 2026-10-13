@@ -1,13 +1,15 @@
 import type pg from "pg";
 import { describe, expect, it } from "vitest";
-import { databaseLedger, LedgerError } from "../../src/database-ledger.ts";
+import { CONNECT_TIMEOUT_MS, databaseLedger, LedgerError } from "../../src/database-ledger.ts";
 
 const DATABASE_URL = "postgresql://synthetic-user:synthetic-db-password-41@db.example.invalid/synthetic";
 
 /** A synthetic pg client whose connect fails with the next queued error, or connects. */
 function clients(failures: (Error | undefined)[]) {
   const made: { connected: boolean; ended: boolean; queries: number }[] = [];
-  const createClient = () => {
+  const configs: pg.ClientConfig[] = [];
+  const createClient = (config: pg.ClientConfig) => {
+    configs.push(config);
     const state = { connected: false, ended: false, queries: 0 };
     made.push(state);
     const failure = failures.shift();
@@ -28,7 +30,7 @@ function clients(failures: (Error | undefined)[]) {
       },
     } as unknown as pg.Client;
   };
-  return { made, createClient };
+  return { made, configs, createClient };
 }
 
 const error = (code: string, message = "synthetic: failed") => Object.assign(new Error(message), { code });
@@ -64,6 +66,7 @@ describe("the database ledger's initial connect", () => {
       error("57P03"),
       error("08006"),
       new Error("Connection terminated unexpectedly"),
+      new Error("timeout expired"),
     ];
     for (const failure of transient) {
       const { made, createClient } = clients([failure]);
@@ -82,6 +85,13 @@ describe("the database ledger's initial connect", () => {
     for (const hidden of [DATABASE_URL, "synthetic-user", "synthetic-db-password-41", "db.example.invalid"]) expect(message).not.toContain(hidden);
     expect(made).toHaveLength(3);
     expect(waits.reduce((sum, ms) => sum + ms, 0)).toBeLessThan(10_000);
+  });
+
+  it("bounds each connect attempt with a timeout, so a hung connect is retried", async () => {
+    const { made, configs, createClient } = clients([new Error("timeout expired")]);
+    await databaseLedger(DATABASE_URL, () => new Date(0), { createClient, sleep: () => Promise.resolve() });
+    expect(made).toHaveLength(2);
+    expect(configs.every((config) => config.connectionTimeoutMillis === CONNECT_TIMEOUT_MS)).toBe(true);
   });
 
   it("never retries an authentication or other error", async () => {

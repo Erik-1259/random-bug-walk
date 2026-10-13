@@ -41,8 +41,14 @@ const TRANSIENT_CODES = new Set([
   "08006",
 ]);
 
-/** pg's own message when the server closes the socket during the handshake; pg gives it no code. */
-const TERMINATED = "Connection terminated unexpectedly";
+/**
+ * pg's own code-less messages: the server closed the socket during the handshake, or the connect
+ * outlasted CONNECT_TIMEOUT_MS (a waking compute that never answers).
+ */
+const CODELESS_TRANSIENT = new Set(["Connection terminated unexpectedly", "timeout expired"]);
+
+/** Each attempt's connect timeout, so a hung connect is retried too: three attempts stay under 35 s. */
+export const CONNECT_TIMEOUT_MS = 10_000;
 
 export interface DatabaseLedgerOptions {
   createClient?: (config: pg.ClientConfig) => pg.Client;
@@ -54,7 +60,7 @@ function driverCode(error: unknown): string {
 }
 
 function transient(error: unknown): boolean {
-  return TRANSIENT_CODES.has(driverCode(error)) || (error instanceof Error && driverCode(error) === "unknown" && error.message === TERMINATED);
+  return TRANSIENT_CODES.has(driverCode(error)) || (error instanceof Error && driverCode(error) === "unknown" && CODELESS_TRANSIENT.has(error.message));
 }
 
 /**
@@ -65,7 +71,7 @@ export async function databaseLedger(databaseUrl: string, now: () => Date, optio
   const createClient = options.createClient ?? ((config) => new pg.Client(config));
   const sleep = options.sleep ?? ((ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   for (let attempt = 0; ; attempt += 1) {
-    const client = createClient({ connectionString: databaseUrl });
+    const client = createClient({ connectionString: databaseUrl, connectionTimeoutMillis: CONNECT_TIMEOUT_MS });
     // A dropped connection surfaces as a failed ledger call, which the controller turns into
     // needs_reconciliation; the listener only keeps the error from crashing the process.
     client.on("error", () => undefined);
