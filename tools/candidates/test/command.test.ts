@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { parseCanonical } from "@rbw/schema";
 import { describe, expect, it } from "vitest";
@@ -23,13 +23,13 @@ function files(): { rule: string; symptom: string; outFile: string; scratch: str
   return { rule, symptom, outFile: join(dir, "record.json"), scratch: tempDir("rbw-candidates-cli-scratch-") };
 }
 
-async function run(extra: string[], deps: CommandDeps, outFile?: string, scratch?: string): Promise<Run> {
+async function run(extra: string[], deps: CommandDeps, outFile?: string, scratch?: string, host?: string): Promise<Run> {
   const paths = files();
   const target = outFile ?? paths.outFile;
   let out = "";
   let err = "";
   const code = await runCommand(
-    ["--rule", paths.rule, "--host", makeHost(), "--symptom", paths.symptom, "--out", target, "--scratch", scratch ?? paths.scratch, ...extra],
+    ["--rule", paths.rule, "--host", host ?? makeHost(), "--symptom", paths.symptom, "--out", target, "--scratch", scratch ?? paths.scratch, ...extra],
     { now: () => new Date("2026-10-13T12:00:00.000Z"), runId: () => "11111111-1111-4111-8111-111111111111", ...deps },
     { out: (text) => (out += text), err: (text) => (err += text) },
   );
@@ -147,6 +147,36 @@ describe("command line", () => {
     expect(result.err).toMatch(/--scratch must be a directory/);
     expect(screen.calls).toHaveLength(0);
     expect(existsSync(result.outFile)).toBe(false);
+  });
+
+  it("refuses a --scratch directory inside the host before any screen runs, and writes nothing", async () => {
+    const host = makeHost();
+    const nested = join(host, ".scratch");
+    mkdirSync(nested);
+    const screen = scripted([miss(), miss(), miss()]);
+    const result = await run([], { findSites: finder(threeSites()), screen }, undefined, nested, host);
+    expect(result.code).toBe(2);
+    expect(result.err).toMatch(/--scratch must be outside --host/);
+    expect(screen.calls).toHaveLength(0);
+    expect(existsSync(result.outFile)).toBe(false);
+  });
+
+  it("refuses the host itself as the --scratch directory", async () => {
+    const host = makeHost();
+    const result = await run([], { findSites: finder(threeSites()), screen: scripted([]) }, undefined, host, host);
+    expect(result.code).toBe(2);
+    expect(result.err).toMatch(/--scratch must be outside --host/);
+  });
+
+  it("prints the kept scratch directory with --keep-scratch", async () => {
+    const scratch = tempDir("rbw-candidates-cli-scratch-");
+    const result = await run(["--keep-scratch"], { findSites: finder(threeSites()), screen: scripted([miss(), miss(), miss()]) }, undefined, scratch);
+    expect(result.code).toBe(0);
+    const match = /^scratch kept: (.+)$/m.exec(result.out);
+    expect(match).not.toBeNull();
+    const kept = match?.[1] ?? "";
+    expect(dirname(kept)).toBe(scratch);
+    expect(existsSync(kept)).toBe(true);
   });
 
   it("leaves no empty record behind when the site finder fails on a real run", async () => {

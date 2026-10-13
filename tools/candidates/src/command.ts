@@ -5,7 +5,7 @@
 // kept and its path printed; 2 a usage or input error found before anything ran, nothing written.
 // The --out file is claimed before the pipeline runs, so a bad --out never costs a screen.
 import { randomUUID } from "node:crypto";
-import { closeSync, openSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { closeSync, openSync, readFileSync, realpathSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -122,7 +122,7 @@ function saveRecord(fd: number, outPath: string, record: RunRecord, scratchBase:
   return { ok: true, note: `${spent}; record: ${outPath}\n` };
 }
 
-function summary(record: RunRecord, out: string): string {
+function summary(record: RunRecord, out: string, scratchDir: string | null): string {
   const { totals } = record;
   const lines = [
     `${record.dry_run ? "dry run" : "run"} ${record.run_id}: ${String(totals.sites_found)} sites, ${String(totals.duplicates)} duplicates, ${String(totals.planted)} planted`,
@@ -134,6 +134,9 @@ function summary(record: RunRecord, out: string): string {
     lines.push(`stopped screening: ${record.stop_reason}`);
   }
   lines.push(`record: ${out}`);
+  if (scratchDir !== null) {
+    lines.push(`scratch kept: ${scratchDir}`);
+  }
   return `${lines.join("\n")}\n`;
 }
 
@@ -196,6 +199,10 @@ export async function runCommand(argv: readonly string[], deps: CommandDeps, io:
     if (!dryRun && !isDirectory(scratchBase)) {
       throw new UsageError("--scratch must be a directory");
     }
+    // Each copy is made under --scratch; a copy inside the tree being copied cannot be made.
+    if (!dryRun && isInside(realpathSync(host), realpathSync(scratchBase))) {
+      throw new UsageError("--scratch must be outside --host");
+    }
     // Claim the record file before anything runs, so a bad --out fails before any screen spends.
     let fd: number;
     try {
@@ -205,8 +212,9 @@ export async function runCommand(argv: readonly string[], deps: CommandDeps, io:
     }
     const runId = (deps.runId ?? randomUUID)();
     let record: RunRecord;
+    let scratchDir: string | null;
     try {
-      ({ record } = await runPipeline({
+      ({ record, scratchDir } = await runPipeline({
         rule: { id: ruleId, path: rulePath, text: ruleText },
         hostDir: resolve(host),
         symptom: { text: symptomText },
@@ -237,7 +245,7 @@ export async function runCommand(argv: readonly string[], deps: CommandDeps, io:
       io.err(`candidates: ${where.note}`);
       return 1;
     }
-    io.out(summary(record, outPath));
+    io.out(summary(record, outPath, scratchDir));
     return 0;
   } catch (error) {
     if (error instanceof UsageError || (error instanceof TypeError && "code" in error)) {

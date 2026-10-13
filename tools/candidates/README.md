@@ -18,7 +18,7 @@ The types are in `src/types.ts`. Until a real implementation lands, `src/wiring.
 3. For each candidate in order, copies the host tree into a fresh directory under the run's own scratch directory (leaving out `.git` and `node_modules`), writes the planted file, and calls `screen`. Screens run one at a time.
 4. Before each screen, checks that one whole per-screen budget still fits in what is left of the total spend cap. If it does not, that candidate and the rest are recorded as `skipped_spend_cap`. A screen that throws or returns a malformed result is recorded as `screen_error` and charged its whole budget, because its real cost is unknown; a malformed result that reports a cost above the budget is charged that cost instead. A screen that reports spending more than its budget, malformed or not, is recorded, and no further screens start (`skipped_after_overspend`). If the run itself fails after screening begins (for example a scratch directory cannot be made or removed), the candidates not yet screened are recorded as `skipped_after_error`, the scratch directory is removed, and the record of the spend so far is still written, with stop reason `pipeline_error`.
 5. Ranks the survivors (`not_located`): more attempts first (more independent misses is stronger evidence that the bug cannot be found by reading), then higher finder confidence, then file and line.
-6. Removes each scratch copy after its screen unless `--keep-scratch` is given. The host tree is never written.
+6. Removes each scratch copy after its screen unless `--keep-scratch` is given, in which case the summary prints the kept scratch directory. The host tree is never written.
 
 A dry run does steps 1 and 2 only: it makes no copies, calls no screen and spends nothing, and records the most the screens could spend under the caps.
 
@@ -44,11 +44,11 @@ node tools/candidates/src/cli.ts --rule <class rule file> --host <host tree> --s
 | `--max-spend-usd` | 2.00 | Cap on the total the screens may spend. |
 | `--screen-budget-usd` | 0.25 | Budget given to each screen. |
 | `--screen-attempts` | 3 | Attempts allowed to each screen. |
-| `--scratch` | the system temporary directory | Where the run makes its scratch directory. |
+| `--scratch` | the system temporary directory | Where the run makes its scratch directory. It must be outside `--host`. |
 
 Amounts are decimal USD with at most six decimals and are held as integer micro-USD. A run without `--dry-run` is refused while the screen is not wired. It prints a short summary and the record's path.
 
-Exit codes: 0 the run finished and the record was written; 1 the pipeline could not run or finish (an implementation is not wired, the finder failed, or the run failed after screening began), and once screening has begun the record of the spend so far is still kept and its path printed; 2 a usage or input error found before anything ran (including an `--out` that exists or sits in a missing directory, or a `--scratch` that is not a directory), nothing written.
+Exit codes: 0 the run finished and the record was written; 1 the pipeline could not run or finish (an implementation is not wired, the finder failed, or the run failed after screening began), and once screening has begun the record of the spend so far is still kept and its path printed; 2 a usage or input error found before anything ran (including an `--out` that exists or sits in a missing directory, or a `--scratch` that is not a directory or sits inside `--host`), nothing written.
 
 ## Tests
 
