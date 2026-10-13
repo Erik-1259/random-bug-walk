@@ -9,7 +9,10 @@ Standard library only. Run from the repository root:
 
 Solve outcome: exact power of the two-sided Fisher exact test, by full enumeration of the
 21 x 21 outcome tables. The rejection region is computed with exact rational arithmetic; the
-power sums binomial probabilities over that region. Nothing here is simulated or measured.
+power sums binomial probabilities over that region, minus the probability that the registered
+futility rule stops the solve test (both arms 0/FUTILITY_N or both FUTILITY_N/FUTILITY_N in
+their first FUTILITY_N attempts), since a stopped test is fixed at p = 1. Nothing here is
+simulated or measured.
 
 Tokens and turns: power of the two-sided exact Mann-Whitney test (exact null distribution of U,
 no ties) under a normal location shift in SD units, by seeded Monte Carlo. Mann-Whitney is
@@ -28,6 +31,7 @@ from functools import cache
 from pathlib import Path
 
 K = 20  # attempts per arm
+FUTILITY_N = 6  # the futility rule looks at each arm's first 6 counted attempts
 POWER = 0.80
 ALPHAS = (Fraction(5, 100), Fraction(5, 300))  # alpha 0.05, and Holm's first step at 0.05 / 3
 BASE_RATES = tuple(range(0, 101, 5))  # off-arm solve rate, percentage points
@@ -78,9 +82,42 @@ def binom_pmf(n: int, p: float) -> list[float]:
     return [math.comb(n, x) * p**x * (1 - p) ** (n - x) for x in range(n + 1)]
 
 
+def futility_joint(p: float) -> tuple[list[float], list[float]]:
+    """P(first FUTILITY_N attempts all fail, total = x) and P(all succeed, total = x), x in 0..K."""
+    rest = binom_pmf(K - FUTILITY_N, p)
+    padding = [0.0] * FUTILITY_N
+    none = [(1 - p) ** FUTILITY_N * r for r in rest + padding]
+    every = [p**FUTILITY_N * r for r in padding + rest]
+    return none, every
+
+
 def fisher_power(p0: float, p1: float, alpha: Fraction) -> float:
+    """Probability that Fisher's test runs and rejects: a run the futility rule stops (both arms
+    0/FUTILITY_N or both FUTILITY_N/FUTILITY_N) is fixed at p = 1, so it never rejects."""
     f0, f1 = binom_pmf(K, p0), binom_pmf(K, p1)
-    return sum(f0[x0] * f1[x1] for x0, x1 in rejection_region(alpha))
+    none0, every0 = futility_joint(p0)
+    none1, every1 = futility_joint(p1)
+    return sum(
+        f0[x0] * f1[x1] - none0[x0] * none1[x1] - every0[x0] * every1[x1]
+        for x0, x1 in rejection_region(alpha)
+    )
+
+
+def fisher_power_by_stage(p0: float, p1: float, alpha: Fraction) -> float:
+    """The same probability by a separate route, for the self-check: enumerate each arm's
+    successes in its first FUTILITY_N attempts and in the rest, and apply the rule directly."""
+    head0, head1 = binom_pmf(FUTILITY_N, p0), binom_pmf(FUTILITY_N, p1)
+    tail0, tail1 = binom_pmf(K - FUTILITY_N, p0), binom_pmf(K - FUTILITY_N, p1)
+    total = 0.0
+    heads = [(a0, a1) for a0 in range(FUTILITY_N + 1) for a1 in range(FUTILITY_N + 1)]
+    tails = [(r0, r1) for r0 in range(K - FUTILITY_N + 1) for r1 in range(K - FUTILITY_N + 1)]
+    for a0, a1 in heads:
+        if a0 == a1 and a0 in (0, FUTILITY_N):
+            continue
+        for r0, r1 in tails:
+            if fisher_p(a0 + r0, a1 + r1) <= alpha:
+                total += head0[a0] * tail0[r0] * head1[a1] * tail1[r1]
+    return total
 
 
 def detectable(base: int, alpha: Fraction, direction: int) -> tuple[int, float] | None:
@@ -179,6 +216,12 @@ def self_check() -> None:
     require(mw_critical(20, 20, Fraction(5, 100)) == 127, "Mann-Whitney critical 0.05")
     require(mw_critical(20, 20, Fraction(1, 100)) == 105, "Mann-Whitney critical 0.01")
     require(sum(u_counts(20, 20)) == math.comb(40, 20), "Mann-Whitney null total")
+    # The futility-aware solve power agrees with a stage-by-stage enumeration of the rule.
+    for p0, p1 in ((0.0, 0.32), (0.25, 0.75), (0.5, 0.5), (1.0, 0.68)):
+        for alpha in ALPHAS:
+            joint = fisher_power(p0, p1, alpha)
+            staged = fisher_power_by_stage(p0, p1, alpha)
+            require(abs(joint - staged) < 1e-12, f"futility-aware power at {p0}, {p1}")
 
 
 # ---------- output ----------
@@ -209,7 +252,10 @@ def generate() -> str:
         ' `difference (power at that difference)`. "Increase" means the on arm solves more'
         ' often than the off arm; "decrease" means it solves less often. `none` means no'
         ' difference within 0-100% reaches the power. "Size" is the actual false-positive'
-        " rate when both arms share the base rate (Fisher is conservative at this size).",
+        " rate when both arms share the base rate (Fisher is conservative at this size)."
+        f" A run the futility rule stops counts as no rejection: both arms 0/{FUTILITY_N} or"
+        f" both {FUTILITY_N}/{FUTILITY_N} in their first {FUTILITY_N} attempts fixes the solve"
+        " test at p = 1.",
         "",
         f"| Off-arm base rate | Increase, alpha {pct(a05)} | Increase, alpha {pct(a_holm)}"
         f" | Decrease, alpha {pct(a05)} | Decrease, alpha {pct(a_holm)}"

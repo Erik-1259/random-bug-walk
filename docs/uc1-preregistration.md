@@ -53,35 +53,35 @@ These are the differences that would matter to a tool builder. At k = 20 per arm
 
 ## Detectable difference (calculated)
 
-The tables below are calculated, not measured. `docs/uc1-preregistration/power.py` generates the block between the markers, and `--check` confirms that the block here matches. The repository's test suite runs `--check` on every change, including a change to this file alone (`scripts/checks/test/uc1-preregistration.test.ts`). The solve table is exact: it enumerates all 21 × 21 outcome tables, finds the Fisher rejection region with exact rational arithmetic, and sums binomial probabilities over it. The token and turn table is a seeded simulation, labeled as such. The alpha 0.0167 columns are alpha/3 = 0.05/3, the first step of Holm's procedure across the 3 co-primary outcomes.
+The tables below are calculated, not measured. `docs/uc1-preregistration/power.py` generates the block between the markers, and `--check` confirms that the block here matches. The repository's test suite runs `--check` on every change, including a change to this file alone (`scripts/checks/test/uc1-preregistration.test.ts`). The solve table is exact: it enumerates all 21 × 21 outcome tables, finds the Fisher rejection region with exact rational arithmetic, and sums binomial probabilities over it, leaving out the runs the futility rule stops (see "Stop and futility rules"), since a stopped solve test is fixed at p = 1. The token and turn table is a seeded simulation, labeled as such. The alpha 0.0167 columns are alpha/3 = 0.05/3, the first step of Holm's procedure across the 3 co-primary outcomes.
 
 <!-- BEGIN GENERATED: docs/uc1-preregistration/power.py -->
 
-Solve outcome: smallest detectable difference in percentage points at 80% power, k = 20 per arm, two-sided Fisher exact test, by exact enumeration. Each cell is `difference (power at that difference)`. "Increase" means the on arm solves more often than the off arm; "decrease" means it solves less often. `none` means no difference within 0-100% reaches the power. "Size" is the actual false-positive rate when both arms share the base rate (Fisher is conservative at this size).
+Solve outcome: smallest detectable difference in percentage points at 80% power, k = 20 per arm, two-sided Fisher exact test, by exact enumeration. Each cell is `difference (power at that difference)`. "Increase" means the on arm solves more often than the off arm; "decrease" means it solves less often. `none` means no difference within 0-100% reaches the power. "Size" is the actual false-positive rate when both arms share the base rate (Fisher is conservative at this size). A run the futility rule stops counts as no rejection: both arms 0/6 or both 6/6 in their first 6 attempts fixes the solve test at p = 1.
 
 | Off-arm base rate | Increase, alpha 0.05 | Increase, alpha 0.0167 | Decrease, alpha 0.05 | Decrease, alpha 0.0167 | Size, alpha 0.05 | Size, alpha 0.0167 |
 |---|---|---|---|---|---|---|
-| 0% | 32 (0.817) | 42 (0.804) | none | none | 0.0000 | 0.0000 |
-| 5% | 40 (0.818) | 48 (0.812) | none | none | 0.0019 | 0.0000 |
-| 10% | 43 (0.803) | 51 (0.804) | none | none | 0.0118 | 0.0006 |
-| 15% | 46 (0.815) | 53 (0.804) | none | none | 0.0199 | 0.0022 |
-| 20% | 48 (0.813) | 54 (0.811) | none | none | 0.0226 | 0.0039 |
-| 25% | 49 (0.815) | 54 (0.811) | none | none | 0.0235 | 0.0053 |
-| 30% | 48 (0.803) | 54 (0.820) | none | none | 0.0248 | 0.0060 |
-| 35% | 47 (0.808) | 53 (0.822) | 34 (0.822) | none | 0.0252 | 0.0062 |
-| 40% | 46 (0.823) | 51 (0.815) | 37 (0.813) | none | 0.0238 | 0.0063 |
-| 45% | 44 (0.813) | 49 (0.817) | 40 (0.818) | 44 (0.815) | 0.0215 | 0.0065 |
-| 50% | 42 (0.806) | 47 (0.827) | 42 (0.806) | 47 (0.827) | 0.0204 | 0.0066 |
-| 55% | 40 (0.818) | 44 (0.815) | 44 (0.813) | 49 (0.817) | 0.0215 | 0.0065 |
-| 60% | 37 (0.813) | none | 46 (0.823) | 51 (0.815) | 0.0238 | 0.0063 |
-| 65% | 34 (0.822) | none | 47 (0.808) | 53 (0.822) | 0.0252 | 0.0062 |
-| 70% | none | none | 48 (0.803) | 54 (0.820) | 0.0248 | 0.0060 |
-| 75% | none | none | 49 (0.815) | 54 (0.811) | 0.0235 | 0.0053 |
-| 80% | none | none | 48 (0.813) | 54 (0.811) | 0.0226 | 0.0039 |
-| 85% | none | none | 46 (0.815) | 53 (0.804) | 0.0199 | 0.0022 |
-| 90% | none | none | 43 (0.803) | 51 (0.804) | 0.0118 | 0.0006 |
-| 95% | none | none | 40 (0.818) | 48 (0.812) | 0.0019 | 0.0000 |
-| 100% | none | none | 32 (0.817) | 42 (0.804) | 0.0000 | 0.0000 |
+| 0% | 34 (0.817) | 43 (0.815) | none | none | 0.0000 | 0.0000 |
+| 5% | 40 (0.806) | 48 (0.809) | none | none | 0.0016 | 0.0000 |
+| 10% | 43 (0.800) | 51 (0.803) | none | none | 0.0106 | 0.0006 |
+| 15% | 46 (0.814) | 53 (0.804) | none | none | 0.0184 | 0.0021 |
+| 20% | 48 (0.812) | 54 (0.811) | none | none | 0.0215 | 0.0038 |
+| 25% | 49 (0.815) | 54 (0.811) | none | none | 0.0230 | 0.0052 |
+| 30% | 48 (0.803) | 54 (0.820) | none | none | 0.0246 | 0.0060 |
+| 35% | 47 (0.808) | 53 (0.822) | 35 (0.838) | none | 0.0252 | 0.0062 |
+| 40% | 46 (0.822) | 51 (0.814) | 38 (0.836) | none | 0.0237 | 0.0063 |
+| 45% | 44 (0.810) | 49 (0.814) | 40 (0.806) | 44 (0.804) | 0.0215 | 0.0065 |
+| 50% | 42 (0.801) | 47 (0.821) | 42 (0.801) | 47 (0.821) | 0.0204 | 0.0066 |
+| 55% | 40 (0.806) | 44 (0.804) | 44 (0.810) | 49 (0.814) | 0.0215 | 0.0065 |
+| 60% | 38 (0.836) | none | 46 (0.822) | 51 (0.814) | 0.0237 | 0.0063 |
+| 65% | 35 (0.838) | none | 47 (0.808) | 53 (0.822) | 0.0252 | 0.0062 |
+| 70% | none | none | 48 (0.803) | 54 (0.820) | 0.0246 | 0.0060 |
+| 75% | none | none | 49 (0.815) | 54 (0.811) | 0.0230 | 0.0052 |
+| 80% | none | none | 48 (0.812) | 54 (0.811) | 0.0215 | 0.0038 |
+| 85% | none | none | 46 (0.814) | 53 (0.804) | 0.0184 | 0.0021 |
+| 90% | none | none | 43 (0.800) | 51 (0.803) | 0.0106 | 0.0006 |
+| 95% | none | none | 40 (0.806) | 48 (0.809) | 0.0016 | 0.0000 |
+| 100% | none | none | 34 (0.817) | 43 (0.815) | 0.0000 | 0.0000 |
 
 Tokens and turns: smallest normal location shift (SD units, step 0.05) detected with at least 80% power by the two-sided exact Mann-Whitney test, k = 20 per arm, no ties. Monte Carlo, 20000 replicates, seed 20261013 (standard error about 0.003 near 0.80).
 
@@ -96,8 +96,8 @@ How to read it:
 
 - A difference counts as detectable when the power is at least 80% at that difference and at every larger feasible difference in the same direction. Differences are whole percentage points.
 - The result page quotes the row for the observed off-arm rate, rounded to the nearest 5 points.
-- Near the expected range (off-arm rate 0–25%), only an increase of about 32–49 points is detectable at alpha 0.05, and 42–54 points at Holm's first step. The pre-registered 25-point difference is well below that.
-- These numbers replace the rounded estimates in the design notes (35/45 at 0%, 45/55 at 10%, 50/55 at 25%, 45/50 at 50%). The calculated values are 32/42, 43/51, 49/54 and 42/47.
+- Near the expected range (off-arm rate 0–25%), only an increase of about 34–49 points is detectable at alpha 0.05, and 43–54 points at Holm's first step. The pre-registered 25-point difference is well below that.
+- These numbers replace the rounded estimates in the design notes (35/45 at 0%, 45/55 at 10%, 50/55 at 25%, 45/50 at 50%). The calculated values, with the futility rule counted as no rejection, are 34/43, 43/51, 49/54 and 42/47.
 - **Tokens.** Mann-Whitney uses ranks, so the shift applies equally to log tokens. Under a lognormal model, a 25% median reduction is a shift of ln(4/3) ≈ 0.29 in log tokens. It is detectable at alpha 0.05 only if the standard deviation of log tokens per attempt is about 0.30 or less (0.29 / 0.95). That standard deviation is unknown until the pilot measures it, so this is a prediction, not a measurement.
 - **Ties.** The table assumes no ties. Turns are whole numbers from 1 to 50 over 40 attempts, so turns will be tied, and capped attempts share the cap values of both outcomes. The test that is run handles ties (see "Outcomes"), but the table is optimistic for turns, and for tokens if attempts hit a cap.
 
@@ -175,4 +175,4 @@ uv run --no-project --python 3.12 python docs/uc1-preregistration/power.py      
 uv run --no-project --python 3.12 python docs/uc1-preregistration/power.py --check  # compare with this file
 ```
 
-The script checks itself against reference values before printing: Fisher's tea-tasting p of 34/70, the exact p for 0/20 versus 6/20, and the published Mann-Whitney critical values for 20 and 20 (127 at 0.05 and 105 at 0.01, two-sided). It uses only the Python standard library.
+The script checks itself against reference values before printing: Fisher's tea-tasting p of 34/70, the exact p for 0/20 versus 6/20, and the published Mann-Whitney critical values for 20 and 20 (127 at 0.05 and 105 at 0.01, two-sided), and that the futility-aware solve power matches a separate enumeration of each arm's first 6 attempts and the rest. It uses only the Python standard library.

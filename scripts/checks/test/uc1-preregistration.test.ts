@@ -38,12 +38,25 @@ describe("UC1 pre-registration power.py --check", () => {
   it(
     "exits 1 when one number in the doc's block is changed",
     () => {
-      const original = "| 0% | 32 (0.817) | 42 (0.804) |";
+      const original = "| 0% | 34 (0.817) | 43 (0.815) |";
       expect(readFileSync(DOC, "utf8")).toContain(original);
-      const tampered = copyWith((text) => text.replace(original, "| 0% | 25 (0.817) | 42 (0.804) |"));
+      const tampered = copyWith((text) => text.replace(original, "| 0% | 25 (0.817) | 43 (0.815) |"));
       const result = check(["--doc", tampered]);
       expect(result.status).toBe(1);
       expect(result.stderr).toContain("is missing or differs");
+    },
+    TIMEOUT_MS,
+  );
+
+  it(
+    "counts a futility stop as no rejection in the solve power",
+    () => {
+      const result = spawnSync("uv", ["run", "--no-project", "--python", "3.12", "python", SCRIPT], {
+        cwd: repositoryRoot,
+        encoding: "utf8",
+      });
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain("A run the futility rule stops counts as no rejection");
     },
     TIMEOUT_MS,
   );
