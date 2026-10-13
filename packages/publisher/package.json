@@ -24,7 +24,7 @@
     "@vercel/blob": "2.8.0"
   },
   "devDependencies": {
-    "@types/node": "24.19.1",
+    "@types/node": "26.6.4",
     "typescript": "6.0.3",
     "vitest": "5.0.3"
   }
