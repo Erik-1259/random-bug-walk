@@ -229,11 +229,14 @@ export function readGrade(work: string, grade: GradeNumber, route: GradeRoute, a
   // A job that did not complete stopped on the slot, the ledger, the build, the launch or the copy,
   // before any verdict on the attempt, except an import refusal of the copy's records (the job then
   // ends incomplete with no stop reason): records the attempt's code may have touched are a failure.
+  // A job can also stop after the verdict (the slot release or the spend read failed): an imported
+  // complete fixed-01 is then judged like a complete job's.
   const status = field(summary, "status");
   if (status !== "complete" && field(summary, "reason") === null && typeof field(field(summary, "import"), "refusal") === "string") {
     return result("failed", "the record set was refused at import", summarySha, trial);
   }
-  if (status !== "complete") return result("infrastructure", `the grade job ended ${String(str(field(summary, "status")))} (${String(str(field(summary, "reason")))})`, summarySha, trial);
+  const verdictImported = field(field(summary, "import"), "refusal") === null && trial.status === "complete" && trial.added_verdict !== null;
+  if (status !== "complete" && !verdictImported) return result("infrastructure", `the grade job ended ${String(str(field(summary, "status")))} (${String(str(field(summary, "reason")))})`, summarySha, trial);
   if (trial.placed_sha256 !== route.attempt_sha256) return result("invalid", "the graded copy did not place the attempt's bytes", summarySha, trial);
   if (field(field(summary, "import"), "refusal") !== null) return result("failed", "the record set was refused at import", summarySha, trial);
   if (trialRecord === undefined) return result("failed", `no imported result for ${GRADED_TRIAL}`, summarySha, trial);
