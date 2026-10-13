@@ -12,7 +12,7 @@
 // without credentials, so such runs are included only when their root IDs are given.
 // Usage, from packages/web:
 //   node scripts/assemble-results.mjs <new out dir> <repository https url> <public store base uri> [<status-only root id> ...]
-/* global Buffer, URL, console, fetch, process */
+/* global Buffer, URL, console, fetch, process, setTimeout */
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -48,8 +48,23 @@ mkdirSync(join(out, "store", "status"), { recursive: true });
 mkdirSync(join(out, "store", "sha256"), { recursive: true });
 const runs = join(out, "repository", "runs");
 let objects = 0;
+/**
+ * A published run's status object must say published. The publisher pushes the repository
+ * before it rewrites the status, and the store caches status objects for up to 60 seconds, so
+ * right after a publication the fetch can return the earlier status: wait and fetch it again.
+ */
+async function publishedStatus(root, attempts = 7, waitMs = 15_000) {
+  for (let attempt = 1; ; attempt++) {
+    const bytes = await fetchBytes(new URL(`status/${root}.json`, base).href);
+    if (JSON.parse(bytes.toString("utf8")).publication_status === "published") return bytes;
+    if (attempt >= attempts) throw new Error(`status/${root}.json does not say published after ${String(attempts)} fetches; retry in a few minutes`);
+    console.log(`run ${root}: status not yet published, fetching again in ${String(waitMs / 1000)} s`);
+    await new Promise((resolve) => setTimeout(resolve, waitMs));
+  }
+}
+
 for (const root of existsSync(runs) ? readdirSync(runs) : []) {
-  const status = await fetchBytes(new URL(`status/${root}.json`, base).href);
+  const status = await publishedStatus(root);
   writeFileSync(join(out, "store", "status", `${root}.json`), status);
   const manifest = JSON.parse(readFileSync(join(runs, root, "manifest.json"), "utf8"));
   for (const entry of manifest.entries) {
