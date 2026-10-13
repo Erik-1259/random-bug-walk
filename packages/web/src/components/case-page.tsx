@@ -249,7 +249,7 @@ function Provenance({ results }: { results: Results }) {
         </ul>
         <h3>The released run&apos;s files</h3>
         <RunSummary run={run} />
-        <DiagnosticArchive results={results} archives={diagnosticArchives(results)} empty="No other published runs." />
+        <DiagnosticArchive results={results} archives={diagnosticArchives(results)} empty="No other published factory runs." />
         <Replays replays={verificationReplays(results)} />
       </>
     );
@@ -275,7 +275,7 @@ function Provenance({ results }: { results: Results }) {
         </dl>
       )}
       <p>Release files: none, because there is no validated release.</p>
-      <DiagnosticArchive results={results} archives={run === null ? diagnosticArchives(results) : [run]} empty="No run has been published." />
+      <DiagnosticArchive results={results} archives={run === null ? diagnosticArchives(results) : [run]} empty="No factory run has been published." />
       <Replays replays={verificationReplays(results)} />
     </>
   );

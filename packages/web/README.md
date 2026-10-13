@@ -35,7 +35,7 @@ The page names the measured original **API** suite and says that other upstream 
 
 ### With and without a release
 
-With a release (ADM-09), the page shows "Validated blind-spot example". The case is the released run, labeled "Validated release, synthetic planted bug". Provenance comes from `release.json`, and "Release files" lists `release.json` and the release's files, followed by the released run's file summary. Other published runs, except judge replays, stay in the diagnostic archive, each labeled "not validated"; one whose admission passed with a blind spot demonstrated also says that no release names it and which run the one published release is for. The funnel counts 1 validated release. The catalog marks the released run.
+With a release (ADM-09), the page shows "Validated blind-spot example". The case is the released run, labeled "Validated release, synthetic planted bug". Provenance comes from `release.json`, and "Release files" lists `release.json` and the release's files, followed by the released run's file summary. Other published factory runs (not judge replays or paired comparisons) stay in the diagnostic archive, each labeled "not validated"; one whose admission passed with a blind spot demonstrated also says that no release names it and which run the one published release is for. The funnel counts 1 validated release. The catalog marks the released run.
 
 Without a release, the page shows "No validated blind-spot example yet", provenance says "Release: None published yet.", "Release files" says there are none, and the funnel counts 0 validated releases. A run that holds an observed symptom is shown as the case, labeled "Development evidence, not validated", and published runs are downloadable as diagnostic archives.
 

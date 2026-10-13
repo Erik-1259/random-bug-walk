@@ -57,7 +57,7 @@ describe("verification replays", () => {
   it("lists published replays as verification replays, not as failed or unvalidated factory runs", async () => {
     const html = renderToStaticMarkup(<CasePage results={await readResults(releaseWithReplays())} />);
     const page = text(html);
-    expect(page).toContain("Diagnostic archive (not validated) No other published runs.");
+    expect(page).toContain("Diagnostic archive (not validated) No other published factory runs.");
     expect(page).toContain(`Verification replays (judge) These are judges' replays, not factory runs, so they are not candidates for validation. ${REPLAY_ROOTS[0]} verification replay (judge), completed`);
     for (const root of REPLAY_ROOTS) expect(page).not.toContain(`${root} completed, not validated`);
     expect(html).toContain(`href="/runs/${REPLAY_ROOTS[0]}/report.md"`);
@@ -106,7 +106,7 @@ describe("paired comparisons", () => {
     ]);
     const page = text(renderToStaticMarkup(<CasePage results={results} />));
     expect(page).toContain("Replays not finished 1 Paired comparisons 2");
-    expect(page).toContain("Diagnostic archive (not validated) No other published runs.");
+    expect(page).toContain("Diagnostic archive (not validated) No other published factory runs.");
     for (const root of PAIRED_ROOTS) expect(page).not.toContain(`${root} completed, not validated`);
   });
 
