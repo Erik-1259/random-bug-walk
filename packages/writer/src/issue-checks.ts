@@ -57,6 +57,35 @@ function countRuns(text: string): bigint[] {
   return digitRuns(text.replace(DATE_OR_TIME, " ")).map(BigInt);
 }
 
+// A race count is a standalone number stated with its outcome: "2 were accepted", "1 refused",
+// "2 of them were accepted" or "accepted: 2". A digit run inside a path or word (`/api/2fa`), or
+// one followed by a unit or another number (`0 ms`, `1.5`), is never a count.
+const STANDALONE = String.raw`(?<![\p{L}\p{N}_./:-])(\d+)(?![\p{L}\p{N}_]|[.,:]\d)(?!\s*(?:ms|milliseconds?|seconds?|s|%)(?![\p{L}]))`;
+const OUTCOME = String.raw`(accept\p{L}*|refus\p{L}*|reject\p{L}*)`;
+const RACE_COUNT = new RegExp(
+  `${STANDALONE}\\s+(?:\\p{L}+\\s+){0,3}?${OUTCOME}(?![\\p{L}])|(?<![\\p{L}])${OUTCOME}\\s*[:=]\\s*${STANDALONE}`,
+  "giu",
+);
+
+/** The race counts stated in `text`, in order, each with the outcome it is stated for. */
+function raceCounts(text: string): { outcome: "accepted" | "refused"; count: bigint }[] {
+  return [...text.replace(DATE_OR_TIME, " ").matchAll(RACE_COUNT)].map((match) => {
+    const [count, word] = match[1] === undefined ? [match[4], match[3]] : [match[1], match[2]];
+    return { outcome: (word ?? "").toLowerCase().startsWith("accept") ? "accepted" : "refused", count: BigInt(count ?? "") };
+  });
+}
+
+/** True when the accepted count, then the refused count, are each stated with their outcome. */
+function statesRaceCounts(text: string, counts: { accepted: number; refused: number }): boolean {
+  let next: "accepted" | "refused" | null = "accepted";
+  for (const stated of raceCounts(text)) {
+    if (next !== null && stated.outcome === next && stated.count === BigInt(counts[next])) {
+      next = next === "accepted" ? "refused" : null;
+    }
+  }
+  return next === null;
+}
+
 /** Every string and number value in the observation (never its keys). */
 function symptomValues(value: unknown): string[] {
   if (typeof value === "string") {
@@ -96,14 +125,14 @@ function checkNumbers(issue: IssueOutput, symptom: WriterSymptom): NumericViolat
     }
   }
   // The time-zone family's vectors are its bucket counts in bucket order; the race family's are
-  // the accepted count, then the refused count.
-  const counts = isRaceSymptom(symptom)
-    ? (key: "expected" | "observed") => [BigInt(symptom[key].accepted), BigInt(symptom[key].refused)]
-    : (key: "expected" | "observed") => symptom[key].map((b) => BigInt(b.count));
-  if (!containsInOrder(countRuns(issue.expected_result), counts("expected"))) {
+  // the accepted count, then the refused count, each stated with its outcome.
+  const states = isRaceSymptom(symptom)
+    ? (text: string, key: "expected" | "observed") => statesRaceCounts(text, symptom[key])
+    : (text: string, key: "expected" | "observed") => containsInOrder(countRuns(text), symptom[key].map((b) => BigInt(b.count)));
+  if (!states(issue.expected_result, "expected")) {
     violations.push({ field: "expected_result", reason: "missing_expected_vector", number: null });
   }
-  if (!containsInOrder(countRuns(issue.actual_result), counts("observed"))) {
+  if (!states(issue.actual_result, "observed")) {
     violations.push({ field: "actual_result", reason: "missing_observed_vector", number: null });
   }
   return violations;

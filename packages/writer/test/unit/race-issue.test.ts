@@ -121,6 +121,17 @@ describe("the race issue checks", () => {
     expect(report.numeric?.violations).toEqual([{ field: "actual_result", reason: "missing_observed_vector", number: null }]);
   });
 
+  it("count only digits stated next to an accepted or refused outcome, not endpoint, status or time digits", () => {
+    const missing = [{ field: "actual_result", reason: "missing_observed_vector", number: null }];
+    const digitPath = parsed({ ...raceSymptom("checks"), request: { method: "POST", path: "/api/2fa/verify", query: {} } });
+    const actual = "POST /api/2fa/verify at 0 ms behaved unexpectedly.";
+    expect(checkIssue({ ...VALID, actual_result: actual }, digitPath, EXCLUDED_IDENTIFIERS).numeric?.violations).toEqual(missing);
+    expect(check({ actual_result: "Request b returned 200 at 0 ms and both tabs were signed in." }).numeric?.violations).toEqual(missing);
+    expect(check({ actual_result: "Request a was sent at 0 ms and accepted; request b at 1 ms was refused." }).numeric?.violations).toEqual(missing);
+    expect(check({ actual_result: "Accepted: 2, refused: 0." }).numeric?.ok).toBe(true);
+    expect(check({ actual_result: "Of the 2 requests, 2 of them were accepted and 0 were refused." }).numeric?.ok).toBe(true);
+  });
+
   it("reject a number the observation does not hold, such as a computed total", () => {
     expect(check({ environment: "Locale en-US; 3 sign-ins in total." }).numeric?.violations).toEqual([{ field: "environment", reason: "unsupported_number", number: "3" }]);
   });
