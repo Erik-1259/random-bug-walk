@@ -1,0 +1,64 @@
+id: rc-1.atomic-backup-code.source
+snapshots:
+  ? |
+    export async function POST(request: Request) {
+      await prisma.client.twoFactorBackupCode.update({
+        where: { id: unusedCodes[matchIndex].id },
+        data: { used: true },
+      });
+    }
+  : labels:
+    - source: |-
+        prisma.client.twoFactorBackupCode.update({
+            where: { id: unusedCodes[matchIndex].id },
+            data: { used: true },
+          })
+      style: primary
+      start: 55
+      end: 175
+    - source: POST
+      style: secondary
+      start: 22
+      end: 26
+    - source: |-
+        async function POST(request: Request) {
+          await prisma.client.twoFactorBackupCode.update({
+            where: { id: unusedCodes[matchIndex].id },
+            data: { used: true },
+          });
+        }
+      style: secondary
+      start: 7
+      end: 178
+  ? |
+    export async function POST(request: Request) {
+      const consumed = await prisma.client.twoFactorBackupCode.updateMany({
+        where: { id: unusedCodes[matchIndex].id, used: false },
+        data: { used: true },
+      });
+      return consumed;
+    }
+  : labels:
+    - source: |-
+        prisma.client.twoFactorBackupCode.updateMany({
+            where: { id: unusedCodes[matchIndex].id, used: false },
+            data: { used: true },
+          })
+      style: primary
+      start: 72
+      end: 209
+    - source: POST
+      style: secondary
+      start: 22
+      end: 26
+    - source: |-
+        async function POST(request: Request) {
+          const consumed = await prisma.client.twoFactorBackupCode.updateMany({
+            where: { id: unusedCodes[matchIndex].id, used: false },
+            data: { used: true },
+          });
+          return consumed;
+        }
+      style: secondary
+      start: 7
+      end: 231

@@ -124,6 +124,11 @@ describe("committed probe data for DT-1.tz-arg", () => {
     ]);
   });
 
+  it("ADM-06 applies to this shape: its probe data records no not-applicable status", () => {
+    expect(set.data.adm_06).toBeUndefined();
+    expect(set.data.probes.map((probe) => probe.id)).toEqual(["mutation", "partial", "stub"]);
+  });
+
   it("ADM-06 fixed reference restores the clean file from the planted file", () => {
     expect(set.data.fixed_reference).toMatchObject({
       base_sha256: PLANTED_SHA,

@@ -1,0 +1,143 @@
+id: rc-1.atomic-backup-code
+snapshots:
+  ? |
+    export async function POST(request: Request) {
+      const consumed = await prisma.client.twoFactorBackupCode.updateMany({
+        where: { id: unusedCodes[matchIndex].id, used: false },
+        data: { used: true },
+      });
+      return consumed;
+    }
+  : fixed: |
+      export async function POST(request: Request) {
+        const consumed = await prisma.client.twoFactorBackupCode.updateMany({
+          where: { id: unusedCodes[matchIndex].id },
+          data: { used: true },
+        });
+        return consumed;
+      }
+    labels:
+    - source: '{ id: unusedCodes[matchIndex].id, used: false }'
+      style: primary
+      start: 130
+      end: 177
+    - source: prisma.client.twoFactorBackupCode.updateMany
+      style: secondary
+      start: 72
+      end: 116
+    - source: |-
+        prisma.client.twoFactorBackupCode.updateMany({
+            where: { id: unusedCodes[matchIndex].id, used: false },
+            data: { used: true },
+          })
+      style: secondary
+      start: 72
+      end: 209
+    - source: |-
+        ({
+            where: { id: unusedCodes[matchIndex].id, used: false },
+            data: { used: true },
+          })
+      style: secondary
+      start: 116
+      end: 209
+    - source: |-
+        {
+            where: { id: unusedCodes[matchIndex].id, used: false },
+            data: { used: true },
+          }
+      style: secondary
+      start: 117
+      end: 208
+    - source: where
+      style: secondary
+      start: 123
+      end: 128
+    - source: 'where: { id: unusedCodes[matchIndex].id, used: false }'
+      style: secondary
+      start: 123
+      end: 177
+    - source: POST
+      style: secondary
+      start: 22
+      end: 26
+    - source: |-
+        async function POST(request: Request) {
+          const consumed = await prisma.client.twoFactorBackupCode.updateMany({
+            where: { id: unusedCodes[matchIndex].id, used: false },
+            data: { used: true },
+          });
+          return consumed;
+        }
+      style: secondary
+      start: 7
+      end: 231
+  ? |
+    export async function POST(request: Request) {
+      if (body.backupCode) {
+        const matchIndex = await verifySyntheticCode(body.backupCode, hashes);
+        const consumed = await prisma.client.twoFactorBackupCode.updateMany({ where: { id: unusedCodes[matchIndex].id, used: false }, data: { used: true } });
+        if (consumed.count === 0) {
+          return badRequest();
+        }
+      }
+      return json({});
+    }
+  : fixed: |
+      export async function POST(request: Request) {
+        if (body.backupCode) {
+          const matchIndex = await verifySyntheticCode(body.backupCode, hashes);
+          const consumed = await prisma.client.twoFactorBackupCode.updateMany({ where: { id: unusedCodes[matchIndex].id }, data: { used: true } });
+          if (consumed.count === 0) {
+            return badRequest();
+          }
+        }
+        return json({});
+      }
+    labels:
+    - source: '{ id: unusedCodes[matchIndex].id, used: false }'
+      style: primary
+      start: 228
+      end: 275
+    - source: prisma.client.twoFactorBackupCode.updateMany
+      style: secondary
+      start: 174
+      end: 218
+    - source: 'prisma.client.twoFactorBackupCode.updateMany({ where: { id: unusedCodes[matchIndex].id, used: false }, data: { used: true } })'
+      style: secondary
+      start: 174
+      end: 300
+    - source: '({ where: { id: unusedCodes[matchIndex].id, used: false }, data: { used: true } })'
+      style: secondary
+      start: 218
+      end: 300
+    - source: '{ where: { id: unusedCodes[matchIndex].id, used: false }, data: { used: true } }'
+      style: secondary
+      start: 219
+      end: 299
+    - source: where
+      style: secondary
+      start: 221
+      end: 226
+    - source: 'where: { id: unusedCodes[matchIndex].id, used: false }'
+      style: secondary
+      start: 221
+      end: 275
+    - source: POST
+      style: secondary
+      start: 22
+      end: 26
+    - source: |-
+        async function POST(request: Request) {
+          if (body.backupCode) {
+            const matchIndex = await verifySyntheticCode(body.backupCode, hashes);
+            const consumed = await prisma.client.twoFactorBackupCode.updateMany({ where: { id: unusedCodes[matchIndex].id, used: false }, data: { used: true } });
+            if (consumed.count === 0) {
+              return badRequest();
+            }
+          }
+          return json({});
+        }
+      style: secondary
+      start: 7
+      end: 391

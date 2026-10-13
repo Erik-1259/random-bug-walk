@@ -1,0 +1,34 @@
+id: rc-1.atomic-backup-code.planted
+valid:
+  - |
+    export async function POST(request: Request) {
+      const consumed = await prisma.client.twoFactorBackupCode.updateMany({
+        where: { id: unusedCodes[matchIndex].id, used: false },
+        data: { used: true },
+      });
+      return consumed;
+    }
+  - |
+    export async function PUT(request: Request) {
+      const consumed = await prisma.client.twoFactorBackupCode.updateMany({
+        where: { id: unusedCodes[matchIndex].id },
+        data: { used: true },
+      });
+      return consumed;
+    }
+  - |
+    export async function POST(request: Request) {
+      await prisma.client.twoFactorBackupCode.update({
+        where: { id: unusedCodes[matchIndex].id },
+        data: { used: true },
+      });
+    }
+invalid:
+  - |
+    export async function POST(request: Request) {
+      const consumed = await prisma.client.twoFactorBackupCode.updateMany({
+        where: { id: unusedCodes[matchIndex].id },
+        data: { used: true },
+      });
+      return consumed;
+    }
