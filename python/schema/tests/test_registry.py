@@ -20,6 +20,10 @@ from rbw_schema.validate import validate_record
 UMAMI_FIX = {"upstream": "umami", "commit": "e6f3f3b4b40a490d5cb050471baa0999366dab2a"}
 # The planted change at the pinned Umami commit, as the candidate attempt computes it.
 UMAMI_MUTATION = "4c2531a343d8250607df3ab84491e2d7e655849c1dbcb477264a5c126b21ccca"
+# The race family: the upstream fix that added the compare-and-swap guard, and the mutation id of
+# the one-line planted change at the pinned Umami commit, computed as the candidate attempt does.
+RC1_FIX = {"upstream": "umami", "commit": "3e165a8c6fea303250e626dc952a396e40887c71"}
+RC1_MUTATION = "e58a281fa1ac6029095043858dcefd5b3e123b24c318b9da93d76ee334fb6ce7"
 HELD_OUT: HeldOutIdentityList = {
     "schema_version": 1,
     "family_ids": ["synthetic-held-out-001"],
@@ -54,7 +58,7 @@ def refusal_code(action: object) -> str:
     return caught.value.code
 
 
-def test_committed_registry_is_valid_and_registers_umami() -> None:
+def test_committed_registry_is_valid_and_registers_both_families() -> None:
     registry = load_registry(REGISTRY)
     assert validate_record("FamilyRegistry", registry) == []
     assert registry["families"] == [
@@ -64,13 +68,27 @@ def test_committed_registry_is_valid_and_registers_umami() -> None:
             "held_out_eligible": False,
             "source_fixes": [UMAMI_FIX],
             "mutation_ids": [UMAMI_MUTATION],
-        }
+        },
+        {
+            "family_id": "rc-1-backup-code-001",
+            "exposure": "public",
+            "held_out_eligible": False,
+            "source_fixes": [RC1_FIX],
+            "mutation_ids": [RC1_MUTATION],
+        },
     ]
     umami: Identity = {"kind": "family", "family_id": "umami-tz-arg-001"}
     assert is_held_out_eligible(registry, umami) is False
     mutation: Identity = {"kind": "mutation", "mutation_id": UMAMI_MUTATION}
     assert is_held_out_eligible(registry, mutation) is False
     check_public_demo_input(registry, mutation, HELD_OUT)
+    rc1_family: Identity = {"kind": "family", "family_id": "rc-1-backup-code-001"}
+    assert is_held_out_eligible(registry, rc1_family) is False
+    rc1_fix: Identity = {"kind": "source_fix", "upstream": "umami", "commit": RC1_FIX["commit"]}
+    assert is_held_out_eligible(registry, rc1_fix) is False
+    rc1_mutation: Identity = {"kind": "mutation", "mutation_id": RC1_MUTATION}
+    assert is_held_out_eligible(registry, rc1_mutation) is False
+    check_public_demo_input(registry, rc1_mutation, HELD_OUT)
 
 
 @pytest.mark.parametrize(

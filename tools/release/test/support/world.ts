@@ -14,8 +14,8 @@ import type { FamilyRegistry, HeldOutIdentityList, RootRun } from "@rbw/schema";
 import { FakeClock, FakeDocker, ok } from "../../../local-runner/test/support/fakes.ts";
 import { KitImage } from "../../../local-runner/test/support/kit-image.ts";
 import { tempDir as runnerTempDir, writeAlternativeDir, writeManifest, writeProbeDir, writeTerms } from "../../../local-runner/test/support/synthetic.ts";
-import { jobContext } from "../../src/judge-job.ts";
-import type { BuildSources } from "../../src/judge-job.ts";
+import { TIME_ZONE_FAMILY, jobContext } from "../../src/judge-job.ts";
+import type { BuildSources, JudgeJobFamily } from "../../src/judge-job.ts";
 
 export const PROJECT_ID = "00000000-0000-4000-8000-000000000001";
 export const RELEASE_ID = "00000000-0000-4000-8000-000000000601";
@@ -65,7 +65,7 @@ export interface World {
   kit: KitImage;
   docker: FakeDocker;
   clock: FakeClock;
-  sources: BuildSources;
+  sources: BuildSources & { family: JudgeJobFamily };
   policy: { file: string; bytes: Uint8Array; sha256: string };
   patterns: string;
   gitleaks: string;
@@ -109,8 +109,7 @@ export function world(): World {
       auditPolicy: write(join(dir, "inputs", "audit-policy.json"), "{}"),
       kitStage: kit.kitStage,
       originalSuite,
-      probesDir: writeProbeDir(),
-      alternativeDir: writeAlternativeDir(),
+      family: { ...TIME_ZONE_FAMILY, probesDir: writeProbeDir(), alternativeDir: writeAlternativeDir() },
     },
     policy: { file: write(join(dir, "private", "policy.json"), built.bytes), bytes: built.bytes, sha256: built.sha256 },
     patterns: write(join(dir, "private", "patterns.txt"), `# synthetic pattern list\n${FORBIDDEN_TERM}\n`),
@@ -154,7 +153,7 @@ export async function runJobCopies(w: World, run: string, name: string, label: J
   for (const trial of built.expected.trials) {
     const work = join(base, "copies", trial.trial_id);
     const outcome = await runCopyCommand(
-      { job: join(base, "job"), trial: trial.trial_id, root: run, image: w.sources.image, manifest: w.sources.manifest, terms: w.sources.terms, policy: w.sources.auditPolicy, probesDir: w.sources.probesDir, alternativeDir: w.sources.alternativeDir, work, backend: "docker" },
+      { job: join(base, "job"), trial: trial.trial_id, root: run, image: w.sources.image, manifest: w.sources.manifest, terms: w.sources.terms, policy: w.sources.auditPolicy, probesDir: w.sources.family.probesDir, alternativeDir: w.sources.family.alternativeDir, work, backend: "docker" },
       { docker: w.docker, clock: w.clock },
     );
     const copy = outcome.copy;

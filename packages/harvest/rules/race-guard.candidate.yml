@@ -1,0 +1,49 @@
+# Candidate source rule for shape RC-1.guarded-write, the race class: a record is read, the code
+# awaits, and a write then changes the record without checking that the state it read still
+# holds, so two concurrent requests can both act on it. The fix makes the write compare and swap:
+# its filter gains a condition on that state (`used: false`, `status: "pending"`,
+# `version: row.version`). This rule finds the write: a call to an ORM or driver write method
+# (Prisma, Sequelize, TypeORM, MongoDB and Mongoose method names) with an object argument, the
+# filter (a `where` object, or the first object argument). src/race.ts finds the filter and runs
+# the structural checks. The two documents differ only in id and parser language.
+id: race-guard.candidate.ts
+language: TypeScript
+severity: info
+message: A database write that names the record it changes with a filter object.
+rule:
+  kind: call_expression
+  all:
+    - has:
+        field: function
+        kind: member_expression
+        has:
+          field: property
+          regex: '^(update|updateMany|updateOne|findOneAndUpdate|findOneAndReplace|findOneAndDelete|findAndModify|replaceOne|delete|deleteMany|deleteOne|destroy)$'
+    - has:
+        field: arguments
+        has:
+          kind: object
+metadata:
+  shape_id: RC-1.guarded-write
+  form: candidate_source
+---
+id: race-guard.candidate.tsx
+language: Tsx
+severity: info
+message: A database write that names the record it changes with a filter object.
+rule:
+  kind: call_expression
+  all:
+    - has:
+        field: function
+        kind: member_expression
+        has:
+          field: property
+          regex: '^(update|updateMany|updateOne|findOneAndUpdate|findOneAndReplace|findOneAndDelete|findAndModify|replaceOne|delete|deleteMany|deleteOne|destroy)$'
+    - has:
+        field: arguments
+        has:
+          kind: object
+metadata:
+  shape_id: RC-1.guarded-write
+  form: candidate_source

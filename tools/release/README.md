@@ -21,7 +21,8 @@ node tools/release/src/cli.ts build --release-id <uuid> --run <published run dir
   --policy <ProjectPolicy> --root-run <file> --issue <file> --issue-check <file> --recordings <dir> --approval <file> \
   --registry packages/schema/registry/families.json --held-out <private HeldOutIdentityList> \
   --image <local kit image> --controller-image <repo@sha256:...> --kit-stage <dir> --manifest <file> --terms <file> \
-  --audit-policy <file> --original-suite <file> [--local-store <dir>] --out <new release dir>
+  --audit-policy <file> --original-suite <file> \
+  [--fixture-package <dir> --probes <dir> --alternative-fix <dir>] [--local-store <dir>] --out <new release dir>
 node tools/release/src/cli.ts publish-replays --policy <file> --state <dir> --patterns <file> [--local-runs <dir>] \
   [the publisher's destination options and limits]
 node tools/release/scripts/release-fixture.ts --out tools/release/fixtures/release
@@ -44,6 +45,8 @@ A root that is not `terminal` is refused (`root_not_terminal`) and nothing is wr
 ### `build`
 
 Order: read the inputs, build the judge job, run every check, then store the judge job, then write the release directory. Any failing check stores and writes nothing and prints every failing code. Two codes stop before the other checks, because the release record they read cannot be assembled without them: `admission_missing` (no single published admission in the run) and `judge_job_unbuildable`. `--approval` is the owner's `{ "decision": "approved", "issue_sha256": "<hex>", "reviewed_at": "<UTC time>" }` for the frozen issue. JSON inputs are written as canonical bytes.
+
+The judge job is built for one bug family. With no family flag it is the released time-zone family's: `packages/umami-fixture`'s data file and fixture, `packages/shapes`' probes and the local runner's alternative fix, so that family's judge job is unchanged byte for byte (a test pins it). A release of another family names all three: `--fixture-package <dir>` (a fixture package whose `src/index.ts` exports `FIXTURE_FILE` and `loadFixture`, as `@rbw/umami-fixture` does), `--probes <dir>` and `--alternative-fix <dir>`. The flags go together, so another family never falls back to the time-zone family's probes or fix (`family_incomplete`); a directory without those exports is `fixture_package_invalid`. A judge replay cannot yet carry a family's probes or alternative fix: the judge job does not freeze them, and the released controller's copies derive their code states from the time-zone family's probes and fix, so a judge job with any other probes or fix could never run. Until a controller release reads them from the job, `--probes` and `--alternative-fix` must hold byte for byte the time-zone family's probes and fix, or the build is refused with `family_not_replayable` (`family_inputs_invalid` when they cannot be loaded). Another family, such as the race family, therefore cannot be released yet. The family's data file must be the one staged into `--kit-stage` (`stage-kit.ts --fixture-package` copies the package's `data/`): a missing or different `umami-fixture/data/<name>` is `fixture_stage_mismatch`. The judge job expects a vector for every code state (`clean`, `fixed`, `planted`, `partial`, `stub`); a fixture without one is refused with `fixture_vectors_incomplete`, which a family that records no partial or stub state meets until the local runner builds jobs without them.
 
 The release directory (`--out`, published by the publisher's `release` as `releases/<release_id>/`):
 

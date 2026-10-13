@@ -48,6 +48,8 @@ const MANIFEST_VERSION = 2;
 const manifestSchema = z.object({
   schema_version: z.literal(MANIFEST_VERSION),
   tool: z.literal("@rbw/harvest"),
+  /** The harvest shape; absent for the default shape, DT-1.tz-arg, as in runs written before shapes could be chosen. */
+  shape_id: z.string().min(1).optional(),
   api_base_url: z.string(),
   authenticated: z.boolean(),
   max: z.number().int().positive(),
