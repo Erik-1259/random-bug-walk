@@ -99,18 +99,34 @@ export interface SyntheticCase {
   evidence: Evidence;
 }
 
+/** @rbw/schema's synthetic RaceSymptom fixture: two concurrent uses of one code, both accepted. */
+export const RACE_SYMPTOM_SOURCE = fileURLToPath(new URL("../../../../packages/schema/fixtures/records/race-symptom-valid.json", import.meta.url));
+
+export interface SyntheticCaseOptions {
+  /** The run's generated/symptom.json bytes; the development fixture's time-zone symptom unless set. */
+  symptom?: Uint8Array;
+  /** Leaves the partial-fix and stub-fix copies out of the evidence, as a family without negative probes admits with 11 copies. */
+  withoutProbes?: boolean;
+}
+
+/** The race symptom fixture in canonical bytes, as a release stages it. */
+export function raceSymptomBytes(): Uint8Array {
+  return canonicalDigest(JSON.parse(readFileSync(RACE_SYMPTOM_SOURCE, "utf8")) as never).bytes;
+}
+
 /**
  * A results directory with one published case run: the development fixture's symptom and an
  * admission job's evidence.json and decision.json, imported from a synthetic record set.
  */
-export function syntheticCase(mutate: (draft: RecordSetDraft) => void = () => undefined): SyntheticCase {
-  const evidence = importRecordSet(recordSet(mutate));
+export function syntheticCase(mutate: (draft: RecordSetDraft) => void = () => undefined, options: SyntheticCaseOptions = {}): SyntheticCase {
+  const imported = importRecordSet(recordSet(mutate));
+  const evidence: Evidence = options.withoutProbes === true ? { ...imported, trials: imported.trials.filter((trial) => trial.code_state !== "partial" && trial.code_state !== "stub") } : imported;
   const decision = decide(evidence);
   const root = evidence.request.root_execution_id;
   const execution = evidence.request.execution_id;
   const dir = tempDir();
   mkdirSync(join(dir, "repository", "runs"), { recursive: true });
-  const symptom = readFileSync(join(runDir(DEVELOPMENT, DEVELOPMENT_ROOT), "generated", "symptom.json"));
+  const symptom = options.symptom ?? readFileSync(join(runDir(DEVELOPMENT, DEVELOPMENT_ROOT), "generated", "symptom.json"));
   const evidenceBytes = canonicalDigest(evidence).bytes;
   const decisionBytes = canonicalDigest(decision).bytes;
   const files: [string, string, Uint8Array][] = [

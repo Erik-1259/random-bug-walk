@@ -5,14 +5,15 @@
 //   store/status/<root>.json               each run's PublicRunStatus
 //   store/sha256/<hex>                     large published files (optional here; linked by public_uri)
 //   repository/releases/<id>/release.json  the release (at most one), with the files its record lists
-// Inside a run it reads generated/symptom.json (an ObservedSymptom) and, for each job execution,
-// results/<execution>/evidence.json and decision.json as @rbw/admission writes them.
+// Inside a run it reads generated/symptom.json (an ObservedSymptom, or a RaceSymptom when it has a
+// symptom_kind) and, for each job execution, results/<execution>/evidence.json and decision.json
+// as @rbw/admission writes them.
 import { createHash } from "node:crypto";
 import type { Dirent } from "node:fs";
 import { lstat, readdir, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { Decision, Evidence } from "@rbw/admission";
-import type { JsonValue, ObservedSymptom, PublicationStatus, PublicRunStatus, Release, RootRunKind, RootRunOutcome, RootRunStatus, RunManifest, RunManifestEntry } from "@rbw/schema";
+import type { JsonValue, ObservedSymptom, PublicationStatus, RaceSymptom, PublicRunStatus, Release, RootRunKind, RootRunOutcome, RootRunStatus, RunManifest, RunManifestEntry } from "@rbw/schema";
 import { recordPackages, type RecordPackages } from "./records.ts";
 
 export const MANIFEST_FILE = "manifest.json";
@@ -20,6 +21,13 @@ export const SYMPTOM_PATH = "generated/symptom.json";
 export const RELEASE_FILE = "release.json";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const JOB_OUTPUT = /^results\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/(evidence|decision)\.json$/;
+
+/** Either family's symptom: the time-zone family's ObservedSymptom or the race family's RaceSymptom. */
+export type CaseSymptom = ObservedSymptom | RaceSymptom;
+
+export function isRaceSymptom(symptom: CaseSymptom): symptom is RaceSymptom {
+  return "symptom_kind" in symptom;
+}
 
 export type ReleaseErrorCode =
   | "layout"
@@ -63,7 +71,8 @@ export interface Run {
   childExecutionCount: number;
   /** The published manifest; null for a run that only has a status object. */
   manifest: RunManifest | null;
-  symptom: ObservedSymptom | null;
+  /** The run's generated symptom: a time-zone ObservedSymptom or a race-family RaceSymptom. */
+  symptom: CaseSymptom | null;
   /** The admission job's records; null when the run published none. */
   admission: AdmissionRecords | null;
 }
@@ -245,12 +254,16 @@ class Reader {
     return bytes;
   }
 
-  async readSymptom(manifest: RunManifest): Promise<ObservedSymptom | null> {
+  /** The run's symptom, routed by kind as the issue writer routes it: one with a `symptom_kind` must be a RaceSymptom. */
+  async readSymptom(manifest: RunManifest): Promise<CaseSymptom | null> {
     const entry = manifest.entries.find((item) => item.path === SYMPTOM_PATH && item.outcome === "published");
     if (entry === undefined) return null;
     const bytes = await this.entryBytes(manifest.root_execution_id, entry);
+    const { schema } = this.packages;
     try {
-      return this.packages.schema.parseRecord("ObservedSymptom", bytes);
+      const value = schema.parseCanonical(bytes);
+      const race = typeof value === "object" && value !== null && !Array.isArray(value) && "symptom_kind" in value;
+      return race ? schema.parseRecord("RaceSymptom", bytes) : schema.parseRecord("ObservedSymptom", bytes);
     } catch (error) {
       if (error instanceof this.packages.schema.RecordError || error instanceof this.packages.schema.CanonicalError) {
         throw new ReleaseError("symptom_invalid", `runs/${manifest.root_execution_id}/${SYMPTOM_PATH}: ${error.message}`);
