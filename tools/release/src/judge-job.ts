@@ -2,10 +2,12 @@
 // time from the local runner's own functions, so a judge replay runs from these bytes without
 // Docker. The files go to the private store under judge-jobs/<release_id>/, with the canonical
 // index judge-job.json, which lists the release ID and each file with its SHA-256 and nothing else.
-import { lstatSync, readFileSync, readdirSync, readlinkSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, lstatSync, readFileSync, readdirSync, readlinkSync } from "node:fs";
+import { basename, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { pack } from "tar-stream";
 import {
+  ALTERNATIVE_FIX_DIR,
   buildJob,
   candidateIdentity,
   containerName,
@@ -20,10 +22,33 @@ import {
 import type { BuiltJob, Docker, JobContext, RunIds } from "@rbw/local-runner";
 import { buildJobRequest, canonicalDigest, sha256Hex } from "@rbw/schema";
 import type { TaskRevisionIdentity } from "@rbw/schema";
+import { PROBE_DIR } from "@rbw/shapes";
 import { addedSuiteSha256, parseSuiteManifest } from "@rbw/umami-driver";
-import { FIXTURE_FILE, loadFixture } from "@rbw/umami-fixture";
+import { CODE_STATES, FIXTURE_FILE, loadFixture } from "@rbw/umami-fixture";
+import type { Fixture } from "@rbw/umami-fixture";
 import { ReleaseInputError } from "./errors.ts";
 import type { PrivateStore } from "@rbw/publisher/private-store";
+
+/**
+ * The bug family a judge job is built for: its fixture package (the data file whose SHA-256 the job
+ * records, and the parsed fixture whose outcome vectors the job expects), its probe directory and
+ * its alternative fix. A release of one family must never take another family's fixture or probes.
+ * A judge replay derives code states from the time-zone family's probes and fix, not the job's, so
+ * the build command takes a family only through familyFrom, which refuses other probes or fixes.
+ */
+export interface JudgeJobFamily {
+  /** The fixture package's data file, hashed as fixture_sha256. */
+  fixtureFile: string | URL;
+  /** The fixture package's parsed data file. */
+  loadFixture: () => Fixture;
+  /** The family's probe directory: probes.json and its patches. */
+  probesDir: string;
+  /** The family's alternative fix directory. */
+  alternativeDir: string;
+}
+
+/** The released time-zone family: @rbw/umami-fixture, the shapes package's probes and the local runner's alternative fix. */
+export const TIME_ZONE_FAMILY: Readonly<JudgeJobFamily> = Object.freeze({ fixtureFile: FIXTURE_FILE, loadFixture, probesDir: PROBE_DIR, alternativeDir: ALTERNATIVE_FIX_DIR });
 
 /** The host inputs a job is built from: the local kit image and the files the copies and their audit read. */
 export interface BuildSources {
@@ -38,10 +63,8 @@ export interface BuildSources {
   kitStage: string;
   /** The admission's frozen original-suite manifest. */
   originalSuite: string;
-  /** The shapes package's probes unless a test gives others. */
-  probesDir?: string;
-  /** The local runner's alternative fix unless a test gives another. */
-  alternativeDir?: string;
+  /** The family the job is built for; the time-zone family when absent. */
+  family?: Readonly<JudgeJobFamily>;
 }
 
 /**
@@ -75,11 +98,28 @@ export interface ContextOptions {
   exportDir: string;
 }
 
-function readInput(path: string, what: string): Buffer {
+function readInput(path: string | URL, what: string): Buffer {
   try {
     return readFileSync(path);
   } catch {
     throw new ReleaseInputError("input_unreadable", what);
+  }
+}
+
+/**
+ * The family's data file must be the one staged into the kit: stage-kit.ts copies the chosen
+ * fixture package's data/ to <kitStage>/umami-fixture/data/, so a file of the same name and bytes
+ * must be there, or the job would pair one family's fixture hash and vectors with another family's
+ * kit and added suite. A stage with no data/ at all is not one stage-kit.ts writes (the tests'
+ * synthetic stage), so there is nothing to compare.
+ */
+function checkStagedFixture(kitStage: string, fixtureFile: string | URL, fixtureBytes: Buffer): void {
+  const stagedData = join(kitStage, "umami-fixture", "data");
+  if (!existsSync(stagedData)) return;
+  const name = basename(fixtureFile instanceof URL ? fileURLToPath(fixtureFile) : fixtureFile);
+  const staged = join(stagedData, name);
+  if (!existsSync(staged) || !readFileSync(staged).equals(fixtureBytes)) {
+    throw new ReleaseInputError("fixture_stage_mismatch", `the kit stage's umami-fixture/data/${name} is not the family's fixture data file`);
   }
 }
 
@@ -89,13 +129,21 @@ function readInput(path: string, what: string): Buffer {
  * fixture, both suites, the vectors and the copy profile.
  */
 export async function jobContext(docker: Docker, sources: BuildSources, options: ContextOptions): Promise<{ ctx: JobContext; sourceDir: string }> {
+  const family = sources.family ?? TIME_ZONE_FAMILY;
   const copyInputs = loadCopyInputs({
     manifest: sources.manifest,
     terms: sources.terms,
     policy: sources.auditPolicy,
-    ...(sources.probesDir === undefined ? {} : { probesDir: sources.probesDir }),
-    ...(sources.alternativeDir === undefined ? {} : { alternativeDir: sources.alternativeDir }),
+    probesDir: family.probesDir,
+    alternativeDir: family.alternativeDir,
   });
+  const fixture = family.loadFixture();
+  // The judge job expects a vector for every code state; a fixture without one cannot build it.
+  const vectorsByState = fixture.outcome_vectors as Partial<Fixture["outcome_vectors"]>;
+  const missing = CODE_STATES.filter((state) => !Array.isArray(vectorsByState[state]));
+  if (missing.length > 0) throw new ReleaseInputError("fixture_vectors_incomplete", missing.join(","));
+  const fixtureBytes = readInput(family.fixtureFile, "the fixture data file");
+  checkStagedFixture(sources.kitStage, family.fixtureFile, fixtureBytes);
   const digest = await inspectImage(docker, sources.image);
   const exported = await exportImage(docker, { image: digest, container: containerName(runTag(options.ids.root_execution_id), "release", "export"), dest: options.exportDir });
   const states = deriveCodeStates(readFileSync(join(exported.source_dir, copyInputs.probes.data.target_path)), copyInputs.probes, copyInputs.alternative);
@@ -111,11 +159,11 @@ export async function jobContext(docker: Docker, sources: BuildSources, options:
     ids: options.ids,
     imageDigest: digest,
     kitSha256: sha256Hex(exported.image_manifest),
-    fixtureSha256: sha256Hex(readFileSync(FIXTURE_FILE)),
+    fixtureSha256: sha256Hex(fixtureBytes),
     addedSuiteSha256: await addedSuiteSha256(join(sources.kitStage, "umami-fixture")),
     originalSuite: { sha256: sha256Hex(suiteBytes), testIds },
     states,
-    vectors: expectedVectors(loadFixture(), copyInputs.probes),
+    vectors: expectedVectors(fixture, copyInputs.probes),
     profileSha256: profileSha256(),
     deadlineAt: options.deadlineAt,
     ...(options.projectPolicy === undefined ? {} : { projectPolicy: options.projectPolicy }),

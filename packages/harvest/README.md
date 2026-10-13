@@ -1,6 +1,6 @@
 # @rbw/harvest
 
-Finds public source fixes on GitHub that match shape `DT-1.tz-arg` (a caller has the selected time zone but does not pass it to a date operation), confirms them structurally, and reports a funnel with a count and a reason for every drop. It makes no model or paid calls, and it stops at "structurally confirmed". Cards for candidates the review confirms are written by `card-inputs` in `@rbw/harvest-review` and the writer's paid `record` command.
+Finds public source fixes on GitHub that match a shape, confirms them structurally, and reports a funnel with a count and a reason for every drop. Two shapes are supported: `DT-1.tz-arg` (a caller has the selected time zone but does not pass it to a date operation), the default, and the race class `RC-1.guarded-write` (see [Race class](#race-class-rc-1guarded-write)). It makes no model or paid calls, and it stops at "structurally confirmed". Cards for candidates the review confirms are written by `card-inputs` in `@rbw/harvest-review` and the writer's paid `record` command.
 
 ## Contents
 
@@ -9,13 +9,18 @@ Finds public source fixes on GitHub that match shape `DT-1.tz-arg` (a caller has
 | `src/github.ts` | The one GitHub REST client: `@octokit/core`, GET by exact path and query, with rate-limit handling. |
 | `src/github-api.ts` | Zod schemas for the responses the funnel reads, and the URL builders. |
 | `src/frozen.ts` | The recording transport (live) and the replay transport (offline), and the run directory's manifest. |
-| `queries.json`, `src/queries.ts` | The searches a live harvest runs, in order, and their loader. |
+| `queries.json`, `queries.race.json`, `src/queries.ts` | The searches a live harvest runs for each shape, in order, and their loader. |
+| `src/shapes.ts` | The shapes a harvest can run for: each names its query file, candidate rule, text filter and structural confirmation. |
+| `src/rule-file.ts` | Loads a candidate rule file (one document per parser language). |
 | `src/license.ts` | The license filter. |
-| `src/confirm.ts` | The candidate source rule and the structural confirmation. |
+| `src/confirm.ts` | The time-zone candidate source rule and its structural confirmation. |
+| `src/race.ts` | The race class's candidate source rule and its structural confirmation. |
 | `src/funnel.ts` | The funnel stages, their drop reasons, and the pipeline over a transport. |
 | `src/harvest.ts`, `src/commands.ts`, `src/cli.ts` | The live run, the replay, and the command line. |
-| `rules/tz-arg.candidate.yml` | The candidate source rule, one document per parser language (TypeScript and TSX). |
-| `test/fixtures/synthetic-run/` | A committed run directory from a synthetic GitHub API. |
+| `rules/tz-arg.candidate.yml`, `rules/race-guard.candidate.yml` | The candidate source rules, one document per parser language (TypeScript and TSX). |
+| `test/fixtures/synthetic-run/`, `test/fixtures/synthetic-race-run/` | Committed run directories from synthetic GitHub APIs, one per shape. |
+
+The sections below describe the default shape, `DT-1.tz-arg`. The race class uses the same sources, stages, license filter, de-duplication, frozen responses and rate limits; its queries, text filter, rule and structural checks are described under [Race class](#race-class-rc-1guarded-write).
 
 ## Sources
 
@@ -123,14 +128,33 @@ A live run directory holds third-party source files and patches from the harvest
 
 Without a token GitHub allows 10 searches a minute and 60 other requests an hour, so a 50-candidate run without a token waits for several hourly resets. Every query in `queries.json` runs once per harvest. With a token it allows 30 searches a minute and 5,000 other requests an hour.
 
+## Race class (`RC-1.guarded-write`)
+
+The race class is a check-then-act bug in server code: a record is read, the code awaits, and a write then changes the record without checking that the state it read still holds, so two concurrent requests can both act on it (both spend one code, both claim one task). The fix makes the write compare and swap: its filter gains a condition on that state, as in `where: { id, used: false }` with `updateMany`, then a check of the count.
+
+- **Queries** (`queries.race.json`): each pairs a race word with a write API (`updateMany`, `findOneAndUpdate`, `updateOne`) or a fix pattern (`compare-and-swap`, `check-then-act`, `TOCTOU`, `double spend`, `atomic update`, optimistic concurrency).
+- **Text filter**: a file's added lines name a write method or `where`. A candidate with no such file drops as `no_write_text_added`; the funnel's drop details call it "write text".
+- **Candidate rule** (`rules/race-guard.candidate.yml`): a call to a write method (`update`, `updateMany`, `updateOne`, `findOneAndUpdate`, `findOneAndReplace`, `findOneAndDelete`, `findAndModify`, `replaceOne`, `delete`, `deleteMany`, `deleteOne`, `destroy`, as Prisma, Sequelize, TypeORM, MongoDB and Mongoose name them) with an object argument. The write's filter is the object value of a `where` key in an object argument (Prisma, Sequelize). Failing that, it is the first argument when that is an object and a second argument follows (MongoDB `updateOne(filter, update)`, TypeORM `update(criteria, partial)`) or the method is a delete. A lone object passed to an update, such as `coupon.update({ used: true })`, is the data written, so that write has no filter. A match counts when the commit added a line of its filter.
+- **Structural confirmation**, in order, with the drop reason of each check:
+  1. The parent has a function at the same nesting path (`function_missing_before`).
+  2. That function writes through the same receiver (such as `db.coupon`) the same number of times in both versions (`call_added`). Writes on other receivers or in other functions do not count. The method may change, as `update` to `updateMany`.
+  3. A parent write that no other write of the commit keeps unchanged has filter keys that are a strict subset of the commit's filter keys: the commit added a condition (`guard_not_added`). When several parent writes qualify, the one at the same position in the function is paired.
+  4. An added condition compares a state: its value is a literal (`used: false`), an operator object whose operands are not nested objects (`{ gt: 0 }`, `{ $ne: "done" }`), or the same field of a record that the function bound from an awaited read (`version: row.version` after `const row = await ...find...`). An added owner or tenant scope compares no state (`guard_not_state`). Examples: `userId: session.user.id`, `{ teamId }`, `owner: { id: session.user.id }`, and `userId: session.userId` or `teamId: ctx.teamId`, where the key is an owner or tenant key (`userId`, `ownerId`, `accountId`, `teamId`, `orgId`, `tenantId`, `workspaceId`, `websiteId` and similar, in either case style).
+  5. The write's own function awaits a read before the write (`no_read_before_write`). The read is an `await` that ends before the write and calls a method named `find…`, `get…`, `select…`, `count…`, `query…`, `fetch…`, `load…`, `read…` or `exists`, but not `findOneAnd…` or `findAndModify`, which write. It must also be the read the write acts on: either it reads through the write's receiver, or its result is bound to the record the write goes through (`coupon` in `coupon.destroy(...)`) or the record the guard compares with. A session lookup such as `await getServerSession()` does not count. The read, the await and the write are the window the guard closes.
+- **Confirmation**: the record names the added condition as `guard` (in place of the time-zone shape's `timezone`).
+- **Limits**, beyond those of the time-zone shape: a guard passed as a shorthand or a plain name (`{ version }`, `version: expectedVersion`) reads as `guard_not_state`; a filter built by a call (Drizzle's `.where(and(...))`, Knex chains) or SQL text is not matched; other race fixes (a transaction, a lock, `upsert` in place of find-then-create, an atomic increment, a unique index) are not matched; a read in another function or a caller does not count, nor does a read whose result is not bound by a plain `const x = await ...` and that goes through another receiver; an owner key outside the list, compared with the same field of a record read earlier, still reads as a state.
+
+The family's own source rule, `rc-1.atomic-backup-code.source` in `@rbw/shapes`, is pinned to one upstream handler and commit, so this package matches candidates with its own rule, as for the time-zone shape.
+
 ## Command line
 
 ```sh
-node packages/harvest/src/cli.ts harvest --out <new directory> [--max <n>]
+node packages/harvest/src/cli.ts harvest --out <new directory> [--max <n>] [--shape <DT-1.tz-arg | RC-1.guarded-write>]
 node packages/harvest/src/cli.ts funnel --in <run directory>
 ```
 
-- `harvest` makes live calls to the public GitHub REST API, writes the run directory (which must be new or empty) and prints a stage summary. `--max` defaults to 50.
+- `harvest` makes live calls to the public GitHub REST API, writes the run directory (which must be new or empty) and prints a stage summary. `--max` defaults to 50. `--shape` defaults to `DT-1.tz-arg`; the shape's own query file is run.
+- The manifest records a shape other than the default as `shape_id`, and `funnel` replays a run with the shape its manifest names. A manifest with no `shape_id` is a `DT-1.tz-arg` run.
 - `GITHUB_TOKEN` is read from the environment only, sent only as the authorization header, and never printed or recorded. A token with read access to public repositories is enough.
 - `funnel` prints the funnel as canonical JSON (sorted keys) from the frozen responses, with no network.
 - Exit codes: 0 done; 2 the command cannot run (bad usage, an unreadable, non-empty or incomplete run directory, a rate limit beyond the cap, a request that fails without a response).
@@ -139,6 +163,7 @@ node packages/harvest/src/cli.ts funnel --in <run directory>
 
 `pnpm --filter @rbw/harvest run test` runs the unit tests. No test reaches the network:
 
+- The committed run in `test/fixtures/synthetic-race-run/` is a race-class harvest against a synthetic API (`test/support/synthetic-race-github.ts`), regenerated by `node packages/harvest/test/support/generate-race-fixture.ts`; its test replays it and checks every race stage count and drop reason after the license.
 - The committed run in `test/fixtures/synthetic-run/` is a harvest against a synthetic GitHub API (`test/support/synthetic-github.ts`) with a fixed clock. `node packages/harvest/test/support/generate-fixture.ts` regenerates it, and a test fails if the committed files differ from the generator's output.
 - The funnel test replays the committed run with `fetch` stubbed to fail and checks every stage count and every drop reason.
 - Further tests cover the query file, the round-robin harvest, the per-query report, de-duplication, the license lookup and filter, rate-limit handling with an injected clock, the frozen responses and the structural confirmation.

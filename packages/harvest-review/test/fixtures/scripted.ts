@@ -2,16 +2,24 @@
 // answer then Kimi's. No answer here came from a model.
 import type { FetchFunction } from "@rbw/writer";
 import { KIMI_PROFILE } from "../../src/profiles.ts";
-import type { ReviewOutput } from "../../src/prompt.ts";
+import type { RaceReviewOutput, ReviewAnswer, ReviewOutput } from "../../src/prompt.ts";
 
 /** A valid answer, a schema-invalid answer, an HTTP 500, or the reply text as given. */
-export type Scripted = ReviewOutput | "invalid" | "http_500" | { readonly raw: string };
+export type Scripted = ReviewAnswer | "invalid" | "http_500" | { readonly raw: string };
 
 export const answer = (verdict: ReviewOutput["verdict"], zone: ReviewOutput["zone_is_selected"], same: ReviewOutput["same_call"]): ReviewOutput => ({
   verdict,
   zone_is_selected: zone,
   same_call: same,
   reason: `Synthetic answer: ${verdict}, zone ${zone}, same call ${same}.`,
+});
+
+/** A synthetic answer in the race class's output shape. */
+export const raceAnswer = (verdict: RaceReviewOutput["verdict"], guard: RaceReviewOutput["guard_rechecks_state"], same: RaceReviewOutput["same_call"]): RaceReviewOutput => ({
+  verdict,
+  guard_rechecks_state: guard,
+  same_call: same,
+  reason: `Synthetic race answer: ${verdict}, guard ${guard}, same call ${same}.`,
 });
 
 export const YES = answer("fix", "yes", "yes");

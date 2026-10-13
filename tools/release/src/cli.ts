@@ -6,7 +6,7 @@
 //         --issue <file> --issue-check <file> --recordings <dir> --approval <file> --registry <file>
 //         --held-out <file> --image <local kit image> --controller-image <repo@sha256:...> --kit-stage <dir>
 //         --manifest <file> --terms <file> --audit-policy <file> --original-suite <file>
-//         [--local-store <dir>] --out <new release dir>
+//         [--fixture-package <dir> --probes <dir> --alternative-fix <dir>] [--local-store <dir>] --out <new release dir>
 //   publish-replays --policy <file> --state <dir> --patterns <file> [--local-runs <dir>] [publisher options]
 //
 // In real mode build and publish-replays read the private store's variables through
@@ -21,6 +21,7 @@ import { loadRateSheet } from "@rbw/envelope";
 import { createDocker, realClock } from "@rbw/local-runner";
 import { buildRelease } from "./build.ts";
 import { ReleaseInputError } from "./errors.ts";
+import { familyFrom } from "./family.ts";
 import { InvalidInput, StoreError, privateStoreFromEnv } from "@rbw/publisher/private-store";
 import { publishReplays } from "./replays.ts";
 import { stage } from "./stage.ts";
@@ -29,7 +30,8 @@ const USAGE = `usage:
   node src/cli.ts stage --run <dir> --root-run <file> --out <new dir> --redactions-out <private file> [--symptom <file>] [--card <file>] [--novelty <file>]
   node src/cli.ts build --release-id <uuid> --run <dir> --publication <file> --policy <file> --root-run <file> --issue <file> --issue-check <file>
                         --recordings <dir> --approval <file> --registry <file> --held-out <file> --image <tag|digest> --controller-image <repo@sha256:...>
-                        --kit-stage <dir> --manifest <file> --terms <file> --audit-policy <file> --original-suite <file> [--local-store <dir>] --out <new dir>
+                        --kit-stage <dir> --manifest <file> --terms <file> --audit-policy <file> --original-suite <file>
+                        [--fixture-package <dir> --probes <dir> --alternative-fix <dir>] [--local-store <dir>] --out <new dir>
   node src/cli.ts publish-replays --policy <file> --state <dir> --patterns <file> [--local-runs <dir>] [publisher destination options and limits]
 `;
 
@@ -85,10 +87,19 @@ function stageCommand(args: string[]): number {
 const BUILD_OPTIONS = strings([
   "release-id", "run", "publication", "policy", "root-run", "issue", "issue-check", "recordings", "approval", "registry", "held-out",
   "image", "controller-image", "kit-stage", "manifest", "terms", "audit-policy", "original-suite", "local-store", "out",
+  "fixture-package", "probes", "alternative-fix",
 ]);
 
 async function buildCommand(args: string[]): Promise<number> {
   const { values } = parseArgs({ args, strict: true, allowPositionals: false, options: BUILD_OPTIONS });
+  const fixturePackage = optional(values, "fixture-package");
+  const probesDir = optional(values, "probes");
+  const alternativeDir = optional(values, "alternative-fix");
+  const family = await familyFrom({
+    ...(fixturePackage === undefined ? {} : { fixturePackage }),
+    ...(probesDir === undefined ? {} : { probesDir }),
+    ...(alternativeDir === undefined ? {} : { alternativeDir }),
+  });
   const outcome = await buildRelease(
     {
       releaseId: required(values, "release-id"),
@@ -109,6 +120,7 @@ async function buildCommand(args: string[]): Promise<number> {
         auditPolicy: file(values, "audit-policy"),
         kitStage: file(values, "kit-stage"),
         originalSuite: file(values, "original-suite"),
+        family,
       },
       controllerImage: required(values, "controller-image"),
       localStore: optional(values, "local-store") ?? null,

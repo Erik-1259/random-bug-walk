@@ -4,7 +4,7 @@
 import { readFile, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
-import { candidateRule } from "@rbw/harvest";
+import { harvestShape } from "@rbw/harvest";
 import type { CardSource } from "@rbw/writer";
 import { z } from "zod";
 import { buildInputs } from "./inputs.ts";
@@ -96,7 +96,7 @@ export async function runCardInputs(options: Pick<ReviewOptions, "argv" | "write
             confirmation: {
               card_id: `card-${key}`,
               shape_id: funnel.shape_id,
-              rules_matched: [candidateRule(input.path).id],
+              rules_matched: [harvestShape(funnel.shape_id).rules.rule(input.path).id],
               matched_lines: [input.call],
             },
           },
