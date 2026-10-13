@@ -5,11 +5,11 @@
   "case_status": "released and judge-verified (time-zone family, DT-1.tz-arg)",
   "shape": "DT-1.tz-arg: the planted call drops its time-zone argument",
   "screen": {
-    "source": "Product spec \u00a78.3, paragraph 'For UC1', and \u00a72.4 (UC1 row)",
+    "source": "UC1 static-headroom screen, stated in full in `criterion`",
     "criterion": "Skip a UC1 candidate whose omission is plain from the pre-fix source alone.",
     "binding": true,
     "judged_on": "2026-10-13",
-    "judged_by": "builder lane race-screen (agent), written judgment from the pinned source; no model probe was run"
+    "judged_by": "Written judgment from the pinned source; no model probe was run"
   },
   "subject": {
     "host": "Umami",
@@ -22,7 +22,7 @@
     "mutation": "packages/shapes/probes/dt-1.tz-arg/mutation.patch: line 28 `${getDateSQL('website_event.created_at', unit, timezone)} x,` -> `${getDateSQL('website_event.created_at', unit)} x,`"
   },
   "verdict": "fail",
-  "verdict_summary": "The omission is plain from the planted file alone: the function reads `timezone` and never uses it, and the same file's ClickHouse query still passes it. Not a UC1 tool-effect subject; it suits UC3. Spec \u00a78.3 predicted this.",
+  "verdict_summary": "The omission is plain from the planted file alone: the function reads `timezone` and never uses it, and the same file's ClickHouse query still passes it. Not a UC1 tool-effect subject; it suits UC3.",
   "static_tells": [
     {
       "location": "src/queries/sql/pageviews/getPageviewStats.ts:17",
@@ -41,7 +41,7 @@
     }
   ],
   "evidence_comparison": {
-    "note": "Required by the UC1 pre-registration: what each channel already reveals compared with the server logs (Umami stderr plus Postgres stderr as the kit captures them).",
+    "note": "What each channel already reveals compared with the server logs (Umami stderr plus Postgres stderr as the kit captures them).",
     "issue_text": "Describes wrong per-day pageview counts under a non-UTC time zone. It carries no Prisma or Postgres message, because the planted path raises none.",
     "observe_and_writer_evidence": "The planted copy's recorded responses for the four checks (tools/local-runner/candidates/umami-tz-arg-001/observed/): day buckets that differ from the expected local-day counts. No error text.",
     "http_responses": "HTTP 200 with UTC-bucketed counts; the responses already show the symptom.",
@@ -49,8 +49,8 @@
     "leak_judgment": "No leak, but the log tool has nothing to add, on top of the static tells."
   },
   "consequences": [
-    "Use this case only as the excluded UC1 harness pilot (2 off and 2 on attempts), published as 'harness pilot; bug fails static-headroom screen; not a UC1 result'.",
-    "Running it 20+20 as a labeled low-headroom contrast would need the owner to amend plan decision #32; the owner decides the time-zone fallback on Oct 18 at noon, and this record does not decide it."
+    "Use this case only as an excluded UC1 harness pilot (2 off and 2 on attempts), published as 'harness pilot; bug fails static-headroom screen; not a UC1 result'.",
+    "Running it at full size as a labeled low-headroom contrast is the owner's decision, as is any time-zone fallback; this record does not decide either."
   ],
   "optional_static_probe": "Not run."
 }
