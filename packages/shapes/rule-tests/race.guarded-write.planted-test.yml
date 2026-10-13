@@ -14,6 +14,11 @@ valid:
     async function close(id: string) {
       await db.ticket.update({ where: { id }, data: { open: false } });
     }
+  - |
+    async function publish(id: string) {
+      const row = await db.document.findUnique({ where: { id } });
+      await db.document.update({ where: { active: false, id: row.id }, data: { active: true } });
+    }
 invalid:
   - |
     async function redeem(id: string) {

@@ -87,7 +87,7 @@ The rules leave out, by design: a guard in the first position of `where` (the re
 
 - `class_id`, `rule_id`, `path` (with `prefix`), `line`, `column`, the nearest named enclosing `function` and the `matched` text;
 - `diff`: a git-style unified diff of that one site, and the file's `original_sha256` and `result_sha256`;
-- `planted_form_confirmed`: the planted-form rule matches the rewritten file at the edited spot (false when, for example, a second guard remains). A `where` with two guards gives one site per guard, and each rewrite keeps the other guard, so the write stays conditional and may still stop the second request; such sites are therefore always ranked `low`. This includes a guard paired with a soft-delete key such as `deletedAt: null`, which the rule counts as a guard;
+- `planted_form_confirmed`: the planted-form rule matches the rewritten file at the edited spot (false when, for example, a second guard remains, in any position of the `where`, including the first). A `where` with two guards gives one site per guard, and each rewrite keeps the other guard, so the write stays conditional and may still stop the second request; such sites are therefore always ranked `low`. This includes a guard paired with a soft-delete key such as `deletedAt: null`, which the rule counts as a guard;
 - `confidence`: named boolean `signals`, a `score` that sums their weights, and a `level` (`high` from 0.75, `medium` from 0.45, otherwise `low`; always `low` when the planted form is not confirmed).
 
 | Class | Signal | Weight | Holds when |

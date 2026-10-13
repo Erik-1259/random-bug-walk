@@ -133,6 +133,20 @@ describe("find sites in one file", () => {
     }
   });
 
+  it("marks the planted form unconfirmed when a guard in the first position remains", () => {
+    const text = [
+      "export async function publish(documentId: string) {",
+      "  const row = await db.client.document.findUniqueOrThrow({ where: { id: documentId } });",
+      "  await db.client.document.update({ where: { active: false, id: row.id, version: row.version }, data: { active: true } });",
+      "}",
+      "",
+    ].join("\n");
+    const sites = findSitesInSource(CLASSES, "lib/publish.ts", text);
+    expect(sites.map((site) => site.matched)).toEqual(["version: row.version"]);
+    expect(sites[0]?.planted_form_confirmed).toBe(false);
+    expect(sites[0]?.confidence.level).toBe("low");
+  });
+
   it("gives the full confidence for operator and version guards", () => {
     expect(sitesIn("lib/quota.ts")[0]?.confidence).toEqual({
       score: 0.9,

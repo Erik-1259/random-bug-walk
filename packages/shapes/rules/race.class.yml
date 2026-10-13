@@ -103,11 +103,11 @@ language: TypeScript
 severity: info
 message: A write after a read of the same model pins only the record's identity, so it applies even when another request changed the state it read.
 utils:
+  # The same guard test as the fixed rule, but in any position: a guard first in the object still
+  # keeps the write conditional, even though the fixed rule cannot remove it with its comma.
   guard-pair:
     kind: pair
     all:
-      - follows:
-          pattern: ","
       - has:
           field: key
           kind: property_identifier
