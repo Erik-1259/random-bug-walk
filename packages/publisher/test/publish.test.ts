@@ -91,6 +91,17 @@ describe("terminal publish", () => {
     expect(statusObject(world)?.publication_status).toBe("published");
   });
 
+  it("publishes a terminal paired_comparison root with its kind in the manifest and the status object", async () => {
+    const world = createWorld();
+    stage(world.staging);
+    const result = await publish(world, writeRootRun(world, { kind: "paired_comparison" }));
+    expect(result.stderr).not.toContain("internal error");
+    expect(result.code).toBe(0);
+    expect(printed(result).status).toBe("published");
+    expect(readPublished(world).manifest.kind).toBe("paired_comparison");
+    expect(statusObject(world)).toMatchObject({ kind: "paired_comparison", status: "terminal", outcome: "completed", publication_status: "published" });
+  });
+
   it("publishes an incomplete root on top of an existing branch without touching other paths", async () => {
     const world = createWorld();
     const seeded = seedRemote(world.remote);

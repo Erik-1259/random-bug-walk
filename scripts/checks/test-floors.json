@@ -8,8 +8,8 @@
     "packages/harvest": 102,
     "packages/harvest-review": 76,
     "packages/projection": 126,
-    "packages/publisher": 172,
-    "packages/schema": 909,
+    "packages/publisher": 181,
+    "packages/schema": 910,
     "packages/search": 84,
     "packages/shapes": 75,
     "packages/solver": 114,
@@ -17,7 +17,7 @@
     "packages/umami-driver": 232,
     "packages/umami-fixture": 109,
     "packages/umami-fixture-rc1": 92,
-    "packages/web": 141,
+    "packages/web": 143,
     "packages/writer": 188,
     "scripts/checks": 189,
     "tools/controller": 105,
@@ -28,6 +28,6 @@
     "tools/solver-session": 18
   },
   "pytest": {
-    "python/schema": 878
+    "python/schema": 879
   }
 }

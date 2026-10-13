@@ -141,29 +141,32 @@ export interface JudgeReplayOptions {
   outcome: "completed" | "failed" | "incomplete" | "cancelled" | null;
   /** Whether the run's files are published, or it has only a status object. */
   published: boolean;
+  /** The root's kind: a judge replay unless set. */
+  kind?: "judge_replay" | "paired_comparison";
 }
 
 /**
  * Adds a judge replay root (RootRun kind judge_replay) to a results directory, shaped like the ones
  * `tools/release publish-replays` publishes: one judge_verify child, a report.md and a status object.
+ * With kind paired_comparison it adds a paired comparison root of the same shape instead.
  * Its policy hash is the first published run's, so it passes the status check.
  */
-export function addJudgeReplay(results: string, root: string, { outcome, published }: JudgeReplayOptions): void {
+export function addJudgeReplay(results: string, root: string, { outcome, published, kind = "judge_replay" }: JudgeReplayOptions): void {
   const [first] = readdirSync(join(results, "repository", "runs")).sort();
   if (first === undefined) throw new Error("synthetic: the results directory holds no published run to take a policy from");
   const policy = readManifest(results, first).project_policy_sha256;
   const child = `${root.slice(0, -4)}f001`;
   if (published) {
     if (outcome === null) throw new Error("synthetic: a published run has an outcome");
-    const report = new TextEncoder().encode(`# Run ${root}\n\nKind: judge_replay. Outcome: ${outcome}. The planted bug is synthetic.\n`);
+    const report = new TextEncoder().encode(`# Run ${root}\n\nKind: ${kind}. Outcome: ${outcome}. The planted bug is synthetic.\n`);
     writeFile(join(runDir(results, root), "report.md"), report);
     writeManifest(results, {
       schema_version: 1,
       project_id: "00000000-0000-4000-8000-000000000001",
       project_policy_sha256: policy,
       root_execution_id: root,
-      kind: "judge_replay",
-      declared_stages: ["judge_verify"],
+      kind,
+      declared_stages: [kind === "judge_replay" ? "judge_verify" : "solver_sessions"],
       outcome,
       executions: [
         { execution_id: root, parent_execution_id: null },
@@ -175,7 +178,7 @@ export function addJudgeReplay(results: string, root: string, { outcome, publish
   const status = encodeCanonical({
     schema_version: 1,
     root_execution_id: root,
-    kind: "judge_replay",
+    kind,
     status: outcome === null ? "running" : "terminal",
     outcome,
     publication_status: published ? "published" : null,
@@ -195,5 +198,16 @@ export function releaseWithReplays(): string {
   addJudgeReplay(dir, REPLAY_ROOTS[0], { outcome: "completed", published: true });
   addJudgeReplay(dir, REPLAY_ROOTS[1], { outcome: "completed", published: true });
   addJudgeReplay(dir, REPLAY_ROOTS[2], { outcome: null, published: false });
+  return dir;
+}
+
+/** Two paired comparison roots: one published and completed, one still running with only a status object. */
+export const PAIRED_ROOTS = ["00000000-0000-4000-8300-000000000001", "00000000-0000-4000-8300-000000000002"] as const;
+
+/** The release fixture with the three judge replays and the two paired comparison roots. */
+export function releaseWithPairedComparisons(): string {
+  const dir = releaseWithReplays();
+  addJudgeReplay(dir, PAIRED_ROOTS[0], { outcome: "completed", published: true, kind: "paired_comparison" });
+  addJudgeReplay(dir, PAIRED_ROOTS[1], { outcome: null, published: false, kind: "paired_comparison" });
   return dir;
 }
