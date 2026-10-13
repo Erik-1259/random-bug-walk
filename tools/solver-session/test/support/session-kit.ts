@@ -36,6 +36,10 @@ export interface SessionKitOptions {
   run?: () => CommandResult;
   /** `docker rm`'s answer for a container; the default removes it. */
   rm?: (container: string) => CommandResult;
+  /** rbw-stop's answer per call (1-based); the default stops. */
+  stop?: (call: number) => CommandResult;
+  /** `docker stop`'s answer for the container; the default stops it. */
+  dockerStop?: () => CommandResult;
   /** The runtime logs' `docker cp` answer per call (1-based); the default copies them. */
   copyLogs?: (call: number) => CommandResult;
   /** rbw-check-cold's answer per call (1-based); the default is cold. */
@@ -65,6 +69,7 @@ export class SessionKit {
   private builds = 0;
   private starts = 0;
   private logCopies = 0;
+  private stops = 0;
 
   constructor(options: SessionKitOptions = {}) {
     this.options = options;
@@ -88,6 +93,7 @@ export class SessionKit {
     if (command === "image") return ok(`${IMAGE_ID}\n`);
     if (command === "run") return this.options.run?.() ?? ok();
     if (command === "rm") return this.options.rm?.(String(args.at(-1))) ?? ok();
+    if (command === "stop") return this.options.dockerStop?.() ?? ok();
     if (command === "create") return ok();
     if (command === "cp") return this.copy(args.map(String), options);
     if (command === "exec") return this.exec(args.slice(4).map(String), options);
@@ -125,7 +131,10 @@ export class SessionKit {
     if (program === "/opt/rbw/bin/rbw-launch") return this.launch(command.slice(command.indexOf("--") + 1));
     const name = String(program).replace("/opt/rbw/bin/", "");
     this.ran.push(name);
-    if (name === "rbw-stop") return ok();
+    if (name === "rbw-stop") {
+      this.stops += 1;
+      return this.options.stop?.(this.stops) ?? ok();
+    }
     if (name === "rbw-check-cold") {
       this.colds += 1;
       return this.options.checkCold?.(this.colds) ?? ok();

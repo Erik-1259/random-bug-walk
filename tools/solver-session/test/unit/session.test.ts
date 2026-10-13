@@ -367,6 +367,35 @@ describe("submit and close", () => {
     expect(stop).toBeLessThan(copy);
   });
 
+  it("stops the whole container before copying the logs when rbw-stop leaves a writer running", async () => {
+    const { kit, session } = await open({ stop: () => failed(1, "rbw-stop: umami did not stop\n") });
+    await session.close();
+    const order = kit.docker.calls.map((call) => (call[0] === "exec" ? String(call[4]) : `${String(call[0])} ${String(call[1])}`));
+    const stop = order.lastIndexOf("/opt/rbw/bin/rbw-stop");
+    const dockerStop = order.indexOf("stop --time");
+    const copy = order.indexOf("cp rbw-solver-uc1-test-on-01:/var/lib/rbw/logs");
+    expect(stop).toBeGreaterThan(-1);
+    expect(dockerStop).toBeGreaterThan(stop);
+    expect(copy).toBeGreaterThan(dockerStop);
+    expect(kit.docker.named("stop")).toEqual([["stop", "--time", "30", "rbw-solver-uc1-test-on-01"]]);
+    expect(kit.docker.named("rm").filter((call) => call[2] === "rbw-solver-uc1-test-on-01")).toHaveLength(1);
+  });
+
+  it("keeps the container, without copying, when neither rbw-stop nor docker stop ends the writers, then retries", async () => {
+    let dockerStops = 0;
+    const { kit, session } = await open({
+      stop: () => failed(1, "rbw-stop: umami did not stop\n"),
+      dockerStop: () => (++dockerStops === 1 ? failed(1, "Error response from daemon: transient\n") : ok()),
+    });
+    await expect(session.close()).rejects.toThrow(/container_stop_failed/);
+    expect(kit.docker.named("cp").filter((call) => call[1] === "rbw-solver-uc1-test-on-01:/var/lib/rbw/logs")).toHaveLength(0);
+    expect(kit.docker.named("rm").filter((call) => call[2] === "rbw-solver-uc1-test-on-01")).toHaveLength(0);
+    await session.close();
+    expect(kit.docker.named("cp").filter((call) => call[1] === "rbw-solver-uc1-test-on-01:/var/lib/rbw/logs")).toHaveLength(1);
+    expect(kit.docker.named("cp").find((call) => call[1] === "rbw-solver-uc1-test-on-01:/var/lib/rbw/logs")?.[2]).toBe(join(session.work, "logs"));
+    expect(kit.docker.named("rm").filter((call) => call[2] === "rbw-solver-uc1-test-on-01")).toHaveLength(1);
+  });
+
   it("keeps the container and fails when the runtime logs cannot be copied out, then retries", async () => {
     const { kit, session } = await open({ copyLogs: (call) => (call === 1 ? failed(1, "Error response from daemon: transient\n") : ok()) });
     await expect(session.close()).rejects.toThrow(/logs_copy_failed/);

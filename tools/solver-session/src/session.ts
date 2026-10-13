@@ -482,7 +482,8 @@ export class Session implements SolverTools {
   /**
    * Stops the app and the database, copies the runtime logs out (harness capture, both arms) and
    * removes the container. Idempotent.
-   * A failed copy keeps the container (the logs' only copy) and throws; calling close() again retries.
+   * A failed copy, or a failed stop of the logs' writers, keeps the container (the logs' only copy)
+   * and throws; calling close() again retries.
    */
   close(): Promise<void> {
     return this.serial(() => this.closeNow());
@@ -496,18 +497,29 @@ export class Session implements SolverTools {
       return;
     }
     // Stop Umami and Postgres first: rbw-stop waits for their launchers, the logs' writers, to exit,
-    // so the copy holds everything they wrote. A failed stop is recorded; the copy is still made.
+    // so the copy holds everything they wrote. When it fails (a launcher is still alive), the whole
+    // container is stopped instead, which ends every process in it; docker cp reads a stopped
+    // container. If that fails too, nothing is copied and the container is kept for a retry.
     const stopped = await this.exec(["/opt/rbw/bin/rbw-stop"], STOP_TIMEOUT_MS);
+    let containerStop: number | null = null;
+    if (stopped.code !== 0) {
+      const halted = await this.deps.docker.run(["stop", "--time", "30", this.container], { timeoutMs: SCRIPT_TIMEOUT_MS });
+      containerStop = halted.code;
+      if (halted.code !== 0) {
+        this.event("closed", { stop_exit: stopped.code, container_stop_exit: halted.code, logs_copied: false, removed: false });
+        throw new SessionError("container_stop_failed", `kept container ${this.container}: rbw-stop exit ${String(stopped.code)}, docker stop: ${halted.stderr.trim()}`);
+      }
+    }
     this.logCopies += 1;
     // A retry copies into a fresh directory: docker cp nests into a destination that already exists.
     const destination = join(this.work, this.logCopies === 1 ? "logs" : `logs-retry-${String(this.logCopies - 1)}`);
     const logs = await this.deps.docker.run(["cp", `${this.container}:${LOGS_DIR}`, destination], { timeoutMs: SCRIPT_TIMEOUT_MS });
     if (logs.code !== 0) {
-      this.event("closed", { stop_exit: stopped.code, logs_copied: false, removed: false });
+      this.event("closed", { stop_exit: stopped.code, container_stop_exit: containerStop, logs_copied: false, removed: false });
       throw new SessionError("logs_copy_failed", `kept container ${this.container} for its runtime logs: ${logs.stderr.trim()}`);
     }
     const removed = await this.deps.docker.run(["rm", "--force", this.container], { timeoutMs: SCRIPT_TIMEOUT_MS });
-    this.event("closed", { stop_exit: stopped.code, logs_copied: true, logs_dir: destination.slice(this.work.length + 1), removed: removed.code === 0 });
+    this.event("closed", { stop_exit: stopped.code, container_stop_exit: containerStop, logs_copied: true, logs_dir: destination.slice(this.work.length + 1), removed: removed.code === 0 });
     this.removed = true;
     if (removed.code !== 0) throw new SessionError("container_remove_failed", removed.stderr.trim());
   }

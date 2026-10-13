@@ -11,7 +11,7 @@ One solver attempt's session on local Docker, for the paired comparison (UC1): a
 5. **Snapshot.** Before the first build, the snapshot script records each build output's owner, group and mode, a copy of each `tracked` output, and the entries of each `sticky` directory, under `/var/lib/rbw/session` (root only).
 6. **Start.** `rbw-check-cold`, `rbw-build-app`, `rbw-start`: the same in both arms. A failed first start is an infrastructure error (`SessionError`).
 7. **Tools** until submit (next section).
-8. **Close.** `rbw-stop`, which waits until the Umami and Postgres launchers (the logs' writers) have exited, then `docker cp` of `/var/lib/rbw/logs` to `<work>/logs` (the harness's copy of the runtime logs, in both arms), then `docker rm --force`. A failed copy keeps the container and throws `logs_copy_failed`; calling `close()` again retries the copy into `<work>/logs-retry-N`.
+8. **Close.** `rbw-stop`, which waits until the Umami and Postgres launchers (the logs' writers) have exited, then `docker cp` of `/var/lib/rbw/logs` to `<work>/logs` (the harness's copy of the runtime logs, in both arms), then `docker rm --force`. When `rbw-stop` fails (a launcher is still alive), `docker stop --time 30` stops the whole container first, so no writer outlives the copy; if that fails too, nothing is copied, the container is kept and `close()` throws `container_stop_failed`. A failed copy keeps the container and throws `logs_copy_failed`; calling `close()` again retries the copy into `<work>/logs-retry-N`.
 
 ### The neutral commit
 
