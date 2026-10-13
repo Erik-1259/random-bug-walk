@@ -168,5 +168,9 @@ describe("a race-family attempt's stops", () => {
     expect(run.outcome.rootRun).toMatchObject({ status: "terminal", outcome: "failed" });
     expect(run.aw.search.queries).toEqual([]);
     expect(existsSync(join(run.work, "jobs", "admission"))).toBe(false);
+    // The stop is the issue check on a race symptom, not an earlier failure in the symptom path.
+    expect(parseRecord("RaceSymptom", readFileSync(join(run.work, "candidate", "symptom.json")))).toMatchObject({ symptom_kind: "concurrent_double_acceptance" });
+    expect(parseCanonical(readFileSync(join(run.work, "candidate", "issue-check.json")))).toMatchObject({ status: "rejected" });
+    expect(run.aw.lines.some((line) => line.includes("reason=issue_not_ready"))).toBe(true);
   });
 });
