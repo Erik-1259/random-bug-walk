@@ -8,7 +8,7 @@ import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, 
 import { join, posix } from "node:path";
 import { extract } from "tar-stream";
 import type { Clock } from "./clock.ts";
-import { APP_DIR, COPY_OUTER_LIMIT_MS, COPY_SCRIPT, JOB_DIR, KILL_GRACE_MS, RUNNER_DIR, interpret, placedFile, readExit } from "./copy.ts";
+import { APP_DIR, COPY_OUTER_LIMIT_MS, COPY_SCRIPT, JOB_DIR, KILL_GRACE_MS, RUNNER_DIR, copyScriptArgs, interpret, placedFile, readExit } from "./copy.ts";
 import type { CopyPlan, CopyResult, Interpreted } from "./copy.ts";
 import { ARTIFACT_LIMIT_BYTES } from "./records.ts";
 
@@ -217,10 +217,10 @@ export function sandboxCreateParams(plan: Pick<CopyPlan, "container">, image: st
 }
 
 /** The single-run copy script, as root under the image's tini as a child subreaper: there is no init to reap the kit's launchers. */
-export function sandboxCopyCommand(plan: Pick<CopyPlan, "mode" | "trial_id">): SandboxCommandParams {
+export function sandboxCopyCommand(plan: Pick<CopyPlan, "mode" | "trial_id" | "proxy_latency_ms">): SandboxCommandParams {
   return {
     cmd: "/sbin/tini",
-    args: ["-s", "--", "/bin/sh", "-c", SANDBOX_COPY_SCRIPT, "rbw-copy", plan.mode, plan.trial_id],
+    args: ["-s", "--", "/bin/sh", "-c", SANDBOX_COPY_SCRIPT, ...copyScriptArgs(plan)],
     cwd: APP_DIR,
     env: COPY_ENV,
     detached: true,

@@ -21,10 +21,16 @@ export const APP_DIR = "/workspace/app";
 export const JOB_DIR = "/var/lib/rbw/job";
 export const RUNNER_DIR = "/var/lib/rbw/results/rbw-runner";
 
+/** The race kit image's proxy control (kit/umami-race/bin/rbw-proxy), run as root. */
+export const RBW_PROXY = "/opt/rbw/bin/rbw-proxy";
+
 /**
  * The copy's command, run by the image's tini as root. It runs only the verifier's Node and the
  * protected driver, never anything from the app copy, and writes each exit status beside the
- * output so the host can tell a finished driver from a killed one.
+ * output so the host can tell a finished driver from a killed one. A third argument, given only
+ * for a race-family copy, is the database latency in milliseconds: before anything else the
+ * script sets it with rbw-proxy, which the driver's later rbw-start then applies, and records
+ * rbw-proxy's answer and exit status; a failure stops the copy before the freeze.
  */
 export const COPY_SCRIPT = [
   "set -u",
@@ -32,6 +38,12 @@ export const COPY_SCRIPT = [
   "node=/opt/rbw/verifier/node/bin/node",
   "driver=/opt/rbw/verifier/kit/umami-driver/src/cli.ts",
   'mkdir -p "$out" || exit 90',
+  'if [ "$#" -ge 3 ]; then',
+  `  ${RBW_PROXY} set-latency "$3" > "$out/proxy.stdout" 2> "$out/proxy.stderr"`,
+  "  status=$?",
+  '  echo "$status" > "$out/proxy.exit"',
+  '  [ "$status" -eq 0 ] || exit 91',
+  "fi",
   'if [ "$1" = freeze ]; then',
   '  "$node" "$driver" freeze --out "$out/original-suite.json" > "$out/freeze.stdout" 2> "$out/freeze.stderr"',
   "  status=$?",
@@ -81,6 +93,8 @@ export interface CopyPlan {
   placement: Placement | null;
   /** The projection audit of exactly the bytes in `placement`. */
   audit: () => Promise<AuditResult>;
+  /** Race family only: the database latency the copy sets before it runs; absent or null keeps the image's setting. */
+  proxy_latency_ms?: number | null;
 }
 
 export type CopyStatus = "complete" | "incomplete" | "refused" | "failed";
@@ -126,8 +140,14 @@ async function step(docker: Docker, args: readonly string[]): Promise<CommandRes
   return result;
 }
 
-export function createArgs(plan: Pick<CopyPlan, "container" | "image" | "mode" | "trial_id">): string[] {
-  return ["create", "--name", plan.container, ...COPY_RESOURCES, plan.image, "/bin/sh", "-c", COPY_SCRIPT, "rbw-copy", plan.mode, plan.trial_id];
+/** The copy script's arguments: the mode, the trial and, for a race-family copy with a latency, that latency. */
+export function copyScriptArgs(plan: Pick<CopyPlan, "mode" | "trial_id" | "proxy_latency_ms">): string[] {
+  const latency = plan.proxy_latency_ms ?? null;
+  return ["rbw-copy", plan.mode, plan.trial_id, ...(latency === null ? [] : [String(latency)])];
+}
+
+export function createArgs(plan: Pick<CopyPlan, "container" | "image" | "mode" | "trial_id" | "proxy_latency_ms">): string[] {
+  return ["create", "--name", plan.container, ...COPY_RESOURCES, plan.image, "/bin/sh", "-c", COPY_SCRIPT, ...copyScriptArgs(plan)];
 }
 
 export function placedFile(plan: Pick<CopyPlan, "work_dir">, placement: Placement): string {
@@ -181,6 +201,9 @@ export interface Interpreted {
 
 /** What a copy's collected files say, the same for every backend. */
 export function interpret(mode: CopyPlan["mode"], collected: string | null, freezeExit: number | null, driverExit: number | null, timedOut: boolean): Interpreted {
+  // A race-family copy whose latency could not be set ran nothing else.
+  const proxyExit = collected === null ? null : readExit(join(collected, "proxy.exit"));
+  if (proxyExit !== null && proxyExit !== 0) return { status: "failed", reason: "proxy_latency_failed", records: false };
   if (mode === "freeze") {
     if (freezeExit === 0 && collected !== null && existsSync(join(collected, "original-suite.json"))) return { status: "complete", reason: null, records: false };
     return timedOut ? { status: "incomplete", reason: "timeout", records: false } : { status: "failed", reason: "freeze_failed", records: false };

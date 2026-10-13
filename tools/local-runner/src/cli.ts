@@ -2,8 +2,12 @@
 //
 //   run      --image <tag|digest> --kit-stage <dir> --manifest <file> --terms <file> --work <dir>
 //            [--recorded <dir>] [--policy <file>] [--concurrency <n>] [--dry-run]
+//            [--family time-zone|race] [--race-latency-ms <0-10000>]
 //   run-copy --job <dir> --trial <trial_id> --image <tag|digest> --manifest <file> --terms <file> --work <dir>
 //            [--root <run dir>] [--policy <file>] [--backend docker|sandbox] [--sandbox-image <vcr ref>]
+//            [--family time-zone|race] [--race-latency-ms <0-10000>]
+//
+// Without --family the run is the time-zone family's, exactly as before families existed.
 //
 // The sandbox backend reads VERCEL_TOKEN, VERCEL_TEAM_ID and VERCEL_PROJECT_ID from the environment
 // here and nowhere else, and passes them to the SDK as options.
@@ -18,6 +22,8 @@ import { realClock } from "./clock.ts";
 import { CodeStateRefusal } from "./code-states.ts";
 import { createDocker } from "./docker.ts";
 import { dryRun } from "./dry-run.ts";
+import { FamilyError, familyFor, raceLatency } from "./family.ts";
+import type { FamilyId } from "./family.ts";
 import { InputsError } from "./inputs.ts";
 import { JobRefusal } from "./jobs.ts";
 import { RECORDED_SYNTHETIC_DIR, RecordedModeError } from "./recorded.ts";
@@ -28,8 +34,9 @@ import { runSequence } from "./sequence.ts";
 
 const USAGE = `usage:
   node src/cli.ts run --image <tag|digest> --kit-stage <dir> --manifest <file> --terms <file> --work <dir> [--recorded <dir>] [--policy <file>] [--concurrency <n>] [--dry-run]
+                      [--family time-zone|race] [--race-latency-ms <0-10000>]
   node src/cli.ts run-copy --job <dir> --trial <trial_id> --image <tag|digest> --manifest <file> --terms <file> --work <dir> [--root <run dir>] [--policy <file>]
-                           [--backend docker|sandbox] [--sandbox-image <repository>@sha256:<digest>]
+                           [--backend docker|sandbox] [--sandbox-image <repository>@sha256:<digest>] [--family time-zone|race] [--race-latency-ms <0-10000>]
 `;
 
 class UsageError extends Error {}
@@ -44,6 +51,22 @@ function required(values: Record<string, string | boolean | undefined>, name: st
   if (typeof value !== "string" || value === "") throw new UsageError(`--${name} is required`);
   return resolve(value);
 }
+
+/** --family and --race-latency-ms: none given is the time-zone family with no latency. */
+function familyOptions(values: Record<string, string | boolean | undefined>): { family?: FamilyId; raceLatencyMs?: number } {
+  const id = typeof values.family === "string" ? values.family : undefined;
+  const latencyText = typeof values["race-latency-ms"] === "string" ? values["race-latency-ms"] : undefined;
+  try {
+    const family = familyFor(id);
+    const latency = raceLatency(family, latencyText);
+    return { ...(id === undefined ? {} : { family: family.id }), ...(latency === null ? {} : { raceLatencyMs: latency }) };
+  } catch (error) {
+    if (error instanceof FamilyError) throw new UsageError(error.message);
+    throw error;
+  }
+}
+
+const FAMILY_OPTIONS = { family: { type: "string" }, "race-latency-ms": { type: "string" } } as const;
 
 function optional(values: Record<string, string | boolean | undefined>, name: string): string | null {
   const value = values[name];
@@ -65,6 +88,7 @@ async function run(args: string[]): Promise<number> {
       policy: { type: "string" },
       concurrency: { type: "string" },
       "dry-run": { type: "boolean" },
+      ...FAMILY_OPTIONS,
     },
   });
   const concurrency = values.concurrency ?? "1";
@@ -79,6 +103,7 @@ async function run(args: string[]): Promise<number> {
     recorded: optional(values, "recorded") ?? RECORDED_SYNTHETIC_DIR,
     policy: optional(values, "policy"),
     concurrency: Number(concurrency),
+    ...familyOptions(values),
   };
   if (values["dry-run"] === true) {
     process.stdout.write(`${(await dryRun(options, { uuid: randomUUID })).join("\n")}\n`);
@@ -114,6 +139,7 @@ async function runCopyCli(args: string[]): Promise<number> {
       policy: { type: "string" },
       backend: { type: "string" },
       "sandbox-image": { type: "string" },
+      ...FAMILY_OPTIONS,
     },
   });
   if (values.trial === undefined || values.image === undefined) throw new UsageError("--trial and --image are required");
@@ -135,6 +161,7 @@ async function runCopyCli(args: string[]): Promise<number> {
       policy: optional(values, "policy"),
       backend,
       sandboxImage,
+      ...familyOptions(values),
     },
     deps,
   );

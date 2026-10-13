@@ -12,11 +12,17 @@ import type { Rates } from "@rbw/envelope";
 import {
   BASELINE_KEY,
   CodeStateRefusal,
+  DEFAULT_FAMILY,
   ExportError,
+  FamilyError,
   InputsError,
   JobRefusal,
   PlanError,
+  adm06For,
   buildJob,
+  checkFamilyImage,
+  checkFamilyProbes,
+  checkKitStage,
   containerName,
   deriveCodeStates,
   expectedVectors,
@@ -35,12 +41,11 @@ import {
   utcSeconds,
   writeJobDir,
 } from "@rbw/local-runner";
-import type { BuiltJob, Clock, CopyResult, CopySummary, Docker, JobContext, JobLabel, RunCopyOutcome, RunIds, SandboxSdk, TrialSummary } from "@rbw/local-runner";
+import type { BuiltJob, Clock, CopyResult, CopySummary, Docker, FamilyId, JobContext, JobLabel, RunCopyOutcome, RunIds, SandboxSdk, TrialSummary } from "@rbw/local-runner";
 import { buildJobRequest, callName, canonicalDigest, operationId, parseCanonical, providerCallIdentity, sha256Hex } from "@rbw/schema";
 import type { ExpectedTrial, JobKind } from "@rbw/schema";
 import type { OperationState, Refusal, Result, Spend } from "@rbw/spend";
 import { addedSuiteSha256, parseSuiteManifest } from "@rbw/umami-driver";
-import { FIXTURE_FILE, loadFixture } from "@rbw/umami-fixture";
 import { copyEnvelope, copySettlement } from "./envelope.ts";
 import type { CopyEnvelope } from "./envelope.ts";
 import { LaunchWatch, watchedDocker, watchedSandbox } from "./launch.ts";
@@ -65,8 +70,12 @@ export interface JobInputs {
   kitStage: string;
   /** The driver's frozen original-suite manifest; when null, a local Docker freeze copy makes it. */
   originalSuite: string | null;
+  /** The bug family: its fixture, probe set, kit image and alternative fix. The time-zone family when absent. */
+  family?: FamilyId;
+  /** Race family only: the database latency each copy's Toxiproxy applies, 0 to 10000 ms; absent keeps the image default. */
+  raceLatencyMs?: number | null;
   probesDir?: string;
-  /** The fix a judge replay grades as fixed-01 (the alternative-fix layout); the local runner's alternative fix by default. */
+  /** The fix a judge replay grades as fixed-01 (the alternative-fix layout); the family's alternative fix by default. */
   alternativeDir?: string;
   /**
    * The code state judge_verify's fixed-01 grades: `fixed` is the reference fix (the clean file's
@@ -426,6 +435,11 @@ async function build(inputs: JobInputs, deps: ControllerDeps, state: ControllerS
   const exported = await exportImage(deps.docker, { image: digest, container: containerName(tag, inputs.name, "export"), dest: join(p.base, "source") });
   const kitSha256 = sha256Hex(exported.image_manifest);
   summary.image.kit_sha256 = kitSha256;
+  try {
+    checkFamilyImage(copyInputs.family, exported.image_manifest);
+  } catch (error) {
+    throw error instanceof FamilyError ? new PlanError(error.message) : error;
+  }
   const states = deriveCodeStates(readFileSync(join(exported.source_dir, copyInputs.probes.data.target_path)), copyInputs.probes, copyInputs.alternative);
 
   let suiteBytes: Buffer;
@@ -442,6 +456,7 @@ async function build(inputs: JobInputs, deps: ControllerDeps, state: ControllerS
         job_dir: null,
         placement: null,
         audit: () => Promise.resolve(NOT_APPLICABLE),
+        ...(copyInputs.raceLatencyMs === null ? {} : { proxy_latency_ms: copyInputs.raceLatencyMs }),
       },
       { docker: deps.docker, clock: deps.clock },
     );
@@ -455,15 +470,24 @@ async function build(inputs: JobInputs, deps: ControllerDeps, state: ControllerS
 
   const fixtureDir = join(inputs.kitStage, "umami-fixture");
   if (!existsSync(fixtureDir)) throw new InputsError("the kit stage has no umami-fixture directory (run the driver's stage-kit.ts)");
+  try {
+    checkKitStage(copyInputs.family, inputs.kitStage);
+    checkFamilyProbes(copyInputs.family, copyInputs.probes);
+  } catch (error) {
+    throw error instanceof FamilyError ? new InputsError(error.message) : error;
+  }
   const ctx: JobContext = {
     ids: state.ids,
     imageDigest: digest,
     kitSha256,
-    fixtureSha256: sha256Hex(readFileSync(FIXTURE_FILE)),
+    fixtureSha256: sha256Hex(readFileSync(copyInputs.family.fixtureFile)),
     addedSuiteSha256: await addedSuiteSha256(fixtureDir),
     originalSuite: { sha256: sha256Hex(suiteBytes), testIds: suite.tests.map((test) => test.id) },
     states,
-    vectors: expectedVectors(loadFixture(), copyInputs.probes),
+    vectors: expectedVectors(copyInputs.family.loadFixture(), copyInputs.probes),
+    adm06: adm06For(copyInputs.probes),
+    // A family without an alternative fix: a judge replay grades the reference fix as fixed-01.
+    ...(copyInputs.alternative === null ? { judgeFixed: "fixed" as const } : {}),
     profileSha256: profileSha256(),
     deadlineAt: utcSeconds(deadlineMs),
     ...(inputs.projectPolicy === undefined ? {} : { projectPolicy: inputs.projectPolicy }),
@@ -664,6 +688,8 @@ async function runOneCopy(run: Run, trial: ExpectedTrial): Promise<{ go: boolean
         manifest: inputs.manifest,
         terms: inputs.terms,
         policy: inputs.policy,
+        ...(inputs.family === undefined ? {} : { family: inputs.family }),
+        ...(inputs.raceLatencyMs === undefined ? {} : { raceLatencyMs: inputs.raceLatencyMs }),
         ...(inputs.probesDir === undefined ? {} : { probesDir: inputs.probesDir }),
         ...(inputs.alternativeDir === undefined ? {} : { alternativeDir: inputs.alternativeDir }),
         work: join(run.p.copies, trial.trial_id),
@@ -747,7 +773,7 @@ export async function runJob(inputs: JobInputs, deps: ControllerDeps): Promise<J
     name: inputs.name,
     image: inputs.image,
     image_digest: inputs.prebuilt === undefined ? await imageDigest(deps.docker, inputs.image) : null,
-    fixture_sha256: sha256Hex(readFileSync(FIXTURE_FILE)),
+    fixture_sha256: sha256Hex(readFileSync(copyInputs.family.fixtureFile)),
     added_suite_sha256: existsSync(fixtureDir) ? await addedSuiteSha256(fixtureDir) : null,
     baseline_sha256: inputs.kind === "observe" && existsSync(baselinePath) ? fileSha(baselinePath) : null,
     backend: inputs.backend,
@@ -759,8 +785,10 @@ export async function runJob(inputs: JobInputs, deps: ControllerDeps): Promise<J
     policy_sha256: copyInputs.policySha256,
     probes_json_sha256: copyInputs.probesJsonSha256,
     probe_patches_sha256: copyInputs.probePatchesSha256,
-    alternative_record_sha256: copyInputs.alternative.record_sha256,
-    alternative_patch_sha256: copyInputs.alternative.patch_sha256,
+    alternative_record_sha256: copyInputs.alternative?.record_sha256 ?? null,
+    alternative_patch_sha256: copyInputs.alternative?.patch_sha256 ?? null,
+    // Off the default family only, so a time-zone job's fingerprint is what it always was.
+    ...(copyInputs.family.id === DEFAULT_FAMILY ? {} : { family: copyInputs.family.id, race_latency_ms: copyInputs.raceLatencyMs }),
     original_suite_sha256: fileSha(inputs.originalSuite),
     ...(inputs.ids === undefined ? {} : { ids: inputs.ids }),
     ...(inputs.prebuilt === undefined ? {} : { prebuilt: inputs.prebuilt.fingerprint }),

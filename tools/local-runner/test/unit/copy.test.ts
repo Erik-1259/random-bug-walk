@@ -1,7 +1,8 @@
-import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { COPY_OUTER_LIMIT_MS, COPY_SCRIPT, KILL_GRACE_MS, runCopies, runCopy } from "../../src/copy.ts";
+import { COPY_OUTER_LIMIT_MS, COPY_SCRIPT, KILL_GRACE_MS, RBW_PROXY, RUNNER_DIR, createArgs, runCopies, runCopy } from "../../src/copy.ts";
 import type { AuditResult, CopyPlan } from "../../src/copy.ts";
 import { FakeClock, FakeDocker, deferred, failed, ok } from "../support/fakes.ts";
 import type { Handler } from "../support/fakes.ts";
@@ -283,5 +284,71 @@ describe("copies run concurrently", () => {
 
   it("refuses a concurrency below 1", async () => {
     await expect(runCopies([], 0, { docker: new FakeDocker(() => ok()), clock: new FakeClock() })).rejects.toThrow(/concurrency/);
+  });
+});
+
+describe("the race family's database latency in the copy", () => {
+  it("passes the latency as the copy script's third argument, and nothing more without one", () => {
+    expect(createArgs({ ...plan(), proxy_latency_ms: 50 }).slice(-4)).toEqual(["rbw-copy", "trial", "planted-02", "50"]);
+    expect(createArgs({ ...plan(), proxy_latency_ms: 0 }).slice(-4)).toEqual(["rbw-copy", "trial", "planted-02", "0"]);
+    expect(createArgs(plan()).slice(-3)).toEqual(["rbw-copy", "trial", "planted-02"]);
+    expect(createArgs({ ...plan(), proxy_latency_ms: null }).at(-1)).toBe("planted-02");
+  });
+
+  it("records a copy whose latency could not be set as failed, with no records", async () => {
+    const p = plan({ proxy_latency_ms: 50 });
+    const docker = new FakeDocker((args) => {
+      if (args[0] === "wait") return ok("91\n");
+      if (args[0] === "cp" && String(args[1]).endsWith(":/var/lib/rbw/results/rbw-runner")) {
+        mkdirSync(String(args[2]), { recursive: true });
+        writeFileSync(join(String(args[2]), "proxy.exit"), "1\n");
+      }
+      return ok();
+    });
+    const result = await runCopy(p, { docker, clock: new FakeClock() });
+    expect(result).toMatchObject({ status: "failed", reason: "proxy_latency_failed", records_dir: null });
+  });
+
+  /**
+   * Runs the real copy script with sh, its absolute paths pointed at stubs in a temporary
+   * directory: the proxy, the verifier's Node (which records the driver commands) and the runner directory.
+   */
+  function runScript(args: readonly string[], proxyStatus: number): { status: number | null; dir: string; calls: string } {
+    const dir = tempDir();
+    const calls = join(dir, "calls.log");
+    const stub = (name: string, body: string): string => {
+      const path = join(dir, name);
+      writeFileSync(path, `#!/bin/sh\n${body}\n`);
+      chmodSync(path, 0o755);
+      return path;
+    };
+    const proxy = stub("rbw-proxy", `echo "proxy $*" >> "${calls}"\necho "proxy_latency latency_ms=$2 source=override"\nexit ${String(proxyStatus)}`);
+    const node = stub("node", `shift\necho "driver $*" >> "${calls}"\nexit 0`);
+    const script = COPY_SCRIPT.replaceAll(RUNNER_DIR, join(dir, "runner")).replace("node=/opt/rbw/verifier/node/bin/node", `node=${node}`).replace(RBW_PROXY, proxy);
+    const ran = spawnSync("/bin/sh", ["-c", script, ...args], { encoding: "utf8" });
+    return { status: ran.status, dir: join(dir, "runner"), calls: existsSync(calls) ? readFileSync(calls, "utf8") : "" };
+  }
+
+  it("sets the latency with rbw-proxy before the freeze and the run, and records its answer and exit status", () => {
+    const ran = runScript(["rbw-copy", "trial", "planted-02", "50"], 0);
+    expect(ran.status).toBe(0);
+    expect(ran.calls.split("\n").filter(Boolean)).toEqual(["proxy set-latency 50", "driver freeze", "driver run --job /var/lib/rbw/job --trial planted-02 --out " + join(ran.dir, "out")]);
+    expect(readFileSync(join(ran.dir, "proxy.exit"), "utf8")).toBe("0\n");
+    expect(readFileSync(join(ran.dir, "proxy.stdout"), "utf8")).toBe("proxy_latency latency_ms=50 source=override\n");
+  });
+
+  it("stops before the freeze when rbw-proxy refuses the latency", () => {
+    const ran = runScript(["rbw-copy", "freeze", "freeze", "50"], 1);
+    expect(ran.status).toBe(91);
+    expect(ran.calls).toBe("proxy set-latency 50\n");
+    expect(readFileSync(join(ran.dir, "proxy.exit"), "utf8")).toBe("1\n");
+    expect(existsSync(join(ran.dir, "freeze.exit"))).toBe(false);
+  });
+
+  it("never calls rbw-proxy for a copy without a latency, as for every time-zone copy", () => {
+    const ran = runScript(["rbw-copy", "freeze", "freeze"], 1);
+    expect(ran.status).toBe(0);
+    expect(ran.calls.split("\n").filter(Boolean)).toEqual([`driver freeze --out ${join(ran.dir, "original-suite.json")}`]);
+    expect(existsSync(join(ran.dir, "proxy.exit"))).toBe(false);
   });
 });

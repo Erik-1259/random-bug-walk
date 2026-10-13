@@ -95,6 +95,7 @@ export function planCopy(trial: TrialRef, p: CopyPlanInputs): CopyPlan {
     work_dir: join(p.work, "copies", p.label, trial.trial_id),
     job_dir: p.jobDir,
     placement: state.key === "clean" ? null : { path: state.path, bytes: state.bytes, sha256: state.sha256 },
+    ...(p.inputs.raceLatencyMs === null ? {} : { proxy_latency_ms: p.inputs.raceLatencyMs }),
     audit: () =>
       Promise.resolve(
         auditCopy({

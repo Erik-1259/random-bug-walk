@@ -6,6 +6,8 @@ import type { Docker } from "@rbw/local-runner";
 import { runJob } from "../../src/controller.ts";
 import { JUDGE } from "../../src/limits.ts";
 import { FakeClock, FakeDocker } from "../../../local-runner/test/support/fakes.ts";
+import type { JobInputs } from "../../src/controller.ts";
+import { writeRaceProbeDir } from "../../../local-runner/test/support/synthetic.ts";
 import { jobInputs, world } from "../support/harness.ts";
 import type { LedgerCall, World } from "../support/harness.ts";
 import { SERIAL_CHECKS } from "../support/serial-checks.ts";
@@ -299,4 +301,42 @@ describe("a copy that fails after its container was made", () => {
 
 describe("serial-run checks (spec §6.1) on PGlite", () => {
   for (const [name, check] of Object.entries(SERIAL_CHECKS)) it(name, () => check(world));
+});
+
+describe("the race family", () => {
+  const race = (w: World, overrides: Partial<JobInputs> = {}): JobInputs =>
+    jobInputs(w, { family: "race", raceLatencyMs: 75, probesDir: writeRaceProbeDir(), alternativeDir: undefined, backend: "docker", sandboxImage: null, ...overrides });
+
+  it("runs an 11-copy admission on the race image, with ADM-06 not applicable and the latency in every copy", async () => {
+    const w = await world({ kit: { family: "race" } });
+    const kit = await runJob(race(w, { kind: "kit_check", name: "kit-check" }), w.deps);
+    expect(kit.status).toBe("complete");
+    const outcome = await runJob(race(w, { kind: "admission", name: "admission", originalSuite: join(kit.jobDir, "freeze", "collected", "original-suite.json") }), w.deps);
+    expect(outcome.status).toBe("complete");
+    expect(outcome.summary.copies.map((copy) => copy.trial_id)).toEqual([
+      "clean-01",
+      "fixed-01",
+      "fixed-02",
+      "fixed-03",
+      "fixed-04",
+      "fixed-05",
+      "planted-01",
+      "planted-02",
+      "planted-03",
+      "planted-04",
+      "planted-05",
+    ]);
+    const decision = parseCanonical(readFileSync(join(outcome.jobDir, "decision.json"))) as { decisions: Record<string, { decision: string }>; outcome_verdict: string };
+    expect(decision.decisions["ADM-06"]?.decision).toBe("not_applicable");
+    expect(decision.outcome_verdict).toBe("pass");
+    expect([...w.kit.containers.values()].every((container) => container.latency === "75")).toBe(true);
+  });
+
+  it("refuses a race job on a time-zone kit image before any copy", async () => {
+    const w = await world({ kit: { family: "race", imageFamily: "time-zone" } });
+    const outcome = await runJob(race(w, { kind: "kit_check", name: "kit-check" }), w.deps);
+    expect(outcome.status).not.toBe("complete");
+    expect(outcome.summary.detail).toContain("rbw-umami-race-kit-image-manifest/1");
+    expect(outcome.summary.copies).toEqual([]);
+  });
 });

@@ -118,6 +118,26 @@ The card call, the issue call and the three phrase searches (`phrase-1` to `phra
 
 `summary.txt` has one line per copy and the decisions.
 
+## Bug families
+
+`--family` picks the bug family (`src/family.ts`); without it the run is the time-zone family's, with the same inputs, jobs, summary keys and commands as before families existed.
+
+| | `time-zone` (default) | `race` |
+|---|---|---|
+| fixture package (staged with `stage-kit.ts --fixture-package`) | `packages/umami-fixture` | `packages/umami-fixture-rc1` |
+| probe set | `packages/shapes/probes/dt-1.tz-arg` | `packages/shapes/probes/rc-1.atomic-backup-code` |
+| ADM-06 | required: partial and stub probes | recorded as not applicable in the probe set, with the reason |
+| admission copies | 13 | 11: no `partial-01` or `stub-01` |
+| alternative fix | `probes/alternative-fix.*` here | none: no alternative-fix copy |
+| kit image | `kit/umami` | `kit/umami-race` (manifest schema `rbw-umami-race-kit-image-manifest/1`) |
+| `--race-latency-ms` | refused | 0 to 10000; absent keeps the image's default |
+
+Before any container starts, a race run refuses a kit stage whose `umami-fixture/data/` does not hold the race fixture's data file byte for byte, and a probe set whose code states differ from the fixture's (the race fixture declares clean, fixed and planted only, so the time-zone probes are refused). After the export it refuses a kit image whose manifest does not name the race schema. A time-zone run refuses a kit stage or image that names the race family, and otherwise accepts what it always did.
+
+The code states of a probe set that records ADM-06 as not applicable are clean, planted and fixed; any other probe set still needs both the partial and the stub probe. The admission job then follows `ADMISSION_WITHOUT_PROBES_PROFILE` from `@rbw/schema`, and `@rbw/admission` records ADM-06 as `not_applicable`. The summary's `family` field records the family, the ADM-06 status with its reason and the admission copy count; a race run's inputs also record `family` and `race_latency_ms`.
+
+With `--race-latency-ms <ms>`, every copy of the run (the freeze copy included) gets the latency as the copy script's third argument. Before anything else the script runs `/opt/rbw/bin/rbw-proxy set-latency <ms>` as root, records its answer in `proxy.stdout` and its status in `proxy.exit`, and stops with status 91 when it fails; the copy is then `failed` with the reason `proxy_latency_failed`. The driver's later `rbw-start` starts the proxy at that latency. Checking the proxy before and after each round (`rbw-proxy check`) is the driver's job and is not done here.
+
 ## Host commands
 
 Run from the repository root on a host with Docker. `<stage>`, `<umami>`, `<manifest>`, `<terms>`, `<work>` and `<scratch>` are paths you choose; `<work>` must be absent or empty.
