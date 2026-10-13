@@ -28,6 +28,7 @@ The planted bug is synthetic, labeled as such everywhere, and never filed upstre
 | [`tools/controller`](tools/controller/README.md) | Runs jobs and the candidate attempt against the spend ledger on Vercel Sandbox; also the judge replay's controller |
 | [`tools/local-runner`](tools/local-runner/README.md) | Runs the kit check, observation and admission on local Docker; its job builders and copy path are reused by the controller |
 | [`tools/release`](tools/release/README.md) | Stages runs for the publisher, builds a checked release with its frozen judge job, and publishes judge replays |
+| [`tools/uc1`](tools/uc1/README.md) | Runs the UC1 paired comparison's attempts (server logs off and on) in the pre-registered order, with the spend guard and both grades |
 | [`tools/publication`](tools/publication/README.md) | Publication boundary for agent work: scanner, host helper, wrapper and pre-push hook |
 | `tools/neon-ci` | Creates and deletes the throwaway Neon database branches that the integration workflows use |
 | [`kit/umami`](kit/umami/README.md) | The kit image: pinned Umami, PostgreSQL and the protected verifier area |
