@@ -121,7 +121,7 @@ function modelCall(call: SgNode): { model: string; method: string } | undefined 
   return method === undefined || model === undefined ? undefined : { model, method };
 }
 
-/** Names bound by `const <pattern> = await <call>` around a call, or none. */
+/** Names bound by `const`, `let` or `var <pattern> = await <call>` around a call, or none. */
 function boundNames(call: SgNode): string[] {
   let node: SgNode | null = call.parent();
   if (kindOf(node) === "await_expression") {
@@ -131,6 +131,27 @@ function boundNames(call: SgNode): string[] {
     return [];
   }
   return patternNames(fieldOf(node, "name"));
+}
+
+/**
+ * The declarator binding a read's result when the binding is `const`, or none. A `let` or `var`
+ * binding may be reassigned before the write, so its names never stand for the record the code read.
+ */
+function constReadDeclarator(read: SgNode): SgNode | undefined {
+  let node: SgNode | null = read.parent();
+  if (kindOf(node) === "await_expression") {
+    node = node?.parent() ?? null;
+  }
+  const declaration = node?.parent() ?? null;
+  return node !== null && kindOf(node) === "variable_declarator" && kindOf(declaration) === "lexical_declaration" && declaration?.children()[0]?.text() === "const"
+    ? node
+    : undefined;
+}
+
+/** Names a `const` binding of a read binds, or none (see `constReadDeclarator`). */
+function constReadNames(read: SgNode | undefined): string[] {
+  const declarator = read === undefined ? undefined : constReadDeclarator(read);
+  return declarator === undefined ? [] : patternNames(fieldOf(declarator, "name"));
 }
 
 /**
@@ -158,8 +179,8 @@ function patternNames(pattern: SgNode | null): string[] {
 
 /**
  * Whether a value text holds the read's own `id`: `<record>.id` (or `<records>[<index>].id` for a
- * list read) when the read is bound to a name, the name an `id` key destructures to (without a
- * default), or the read's own `where` id value.
+ * list read) when the read is bound to a `const` name, the name an `id` key of a `const`
+ * destructuring binds (without a default), or the read's own `where` id value.
  */
 function readIdTest(read: SgNode | undefined): (value: string) => boolean {
   const values = new Set<string>();
@@ -171,11 +192,8 @@ function readIdTest(read: SgNode | undefined): (value: string) => boolean {
   if (whereId !== undefined) {
     values.add(whereId);
   }
-  let node: SgNode | null = read.parent();
-  if (kindOf(node) === "await_expression") {
-    node = node?.parent() ?? null;
-  }
-  const name = kindOf(node) === "variable_declarator" ? fieldOf(node, "name") : null;
+  const declarator = constReadDeclarator(read);
+  const name = declarator === undefined ? null : fieldOf(declarator, "name");
   if (kindOf(name) === "identifier" && name !== null) {
     record = new RegExp(`^${name.text().replace(/\$/g, "\\$")}(\\[[^\\[\\]]*\\])?\\.id$`);
   } else if (kindOf(name) === "object_pattern") {
@@ -300,6 +318,8 @@ function guardedWriteSignals(guard: SgNode): Signals {
           fieldOf(node, "property")?.text() === key &&
           readNames.includes(fieldOf(node, "object")?.text() ?? ""),
       );
+  // Only a `const` binding gives the write its identity: a `let` or `var` may be reassigned first.
+  const identityNames = constReadNames(read);
   const where = guard.parent();
   const identity =
     where
@@ -308,8 +328,8 @@ function guardedWriteSignals(guard: SgNode): Signals {
       .some((child) =>
         // A shorthand entry (`where: { id, ... }`) is its own name; a pair holds the name as a descendant.
         kindOf(child) === "shorthand_property_identifier"
-          ? readNames.includes(child.text())
-          : readNames.some((name) => child.findAll({ rule: { kind: "identifier", regex: `^${name.replace(/\$/g, "\\$")}$` } }).length > 0),
+          ? identityNames.includes(child.text())
+          : identityNames.some((name) => child.findAll({ rule: { kind: "identifier", regex: `^${name.replace(/\$/g, "\\$")}$` } }).length > 0),
       ) ?? false;
   const awaitBetween =
     read !== undefined &&

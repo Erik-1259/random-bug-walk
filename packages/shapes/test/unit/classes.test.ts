@@ -270,6 +270,31 @@ describe("find sites in one file", () => {
     ]);
   });
 
+  it("takes a read's bound names as the write's identity only when the binding is const", () => {
+    const text = [
+      "export async function reassigned(seatId: string, fallback: { id: string }) {",
+      "  let row = await db.client.seat.findUnique({ where: { id: seatId } });",
+      "  row = fallback;",
+      "  await db.client.seat.update({ where: { id: row.id, taken: false }, data: { taken: true } });",
+      "}",
+      "export async function hoisted(seatId: string) {",
+      "  var { id } = await db.client.seat.findFirst({ where: { title: seatId } });",
+      "  await db.client.seat.update({ where: { id, taken: false }, data: { taken: true } });",
+      "}",
+      "export async function constant(seatId: string) {",
+      "  const row = await db.client.seat.findUnique({ where: { id: seatId } });",
+      "  await db.client.seat.update({ where: { id: row.id, taken: false }, data: { taken: true } });",
+      "}",
+      "",
+    ].join("\n");
+    const sites = findSitesInSource(CLASSES, "lib/seats.ts", text);
+    expect(sites.map((site) => [site.line, site.planted_form_confirmed, site.confidence.signals.identity_from_read])).toEqual([
+      [4, false, false],
+      [8, false, false],
+      [12, true, true],
+    ]);
+  });
+
   it("leaves out a guard in a where that holds any comment, where removing it could leave a stray comma", () => {
     const text = [
       "export async function redeem(code: string) {",
