@@ -68,12 +68,14 @@ describe("verification replays", () => {
   it("labels replays in the catalog and says they are not factory runs", async () => {
     const page = text(renderToStaticMarkup(<Catalog results={await readResults(releaseWithReplays())} />));
     expect(page).toContain(`Run ${RELEASE_ROOT} is validated release ${RELEASE_ID}; the other factory runs are not validated. Verification replays (judge) are not factory runs.`);
+    expect(page).not.toContain("Paired comparisons are not factory runs.");
     expect(page).toContain(`${REPLAY_ROOTS[0]} Verification replay (judge) Terminal Completed Published 1 1`);
     expect(page).toContain(`${REPLAY_ROOTS[2]} Verification replay (judge) Running None yet Not published`);
     expect(page).toContain(`${RELEASE_ROOT} Validated release ${RELEASE_ID} Factory run Terminal Completed Published`);
     const kit = text(renderToStaticMarkup(<Catalog results={await readResults(NO_RELEASE)} />));
     expect(kit).toContain("00000000-0000-4000-8000-000000002005 Kit check Running None yet Not published");
     expect(kit).not.toContain("Verification replays (judge) are not factory runs.");
+    expect(kit).not.toContain("Paired comparisons are not factory runs.");
   });
 
   it("labels a replay's file index page and keeps its file routes", async () => {
