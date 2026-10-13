@@ -32,6 +32,8 @@ export { PlanError, containerName, inspectImage, inspectRepoDigests, profileSha2
 export { ExportError, KIT_BUILD_OUTPUTS, auditCopy, exportImage, kitNonSource } from "./projection.ts";
 export { RECORDED_SYNTHETIC_DIR, RecordedModeError, loadRecordedDir, runRecorded } from "./recorded.ts";
 export { importJob, measure, mergeRecordSet } from "./records.ts";
+export { frozenJobFamily, latencyOfProfile } from "./replay-family.ts";
+export type { FrozenFamily, FrozenJob } from "./replay-family.ts";
 export { runCopyCommand } from "./run-copy.ts";
 export type { RunCopyDeps, RunCopyOptions, RunCopyOutcome } from "./run-copy.ts";
 export { COLLECT_LIMIT_BYTES, SANDBOX_CALL_LIMITS, runSandboxCopy, sandboxCopyCommand, sandboxCreateParams } from "./sandbox.ts";
