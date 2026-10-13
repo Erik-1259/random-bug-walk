@@ -75,9 +75,11 @@ describe("next build", () => {
       "/_global-error",
       "/_not-found",
       "/catalog",
+      "/runs/00000000-0000-4000-8000-000000002001",
       "/runs/00000000-0000-4000-8000-000000002001/logs/00000000-0000-4000-8000-000000002002/run.log",
       "/runs/00000000-0000-4000-8000-000000002001/manifest.json",
       "/runs/00000000-0000-4000-8000-000000002001/report.md",
+      "/runs/00000000-0000-4000-8000-000000002003",
       "/runs/00000000-0000-4000-8000-000000002003/manifest.json",
       "/runs/00000000-0000-4000-8000-000000002003/report.md",
     ]);
@@ -92,6 +94,13 @@ describe("next build", () => {
     const page = readFileSync(join(SERVER_APP, "index.html"), "utf8");
     expect([...page.matchAll(/data-cell="(\d)"/g)].map((match) => match[1])).toEqual(["1", "2", "3", "4", "5", "6"]);
     expect(page).toContain("Development evidence, not validated");
+    // The case page links the run's file index page; the index page lists the files.
+    expect(page).toContain(`href="/runs/${DEVELOPMENT_ROOT}"`);
+    expect(page).not.toContain(`href="/runs/${DEVELOPMENT_ROOT}/generated/symptom.json"`);
+    expect(prerendered()).toContain(`/runs/${DEVELOPMENT_ROOT}`);
+    const index = readFileSync(join(SERVER_APP, "runs", `${DEVELOPMENT_ROOT}.html`), "utf8");
+    expect(index).toContain(`Files of run ${DEVELOPMENT_ROOT}`);
+    expect(index).toContain(`href="/runs/${DEVELOPMENT_ROOT}/generated/symptom.json"`);
     const body = join(SERVER_APP, "runs", DEVELOPMENT_ROOT, "report.md.body");
     expect(existsSync(body)).toBe(true);
     expect(readFileSync(body).equals(readFileSync(join(runDir(DEVELOPMENT, DEVELOPMENT_ROOT), "report.md")))).toBe(true);

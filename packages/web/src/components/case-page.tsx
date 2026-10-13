@@ -7,7 +7,6 @@ import {
   COMPARISON_TEXT,
   countExamples,
   diagnosticArchives,
-  fileHref,
   funnel,
   MATRIX_COLUMNS,
   MATRIX_ROWS,
@@ -23,6 +22,7 @@ import {
   VERDICT_TEXT,
 } from "../model.ts";
 import { ReplayControl } from "./replay-control.tsx";
+import { RunSummary } from "./run-summary.tsx";
 import { releaseFiles, type AdmissionRecords, type PublishedRelease, type Results, type Run } from "../release.ts";
 
 function Cell({ index, title, children }: { index: number; title: string; children: ReactNode }) {
@@ -149,6 +149,10 @@ function Matrix({ admission }: { admission: AdmissionRecords | null }) {
           ))}
         </tbody>
       </table>
+      <p className="matrix-note">
+        The added checks run once in the clean copy, and 20 times each in the first planted and the first fixed copy (the stability rule, ADM-05), so those two cells count 20
+        times as many executions as the clean copy.
+      </p>
       {decision === null ? (
         <p>This run published no admission decision.</p>
       ) : (
@@ -157,27 +161,24 @@ function Matrix({ admission }: { admission: AdmissionRecords | null }) {
           <li>Admission verdict (ADM-02 to ADM-06): {decision.outcome_verdict === null ? "none" : VERDICT_TEXT[decision.outcome_verdict]}</li>
         </ul>
       )}
+      <p className="rule-codes">
+        Rule codes refer to the <a href={ADMISSION_RULES}>admission rules</a>: ADM-02 to ADM-06 cover the 13 fresh copies, the fixed copies passing, the planted copies failing as
+        declared, stability and the negative probes; ADM-07 the card, issue and leak checks with a human check; ADM-08 this original-suite comparison; ADM-09 the release.
+      </p>
     </>
   );
 }
 
-function FileList({ run }: { run: Run }) {
-  if (run.manifest === null) return null;
-  const root = run.rootExecutionId;
-  return (
-    <ul>
-      <li>
-        <a href={fileHref(root, "manifest.json", null)}>manifest.json</a>
-      </li>
-      {run.manifest.entries
-        .filter((entry) => entry.outcome === "published" || entry.outcome === "truncated")
-        .map((entry) => (
-          <li key={entry.path}>
-            <a href={fileHref(root, entry.path, entry.public_uri)}>{entry.path}</a>
-          </li>
-        ))}
-    </ul>
-  );
+/**
+ * Why a run that passed admission with a blind spot is still not validated, from the records:
+ * no release names it, and the one published release names another run. Null for any other run.
+ */
+export function notValidatedReason(results: Results, run: Run): string | null {
+  const decision = run.admission?.decision;
+  const release = results.release?.record;
+  if (release === undefined || release.run.root_execution_id === run.rootExecutionId) return null;
+  if (decision?.outcome_verdict !== "pass" || decision.comparison?.classification !== "blind_spot_demonstrated") return null;
+  return `Its admission also passed with a blind spot demonstrated, but no release names it: the one published release is for run ${release.run.root_execution_id}, whose issue passed the human check (ADM-07).`;
 }
 
 /** The release's provenance, from its record; the hashes of judge_job and files stay in release.json. */
@@ -233,7 +234,7 @@ function Provenance({ results }: { results: Results }) {
     return (
       <>
         <ReleaseProvenance release={release} run={run} />
-        <h3>Validated-task downloads</h3>
+        <h3>Release files</h3>
         <ul>
           {releaseFiles(results).map((file) => (
             <li key={file.path}>
@@ -241,9 +242,9 @@ function Provenance({ results }: { results: Results }) {
             </li>
           ))}
         </ul>
-        <p>The released run's files:</p>
-        <FileList run={run} />
-        <DiagnosticArchive archives={diagnosticArchives(results)} empty="No other published runs." />
+        <h3>The released run&apos;s files</h3>
+        <RunSummary run={run} />
+        <DiagnosticArchive results={results} archives={diagnosticArchives(results)} empty="No other published runs." />
       </>
     );
   }
@@ -267,34 +268,47 @@ function Provenance({ results }: { results: Results }) {
           <dd>Not requested</dd>
         </dl>
       )}
-      <p>Validated-task downloads: disabled, because there is no validated release.</p>
-      <DiagnosticArchive archives={run === null ? diagnosticArchives(results) : [run]} empty="No run has been published." />
+      <p>Release files: none, because there is no validated release.</p>
+      <DiagnosticArchive results={results} archives={run === null ? diagnosticArchives(results) : [run]} empty="No run has been published." />
     </>
   );
 }
 
-function DiagnosticArchive({ archives, empty }: { archives: Run[]; empty: string }) {
+function DiagnosticArchive({ results, archives, empty }: { results: Results; archives: Run[]; empty: string }) {
   return (
     <>
       <h3>Diagnostic archive (not validated)</h3>
       {archives.length === 0 ? <p>{empty}</p> : null}
-      {archives.map((archive) => (
-        <div key={archive.rootExecutionId}>
-          <p>
-            {archive.rootExecutionId} {runStatusText(archive).outcome.toLowerCase()}, not validated
-          </p>
-          <FileList run={archive} />
-        </div>
-      ))}
+      {archives.map((archive) => {
+        const reason = notValidatedReason(results, archive);
+        return (
+          <div key={archive.rootExecutionId}>
+            <p>
+              {archive.rootExecutionId} {runStatusText(archive).outcome.toLowerCase()}, not validated
+            </p>
+            {reason === null ? null : <p>{reason}</p>}
+            <RunSummary run={archive} />
+          </div>
+        );
+      })}
     </>
   );
+}
+
+/** What the funnel counts: only the runs in this results directory, never every attempt. */
+export function funnelScope(results: Results): string {
+  const unfinished = results.runs.some((run) => run.outcome === "failed" || run.outcome === "incomplete");
+  const scope = "It counts only the runs in this site's results repository and its public store.";
+  return unfinished
+    ? `${scope} Attempts that were not published here are not counted, so it is not a record of every attempt.`
+    : `${scope} Failed and incomplete factory attempts are not published here, so it is not a record of every attempt.`;
 }
 
 function FunnelAndLimitations({ results }: { results: Results }) {
   return (
     <>
       <table className="funnel">
-        <caption>Batch funnel, counted from the published records</caption>
+        <caption>Batch funnel, counted from the runs published for this site</caption>
         <tbody>
           {funnel(results).map((step) => (
             <tr key={step.label}>
@@ -304,6 +318,8 @@ function FunnelAndLimitations({ results }: { results: Results }) {
           ))}
         </tbody>
       </table>
+      <p className="funnel-note">{funnelScope(results)}</p>
+      {/* Verification replays: when judge replay outcomes are published (judge_replay roots), their "N verified" line goes here. */}
       <h3>Limitations</h3>
       <ul>
         <li>The planted bug is synthetic. It was introduced on purpose and is not a real Umami bug.</li>
@@ -327,6 +343,24 @@ function FunnelAndLimitations({ results }: { results: Results }) {
   );
 }
 
+export const CODE_REPOSITORY = "https://github.com/Erik-1259/random-bug-walk";
+export const RESULTS_REPOSITORY = "https://github.com/Erik-1259/random-bug-walk-results";
+export const UMAMI_REPOSITORY = "https://github.com/umami-software/umami";
+export const ADMISSION_RULES = `${CODE_REPOSITORY}/blob/main/docs/admission-rules.md`;
+
+/** What a blind-spot example is, for a reader who arrives cold, and where the code and records are. */
+function Intro() {
+  return (
+    <p className="intro">
+      A blind-spot example is a bug planted on purpose in a pinned copy of <a href={UMAMI_REPOSITORY}>Umami</a>, an open-source web analytics app, that Umami&apos;s own original API
+      test suite does not catch, while added checks do: the original suite passes on the clean, planted and fixed copies, and the added checks fail only on the planted copy. Every
+      result on this page is read from the published records in the <a href={RESULTS_REPOSITORY}>results repository</a>; the code that produced them is in the{" "}
+      <a href={CODE_REPOSITORY}>code repository</a>. The copies run on Vercel Sandbox, the spend ledger is a Neon Postgres database, run status and large published files are kept on Vercel Blob,
+      the issue writer&apos;s model runs on Nebius Token Factory, and the novelty search uses Tavily.
+    </p>
+  );
+}
+
 /** `judgeEnabled`: the judge routes are configured for this release (src/config.ts, judgeEnabled). */
 export function CasePage({ results, judgeEnabled = false }: { results: Results; judgeEnabled?: boolean }) {
   const run = results.caseRun;
@@ -334,6 +368,7 @@ export function CasePage({ results, judgeEnabled = false }: { results: Results; 
     <main>
       <h1>Random Bug Walk results</h1>
       <p className="headline">{results.release === null ? NO_VALIDATED_RESULT : VALIDATED_RESULT}</p>
+      <Intro />
       <Cell index={1} title="Symptom">
         <Symptom symptom={run?.symptom ?? null} validated={results.release !== null} />
       </Cell>
