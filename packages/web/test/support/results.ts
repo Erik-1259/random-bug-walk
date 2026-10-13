@@ -105,7 +105,11 @@ export const RACE_SYMPTOM_SOURCE = fileURLToPath(new URL("../../../../packages/s
 export interface SyntheticCaseOptions {
   /** The run's generated/symptom.json bytes; the development fixture's time-zone symptom unless set. */
   symptom?: Uint8Array;
-  /** Leaves the partial-fix and stub-fix copies out of the evidence, as a family without negative probes admits with 11 copies. */
+  /**
+   * Leaves the partial-fix and stub-fix copies out of the imported evidence, leaving 11 copies. Hand-made:
+   * the importer still requires the fixed 13-copy admission profile, and decide() then rates ADM-06 as a
+   * pass over no probe copies rather than as not applicable.
+   */
   withoutProbes?: boolean;
 }
 

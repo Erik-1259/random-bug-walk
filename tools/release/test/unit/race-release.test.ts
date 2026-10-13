@@ -1,7 +1,10 @@
-// A synthetic race-family release, made end to end as the release fixture script makes the
+// A time-zone release with a race symptom swapped in, made end to end as the release fixture script makes the
 // time-zone one: stage with a RaceSymptom, the real publisher, build with a local private store and
 // the publisher's release command; then the results site's reader reads the published directory.
 // The race symptom is @rbw/schema's synthetic fixture; the committed time-zone fixture is untouched.
+// Only the symptom is swapped: the run, kit, issue, recordings and judge job (jobContext still loads
+// the time-zone fixture, suite, vectors and probes) stay time-zone, so this checks the symptom's
+// staging and reading, not a race-family judge job.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
@@ -76,7 +79,7 @@ describe("stage with a race symptom", () => {
   });
 });
 
-describe("a race-family release, staged, published, built and read by the results site", () => {
+describe("a release carrying a race symptom, staged, published, built and read by the results site", () => {
   it("passes every release check, and the site reads the released run's RaceSymptom", async () => {
     const dir = tempDir();
     const staging = join(dir, "staging");

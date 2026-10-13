@@ -143,7 +143,7 @@ The judge job is stored with `@rbw/publisher/private-store`. Real mode builds th
 
 `fixtures/release/` is a synthetic results directory for the results site, made by `scripts/release-fixture.ts` from `fixtures/sources/` and the local runner's simulated kit: one completed factory root (`repository/runs/`), its release (`repository/releases/`), the store's status object (`store/`), its judge job in a local store (`private-store/`), and the inputs `checkRelease` reads (`inputs/`). The web's `readResults` reads it unchanged. Failed and incomplete roots are in `packages/web/fixtures`.
 
-That fixture is a time-zone case. `test/unit/race-release.test.ts` makes a race-family release the same way at test time, with `@rbw/schema`'s synthetic `RaceSymptom` fixture as the symptom: the release passes every check and the web's `readResults` reads the released run's `RaceSymptom`.
+That fixture is a time-zone case. `test/unit/race-release.test.ts` checks only that the symptom staging and the web's reading accept a race symptom: it makes a time-zone release (time-zone run, kit, issue and recordings) with `@rbw/schema`'s synthetic `RaceSymptom` swapped in as the symptom, the release passes every check, and the web's `readResults` reads the released run's `RaceSymptom`. It is not a race-family release. The judge-job construction (`jobContext` in `src/judge-job.ts`) still loads the time-zone fixture, its added suite, vectors and probes, and `checkRelease` does not compare the symptom's family with the judge job, so releasing a real race run needs the family selection listed in `docs/bug-generation-pipeline.md` first.
 
 ## What it does not do
 

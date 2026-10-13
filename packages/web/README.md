@@ -21,7 +21,7 @@ The case page opens with a short paragraph: what a blind-spot example is (a bug 
 5. provenance (release, run, policy, task revision, kit version, family, human check, calibration) and downloads: the release's files, and for each published run one line with its file count, total size, `manifest.json`, `report.md` and a link to its file index page (`/runs/<root>`), never the full file list;
 6. the batch funnel of factory runs, a sentence that it counts only the factory runs published for this site (so it is not a record of every attempt), the runs counted apart from it (below), the limitations and the method.
 
-The method and the rule-code note count the case's fresh copies from its admission evidence (for example 11 copies, with no partial-fix or stub-fix copy, for a family without negative probes). Without admission records they describe the admission policy's 13 copies.
+The method and the rule-code note count the case's fresh copies from its admission evidence, so a run whose evidence has fewer copies would show its own count. Today's admission profile always has 13 copies, including a partial-fix and a stub-fix copy; a probe-free count shows up only once the admission accepts a profile without them, which the tests anticipate with hand-made evidence. Without admission records they describe the admission policy's 13 copies.
 
 ### Judge replays and kit checks
 
