@@ -7,9 +7,12 @@ export const metadata: Metadata = {
 };
 
 // System fonts and no external assets. Status is always written in text; color only repeats it.
-// Narrow screens stack the suite matrix's six cells, each with its row and column label.
+// Narrow screens stack the suite matrix's six cells (and the replay's), each with its row and column
+// label. Long identifiers (hashes, UUIDs, image references, paths) wrap anywhere, so no page scrolls
+// sideways at 375 px; a wide table scrolls inside its own box.
 const STYLES = `
-body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; line-height: 1.5; margin: 0; color: #1a1a1a; background: #fff; }
+body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; line-height: 1.5; margin: 0; color: #1a1a1a; background: #fff; overflow-wrap: anywhere; }
+.table-scroll { overflow-x: auto; }
 header, main, footer { max-width: 60rem; margin: 0 auto; padding: 0 1rem; }
 nav a { margin-right: 1rem; }
 table { border-collapse: collapse; margin: 0.75rem 0; }
@@ -36,6 +39,11 @@ code, .hash { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 
   .matrix thead, .matrix tbody th { display: none; }
   .matrix td { margin-bottom: 0.5rem; }
   .matrix .cell-label { display: block; font-weight: 600; }
+  .files, .files tbody, .files tr, .files th, .files td { display: block; }
+  .files thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .files td[data-label]:not(:empty)::before { content: attr(data-label) ": "; font-weight: 600; }
+  .files tr { border: 1px solid #c8c8c8; margin-bottom: 0.5rem; padding: 0.25rem 0.5rem; }
+  .files th, .files td { border: 0; padding: 0; }
 }
 `;
 
