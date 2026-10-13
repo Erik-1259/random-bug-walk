@@ -3,6 +3,8 @@
 //   run   --job-kind <kit_check|observe|admission|judge_verify> --work <run dir> --image <tag|digest>
 //         --manifest <file> --terms <file> --kit-stage <dir> [--original-suite <file>] [--policy <file>]
 //         [--fix <dir>] [--name <job name>] [--backend sandbox|docker] [--sandbox-image <repository>@sha256:<digest>]
+//         [--trials <id,...>] [--ledger development|judge] [--ids <RunIds JSON>] [--project-policy <ProjectPolicy>]
+//         [--judge-fixed fixed|alternative_fix]
 //   proof --work <run dir> --image ... --manifest ... --terms ... --kit-stage ... [--original-suite <file>]
 //         [--policy <file>] [--backend sandbox|docker] [--sandbox-image ...]
 //   create-slot-key --slot-key <development|judge>
@@ -11,6 +13,10 @@
 //         --kit-stage <dir> --sandbox-image <repository>@sha256:<digest> [--original-suite <file>]
 //   run   --job-kind judge_verify --request-id <uuid> --prebuilt <local store dir | judge job index key>
 //         --release <release.json> --deadline-at <UTC time> [--backend sandbox] [--sandbox-image <kit image>] [--work <dir>]
+//
+// --ledger defaults to the judge allocation and slot for judge_verify and the development pool and
+// slot otherwise; solver grades pass --ledger development so they never take the judge slot.
+// --ids shares a root's IDs across its jobs; --project-policy needs --ids naming the policy's project.
 //
 // The prebuilt form is the judge controller, started by the judge route in its own sandbox. It
 // also reads BLOB_PRIVATE_STORE_ID and VERCEL_OIDC_TOKEN for the private store, unless --prebuilt
@@ -33,23 +39,24 @@ import { parseArgs } from "node:util";
 import { loadRateSheet } from "@rbw/envelope";
 import { CodeStateRefusal, InputsError, createDocker, createSandboxSdk, realClock } from "@rbw/local-runner";
 import { InvalidInput, LocalPrivateStore, privateStoreFromEnv } from "@rbw/publisher/private-store";
-import { CanonicalError, JOB_KIND_VALUES, RecordError, parseRecord } from "@rbw/schema";
+import { CanonicalError, RecordError, parseRecord } from "@rbw/schema";
 import { createTavilyClient } from "@rbw/search";
-import type { JobKind } from "@rbw/schema";
 import { KEY_VARIABLES, prepareAttempt, runAttempt } from "./attempt.ts";
 import { runJob } from "./controller.ts";
-import type { Backend, ControllerDeps, JobInputs } from "./controller.ts";
+import type { Backend, ControllerDeps } from "./controller.ts";
 import { isRequestId } from "./judge.ts";
 import { NO_DOCKER, runJudgeReplay } from "./judge-run.ts";
 import { LedgerError, databaseLedger, inMemoryLedger } from "./ledger.ts";
 import type { Ledger } from "./ledger.ts";
-import { DEVELOPMENT, JUDGE } from "./limits.ts";
 import { PROOF_DIR, ProofInputError, runProof } from "./proof.ts";
 import { RATE_SHEET_PATH } from "./rate-sheet.ts";
+import { JOB_OPTIONS, NOT_FOR_PREBUILT, RUN_OPTIONS, UsageError, common, path, required, runJobInputs } from "./run-options.ts";
+import type { Values } from "./run-options.ts";
 
 const USAGE = `usage:
   node src/cli.ts run --job-kind <kit_check|observe|admission|judge_verify> --work <run dir> --image <tag|digest> --manifest <file> --terms <file> --kit-stage <dir>
                       [--original-suite <file>] [--policy <file>] [--fix <dir>] [--name <job name>] [--backend sandbox|docker] [--sandbox-image <repository>@sha256:<digest>]
+                      [--trials <id,...>] [--ledger development|judge] [--ids <file>] [--project-policy <file>] [--judge-fixed fixed|alternative_fix]
   node src/cli.ts proof --work <run dir> --image <tag|digest> --manifest <file> --terms <file> --kit-stage <dir>
                         [--original-suite <file>] [--policy <file>] [--backend sandbox|docker] [--sandbox-image <repository>@sha256:<digest>]
   node src/cli.ts create-slot-key --slot-key <key>
@@ -64,61 +71,14 @@ const USAGE = `usage:
 const TAVILY_BASE_URL = "https://api.tavily.com";
 const SANDBOX_VARIABLES = ["DATABASE_URL", "VERCEL_TOKEN", "VERCEL_TEAM_ID", "VERCEL_PROJECT_ID"] as const;
 
-class UsageError extends Error {}
-
 function log(line: string): void {
   process.stderr.write(`controller: ${line}\n`);
-}
-
-type Values = Record<string, string | undefined>;
-
-function required(values: Values, name: string): string {
-  const value = values[name];
-  if (value === undefined || value === "") throw new UsageError(`--${name} is required`);
-  return value;
-}
-
-function path(values: Values, name: string): string | null {
-  const value = values[name];
-  return value === undefined || value === "" ? null : resolve(value);
 }
 
 function env(name: string): string {
   const value = process.env[name] ?? "";
   if (value === "") throw new UsageError(`${name} is not set`);
   return value;
-}
-
-const JOB_OPTIONS = {
-  work: { type: "string" },
-  image: { type: "string" },
-  manifest: { type: "string" },
-  terms: { type: "string" },
-  "kit-stage": { type: "string" },
-  "original-suite": { type: "string" },
-  policy: { type: "string" },
-  backend: { type: "string" },
-  "sandbox-image": { type: "string" },
-} as const;
-
-type CommonInputs = Omit<JobInputs, "kind" | "name" | "trials" | "alternativeDir" | "ledger">;
-
-function common(values: Values): CommonInputs {
-  const backend = values.backend ?? "sandbox";
-  if (backend !== "sandbox" && backend !== "docker") throw new UsageError("--backend must be sandbox or docker");
-  const sandboxImage = values["sandbox-image"] ?? null;
-  if ((backend === "sandbox") !== (sandboxImage !== null)) throw new UsageError("--sandbox-image is required with --backend sandbox, and only with it");
-  return {
-    work: resolve(required(values, "work")),
-    image: required(values, "image"),
-    manifest: resolve(required(values, "manifest")),
-    terms: resolve(required(values, "terms")),
-    policy: path(values, "policy"),
-    kitStage: resolve(required(values, "kit-stage")),
-    originalSuite: path(values, "original-suite"),
-    backend: backend satisfies Backend,
-    sandboxImage,
-  };
 }
 
 /** The ledger and the SDK for the backend: Sandbox needs DATABASE_URL and the Vercel credentials, Docker neither. */
@@ -162,29 +122,14 @@ async function judgeCommand(values: Values): Promise<number> {
 }
 
 async function runCommand(args: string[]): Promise<number> {
-  const { values } = parseArgs({
-    args,
-    strict: true,
-    allowPositionals: false,
-    options: { ...JOB_OPTIONS, "job-kind": { type: "string" }, fix: { type: "string" }, name: { type: "string" }, "request-id": { type: "string" }, prebuilt: { type: "string" }, release: { type: "string" }, "deadline-at": { type: "string" } },
-  });
-  if (values.prebuilt !== undefined) return judgeCommand(values);
-  const kind = required(values, "job-kind");
-  if (!(JOB_KIND_VALUES as readonly string[]).includes(kind)) throw new UsageError(`--job-kind must be one of ${JOB_KIND_VALUES.join(", ")}`);
-  const jobKind = kind as JobKind;
-  const inputs = common(values);
-  const label = { kit_check: "kit-check", observe: "observe", admission: "admission", judge_verify: "judge" }[jobKind];
-  const fix = path(values, "fix");
-  if (fix !== null && jobKind !== "judge_verify") throw new UsageError("--fix is only for --job-kind judge_verify");
-  const job: JobInputs = {
-    ...inputs,
-    kind: jobKind,
-    name: values.name ?? label,
-    trials: null,
-    ...(fix === null ? {} : { alternativeDir: fix }),
-    ledger: jobKind === "judge_verify" ? JUDGE : DEVELOPMENT,
-  };
-  const outcome = await withLedger(inputs.backend, (deps) => runJob(job, deps));
+  const { values } = parseArgs({ args, strict: true, allowPositionals: false, options: RUN_OPTIONS });
+  if (values.prebuilt !== undefined) {
+    const extra = NOT_FOR_PREBUILT.find((name) => values[name] !== undefined);
+    if (extra !== undefined) throw new UsageError(`--${extra} is not for the judge controller (--prebuilt)`);
+    return judgeCommand(values);
+  }
+  const job = runJobInputs(values);
+  const outcome = await withLedger(job.backend, (deps) => runJob(job, deps));
   for (const copy of outcome.summary.copies) {
     process.stdout.write(`trial=${copy.trial_id} status=${copy.status} launch=${copy.launch} ledger=${copy.ledger_state ?? "-"} reserved=${String(copy.reserved_microusd ?? "-")} settled=${String(copy.settled_microusd ?? "-")}\n`);
   }
