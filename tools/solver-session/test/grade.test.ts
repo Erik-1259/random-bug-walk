@@ -2,9 +2,9 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { applyPatchChecked, loadAlternativeFix } from "@rbw/local-runner";
+import { applyPatchChecked, loadAlternativeFix, newRunIds } from "@rbw/local-runner";
 import { sha256Hex } from "@rbw/schema";
-import { ALTERNATIVE_RECORD, GRADED_TRIAL, decide, gradeArgs, gradeAttempt, jobName, prepareGrade, readGrade } from "../src/grade.ts";
+import { ALTERNATIVE_RECORD, GRADED_TRIAL, decide, gradeArgs, gradeAttempt, jobName, prepareGrade, readGrade, recordAttempt, runGrade, writeGradeIds } from "../src/grade.ts";
 import type { GradeCommand, GradeNumber, GradeResult, GradeRoute, GradeTarget } from "../src/grade.ts";
 
 // Synthetic target file: the clean file passes a time zone, the planted one drops it.
@@ -17,12 +17,20 @@ function target(): GradeTarget {
   return { target_path: TARGET, clean_sha256: sha256Hex(Buffer.from(CLEAN)), planted: Buffer.from(PLANTED) };
 }
 
+const ATTEMPT = "a01";
+
 function temp(): string {
   return mkdtempSync(join(tmpdir(), "rbw-solver-grade-"));
 }
 
 function command(work: string): GradeCommand {
-  return { work, base: ["--image", "rbw-umami-kit:synthetic", "--manifest", "m.json", "--terms", "t.json", "--kit-stage", "stage"], sandboxImage: `synthetic/kit@sha256:${"ab".repeat(32)}` };
+  return {
+    work,
+    attempt: ATTEMPT,
+    base: ["--image", "rbw-umami-kit:synthetic", "--manifest", "m.json", "--terms", "t.json", "--kit-stage", "stage"],
+    sandboxImage: `synthetic/kit@sha256:${"ab".repeat(32)}`,
+    referenceFix: "case/alternative",
+  };
 }
 
 interface SummaryOptions {
@@ -33,6 +41,7 @@ interface SummaryOptions {
   placed?: string | null;
   trial?: Record<string, unknown> | null;
   refusal?: string | null;
+  reason?: string | null;
 }
 
 /** A controller summary as the controller writes it, for one grade of one attempt. */
@@ -41,8 +50,8 @@ function summary(grade: GradeNumber, route: GradeRoute, options: SummaryOptions 
   return {
     schema_version: 1,
     status: options.status ?? "complete",
-    reason: null,
-    job: { name: jobName(grade), kind: "judge_verify", trials: options.trials ?? [GRADED_TRIAL] },
+    reason: options.reason ?? null,
+    job: { name: jobName(grade, ATTEMPT), kind: "judge_verify", trials: options.trials ?? [GRADED_TRIAL] },
     controller: { backend: options.backend ?? (grade === 1 ? "docker" : "sandbox"), pool_key: options.slot ?? "development", allocation_key: null, slot_key: options.slot ?? "development" },
     copies: [{ trial_id: GRADED_TRIAL, copy: { placed_sha256: options.placed === undefined ? route.attempt_sha256 : options.placed } }],
     import: { refusal: options.refusal ?? null, trials: trial },
@@ -50,13 +59,13 @@ function summary(grade: GradeNumber, route: GradeRoute, options: SummaryOptions 
 }
 
 function writeSummary(work: string, grade: GradeNumber, value: unknown): void {
-  const dir = join(work, "jobs", jobName(grade));
+  const dir = join(work, "jobs", jobName(grade, ATTEMPT));
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, "summary.json"), typeof value === "string" ? value : JSON.stringify(value));
 }
 
 function result(grade: GradeNumber, state: GradeResult["state"]): GradeResult {
-  return { grade, job: jobName(grade), state, detail: null, summary_sha256: null, trial: null };
+  return { grade, job: jobName(grade, ATTEMPT), state, detail: null, summary_sha256: null, trial: null };
 }
 
 function option(args: readonly string[], name: string): string | undefined {
@@ -72,8 +81,27 @@ describe("the clean-equal route", () => {
     expect(existsSync(dir)).toBe(false);
     const args = gradeArgs(route, 2, command("work"));
     expect(option(args, "--judge-fixed")).toBe("fixed");
-    expect(args).not.toContain("--fix");
-    expect(gradeArgs(route, 2, { ...command("work"), referenceFix: "case/alternative" })).toEqual(expect.arrayContaining(["--fix", "case/alternative"]));
+    expect(option(args, "--fix")).toBe("case/alternative");
+  });
+
+  it("refuses a clean-equal grade without the case's committed fix, before any controller run", async () => {
+    const route = prepareGrade(Buffer.from(CLEAN), target(), join(temp(), "fix"));
+    const rest: Partial<GradeCommand> = { ...command("work") };
+    delete rest.referenceFix;
+    for (const missing of [rest as GradeCommand, { ...command("work"), referenceFix: "" }]) {
+      expect(() => gradeArgs(route, 1, missing)).toThrow("the case's committed alternative fix");
+      let ran = 0;
+      const work = temp();
+      await expect(
+        gradeAttempt(Buffer.from(CLEAN), target(), { ...missing, work }, {
+          runController: () => {
+            ran += 1;
+            return Promise.resolve(0);
+          },
+        }),
+      ).rejects.toThrow("the case's committed alternative fix");
+      expect(ran).toBe(0);
+    }
   });
 
   it("grades a clean-equal fix as solved when grade 2 places the clean bytes as fixed-01 and it passes", async () => {
@@ -150,11 +178,58 @@ describe("the grade commands", () => {
     }
     expect([option(first, "--backend"), option(first, "--sandbox-image")]).toEqual(["docker", undefined]);
     expect([option(second, "--backend"), option(second, "--sandbox-image")]).toEqual(["sandbox", command("w").sandboxImage]);
-    expect([option(first, "--name"), option(second, "--name")]).toEqual(["grade-1-docker", "grade-2-sandbox"]);
+    expect([option(first, "--name"), option(second, "--name")]).toEqual(["grade-1-docker-a01", "grade-2-sandbox-a01"]);
+  });
+
+  it("names each attempt's grades apart, so attempts under one root never share a call name or operation", () => {
+    const one = gradeArgs(route, 2, { ...command("w"), attempt: "a01" });
+    const two = gradeArgs(route, 2, { ...command("w"), attempt: "a02" });
+    expect(option(one, "--name")).not.toBe(option(two, "--name"));
+    for (const bad of ["", "A01", "a_01", "a--1", "-a1"]) expect(() => gradeArgs(route, 2, { ...command("w"), attempt: bad })).toThrow("the attempt label");
+  });
+
+  it("passes each grade its own ids file and the project policy, and keeps them out of the base options", () => {
+    const ids = { 1: "ids/grade-1.json", 2: "ids/grade-2.json" } as const;
+    const withIds = { ...command("w"), ids, projectPolicy: "policy.json" };
+    expect([option(gradeArgs(route, 1, withIds), "--ids"), option(gradeArgs(route, 2, withIds), "--ids")]).toEqual([ids[1], ids[2]]);
+    expect([option(gradeArgs(route, 1, withIds), "--project-policy"), option(gradeArgs(route, 2, withIds), "--project-policy")]).toEqual(["policy.json", "policy.json"]);
+    expect(gradeArgs(route, 1, command("w"))).not.toContain("--ids");
+    expect(() => gradeArgs(route, 1, { ...command("w"), ids: { 1: "same.json", 2: "same.json" } })).toThrow("its own ids file");
+    expect(() => gradeArgs(route, 1, { ...command("w"), projectPolicy: "policy.json" })).toThrow("needs the per-grade ids");
+  });
+
+  it("writes one ids file per grade under the attempt root, with a fresh alternative-fix execution each", () => {
+    const root = newRunIds(() => "11111111-1111-4111-8111-111111111111");
+    let next = 0;
+    const uuid = () => `22222222-2222-4222-8222-${String(next++).padStart(12, "0")}`;
+    const dir = temp();
+    const files = writeGradeIds(root, dir, ATTEMPT, uuid);
+    const [first, second] = [1, 2].map((grade) => JSON.parse(readFileSync(files[grade as GradeNumber], "utf8")) as typeof root);
+    if (first === undefined || second === undefined) throw new Error("synthetic: two ids files");
+    for (const ids of [first, second]) expect({ ...ids, executions: { ...ids.executions, "alternative-fix": "x" } }).toEqual({ ...root, executions: { ...root.executions, "alternative-fix": "x" } });
+    expect(new Set([root.executions["alternative-fix"], first.executions["alternative-fix"], second.executions["alternative-fix"]]).size).toBe(3);
+    expect(files[1]).not.toBe(files[2]);
+  });
+
+  it("runs one grade on its own, so the runner can run grade 2 serially after concurrent sessions", async () => {
+    const work = temp();
+    const route = prepareGrade(Buffer.from(ALTERNATIVE), target(), join(work, "fix"));
+    const calls: string[][] = [];
+    const graded = await runGrade(route, 2, command(work), {
+      runController: (args) => {
+        calls.push([...args]);
+        writeSummary(work, 2, summary(2, route));
+        return Promise.resolve(0);
+      },
+    });
+    expect(calls.map((args) => option(args, "--backend"))).toEqual(["sandbox"]);
+    expect(graded.state).toBe("passed");
+    expect(recordAttempt(target(), route, [graded], work)).toMatchObject({ solved: true });
+    expect(JSON.parse(readFileSync(join(work, "grade.json"), "utf8"))).toMatchObject({ solved: true, grades: [{ grade: 2, state: "passed" }] });
   });
 
   it("refuses base options that would override the ledger, the trials, the backend or the fix", () => {
-    for (const flag of ["--ledger", "--ledger=judge", "--trials", "--fix", "--judge-fixed", "--backend", "--prebuilt"]) {
+    for (const flag of ["--ledger", "--ledger=judge", "--trials", "--fix", "--judge-fixed", "--backend", "--prebuilt", "--ids", "--project-policy=p.json"]) {
       expect(() => gradeArgs(route, 2, { ...command("w"), base: [flag, "x"] })).toThrow("the grade sets it");
     }
   });
@@ -167,7 +242,7 @@ describe("reading a grade", () => {
   it("passes a complete fixed-01 with added verdict match and no original-suite failure", () => {
     const work = temp();
     writeSummary(work, 2, summary(2, route));
-    expect(readGrade(work, 2, route)).toMatchObject({ state: "passed", detail: null, trial: { status: "complete", added_verdict: "match", placed_sha256: route.attempt_sha256 } });
+    expect(readGrade(work, 2, route, ATTEMPT)).toMatchObject({ state: "passed", detail: null, trial: { status: "complete", added_verdict: "match", placed_sha256: route.attempt_sha256 } });
   });
 
   it("never passes a missing, malformed or tampered result", () => {
@@ -185,15 +260,19 @@ describe("reading a grade", () => {
       ["an original-suite failure", summary(2, route, { trial: { original_failed: 1, failed_test_ids: ["t1"] } }), "failed"],
       ["no original-suite test ran", summary(2, route, { trial: { original_executed: 0 } }), "failed"],
       ["the import refused", summary(2, route, { refusal: "evidence_mismatch" }), "failed"],
-      ["a job that did not complete", summary(2, route, { status: "needs_reconciliation" }), "failed"],
-      ["a refused job", summary(2, route, { status: "refused", placed: null, trial: null }), "failed"],
+      ["the import refused, as the controller ends it", summary(2, route, { status: "incomplete", refusal: "evidence_mismatch" }), "failed"],
+      ["a job left for reconciliation", summary(2, route, { status: "needs_reconciliation", reason: "ledger_unavailable" }), "infrastructure"],
+      ["a refused slot", summary(2, route, { status: "refused", reason: "slot_busy", placed: null, trial: null }), "infrastructure"],
+      ["a job that could not build", summary(2, route, { status: "refused", reason: "cannot_build", placed: null, trial: null }), "infrastructure"],
+      ["a refused reservation", summary(2, route, { status: "incomplete", reason: "reserve_operation_conflict", placed: null, trial: null }), "infrastructure"],
+      ["a copy error", summary(2, route, { status: "incomplete", reason: "copy_error", trial: null }), "infrastructure"],
     ];
     for (const [name, value, state] of cases) {
       const work = temp();
       writeSummary(work, 2, value);
-      expect({ name, state: readGrade(work, 2, route).state }).toEqual({ name, state });
+      expect({ name, state: readGrade(work, 2, route, ATTEMPT).state }).toEqual({ name, state });
     }
-    expect(readGrade(temp(), 2, route)).toMatchObject({ state: "missing" });
+    expect(readGrade(temp(), 2, route, ATTEMPT)).toMatchObject({ state: "missing" });
   });
 
   it("counts an attempt solved only on a passed grade 2, and records any disagreement", () => {
@@ -203,6 +282,13 @@ describe("reading a grade", () => {
     expect(decide(t, route, [result(1, "passed"), result(2, "invalid")])).toMatchObject({ solved: false, disagreement: true });
     expect(decide(t, route, [result(1, "failed"), result(2, "passed")])).toMatchObject({ solved: true, disagreement: true });
     expect(decide(t, route, [result(1, "passed")])).toMatchObject({ solved: false, disagreement: false });
+  });
+
+  it("reports an infrastructure grade apart: unsolved, rerunnable, and never a disagreement", () => {
+    const t = target();
+    expect(decide(t, route, [result(1, "passed"), result(2, "infrastructure")])).toMatchObject({ solved: false, infrastructure: true, disagreement: false });
+    expect(decide(t, route, [result(1, "infrastructure"), result(2, "failed")])).toMatchObject({ solved: false, infrastructure: false, disagreement: false });
+    expect(decide(t, route, [result(1, "passed"), result(2, "failed")])).toMatchObject({ infrastructure: false, disagreement: true });
   });
 
   it("does not trust the controller's exit code: a zero exit with no summary is unsolved", async () => {

@@ -14,18 +14,27 @@
 // which is authoritative. Solved means grade 2's summary is complete, names the development slot,
 // placed the attempt's exact bytes as fixed-01, and imported fixed-01 as complete with its added
 // verdict `match` and no original-suite failure. A missing, unreadable, refused or tampered result
-// is never solved. A disagreement between the two grades is recorded for publication.
+// is never solved. A job that stopped before a verdict (a slot or reservation refusal, a launch or
+// copy error, a build refusal, a ledger outage) is an `infrastructure` grade: unsolved, reported apart
+// from a wrong fix and rerunnable (R8). A disagreement between two verdicts is recorded for publication.
+//
+// Attempts graded under one root (the design's shared root and policy) stay apart in the ledger: each
+// grade's job name carries the attempt label, so its call name and operation ID are its own, and each
+// grade gets its own ids file (writeGradeIds) with the root's IDs and a fresh alternative-fix
+// execution. Grade 1 and grade 2 are separate calls (runGrade), so a runner can run grade 1 as each
+// session ends and grade 2 serially, since every grade 2 takes the one development slot.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { structuredPatch } from "diff";
 import { CodeStateRefusal, applyPatchChecked } from "@rbw/local-runner";
+import type { RunIds } from "@rbw/local-runner";
 import { sha256Hex } from "@rbw/schema";
 
 export const GRADED_TRIAL = "fixed-01";
 export const ALTERNATIVE_RECORD = "alternative-fix.json";
 export const ALTERNATIVE_PATCH = "alternative-fix.patch";
 /** The controller options the grade sets itself; the caller's base options may not repeat them. */
-export const RESERVED_OPTIONS = ["--job-kind", "--ledger", "--trials", "--backend", "--sandbox-image", "--name", "--work", "--fix", "--judge-fixed", "--prebuilt"] as const;
+export const RESERVED_OPTIONS = ["--job-kind", "--ledger", "--trials", "--backend", "--sandbox-image", "--name", "--work", "--fix", "--judge-fixed", "--prebuilt", "--ids", "--project-policy"] as const;
 
 /** The case's target file: its path, the clean file's hash, and the planted file's bytes. */
 export interface GradeTarget {
@@ -89,20 +98,48 @@ export type GradeNumber = 1 | 2;
 export interface GradeCommand {
   /** The run directory both grades share; each grade is its own job in it. */
   work: string;
+  /**
+   * The attempt's label (lowercase letters, digits and single hyphens), unique among the attempts
+   * graded under one root. It names the grade jobs, and so their call names and operation IDs.
+   */
+  attempt: string;
   /** The case's controller options: --image, --manifest, --terms, --kit-stage, --original-suite, and any the case needs. */
   base: readonly string[];
   /** Grade 2's kit image in VCR, pinned by digest. */
   sandboxImage: string;
   /**
-   * For the clean-equal route: the case's committed alternative fix (`--fix`), which the controller
-   * derives (and refuses if invalid) even when fixed-01 grades the reference fix. Absent, the local
-   * runner's default, which only fits the time-zone case.
+   * The case's committed alternative fix (`--fix`), used by the clean-equal route: the controller
+   * derives it (and refuses the job if it does not apply) even when fixed-01 grades the reference fix,
+   * and the local runner's default only fits the time-zone case. Required, so a race-case exact revert
+   * is never graded against the time-zone fix.
    */
-  referenceFix?: string;
+  referenceFix: string;
+  /** Each grade's ids file (`--ids`), written by writeGradeIds; absent, each grade mints its own root. */
+  ids?: Readonly<Record<GradeNumber, string>>;
+  /** The run's ProjectPolicy record (`--project-policy`); it needs `ids` naming its project. */
+  projectPolicy?: string;
 }
 
-export function jobName(grade: GradeNumber): string {
-  return grade === 1 ? "grade-1-docker" : "grade-2-sandbox";
+const ATTEMPT_LABEL = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
+export function jobName(grade: GradeNumber, attempt: string): string {
+  if (!ATTEMPT_LABEL.test(attempt)) throw new Error("the attempt label must be lowercase letters, digits and single hyphens");
+  return `${grade === 1 ? "grade-1-docker" : "grade-2-sandbox"}-${attempt}`;
+}
+
+/**
+ * Writes one ids file per grade into `dir`: the root's IDs with a fresh alternative-fix execution, so
+ * both grades of every attempt share the root and policy but record under their own execution.
+ */
+export function writeGradeIds(root: RunIds, dir: string, attempt: string, uuid: () => string): Record<GradeNumber, string> {
+  mkdirSync(dir, { recursive: true });
+  const file = (grade: GradeNumber): string => {
+    const path = join(dir, `${jobName(grade, attempt)}.ids.json`);
+    const ids: RunIds = { ...root, executions: { ...root.executions, "alternative-fix": uuid() } };
+    writeFileSync(path, `${JSON.stringify(ids, null, 2)}\n`);
+    return path;
+  };
+  return { 1: file(1), 2: file(2) };
 }
 
 /** The controller's `run` arguments for one grade: judge_verify, fixed-01 only, on the development ledger. */
@@ -110,15 +147,22 @@ export function gradeArgs(route: GradeRoute, grade: GradeNumber, command: GradeC
   if (route.route === "not_graded") throw new Error("an attempt that is not graded has no grade command");
   const reserved = command.base.find((arg) => (RESERVED_OPTIONS as readonly string[]).includes(arg.split("=")[0] ?? ""));
   if (reserved !== undefined) throw new Error(`the base options may not set ${reserved}; the grade sets it`);
+  if (route.route === "clean_equal" && (typeof command.referenceFix !== "string" || command.referenceFix === "")) {
+    throw new Error("a clean-equal grade needs the case's committed alternative fix (referenceFix); the default only fits the time-zone case");
+  }
+  if (command.ids !== undefined && command.ids[1] === command.ids[2]) throw new Error("each grade needs its own ids file");
+  if (command.projectPolicy !== undefined && command.ids === undefined) throw new Error("the project policy needs the per-grade ids naming its project");
+  const ids = [...(command.ids === undefined ? [] : ["--ids", command.ids[grade]]), ...(command.projectPolicy === undefined ? [] : ["--project-policy", command.projectPolicy])];
   const backend = grade === 1 ? ["--backend", "docker"] : ["--backend", "sandbox", "--sandbox-image", command.sandboxImage];
   const fix =
     route.route === "clean_equal"
-      ? ["--judge-fixed", "fixed", ...(command.referenceFix === undefined ? [] : ["--fix", command.referenceFix])]
+      ? ["--judge-fixed", "fixed", "--fix", command.referenceFix]
       : ["--judge-fixed", "alternative_fix", "--fix", route.fix_dir];
-  return ["run", "--job-kind", "judge_verify", "--ledger", "development", "--trials", GRADED_TRIAL, "--name", jobName(grade), "--work", command.work, ...backend, ...fix, ...command.base];
+  return ["run", "--job-kind", "judge_verify", "--ledger", "development", "--trials", GRADED_TRIAL, "--name", jobName(grade, command.attempt), "--work", command.work, ...backend, ...fix, ...ids, ...command.base];
 }
 
-export type GradeState = "passed" | "failed" | "missing" | "invalid";
+/** `infrastructure`: the job stopped before a verdict on the attempt; unsolved, reported apart, rerunnable. */
+export type GradeState = "passed" | "failed" | "missing" | "invalid" | "infrastructure";
 
 export interface GradeResult {
   grade: GradeNumber;
@@ -150,8 +194,8 @@ function num(value: unknown): number | null {
  * attempt. Passed only when every check holds; a missing or malformed summary is `missing` or
  * `invalid`, and a summary for other bytes, another trial set or the judge slot is `invalid`.
  */
-export function readGrade(work: string, grade: GradeNumber, route: GradeRoute): GradeResult {
-  const job = jobName(grade);
+export function readGrade(work: string, grade: GradeNumber, route: GradeRoute, attempt: string): GradeResult {
+  const job = jobName(grade, attempt);
   const result = (state: GradeState, detail: string | null, summarySha: string | null = null, trial: GradeResult["trial"] = null): GradeResult => ({ grade, job, state, detail, summary_sha256: summarySha, trial });
   const file = join(work, "jobs", job, "summary.json");
   if (!existsSync(file)) return result("missing", "no controller summary");
@@ -182,7 +226,14 @@ export function readGrade(work: string, grade: GradeNumber, route: GradeRoute): 
     original_failed: num(field(trialRecord, "original_failed")),
     placed_sha256: str(field(field(copy, "copy"), "placed_sha256")),
   };
-  if (field(summary, "status") !== "complete") return result("failed", `the grade job ended ${String(str(field(summary, "status")))} (${String(str(field(summary, "reason")))})`, summarySha, trial);
+  // A job that did not complete stopped on the slot, the ledger, the build, the launch or the copy,
+  // before any verdict on the attempt, except an import refusal of the copy's records (the job then
+  // ends incomplete with no stop reason): records the attempt's code may have touched are a failure.
+  const status = field(summary, "status");
+  if (status !== "complete" && field(summary, "reason") === null && typeof field(field(summary, "import"), "refusal") === "string") {
+    return result("failed", "the record set was refused at import", summarySha, trial);
+  }
+  if (status !== "complete") return result("infrastructure", `the grade job ended ${String(str(field(summary, "status")))} (${String(str(field(summary, "reason")))})`, summarySha, trial);
   if (trial.placed_sha256 !== route.attempt_sha256) return result("invalid", "the graded copy did not place the attempt's bytes", summarySha, trial);
   if (field(field(summary, "import"), "refusal") !== null) return result("failed", "the record set was refused at import", summarySha, trial);
   if (trialRecord === undefined) return result("failed", `no imported result for ${GRADED_TRIAL}`, summarySha, trial);
@@ -201,7 +252,9 @@ export interface AttemptGrade {
   grades: GradeResult[];
   /** Grade 2 (Sandbox) passed. */
   solved: boolean;
-  /** Both grades ran and reached different states; published with the attempt. */
+  /** Grade 2 stopped before a verdict: unsolved, reported apart from a wrong fix, and rerunnable. */
+  infrastructure: boolean;
+  /** Both grades reached a state other than infrastructure and the states differ; published with the attempt. */
   disagreement: boolean;
 }
 
@@ -217,7 +270,8 @@ export function decide(target: GradeTarget, route: GradeRoute, grades: readonly 
     not_graded: route.route === "not_graded" ? { reason: route.reason, detail: route.detail } : null,
     grades: [...grades],
     solved: route.route !== "not_graded" && second?.state === "passed",
-    disagreement: first !== undefined && second !== undefined && first.state !== second.state,
+    infrastructure: second?.state === "infrastructure",
+    disagreement: first !== undefined && second !== undefined && first.state !== "infrastructure" && second.state !== "infrastructure" && first.state !== second.state,
   };
 }
 
@@ -226,18 +280,32 @@ export interface GradeDeps {
   runController: (args: readonly string[]) => Promise<number>;
 }
 
-/** Grades one attempt: route, grade 1 on Docker, grade 2 on Sandbox, then `<work>/grade.json`. */
+/** Runs one grade of a prepared attempt and reads its summary. */
+export async function runGrade(route: GradeRoute, grade: GradeNumber, command: GradeCommand, deps: GradeDeps): Promise<GradeResult> {
+  await deps.runController(gradeArgs(route, grade, command));
+  return readGrade(command.work, grade, route, command.attempt);
+}
+
+/** Decides the attempt from the grades that ran and writes `<work>/grade.json`. */
+export function recordAttempt(target: GradeTarget, route: GradeRoute, grades: readonly GradeResult[], work: string): AttemptGrade {
+  const decided = decide(target, route, grades);
+  mkdirSync(work, { recursive: true });
+  writeFileSync(join(work, "grade.json"), `${JSON.stringify(decided, null, 2)}\n`);
+  return decided;
+}
+
+/**
+ * Grades one attempt serially: route, grade 1 on Docker, grade 2 on Sandbox, then `<work>/grade.json`.
+ * A runner with concurrent sessions calls prepareGrade, runGrade and recordAttempt itself instead, so
+ * that grade 2 runs serially. Both commands are checked before any controller run.
+ */
 export async function gradeAttempt(attempt: Uint8Array, target: GradeTarget, command: GradeCommand, deps: GradeDeps): Promise<AttemptGrade> {
   const route = prepareGrade(attempt, target, join(command.work, "fix"));
   const grades: GradeResult[] = [];
   if (route.route !== "not_graded") {
-    for (const grade of [1, 2] as const) {
-      await deps.runController(gradeArgs(route, grade, command));
-      grades.push(readGrade(command.work, grade, route));
-    }
+    gradeArgs(route, 1, command);
+    gradeArgs(route, 2, command);
+    for (const grade of [1, 2] as const) grades.push(await runGrade(route, grade, command, deps));
   }
-  const decided = decide(target, route, grades);
-  mkdirSync(command.work, { recursive: true });
-  writeFileSync(join(command.work, "grade.json"), `${JSON.stringify(decided, null, 2)}\n`);
-  return decided;
+  return recordAttempt(target, route, grades, command.work);
 }
