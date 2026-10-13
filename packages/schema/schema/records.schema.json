@@ -993,7 +993,7 @@
       }
     },
     "ObservedSymptom": {
-      "description": "The only input the issue writer accepts. It allows no other field, so it holds no stack trace, source path, function name, test or assertion title, check ID, patch, SQL or repair suggestion.",
+      "description": "The issue writer's input for the time-zone family (RaceSymptom is the race family's). It allows no other field, so it holds no stack trace, source path, function name, test or assertion title, check ID, patch, SQL or repair suggestion.",
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -1022,6 +1022,73 @@
         "expected": { "type": "array", "items": { "$ref": "#/$defs/BucketCount" } },
         "observed": { "type": "array", "items": { "$ref": "#/$defs/BucketCount" } },
         "follow_up_examples": { "type": "array", "items": { "$ref": "#/$defs/FollowUpExample" } },
+        "doc_excerpts": { "type": "array", "items": { "$ref": "#/$defs/DocExcerpt" } }
+      }
+    },
+    "RaceAttemptOutcome": {
+      "description": "accepted: HTTP 200 and the app issued a session; refused: the app answered that the code is not valid.",
+      "enum": ["accepted", "refused"]
+    },
+    "RaceAttempt": {
+      "description": "One request as the user's client saw it. Times are whole milliseconds from the first request of its example; settled_ms is not before sent_ms (checked in code). An accepted request has HTTP 200 and no error code; a refused one has an error code.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["label", "sent_ms", "settled_ms", "http_status", "outcome", "error_code"],
+      "properties": {
+        "label": { "type": "string", "minLength": 1 },
+        "sent_ms": { "$ref": "#/$defs/NonNegativeInteger" },
+        "settled_ms": { "$ref": "#/$defs/NonNegativeInteger" },
+        "http_status": { "type": "integer", "minimum": 100, "maximum": 599 },
+        "outcome": { "$ref": "#/$defs/RaceAttemptOutcome" },
+        "error_code": { "anyOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }] }
+      },
+      "allOf": [
+        {
+          "if": { "type": "object", "properties": { "outcome": { "const": "accepted" } } },
+          "then": { "type": "object", "properties": { "http_status": { "const": 200 }, "error_code": { "type": "null" } } },
+          "else": { "type": "object", "properties": { "error_code": { "type": "string" } } }
+        }
+      ]
+    },
+    "AcceptanceCounts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["accepted", "refused"],
+      "properties": {
+        "accepted": { "$ref": "#/$defs/NonNegativeInteger" },
+        "refused": { "$ref": "#/$defs/NonNegativeInteger" }
+      }
+    },
+    "RaceSymptom": {
+      "description": "The issue writer's input for the race family: two requests that spend the same one-time code at the same time, the single acceptance expected and the acceptances observed, the sequential reuse for contrast, and user-documentation passages. Like ObservedSymptom it allows no other field. observed counts the outcomes of concurrent_attempts, and overlap_ms is the earlier settle minus the later send (both checked in code).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "symptom_kind",
+        "user_action",
+        "request",
+        "locale",
+        "fixture_description",
+        "concurrent_attempts",
+        "overlap_ms",
+        "expected",
+        "observed",
+        "sequential_attempts",
+        "doc_excerpts"
+      ],
+      "properties": {
+        "schema_version": { "$ref": "#/$defs/SchemaVersion" },
+        "symptom_kind": { "const": "concurrent_double_acceptance" },
+        "user_action": { "type": "string", "minLength": 1 },
+        "request": { "$ref": "#/$defs/SymptomRequest" },
+        "locale": { "anyOf": [{ "$ref": "#/$defs/LocaleTag" }, { "type": "null" }] },
+        "fixture_description": { "type": "string", "minLength": 1 },
+        "concurrent_attempts": { "type": "array", "minItems": 2, "maxItems": 2, "items": { "$ref": "#/$defs/RaceAttempt" } },
+        "overlap_ms": { "$ref": "#/$defs/PositiveInteger" },
+        "expected": { "$ref": "#/$defs/AcceptanceCounts" },
+        "observed": { "$ref": "#/$defs/AcceptanceCounts" },
+        "sequential_attempts": { "type": "array", "items": { "$ref": "#/$defs/RaceAttempt" } },
         "doc_excerpts": { "type": "array", "items": { "$ref": "#/$defs/DocExcerpt" } }
       }
     },

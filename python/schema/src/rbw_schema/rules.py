@@ -28,6 +28,7 @@ from rbw_schema.generated import (
     ObservedSymptom,
     ProjectPolicy,
     PublicationRecord,
+    RaceSymptom,
     RootRun,
     RunManifest,
     StagingOmissions,
@@ -52,6 +53,25 @@ def _strictly_sorted(values: Sequence[str]) -> bool:
 
 def _has_duplicates(values: Sequence[str]) -> bool:
     return len(set(values)) != len(values)
+
+
+def _race_symptom_rules(symptom: RaceSymptom) -> list[str]:
+    """A race symptom's observed counts, request times and overlap follow from its attempts."""
+    errors: list[str] = []
+    attempts = symptom["concurrent_attempts"]
+    accepted = sum(1 for attempt in attempts if attempt["outcome"] == "accepted")
+    refused = sum(1 for attempt in attempts if attempt["outcome"] == "refused")
+    observed = symptom["observed"]
+    if observed["accepted"] != accepted or observed["refused"] != refused:
+        errors.append("race_symptom:observed_counts")
+    every = [*attempts, *symptom["sequential_attempts"]]
+    if any(attempt["settled_ms"] < attempt["sent_ms"] for attempt in every):
+        errors.append("race_symptom:attempt_times")
+    settled = min(attempt["settled_ms"] for attempt in attempts)
+    overlap = settled - max(attempt["sent_ms"] for attempt in attempts)
+    if symptom["overlap_ms"] != overlap:
+        errors.append("race_symptom:overlap")
+    return errors
 
 
 def _registry_rules(registry: FamilyRegistry) -> list[str]:
@@ -264,6 +284,8 @@ def check_rules(type_name: str, value: JsonValue, context: RecordContext) -> lis
             events = cast(ObservedSymptom, value)["events"]
             if any(utc_seconds(e["utc_instant"]) != e["timestamp_seconds"] for e in events):
                 errors.append("symptom:event_instant")
+        case "RaceSymptom":
+            errors.extend(_race_symptom_rules(cast(RaceSymptom, value)))
         case "MutationIdentity":
             errors.extend(_mutation_rules(cast(MutationIdentity, value)))
         case _:

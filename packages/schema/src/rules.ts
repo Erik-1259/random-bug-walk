@@ -10,6 +10,8 @@ import type {
   ObservedSymptom,
   ProjectPolicy,
   PublicationRecord,
+  RaceAttempt,
+  RaceSymptom,
   RootRun,
   RunManifest,
   StagingOmissions,
@@ -34,6 +36,18 @@ function strictlySorted(values: readonly string[]): boolean {
 
 function hasDuplicates(values: readonly string[]): boolean {
   return new Set(values).size !== values.length;
+}
+
+/** A race symptom's observed counts, request times and overlap follow from its attempts. */
+function raceSymptomRules(symptom: RaceSymptom): string[] {
+  const errors: string[] = [];
+  const attempts = symptom.concurrent_attempts;
+  const count = (outcome: RaceAttempt["outcome"]): number => attempts.filter((attempt) => attempt.outcome === outcome).length;
+  if (symptom.observed.accepted !== count("accepted") || symptom.observed.refused !== count("refused")) errors.push("race_symptom:observed_counts");
+  if ([...attempts, ...symptom.sequential_attempts].some((attempt) => attempt.settled_ms < attempt.sent_ms)) errors.push("race_symptom:attempt_times");
+  const overlap = Math.min(...attempts.map((attempt) => attempt.settled_ms)) - Math.max(...attempts.map((attempt) => attempt.sent_ms));
+  if (symptom.overlap_ms !== overlap) errors.push("race_symptom:overlap");
+  return errors;
 }
 
 function registryRules(registry: FamilyRegistry): string[] {
@@ -200,6 +214,9 @@ export function checkRules(type: DefName, value: unknown, context: Context): str
     }
     case "ObservedSymptom":
       if ((value as ObservedSymptom).events.some((event) => utcSeconds(event.utc_instant) !== event.timestamp_seconds)) errors.push("symptom:event_instant");
+      break;
+    case "RaceSymptom":
+      errors.push(...raceSymptomRules(value as RaceSymptom));
       break;
     case "MutationIdentity":
       errors.push(...mutationRules(value as MutationIdentity));

@@ -1,6 +1,6 @@
 // Derived from packages/schema/schema/records.schema.json; regenerate with pnpm --filter @rbw/schema run generate.
 
-export const DEF_NAMES = ["SafeInteger", "NonNegativeInteger", "PositiveInteger", "SchemaVersion", "Uuid", "Sha256", "ImageDigest", "GitCommitId", "UtcTime", "DurationMs", "ByteCount", "TokenCount", "MicroUsd", "StageName", "TrialId", "Slug", "ArtifactKind", "RelativePath", "MediaType", "HttpsRepositoryUrl", "HttpsBaseUri", "HttpsObjectUri", "PolicyPurpose", "Visibility", "RootRunKind", "RootRunStatus", "RootRunOutcome", "PublicationStatus", "FailureReason", "OmissionOutcome", "EntryOutcome", "OmissionReason", "RedactionCategory", "Exposure", "ProjectPolicy", "SourceFix", "Family", "FamilyRegistry", "HeldOutIdentityList", "RootRun", "ArtifactEntry", "ArtifactManifest", "PublishedArtifact", "Omission", "PublicationRecord", "Redaction", "ExecutionLink", "RunManifestEntry", "RunManifest", "PublicRunStatus", "PathOmissionDeclaration", "WithheldDeclaration", "RedactionDeclaration", "StagingOmissions", "JobKind", "CodeState", "ExpectedOutcome", "ObservedOutcome", "TrialStatus", "TrialReason", "AssertionFailureCode", "CheckId", "TestId", "OperationKind", "CallName", "FileMode", "TaskRevisionKind", "TimeZoneName", "LocaleTag", "EndpointPath", "JobRequest", "ExpectedCheck", "ExpectedTrial", "ExpectedTrials", "CheckObservation", "TrialObservations", "TrialResult", "QueryParameters", "SymptomRequest", "SymptomEvent", "BucketCount", "FollowUpExample", "DocExcerpt", "ObservedSymptom", "OperationIdentity", "MutationChange", "MutationIdentity", "TaskRevisionIdentity", "ImageReference", "ReleaseRevision", "ReleaseImages", "ReleaseFamily", "ReleaseRun", "ReleaseAdmission", "ReleaseFile", "ReleaseApproval", "ReleaseJudgeJob", "Release"] as const;
+export const DEF_NAMES = ["SafeInteger", "NonNegativeInteger", "PositiveInteger", "SchemaVersion", "Uuid", "Sha256", "ImageDigest", "GitCommitId", "UtcTime", "DurationMs", "ByteCount", "TokenCount", "MicroUsd", "StageName", "TrialId", "Slug", "ArtifactKind", "RelativePath", "MediaType", "HttpsRepositoryUrl", "HttpsBaseUri", "HttpsObjectUri", "PolicyPurpose", "Visibility", "RootRunKind", "RootRunStatus", "RootRunOutcome", "PublicationStatus", "FailureReason", "OmissionOutcome", "EntryOutcome", "OmissionReason", "RedactionCategory", "Exposure", "ProjectPolicy", "SourceFix", "Family", "FamilyRegistry", "HeldOutIdentityList", "RootRun", "ArtifactEntry", "ArtifactManifest", "PublishedArtifact", "Omission", "PublicationRecord", "Redaction", "ExecutionLink", "RunManifestEntry", "RunManifest", "PublicRunStatus", "PathOmissionDeclaration", "WithheldDeclaration", "RedactionDeclaration", "StagingOmissions", "JobKind", "CodeState", "ExpectedOutcome", "ObservedOutcome", "TrialStatus", "TrialReason", "AssertionFailureCode", "CheckId", "TestId", "OperationKind", "CallName", "FileMode", "TaskRevisionKind", "TimeZoneName", "LocaleTag", "EndpointPath", "JobRequest", "ExpectedCheck", "ExpectedTrial", "ExpectedTrials", "CheckObservation", "TrialObservations", "TrialResult", "QueryParameters", "SymptomRequest", "SymptomEvent", "BucketCount", "FollowUpExample", "DocExcerpt", "ObservedSymptom", "RaceAttemptOutcome", "RaceAttempt", "AcceptanceCounts", "RaceSymptom", "OperationIdentity", "MutationChange", "MutationIdentity", "TaskRevisionIdentity", "ImageReference", "ReleaseRevision", "ReleaseImages", "ReleaseFamily", "ReleaseRun", "ReleaseAdmission", "ReleaseFile", "ReleaseApproval", "ReleaseJudgeJob", "Release"] as const;
 export type DefName = (typeof DEF_NAMES)[number];
 
 export type SafeInteger = number;
@@ -418,6 +418,37 @@ export interface ObservedSymptom {
   doc_excerpts: DocExcerpt[];
 }
 
+export type RaceAttemptOutcome = "accepted" | "refused";
+
+export interface RaceAttempt {
+  label: string;
+  sent_ms: NonNegativeInteger;
+  settled_ms: NonNegativeInteger;
+  http_status: number;
+  outcome: RaceAttemptOutcome;
+  error_code: string | null;
+}
+
+export interface AcceptanceCounts {
+  accepted: NonNegativeInteger;
+  refused: NonNegativeInteger;
+}
+
+export interface RaceSymptom {
+  schema_version: SchemaVersion;
+  symptom_kind: "concurrent_double_acceptance";
+  user_action: string;
+  request: SymptomRequest;
+  locale: LocaleTag | null;
+  fixture_description: string;
+  concurrent_attempts: RaceAttempt[];
+  overlap_ms: PositiveInteger;
+  expected: AcceptanceCounts;
+  observed: AcceptanceCounts;
+  sequential_attempts: RaceAttempt[];
+  doc_excerpts: DocExcerpt[];
+}
+
 export interface OperationIdentity {
   schema_version: SchemaVersion;
   project_id: Uuid;
@@ -613,6 +644,10 @@ export interface DefTypes {
   FollowUpExample: FollowUpExample;
   DocExcerpt: DocExcerpt;
   ObservedSymptom: ObservedSymptom;
+  RaceAttemptOutcome: RaceAttemptOutcome;
+  RaceAttempt: RaceAttempt;
+  AcceptanceCounts: AcceptanceCounts;
+  RaceSymptom: RaceSymptom;
   OperationIdentity: OperationIdentity;
   MutationChange: MutationChange;
   MutationIdentity: MutationIdentity;
