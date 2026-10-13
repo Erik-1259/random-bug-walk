@@ -181,6 +181,24 @@ describe("find sites in one file", () => {
     });
   });
 
+  it("counts identity from the read when a destructured field reaches the write as shorthand", () => {
+    const code = [
+      "export async function claimSeat(seatId: string) {",
+      "  const { id } = await db.client.seat.findFirst({ where: { id: seatId, taken: false } });",
+      "  await db.client.seat.update({ where: { id, taken: false }, data: { taken: true } });",
+      "}",
+      "",
+    ].join("\n");
+    const [site, ...rest] = findSitesInSource(CLASSES, "lib/seats.ts", code);
+    expect(rest).toEqual([]);
+    expect(site?.matched).toBe("taken: false");
+    expect(site?.confidence).toEqual({
+      score: 0.7,
+      level: "medium",
+      signals: { read_before_write: true, read_checks_guard: true, write_result_used: false, identity_from_read: true, await_between: false },
+    });
+  });
+
   it("scores a write whose only read of the model comes later as low", () => {
     const [site, ...rest] = sitesIn("lib/late-read.ts");
     expect(rest).toEqual([]);

@@ -193,7 +193,12 @@ function guardedWriteSignals(guard: SgNode): Signals {
     where
       ?.children()
       .filter((child) => child.id() !== guard.id() && (kindOf(child) === "pair" || kindOf(child) === "shorthand_property_identifier"))
-      .some((child) => readNames.some((name) => child.findAll({ rule: { kind: "identifier", regex: `^${name.replace(/\$/g, "\\$")}$` } }).length > 0)) ?? false;
+      .some((child) =>
+        // A shorthand entry (`where: { id, ... }`) is its own name; a pair holds the name as a descendant.
+        kindOf(child) === "shorthand_property_identifier"
+          ? readNames.includes(child.text())
+          : readNames.some((name) => child.findAll({ rule: { kind: "identifier", regex: `^${name.replace(/\$/g, "\\$")}$` } }).length > 0),
+      ) ?? false;
   const awaitBetween =
     read !== undefined &&
     fn.findAll({ rule: { kind: "await_expression" } }).some((node) => before(read, node) && before(node, call));
