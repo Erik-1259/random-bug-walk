@@ -6,7 +6,7 @@ Asks one model to write (a) a pattern card from public source-fix information an
 - Code checks every issue before any person sees it: its structure, every number in it, and a scan for internal identifiers.
 - Nothing in this package marks an issue approved. The best outcome is `ready_for_review`.
 
-The package makes no live call in its tests or in public CI. A replay `fetch` answers from committed recordings. The live recording, made by the owner with the `record` command in a private workflow, is **planned**; every committed recording today is labelled `synthetic`.
+The package makes no live call in its tests or in public CI. A replay `fetch` answers from committed recordings. Live calls run only outside public CI: through the `record` command, and through the controller's candidate attempt (`tools/controller`). A release publishes its root's card and issue recordings to the results repository (`tools/release`). Every recording committed in this repository is labeled `synthetic`.
 
 ## Contents
 
@@ -25,7 +25,7 @@ The package makes no live call in its tests or in public CI. A replay `fetch` an
 - [Recordings and the replay fetch](#recordings-and-the-replay-fetch)
 - [The record command](#the-record-command)
 - [Tests](#tests)
-- [Not in this package (planned elsewhere)](#not-in-this-package-planned-elsewhere)
+- [Not in this package](#not-in-this-package)
 
 ## Scripts
 
@@ -202,7 +202,7 @@ The run context's `batch_id` is required, because the schema's `OperationIdentit
 }
 ```
 
-**Rate record.** Until the shared rate-sheet package exists, the rate file is a JSON array of `{ service, unit, price: { microusd, per_units }, source_url }`. The writer needs `token-factory` lines for `input_token` and `output_token`. A missing file, unreadable JSON, a malformed or repeated entry, or a missing line refuses with `unknown_price` before any reservation. Synthetic example, at the currently published prices of $0.06 and $0.24 per million tokens:
+**Rate record.** The rate file is the writer's own format, separate from `@rbw/envelope`'s rate sheet: a JSON array of `{ service, unit, price: { microusd, per_units }, source_url }`. The writer needs `token-factory` lines for `input_token` and `output_token`. A missing file, unreadable JSON, a malformed or repeated entry, or a missing line refuses with `unknown_price` before any reservation. Synthetic example, at the currently published prices of $0.06 and $0.24 per million tokens:
 
 ```json
 [
@@ -230,7 +230,7 @@ At those prices one call reserves `ceil(32768 × 0.06) + ceil(8192 × 0.24)` = 1
 
 ## Issue input: ObservedSymptom
 
-The issue writer accepts only an `ObservedSymptom`. A narrow local Zod type in `src/observed-symptom.ts` defines it for now. It will be replaced by the shared schema's `ObservedSymptom`, and field names may change then. Every object in it is strict and every field is required:
+The issue writer accepts only an `ObservedSymptom`. A narrow local Zod type in `src/observed-symptom.ts` defines it. The controller's candidate attempt builds the symptom as `@rbw/schema`'s `ObservedSymptom` record (`tools/controller`) and passes it to the writer, which parses it with this type. Every object in it is strict and every field is required:
 
 | Field | Type |
 | --- | --- |
@@ -316,7 +316,7 @@ A recording file (`format_version` 1):
 
 ## The record command
 
-**Planned:** the owner runs this in a private workflow. It has not been run against the live provider; nothing in this repository was produced by it yet.
+The owner runs this with live credentials, outside public CI. Nothing committed in this repository was produced by it.
 
 ```sh
 pnpm --filter @rbw/writer run record -- --context <run-context.json> --rate-sheet <rates.json> --input <inputs.json> --out <dir> --slot-key <key> --pool <pool-key> --max-calls <n>
@@ -381,10 +381,10 @@ The intended live run is two calls, one card and one issue, from inputs the owne
 
 The root `pnpm test` runs only the unit tests.
 
-## Not in this package (planned elsewhere)
+## Not in this package
 
-- The shared `ObservedSymptom`, run context, operation-ID and payload-hash definitions (shared schema package).
-- The shared rate sheet and envelope (rate-sheet package); real prices.
-- Documentation search and extraction for issues.
-- The private workflow that runs `record`, and the live recordings it will produce.
-- Human review of cards and issues, and publication.
+- The shared `ObservedSymptom`, run context, operation-ID and payload-hash definitions: `@rbw/schema`.
+- The shared rate sheet and envelope, with real prices: `@rbw/envelope`.
+- Documentation search and extraction: `@rbw/search`. The candidate attempt runs no docs extract.
+- Running `record` with live credentials, and its live recordings, which are not committed here.
+- Human review of an issue: the owner's approval of its SHA-256, which `tools/release build` checks (ADM-07). Publication: `@rbw/publisher`.

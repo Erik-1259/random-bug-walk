@@ -2,7 +2,7 @@
 
 Asks two models to judge each candidate that `@rbw/harvest` matched for shape `DT-1.tz-arg` (a caller holds the selected time zone but does not pass it to a date operation, which then uses its default). Their votes are combined with the harvest's ast-grep outcome into one of four outcomes. Every model call is metered through `@rbw/writer`'s `meteredStructuredCall`: bounded, priced, reserved in the spend ledger, launched, sent once and settled.
 
-The package makes no live call in its tests or in public CI. A replay `fetch` answers from committed synthetic recordings. **Planned:** the live review and the full live acceptance run. The limits were set from live calls on small synthetic inputs; nothing committed in this repository was produced by a live call.
+The package makes no live call in its tests or in public CI. A replay `fetch` answers from committed synthetic recordings. The `review` and `acceptance` commands make live calls (`src/live-fetch.ts`); their outputs stay outside this repository (below). The limits were set from live calls on small synthetic inputs; nothing committed in this repository was produced by a live call.
 
 ## Contents
 

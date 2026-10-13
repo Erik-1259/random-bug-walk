@@ -113,7 +113,7 @@ A trial counts as broken for a rule when it is not `complete` and the rule reads
 
 The trial's own status in the evidence does not change: a trial with an absent or skipped test stays `incomplete` there, and ADM-02 and ADM-03 report it as `invalid`, with basis `execution`. ADM-04 and ADM-05 keep the trial's status, and ADM-06 stays `incomplete` for any broken probe.
 
-`outcome_verdict`: any `reject` among ADM-02 to ADM-06 gives `reject` (a valid rejection is conclusive); otherwise any `invalid` gives `invalid`; otherwise any `incomplete` gives `incomplete`; otherwise `pass`. The ADM-08 classification is reported next to it and does not enter it. ADM-01, ADM-07, ADM-09 and ADM-10 are decided elsewhere and are listed in `not_evaluated_here`.
+`outcome_verdict`: any `reject` among ADM-02 to ADM-06 gives `reject` (a valid rejection is conclusive); otherwise any `invalid` gives `invalid`; otherwise any `incomplete` gives `incomplete`; otherwise `pass`. The ADM-08 classification is reported next to it and does not enter it. ADM-01, ADM-07 and ADM-09 are decided elsewhere (the projection audit in `@rbw/projection`, which the local runner runs on every copy; the writer's and searcher's checks with the release step's approval check; and the release step, `tools/release`), and ADM-10 is planned; all four are listed in `not_evaluated_here`.
 
 For other job kinds, `decisions`, `comparison` and `outcome_verdict` are `null`.
 

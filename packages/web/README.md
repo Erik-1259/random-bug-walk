@@ -24,9 +24,9 @@ The page names the measured original **API** suite and says that other upstream 
 
 ### With and without a release
 
-With a release (ADM-09), the page shows "Validated blind-spot example". The case is the released run, labelled "Validated release, synthetic planted bug". Provenance comes from `release.json`, and the validated-task downloads list `release.json`, the release's files and the released run's files. Other published runs stay in the diagnostic archive, each labelled "not validated". The funnel counts 1 validated release. The catalog marks the released run.
+With a release (ADM-09), the page shows "Validated blind-spot example". The case is the released run, labeled "Validated release, synthetic planted bug". Provenance comes from `release.json`, and the validated-task downloads list `release.json`, the release's files and the released run's files. Other published runs stay in the diagnostic archive, each labeled "not validated". The funnel counts 1 validated release. The catalog marks the released run.
 
-Without a release, the page shows "No validated blind-spot example yet", provenance says "Release: None published yet.", validated-task downloads are disabled, and the funnel counts 0 validated releases. A run that holds an observed symptom is shown as the case, labelled "Development evidence, not validated", and published runs are downloadable as diagnostic archives.
+Without a release, the page shows "No validated blind-spot example yet", provenance says "Release: None published yet.", validated-task downloads are disabled, and the funnel counts 0 validated releases. A run that holds an observed symptom is shown as the case, labeled "Development evidence, not validated", and published runs are downloadable as diagnostic archives.
 
 Without a release, or when the judge routes are not configured for the release, the replay control is disabled. Otherwise it shows a passcode field and the "Plant and verify this example" button (see Judge routes).
 
@@ -55,7 +55,7 @@ With a release, the case is the released run instead.
 
 The release step (`tools/release`) runs its checks before it writes a release, so the app does not rerun them. It checks that `release.json` is a canonical `Release` named after its directory, that the directory holds exactly the listed files with their SHA-256, and that `release.run` names a run published here whose `manifest.json` bytes have `manifest_sha256`. The release's integrity is the SHA-256 of `release.json`'s bytes (`Results.release.sha256`).
 
-The symptom and admission paths are this app's reading convention. No current code stages the local runner's outputs for the publisher; that hand-off is planned.
+The symptom and admission paths are this app's reading convention. `tools/release stage` writes a controller run directory in this layout for the publisher.
 
 ### Refusals
 
@@ -163,16 +163,31 @@ RBW_RESULTS_DIR=../../tools/release/fixtures/release pnpm --filter @rbw/web buil
 
 The build sets `NEXT_TELEMETRY_DISABLED=1`.
 
-## Deploying on Vercel (host steps)
+## Deploying on Vercel
 
-The conductor sets these on the host; this repository holds no Vercel configuration.
+This repository holds no Vercel configuration. The project settings:
 
-- Root Directory: `packages/web`, with source files outside the root directory included in the build, since the app imports the workspace packages `@rbw/schema` and `@rbw/admission`.
+- Root Directory: `packages/web`, with source files outside the root directory included in the build, since the app imports workspace packages (`@rbw/schema`, `@rbw/admission` and others).
 - Framework preset: Next.js. Vercel installs with pnpm from the repository root lockfile.
 - Node.js version: 24.x.
-- `RBW_RESULTS_DIR` is optional; unset, the build uses the development fixture, which holds no release.
+- `RBW_RESULTS_DIR` is optional; unset, the build uses the development fixture, which holds no release. The judge routes' variables are listed under [Configuration](#configuration).
 
-A push of a branch other than the production branch then builds a preview deployment.
+A push of a branch other than the production branch then builds a preview deployment from the committed fixture.
+
+The live site is built from the published results, which are not in this repository. To deploy it:
+
+1. Take a tree of this repository at the commit to deploy, for example `git archive <commit> | tar -x -C <new dir>`. For the judge routes, the commit must fit the controller image the release pins (see `--prebuilt` in `tools/controller/README.md`).
+2. Assemble a results directory inside `packages/web` of that tree, from the public results repository and the public store:
+
+   ```sh
+   cd <tree>/packages/web
+   node scripts/assemble-results.mjs results-snapshot \
+     https://github.com/Erik-1259/random-bug-walk-results https://iguounh7tl23isfm.public.blob.vercel-storage.com/
+   ```
+
+   The script (`scripts/assemble-results.mjs`) makes a shallow clone of the results repository as `repository/`, downloads each run's status object to `store/status/` and each manifest entry that has a `public_uri` to `store/sha256/`, and checks every downloaded object against its manifest's SHA-256. It reads public data only and needs no credentials. The output directory must not exist yet. It fetches status objects only for the runs the repository holds. The build does not need the clone's `repository/.git`, which can be moved out of the tree before the upload.
+3. Set `RBW_RESULTS_DIR=results-snapshot` (relative to `packages/web`) in the project's environment, together with the judge routes' variables.
+4. Deploy that tree, for example with `vercel deploy` from its root, linked to the project. The build checks the whole results directory (see [Refusals](#refusals)) and fails on any mismatch.
 
 ## Dependencies
 
@@ -192,5 +207,5 @@ A push of a branch other than the production branch then builds a preview deploy
 - It does not rerun the release step's checks; it reads `release.json` and checks only its files and its link to the run.
 - It does not render the frozen issue inline; `issue.json` is a download.
 - Its only routes that launch compute are the judge routes, and only for judges with the passcode. It has no anonymous replays, no queue and no cancel action.
-- It reads a local results directory at build time; it fetches nothing from the results repository or the store.
+- It reads a local results directory at build time; the app fetches nothing from the results repository or the store. Only `scripts/assemble-results.mjs`, run before a build, downloads them.
 - It uses no external fonts or assets.
