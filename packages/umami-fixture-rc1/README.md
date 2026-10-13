@@ -110,13 +110,13 @@ The kit's app environment sets `TWO_FACTOR_ENCRYPTION_KEY` to a valid placeholde
 | clean | 25 | 25 pass | 25 pass |
 | planted | 30 | 30 pass | 17 `double_spend`, 13 pass |
 
-The checks grade as declared, but with no database delay the planted race is not repeatable enough for ADM-05, which needs 20 of 20. The delay study picks the database delay that makes it so.
+The checks grade as declared, but with no database delay the planted race is not repeatable enough for ADM-05, which needs 20 of 20. The delay study picks a database delay that gives 20 of 20 on a planted copy, ahead of the ADM-05 run itself.
 
 With no guard in the planted route, a refusal can only come from the branch where no unused code matched, so in the 13 lost planted rounds the second request read after the first wrote. The delay study sizes a database delay to cover that lag.
 
 ## Delay study
 
-`host/race-delay-study.sh` runs the same single-copy flow in a **race** kit image (`kit/umami-race`, the kit with Toxiproxy between Umami and Postgres) and sweeps the downstream latency toxic. It builds once, starts, bakes the template, then for each delay sets the latency with `rbw-proxy set-latency`, checks the proxy before and after every round, and runs the rounds, each after a reset. It writes one JSON line per check per round to `study-<variant>/rounds.jsonl` (delay, round, outcome, the two verify attempts, overlap, round time) and prints a line per check per round. Like `host/live-proof.sh`, it refuses to start when its output directory is not empty, so an earlier run's round files are never read as this run's. `evidence/rc-1-race-study.json` summarizes a run of Oct 13, 2026, 20 planted and 20 clean rounds at each delay, on a race kit image built locally for arm64 (4 CPUs, 6 GB):
+`host/race-delay-study.sh` runs the same single-copy flow in a **race** kit image (`kit/umami-race`, the kit with Toxiproxy between Umami and Postgres) and sweeps the downstream latency toxic. It builds once, starts, bakes the template, then for each delay sets the latency once with `rbw-proxy set-latency`, checks the proxy once after setting it and again after every round, and runs the rounds, each after a reset. It writes one JSON line per check per round to `study-<variant>/rounds.jsonl` (delay, round, outcome, the two verify attempts, overlap, round time) and prints a line per check per round. Like `host/live-proof.sh`, it refuses to start when its output directory is not empty, so an earlier run's round files are never read as this run's. `evidence/rc-1-race-study.json` summarizes a run of Oct 13, 2026, 20 planted and 20 clean rounds at each delay, on a race kit image built locally for arm64 (4 CPUs, 6 GB):
 
 | Delay | Planted race | Clean race (false positives) | Serial control | Planted overlap (median) |
 | --- | --- | --- | --- | --- |
@@ -126,7 +126,7 @@ With no guard in the planted route, a refusal can only come from the branch wher
 | 100 ms | 20/20 `double_spend` | 0/20 | 40/40 pass | 2001 ms |
 | 200 ms | 20/20 `double_spend` | 0/20 | 40/40 pass | 3186 ms |
 
-The smallest delay giving 20/20 planted `double_spend` and 0/20 clean on arm64 is **25 ms**. The delay widens the window between each request's read and the first request's write; the clean copy overlaps by the same amount but the guard still refuses the second write, so it stays 0/20 at every delay. At 0 ms the planted race was 9/20, so 25 ms has little margin.
+The smallest delay giving 20/20 planted `double_spend` and 0/20 clean on arm64 is **25 ms**. This is a pre-admission repeatability result on the planted and clean copies; it is not ADM-05, which needs 20 repetitions on `fixed-01` and `planted-01`. The delay widens the window between each request's read and the first request's write; the clean copy overlaps by the same amount but the guard still refuses the second write, so it stays 0/20 at every delay. At 0 ms the planted race was 9/20, so 25 ms has little margin.
 
 This result is from a native arm64 build. The released image is amd64, and bcrypt and database timing differ by arch, so the chosen delay must be re-measured on the released amd64 image on native amd64 hardware before the family is admitted; a release targeting amd64 may prefer 50 ms for margin. The amd64 race kit built from this source passes all ten in-image race self-tests under `linux/amd64` emulation (the latency toxic, per-container `set-latency`, the API-change audit and the timed database-through-proxy check), so the delay mechanism itself works on amd64, but the per-round app build cannot run under emulation: `rbw-build-app`'s cold-build check refuses the `/root/.cache` that Rosetta recreates on every emulated process, the same limitation this image's README records for the base self-test.
 

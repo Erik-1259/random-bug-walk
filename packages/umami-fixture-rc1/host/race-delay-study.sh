@@ -2,7 +2,7 @@
 # The rc-1 race flakiness/delay study. One copy of the fixture in a race kit image (kit/umami-race,
 # a time-zone kit with Toxiproxy between Umami and Postgres): optionally plant the RC-1 line, build,
 # start, bake the template, then sweep a list of database delays. At each delay it sets the proxy's
-# latency toxic with "rbw-proxy set-latency", checks the proxy before and after each round, and runs
+# latency toxic once with "rbw-proxy set-latency", checks the proxy once then and after each round, and runs
 # ROUNDS rounds, each after a template reset. The concurrent double-spend check and the serial
 # control run in one Playwright run per round.
 #
