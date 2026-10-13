@@ -148,7 +148,14 @@ export function syntheticRaceIssue(symptom: RaceSymptom): IssueOutput {
   };
 }
 
-export type IssueMode = "valid" | "rejected" | "lost";
+/** The issue with one reproduction step and each result field's prose cut to its last sentence's few words, keeping any count line. */
+function shortResults(issue: IssueOutput): IssueOutput {
+  const short = (field: string, prose: string): string => [prose, ...field.split("\n").slice(1)].join("\n");
+  return { ...issue, reproduction_steps: issue.reproduction_steps.slice(0, 1), expected_result: short(issue.expected_result, "One is refused."), actual_result: short(issue.actual_result, "Both tabs signed in.") };
+}
+
+/** "short": a race issue whose result prose is under 6 words and that has one reproduction step, so one phrase slot has no phrase. */
+export type IssueMode = "valid" | "rejected" | "lost" | "short";
 
 export interface FakeWriter {
   fetch: FetchFunction;
@@ -166,7 +173,7 @@ export function fakeWriter(work: string, mode: IssueMode = "valid"): FakeWriter 
     if (mode === "lost") return Promise.reject(new TypeError("synthetic: the connection was reset after the request was sent"));
     const symptom = parseCanonical(readFileSync(join(work, "candidate", "symptom.json"))) as unknown as ObservedSymptom | RaceSymptom;
     const issue = "symptom_kind" in symptom ? syntheticRaceIssue(symptom) : syntheticIssue(symptom);
-    const content = mode === "rejected" ? { ...issue, environment: `${issue.environment} In total 97 pageviews are listed.` } : issue;
+    const content = mode === "rejected" ? { ...issue, environment: `${issue.environment} In total 97 pageviews are listed.` } : mode === "short" ? shortResults(issue) : issue;
     return Promise.resolve(new Response(completion(JSON.stringify(content), SYNTHETIC_USAGE), { status: 200 }));
   };
   return { fetch, calls };

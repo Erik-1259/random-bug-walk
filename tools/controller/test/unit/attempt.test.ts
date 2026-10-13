@@ -84,7 +84,7 @@ function searchSecrets(run: Run): string[] {
 
 function issueOf(run: Run): string[] {
   const issue = parseCanonical(readFileSync(join(run.work, "candidate", "issue.json"))) as unknown as { title: string; expected_result: string; actual_result: string };
-  return [issue.title, issue.expected_result, issue.actual_result, ...pickPhrases(issue as never)];
+  return [issue.title, issue.expected_result, issue.actual_result, ...pickPhrases(issue as never).filter((phrase) => phrase !== null)];
 }
 
 async function slotHolder(w: World): Promise<string | null> {
@@ -187,7 +187,7 @@ describe("the phrase picker", () => {
     const phrases = pickPhrases(issue);
     expect(phrases).toEqual(["A quoted title that runs well past the twelve word limit of", "Each visit is counted on its local day.", "Some visits move to the neighboring day!"]);
     expect(pickPhrases(issue)).toEqual(phrases);
-    for (const phrase of phrases) {
+    for (const phrase of phrases.map(String)) {
       expect(phrase.split(" ").length).toBeLessThanOrEqual(12);
       expect(phrase).not.toContain('"');
     }
@@ -206,7 +206,7 @@ describe("the phrase picker, short opening sentences", () => {
     const [, expected, actual] = pickPhrases(issue);
     expect(expected).toBe("Counts are right. Each of the three days shows the visits stored");
     expect(actual).toBe("Counts are wrong. Two of the three days show visits that belong");
-    for (const phrase of [expected, actual]) expect(phrase.split(" ").length).toBeGreaterThanOrEqual(6);
+    for (const phrase of [expected, actual].map(String)) expect(phrase.split(" ").length).toBeGreaterThanOrEqual(6);
   });
 });
 

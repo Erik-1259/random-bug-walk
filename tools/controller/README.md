@@ -222,7 +222,7 @@ The attempt makes one `RunIds` with the policy's `project_id`. Every stage runs 
 
 1. **`kit_check` and `observe`:** `runJob` with the root's IDs and the policy, `policy_id` `umami-uc3-v1` (the release check requires it, and `ProjectPolicy` has no such field), on the development pool and slot. Without `--original-suite`, the kit check's freeze copy makes it, and every later job takes that same file.
 2. **`write`:** the symptom, the two source searches (`source-1`, `source-2`) and the docs extract (`docs-1`), then one card call and one issue call. There are no repairs.
-3. **`novelty`:** the three exact-phrase checks, then `summarizeNovelty`.
+3. **`novelty`:** the exact-phrase checks (three, less any left out for want of a 6-word phrase), then `summarizeNovelty` over the checks that ran.
 4. **`admission`:** `runJob`, 13 copies (11 for the race family), with the same IDs, policy and original suite.
 
 `runJob` takes two optional `JobInputs` fields for this, `ids` and `projectPolicy`. Both go into the job's fingerprint. Without them a job's bytes are what they were before.
@@ -249,7 +249,7 @@ For the race family (`rc-1-backup-code-001`, `@rbw/umami-fixture-rc1`) it is a s
 
 A failed source search or extract (an `incomplete` record: a provider error, a failed URL or a malformed response) is recorded, and the attempt continues. Spec §1 lists the exact-phrase check as Tavily's only admission check, and §5 counts only novelty rejections in the funnel, so missing source evidence or grounding does not block admission by itself. An uncertain call stops the root for reconciliation, and a spend refusal stops it as `incomplete`, as the search package's `record` command stops at the first spend refusal.
 
-**The phrases** are picked by code from the frozen issue: the `title`, the first sentence of `expected_result` and the first sentence of `actual_result`. Each has its double quotes removed and its whitespace collapsed, and is cut to at most 12 words. When a first sentence has fewer than 6 words, its phrase is the start of the field instead, up to 12 words: a shorter phrase matches almost any page. A race issue's fixed count lines (`Expected: accepted=<n>, refused=<n>` and `Observed: accepted=<n>, refused=<n>`, which the issue check reads) are dropped before the pick, so no phrase is taken from them.
+**The phrases** are picked by code from the frozen issue: the `title`, the first sentence of `expected_result` and the first sentence of `actual_result`. Each has its double quotes removed and its whitespace collapsed, and is cut to at most 12 words. When a first sentence has fewer than 6 words, its phrase is the start of the field instead, up to 12 words: a shorter phrase matches almost any page. A race issue's fixed count lines (`Expected: accepted=<n>, refused=<n>` and `Observed: accepted=<n>, refused=<n>`, which the issue check reads) are dropped before the pick, so no phrase is taken from them. No phrase under 6 words is ever searched. When a field still has fewer than 6 words (a short title, or result prose of one short sentence), its phrase comes from adjacent reproduction steps joined in order, the first run of 6 or more words (cut to 12) that no earlier phrase used. When none is left, that phrase check is left out: the command prints `stage=novelty omitted=<calls> reason=no_phrase_of_6_words`, `novelty.json` names them in `omitted_calls`, and novelty is summarized over the checks that ran. With no phrase at all, the root fails as `novelty_no_phrase`.
 
 **The candidate text** runs in the attempt's process, against the controller's own ledger. Its run context is the admission's: the policy's project and hash, the batch, the observation's candidate `task_revision`, the root, and the `candidate-text` execution with the root as parent. It acquires the development slot for the root first, and releases it at the end when nothing blocks it. The writer and the searcher use the development pool, so their own caps (12 writer calls and 6 searches per candidate) and the ledger are the controls.
 
@@ -287,7 +287,7 @@ Nothing is retried, and every stop still writes `root-run.json`. The admission d
 
 | Cause | Root |
 |---|---|
-| A job `refused`, `symptom_unavailable`, a refused or failed writer call, an issue check other than `ready_for_review`, novelty `blocked` | `terminal`, `failed` |
+| A job `refused`, `symptom_unavailable`, a refused or failed writer call, an issue check other than `ready_for_review`, novelty `blocked`, no phrase of 6 words to check | `terminal`, `failed` |
 | A job `incomplete`, novelty `incomplete`, a spend refusal of a source search or the extract | `terminal`, `incomplete` |
 | A job `needs_reconciliation`, an `uncertain` writer call, a search call left uncertain (a source search, the extract or a phrase check), an operation left unresolved in the ledger, a ledger call that failed, a slot release that was refused | `needs_reconciliation` (outcome `null`); the slot stays held and nothing more runs |
 

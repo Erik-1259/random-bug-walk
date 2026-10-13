@@ -299,27 +299,41 @@ function distinctPhrase(text: string): string | null {
 }
 
 /**
- * A result field's phrase, never from a race issue's count lines. A race field's prose can be one short
- * sentence, so when the field has fewer than 6 words of prose the phrase comes from the first
- * reproduction step that has 6 and is not already taken; the short prose is the last resort.
+ * The field's own phrase when it has one; else a phrase from adjacent
+ * reproduction steps joined in order, the first such run of 6 or more words not already taken; else
+ * null, and the field's phrase check is left out. A phrase under 6 words is never returned.
  */
-function resultPhrase(field: string, steps: readonly string[], taken: readonly string[]): string {
-  const text = withoutCountLines(field);
-  const own = distinctPhrase(text);
+function phraseFrom(own: string | null, steps: readonly string[], taken: readonly string[]): string | null {
   if (own !== null) return own;
-  for (const step of steps) {
-    const phrase = distinctPhrase(step);
-    if (phrase !== null && !taken.includes(phrase)) return phrase;
+  for (let start = 0; start < steps.length; start += 1) {
+    for (let end = start + 1; end <= steps.length; end += 1) {
+      const phrase = distinctPhrase(steps.slice(start, end).join(" "));
+      if (phrase === null) continue;
+      if (!taken.includes(phrase)) return phrase;
+      break;
+    }
   }
-  return words(clean(text));
+  return null;
 }
 
-/** The three exact phrases, picked by code from the frozen issue: the title and the first sentences of the expected and actual results (or their first 12 words when that sentence has fewer than 6, or a reproduction step when the field has fewer than 6 words of prose), never a race issue's fixed count lines. */
-export function pickPhrases(issue: IssueOutput): [string, string, string] {
+/** The three phrase slots, in PHRASE_NAMES order; null marks a slot with no phrase of 6 words, whose check is left out. */
+export type PickedPhrases = [string | null, string | null, string | null];
+
+/**
+ * The exact phrases, picked by code from the frozen issue: the title's first 12 words and the expected
+ * and actual results' first sentences (or their first 12 words when that sentence has fewer than 6),
+ * never a race issue's fixed count lines. A field with fewer than 6 words falls back to adjacent
+ * reproduction steps joined in order (6 to 12 words, not already used); with none, its slot is null.
+ */
+export function pickPhrases(issue: IssueOutput): PickedPhrases {
+  const taken: string[] = [];
+  const pick = (own: string | null): string | null => {
+    const phrase = phraseFrom(own, issue.reproduction_steps, taken);
+    if (phrase !== null) taken.push(phrase);
+    return phrase;
+  };
   const title = words(clean(issue.title));
-  const expected = resultPhrase(issue.expected_result, issue.reproduction_steps, [title]);
-  const actual = resultPhrase(issue.actual_result, issue.reproduction_steps, [title, expected]);
-  return [title, expected, actual];
+  return [pick(wordCount(title) >= PHRASE_MIN_WORDS ? title : null), pick(distinctPhrase(withoutCountLines(issue.expected_result))), pick(distinctPhrase(withoutCountLines(issue.actual_result)))];
 }
 
 function writeOnce(path: string, bytes: string | Uint8Array): void {
@@ -458,9 +472,21 @@ async function writeAndSearch(a: Attempt, spend: Spend, context: Record<string, 
   if (issueEnd !== null) return issueEnd;
   if (frozen === null || check !== "ready_for_review") return failed("issue_not_ready");
 
-  const phrases = pickPhrases(frozen.issue);
+  const picked = pickPhrases(frozen.issue);
+  const kept = picked.filter((phrase): phrase is string => phrase !== null);
+  const calls = PHRASE_NAMES.filter((_name, index) => picked[index] !== null);
+  const omitted = PHRASE_NAMES.filter((_name, index) => picked[index] === null);
+  if (omitted.length > 0) say(`stage=novelty omitted=${omitted.join(",")} reason=no_phrase_of_6_words`);
+  const [first] = kept;
+  if (first === undefined) {
+    writeOnce(join(a.dir, "novelty.json"), encodeCanonical({ status: "incomplete", matching_urls: [], incomplete_calls: [], omitted_calls: omitted, issue_sha256: frozen.sha256 }));
+    say("stage=novelty status=refused reason=no_phrase_of_6_words");
+    return failed("novelty_no_phrase");
+  }
+  // The search input takes three phrases; an omitted slot holds a kept phrase and is never checked.
+  const phrases = picked.map((phrase) => phrase ?? first);
   const records: SearchRecord[] = [];
-  for (const name of PHRASE_NAMES) {
+  for (const name of calls) {
     const result = await searcher.checkPhrase(name, { ...input.search, phrases });
     if (result.status === "refused") {
       say(`stage=novelty call=${name} refused=${result.code}`);
@@ -472,8 +498,8 @@ async function writeAndSearch(a: Attempt, spend: Spend, context: Record<string, 
     if (result.stop === "uncertain") return reconcile(`${name}_uncertain`);
     if (result.stop !== null) break;
   }
-  const novelty = summarizeNovelty(records);
-  writeOnce(join(a.dir, "novelty.json"), encodeCanonical({ ...novelty, issue_sha256: frozen.sha256 }));
+  const novelty = summarizeNovelty(records, calls);
+  writeOnce(join(a.dir, "novelty.json"), encodeCanonical({ ...novelty, ...(omitted.length > 0 ? { omitted_calls: omitted } : {}), issue_sha256: frozen.sha256 }));
   say(`stage=novelty status=${novelty.status}`);
   if (novelty.status === "blocked") return failed("novelty_blocked");
   if (novelty.status === "incomplete") return incomplete("novelty_incomplete");

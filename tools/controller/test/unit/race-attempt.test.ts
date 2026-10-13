@@ -73,7 +73,7 @@ function summaryFamily(run: Run, job: string): unknown {
 /** The frozen issue's fields and its three phrases: private until the release tool publishes the issue. */
 function issueTexts(run: Run): string[] {
   const issue = parseCanonical(readFileSync(join(run.work, "candidate", "issue.json"))) as unknown as { title: string; reproduction_steps: string[]; expected_result: string; actual_result: string };
-  return [issue.title, ...issue.reproduction_steps, issue.expected_result, issue.actual_result, ...pickPhrases(issue as never)];
+  return [issue.title, ...issue.reproduction_steps, issue.expected_result, issue.actual_result, ...pickPhrases(issue as never).filter((phrase) => phrase !== null)];
 }
 
 describe("the attempt's symptom family", () => {
@@ -143,7 +143,7 @@ describe("a race-family attempt, start to finish", () => {
     const issue = parseCanonical(readFileSync(join(run.work, "candidate", "issue.json"))) as never;
     const phrases = pickPhrases(issue);
     expect(phrases).toEqual(["Synthetic report: one backup code signs in twice when it is entered", "Of the two requests sent together, one should be accepted and the", "Both tabs were signed in with the same backup code."]);
-    for (const phrase of phrases) expect(phrase.split(" ").length).toBeGreaterThanOrEqual(6);
+    for (const phrase of phrases.map(String)) expect(phrase.split(" ").length).toBeGreaterThanOrEqual(6);
     expect(run.aw.search.queries.map((query) => query.replace(/^"|"$/g, ""))).toEqual(phrases);
     expect(parseCanonical(readFileSync(join(run.work, "candidate", "novelty.json")))).toMatchObject({ status: "clear" });
   });
@@ -164,7 +164,7 @@ describe("a race-family attempt, start to finish", () => {
 });
 
 describe("the phrase picker on a race issue", () => {
-  const wordCount = (phrase: string): number => phrase.split(" ").length;
+  const wordCount = (phrase: string | null): number => (phrase ?? "").split(" ").length;
   const steps = ["Sign in with a password and open the backup code prompt in two browser tabs.", "Enter the same backup code in both tabs and submit them at the same moment.", "Look at which tabs are signed in."];
 
   it("never takes a phrase from the fixed Expected and Observed count lines, and uses distinct reproduction steps when the prose before them is under 6 words", () => {
@@ -196,15 +196,52 @@ describe("the phrase picker on a race issue", () => {
     expect(pickPhrases(issue).slice(1)).toEqual(["Sign in with a password and open the backup code prompt in", "Both tabs were signed in together."]);
   });
 
-  it("keeps the short prose only when no reproduction step has 6 words", () => {
+  it("joins adjacent reproduction steps in order when no single step has 6 words, and never repeats a phrase", () => {
     const issue = {
       title: "One backup code signs in twice when it is entered in two tabs",
+      reproduction_steps: ["Open two tabs.", "Enter one backup code.", "Submit both."],
+      expected_result: "One is refused.\nExpected: accepted=1, refused=1",
+      actual_result: "Both tabs signed in.\nObserved: accepted=2, refused=0",
+      environment: "Synthetic.",
+    };
+    expect(pickPhrases(issue).slice(1)).toEqual(["Open two tabs. Enter one backup code.", "Enter one backup code. Submit both."]);
+  });
+
+  it("never sends a phrase under 6 words: with one usable step, the second short field's slot is left out", () => {
+    const issue = {
+      title: "One backup code signs in twice when it is entered in two tabs",
+      reproduction_steps: ["Sign in with a password and open the backup code prompt in two browser tabs."],
+      expected_result: "One is refused.\nExpected: accepted=1, refused=1",
+      actual_result: "Both tabs signed in.\nObserved: accepted=2, refused=0",
+      environment: "Synthetic.",
+    };
+    expect(pickPhrases(issue)).toEqual(["One backup code signs in twice when it is entered in two", "Sign in with a password and open the backup code prompt in", null]);
+  });
+
+  it("leaves out every slot whose field and steps have under 6 words, the title's too", () => {
+    const issue = {
+      title: "Backup code works twice",
       reproduction_steps: ["Open two tabs."],
       expected_result: "One is refused.\nExpected: accepted=1, refused=1",
       actual_result: "Both tabs signed in.\nObserved: accepted=2, refused=0",
       environment: "Synthetic.",
     };
-    expect(pickPhrases(issue).slice(1)).toEqual(["One is refused.", "Both tabs signed in."]);
+    expect(pickPhrases(issue)).toEqual([null, null, null]);
+  });
+});
+
+describe("a race issue with short result prose and one reproduction step", () => {
+  let run: Run;
+  beforeAll(async () => {
+    run = await raceAttempt({ issue: "short" });
+  });
+
+  it("checks only the phrases of 6 words or more, records the left-out call, and finds novelty clear on the rest", () => {
+    expect(run.aw.search.queries).toHaveLength(2);
+    for (const query of run.aw.search.queries) expect(query.replace(/^"|"$/g, "").split(" ").length).toBeGreaterThanOrEqual(6);
+    expect(parseCanonical(readFileSync(join(run.work, "candidate", "novelty.json")))).toMatchObject({ status: "clear", incomplete_calls: [], omitted_calls: ["phrase-3"] });
+    expect(run.aw.lines).toContain("stage=novelty omitted=phrase-3 reason=no_phrase_of_6_words");
+    expect(run.outcome.rootRun).toMatchObject({ status: "terminal", outcome: "completed" });
   });
 });
 
