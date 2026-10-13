@@ -142,7 +142,10 @@ const CONSEQUENCES: Record<Verdict, string> = {
   inconclusive: "Rerun the screen or judge the case in writing before using it as a UC1 subject.",
 };
 
-/** The record for one finished or stopped run. Every sentence is written by code. */
+/**
+ * The record for one finished or stopped run. Every sentence is written by code. It names the planted
+ * site by line range but holds no line of the clean or planted form, so the patch stays out of it.
+ */
 export function buildRecord(inputs: RecordInputs): ScreenRecord {
   const { subject, probe, verdict } = inputs;
   const { site } = subject;
@@ -181,7 +184,6 @@ export function buildRecord(inputs: RecordInputs): ScreenRecord {
       planted_sha256: subject.planted_sha256,
       planted_site: siteLabel(target, site),
       planted_hunks: site.hunks.map((hunk) => ({ start_line: hunk.start_line, end_line: hunk.end_line })),
-      mutation: site.mutation,
     },
     verdict,
     verdict_summary: summary(verdict, probe, target),

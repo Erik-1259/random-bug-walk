@@ -113,6 +113,14 @@ describe("screen run, end to end on PGlite with the fake model", () => {
     expect(readFileSync(join(out, "answers.json"), "utf8")).toContain(MISS_REASON);
   });
 
+  it("keeps the planted patch out of the record: no diff and neither form of the changed line", async () => {
+    const { out } = await run([MISS, MISS], 2);
+    const screen = readFileSync(join(out, "screen.json"), "utf8");
+    expect(readRecord(out).subject).not.toHaveProperty("mutation");
+    expect(screen).not.toContain("formatTotal(total, rounding)");
+    expect(screen).not.toContain("formatTotal(total, rounding, currency)");
+  });
+
   it("fails a case at the first hit and stops spending", async () => {
     const { code, out, spy, fake, output } = await run([MISS, LOCATED_AND_FIXED, MISS, MISS], 4);
     expect(code).toBe(0);

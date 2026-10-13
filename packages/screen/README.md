@@ -70,7 +70,7 @@ Exit codes: 0 the run finished (whatever the verdict), or stopped because the ve
 | `files` | Every file shown to the model, 1 to 12, `target_path` among them; relative, forward slashes, no `.` or `..` segments. |
 | `symptom` | The issue-style symptom, at most 4,000 characters: what a user sees, never where the bug is. |
 
-The planted site is found by comparing the planted file with the clean copy line by line (a longest-common-subsequence line diff). Each run of changed lines is one hunk, so a mutation that touches two far-apart places has two small sites, not one wide region between them. For a hunk that only deletes lines, the site is the two planted lines on either side of it. The record states every hunk (`planted_site` as `path:start-end, start-end`, and `planted_hunks`) and a unified diff of the mutation. A changed region larger than 16,000,000 clean-by-planted line pairs, which no single planted bug produces, is kept as one hunk.
+The planted site is found by comparing the planted file with the clean copy line by line (a longest-common-subsequence line diff). Each run of changed lines is one hunk, so a mutation that touches two far-apart places has two small sites, not one wide region between them. For a hunk that only deletes lines, the site is the two planted lines on either side of it. The record states every hunk (`planted_site` as `path:start-end, start-end`, and `planted_hunks`) by line range only, never the changed lines or a diff of them. A changed region larger than 16,000,000 clean-by-planted line pairs, which no single planted bug produces, is kept as one hunk.
 
 ## What the model sees
 
@@ -140,13 +140,13 @@ Under `--out`:
 
 | File | Content |
 | --- | --- |
-| `screen.json` | The screen record (below). It holds no model text: a hit keeps only its range, which is at the planted site; a miss keeps only its `miss_kind`. |
+| `screen.json` | The screen record (below). It holds no model text: a hit keeps only its range, which is at the planted site; a miss keeps only its `miss_kind`. It holds no line of the patch either, but it names the planted site's lines, so for a candidate not yet released keep it with the held-out material until release. |
 | `answers.json` | Each attempt's full answer, including `reason` and `fixed_code`. A working file: a miss can point anywhere in the host's source, so review it before sharing it. |
 | `recordings/` | One recording per call that got an HTTP response (`<candidate>-<attempt>.recording.json`), in the writer's recording format, labeled with the run's provenance. They hold the full request and response. |
 
 ## The screen record
 
-`screen.json` is a `uc1-static-headroom-screen` record, version 1, as the written screen records use it: `record`, `record_version`, `case`, `case_status`, `shape`, `screen` (`source`, `criterion`, `binding`, `judged_on`, `judged_by`), `subject` (`host`, `host_commit`, `source_read_from`, `target_file`, `clean_sha256`, `planted_sha256`, plus `planted_site`, `planted_hunks` and `mutation`), `verdict`, `verdict_summary`, `static_tells`, `consequences` and `optional_static_probe`.
+`screen.json` is a `uc1-static-headroom-screen` record, version 1, as the written screen records use it: `record`, `record_version`, `case`, `case_status`, `shape`, `screen` (`source`, `criterion`, `binding`, `judged_on`, `judged_by`), `subject` (`host`, `host_commit`, `source_read_from`, `target_file`, `clean_sha256`, `planted_sha256`, plus `planted_site` and `planted_hunks`), `verdict`, `verdict_summary`, `static_tells`, `consequences` and `optional_static_probe`.
 
 The written records can also hold `evidence_comparison` (what each evidence channel would reveal) and `log_headroom_note`. Those are a person's judgment from reading the source and the logs, which the probe does not make, so the automated record leaves them out rather than filling them with placeholders. A test parses every committed record in `docs/uc1-screen/` with `ScreenRecordSchema` and checks that the automated record has every top-level key they have except those two.
 
@@ -157,7 +157,7 @@ The written records can also hold `evidence_comparison` (what each evidence chan
 
 ## Tests
 
-`pnpm --filter @rbw/screen run test` covers the site finder, the scoring table and the verdict, the input and path checks, the prompt (sorted, numbered, nothing of the clean form), the prices and this README's numbers, and full runs on PGlite with the fake model: one reservation per attempt with the profile's envelope, settled cost equal to the pool's settled amount, the stop at the deciding hit, failed calls counted as no answer, a lost response leaving the slot held, the budget refusal, the fallback model's request, and no model text in the record.
+`pnpm --filter @rbw/screen run test` covers the site finder, the scoring table and the verdict, the input and path checks, the prompt (sorted, numbered, nothing of the clean form), the prices and this README's numbers, and full runs on PGlite with the fake model: one reservation per attempt with the profile's envelope, settled cost equal to the pool's settled amount, the stop at the deciding hit, failed calls counted as no answer, a lost response leaving the slot held, the budget refusal, the fallback model's request, and no model text or line of the patch in the record.
 
 ## Not in this package
 
