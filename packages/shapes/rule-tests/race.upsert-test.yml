@@ -18,6 +18,10 @@ valid:
     const text = "db.preference.upsert({ where: { id }, update: {}, create: { id } })";
   - |
     await upsert({ where: { profileId }, update: {}, create: { profileId } });
+  - |
+    const pending = db.preference.upsert({ where: { profileId }, update: {}, create: { profileId } });
+  - |
+    await db.$transaction([db.preference.upsert({ where: { profileId }, update: {}, create: { profileId } })]);
 invalid:
   - |
     await db.client.preference.upsert({ where: { profileId }, update: { theme }, create: { profileId, theme } });
@@ -32,3 +36,5 @@ invalid:
         value,
       },
     });
+  - |
+    const save = async (tx) => tx.preference.upsert({ where: { profileId }, update: {}, create: { profileId } });

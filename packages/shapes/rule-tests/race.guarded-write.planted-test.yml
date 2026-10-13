@@ -19,7 +19,27 @@ valid:
       const row = await db.document.findUnique({ where: { id } });
       await db.document.update({ where: { active: false, id: row.id }, data: { active: true } });
     }
+  - |
+    async function publish(id: string) {
+      const row = await db.document.findUnique({ where: { id } });
+      await db.document.update({ where: { id: row.id, status: row.status }, data: { active: true } });
+    }
+  - |
+    async function publish(id: string) {
+      const row = await db.document.findUnique({ where: { id } });
+      await db.document.update({ where: { id: row.id, AND: [{ status: row.status }] }, data: { active: true } });
+    }
+  - |
+    async function publish(id: string, status: string) {
+      const row = await db.document.findUnique({ where: { id } });
+      await db.document.update({ where: { id: row.id, status }, data: { active: true } });
+    }
 invalid:
+  - |
+    async function publish(id: string, ownerId: string) {
+      const row = await db.document.findFirst({ where: { id, ownerId } });
+      await db.document.update({ where: { id: row.id, ownerId }, data: { active: true } });
+    }
   - |
     async function redeem(id: string) {
       const codes = await db.client.code.findMany({ where: { ownerId: id, used: false } });

@@ -114,46 +114,27 @@ id: race.guarded-write.planted
 language: TypeScript
 severity: info
 message: A write after a read of the same model pins only the record's identity, so it applies even when another request changed the state it read.
-utils:
-  # The same guard test as the fixed rule, but in any position: a guard first in the object still
-  # keeps the write conditional, even though the fixed rule cannot remove it with its comma.
-  guard-pair:
-    kind: pair
-    all:
-      - has:
-          field: key
-          kind: property_identifier
-          not:
-            regex: ^(id|[A-Za-z_$][A-Za-z0-9_$]*Id|[A-Za-z0-9_$]*_id|AND|OR|NOT)$
-      - any:
-          - has:
-              field: value
-              any:
-                - kind: "false"
-                - kind: "true"
-                - kind: "null"
-                - kind: number
-                - kind: string
-          - has:
-              field: value
-              kind: object
-              has:
-                kind: pair
-                has:
-                  field: key
-                  regex: ^(lt|lte|gt|gte|not|equals)$
-          - has:
-              field: key
-              regex: ^(version|revision|updatedAt|updated_at|etag)$
 rule:
-  # A spread (`...expected`) can carry a guard this rule cannot see, so a where with one is never
-  # confirmed as the planted form.
+  # After the rewrite the where must pin only the record's identity: every entry is a pair or a
+  # shorthand whose key is an identity key (`id`, `*Id`, `*_id`). Any other surviving entry can keep the write conditional
+  # whatever its value form (`status: row.status`, `AND: [...]`, a spread such as `...expected`
+  # that may carry a guard this rule cannot see), so the planted form is then not confirmed.
+  # findSites also requires each surviving key other than `id` to be one the read filters on.
   kind: object
   not:
     has:
       any:
-        - matches: guard-pair
         - kind: spread_element
+        - kind: method_definition
+        - kind: shorthand_property_identifier
+          not:
+            regex: ^(id|[A-Za-z_$][A-Za-z0-9_$]*Id|[A-Za-z0-9_$]*_id)$
+        - kind: pair
+          not:
+            has:
+              field: key
+              kind: property_identifier
+              regex: ^(id|[A-Za-z_$][A-Za-z0-9_$]*Id|[A-Za-z0-9_$]*_id)$
   inside:
     kind: pair
     has:
@@ -271,6 +252,18 @@ rule:
                     - kind: assignment_expression
                     - kind: augmented_assignment_expression
                     - kind: update_expression
+    # The rewrite reads the where, update and create values only after the lookup resolves. An
+    # upsert awaited or returned where it is called (`await db.m.upsert(...)`, `return db.m.upsert(...)`,
+    # `async (tx) => tx.m.upsert(...)`) leaves its own code no chance to change those values in
+    # between; a promise kept for later, passed on or chained is not matched.
+    - any:
+        - inside:
+            kind: await_expression
+        - inside:
+            kind: return_statement
+        - inside:
+            kind: arrow_function
+            field: body
     # The rewrite names the client three times, so a client computed by a call would run three times.
     - has:
         field: function

@@ -165,27 +165,60 @@ function inFlowOf(node: SgNode, call: SgNode): boolean {
   return fn !== undefined && fn.range().start.index <= call.range().start.index && call.range().end.index <= fn.range().end.index;
 }
 
-function guardedWriteSignals(guard: SgNode): Signals {
+/**
+ * The write around a guard, the outermost function enclosing it, and the read it is scored
+ * against: the last read of the same model that ends before the write, in the write's flow.
+ */
+function writeContext(guard: SgNode): { call: SgNode; fn: SgNode; read: SgNode | undefined } | undefined {
   const call = guard.ancestors().find((node) => kindOf(node) === "call_expression");
   const write = call === undefined ? undefined : modelCall(call);
   // The outermost enclosing function: a read in it, or in any function around the write, counts,
   // but not one inside a callback the write does not run in.
   const fn = guard.ancestors().filter((node) => FUNCTION_KINDS.has(kindOf(node) ?? "")).at(-1);
   if (call === undefined || write === undefined || fn === undefined) {
-    return { read_before_write: false, read_checks_guard: false, write_result_used: false, identity_from_read: false, await_between: false };
+    return undefined;
   }
-  const reads = fn
+  const read = fn
     .findAll({ rule: { kind: "call_expression" } })
     .filter((node) => {
-      const read = modelCall(node);
-      return read?.model === write.model && READ_METHODS.has(read.method) && before(node, call) && inFlowOf(node, call);
+      const found = modelCall(node);
+      return found?.model === write.model && READ_METHODS.has(found.method) && before(node, call) && inFlowOf(node, call);
+    })
+    .at(-1);
+  return { call, fn, read };
+}
+
+/** The `where` pair of a read's argument object. */
+function readWhereOf(read: SgNode | undefined): SgNode | undefined {
+  return read === undefined ? undefined : objectPairs(fieldOf(read, "arguments")?.children().find((child) => kindOf(child) === "object")).find((pair) => pairKey(pair) === "where");
+}
+
+/**
+ * Whether every entry the rewrite leaves in the guard's `where` pins the record: its key is `id`
+ * or a direct key of the read's own `where`. Any other key may still keep the write conditional,
+ * whatever its value, so the planted form is then not confirmed.
+ */
+function survivorsPinRecord(guard: SgNode): boolean {
+  const readKeys = new Set(objectEntries(fieldOf(readWhereOf(writeContext(guard)?.read), "value")).keys());
+  return (guard.parent()?.children() ?? [])
+    .filter((child) => child.id() !== guard.id() && (kindOf(child) === "pair" || kindOf(child) === "shorthand_property_identifier"))
+    .every((child) => {
+      const key = kindOf(child) === "pair" ? pairKey(child) : child.text();
+      return key === "id" || (key !== undefined && readKeys.has(key));
     });
-  const read = reads.at(-1);
+}
+
+function guardedWriteSignals(guard: SgNode): Signals {
+  const context = writeContext(guard);
+  if (context === undefined) {
+    return { read_before_write: false, read_checks_guard: false, write_result_used: false, identity_from_read: false, await_between: false };
+  }
+  const { call, fn, read } = context;
   const key = pairKey(guard);
   const value = fieldOf(guard, "value")?.text().replace(/\s+/g, " ");
   // Only direct fields of the read's own `where` filter the written model; a `select` or `include`
   // naming the field, or a nested relation filter (`owner: { active: true }`), does not.
-  const readWhere = read === undefined ? undefined : objectPairs(fieldOf(read, "arguments")?.children().find((child) => kindOf(child) === "object")).find((pair) => pairKey(pair) === "where");
+  const readWhere = readWhereOf(read);
   const readFilters = objectPairs(fieldOf(readWhere, "value")).some(
     (pair) => pairKey(pair) === key && fieldOf(pair, "value")?.text().replace(/\s+/g, " ") === value,
   );
@@ -307,9 +340,9 @@ export function findSitesInSource(classes: readonly ClassRule[], path: string, s
     for (const match of matches) {
       const edit = fixEdit(fixed, match);
       const result = root.commitEdits([edit]);
-      const plantedConfirmed = matchAll(planted, result, language).matches.some(
-        (node) => node.range().start.index <= edit.startPos && node.range().end.index >= edit.startPos,
-      );
+      const plantedConfirmed =
+        matchAll(planted, result, language).matches.some((node) => node.range().start.index <= edit.startPos && node.range().end.index >= edit.startPos) &&
+        (classId !== "RACE.guarded-write" || survivorsPinRecord(match));
       const patch = structuredPatch(`a/${path}`, `b/${path}`, source, result, undefined, undefined, { context: 3 });
       const start = match.range().start;
       sites.push({

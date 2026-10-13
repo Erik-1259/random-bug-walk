@@ -162,6 +162,36 @@ describe("find sites in one file", () => {
     expect(sites[0]?.confidence.level).toBe("low");
   });
 
+  it("marks the planted form unconfirmed when any non-identity key survives, whatever its value form", () => {
+    const text = [
+      "export async function publish(documentId: string, ownerId: string) {",
+      "  const row = await db.client.document.findUniqueOrThrow({ where: { id: documentId } });",
+      "  await db.client.document.update({ where: { id: row.id, status: row.status, version: row.version }, data: { active: true } });",
+      "  await db.client.document.update({ where: { id: row.id, AND: [{ status: row.status }], version: row.version }, data: { active: true } });",
+      "  await db.client.document.update({ where: { id: row.id, ownerId, version: row.version }, data: { active: true } });",
+      "}",
+      "",
+    ].join("\n");
+    const sites = findSitesInSource(CLASSES, "lib/publish.ts", text);
+    expect(sites.map((site) => [site.line, site.matched, site.planted_form_confirmed, site.confidence.level])).toEqual([
+      [3, "version: row.version", false, "low"],
+      [4, "version: row.version", false, "low"],
+      [5, "version: row.version", false, "low"],
+    ]);
+  });
+
+  it("confirms the planted form when the only other surviving key is one the read filters on", () => {
+    const text = [
+      "export async function publish(documentId: string, ownerId: string) {",
+      "  const row = await db.client.document.findFirst({ where: { id: documentId, ownerId } });",
+      "  await db.client.document.update({ where: { id: row.id, ownerId, version: row.version }, data: { active: true } });",
+      "}",
+      "",
+    ].join("\n");
+    const sites = findSitesInSource(CLASSES, "lib/publish.ts", text);
+    expect(sites.map((site) => [site.matched, site.planted_form_confirmed])).toEqual([["version: row.version", true]]);
+  });
+
   it("finds a guard after a comment and removes the guard, keeping the comment and a trailing comma", () => {
     const text = [
       "export async function redeem(code: string) {",
@@ -243,7 +273,6 @@ describe("find sites in one file", () => {
     expect(sites.map((site) => [site.rule_id, site.line, site.function])).toEqual([
       ["race.upsert", 6, "POST"],
       ["race.upsert", 19, "touchProfile"],
-      ["race.upsert", 28, "resetPreferences"],
     ]);
     expect(sites[1]?.confidence).toEqual({
       score: 1,
@@ -304,9 +333,25 @@ describe("find sites in one file", () => {
     expect(findSitesInSource(CLASSES, "components/redeem-form.ts", tsx)).toEqual([]);
   });
 
-  it("lowers an upsert inside a batch transaction, where the split form would not run", () => {
-    const batch = sitesIn("api/preferences/route.ts").find((site) => site.function === "resetPreferences");
-    expect(batch?.confidence).toMatchObject({ score: 0.7, level: "medium", signals: { not_in_batch_transaction: false } });
+  it("does not match an upsert in the array of a batch transaction, which is neither awaited nor returned", () => {
+    expect(sitesIn("api/preferences/route.ts").some((site) => site.function === "resetPreferences")).toBe(false);
+  });
+
+  it("matches only an upsert that is awaited or returned where it is called, whose values cannot change before the split read", () => {
+    const code = [
+      "export async function save(db, profileId, next) {",
+      "  const pending = db.client.preference.upsert({ where: { profileId }, update: {}, create: { profileId } });",
+      "  profileId = next;",
+      "  await pending;",
+      "  void db.client.preference.upsert({ where: { profileId }, update: {}, create: { profileId } });",
+      "  await Promise.all([db.client.preference.upsert({ where: { profileId }, update: {}, create: { profileId } })]);",
+      "  await db.client.preference.upsert({ where: { profileId }, update: {}, create: { profileId } }).catch(() => null);",
+      "  await db.client.preference.upsert({ where: { profileId }, update: {}, create: { profileId } });",
+      "  return db.client.preference.upsert({ where: { profileId }, update: {}, create: { profileId } });",
+      "}",
+      "",
+    ].join("\n");
+    expect(findSitesInSource(CLASSES, "lib/prefs.ts", code).map((site) => site.line)).toEqual([8, 9]);
   });
 
   it("keeps the full score for an upsert inside an interactive transaction callback", () => {
@@ -425,11 +470,10 @@ describe("find sites in a tree", () => {
     const report = findSites(root, RULES, "src/");
     expect(report.files_scanned).toBe(10);
     expect(report.classes).toEqual(["RACE.guarded-write", "RACE.check-then-act"]);
-    expect(report.site_count).toBe(16);
+    expect(report.site_count).toBe(15);
     expect(report.sites.map((site) => `${site.path}:${String(site.line)}`)).toEqual([
       "src/api/preferences/route.ts:6",
       "src/api/preferences/route.ts:19",
-      "src/api/preferences/route.ts:28",
       "src/api/seats/hold.ts:13",
       "src/api/vouchers/redeem.ts:17",
       "src/components/redeem-form.tsx:12",
@@ -444,7 +488,7 @@ describe("find sites in a tree", () => {
       "src/lib/settings.ts:12",
       "src/lib/settings.ts:17",
     ]);
-    expect(report.sites[4]?.diff).toContain("--- a/src/api/vouchers/redeem.ts\n");
+    expect(report.sites[3]?.diff).toContain("--- a/src/api/vouchers/redeem.ts\n");
     expect(JSON.stringify(findSites(root, RULES, "src/"))).toBe(JSON.stringify(report));
   });
 
@@ -453,9 +497,9 @@ describe("find sites in a tree", () => {
     const out = join(scratch, "sites.json");
     const run = spawnSync(process.execPath, [CLI, "find-sites", "--root", root, "--record", out], { encoding: "utf8" });
     expect(run.status).toBe(0);
-    expect(run.stderr).toContain("find-sites: 16 sites in 10 files");
+    expect(run.stderr).toContain("find-sites: 15 sites in 10 files");
     const report = JSON.parse(readFileSync(out, "utf8")) as { site_count: number; sites: SiteRecord[] };
-    expect(report.site_count).toBe(16);
+    expect(report.site_count).toBe(15);
     expect(report.sites[0]?.path).toBe("api/preferences/route.ts");
     const missing = spawnSync(process.execPath, [CLI, "find-sites"], { encoding: "utf8" });
     expect(missing.status).toBe(2);
