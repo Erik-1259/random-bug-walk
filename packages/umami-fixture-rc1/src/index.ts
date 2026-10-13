@@ -42,3 +42,22 @@ export {
 } from "./race.ts";
 export { loginRequest, verifyBackupCodeRequest, type Credentials } from "./requests.ts";
 export { createFixtureTemplate, resetFixture, TEMPLATE_DATABASE, twoFactorSeedStatements, type Statement } from "./reset.ts";
+export {
+  classifyConcurrent,
+  classifyReuse,
+  fireConcurrent,
+  fireSequential,
+  overlapOf,
+  type AttemptTiming,
+  type Burst,
+  type Grade,
+  type Graded,
+  type RaceGrading,
+  type RecordAttempt,
+  type RequestOutcome,
+  type RequestPlan,
+  type ReuseGrading,
+  type Sequence,
+  type SetupResult,
+  type Verdict,
+} from "./template/index.ts";

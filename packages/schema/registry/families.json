@@ -14,6 +14,20 @@
       "mutation_ids": [
         "4c2531a343d8250607df3ab84491e2d7e655849c1dbcb477264a5c126b21ccca"
       ]
+    },
+    {
+      "family_id": "rc-1-backup-code-001",
+      "exposure": "public",
+      "held_out_eligible": false,
+      "source_fixes": [
+        {
+          "upstream": "umami",
+          "commit": "3e165a8c6fea303250e626dc952a396e40887c71"
+        }
+      ],
+      "mutation_ids": [
+        "e58a281fa1ac6029095043858dcefd5b3e123b24c318b9da93d76ee334fb6ce7"
+      ]
     }
   ]
 }

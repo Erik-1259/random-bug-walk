@@ -63,8 +63,8 @@ describe("a candidate attempt, staged, published and built into a release", () =
       auditPolicy: w.sources.auditPolicy,
       kitStage: w.sources.kitStage,
       originalSuite: w.sources.originalSuite,
-      probesDir: w.sources.probesDir,
-      alternativeDir: w.sources.alternativeDir,
+      probesDir: w.sources.family.probesDir,
+      alternativeDir: w.sources.family.alternativeDir,
       backend: "docker",
       sandboxImage: null,
     };

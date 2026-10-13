@@ -1,4 +1,4 @@
-// Command line for the DT-1.tz-arg harvest. See commands.ts for the commands and exit codes.
+// Command line for the harvest (DT-1.tz-arg by default, or the race class with --shape). See commands.ts for the commands and exit codes.
 import { runCommand } from "./commands.ts";
 
 process.exitCode = await runCommand(process.argv.slice(2), {

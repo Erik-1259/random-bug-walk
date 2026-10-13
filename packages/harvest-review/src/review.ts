@@ -1,5 +1,6 @@
 // The `review` command: for each candidate in a review-inputs file, one metered call to Super and
-// then one to Kimi, one at a time, combined with the harvest's ast-grep outcome. It follows the
+// then one to Kimi, one at a time, under the shape the inputs name (its prompt, output schema and
+// evidence fields), combined with the harvest's ast-grep outcome. It follows the
 // writer's `record` command: it opens the ledger, acquires the slot for a fresh root, runs the
 // calls and releases the slot. An uncertain call stops the run and leaves the slot held.
 import { createHash, randomUUID } from "node:crypto";
@@ -23,8 +24,10 @@ import { parseReviewInputs } from "./inputs.ts";
 import type { CandidateInput, ReviewInputs } from "./inputs.ts";
 import { ACTOR_ROLE, API_KEY_VARIABLE, REVIEW_KIND, REVIEW_MODELS } from "./profiles.ts";
 import type { ModelName, ReviewKind } from "./profiles.ts";
-import { ReviewOutputSchema, reviewPrompt } from "./prompt.ts";
-import type { ReviewOutput } from "./prompt.ts";
+import { reviewPrompt } from "./prompt.ts";
+import type { ReviewAnswer } from "./prompt.ts";
+import { reviewShape } from "./shapes.ts";
+import type { ReviewShape } from "./shapes.ts";
 import { combine, emptyMatrix, OUTCOMES, vote } from "./vote.ts";
 import type { Matrix, Outcome, Vote } from "./vote.ts";
 
@@ -62,7 +65,7 @@ export function freshContext(): RunContext {
 
 export interface CallResult {
   vote: Vote;
-  output: ReviewOutput | null;
+  output: ReviewAnswer | null;
   call_name: string;
   operation_id: string;
   status: CallRecord["status"];
@@ -106,6 +109,8 @@ export interface Stopped {
 
 export interface ReviewFile {
   format_version: 1;
+  /** The shape the candidates were judged as. */
+  shape_id: string;
   context: RunContext;
   profiles: Record<ModelName, { model: string; service: string; runtime_profile_sha256: string }>;
   rate_sheet_sha256: string;
@@ -157,9 +162,9 @@ export function reasoningMeasures(responseBody: string | null): { reasoning_toke
   };
 }
 
-function callResult(call: CallRecord<ReviewKind>, output: ReviewOutput | null): CallResult {
+function callResult(call: CallRecord<ReviewKind>, output: ReviewAnswer | null, shape: ReviewShape): CallResult {
   return {
-    vote: vote(output),
+    vote: vote(output, shape.evidence),
     output,
     call_name: call.call_name,
     operation_id: call.operation_id,
@@ -258,9 +263,11 @@ export async function executeReview(options: ReviewOptions, run: ReviewRun): Pro
   }
   const { spend } = connection;
   const context = freshContext();
+  const shape = reviewShape(run.inputs.shape_id);
   const candidates = run.inputs.candidates.map((input, index) => pending(input, index < run.maxCandidates ? null : "not_reviewed"));
   const review = (stopped: Stopped | null): ReviewFile => ({
     format_version: 1,
+    shape_id: shape.id,
     context,
     profiles: {
       super: describe(REVIEW_MODELS[0]?.profile),
@@ -308,7 +315,7 @@ export async function executeReview(options: ReviewOptions, run: ReviewRun): Pro
     held = true;
     await mkdir(join(run.out, "recordings"), { recursive: true });
     const providers = REVIEW_MODELS.map((model) => ({ ...model, provider: createModelProvider(model.profile, { fetch: options.fetch, apiKey }) }));
-    const stopped = await reviewAll(options, run, { spend, context, providers, candidates, say, setCurrent: (id) => (current = id) });
+    const stopped = await reviewAll(options, run, { spend, context, shape, providers, candidates, say, setCurrent: (id) => (current = id) });
     const file = await finish(stopped);
     return { code: (await release()) && stopped === null ? 0 : 1, review: file };
   } catch (error) {
@@ -343,6 +350,7 @@ function describe(profile: (typeof REVIEW_MODELS)[number]["profile"] | undefined
 interface Loop {
   spend: Spend;
   context: RunContext;
+  shape: ReviewShape;
   providers: ((typeof REVIEW_MODELS)[number] & { provider: ModelProvider<ReviewKind> })[];
   candidates: CandidateResult[];
   say: (line: string) => void;
@@ -351,18 +359,18 @@ interface Loop {
 
 /** Reviews the candidates within the cap, one call at a time. Returns why the run stopped, or null. */
 async function reviewAll(options: ReviewOptions, run: ReviewRun, loop: Loop): Promise<Stopped | null> {
-  const { spend, context, providers, candidates, say } = loop;
+  const { spend, context, shape, providers, candidates, say } = loop;
   for (const [index, input] of run.inputs.candidates.slice(0, run.maxCandidates).entries()) {
     const entry = candidates[index];
     if (entry === undefined) {
       throw new Error("a candidate has no result entry");
     }
     loop.setCurrent(input.candidate_id);
-    const prompt = reviewPrompt(input);
+    const prompt = reviewPrompt(input, shape.system_prompt);
     for (const model of providers) {
       const result = await meteredStructuredCall(
         { spend, provider: model.provider, context, poolKey: run.pool, allocationKey: null, slotKey: run.slotKey, rateSheet: run.rateSheet },
-        { kind: REVIEW_KIND, candidate: entry.candidate_key, prompt, schema: ReviewOutputSchema, callOrdinal: model.ordinal },
+        { kind: REVIEW_KIND, candidate: entry.candidate_key, prompt, schema: shape.schema, callOrdinal: model.ordinal },
       );
       if (!result.ok) {
         if (result.code === "prompt_too_large") {
@@ -386,7 +394,7 @@ async function reviewAll(options: ReviewOptions, run: ReviewRun, loop: Loop): Pr
         );
         await writeFile(join(run.out, "recordings", `${entry.candidate_key}-${String(model.ordinal)}.recording.json`), serializeRecording(recording));
       }
-      entry.votes[model.name] = callResult(call, output);
+      entry.votes[model.name] = callResult(call, output, shape);
       if (call.status === "uncertain") {
         say(`review: uncertain: lost_response for operation ${call.operation_id}; it needs a manual reconciliation`);
         return { reason: "uncertain", candidate_id: input.candidate_id, operation_id: call.operation_id, detail: "lost_response" };
