@@ -23,10 +23,10 @@
     "scripts/checks": 194,
     "tools/candidates": 66,
     "tools/controller": 158,
-    "tools/local-runner": 192,
+    "tools/local-runner": 198,
     "tools/neon-ci": 98,
     "tools/publication": 166,
-    "tools/release": 53,
+    "tools/release": 74,
     "tools/solver-session": 90
   },
   "pytest": {

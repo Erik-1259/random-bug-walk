@@ -8,8 +8,13 @@ import { fileURLToPath } from "node:url";
 import { pack } from "tar-stream";
 import {
   ALTERNATIVE_FIX_DIR,
+  DEFAULT_FAMILY,
+  FAMILIES,
+  FamilyError,
+  adm06For,
   buildJob,
   candidateIdentity,
+  checkFamilyImage,
   containerName,
   deriveCodeStates,
   expectedVectors,
@@ -19,7 +24,7 @@ import {
   profileSha256,
   runTag,
 } from "@rbw/local-runner";
-import type { BuiltJob, Docker, JobContext, RunIds } from "@rbw/local-runner";
+import type { BuiltJob, Docker, FamilyFixture, FamilyId, JobContext, RunIds } from "@rbw/local-runner";
 import { buildJobRequest, canonicalDigest, sha256Hex } from "@rbw/schema";
 import type { TaskRevisionIdentity } from "@rbw/schema";
 import { PROBE_DIR } from "@rbw/shapes";
@@ -33,22 +38,33 @@ import type { PrivateStore } from "@rbw/publisher/private-store";
  * The bug family a judge job is built for: its fixture package (the data file whose SHA-256 the job
  * records, and the parsed fixture whose outcome vectors the job expects), its probe directory and
  * its alternative fix. A release of one family must never take another family's fixture or probes.
- * A judge replay derives code states from the time-zone family's probes and fix, not the job's, so
- * the build command takes a family only through familyFrom, which refuses other probes or fixes.
+ * A judge replay reads the family back from the frozen job (the fixture vectors and the profile
+ * hash) and uses that family's own probes and fix, so a family is either a known one (`id`, from
+ * the admitted run's records) or, through familyFrom, one whose probes and fix are the time-zone
+ * family's.
  */
-export interface JudgeJobFamily {
+export interface JudgeJobFamily<F extends FamilyFixture = Fixture> {
+  /** The local runner's family this is; absent for the time-zone family and for families given by flags. */
+  id?: FamilyId;
   /** The fixture package's data file, hashed as fixture_sha256. */
   fixtureFile: string | URL;
   /** The fixture package's parsed data file. */
-  loadFixture: () => Fixture;
+  loadFixture: () => F;
   /** The family's probe directory: probes.json and its patches. */
   probesDir: string;
-  /** The family's alternative fix directory. */
-  alternativeDir: string;
+  /** The family's alternative fix directory, or null for a family with none (its judge job grades the reference fix). */
+  alternativeDir: string | null;
 }
 
 /** The released time-zone family: @rbw/umami-fixture, the shapes package's probes and the local runner's alternative fix. */
-export const TIME_ZONE_FAMILY: Readonly<JudgeJobFamily> = Object.freeze({ fixtureFile: FIXTURE_FILE, loadFixture, probesDir: PROBE_DIR, alternativeDir: ALTERNATIVE_FIX_DIR });
+export const TIME_ZONE_FAMILY: Readonly<JudgeJobFamily & { alternativeDir: string }> = Object.freeze({ fixtureFile: FIXTURE_FILE, loadFixture, probesDir: PROBE_DIR, alternativeDir: ALTERNATIVE_FIX_DIR });
+
+/** A known family's judge job inputs, as the local runner's family names them; the time-zone family is TIME_ZONE_FAMILY itself. */
+export function judgeJobFamily(id: FamilyId): Readonly<JudgeJobFamily<FamilyFixture>> {
+  if (id === DEFAULT_FAMILY) return TIME_ZONE_FAMILY;
+  const family = FAMILIES[id];
+  return Object.freeze({ id, fixtureFile: family.fixtureFile, loadFixture: family.loadFixture, probesDir: family.probesDir, alternativeDir: family.alternativeDir });
+}
 
 /** The host inputs a job is built from: the local kit image and the files the copies and their audit read. */
 export interface BuildSources {
@@ -64,7 +80,9 @@ export interface BuildSources {
   /** The admission's frozen original-suite manifest. */
   originalSuite: string;
   /** The family the job is built for; the time-zone family when absent. */
-  family?: Readonly<JudgeJobFamily>;
+  family?: Readonly<JudgeJobFamily<FamilyFixture>>;
+  /** A race family's database latency in ms, which every replay copy sets and the profile hash holds; required for the race family (race_latency_missing). */
+  raceLatencyMs?: number | null;
 }
 
 /**
@@ -124,28 +142,52 @@ function checkStagedFixture(kitStage: string, fixtureFile: string | URL, fixture
 }
 
 /**
+ * A family with a database proxy needs a set latency: the race only shows under a delay, and the
+ * plain copy profile hash is the time-zone family's, so a race job without one would not name its
+ * family in the profile it is graded under. Checked before anything is exported or written.
+ */
+export function checkRaceLatency(sources: BuildSources): void {
+  const id = sources.family?.id;
+  if (id !== undefined && FAMILIES[id].proxy && (sources.raceLatencyMs === undefined || sources.raceLatencyMs === null)) {
+    throw new ReleaseInputError("race_latency_missing", `the ${id} family's judge job needs a race latency, and the admitted run set none`);
+  }
+}
+
+/**
  * A job context from the image and the host inputs, exactly as the controller's build makes one:
  * the image digest, the exported source and its kit manifest, the derived code states, the
  * fixture, both suites, the vectors and the copy profile.
  */
 export async function jobContext(docker: Docker, sources: BuildSources, options: ContextOptions): Promise<{ ctx: JobContext; sourceDir: string }> {
+  checkRaceLatency(sources);
   const family = sources.family ?? TIME_ZONE_FAMILY;
+  // The same family selection and latency check as the controller's run (loadCopyInputs).
   const copyInputs = loadCopyInputs({
     manifest: sources.manifest,
     terms: sources.terms,
     policy: sources.auditPolicy,
+    ...(family.id === undefined ? {} : { family: family.id }),
+    ...(sources.raceLatencyMs === undefined || sources.raceLatencyMs === null ? {} : { raceLatencyMs: sources.raceLatencyMs }),
     probesDir: family.probesDir,
-    alternativeDir: family.alternativeDir,
+    ...(family.alternativeDir === null ? {} : { alternativeDir: family.alternativeDir }),
   });
+  const adm06 = adm06For(copyInputs.probes);
   const fixture = family.loadFixture();
-  // The judge job expects a vector for every code state; a fixture without one cannot build it.
-  const vectorsByState = fixture.outcome_vectors as Partial<Fixture["outcome_vectors"]>;
-  const missing = CODE_STATES.filter((state) => !Array.isArray(vectorsByState[state]));
+  // The judge job expects a vector for every code state the probe set uses; a fixture without one cannot build it.
+  const vectorsByState = fixture.outcome_vectors as Partial<Record<string, unknown>>;
+  const missing = CODE_STATES.filter((state) => (adm06 === "required" || !["partial", "stub"].includes(state)) && !Array.isArray(vectorsByState[state]));
   if (missing.length > 0) throw new ReleaseInputError("fixture_vectors_incomplete", missing.join(","));
   const fixtureBytes = readInput(family.fixtureFile, "the fixture data file");
   checkStagedFixture(sources.kitStage, family.fixtureFile, fixtureBytes);
   const digest = await inspectImage(docker, sources.image);
   const exported = await exportImage(docker, { image: digest, container: containerName(runTag(options.ids.root_execution_id), "release", "export"), dest: options.exportDir });
+  // The kit image must be the family's own, as the controller's run checks before any copy.
+  try {
+    checkFamilyImage(copyInputs.family, exported.image_manifest);
+  } catch (error) {
+    if (error instanceof FamilyError) throw new ReleaseInputError("kit_image_family_mismatch", error.message);
+    throw error;
+  }
   const states = deriveCodeStates(readFileSync(join(exported.source_dir, copyInputs.probes.data.target_path)), copyInputs.probes, copyInputs.alternative);
   const suiteBytes = readInput(sources.originalSuite, "the original suite");
   let testIds: string[];
@@ -164,7 +206,8 @@ export async function jobContext(docker: Docker, sources: BuildSources, options:
     originalSuite: { sha256: sha256Hex(suiteBytes), testIds },
     states,
     vectors: expectedVectors(fixture, copyInputs.probes),
-    profileSha256: profileSha256(),
+    adm06,
+    profileSha256: profileSha256(copyInputs.raceLatencyMs),
     deadlineAt: options.deadlineAt,
     ...(options.projectPolicy === undefined ? {} : { projectPolicy: options.projectPolicy }),
     ...(options.judgeFixed === undefined ? {} : { judgeFixed: options.judgeFixed }),
@@ -206,6 +249,10 @@ export async function sourceTar(dir: string): Promise<Buffer> {
 
 export interface JudgeJob {
   releaseId: string;
+  /** The family the job was built for, which a replay reads back from the frozen job (frozenJobFamily). */
+  family: FamilyId;
+  /** The race latency the profile hash holds and every replay copy sets; null only for a family without the proxy. */
+  raceLatencyMs: number | null;
   built: BuiltJob;
   /** The identity the request's task revision hashes: the release's complete revision. */
   identity: TaskRevisionIdentity;
@@ -270,6 +317,8 @@ export async function buildJudgeJob(docker: Docker, sources: BuildSources, optio
   const index = canonicalDigest({ release_id: options.releaseId, files: files.map((file) => ({ path: file.path, sha256: sha256Hex(file.bytes) })) });
   return {
     releaseId: options.releaseId,
+    family: sources.family?.id ?? DEFAULT_FAMILY,
+    raceLatencyMs: sources.raceLatencyMs ?? null,
     built,
     identity: candidateIdentity(ctx),
     files,
