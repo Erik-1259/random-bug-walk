@@ -4,7 +4,7 @@ import { Catalog } from "../src/components/catalog.tsx";
 import { CasePage } from "../src/components/case-page.tsx";
 import { KNOWN_CONDITION_MESSAGE } from "@rbw/controller/judge-types";
 import { ReplayPanel } from "../src/components/replay.tsx";
-import { funnel, NO_VALIDATED_RESULT, REPLAY_STATE, REPLAY_STATE_TEXT, suiteMatrix, VALIDATED_RESULT, type ReplayStatus } from "../src/model.ts";
+import { funnel, NO_VALIDATED_RESULT, REPLAY_STATE, REPLAY_STATE_HELP, REPLAY_STATE_TEXT, REPLAY_UNAVAILABLE_TEXT, suiteMatrix, VALIDATED_RESULT, type ReplayStatus } from "../src/model.ts";
 import { readResults } from "../src/release.ts";
 import { AKL, LA } from "../../../packages/admission/test/support/record-set.ts";
 import { observe, testOutcome } from "../../../packages/admission/test/support/record-set.ts";
@@ -331,5 +331,30 @@ describe("the replay cell", () => {
     const page = text(renderToStaticMarkup(<ReplayPanel release={release} state="disabled" reason="Verified replay is not enabled on this site." status={null} />));
     expect(page).toContain(`Frozen release ${RELEASE_ID}, created 2026-10-06 Replay No replay in this browser yet.`);
     expect(page).toContain(`Replay status: ${REPLAY_STATE_TEXT.disabled}. Verified replay is not enabled on this site.`);
+  });
+
+  it("explains every terminal and uncertain state in plain text", () => {
+    for (const state of ["not_reproduced", "incomplete", "needs_reconciliation", "unknown"] as const) {
+      const help = REPLAY_STATE_HELP[state];
+      expect(help?.length ?? 0).toBeGreaterThan(20);
+      const page = text(renderToStaticMarkup(<ReplayPanel release={release} state={state} reason="" status={status(state, false, [])} />));
+      expect(page).toContain(`Replay status: ${REPLAY_STATE_TEXT[state]}.`);
+      expect(page).toContain(help ?? "none");
+    }
+    const reconciliation = text(renderToStaticMarkup(<ReplayPanel release={release} state="needs_reconciliation" reason="" status={status("needs_reconciliation", false, [])} />));
+    expect(reconciliation).toContain("The operator checks the spend ledger");
+    expect(reconciliation).toContain("try again later");
+  });
+
+  it("shows each unavailable reason's text, even over an earlier replay's status", () => {
+    expect(Object.keys(REPLAY_UNAVAILABLE_TEXT).sort()).toEqual(["budget", "busy", "error", "held", "ledger", "release", "token"]);
+    for (const message of Object.values(REPLAY_UNAVAILABLE_TEXT)) {
+      expect(message).toMatch(/\.$/);
+      for (const earlier of [null, status("verified", false, [])]) {
+        const page = text(renderToStaticMarkup(<ReplayPanel release={release} state="unavailable" reason={message} status={earlier} />));
+        expect(page).toContain(`Replay status: ${REPLAY_STATE_TEXT.unavailable}. ${message}`);
+      }
+    }
+    expect(REPLAY_UNAVAILABLE_TEXT.held).toContain("the operator");
   });
 });

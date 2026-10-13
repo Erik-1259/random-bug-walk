@@ -10,7 +10,7 @@ import type { Release } from "@rbw/schema";
 import type { Spend } from "@rbw/spend";
 import type { Evidence } from "@rbw/admission";
 import type { JudgeConfig } from "../config.ts";
-import { REPLAY_STATE_TEXT, type ReplayCell, type ReplayStatus } from "../model.ts";
+import { REPLAY_STATE_TEXT, REPLAY_UNAVAILABLE_TEXT, type ReplayCell, type ReplayStatus, type UnavailableReason } from "../model.ts";
 
 export const SESSION_COOKIE = "rbw_judge_session";
 /** A week; rotating the passcode ends every session before then. */
@@ -92,6 +92,11 @@ export async function postSession(request: Request, server: JudgeServer): Promis
   return respond(200, { state: "ready" }, { "set-cookie": cookie });
 }
 
+/** GET /api/judge/session: 200 while the session cookie is valid, 401 otherwise, so a reloaded page knows it is signed in. */
+export function getSession(request: Request, server: JudgeServer): Response {
+  return hasSession(request, server.config) ? respond(200, { state: "ready" }) : unauthorized();
+}
+
 interface Context {
   judge: JudgeModule;
   release: Release;
@@ -111,18 +116,8 @@ async function context(server: JudgeServer): Promise<Context | null> {
   return { judge, release, releaseBytes, rates: judge.parseRateSheet(frozen.rateSheet) };
 }
 
-const MESSAGES = {
-  busy: "Busy: another replay is running. Try again shortly.",
-  budget: "Unavailable: the judge budget cannot cover a replay.",
-  error: "Unavailable: the replay could not start. Try again shortly.",
-  held: "Held for inspection.",
-  release: "Unavailable: this site's release is not the configured release.",
-  token: "Unavailable: try again shortly.",
-  ledger: "Unavailable: the status can't be read right now. Try again shortly.",
-} as const;
-
-function unavailable(requestId: string, reason: keyof typeof MESSAGES): Response {
-  return respond(200, { state: "unavailable", request_id: requestId, reason, message: MESSAGES[reason] });
+function unavailable(requestId: string, reason: UnavailableReason): Response {
+  return respond(200, { state: "unavailable", request_id: requestId, reason, message: REPLAY_UNAVAILABLE_TEXT[reason] });
 }
 
 async function readJson<T>(store: JudgeStore, key: string, limit: number, parse: (bytes: Uint8Array) => T): Promise<T | null> {
@@ -161,7 +156,12 @@ export async function postJudge(request: Request, server: JudgeServer): Promise<
   const store = await server.store(token);
   const ids = judge.judgeIds(requestId);
   const keys = judge.judgeKeys(ids.root);
-  const ledger = await server.ledger();
+  // A database outage (after the connect's own retries) reads as unavailable; nothing is written yet.
+  const ledger = await server.ledger().catch((error: unknown) => {
+    if (error instanceof Error) return null;
+    throw error;
+  });
+  if (ledger === null) return unavailable(requestId, "ledger");
   try {
     const { spend } = ledger;
     if ((await store.get(keys.rootRun, SMALL_BYTES)) !== null) return respond(200, await projection(server, ctx, spend, store, requestId));
@@ -175,8 +175,10 @@ export async function postJudge(request: Request, server: JudgeServer): Promise<
     const envelope = judge.controllerEnvelope(ctx.rates);
     if (!whole.ok || !envelope.ok) return unavailable(requestId, "budget");
     const pool = await spend.poolStatus({ pool_key: judge.JUDGE_POOL.pool_key });
+    // The judge allocation and the pool as a whole must both cover the job. Public use is capped by
+    // its own allocation, so only a public settlement over its envelope can make the pool bind first.
     const available = pool.ok ? pool.allocations.find((item) => item.allocation_key === judge.JUDGE_POOL.allocation_key)?.available_microusd : undefined;
-    if (available === undefined || available < whole.reserved_microusd) return unavailable(requestId, "budget");
+    if (!pool.ok || available === undefined || available < whole.reserved_microusd || pool.available_microusd < whole.reserved_microusd) return unavailable(requestId, "budget");
 
     const slot = await spend.acquireSlot({ slot_key: judge.JUDGE_POOL.slot_key, root_execution_id: ids.root, actor_role: ACTOR });
     if (!slot.ok) return unavailable(requestId, "busy");

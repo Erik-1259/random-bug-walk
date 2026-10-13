@@ -1,7 +1,8 @@
 "use client";
 // The replay control: a passcode field, then the button that starts one replay. The browser keeps
-// the request ID, so a refresh resumes the same replay; while it starts or runs, the control asks
-// the status route again every 15 seconds. There is no cancel action.
+// the request ID, so a refresh resumes the same replay, and a refresh while the session cookie is
+// valid needs no new sign-in. While a replay starts or runs, the control asks the status route
+// again every 15 seconds. There is no cancel action.
 import { useEffect, useState, type SyntheticEvent } from "react";
 import type { ReplayState, ReplayStatus } from "../model.ts";
 import { ReplayPanel } from "./replay.tsx";
@@ -29,11 +30,12 @@ export function ReplayControl({ release, initial }: Props) {
       setView({ state: "ready", reason: answer.message ?? "" });
       return;
     }
+    // Every answer but unauthorized comes after the route checked the session cookie.
+    setSignedIn(true);
     if (answer.state === "unavailable" || answer.state === "bad_request") {
       setView({ state: "unavailable", reason: answer.message ?? "" });
       return;
     }
-    setSignedIn(true);
     if (answer.release_id !== undefined) setStatus(answer as ReplayStatus);
     setView({ state: answer.state as ReplayState["state"], reason: answer.message ?? "" });
   };
@@ -48,9 +50,21 @@ export function ReplayControl({ release, initial }: Props) {
     }
   };
 
+  const checkSession = async () => {
+    try {
+      const response = await fetch("/api/judge/session", { cache: "no-store" });
+      if (response.ok) setSignedIn(true);
+    } catch {
+      // Without an answer the passcode form stays; signing in again works.
+    }
+  };
+
+  // After a reload the HttpOnly session cookie may still be valid: the stored replay's status
+  // shows it, or with no stored replay the session check does.
   useEffect(() => {
     const requestId = enabled ? window.localStorage.getItem(REQUEST_KEY) : null;
     if (requestId !== null) void refresh(requestId);
+    else if (enabled) void checkSession();
   }, [enabled]);
 
   useEffect(() => {
@@ -98,12 +112,12 @@ export function ReplayControl({ release, initial }: Props) {
         <form onSubmit={(event) => void signIn(event)}>
           <label htmlFor="judge-passcode">Judge passcode</label>{" "}
           <input id="judge-passcode" type="password" autoComplete="off" value={passcode} onChange={(event) => { setPasscode(event.target.value); }} />{" "}
-          <button type="submit" disabled={passcode === ""}>
+          <button type="submit" className="button-primary" disabled={passcode === ""}>
             Sign in
           </button>
         </form>
       ) : null}
-      <button type="button" disabled={!enabled || !signedIn || busy} aria-describedby="replay-status" onClick={() => void start()}>
+      <button type="button" className="button-primary" disabled={!enabled || !signedIn || busy} aria-describedby="replay-status" onClick={() => void start()}>
         Plant and verify this example
       </button>
     </ReplayPanel>

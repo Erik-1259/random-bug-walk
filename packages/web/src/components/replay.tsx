@@ -1,8 +1,9 @@
 // The replay cell's content: the frozen release beside the replay, each with its date, the
-// replay's state in text, its measured duration apart from the 35-minute hard cap, each copy's
-// progress and the replay's six cells. It holds no state, so the page and tests render it as is.
+// replay's state in text with what a terminal or uncertain state means, its measured duration
+// apart from the 35-minute hard cap, each copy's progress and the replay's six cells. It holds no
+// state, so the page and tests render it as is.
 import type { ReactNode } from "react";
-import { COLUMN_LABEL, MATRIX_COLUMNS, REPLAY_STATE_TEXT, ROW_LABEL, type ReplayStateName, type ReplayStatus } from "../model.ts";
+import { COLUMN_LABEL, MATRIX_COLUMNS, REPLAY_STATE_HELP, REPLAY_STATE_TEXT, ROW_LABEL, type ReplayStateName, type ReplayStatus } from "../model.ts";
 
 const TRIAL_COLUMN: Record<string, string> = { "clean-01": COLUMN_LABEL.clean, "planted-01": COLUMN_LABEL.planted, "fixed-01": COLUMN_LABEL.fixed };
 const COPY_TEXT = { not_started: "not started", running: "running", done: "done" } as const;
@@ -25,6 +26,9 @@ export interface ReplayPanelProps {
 }
 
 export function ReplayPanel({ release, state, reason, status, children }: ReplayPanelProps) {
+  // An unavailable answer carries its own reason; an earlier replay's status must not hide it.
+  const message = state === "unavailable" ? reason : (status?.message ?? reason);
+  const help = REPLAY_STATE_HELP[state];
   return (
     <>
       <div className="replay">
@@ -37,8 +41,9 @@ export function ReplayPanel({ release, state, reason, status, children }: Replay
       </div>
       {children}
       <p id="replay-status" className={`status status-replay-${state}`}>
-        Replay status: {REPLAY_STATE_TEXT[state]}. {status?.message ?? reason}
+        Replay status: {REPLAY_STATE_TEXT[state]}. {message}
       </p>
+      {help === undefined ? null : <p className="replay-help">{help}</p>}
       {status === null ? null : <ReplayDetail status={status} />}
       <p>The page above is complete without a replay.</p>
     </>

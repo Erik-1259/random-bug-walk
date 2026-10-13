@@ -24,6 +24,11 @@ code, .hash { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 
 .status-fail { background: #fde4e1; }
 .status-invalid, .status-incomplete { background: #fff1d6; }
 .status-not_run, .status-no_record { background: #ececec; }
+.button-primary { font: inherit; font-weight: 600; margin: 0.25rem 0; padding: 0.5rem 1.1rem; border: 1px solid #0a4a9e; border-radius: 6px; background: #0b5cc4; color: #fff; cursor: pointer; }
+.button-primary:hover:not(:disabled) { background: #094a9f; border-color: #073a7c; }
+.button-primary:focus-visible { outline: 3px solid #f2b705; outline-offset: 2px; }
+.button-primary:disabled { background: #d5dbe3; border-color: #b9c2cd; color: #5b6573; cursor: not-allowed; }
+.replay-help { margin-top: 0; }
 .matrix .cell-label { display: none; }
 .matrix .detail { display: block; font-size: 0.9em; }
 @media (max-width: 40rem) {
