@@ -6,11 +6,13 @@ import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { parseEnvFile, parseHashList, type EnvFile, type Manifest } from "../../umami/src/manifest.ts";
+import { readLatencyFile } from "./proxy-check.ts";
+
+export { MAX_LATENCY_MS } from "./proxy-check.ts";
 
 export const BASE_SCHEMA = "rbw-umami-kit-image-manifest/1";
 export const RACE_SCHEMA = "rbw-umami-race-kit-image-manifest/1";
 export const TOXIPROXY_VERSION = "2.12.0";
-export const MAX_LATENCY_MS = 10000;
 
 /** The proxy that rbw-proxy creates; the race selftest and rbw-proxy check hold the same values. */
 export const PROXY = {
@@ -51,18 +53,9 @@ function sha256(text: string | Buffer): string {
   return createHash("sha256").update(text).digest("hex");
 }
 
-/** Reads RBW_RACE_LATENCY_MS: a whole number of milliseconds from 0 to MAX_LATENCY_MS, without a leading zero. */
+/** Reads RBW_RACE_LATENCY_MS: the same rule rbw-proxy applies in the image, through proxy-check.ts. */
 export function parseLatency(raceEnv: string): number {
-  const env = parseEnvFile(raceEnv);
-  const value = env.set.RBW_RACE_LATENCY_MS;
-  if (value === undefined || !/^(0|[1-9][0-9]{0,4})$/.test(value) || Number(value) > MAX_LATENCY_MS) {
-    throw new Error(`RBW_RACE_LATENCY_MS must be a whole number of milliseconds from 0 to ${String(MAX_LATENCY_MS)}`);
-  }
-  const extra = Object.keys(env.set).filter((key) => key !== "RBW_RACE_LATENCY_MS");
-  if (extra.length > 0 || env.unset.length > 0) {
-    throw new Error("race.environment holds only RBW_RACE_LATENCY_MS");
-  }
-  return Number(value);
+  return readLatencyFile(raceEnv);
 }
 
 /**

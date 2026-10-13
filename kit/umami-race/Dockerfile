@@ -15,7 +15,8 @@ ARG REGISTRY=docker.io
 ARG NODE22_DIGEST=sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402
 # toxiproxy-server, checked against umami-race/toxiproxy.sha256
 ARG TOXIPROXY_VERSION=2.12.0
-# The fixed latency of the toxic on the proxy's downstream (Postgres to Umami), in milliseconds
+# The default latency of the toxic on the proxy's downstream (Postgres to Umami), in milliseconds;
+# root can set another per container with "rbw-proxy set-latency <ms>"
 ARG RACE_LATENCY_MS=0
 
 # The static toxiproxy-server binary for the target architecture, checked by its committed hash.
@@ -49,6 +50,8 @@ RUN set -euxo pipefail; \
 COPY --chown=0:0 --chmod=0755 umami-race/bin/ /opt/rbw/bin/
 COPY --chown=0:0 --chmod=0644 umami-race/etc/app.environment /opt/rbw/etc/app.environment
 COPY --chown=0:0 --chmod=0600 umami-race/toxiproxy.sha256 /opt/rbw/verifier/toxiproxy.sha256
+# rbw-proxy's parsing, comparison and log audit, run as root by the verifier's Node 24
+COPY --chown=0:0 --chmod=0600 umami-race/src/proxy-check.ts /opt/rbw/verifier/rbw-proxy-check.ts
 RUN set -euxo pipefail; \
     case "$RACE_LATENCY_MS" in \
       '' | 0?* | *[!0-9]*) echo "RACE_LATENCY_MS must be a whole number of milliseconds"; exit 1 ;; \

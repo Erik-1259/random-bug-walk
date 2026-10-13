@@ -109,10 +109,32 @@ describe("latency setting", () => {
     expect(run.indexOf("exit 1")).toBeLessThan(run.indexOf("> /opt/rbw/etc/race.environment"));
   });
 
-  it("is read by rbw-proxy with the same bounds", () => {
-    expect(proxyScript()).toContain("CONFIG=/opt/rbw/etc/race.environment");
-    expect(proxyScript()).toContain("MAX_LATENCY_MS=10000");
-    expect(proxyScript()).toContain("s/^RBW_RACE_LATENCY_MS=//p");
+  it("is read by rbw-proxy through the shipped helper, which the manifest step's parser also uses", () => {
+    const body = code(proxyScript());
+    expect(body).toContain("CONFIG=/opt/rbw/etc/race.environment");
+    expect(body).toContain("HELPER=/opt/rbw/verifier/rbw-proxy-check.ts");
+    expect(body).toContain('helper latency "$CONFIG" "$OVERRIDE"');
+    expect(read("../src/race-manifest.ts")).toContain('import { readLatencyFile } from "./proxy-check.ts";');
+  });
+
+  it("ships the helper root-only in the verifier area", () => {
+    expect(dockerfile()).toMatch(/COPY --chown=0:0 --chmod=0600 umami-race\/src\/proxy-check\.ts \/opt\/rbw\/verifier\/rbw-proxy-check\.ts/);
+    expect(read("../src/proxy-check.ts")).not.toMatch(/from "\.\.?\//);
+  });
+
+  it("can be set per container by root only, and every start, set and check uses the latency in effect", () => {
+    const body = code(proxyScript());
+    expect(body).toContain("OVERRIDE=$RUN/race-latency.environment");
+    expect(body).toContain('[ "$(id -u)" = 0 ] || fail "must run as root"');
+    expect(body).toMatch(/\( umask 077 && printf 'RBW_RACE_LATENCY_MS=%s\\n' "\$value" > "\$OVERRIDE\.tmp" && mv "\$OVERRIDE\.tmp" "\$OVERRIDE" \)/);
+    expect(body).toContain('helper valid-latency "$value" || exit 1');
+    expect(body).toMatch(/set-latency\) \[ \$# -eq 2 \] \|\| fail [^\n]*; set_latency "\$2" ;;/);
+    expect(body).toMatch(/latency\) show_latency ;;/);
+    for (const name of ["start", "check", "set_latency", "show_latency"]) {
+      const fn = body.slice(body.indexOf(`\n${name}() {`), body.indexOf("\n}\n", body.indexOf(`\n${name}() {`)));
+      expect(fn, name).toContain("latency=$(latency_ms)");
+    }
+    expect(body).toMatch(/if running; then\n\s*apply_toxic "\$latency" \|\| exit 1\n\s*check > \/dev\/null \|\| fail/);
   });
 });
 
@@ -125,24 +147,46 @@ describe("rbw-proxy", () => {
     expect(body()).toContain(`LISTEN=${PROXY.listen}`);
     expect(body()).toContain(`UPSTREAM=${PROXY.upstream}`);
     expect(body()).toContain(`PROXY=${PROXY.name}`);
-    expect(body()).toMatch(/toxiproxy-server -host "\$API_HOST" -port "\$API_PORT" -seed 1/);
+    expect(body()).toContain(`exec "$0" -host "$1" -port "$2" -seed 1 >> "$3"`);
+    expect(body()).toContain('/usr/local/bin/toxiproxy-server "$API_HOST" "$API_PORT" "$LOG"');
     expect(body()).not.toMatch(/0\.0\.0\.0|-host\s+localhost/);
   });
 
   it("runs toxiproxy-server as rbw-db through the launcher, never as root", () => {
-    expect(body()).toMatch(/"\$LAUNCH" --as db [^\n]*\\\n[^\n]*\\\n\s*\/usr\/local\/bin\/toxiproxy-server/);
+    expect(body()).toMatch(/"\$LAUNCH" --as db [^\n]*\\\n[^\n]*\\\n\s*\/bin\/sh -c [^\n]*\\\n\s*\/usr\/local\/bin\/toxiproxy-server /);
     expect(body().match(/\/usr\/local\/bin\/toxiproxy-server/g)).toHaveLength(1);
+  });
+
+  it("has toxiproxy-server write its API log itself, unbuffered, where only rbw-db and root can read it", () => {
+    expect(body()).toContain("API_LOG_DIR=/var/lib/rbw/toxiproxy");
+    expect(body()).toContain("LOG=$API_LOG_DIR/api.log");
+    expect(body()).toContain('install -d -o rbw-db -g rbw-db -m 0700 "$API_LOG_DIR"');
+    expect(body()).toContain("umask 077 && exec");
   });
 
   it("sets one downstream latency toxic with no jitter and full toxicity", () => {
     expect(body()).toContain(`TOXIC=${TOXIC.name}`);
-    expect(body()).toContain('\\"type\\":\\"latency\\",\\"stream\\":\\"downstream\\",\\"toxicity\\":1,\\"attributes\\":{\\"latency\\":$latency,\\"jitter\\":0}');
+    expect(body()).toContain('\\"type\\":\\"latency\\",\\"stream\\":\\"downstream\\",\\"toxicity\\":1,\\"attributes\\":{\\"latency\\":$1,\\"jitter\\":0}');
   });
 
-  it("checks the running proxy and toxics after setting them, and refuses extra proxies or toxics", () => {
-    expect(body()).toMatch(/check \|\| fail "the proxy does not match its configuration"/);
-    expect(body()).toContain("names.length !== 1 || names[0] !== name");
-    expect(body()).toContain("toxics.length === 1");
+  it("marks the log after its own writes, then checks the state and audits every request since the mark", () => {
+    const apply = body().slice(body().indexOf("\napply_toxic() {"), body().indexOf("\ncheck() {"));
+    const steps = ["from=$(log_size)", "-X DELETE", "-X POST", 'api rbw-proxy-mark -o /dev/null "$API/version"', 'retry helper mark "$LOG" "$from"', '> "$MARK"'];
+    const order = steps.map((step) => apply.indexOf(step));
+    expect(order.every((index) => index >= 0), apply).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+    const check = body().slice(body().indexOf("\ncheck() {"), body().indexOf("\nshow_latency() {"));
+    expect(check).toContain('api rbw-proxy-check "$API/proxies"');
+    expect(check).toContain('helper check "$PROXY" "$LISTEN" "$UPSTREAM" "$TOXIC" "$latency" || ok=1');
+    expect(check).toContain('retry helper audit "$LOG" "$(cat "$MARK")" "$LOG_BYTES" || ok=1');
+    expect(check).toContain('[ -f "$MARK" ] || {');
+    expect(body()).toMatch(/apply_toxic "\$latency" \|\| exit 1\n\s*check > \/dev\/null \|\| fail "the proxy does not match its configuration"/);
+    expect(body()).toContain('rm -f "$RUN/toxiproxy.pid" "$MARK"');
+  });
+
+  it("keeps the retry loop's status apart from the check's", () => {
+    const retry = body().slice(body().indexOf("\nretry() {"), body().indexOf("\napply_toxic() {"));
+    expect(retry).not.toMatch(/\b(status|ok|tries)=/);
   });
 
   it("writes its launcher's PID where rbw-stop finds it", () => {
@@ -196,6 +240,8 @@ describe("in-image self-test", () => {
       "app-database-url-points-at-proxy",
       "app-database-traffic-goes-through-proxy",
       "manifest-records-proxy",
+      "latency-can-be-set-per-container",
+      "proxy-check-detects-app-api-change",
     ]) {
       expect(code(raceSelftest())).toContain(`check ${name} `);
     }

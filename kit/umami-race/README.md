@@ -16,7 +16,8 @@ race image.
 |---|---|
 | `Dockerfile` | The overlay. Its one registry image (`node:22-alpine`, the same digest as `kit/umami`) only downloads and checks the Toxiproxy binary. |
 | `toxiproxy.sha256` | SHA-256 of `toxiproxy-server` v2.12.0 for Linux amd64 and arm64. |
-| `bin/rbw-proxy` | Starts, checks and stops Toxiproxy. |
+| `bin/rbw-proxy` | Starts, checks, sets the latency of and stops Toxiproxy. |
+| `src/proxy-check.ts` | `rbw-proxy`'s parsing, state comparison and API log audit; shipped in the image. |
 | `bin/rbw-start`, `bin/rbw-stop` | Wrap the base scripts: Postgres, then the proxy, then Umami; stop all three. |
 | `bin/rbw-kit-selftest`, `bin/rbw-race-selftest` | The base self-test, then the race checks. |
 | `etc/app.environment` | The base app environment with `DATABASE_URL` on port 5433. |
@@ -34,6 +35,7 @@ race image.
 | `/opt/rbw/etc/race.environment` | Added: `RBW_RACE_LATENCY_MS`, from the build argument `RACE_LATENCY_MS`. |
 | `/opt/rbw/verifier/image-manifest.json` | Replaced by the race manifest; the base manifest moves to `base-image-manifest.json`. |
 | `/opt/rbw/verifier/toxiproxy.sha256` | Added (root, 0600). |
+| `/opt/rbw/verifier/rbw-proxy-check.ts` | Added (root, 0600): `src/proxy-check.ts`. |
 
 The driver and the local runner call `rbw-start`, `rbw-stop` and `rbw-kit-selftest` by their usual
 paths, so they need no change to use the race image.
@@ -47,29 +49,60 @@ paths, so they need no change to use the race image.
 | Proxy `postgres` | listens on `127.0.0.1:5433`, forwards to `127.0.0.1:5432` |
 | Toxic `latency_downstream` | type `latency`, stream `downstream` (Postgres to Umami), toxicity 1, jitter 0, latency `RBW_RACE_LATENCY_MS` |
 
-`toxiproxy-server` runs as `rbw-db` through `rbw-launch`, with `-seed 1`; its output goes to
-`/var/lib/rbw/logs/toxiproxy.stdout.log` and `toxiproxy.stderr.log`. `rbw-start` runs the base
+`toxiproxy-server` runs as `rbw-db` through `rbw-launch`, with `-seed 1`; its log goes to
+`/var/lib/rbw/toxiproxy/api.log` and its standard error to `/var/lib/rbw/logs/toxiproxy.stderr.log`. `rbw-start` runs the base
 script with `--db-only`, then `rbw-proxy start`, then the base script again, which finds Postgres
 running and starts Umami; that second call's `ready_ms` does not include the proxy's start-up.
 `rbw-start --db-only` starts Postgres and the proxy. `rbw-stop` runs the base stop, then stops the
 proxy.
 
-`rbw-proxy start` creates the proxy, replaces the toxic with the configured one and then runs
-`rbw-proxy check`, which exits 0 only when the API reports exactly one proxy and exactly one toxic,
-both as configured.
+`rbw-proxy` commands, all run as root:
 
-The latency defaults to 0 ms until the flakiness study picks a value. A different value is a
-rebuild of the overlay with `--build-arg RACE_LATENCY_MS=<ms>`, a whole number from 0 to 10000,
-which takes seconds; the manifest records it.
+| Command | What it does |
+|---|---|
+| `start` | Starts the server, creates the proxy, replaces the toxic with one at the latency in effect, marks the API log, then runs `check`. |
+| `check` | Exits 0 only when the API reports exactly one proxy and exactly one toxic, both as configured, at the latency in effect, **and** the API log has no request other than a `GET` since the last `start` or `set-latency`. Prints `proxy_checked latency_ms=<ms>`. |
+| `set-latency <ms>` | Sets this container's latency, a whole number from 0 to 10000, in place of the image default. Applies it at once when the proxy runs, then runs `check`. The value lives in `/run/rbw/race-latency.environment`, which only root can write. `set-latency default` removes it. |
+| `latency` | Prints `proxy_latency latency_ms=<ms> source=default\|override`. |
+| `stop` | Stops the server. |
+
+The parsing, the comparison and the log audit are in `src/proxy-check.ts`, which the image ships
+as `/opt/rbw/verifier/rbw-proxy-check.ts` (root, 0600) and runs with the verifier's Node.
+
+### Latency
+
+The image default comes from the build argument `RACE_LATENCY_MS` (default 0 ms), and the manifest
+records it. One image serves every delay setting: root changes the latency per container, or
+between rounds in one container, with `rbw-proxy set-latency <ms>`, so a sweep over 20 or more
+settings, or a check of a fix under each of them, runs against the one image digest that admission
+and the release record. A caller that sets a latency records, for each round, the
+`rbw-proxy latency` line and the `rbw-proxy check` results from before and after the round.
+
+### The app and the proxy
+
+The Toxiproxy API has no authentication, and `rbw-app` can reach it on loopback, so code running
+as `rbw-app` can remove or change the toxic. `rbw-proxy check` detects that, even when the change
+was put back before the check: `toxiproxy-server` logs every API request, with its method and URL,
+to `/var/lib/rbw/toxiproxy/api.log`, which only `rbw-db` (the server) and root can open, and the
+check fails on any `POST`, `DELETE` or other non-`GET` request logged after rbw-proxy's own last
+write. It also fails when its own `GET /proxies` does not appear in the log within 5 s, or when the
+log has reached 16 MiB, so a log that stopped recording cannot pass. A round counts only when
+`rbw-proxy check` passes both before and after it; the driver lane runs those two checks and
+records them (not done in this package).
+
+The server writes this log itself, not through `rbw-launch`, because the launcher's capture holds
+output back in blocks, and a request could stay out of the log for as long as the API is quiet.
 
 ### Known limits
 
-- The Toxiproxy API has no authentication, and `rbw-app` can reach it on loopback. A process
-  running as `rbw-app` can remove the toxic; `rbw-proxy check` then fails. A caller that relies on
-  the delay should run `rbw-proxy check` after the app has run.
 - `pg_hba.conf` accepts the app role from `127.0.0.1`, which both the proxy and a direct
-  connection come from, so a process running as `rbw-app` can still connect to port 5432 directly.
-  Umami connects through `DATABASE_URL`, which is root-owned.
+  connection come from, so a process running as `rbw-app` can still connect to port 5432 directly
+  and skip the delay. Umami connects through `DATABASE_URL`, which is root-owned. For the race
+  family the delay is therefore something the app can reach, not part of the protected grading
+  boundary of the spec's identity table; the audit above covers changes through the API, not a
+  direct connection. Admission and release notes for the race family must say so.
+- A request the app sends between rbw-proxy's own writes and its mark (a few milliseconds during
+  `start` or `set-latency`) is not audited. The state comparison still runs.
 
 ## Image manifest
 
@@ -109,4 +142,8 @@ pnpm exec vitest run --project kit-umami-race
 ```
 
 The static tests check the Dockerfile, the scripts, the hash list and the app environment against
-the time-zone kit's, and the manifest builder. The in-image checks are in `bin/rbw-race-selftest`.
+the time-zone kit's. The other tests run the manifest builder and its command line, and
+`src/proxy-check.ts` against Toxiproxy `/proxies` answers and API logs in the shape Toxiproxy
+2.12.0 writes them, including each way the proxy or its toxic can be changed. The in-image checks
+are in `bin/rbw-race-selftest`; they include setting a latency per container and an app-side
+delete and re-add of the toxic, which `rbw-proxy check` must catch.

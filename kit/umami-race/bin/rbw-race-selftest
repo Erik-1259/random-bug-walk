@@ -41,8 +41,14 @@ uptime_ms() {
   awk '{ printf "%d", $1 * 1000 }' /proc/uptime
 }
 
-latency_ms() {
+# The image default, which the manifest records.
+default_latency_ms() {
   sed -n 's/^RBW_RACE_LATENCY_MS=//p' /opt/rbw/etc/race.environment
+}
+
+# The latency in effect, which root can change with "rbw-proxy set-latency".
+latency_ms() {
+  /opt/rbw/bin/rbw-proxy latency | sed -n 's/^proxy_latency latency_ms=\([0-9]*\) .*/\1/p'
 }
 
 # The PID of the running toxiproxy-server (its comm is cut to 15 characters).
@@ -140,7 +146,37 @@ manifest_records_proxy() {
     if (base.schema !== "rbw-umami-kit-image-manifest/1") problems.push(`base schema ${base.schema}`);
     for (const problem of problems) console.error(problem);
     process.exitCode = problems.length === 0 ? 0 : 1;
-  ' "$VERIFIER/image-manifest.json" "$VERIFIER/base-image-manifest.json" "$BINARY" "$(latency_ms)"
+  ' "$VERIFIER/image-manifest.json" "$VERIFIER/base-image-manifest.json" "$BINARY" "$(default_latency_ms)"
+}
+
+# Root sets another latency for this container; the toxic and "check" follow it, the app cannot
+# write the override, and "set-latency default" goes back to the image's value.
+latency_set_per_container() {
+  default=$(default_latency_ms)
+  /opt/rbw/bin/rbw-proxy set-latency 25 || return 1
+  /opt/rbw/bin/rbw-proxy latency | grep -qx 'proxy_latency latency_ms=25 source=override' || return 1
+  curl -fsS http://127.0.0.1:8474/proxies/postgres/toxics/latency_downstream | grep -q '"latency":25,' || return 1
+  /opt/rbw/bin/rbw-proxy check || return 1
+  if as_app -- sh -c 'echo RBW_RACE_LATENCY_MS=0 > /run/rbw/race-latency.environment' 2>/dev/null; then
+    echo "the app wrote the latency override"
+    return 1
+  fi
+  /opt/rbw/bin/rbw-proxy set-latency default || return 1
+  /opt/rbw/bin/rbw-proxy latency | grep -qx "proxy_latency latency_ms=$default source=default" || return 1
+  /opt/rbw/bin/rbw-proxy check
+}
+
+# The app removes the toxic and puts an identical one back. The state then matches, but the check
+# still fails, because Toxiproxy logged the app's requests. A restart re-applies, and then passes.
+check_fails_after_app_changes_toxic() {
+  toxic='{"name":"latency_downstream","type":"latency","stream":"downstream","toxicity":1,"attributes":{"latency":'"$(latency_ms)"',"jitter":0}}'
+  as_app -- curl -fsS -o /dev/null -X DELETE http://127.0.0.1:8474/proxies/postgres/toxics/latency_downstream || return 1
+  as_app -- curl -fsS -o /dev/null -X POST -d "$toxic" http://127.0.0.1:8474/proxies/postgres/toxics || return 1
+  if /opt/rbw/bin/rbw-proxy check; then
+    echo "check passed after the app changed the toxic"
+    return 1
+  fi
+  /opt/rbw/bin/rbw-proxy start && /opt/rbw/bin/rbw-proxy check
 }
 
 check toxiproxy-binary-matches-pinned-hash binary_matches_pinned_hash
@@ -151,6 +187,8 @@ check proxy-has-configured-latency-toxic proxy_has_configured_toxic
 check app-database-url-points-at-proxy app_url_points_at_proxy
 check app-database-traffic-goes-through-proxy app_traffic_goes_through_proxy
 check manifest-records-proxy manifest_records_proxy
+check latency-can-be-set-per-container latency_set_per_container
+check proxy-check-detects-app-api-change check_fails_after_app_changes_toxic
 
 if [ "$failures" -eq 0 ]; then
   echo "race checks: all passed"
