@@ -1,17 +1,19 @@
 // End to end over @rbw/screen with fakes for the model and the ledger: a scripted fetch answers
 // the model calls, and an in-memory PGlite holds the spend. No network, no real database, no money.
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { readFileSync } from "node:fs";
 import { PGlite } from "@electric-sql/pglite";
+import type { executeScreen } from "@rbw/screen";
 import { createSpend, migrate } from "@rbw/spend";
 import type { Spend } from "@rbw/spend";
 import type { FetchFunction } from "@rbw/writer";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { makeStaticScreen } from "../src/static-screen.ts";
-import type { ScreenJob } from "../src/types.ts";
+import { ScreenStopError } from "../src/pipeline.ts";
+import { makeStaticScreen, type StaticScreenDeps } from "../src/static-screen.ts";
+import type { Screen, ScreenJob } from "../src/types.ts";
 
 const RATES = fileURLToPath(new URL("../../../packages/screen/rates.json", import.meta.url));
 
@@ -38,9 +40,14 @@ interface Answer {
 
 const LOCATED: Answer = { file: "src/x.ts", start_line: 6, end_line: 6, fixed_code: "  return Math.round(sum);", reason: "synthetic: the total is not rounded" };
 const MISS: Answer = { file: "src/x.ts", start_line: 2, end_line: 2, fixed_code: "  const sum = rows.reduce((a, b) => a + b, 1);", reason: "synthetic: a far miss" };
+/** A reply whose content is not an answer at all: the call settles, but it counts as no answer. */
+const GARBAGE = "not an answer";
 
-/** A fetch that answers each model call from a script in call order, in Token Factory's shape. */
-function scriptedFetch(script: readonly Answer[]): FetchFunction {
+/**
+ * A fetch that answers each model call from a script in call order, in Token Factory's shape. A call
+ * past the end of the script rejects, which the writer treats as a lost response (an uncertain call).
+ */
+function scriptedFetch(script: readonly (Answer | typeof GARBAGE)[]): FetchFunction {
   const queue = [...script];
   return () => {
     const next = queue.shift();
@@ -52,7 +59,7 @@ function scriptedFetch(script: readonly Answer[]): FetchFunction {
       object: "chat.completion",
       created: 1_767_225_600,
       model: "nvidia/nemotron-3-super-120b-a12b",
-      choices: [{ index: 0, message: { role: "assistant", content: JSON.stringify(next) }, finish_reason: "stop" }],
+      choices: [{ index: 0, message: { role: "assistant", content: next === GARBAGE ? next : JSON.stringify(next) }, finish_reason: "stop" }],
       usage: { prompt_tokens: 800, completion_tokens: 40, total_tokens: 840 },
     });
     return Promise.resolve(new Response(body, { status: 200, headers: { "content-type": "application/json" } }));
@@ -99,48 +106,125 @@ function job(): ScreenJob {
   };
 }
 
-async function screenWith(script: readonly Answer[]) {
+/** Runs a screen and returns its result or the error it threw. */
+async function settle(screen: Screen, screenJob: ScreenJob): Promise<unknown> {
+  try {
+    return await screen(screenJob);
+  } catch (error) {
+    return error;
+  }
+}
+
+const ENV = { DATABASE_URL: "postgres://synthetic.invalid/x", TOKEN_FACTORY_SCREEN_KEY: "synthetic-key" };
+
+/** A screen over a fresh ledger whose working files go to a fresh directory the test can inspect. */
+async function screenWith(script: readonly (Answer | typeof GARBAGE)[], overrides: Partial<StaticScreenDeps> = {}) {
   const spend = await freshSpend();
-  return makeStaticScreen({
+  const outBase = mkdtempSync(join(tmpdir(), "rbw-candidates-screen-out-"));
+  const screen = makeStaticScreen({
     fetch: scriptedFetch(script),
     connect: () => Promise.resolve({ spend, close: () => Promise.resolve() }),
-    env: { DATABASE_URL: "postgres://synthetic.invalid/x", TOKEN_FACTORY_SCREEN_KEY: "synthetic-key" },
+    env: ENV,
     rateSheet: readFileSync(RATES),
     slotKey: "development",
     pool: "development",
     provenance: "synthetic",
     now: () => new Date("2026-10-13T12:00:00.000Z"),
+    outBase,
+    ...overrides,
   });
+  return { screen, outBase, spend };
 }
 
 describe("the real screen over @rbw/screen with a fake model and ledger", () => {
-  it("returns not_located when no attempt finds the planted change", async () => {
-    const screen = await screenWith([MISS, MISS]);
+  it("returns not_located when no attempt finds the planted change, and removes its working files", async () => {
+    const { screen, outBase } = await screenWith([MISS, MISS]);
     const result = await screen(job());
     expect(result).toMatchObject({ verdict: "not_located", hits: 0, attempts: 2 });
     expect(result.costMicrousd).toBeGreaterThan(0);
+    // The model's answers and the call recordings can echo host source; none is left behind.
+    expect(readdirSync(outBase)).toEqual([]);
   });
 
   it("returns located when an attempt finds and fixes the planted change", async () => {
-    const screen = await screenWith([MISS, LOCATED]);
+    const { screen } = await screenWith([MISS, LOCATED]);
     const result = await screen(job());
     expect(result.verdict).toBe("located");
     expect(result.hits).toBeGreaterThanOrEqual(1);
     expect(result.costMicrousd).toBeGreaterThan(0);
   });
 
-  it("throws when the run does not fit the budget, so the pipeline charges the whole budget", async () => {
-    const spend = await freshSpend();
-    const screen = makeStaticScreen({
-      fetch: scriptedFetch([MISS]),
-      connect: () => Promise.resolve({ spend, close: () => Promise.resolve() }),
-      env: { DATABASE_URL: "postgres://synthetic.invalid/x", TOKEN_FACTORY_SCREEN_KEY: "synthetic-key" },
-      rateSheet: readFileSync(RATES),
-      slotKey: "development",
-      pool: "development",
-      provenance: "synthetic",
-    });
+  it("returns inconclusive, not a survivor, when an attempt gave no answer", async () => {
+    const { screen } = await screenWith([MISS, GARBAGE]);
+    const result = await screen(job());
+    expect(result).toMatchObject({ verdict: "inconclusive", hits: 0, attempts: 2 });
+  });
+
+  it("keeps its working files when asked", async () => {
+    const { screen, outBase } = await screenWith([MISS, MISS], { keepOutput: true });
+    await screen(job());
+    expect(readdirSync(outBase)).toHaveLength(1);
+  });
+
+  it("stops the run when the run does not fit the budget, charges nothing and removes its working files", async () => {
+    const { screen, outBase } = await screenWith([MISS]);
     // One micro-USD cannot fit even one worst-case Super call.
-    await expect(screen({ ...job(), budget: { maxAttempts: 1, maxCostMicrousd: 1 } })).rejects.toThrow();
+    const error: unknown = await settle(screen, { ...job(), budget: { maxAttempts: 1, maxCostMicrousd: 1 } });
+    expect(error).toBeInstanceOf(ScreenStopError);
+    expect((error as ScreenStopError).message).toMatch(/did not start: screen: over budget/);
+    expect((error as ScreenStopError).chargedMicrousd).toBe(0);
+    expect(readdirSync(outBase)).toEqual([]);
+  });
+
+  it("stops the run on an uncertain call, charges the whole budget and keeps what is needed to reconcile it", async () => {
+    // The second call has no scripted answer, so its response is lost: it may have been billed.
+    const { screen, outBase } = await screenWith([MISS]);
+    const error: unknown = await settle(screen, job());
+    expect(error).toBeInstanceOf(ScreenStopError);
+    const stop = error as ScreenStopError;
+    expect(stop.chargedMicrousd).toBe(1_000_000);
+    expect(stop.message).toMatch(/uncertain/);
+    expect(stop.message).toMatch(/root execution [0-9a-f-]{36}/);
+    expect(stop.message).toMatch(/operations [0-9a-f-]{36}/);
+    const kept = readdirSync(outBase);
+    expect(kept).toHaveLength(1);
+    expect(stop.message).toContain(join(outBase, kept[0] ?? ""));
+  });
+
+  it("stops the run when the slot is still held by an earlier run, with the screen's own reason", async () => {
+    const { screen, spend } = await screenWith([MISS]);
+    await settle(screen, job());
+    // Same ledger, slot still held by the uncertain run above.
+    const { screen: second } = await screenWith([MISS, MISS], {
+      connect: () => Promise.resolve({ spend, close: () => Promise.resolve() }),
+    });
+    const error: unknown = await settle(second, job());
+    expect(error).toBeInstanceOf(ScreenStopError);
+    expect((error as ScreenStopError).message).toMatch(/could not acquire the slot/);
+    expect((error as ScreenStopError).chargedMicrousd).toBe(0);
+  });
+
+  it("stops the run, charging the whole budget and keeping its files, when the screen itself throws", async () => {
+    // A dropped database connection surfaces as an error from close(); the spend state is unknown.
+    const spend = await freshSpend();
+    const { screen, outBase } = await screenWith([MISS, MISS], {
+      connect: () => Promise.resolve({ spend, close: () => Promise.reject(new Error("1 connection error(s)")) }),
+    });
+    const error: unknown = await settle(screen, job());
+    expect(error).toBeInstanceOf(ScreenStopError);
+    expect((error as ScreenStopError).message).toMatch(/connection error/);
+    expect((error as ScreenStopError).chargedMicrousd).toBe(1_000_000);
+    expect(readdirSync(outBase)).toHaveLength(1);
+  });
+
+  it("never asks the screen for more hits than it has attempts", async () => {
+    const seen: number[] = [];
+    const fake: typeof executeScreen = (_options, run) => {
+      seen.push(run.failAtHits);
+      return Promise.resolve({ code: 1, record: null });
+    };
+    const { screen } = await screenWith([], { failAtHits: 5, execute: fake });
+    await settle(screen, job());
+    expect(seen).toEqual([2]);
   });
 });

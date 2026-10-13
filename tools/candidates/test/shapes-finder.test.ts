@@ -11,6 +11,7 @@ import { runCommand } from "../src/command.ts";
 import { findClassSites } from "../src/shapes-finder.ts";
 import { symptomFor } from "../src/symptom.ts";
 import type { ClassRule, RunRecord } from "../src/index.ts";
+import { leakedIdentifiers } from "./support.ts";
 
 const FIXTURES = fileURLToPath(new URL("../../../packages/shapes/test/unit/fixtures/race/tree", import.meta.url));
 const RULE_FILE = fileURLToPath(new URL("../../../packages/shapes/rules/race.class.yml", import.meta.url));
@@ -64,6 +65,14 @@ describe("findClassSites over the synthetic race tree", () => {
     expect(text).toContain("/api/");
     expect(text).not.toContain("where");
   });
+
+  it("derives, for every site found, a symptom that repeats no identifier from the planted change", async () => {
+    const sites = await findClassSites(RULE, syntheticRaceTree());
+    expect(sites.length).toBeGreaterThan(0);
+    for (const site of sites) {
+      expect({ file: site.file, leaked: leakedIdentifiers(site, symptomFor(site)) }).toEqual({ file: site.file, leaked: [] });
+    }
+  });
 });
 
 describe("a dry run end to end over the synthetic race tree", () => {
@@ -86,7 +95,7 @@ describe("a dry run end to end over the synthetic race tree", () => {
     expect(code).toBe(0);
     const record = parseCanonical(readFileSync(outFile)) as unknown as RunRecord;
     expect(record.dry_run).toBe(true);
-    expect(record.symptom_source).toBe("race-class-template-v1");
+    expect(record.symptom_source).toBe("race-class-template-v2");
     expect(record.implementations.find_sites).toBe("findClassSites");
     expect(record.totals.planted).toBeGreaterThan(0);
     const planted = record.candidates.filter((c) => c.status === "would_screen");

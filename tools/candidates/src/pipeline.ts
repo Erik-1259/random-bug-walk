@@ -54,6 +54,7 @@ export type CandidateStatus =
   | "screen_error"
   | "skipped_spend_cap"
   | "skipped_after_overspend"
+  | "skipped_after_screen_stop"
   | "skipped_after_error";
 
 export interface ScreenRecord {
@@ -80,7 +81,7 @@ export interface CandidateRecord {
   rank: number | null;
 }
 
-export type StopReason = "spend_cap" | "screen_overspent" | "pipeline_error" | null;
+export type StopReason = "spend_cap" | "screen_overspent" | "screen_stopped" | "pipeline_error" | null;
 
 export interface RunRecord {
   record: typeof RECORD_KIND;
@@ -132,6 +133,24 @@ export class PipelineError extends Error {
     super(message);
     this.name = "PipelineError";
     this.record = record;
+  }
+}
+
+/**
+ * Thrown by a screen when no further screen should start: the screen never started for a reason
+ * that would repeat for every candidate (a missing key, a held slot, a budget that cannot fit), or it
+ * left spend that must be reconciled by hand (an uncertain call, an unsettled operation, a slot it
+ * could not release). The pipeline records the candidate as a screen error, charges
+ * `chargedMicrousd` against the spend cap and stops screening. The message carries what an operator
+ * needs to reconcile the spend.
+ */
+export class ScreenStopError extends Error {
+  readonly chargedMicrousd: number;
+
+  constructor(message: string, chargedMicrousd: number) {
+    super(message);
+    this.name = "ScreenStopError";
+    this.chargedMicrousd = chargedMicrousd;
   }
 }
 
@@ -299,7 +318,7 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineOutcome
       scratchDir = mkdtempSync(join(input.scratchBase, "rbw-candidates-"));
       for (const [index, { site, record, symptom, cleanText }] of planted.entries()) {
         if (stopReason !== null) {
-          record.status = stopReason === "spend_cap" ? "skipped_spend_cap" : "skipped_after_overspend";
+          record.status = stopReason === "spend_cap" ? "skipped_spend_cap" : stopReason === "screen_stopped" ? "skipped_after_screen_stop" : "skipped_after_overspend";
           settled.add(record);
           continue;
         }
@@ -352,8 +371,15 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineOutcome
           }
         } catch (error) {
           record.status = "screen_error";
-          record.reason = shortMessage(error);
-          record.charged_microusd = budget.maxCostMicrousd;
+          if (error instanceof ScreenStopError) {
+            // Kept whole (not shortened): it names the operations to reconcile.
+            record.reason = `${error.name}: ${error.message}`;
+            record.charged_microusd = isNonNegativeInteger(error.chargedMicrousd) ? error.chargedMicrousd : budget.maxCostMicrousd;
+            stopReason = "screen_stopped";
+          } else {
+            record.reason = shortMessage(error);
+            record.charged_microusd = budget.maxCostMicrousd;
+          }
         }
         spent += record.charged_microusd;
         settled.add(record);

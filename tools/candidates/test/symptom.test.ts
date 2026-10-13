@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { endpointOf, modelCalls, SYMPTOM_SOURCE, symptomFor } from "../src/symptom.ts";
 import type { Site } from "../src/types.ts";
+import { leakedIdentifiers } from "./support.ts";
 
 // Synthetic diffs modeled on the class fixtures, never taken from a real host.
 const GUARDED_WRITE_DIFF = [
@@ -62,11 +63,11 @@ describe("modelCalls", () => {
 });
 
 describe("symptomFor", () => {
-  it("describes a guarded-write race in user terms, naming the endpoint and model and action", () => {
+  it("describes a guarded-write race in user terms, naming the endpoint and the effect", () => {
     const text = symptomFor(site("api/vouchers/redeem.ts", GUARDED_WRITE_DIFF, "RACE.guarded-write"));
     expect(text).toContain("/api/vouchers/redeem");
-    expect(text).toContain("voucher.updateMany");
     expect(text).toContain("at the same moment");
+    expect(text).toMatch(/twice/);
   });
 
   it("describes a check-then-act race as a duplicate record under concurrency", () => {
@@ -74,6 +75,23 @@ describe("symptomFor", () => {
     expect(text).toContain("/api/preferences");
     expect(text).toContain("preference");
     expect(text).toMatch(/duplicate|single/);
+  });
+
+  it.each([
+    ["RACE.guarded-write", "api/vouchers/redeem.ts", GUARDED_WRITE_DIFF],
+    ["RACE.check-then-act", "api/preferences/route.ts", UPSERT_DIFF],
+    [undefined, "lib/coupons.ts", GUARDED_WRITE_DIFF],
+  ])("a %s symptom repeats no identifier from the changed lines and no model call the diff touches", (classId, file, diff) => {
+    const s = site(file, diff, classId);
+    const text = symptomFor(s);
+    expect(leakedIdentifiers(s, text)).toEqual([]);
+    expect(text).not.toMatch(/\b(reads?|writes?|decides|checks whether)\b/);
+  });
+
+  it("the leak check itself catches a symptom that names the changed call", () => {
+    const s = site("api/vouchers/redeem.ts", GUARDED_WRITE_DIFF, "RACE.guarded-write");
+    expect(leakedIdentifiers(s, "then calls `voucher.updateMany`")).toEqual(["updateMany", "voucher.updateMany"]);
+    expect(leakedIdentifiers(s, "the redeemed flag")).toEqual(["redeemed"]);
   });
 
   it("falls back to a generic race symptom for an unknown class", () => {
@@ -90,6 +108,6 @@ describe("symptomFor", () => {
   });
 
   it("names the generation that made it", () => {
-    expect(SYMPTOM_SOURCE).toBe("race-class-template-v1");
+    expect(SYMPTOM_SOURCE).toBe("race-class-template-v2");
   });
 });

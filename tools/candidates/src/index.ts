@@ -1,7 +1,7 @@
 export { DEFAULT_RATE_SHEET, parseUsd, REPO_ROOT, runCommand, USAGE } from "./command.ts";
 export type { CommandDeps, CommandIo, ScreenConfig } from "./command.ts";
 export { implementationName, isWired, notWired } from "./not-wired.ts";
-export { checkCaps, PipelineError, RECORD_KIND, RECORD_VERSION, runPipeline, screenResultProblem } from "./pipeline.ts";
+export { checkCaps, PipelineError, RECORD_KIND, RECORD_VERSION, runPipeline, ScreenStopError, screenResultProblem } from "./pipeline.ts";
 export type { CandidateRecord, CandidateStatus, Caps, PipelineInput, PipelineOutcome, RunRecord, ScreenRecord, StopReason } from "./pipeline.ts";
 export { candidateId, COPY_IGNORE, PlantError, plantCopy, plantedText } from "./plant.ts";
 export type { PlantFailure } from "./plant.ts";
@@ -10,4 +10,4 @@ export { makeStaticScreen } from "./static-screen.ts";
 export type { Connect, StaticScreenDeps } from "./static-screen.ts";
 export { endpointOf, modelCalls, SYMPTOM_SOURCE, symptomFor } from "./symptom.ts";
 export type { ClassRule, FindSites, Screen, ScreenBudget, ScreenJob, ScreenModel, ScreenResult, ScreenVerdict, Site, Symptom } from "./types.ts";
-export { findSites, makeScreen } from "./wiring.ts";
+export { findSites, makeConnect, makeScreen, screenFetch } from "./wiring.ts";

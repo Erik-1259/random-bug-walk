@@ -1,8 +1,10 @@
 import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { parseCanonical } from "@rbw/schema";
-import { describe, expect, it } from "vitest";
-import { parseUsd, REPO_ROOT, runCommand, type CommandDeps } from "../src/command.ts";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { DEFAULT_RATE_SHEET, parseUsd, REPO_ROOT, runCommand, type CommandDeps, type ScreenConfig } from "../src/command.ts";
+import { ScreenStopError } from "../src/pipeline.ts";
+import type { Screen } from "../src/types.ts";
 import { finder, makeHost, miss, scripted, site, tempDir, threeSites } from "./support.ts";
 
 interface Run {
@@ -46,7 +48,7 @@ describe("command line", () => {
       dry_run: true,
       rule: { id: "xx-1.synthetic" },
       screen_model: "super",
-      symptom_source: "race-class-template-v1",
+      symptom_source: "race-class-template-v2",
       implementations: { find_sites: "fakeFindSites", screen: "none" },
     });
     // Each planted candidate carries its own symptom's hash, computed without a model.
@@ -259,6 +261,106 @@ describe("command line", () => {
     expect(result.code).toBe(2);
     expect(result.err).toMatch(message);
     expect(existsSync(result.outFile)).toBe(false);
+  });
+});
+
+describe("command line with the real screen builder", () => {
+  const REAL_ENV = { DATABASE_URL: "postgres://synthetic.invalid/x", TOKEN_FACTORY_SCREEN_KEY: "synthetic-key" };
+
+  function builder(screen: Screen): ((config: ScreenConfig) => Screen) & { configs: ScreenConfig[] } {
+    const configs: ScreenConfig[] = [];
+    return Object.assign(
+      (config: ScreenConfig): Screen => {
+        configs.push(config);
+        return screen;
+      },
+      { configs },
+    );
+  }
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("builds the screen from the run's ledger, rate sheet, scratch and environment options, and uses it", async () => {
+    vi.stubEnv("DATABASE_URL", REAL_ENV.DATABASE_URL);
+    vi.stubEnv("TOKEN_FACTORY_SCREEN_KEY", REAL_ENV.TOKEN_FACTORY_SCREEN_KEY);
+    const screen = scripted([miss()]);
+    const buildScreen = builder(screen);
+    const scratch = tempDir("rbw-candidates-cli-scratch-");
+    const result = await run([], { findSites: finder(threeSites().slice(0, 1)), buildScreen }, undefined, scratch);
+    expect(result.err).toBe("");
+    expect(result.code).toBe(0);
+    expect(screen.calls).toHaveLength(1);
+    expect(buildScreen.configs).toHaveLength(1);
+    expect(buildScreen.configs[0]).toMatchObject({ slotKey: "development", pool: "development", rateSheetPath: DEFAULT_RATE_SHEET, scratchBase: scratch, keepScratch: false });
+    expect(buildScreen.configs[0]?.env.DATABASE_URL).toBe(REAL_ENV.DATABASE_URL);
+
+    const sheet = join(tempDir("rbw-candidates-cli-rates-"), "rates.json");
+    writeFileSync(sheet, readFileSync(DEFAULT_RATE_SHEET));
+    const other = builder(scripted([miss()]));
+    const overridden = await run(["--slot-key", "uc1", "--pool", "uc1-pool", "--rate-sheet", sheet, "--keep-scratch"], {
+      findSites: finder(threeSites().slice(0, 1)),
+      buildScreen: other,
+    });
+    expect(overridden.code).toBe(0);
+    expect(other.configs[0]).toMatchObject({ slotKey: "uc1", pool: "uc1-pool", rateSheetPath: sheet, keepScratch: true });
+  });
+
+  it("refuses a real run with no screen configured", async () => {
+    const result = await run([], { findSites: finder(threeSites()) });
+    expect(result.code).toBe(1);
+    expect(result.err).toMatch(/no screen is configured/);
+    expect(existsSync(result.outFile)).toBe(false);
+  });
+
+  it.each([
+    ["DATABASE_URL", /DATABASE_URL is not set/],
+    ["TOKEN_FACTORY_SCREEN_KEY", /TOKEN_FACTORY_SCREEN_KEY is not set/],
+  ])("refuses a real run without %s before anything runs, and writes nothing", async (missing, message) => {
+    for (const [name, value] of Object.entries(REAL_ENV)) {
+      vi.stubEnv(name, name === missing ? "" : value);
+    }
+    const screen = scripted([miss(), miss(), miss()]);
+    const buildScreen = builder(screen);
+    const result = await run([], { findSites: finder(threeSites()), buildScreen });
+    expect(result.code).toBe(2);
+    expect(result.err).toMatch(message);
+    expect(screen.calls).toHaveLength(0);
+    expect(existsSync(result.outFile)).toBe(false);
+  });
+
+  it("refuses a model whose planned attempts cannot fit the per-screen budget, with the screen's own reason", async () => {
+    vi.stubEnv("DATABASE_URL", REAL_ENV.DATABASE_URL);
+    vi.stubEnv("TOKEN_FACTORY_SCREEN_KEY", REAL_ENV.TOKEN_FACTORY_SCREEN_KEY);
+    const screen = scripted([miss(), miss(), miss()]);
+    // Kimi's worst-case call is priced above a third of the default $0.25 budget.
+    const result = await run(["--model", "kimi"], { findSites: finder(threeSites()), buildScreen: builder(screen) });
+    expect(result.code).toBe(2);
+    expect(result.err).toMatch(/--screen-budget-usd is too small for 3 attempts on kimi: 3 attempts at a worst case of \d+ micro-USD each/);
+    expect(screen.calls).toHaveLength(0);
+    expect(existsSync(result.outFile)).toBe(false);
+  });
+
+  it("checks the budget on a dry run of the real screen too", async () => {
+    const result = await run(["--dry-run", "--model", "kimi"], { findSites: finder(threeSites()) });
+    expect(result.code).toBe(2);
+    expect(result.err).toMatch(/--screen-budget-usd is too small/);
+  });
+
+  it("refuses more attempts than the screen allows", async () => {
+    const result = await run(["--dry-run", "--screen-attempts", "9"], { findSites: finder(threeSites()) });
+    expect(result.code).toBe(2);
+    expect(result.err).toMatch(/--screen-attempts must be from 1 to 8/);
+  });
+
+  it("exits 1 and names the reason when a screen stopped the run, keeping the record", async () => {
+    const screen = scripted([new ScreenStopError("operation op-9 is unsettled", 250_000), miss()]);
+    const result = await run([], { findSites: finder(threeSites()), screen });
+    expect(result.code).toBe(1);
+    expect(result.err).toMatch(/stopped screening: screen_stopped/);
+    expect(result.err).toContain("op-9");
+    expect(readRecord(result.outFile)).toMatchObject({ stop_reason: "screen_stopped", totals: { spend_microusd: 250_000 } });
   });
 });
 

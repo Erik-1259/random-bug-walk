@@ -6,7 +6,12 @@
 // The model sees only the planted file's source and the symptom. The clean copy of the planted file
 // is written to a scratch file and used only to score the answers; it is never shown to the model.
 // The screen's own outputs (its record, the model's answers and the call recordings) can name source
-// from a real host, so they are written to a scratch directory outside the repository and removed.
+// from a real host, so they are written to a scratch directory outside the repository and removed,
+// unless the run asked to keep them or the screen left spend to reconcile.
+//
+// A screen that did not start, or that left an uncertain or unsettled call or a held slot, throws a
+// ScreenStopError: the next screen would hit the same problem (or the held slot), and the operator
+// needs the root execution and operation IDs, which the error message carries.
 import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -15,7 +20,7 @@ import { executeScreen, loadSubject, parseScreenInput } from "@rbw/screen";
 import type { ScreenOptions } from "@rbw/screen";
 import type { Spend } from "@rbw/spend";
 import type { FetchFunction } from "@rbw/writer";
-import { PipelineError } from "./pipeline.ts";
+import { PipelineError, ScreenStopError } from "./pipeline.ts";
 import type { Screen, ScreenJob, ScreenResult } from "./types.ts";
 
 /** Opens the spend ledger named by DATABASE_URL and returns it with a close function. */
@@ -40,6 +45,8 @@ export interface StaticScreenDeps {
   failAtHits?: number;
   /** Where the screen's scratch output directory is made; default the system temporary directory. */
   outBase?: string;
+  /** Keeps the screen's scratch output directory after every run (the command's --keep-scratch). */
+  keepOutput?: boolean;
   /** The screen runner; injectable so tests can drive the real one with fakes or a stub. */
   execute?: typeof executeScreen;
 }
@@ -68,6 +75,10 @@ export function makeStaticScreen(deps: StaticScreenDeps): Screen {
     const scratch = mkdtempSync(join(deps.outBase ?? tmpdir(), "rbw-screen-"));
     const cleanFile = join(scratch, "clean-target");
     const out = join(scratch, "out");
+    let keep = deps.keepOutput === true;
+    // The screen's own report lines; the last one says why it stopped or refused.
+    const lines: string[] = [];
+    const lastLine = (): string => lines.at(-1) ?? "the screen gave no reason";
     try {
       writeFileSync(cleanFile, job.cleanText);
       const input = parseScreenInput({
@@ -89,29 +100,63 @@ export function makeStaticScreen(deps: StaticScreenDeps): Screen {
         fetch: deps.fetch,
         provenance: deps.provenance,
         connect: deps.connect,
-        write: () => undefined,
+        write: (text) => {
+          lines.push(...text.split("\n").filter((line) => line !== ""));
+        },
         now,
       };
-      const result = await execute(options, {
-        subject,
-        model: job.model,
-        attempts: job.budget.maxAttempts,
-        failAtHits: Math.min(failAtHits, job.budget.maxAttempts),
-        budgetMicrousd: job.budget.maxCostMicrousd,
-        rateSheet: deps.rateSheet,
-        out,
-        slotKey: deps.slotKey,
-        pool: deps.pool,
-        binding: false,
-      });
+      let result: Awaited<ReturnType<typeof executeScreen>>;
+      try {
+        result = await execute(options, {
+          subject,
+          model: job.model,
+          attempts: job.budget.maxAttempts,
+          failAtHits: Math.min(failAtHits, job.budget.maxAttempts),
+          budgetMicrousd: job.budget.maxCostMicrousd,
+          rateSheet: deps.rateSheet,
+          out,
+          slotKey: deps.slotKey,
+          pool: deps.pool,
+          binding: false,
+        });
+      } catch (error) {
+        // The screen itself failed (for example the database connection dropped): what it spent
+        // and whether its slot is free are unknown, so the whole budget is charged and its files kept.
+        keep = true;
+        const cause = error instanceof Error ? `${error.name}: ${error.message}` : "non-error value thrown";
+        throw new ScreenStopError(`the screen failed (${cause}); last report: ${lastLine()}; screen output kept at ${scratch}`, job.budget.maxCostMicrousd);
+      }
       const { record } = result;
-      if (record === null || typeof record.optional_static_probe === "string") {
-        // The run did not start, or did not fit the budget: the screen never decided. Throwing lets
-        // the pipeline record it as a screen error and charge the whole budget, since its cost is
-        // not known from a probe.
-        throw new PipelineError("the screen did not run to a probe (it may have been refused or over budget)");
+      if (record === null) {
+        // Nothing was started, so nothing was spent; the cause (a missing key or database, a budget
+        // that cannot fit, a held slot) would stop every later screen too.
+        throw new ScreenStopError(`the screen did not start: ${lastLine()}`, 0);
+      }
+      if (typeof record.optional_static_probe === "string") {
+        throw new PipelineError("the screen did not run to a probe");
       }
       const probe = record.optional_static_probe;
+      const { stopped } = probe;
+      const unsettled = probe.cost.unsettled_operation_ids;
+      const brokenStop = stopped !== null && (stopped.reason === "uncertain" || stopped.reason === "error" || stopped.reason === "ledger_refusal");
+      const slotHeld = lines.some((line) => line.startsWith("screen: the slot stays held"));
+      if (brokenStop || unsettled.length > 0 || slotHeld) {
+        // Spend to reconcile by hand. A call that may have been billed is not in settled_microusd,
+        // so the whole budget (the most the screen could have reserved) is charged.
+        keep = true;
+        const operations = [...new Set([...unsettled, ...(stopped?.operation_id == null ? [] : [stopped.operation_id])])];
+        const charged = brokenStop || unsettled.length > 0 ? Math.max(job.budget.maxCostMicrousd, probe.cost.settled_microusd) : probe.cost.settled_microusd;
+        throw new ScreenStopError(
+          [
+            `the screen left spend to reconcile (${stopped === null ? "slot not released" : `${stopped.reason}: ${stopped.detail}`})`,
+            `root execution ${probe.root_execution_id}`,
+            `operations ${operations.length === 0 ? "none" : operations.join(", ")}`,
+            `last report: ${lastLine()}`,
+            `screen output kept at ${scratch}`,
+          ].join("; "),
+          charged,
+        );
+      }
       const hits = probe.hits;
       const attempts = probe.attempts_run;
       const costMicrousd = probe.cost.settled_microusd;
@@ -125,7 +170,9 @@ export function makeStaticScreen(deps: StaticScreenDeps): Screen {
       }
       return { verdict: "inconclusive", hits: 0, attempts, costMicrousd };
     } finally {
-      rmSync(scratch, { recursive: true, force: true });
+      if (!keep) {
+        rmSync(scratch, { recursive: true, force: true });
+      }
     }
   }
 

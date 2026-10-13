@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createTwoFilesPatch } from "diff";
+import { endpointOf, modelCalls } from "../src/symptom.ts";
 import type { ClassRule, FindSites, Screen, ScreenBudget, ScreenJob, ScreenModel, ScreenResult, Site, Symptom } from "../src/types.ts";
 
 export const CLEAN: Record<string, string> = {
@@ -52,8 +53,11 @@ export const RULE: ClassRule = { id: "XX-1.synthetic", path: "rules/xx-1.synthet
 export const SYMPTOM: Symptom = { text: "A record is sometimes written twice." };
 export const MODEL: ScreenModel = "super";
 
-/** The per-candidate symptom fixture: one fixed symptom for every site, so tests can assert on it. */
-export const symptomFor = (): Symptom => SYMPTOM;
+/**
+ * The per-candidate symptom fixture: the fixed symptom text plus the site's file and line, so each
+ * candidate gets its own symptom and a test can tell which site a symptom was made for.
+ */
+export const symptomFor = (s: Site): Symptom => ({ text: `${SYMPTOM.text} (${s.file}:${String(s.line)})` });
 
 export function finder(sites: readonly Site[]): FindSites & { calls: number } {
   const fn = Object.assign(
@@ -109,5 +113,30 @@ export function scripted(results: readonly unknown[]): Screen & { calls: ScreenC
   return fn;
 }
 
-export const miss = (attempts = 3, costMicrousd = 100_000): ScreenResult => ({ verdict: "not_located", hits: 0, attempts, costMicrousd });
+const KEYWORDS = new Set(["const", "let", "await", "async", "if", "else", "return", "new", "true", "null", "function"]);
+
+/**
+ * The code identifiers on a diff's changed lines that a symptom must not repeat: every identifier of
+ * three or more characters, except language keywords, the model names and the endpoint's own path
+ * segments (both of which a user would name). Also every method and `<model>.<method>` pair of the
+ * model calls anywhere in the diff, context lines included.
+ */
+export function siteIdentifiers(s: Site): string[] {
+  const changed = s.diff
+    .split("\n")
+    .filter((line) => /^[+-]/.test(line) && !/^(\+\+\+|---) /.test(line))
+    .join("\n");
+  const calls = modelCalls(s.diff);
+  const allowed = new Set([...calls.map((call) => call.model), ...(endpointOf(s.file)?.split(/[/:]/) ?? []), "db", "client"]);
+  const words = [...new Set(changed.match(/[A-Za-z_$][\w$]{2,}/g) ?? [])].filter((word) => !KEYWORDS.has(word) && !allowed.has(word));
+  const methods = [...new Set(calls.map((call) => call.method))].filter((method) => !words.includes(method));
+  return [...words, ...methods, ...new Set(calls.map((call) => `${call.model}.${call.method}`))];
+}
+
+/** The identifiers from `siteIdentifiers` that appear in `text` as whole words. */
+export function leakedIdentifiers(s: Site, text: string): string[] {
+  return siteIdentifiers(s).filter((word) => new RegExp(`(^|[^\\w$])${word.replace(/[.$]/g, "\\$&")}($|[^\\w$])`).test(text));
+}
+
+export const miss =(attempts = 3, costMicrousd = 100_000): ScreenResult => ({ verdict: "not_located", hits: 0, attempts, costMicrousd });
 export const hit = (hits = 1, attempts = 3, costMicrousd = 100_000): ScreenResult => ({ verdict: "located", hits, attempts, costMicrousd });
