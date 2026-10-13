@@ -525,6 +525,31 @@ importers:
         specifier: 5.0.3
         version: 5.0.3(@types/node@24.19.1)(vite@8.3.2(@types/node@24.19.1)(yaml@2.9.1))
 
+  tools/solver-session:
+    dependencies:
+      '@rbw/local-runner':
+        specifier: workspace:*
+        version: link:../local-runner
+      '@rbw/schema':
+        specifier: workspace:*
+        version: link:../../packages/schema
+      diff:
+        specifier: 9.0.0
+        version: 9.0.0
+      tar-stream:
+        specifier: 3.2.2
+        version: 3.2.2
+    devDependencies:
+      '@types/node':
+        specifier: 24.19.1
+        version: 24.19.1
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
+      vitest:
+        specifier: 5.0.3
+        version: 5.0.3(@types/node@24.19.1)(vite@8.3.2(@types/node@24.19.1)(yaml@2.9.1))
+
 packages:
 
   '@ai-sdk/gateway@4.0.103':

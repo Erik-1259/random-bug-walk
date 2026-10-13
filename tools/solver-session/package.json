@@ -1,0 +1,32 @@
+{
+  "name": "@rbw/solver-session",
+  "version": "0.0.0",
+  "private": true,
+  "description": "One solver attempt's session on a local Docker kit container: the planted projection, the cold-build reset, the log scrub, the server logs and the submitted diff",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "engines": {
+    "node": ">=24.21 <25"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint . --max-warnings 0",
+    "test": "vitest run",
+    "session": "node src/cli.ts"
+  },
+  "dependencies": {
+    "@rbw/local-runner": "workspace:*",
+    "@rbw/schema": "workspace:*",
+    "diff": "9.0.0",
+    "tar-stream": "3.2.2"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.1",
+    "typescript": "6.0.3",
+    "vitest": "5.0.3"
+  }
+}
