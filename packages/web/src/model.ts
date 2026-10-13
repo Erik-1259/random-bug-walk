@@ -111,10 +111,15 @@ export interface FunnelStep {
   count: number;
 }
 
-/** How each root kind is named on the pages: judge replays are verification runs, never factory runs. */
-export const RUN_KIND_TEXT: Record<RootRunKind, string> = { factory: "Factory run", kit_check: "Kit check", judge_replay: "Verification replay (judge)" };
+/** How each root kind is named on the pages: judge replays and paired comparisons are never factory runs. */
+export const RUN_KIND_TEXT: Record<RootRunKind, string> = {
+  factory: "Factory run",
+  kit_check: "Kit check",
+  judge_replay: "Verification replay (judge)",
+  paired_comparison: "Paired comparison",
+};
 
-/** The factory runs: the funnel counts only these, and kit checks and judge replays apart (otherRuns). */
+/** The factory runs: the funnel counts only these, and kit checks, judge replays and paired comparisons apart (otherRuns). */
 export function factoryRuns(results: Results): Run[] {
   return results.runs.filter((run) => run.kind === "factory");
 }
@@ -148,7 +153,8 @@ export const REPLAY_VERDICT_NOTE =
 
 /**
  * The runs counted apart from the factory funnel: every judge replay, with a line for each recorded
- * outcome that some replay has (and for replays not finished yet), then the kit checks when there are any.
+ * outcome that some replay has (and for replays not finished yet), then the paired comparisons and the kit
+ * checks when there are any.
  */
 export function otherRuns(results: Results): FunnelStep[] {
   const replays = results.runs.filter((run) => run.kind === "judge_replay");
@@ -157,8 +163,9 @@ export function otherRuns(results: Results): FunnelStep[] {
     count: replays.filter((run) => run.outcome === outcome).length,
   }));
   const unfinished = { label: "Replays not finished", count: replays.filter((run) => run.outcome === null).length };
+  const paired = { label: "Paired comparisons", count: results.runs.filter((run) => run.kind === "paired_comparison").length };
   const kitChecks = { label: "Kit checks", count: results.runs.filter((run) => run.kind === "kit_check").length };
-  return [{ label: "Verification replays (judge)", count: replays.length }, ...[...outcomes, unfinished, kitChecks].filter((step) => step.count > 0)];
+  return [{ label: "Verification replays (judge)", count: replays.length }, ...[...outcomes, unfinished, paired, kitChecks].filter((step) => step.count > 0)];
 }
 
 /** The replay control's states (design note section 6). Every state is written in text; color only repeats it. */
@@ -242,10 +249,13 @@ export interface ReplayStatus {
   cells: ReplayCell[];
 }
 
-/** Published runs whose files remain downloadable as diagnostic archives: every one but the released run and the judge replays. */
+/**
+ * Published runs whose files remain downloadable as diagnostic archives: every one but the released run,
+ * the judge replays and the paired comparisons, which are not factory candidates for validation.
+ */
 export function diagnosticArchives(results: Results): Run[] {
   const released = results.release?.record.run.root_execution_id;
-  return results.runs.filter((run) => run.manifest !== null && run.kind !== "judge_replay" && run.rootExecutionId !== released);
+  return results.runs.filter((run) => run.manifest !== null && run.kind !== "judge_replay" && run.kind !== "paired_comparison" && run.rootExecutionId !== released);
 }
 
 const PUBLICATION_TEXT = { prepared: "Prepared", published: "Published", blocked: "Blocked", failed: "Publication failed" } as const;

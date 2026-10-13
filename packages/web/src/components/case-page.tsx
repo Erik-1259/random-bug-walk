@@ -324,7 +324,7 @@ function DiagnosticArchive({ results, archives, empty }: { results: Results; arc
 /** What the funnel counts: only the factory runs in this results directory, never every attempt. */
 export function funnelScope(results: Results): string {
   const unfinished = factoryRuns(results).some((run) => run.outcome === "failed" || run.outcome === "incomplete");
-  const scope = "It counts only the factory runs in this site's results repository and its public store; judge replays and kit checks are counted apart below.";
+  const scope = "It counts only the factory runs in this site's results repository and its public store; judge replays, paired comparisons and kit checks are counted apart below.";
   return unfinished
     ? `${scope} Attempts that were not published here are not counted, so it is not a record of every attempt.`
     : `${scope} Failed and incomplete factory attempts are not published here, so it is not a record of every attempt.`;

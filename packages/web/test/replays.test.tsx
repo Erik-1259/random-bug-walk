@@ -7,7 +7,7 @@ import { CasePage } from "../src/components/case-page.tsx";
 import { RunIndex } from "../src/components/run-index.tsx";
 import { funnel, otherRuns, REPLAY_VERDICT_NOTE } from "../src/model.ts";
 import { publishedFiles, readResults } from "../src/release.ts";
-import { cleanup, NO_RELEASE, RELEASE_ID, RELEASE_ROOT, REPLAY_ROOTS, releaseWithReplays } from "./support/results.ts";
+import { cleanup, NO_RELEASE, PAIRED_ROOTS, RELEASE_ID, RELEASE_ROOT, REPLAY_ROOTS, releaseWithPairedComparisons, releaseWithReplays } from "./support/results.ts";
 
 afterEach(cleanup);
 
@@ -84,5 +84,41 @@ describe("verification replays", () => {
     expect(page).toContain("Verification replay (judge), not a factory run Verification replay (judge), completed.");
     expect(page).not.toContain("not validated");
     expect(publishedFiles(results)).toContainEqual({ root: REPLAY_ROOTS[0], path: "report.md" });
+  });
+});
+
+describe("paired comparisons", () => {
+  it("leaves paired comparison roots out of the factory funnel and counts them apart", async () => {
+    const results = await readResults(releaseWithPairedComparisons());
+    expect(results.runs).toHaveLength(6);
+    expect(funnel(results).slice(0, 3).map((step) => [step.label, step.count])).toEqual([
+      ["Factory runs recorded", 1],
+      ["Factory runs finished", 1],
+      ["Factory runs published", 1],
+    ]);
+    expect(otherRuns(results).map((step) => [step.label, step.count])).toEqual([
+      ["Verification replays (judge)", 3],
+      ["Replays completed", 2],
+      ["Replays not finished", 1],
+      ["Paired comparisons", 2],
+    ]);
+    const page = text(renderToStaticMarkup(<CasePage results={results} />));
+    expect(page).toContain("Replays not finished 1 Paired comparisons 2");
+    expect(page).toContain("Diagnostic archive (not validated) No other published runs.");
+    for (const root of PAIRED_ROOTS) expect(page).not.toContain(`${root} completed, not validated`);
+  });
+
+  it("labels paired comparisons in the catalog and on the run index page as not factory runs", async () => {
+    const results = await readResults(releaseWithPairedComparisons());
+    const catalog = text(renderToStaticMarkup(<Catalog results={results} />));
+    expect(catalog).toContain("Verification replays (judge) are not factory runs. Paired comparisons are not factory runs.");
+    expect(catalog).toContain(`${PAIRED_ROOTS[0]} Paired comparison Terminal Completed Published 1 1`);
+    expect(catalog).toContain(`${PAIRED_ROOTS[1]} Paired comparison Running None yet Not published`);
+    const paired = results.runs.find((run) => run.rootExecutionId === PAIRED_ROOTS[0]);
+    if (paired === undefined) throw new Error("synthetic: the paired comparison is missing");
+    const index = text(renderToStaticMarkup(<RunIndex results={results} run={paired} />));
+    expect(index).toContain("Paired comparison, not a factory run Paired comparison, completed.");
+    expect(index).not.toContain("not validated");
+    expect(publishedFiles(results)).toContainEqual({ root: PAIRED_ROOTS[0], path: "report.md" });
   });
 });

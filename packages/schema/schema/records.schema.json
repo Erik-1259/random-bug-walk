@@ -114,7 +114,7 @@
     },
     "RootRunKind": {
       "type": "string",
-      "enum": ["factory", "kit_check", "judge_replay"]
+      "enum": ["factory", "kit_check", "judge_replay", "paired_comparison"]
     },
     "RootRunStatus": {
       "type": "string",
