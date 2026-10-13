@@ -97,7 +97,7 @@ How to read it:
 - A difference counts as detectable when the power is at least 80% at that difference and at every larger feasible difference in the same direction. Differences are whole percentage points.
 - The result page quotes the row for the observed off-arm rate, rounded to the nearest 5 points.
 - Near the expected range (off-arm rate 0–25%), only an increase of about 34–49 points is detectable at alpha 0.05, and 43–54 points at Holm's first step. The pre-registered 25-point difference is well below that.
-- These numbers replace the rounded estimates in the design notes (35/45 at 0%, 45/55 at 10%, 50/55 at 25%, 45/50 at 50%). The calculated values, with the futility rule counted as no rejection, are 34/43, 43/51, 49/54 and 42/47.
+- The calculated values, with the futility rule counted as no rejection, are 34/43 at 0%, 43/51 at 10%, 49/54 at 25% and 42/47 at 50%.
 - **Tokens.** Mann-Whitney uses ranks, so the shift applies equally to log tokens. Under a lognormal model, a 25% median reduction is a shift of ln(4/3) ≈ 0.29 in log tokens. It is detectable at alpha 0.05 only if the standard deviation of log tokens per attempt is about 0.30 or less (0.29 / 0.95). That standard deviation is unknown until the pilot measures it, so this is a prediction, not a measurement.
 - **Ties.** The table assumes no ties. Turns are whole numbers from 1 to 50 over 40 attempts, so turns will be tied, and capped attempts share the cap values of both outcomes. The test that is run handles ties (see "Outcomes"), but the table is optimistic for turns, and for tokens if attempts hit a cap.
 
@@ -159,7 +159,7 @@ Nemotron 3 Super, frozen after the pilot. Kimi-K2.7-Code is used only if the pil
 
 ## Claim wording
 
-- The headline is "Illustration on N bug(s), k = <off-arm size> off and <on-arm size> on", using the actual counted attempts per arm. When both arms have 20 counted attempts, it is followed by the detectable difference from the table for the observed off-arm rate. When attempts were excluded, the detectable difference is recomputed with `docs/uc1-preregistration/power.py` for the actual arm sizes, or omitted with a note saying so.
+- The headline is "Illustration on N bug(s), k = <off-arm size> off and <on-arm size> on", using the actual counted attempts per arm. When both arms have 20 counted attempts, it is followed by the detectable difference from the table for the observed off-arm rate. When attempts were excluded, the detectable difference is omitted, with a note saying the table assumes 20 counted attempts per arm.
 - Results are reported per bug only. There is no pooled or clustered claim with fewer than 3 bugs, and pairing is at the bug level only.
 - Each bug gets a "made worse" statement: the off-minus-on solve rate, and the token ratio (on over off, from the Hodges–Lehmann shift on log tokens) with its interval. It says plainly whether the tool made this bug worse.
 - A non-detection is reported only as "inconclusive at this sample size", never as "no effect".
