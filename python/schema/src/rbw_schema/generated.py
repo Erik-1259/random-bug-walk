@@ -172,11 +172,13 @@ type RootRunKind = Literal[
     "factory",
     "kit_check",
     "judge_replay",
+    "paired_comparison",
 ]
 ROOT_RUN_KIND_VALUES: Final = (
     "factory",
     "kit_check",
     "judge_replay",
+    "paired_comparison",
 )
 
 type RootRunStatus = Literal[

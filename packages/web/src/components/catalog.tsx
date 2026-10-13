@@ -44,7 +44,9 @@ export function RunFiles({ run }: { run: Run }) {
 
 function releaseSentence(results: Results): string {
   const record = results.release?.record;
-  const replays = results.runs.some((run) => run.kind === "judge_replay") ? " Verification replays (judge) are not factory runs." : "";
+  const replays =
+    (results.runs.some((run) => run.kind === "judge_replay") ? " Verification replays (judge) are not factory runs." : "") +
+    (results.runs.some((run) => run.kind === "paired_comparison") ? " Paired comparisons are not factory runs." : "");
   if (record === undefined) return `None of them is a validated release.${replays}`;
   return `Run ${record.run.root_execution_id} is validated release ${record.release_id}; the other factory runs are not validated.${replays}`;
 }

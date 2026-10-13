@@ -1,0 +1,25 @@
+# Source anchor for shape RC-1.atomic-backup-code: the write that consumes the matched backup code
+# inside the POST handler. The upstream fix changed it from a plain `update` keyed by id to an
+# `updateMany` that also requires `used: false`. This rule only locates that write on each side of
+# the fix; it is separate from the target rules and says nothing about other writes.
+id: rc-1.atomic-backup-code.source
+language: TypeScript
+severity: info
+message: The write that consumes the matched backup code inside POST.
+rule:
+  pattern: prisma.client.twoFactorBackupCode.$METHOD($$$ARGS)
+  inside:
+    kind: function_declaration
+    stopBy: end
+    has:
+      field: name
+      regex: ^POST$
+constraints:
+  METHOD:
+    regex: ^(update|updateMany)$
+metadata:
+  shape_id: RC-1.atomic-backup-code
+  form: source_anchor
+  keywords: [race condition, backup code, two-factor, double use, updateMany]
+  cwe: CWE-367 Time-of-check Time-of-use (TOCTOU) Race Condition
+  related_lint_rule: require-atomic-updates

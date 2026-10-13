@@ -64,6 +64,14 @@ describe("non-terminal roots", () => {
     });
   }
 
+  it("writes the status object of a prepared paired_comparison root with its kind", async () => {
+    const world = createWorld();
+    const result = await publish(world, writeRootRun(world, { kind: "paired_comparison", status: "prepared" }));
+    expect(result.code).toBe(3);
+    expect(statusObject(world)).toMatchObject({ kind: "paired_comparison", status: "prepared", outcome: null, publication_status: null });
+    expect(commitCount(world.remote)).toBe(0);
+  });
+
   it("writes nothing when the status scan is blocked or unavailable", async () => {
     const world = createWorld();
     const unavailable = await publish(world, writeRootRun(world, { status: "running" }), ["--patterns", join(world.dir, "absent.txt")]);

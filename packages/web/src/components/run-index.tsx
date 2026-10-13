@@ -8,7 +8,7 @@ import { RunFiles } from "./catalog.tsx";
 function runLabel(results: Results, run: Run): string {
   const released = results.release?.record;
   if (released?.run.root_execution_id === run.rootExecutionId) return `Validated release ${released.release_id}`;
-  if (run.kind === "judge_replay") return `${RUN_KIND_TEXT.judge_replay}, not a factory run`;
+  if (run.kind === "judge_replay" || run.kind === "paired_comparison") return `${RUN_KIND_TEXT[run.kind]}, not a factory run`;
   return "Diagnostic archive, not validated";
 }
 

@@ -1,6 +1,21 @@
 export { canonicalJson } from "./json.ts";
 export { ProbeDataError, checkProbes, loadProbeSet } from "./probes.ts";
-export type { ExpectedCheck, ProbeData, ProbeEntry, ProbeOutcome, ProbeRecord, ProbeSet } from "./probes.ts";
+export type { Adm06NotApplicable, ExpectedCheck, ProbeData, ProbeEntry, ProbeOutcome, ProbeRecord, ProbeSet } from "./probes.ts";
+export {
+  RC1_CHECK_ID,
+  RC1_DOUBLE_SPEND_REASON,
+  RC1_FIDELITY,
+  RC1_FIXED_RULE_ID,
+  RC1_PLANTED_RULE_ID,
+  RC1_PROBE_DIR,
+  RC1_RULE_FILE,
+  RC1_SHAPE_ID,
+  RC1_SOURCE,
+  RC1_SOURCE_RULE_FILE,
+  RC1_SOURCE_RULE_ID,
+  RC1_TARGET,
+} from "./rc1.ts";
+export type { Rc1SourceSpec, Rc1TargetSpec } from "./rc1.ts";
 export { RuleFileError, applyFix, findMatches, loadRules } from "./rules.ts";
 export type { LoadedRule } from "./rules.ts";
 export {

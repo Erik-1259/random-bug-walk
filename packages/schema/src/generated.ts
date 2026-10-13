@@ -53,7 +53,7 @@ export type PolicyPurpose = (typeof POLICY_PURPOSE_VALUES)[number];
 export const VISIBILITY_VALUES = ["public", "private"] as const;
 export type Visibility = (typeof VISIBILITY_VALUES)[number];
 
-export const ROOT_RUN_KIND_VALUES = ["factory", "kit_check", "judge_replay"] as const;
+export const ROOT_RUN_KIND_VALUES = ["factory", "kit_check", "judge_replay", "paired_comparison"] as const;
 export type RootRunKind = (typeof ROOT_RUN_KIND_VALUES)[number];
 
 export const ROOT_RUN_STATUS_VALUES = ["prepared", "running", "terminal", "needs_reconciliation"] as const;

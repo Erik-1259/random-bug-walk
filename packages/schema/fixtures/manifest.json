@@ -626,6 +626,15 @@
       }
     },
     {
+      "name": "root-run-paired-comparison",
+      "type": "RootRun",
+      "expect": "valid",
+      "rule": "paired comparison root",
+      "context": {
+        "policy": "policy-placeholder"
+      }
+    },
+    {
       "name": "root-run-standalone",
       "type": "RootRun",
       "expect": "valid",

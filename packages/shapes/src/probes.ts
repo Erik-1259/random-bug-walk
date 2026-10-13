@@ -1,5 +1,7 @@
-// Deterministic negative probes for DT-1.tz-arg, stored as data: each patch with its base and
-// result hashes and the outcome vector the added checks are expected to give on it.
+// Deterministic negative probes for a shape (DT-1.tz-arg, RC-1.atomic-backup-code), stored as
+// data: each patch with its base and result hashes and the outcome vector the added checks are
+// expected to give on it. A shape may record ADM-06 (partial and stub probes) as not applicable,
+// with its reason; its probe set then holds the mutation alone.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { applyPatch, parsePatch, reversePatch, type StructuredPatch } from "diff";
@@ -38,6 +40,13 @@ export interface ProbeData {
   readonly invalid_outcomes: { readonly note: string; readonly outcomes: readonly string[] };
   readonly scope: string;
   readonly probes: readonly ProbeEntry[];
+  /** Present only when the shape records ADM-06 as not applicable; the set then has no other probe. */
+  readonly adm_06?: Adm06NotApplicable;
+}
+
+export interface Adm06NotApplicable {
+  readonly status: "not_applicable";
+  readonly reason: string;
 }
 
 export interface ProbeSet {
@@ -56,6 +65,7 @@ export interface ProbeRecord {
   readonly checks: readonly string[];
   readonly fixed_reference: { readonly base_sha256: string; readonly method: string; readonly result_sha256: string };
   readonly invalid_outcomes: readonly string[];
+  readonly adm_06?: Adm06NotApplicable;
   readonly probes: readonly {
     readonly id: string;
     readonly base_sha256: string;
@@ -125,6 +135,14 @@ function expectedVector(value: unknown, checks: readonly string[], where: string
   return result;
 }
 
+function adm06NotApplicable(value: unknown): Adm06NotApplicable {
+  const entry = record(value, "adm_06");
+  if (entry.status !== "not_applicable" || Object.keys(entry).length !== 2) {
+    throw new ProbeDataError("adm_06 must be a not_applicable status with a reason");
+  }
+  return { status: "not_applicable", reason: text(entry.reason, "adm_06.reason") };
+}
+
 function parseProbeData(value: unknown): ProbeData {
   const data = record(value, "probe data");
   const checks = texts(data.checks, "checks");
@@ -156,7 +174,12 @@ function parseProbeData(value: unknown): ProbeData {
   if (new Set(ids).size !== ids.length || !ids.includes(MUTATION)) {
     throw new ProbeDataError(`probe IDs must be unique and include ${MUTATION}`);
   }
+  const adm06 = data.adm_06 === undefined ? undefined : adm06NotApplicable(data.adm_06);
+  if (adm06 !== undefined && ids.length !== 1) {
+    throw new ProbeDataError(`a probe set that records ADM-06 as not applicable must hold only the ${MUTATION} probe`);
+  }
   return {
+    ...(adm06 === undefined ? {} : { adm_06: adm06 }),
     shape_id: text(data.shape_id, "shape_id"),
     target_path: text(data.target_path, "target_path"),
     host_commit: text(data.host_commit, "host_commit"),
@@ -282,6 +305,7 @@ function check(set: ProbeSet, planted: Uint8Array): ProbeRecord {
     checks: data.checks,
     fixed_reference: { base_sha256: reference.base_sha256, method: reference.method, result_sha256: cleanSha },
     invalid_outcomes: data.invalid_outcomes.outcomes,
+    ...(data.adm_06 === undefined ? {} : { adm_06: data.adm_06 }),
     probes,
   };
 }

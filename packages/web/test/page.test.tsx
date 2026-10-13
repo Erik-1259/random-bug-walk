@@ -234,7 +234,7 @@ describe("case page with a published release", () => {
     expect(html).toContain(`href="/runs/${RELEASE_ROOT}/report.md"`);
     const page = text(html);
     expect(page).not.toContain("Release files: none");
-    expect(page).toContain("Diagnostic archive (not validated) No other published runs.");
+    expect(page).toContain("Diagnostic archive (not validated) No other published factory runs.");
     expect(page).not.toContain(`${RELEASE_ROOT} completed, not validated`);
   });
 
