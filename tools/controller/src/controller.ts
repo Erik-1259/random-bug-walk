@@ -68,6 +68,11 @@ export interface JobInputs {
   probesDir?: string;
   /** The fix a judge replay grades as fixed-01 (the alternative-fix layout); the local runner's alternative fix by default. */
   alternativeDir?: string;
+  /**
+   * The code state judge_verify's fixed-01 grades: `fixed` is the reference fix (the clean file's
+   * bytes), for a solver fix that equals the clean file; absent or `alternative_fix`, the alternative fix.
+   */
+  judgeFixed?: "fixed" | "alternative_fix";
   backend: Backend;
   /** For the sandbox backend: the kit image in VCR, pinned by digest. */
   sandboxImage: string | null;
@@ -462,6 +467,7 @@ async function build(inputs: JobInputs, deps: ControllerDeps, state: ControllerS
     profileSha256: profileSha256(),
     deadlineAt: utcSeconds(deadlineMs),
     ...(inputs.projectPolicy === undefined ? {} : { projectPolicy: inputs.projectPolicy }),
+    ...(inputs.judgeFixed === undefined ? {} : { judgeFixed: inputs.judgeFixed }),
   };
   let baseline: { key: string; sha256: string } | null = null;
   if (inputs.kind === "observe") {
@@ -759,6 +765,7 @@ export async function runJob(inputs: JobInputs, deps: ControllerDeps): Promise<J
     ...(inputs.ids === undefined ? {} : { ids: inputs.ids }),
     ...(inputs.prebuilt === undefined ? {} : { prebuilt: inputs.prebuilt.fingerprint }),
     ...(inputs.projectPolicy === undefined ? {} : { project_policy: inputs.projectPolicy }),
+    ...(inputs.judgeFixed === undefined ? {} : { judge_fixed: inputs.judgeFixed }),
   }).sha256;
 
   if (existsSync(p.state)) {
