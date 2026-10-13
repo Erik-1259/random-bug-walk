@@ -10,8 +10,7 @@
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint . --max-warnings 0",
-    "test": "vitest run",
-    "screen": "node src/cli.ts"
+    "test": "vitest run"
   },
   "dependencies": {
     "@rbw/spend": "workspace:*",

@@ -14,8 +14,8 @@ import { executeScreen } from "./screen.ts";
 import type { ScreenOptions } from "./screen.ts";
 
 export const USAGE = `usage:
-  cli.ts plan --input <screen-input.json> --tree <planted tree> --clean <clean target file> --rate-sheet <rates.json> --attempts <1-${String(MAX_ATTEMPTS)}> --budget-microusd <n> [--model super|kimi]
-  cli.ts run  --input <screen-input.json> --tree <planted tree> --clean <clean target file> --rate-sheet <rates.json> --attempts <1-${String(MAX_ATTEMPTS)}> --budget-microusd <n> --out <new dir> --slot-key <key> --pool <pool-key> [--model super|kimi] [--fail-at-hits <n>] [--binding]`;
+  node packages/screen/src/cli.ts plan --input <screen-input.json> --tree <planted tree> --clean <clean target file> --rate-sheet <rates.json> --attempts <1-${String(MAX_ATTEMPTS)}> --budget-microusd <n> [--model super|kimi]
+  node packages/screen/src/cli.ts run  --input <screen-input.json> --tree <planted tree> --clean <clean target file> --rate-sheet <rates.json> --attempts <1-${String(MAX_ATTEMPTS)}> --budget-microusd <n> --out <new dir> --slot-key <key> --pool <pool-key> [--model super|kimi] [--fail-at-hits <n>] [--binding]`;
 
 const OPTIONS = {
   input: { type: "string" },

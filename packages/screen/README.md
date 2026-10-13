@@ -21,16 +21,24 @@ The automated static-headroom screen. A planted bug used to compare debugging to
 
 ## Commands
 
-| Script | What it does |
+Run the command line with `node` from the repository root, so relative paths resolve from there. (A package script run through `pnpm --filter` would run from `packages/screen` and resolve every relative path from that directory, which is why this package has none.)
+
+| Command | What it does |
 | --- | --- |
-| `pnpm --filter @rbw/screen run screen -- plan ...` | Reads the input, finds the planted site, and prints the files shown, the prompt size, the worst case per call and for the run, and whether it fits the budget. No network and no database. Exits 1 when the run would not fit the budget. |
-| `pnpm --filter @rbw/screen run screen -- run ...` | The metered screen run. Reads `TOKEN_FACTORY_SCREEN_KEY` and `DATABASE_URL`, and never prints either value. |
+| `node packages/screen/src/cli.ts plan ...` | Reads the input, finds the planted site, and prints the files shown, the prompt size, the worst case per call and for the run, and whether it fits the budget. No network and no database. Exits 1 when the run would not fit the budget. |
+| `node packages/screen/src/cli.ts run ...` | The metered screen run. Reads `TOKEN_FACTORY_SCREEN_KEY` and `DATABASE_URL`, and never prints either value. |
 | `pnpm --filter @rbw/screen run test` | Unit tests: PGlite with the `@rbw/spend` migrations, the scripted fake model, a synthetic tree written to a temporary directory. No network. |
 | `build`, `typecheck`, `lint` | The workspace's standard scripts. |
 
+```sh
+node packages/screen/src/cli.ts plan --input <screen-input.json> --tree <planted tree> --clean <clean target file> --rate-sheet <rates.json> --attempts <1-8> --budget-microusd <n> [--model super|kimi]
+node packages/screen/src/cli.ts run  --input <screen-input.json> --tree <planted tree> --clean <clean target file> --rate-sheet <rates.json> --attempts <1-8> --budget-microusd <n> --out <new dir> --slot-key <key> --pool <pool-key> [--model super|kimi] [--fail-at-hits <n>] [--binding]
 ```
-cli.ts plan --input <screen-input.json> --tree <planted tree> --clean <clean target file> --rate-sheet <rates.json> --attempts <1-8> --budget-microusd <n> [--model super|kimi]
-cli.ts run  --input <screen-input.json> --tree <planted tree> --clean <clean target file> --rate-sheet <rates.json> --attempts <1-8> --budget-microusd <n> --out <new dir> --slot-key <key> --pool <pool-key> [--model super|kimi] [--fail-at-hits <n>] [--binding]
+
+Example, from the repository root:
+
+```sh
+node packages/screen/src/cli.ts plan --input /tmp/case/screen-input.json --tree /tmp/case/tree --clean /tmp/case/clean.ts --rate-sheet packages/screen/rates.json --attempts 4 --budget-microusd 100000
 ```
 
 | Option | Meaning |
