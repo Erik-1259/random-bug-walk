@@ -9,7 +9,7 @@ import { DEFAULT_SETTINGS } from "@rbw/search";
 import type { SearchClient } from "@rbw/search";
 import type { Spend } from "@rbw/spend";
 import { buildPolicy, parseCanonical } from "@rbw/schema";
-import type { ObservedSymptom } from "@rbw/schema";
+import type { ObservedSymptom, RaceSymptom } from "@rbw/schema";
 import type { FetchFunction, IssueOutput } from "@rbw/writer";
 import { CARD_OUTPUTS, RATE_ENTRIES, SYNTHETIC_USAGE, cardSource, completion } from "../../../../packages/writer/test/fixtures/cases.ts";
 import { FakeDocker } from "../../../local-runner/test/support/fakes.ts";
@@ -118,6 +118,36 @@ export function syntheticIssue(symptom: ObservedSymptom): IssueOutput {
   };
 }
 
+/** The race family's private candidate input, all synthetic: the time-zone input with race prose, search words and excluded check IDs. */
+export function racePrivateInput(): Record<string, unknown> {
+  const input = privateInput();
+  const search = input.search as Record<string, unknown>;
+  return {
+    ...input,
+    excluded_identifiers: ["syntheticVerifyHelper", "rc1.backup-code-concurrent-double-spend", "rc1.backup-code-serial-reuse"],
+    search: {
+      ...search,
+      source: { shape_keywords: ["synthetic", "backup"], symptom_words: ["code", "twice"], include_domains: ["github.com"], start_date: "2020-01-01", end_date: "2026-10-01" },
+      docs: { url: DOCS_URL, query: "backup codes single use" },
+    },
+    user_action: "Signed in from two browser tabs and entered the same unused backup code in both at the same moment.",
+    fixture_description: "One synthetic account with two-step sign-in and ten unused backup codes.",
+    doc_excerpts: [{ text: "Synthetic excerpt: each backup code can be used once.", source_url: "https://docs.example.invalid/reports" }],
+  };
+}
+
+/** A user-style race issue whose every number comes from the symptom: the accepted and refused counts, expected and observed, and the HTTP statuses. */
+export function syntheticRaceIssue(symptom: RaceSymptom): IssueOutput {
+  const statuses = symptom.concurrent_attempts.map((attempt) => String(attempt.http_status)).join(" and ");
+  return {
+    title: "Synthetic report: one backup code signs in twice when it is entered in two tabs at the same moment",
+    reproduction_steps: ["Sign in to the synthetic account in two browser tabs until each asks for a code.", "Enter the same unused backup code in both tabs and submit them together."],
+    expected_result: `Of the two requests sent together, ${String(symptom.expected.accepted)} is accepted and ${String(symptom.expected.refused)} is refused. A backup code works once.`,
+    actual_result: `${String(symptom.observed.accepted)} were accepted and ${String(symptom.observed.refused)} refused, so both tabs were signed in with one code. The responses were ${statuses}.`,
+    environment: "Synthetic fixture data; the planted bug is synthetic.",
+  };
+}
+
 export type IssueMode = "valid" | "rejected" | "lost";
 
 export interface FakeWriter {
@@ -134,8 +164,8 @@ export function fakeWriter(work: string, mode: IssueMode = "valid"): FakeWriter 
     calls.push({ kind, authorization: new Headers(init?.headers).get("authorization"), body });
     if (kind === "card") return Promise.resolve(new Response(completion(JSON.stringify(CARD_OUTPUTS.valid), SYNTHETIC_USAGE), { status: 200 }));
     if (mode === "lost") return Promise.reject(new TypeError("synthetic: the connection was reset after the request was sent"));
-    const symptom = parseCanonical(readFileSync(join(work, "candidate", "symptom.json"))) as unknown as ObservedSymptom;
-    const issue = syntheticIssue(symptom);
+    const symptom = parseCanonical(readFileSync(join(work, "candidate", "symptom.json"))) as unknown as ObservedSymptom | RaceSymptom;
+    const issue = "symptom_kind" in symptom ? syntheticRaceIssue(symptom) : syntheticIssue(symptom);
     const content = mode === "rejected" ? { ...issue, environment: `${issue.environment} In total 97 pageviews are listed.` } : issue;
     return Promise.resolve(new Response(completion(JSON.stringify(content), SYNTHETIC_USAGE), { status: 200 }));
   };

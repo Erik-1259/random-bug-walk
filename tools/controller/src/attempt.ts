@@ -6,6 +6,11 @@
 // and the admission (runJob). Then it writes the RootRun that the release tool stages, publishes
 // and builds from. Nothing is retried; a retry is a new root in a new directory.
 //
+// The attempt's family (the time-zone family unless --family names another) goes to every job with
+// its latency, and picks the symptom the issue writer gets: an ObservedSymptom for the time-zone
+// family, a RaceSymptom for the race family, whose admission runs 11 copies with ADM-06 not
+// applicable. A time-zone attempt is exactly what it was before the family was an attempt input.
+//
 // The writer and searcher run here against the controller's own ledger and development slot. The
 // issue, its phrases and the search records are written under <work>/candidate/ only, never
 // under jobs/ and never to a report line: the release tool publishes the issue later.
@@ -39,8 +44,8 @@ import type { CardOutcome, FetchFunction, IssueOutcome, IssueOutput, WriterProvi
 import { runJob } from "./controller.ts";
 import type { Backend, ControllerDeps, JobOutcome } from "./controller.ts";
 import { DEVELOPMENT } from "./limits.ts";
-import { SymptomUnavailable, TIME_ZONE_FAMILY, buildSymptom } from "./symptom.ts";
-import type { CandidateSymptom, SymptomProse } from "./symptom.ts";
+import { RACE_FAMILY, SymptomUnavailable, TIME_ZONE_FAMILY, buildSymptom } from "./symptom.ts";
+import type { CandidateSymptom, SymptomFamily, SymptomProse } from "./symptom.ts";
 
 /** The admission policy a release is graded under; the release check requires it, and ProjectPolicy has no such field. */
 export const GRADING_POLICY_ID = "umami-uc3-v1";
@@ -233,7 +238,8 @@ export function prepareAttempt(inputs: AttemptInputs, env: Record<string, string
     throw error;
   }
   if (priceOf(searchRates, "tavily", "credit") === null) throw new InputsError("unknown_price: the search rate file has no tavily credit price");
-  const copyInputs = loadCopyInputs({
+  // The family's copy inputs (manifest, terms, probes and fix), checked as each job will load them.
+  loadCopyInputs({
     manifest: inputs.manifest,
     terms: inputs.terms,
     policy: inputs.auditPolicy,
@@ -241,11 +247,15 @@ export function prepareAttempt(inputs: AttemptInputs, env: Record<string, string
     ...(inputs.probesDir === undefined ? {} : { probesDir: inputs.probesDir }),
     ...(inputs.alternativeDir === undefined ? {} : { alternativeDir: inputs.alternativeDir }),
   });
-  // The issue writer's only input, ObservedSymptom, holds time-zone fields (a zone, events and
-  // day buckets), so another family's attempt would pay for its kit check and observation and then
-  // stop at the write. It is refused here, before anything runs, until that family has a symptom.
-  if (copyInputs.family.id !== DEFAULT_FAMILY) throw new InputsError(`symptom_unavailable: the ${copyInputs.family.id} family has no ObservedSymptom for the issue writer yet, so its attempt cannot run`);
   return { inputs, policy, policySha256: sha256Hex(policyBytes), input, writerRates, searchRates, keys: { writer: writerKey, search: searchKey } };
+}
+
+/** The fixture ID the symptom builder knows each runner family by; every runner family needs one. */
+const SYMPTOM_FAMILIES: Readonly<Record<FamilyId, SymptomFamily>> = { "time-zone": TIME_ZONE_FAMILY, race: RACE_FAMILY };
+
+/** The symptom family of the attempt's runner family: the time-zone family when none is given. */
+export function symptomFamilyOf(family: FamilyId | undefined): SymptomFamily {
+  return SYMPTOM_FAMILIES[family ?? DEFAULT_FAMILY];
 }
 
 /** The attempt's family inputs, passed on to every job and copy; none for the default family. */
@@ -540,8 +550,7 @@ async function stages(a: Attempt, projectPolicy: { sha256: string; policy_id: st
 
   let symptom: CandidateSymptom;
   try {
-    // The attempt runs the time-zone family until the family is an attempt input.
-    symptom = buildSymptom(observe.jobDir, a.prepared.input, TIME_ZONE_FAMILY);
+    symptom = buildSymptom(observe.jobDir, a.prepared.input, symptomFamilyOf(inputs.family));
   } catch (error) {
     if (!(error instanceof SymptomUnavailable)) throw error;
     a.deps.report(`stage=write status=failed reason=${error.code}`);

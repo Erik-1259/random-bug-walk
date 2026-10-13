@@ -172,7 +172,9 @@ node tools/controller/src/cli.ts attempt --work <new run dir> --policy <ProjectP
 - `--writer-rates` and `--search-rates` are the writer's and the searcher's rate files, in the formats their `record` commands take.
 - Credentials come only from the environment: `DATABASE_URL`, `VERCEL_TOKEN`, `VERCEL_TEAM_ID` and `VERCEL_PROJECT_ID` (as `run` reads them), plus `TOKEN_FACTORY_WRITER_KEY` and `TAVILY_API_KEY`. A missing one is named, and the command exits 2 before anything runs. The two keys are read once and removed from the environment before any child process starts. No key reaches a log line, a record or an error message.
 - `--work` must be absent or empty. An attempt never resumes: a retry is a new root in a new directory.
-- `--family` and `--race-latency-ms` are `run`'s. A race-family attempt is refused before anything runs (`symptom_unavailable`): the issue writer's only input, `ObservedSymptom`, holds time-zone fields (a zone, events and day buckets), so the attempt would pay for its kit check and observation and then stop at the write. A race-family symptom is not built yet.
+- `--family` and `--race-latency-ms` are `run`'s, and every job of the attempt gets both. The family also picks the symptom the issue writer gets (below): a `RaceSymptom` for `--family race`, whose admission runs 11 copies with ADM-06 not applicable. Without `--family`, or with `--family time-zone`, the attempt writes the same job, symptom and issue bytes as before the family was an attempt input.
+- The private input's fields are the same for every family; for a race attempt, its prose, search words and excluded identifiers describe the race candidate. The card writer reads only `card_source`, so it needs nothing family-specific.
+- `tools/release stage` still validates `symptom.json` as an `ObservedSymptom`, so it refuses a race attempt's symptom (`symptom_invalid`) until the release tool accepts a `RaceSymptom`. Its jobs stage without it.
 
 Exit codes: 0 when the root ends `terminal` and `completed`; 1 when `root-run.json` was written with any other state; 2 for a usage or input error, with nothing run.
 
@@ -221,11 +223,11 @@ The attempt makes one `RunIds` with the policy's `project_id`. Every stage runs 
 1. **`kit_check` and `observe`:** `runJob` with the root's IDs and the policy, `policy_id` `umami-uc3-v1` (the release check requires it, and `ProjectPolicy` has no such field), on the development pool and slot. Without `--original-suite`, the kit check's freeze copy makes it, and every later job takes that same file.
 2. **`write`:** the symptom, the two source searches (`source-1`, `source-2`) and the docs extract (`docs-1`), then one card call and one issue call. There are no repairs.
 3. **`novelty`:** the three exact-phrase checks, then `summarizeNovelty`.
-4. **`admission`:** `runJob`, 13 copies, with the same IDs, policy and original suite.
+4. **`admission`:** `runJob`, 13 copies (11 for the race family), with the same IDs, policy and original suite.
 
 `runJob` takes two optional `JobInputs` fields for this, `ids` and `projectPolicy`. Both go into the job's fingerprint. Without them a job's bytes are what they were before.
 
-**The symptom** (`src/symptom.ts`, spec §9.6) depends on the family, which `buildSymptom(observeJobDir, prose, family)` takes as a parameter (`TIME_ZONE_FAMILY` or `RACE_FAMILY`, named by fixture ID). The attempt passes the time-zone family until the family is an attempt input.
+**The symptom** (`src/symptom.ts`, spec §9.6) depends on the family, which `buildSymptom(observeJobDir, prose, family)` takes as a parameter (`TIME_ZONE_FAMILY` or `RACE_FAMILY`, named by fixture ID). The attempt passes the one its `--family` maps to: `time-zone` (the default) to `TIME_ZONE_FAMILY`, `race` to `RACE_FAMILY`.
 
 For the time-zone family (`umami-tz-arg-001`) it is a schema-valid `ObservedSymptom`:
 - from the fixture: the request (its path; `startAt`, `endAt`, `unit` and `timezone` as strings), the time zone, the events (labeled `pageview <id>`) and every expected count, labeled by the date part of each bucket label;
