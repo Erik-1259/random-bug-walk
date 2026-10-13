@@ -1,6 +1,6 @@
-// A narrow local input type for one candidate bug. The symptom words and the docs query will later
-// come from the shared schema's `ObservedSymptom`, and the phrases from the frozen issue revision.
-// Until that package exists, the caller supplies them here.
+// A narrow local input type for one candidate bug. The caller supplies the symptom words, the docs
+// query and the phrases; in the candidate attempt, the controller picks the phrases from the frozen
+// issue.
 import { z } from "zod";
 import { SearchError } from "./errors.ts";
 

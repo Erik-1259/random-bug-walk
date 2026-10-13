@@ -111,7 +111,7 @@ export interface BlobClient {
   put(pathname: string, body: Uint8Array, options: BlobPutOptions): Promise<{ url: string }>;
 }
 
-/** Reads a body chunk by chunk and stops, cancelling the rest, once more than maxBytes have arrived. */
+/** Reads a body chunk by chunk and stops, canceling the rest, once more than maxBytes have arrived. */
 export async function readLimited(response: Response, maxBytes: number): Promise<Uint8Array> {
   if (response.body === null) return new Uint8Array();
   const reader: ReadableStreamDefaultReader<Uint8Array> = response.body.getReader();

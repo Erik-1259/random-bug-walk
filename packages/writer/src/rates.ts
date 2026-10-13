@@ -1,6 +1,6 @@
-// The injected rate record and the priced envelope. Until the shared rate-sheet package exists,
-// rates come from a JSON file of `{ service, unit, price: { microusd, per_units }, source_url }`
-// entries, and its exact bytes are hashed into rate_sheet_sha256.
+// The injected rate record and the priced envelope. Rates come from the writer's own JSON file of
+// `{ service, unit, price: { microusd, per_units }, source_url }` entries, separate from
+// @rbw/envelope's rate sheet, and its exact bytes are hashed into rate_sheet_sha256.
 import type { EnvelopeLine, Price } from "@rbw/spend";
 import { z } from "zod";
 import { WRITER_MODEL_PROFILE } from "./config.ts";

@@ -1,6 +1,6 @@
 # @rbw/local-runner
 
-A host-side command that runs the whole first local sequence on Docker: the kit check, the observation and admission, each as one job of app copies through the kit image (`kit/umami`) and the protected driver (`packages/umami-driver`). It is the local stand-in for the hosted controller, which is planned. This is part of a hackathon prototype.
+A host-side command that runs the whole first local sequence on Docker: the kit check, the observation and admission, each as one job of app copies through the kit image (`kit/umami`) and the protected driver (`packages/umami-driver`). The controller (`tools/controller`) reuses its job builders and its `run-copy` path to run jobs against the spend ledger on Vercel Sandbox. This is part of a hackathon prototype.
 
 Everything it writes is **development evidence**. It makes no admission claim, publishes nothing, and the planted bug is synthetic.
 
@@ -87,11 +87,11 @@ The card call, the issue call and the three phrase searches (`phrase-1` to `phra
 
 `--concurrency <n>` (default 1) runs up to `n` copies of a job at once; the alternative-fix copy shares admission's queue. The documented proof uses 1, so its timings are clean.
 
-`run-copy` runs exactly one copy from a job directory and a trial ID, for a later hosted or cloud matrix to call: it reads the job with the driver's own reader, checks an observation's baseline against `--root` (the run directory that holds it) before any docker command, refuses an image whose digest is not the job's, then exports, derives, audits and runs the copy, and writes `copy-summary.json` in its work directory. With `--backend sandbox` the copy itself runs on Vercel Sandbox (next section).
+`run-copy` runs exactly one copy from a job directory and a trial ID, which the controller (`tools/controller`) calls for each copy: it reads the job with the driver's own reader, checks an observation's baseline against `--root` (the run directory that holds it) before any docker command, refuses an image whose digest is not the job's, then exports, derives, audits and runs the copy, and writes `copy-summary.json` in its work directory. With `--backend sandbox` the copy itself runs on Vercel Sandbox (next section).
 
 ## Vercel Sandbox backend
 
-`run-copy --backend sandbox --sandbox-image <repository>@sha256:<digest>` runs the copy in a Vercel Sandbox microVM created from the kit image in Vercel Container Registry (VCR), instead of a Docker container. Everything before the copy is the same as with Docker, on the host: the job, the baseline, the image check, the export, the code state and the audit. The `run` command still uses Docker only. The controller that will call this is planned.
+`run-copy --backend sandbox --sandbox-image <repository>@sha256:<digest>` runs the copy in a Vercel Sandbox microVM created from the kit image in Vercel Container Registry (VCR), instead of a Docker container. Everything before the copy is the same as with Docker, on the host: the job, the baseline, the image check, the export, the code state and the audit. The `run` command still uses Docker only. The controller (`tools/controller`) calls this path for each copy of a job.
 
 - **Image:** `--image` is still the local image, which must match the job's `image_digest`; `--sandbox-image` is the same image in VCR, pinned by digest, and must be one of the local image's repository digests (`docker image inspect --format '{{json .RepoDigests}}'`), which `docker push` records. VCR runs `linux/amd64` images only, so the image is built for that platform. When the platform reports the created sandbox's image, its digest must be the requested one, or the sandbox is stopped and nothing runs in it.
 - **Create:** `persistent: false`, `networkPolicy: 'deny-all'`, `resources: { vcpus: 4 }` (spec §9.4; the platform gives 2 GB per vCPU, so 8 GB), and `timeout` equal to the outer limit, 720 000 ms. The name is the Docker container name, `rbw-<run tag>-<job>-<trial_id>`, where the run tag comes from the run's root execution ID. Each create also carries the tag `attempt`, a random UUID of that `run-copy` call. When a create call fails, the runner fetches the name with `Sandbox.get`: a pending or running sandbox with this call's tag is the one that call made, and the copy continues in it; no sandbox fails the copy (`sandbox_create_failed`); any other sandbox under the name, running or not, was left by an earlier attempt and is refused (`sandbox_name_in_use`) and left alone, so a retried `run-copy` never runs a second driver in it. A create is never retried, so no second sandbox is made.
@@ -217,7 +217,7 @@ The unit tests drive a fake Docker command layer and a fake clock, and start no 
 
 ## What it does not do
 
-- It runs single copies on Vercel Sandbox through `run-copy` only; the full `run` uses Docker, and the controller that would run a job's copies in the cloud is planned. It publishes nothing.
+- It runs single copies on Vercel Sandbox through `run-copy` only; the full `run` uses Docker. A job's copies run in the cloud through the controller (`tools/controller`). It publishes nothing.
 - It makes no live model or search call.
 - It does not calibrate anything, and its `outcome_verdict` is not an admission.
 - It does not change the kit or the driver.

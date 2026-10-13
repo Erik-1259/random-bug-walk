@@ -69,7 +69,7 @@ function checkHeldOutList(heldOut: HeldOutIdentityList): void {
 
 function refuseHeldOut(identities: readonly Identity[], heldOut: HeldOutIdentityList): void {
   checkHeldOutList(heldOut);
-  // A held-out identity is refused as it stands; it is never relabelled public.
+  // A held-out identity is refused as it stands; it is never relabeled public.
   if (identities.some((identity) => inList(heldOut, identity))) throw new RegistryRefusal("held_out_conflict");
 }
 

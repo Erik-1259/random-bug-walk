@@ -1,5 +1,6 @@
-// Until the shared rate-sheet package exists, prices come from a JSON file of
-// `{ service, unit, price: { microusd, per_units }, source_url }` entries.
+// Prices come from the searcher's own JSON file of
+// `{ service, unit, price: { microusd, per_units }, source_url }` entries, separate from
+// @rbw/envelope's rate sheet.
 import { readFileSync } from "node:fs";
 import { z } from "zod";
 import type { Price } from "@rbw/spend";

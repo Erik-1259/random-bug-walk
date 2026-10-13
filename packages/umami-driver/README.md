@@ -146,4 +146,4 @@ It holds `umami-driver/`, `umami-fixture/` and `schema/`, with `node_modules/@rb
 - **When:** a run on the 2nd to the 5th of a month. The seed puts purchases 1, 3 and 5 days before the run, near midday UTC, so only those runs place some purchases before the 1st and some after.
 - **Effect:** the clean copy's original suite has 2 failures out of 271, so ADM-03 rejects the candidate. The driver records the failures correctly as original-suite evidence.
 - **How to detect it:** in a trial's `artifacts/original/outcomes.json`, the only failed tests are those two, and the run date is in the first week of a month. For example: `jq -r '.tests[] | select(.outcome == "failed") | .test_id' artifacts/original/outcomes.json`.
-- **What to do:** don't run admission on the 2nd to the 5th of a month. Confirmation is tracked in issue #27.
+- **What to do:** don't run admission on the 2nd to the 5th of a month. A judge replay on those days reports the two failures as a known condition instead (`packages/web`, Judge routes). The cause was confirmed in issue #27, now closed, by a clean trial run outside those days.

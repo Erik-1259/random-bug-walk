@@ -1,0 +1,21 @@
+#!/bin/sh
+# Race kit start: Postgres, then Toxiproxy in front of it (127.0.0.1:5433 -> 127.0.0.1:5432, with
+# the configured latency toxic), then Umami, whose DATABASE_URL points at 127.0.0.1:5433. Wraps the
+# time-zone kit's own start script, which the race image keeps as rbw-start-base. Run as root.
+#
+#   rbw-start [--db-only]
+#
+# With --db-only it starts Postgres and the proxy. The second call to rbw-start-base finds
+# Postgres running and starts only Umami; its ready_ms counts from that call.
+set -u
+BIN=/opt/rbw/bin
+
+case ${1-} in
+  --db-only) db_only=1 ;;
+  '') db_only=0 ;;
+  *) echo "usage: rbw-start [--db-only]" >&2; exit 2 ;;
+esac
+"$BIN/rbw-start-base" --db-only || exit 1
+"$BIN/rbw-proxy" start || exit 1
+[ "$db_only" -eq 1 ] && exit 0
+exec "$BIN/rbw-start-base"
