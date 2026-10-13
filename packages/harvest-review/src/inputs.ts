@@ -1,14 +1,15 @@
 // The review inputs: for each harvested candidate that matched the source rule, one rule match and
-// the code a model needs to judge it, rebuilt from the run directory's funnel and frozen responses
+// the code a model needs to judge it, under the harvest's shape (DT-1.tz-arg or the race class), rebuilt from the run directory's funnel and frozen responses
 // with no network. Both frozen blobs are parsed again to find the after-side function around the
 // call, every parent-side function at the same nesting path, and the patch hunks that touch them.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Lang, parse } from "@ast-grep/napi";
 import type { SgNode } from "@ast-grep/napi";
-import { candidateRule, enclosingFunctions, FUNCTION_KINDS, functionLabel, functionPath, replayTransport, schemas, urls } from "@rbw/harvest";
+import { enclosingFunctions, FUNCTION_KINDS, functionLabel, functionPath, parserLanguage, replayTransport, schemas, urls } from "@rbw/harvest";
 import type { Transport } from "@rbw/harvest";
 import { z } from "zod";
+import { DT1_REVIEW_SHAPE, reviewShape } from "./shapes.ts";
 
 const FunctionTextSchema = z.strictObject({
   start_line: z.number().int().positive(),
@@ -38,6 +39,8 @@ export type CandidateInput = z.infer<typeof CandidateInputSchema>;
 
 const ReviewInputsSchema = z.strictObject({
   format_version: z.literal(1),
+  /** The harvest shape; absent for DT-1.tz-arg, as in files written before shapes could be chosen. */
+  shape_id: z.string().min(1).optional(),
   candidates: z.array(CandidateInputSchema),
 });
 export type ReviewInputs = z.infer<typeof ReviewInputsSchema>;
@@ -48,6 +51,7 @@ export function parseReviewInputs(value: unknown): ReviewInputs {
   if (!parsed.success) {
     throw new Error(`the review inputs do not match the format: ${z.prettifyError(parsed.error)}`);
   }
+  reviewShape(parsed.data.shape_id);
   return parsed.data;
 }
 
@@ -141,7 +145,7 @@ function beforeFunctions(language: Lang, source: string, path: string): Function
 
 /** Builds one candidate's review input from both versions of its file. Throws when the call is not found. */
 export function buildCandidateInput(source: CandidateSource): CandidateInput {
-  const language = Lang[candidateRule(source.path).language];
+  const language = Lang[parserLanguage(source.path)];
   const afterRoot = parse(language, source.after).root();
   const call = afterRoot
     .findAll({ rule: { kind: "call_expression" } })
@@ -182,6 +186,7 @@ export function reviewedMatch<M extends { readonly outcome: { readonly status: s
 const REVIEWED_STAGES: ReadonlySet<string> = new Set(["source_rule_matched", "structurally_confirmed"]);
 
 const FunnelSchema = z.object({
+  shape_id: z.string().optional(),
   candidates: z.array(
     z.object({
       id: z.string(),
@@ -196,7 +201,13 @@ const FunnelSchema = z.object({
           callee: z.string(),
           function: z.string(),
           outcome: z.union([
-            z.object({ status: z.literal("confirmed"), before_call: z.string(), before_line: z.number(), timezone: z.string() }),
+            z.object({
+              status: z.literal("confirmed"),
+              before_call: z.string(),
+              before_line: z.number(),
+              timezone: z.string().optional(),
+              guard: z.string().optional(),
+            }),
             z.object({ status: z.literal("rejected"), reason: z.string(), detail: z.string() }),
           ]),
         }),
@@ -217,12 +228,16 @@ async function blob(transport: Transport, repo: string, path: string, ref: strin
 /** The review inputs of a harvest run directory, from its funnel.json and frozen responses only. */
 export async function buildInputs(runDir: string): Promise<ReviewInputs> {
   const funnel = FunnelSchema.parse(JSON.parse(readFileSync(join(runDir, "funnel.json"), "utf8")));
+  const shape = reviewShape(funnel.shape_id);
   const transport = replayTransport(runDir);
   const candidates: CandidateInput[] = [];
   for (const candidate of funnel.candidates.filter((entry) => REVIEWED_STAGES.has(entry.stage_reached))) {
     const match = reviewedMatch(candidate.matches);
     if (match === undefined || candidate.commit === null) {
       throw new Error(`${candidate.id} reached ${candidate.stage_reached} with no match or commit`);
+    }
+    if (match.outcome.status === "confirmed" && match.outcome[shape.confirmed_field] === undefined) {
+      throw new Error(`${candidate.id}: its confirmed match names no ${shape.confirmed_field}, as a ${shape.id} match does`);
     }
     const commit = schemas.commit.parse((await transport.get(urls.commit(candidate.repo, candidate.commit))).body);
     const file = commit.files.find((entry) => entry.filename === match.path);
@@ -247,5 +262,5 @@ export async function buildInputs(runDir: string): Promise<ReviewInputs> {
       }),
     );
   }
-  return { format_version: 1, candidates };
+  return { format_version: 1, ...(shape.id === DT1_REVIEW_SHAPE.id ? {} : { shape_id: shape.id }), candidates };
 }
