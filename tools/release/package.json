@@ -26,13 +26,13 @@
     "@rbw/local-runner": "workspace:*",
     "@rbw/publisher": "workspace:*",
     "@rbw/schema": "workspace:*",
+    "@rbw/shapes": "workspace:*",
     "@rbw/umami-driver": "workspace:*",
     "@rbw/umami-fixture": "workspace:*",
     "@rbw/writer": "workspace:*",
     "tar-stream": "3.2.2"
   },
   "devDependencies": {
-    "@rbw/shapes": "workspace:*",
     "@types/node": "24.19.1",
     "typescript": "6.0.3",
     "vitest": "5.0.3"
