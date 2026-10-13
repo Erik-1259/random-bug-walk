@@ -194,17 +194,20 @@ function readWhereOf(read: SgNode | undefined): SgNode | undefined {
 }
 
 /**
- * Whether every entry the rewrite leaves in the guard's `where` pins the record: its key is `id`
- * or a direct key of the read's own `where`. Any other key may still keep the write conditional,
- * whatever its value, so the planted form is then not confirmed.
+ * Whether every entry the rewrite leaves in the guard's `where` pins the record: its key is `id`,
+ * or it is a direct entry of the read's own `where` with the same key and the same value text.
+ * Any other entry, including a read key with a different value, may still keep the write
+ * conditional, so the planted form is then not confirmed.
  */
 function survivorsPinRecord(guard: SgNode): boolean {
-  const readKeys = new Set(objectEntries(fieldOf(readWhereOf(writeContext(guard)?.read), "value")).keys());
+  const readEntries = objectEntries(fieldOf(readWhereOf(writeContext(guard)?.read), "value"));
+  const norm = (text: string | undefined): string | undefined => text?.replace(/\s+/g, " ");
   return (guard.parent()?.children() ?? [])
     .filter((child) => child.id() !== guard.id() && (kindOf(child) === "pair" || kindOf(child) === "shorthand_property_identifier"))
     .every((child) => {
       const key = kindOf(child) === "pair" ? pairKey(child) : child.text();
-      return key === "id" || (key !== undefined && readKeys.has(key));
+      const value = kindOf(child) === "pair" ? fieldOf(child, "value")?.text() : child.text();
+      return key === "id" || (key !== undefined && readEntries.has(key) && norm(readEntries.get(key)) === norm(value));
     });
 }
 

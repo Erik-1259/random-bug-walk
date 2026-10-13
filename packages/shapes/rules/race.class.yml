@@ -119,7 +119,7 @@ rule:
   # shorthand whose key is an identity key (`id`, `*Id`, `*_id`). Any other surviving entry can keep the write conditional
   # whatever its value form (`status: row.status`, `AND: [...]`, a spread such as `...expected`
   # that may carry a guard this rule cannot see), so the planted form is then not confirmed.
-  # findSites also requires each surviving key other than `id` to be one the read filters on.
+  # findSites also requires each surviving key other than `id` to be one the read filters on, with the same value.
   kind: object
   not:
     has:

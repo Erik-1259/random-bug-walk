@@ -192,6 +192,22 @@ describe("find sites in one file", () => {
     expect(sites.map((site) => [site.matched, site.planted_form_confirmed])).toEqual([["version: row.version", true]]);
   });
 
+  it("leaves the planted form unconfirmed when a surviving scope key holds a different value than the read's", () => {
+    const text = [
+      "export async function publish(documentId: string, readTenant: string, writeTenant: string) {",
+      "  const row = await db.client.document.findFirst({ where: { id: documentId, tenantId: readTenant } });",
+      "  await db.client.document.update({ where: { id: row.id, tenantId: writeTenant, version: row.version }, data: { active: true } });",
+      "  await db.client.document.update({ where: { id: row.id, tenantId: readTenant, version: row.version }, data: { active: true } });",
+      "}",
+      "",
+    ].join("\n");
+    const sites = findSitesInSource(CLASSES, "lib/publish.ts", text);
+    expect(sites.map((site) => [site.line, site.planted_form_confirmed])).toEqual([
+      [3, false],
+      [4, true],
+    ]);
+  });
+
   it("finds a guard after a comment and removes the guard, keeping the comment and a trailing comma", () => {
     const text = [
       "export async function redeem(code: string) {",
