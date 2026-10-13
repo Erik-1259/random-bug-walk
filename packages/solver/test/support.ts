@@ -162,7 +162,7 @@ export class FakeSession implements SolverSession {
   readonly log: string[] = [];
   files = new Map<string, string>([["src/lib/date.ts", "export const offset = 0;\n"]]);
   rebuildResult: RebuildResult = {
-    build: { exit_code: 0, stderr: "" },
+    build: { exit_code: 0, stdout: "", stderr: "" },
     start: { exit_code: 0, stdout: "postgres_ready_ms=900\nready_ms=4200 budget_ms=60000 within_budget=yes\nlistening tcp 127.0.0.1:3000", stderr: "" },
   };
   logsPage: ServerLogsPage = { text: "synthetic log line\n", next_cursor: "c1", truncated: false };

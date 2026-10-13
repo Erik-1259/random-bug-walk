@@ -42,9 +42,49 @@ describe("the runtime log scrub", () => {
     expect(scrubRuntimeLogs(text)).toBe(["[runtime log lines withheld]", "--- build stderr", "Type error: synthetic"].join("\n"));
   });
 
-  it("shows only exit statuses, build stderr and rbw-start's status lines from a rebuild", () => {
+  it("shows the build's own log sections, which rbw-build-app prints on its stdout", () => {
+    // The shape kit/umami/bin/rbw-build-app prints: its own stderr carries only its precheck and
+    // font-server messages, and the build's two logs come on its stdout under headers.
+    const stdout = [
+      "--- build stdout (/var/lib/rbw/logs/build.stdout.log)",
+      "> umami@3.0.3 build:docker /workspace/app",
+      "   Creating an optimized production build ...",
+      "Failed to compile.",
+      "./src/lib/date.ts:3:7",
+      "Type error: synthetic type 'string' is not assignable to type 'number'.",
+      "--- build stderr (/var/lib/rbw/logs/build.stderr.log)",
+      " ELIFECYCLE  Command failed with exit code 1.",
+      "build_exit=1",
+      "build_wall_ms=91000 budget_ms=240000 within_budget=yes",
+    ].join("\n");
+    const report = rebuildReport({ build: { exit_code: 1, stdout, stderr: "" }, start: null });
+    expect(report).toContain("build_exit_code: 1");
+    expect(report).toContain("Type error: synthetic type 'string' is not assignable");
+    expect(report).toContain("./src/lib/date.ts:3:7");
+    expect(report).toContain("ELIFECYCLE  Command failed with exit code 1.");
+    expect(report).not.toContain("build_wall_ms=");
+    expect(report).not.toContain("/var/lib/rbw/logs/build.stdout.log");
+  });
+
+  it("shows rbw-build-app's own messages when the build could not start", () => {
     const report = rebuildReport({
-      build: { exit_code: 0, stderr: "synthetic warning" },
+      build: { exit_code: 2, stdout: "", stderr: "rbw-build-app: not a cold build:\nsynthetic leftover .next" },
+      start: null,
+    });
+    expect(report).toContain("rbw-build-app: not a cold build:");
+    expect(report).toContain("synthetic leftover .next");
+  });
+
+  it("scrubs runtime log sections from the build output too", () => {
+    const stdout = ["--- build stdout (/var/lib/rbw/logs/build.stdout.log)", "ok", ...failed.split("\n"), "--- build stderr (/var/lib/rbw/logs/build.stderr.log)", "build_exit=0"].join("\n");
+    const report = rebuildReport({ build: { exit_code: 0, stdout, stderr: "" }, start: null });
+    expect(report).not.toContain("P2002");
+    expect(report).not.toContain("duplicate key");
+  });
+
+  it("shows only exit statuses, the build output and rbw-start's status lines from a rebuild", () => {
+    const report = rebuildReport({
+      build: { exit_code: 0, stdout: "", stderr: "synthetic warning" },
       start: { exit_code: 1, stdout: "postgres_ready_ms=700\nsynthetic check-db output", stderr: failed },
     });
     expect(report).toContain("build_exit_code: 0");
@@ -58,7 +98,7 @@ describe("the runtime log scrub", () => {
   });
 
   it("says the app was not started after a failed build", () => {
-    const report = rebuildReport({ build: { exit_code: 1, stderr: "Type error: synthetic" }, start: null });
+    const report = rebuildReport({ build: { exit_code: 1, stdout: "", stderr: "Type error: synthetic" }, start: null });
     expect(report).toContain("start: not run (the build failed)");
   });
 });

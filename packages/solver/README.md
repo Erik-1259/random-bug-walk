@@ -40,7 +40,7 @@ A profile reuses the writer's `ModelProfile` shape (`packages/writer/src/profile
 | Output tokens per call | 8,192 | 16,384 |
 | Request timeout | 300,000 ms | 600,000 ms |
 | Temperature | 0.6 | 0.6 |
-| `runtime_profile_sha256` | `5b598fadc14732748dcf2a00e876bcc34d6eed3c4f20fd8ff434a462a5f91b46` | `32e7014f4750c20663518f6a83439d2e8eab07b5f52d04688bc89501ed878898` |
+| `runtime_profile_sha256` | `978b87fdd5815b13cd42e5226080060526c65ed37d5328dd50045a57fb2586d4` | `2e799c711837f0168afe24ae2e67b765f7680d06167254e21113a4d6bdad14e3` |
 
 Both: provider `token-factory`, base URL `https://api.tokenfactory.nebius.com/v1/`, 0 retries, kind `solver.turn`, role `solver`, key variable `TOKEN_FACTORY_SOLVER_KEY`, seed = the attempt index.
 
@@ -75,13 +75,13 @@ The prompt bound is the UTF-8 byte length of the exact request body, plus 16 tok
 | `bash` | both | exit code, stdout and stderr, each cut to its last 16,384 bytes; the session is asked for a 120 s timeout |
 | `read_file` | both | the file's first 65,536 bytes |
 | `write_file` | both | a confirmation or the session's error |
-| `rebuild_restart` | both | the build's exit code and stderr (last 16,384 bytes), rbw-start's exit code, and only rbw-start's status lines |
+| `rebuild_restart` | both | the build's exit code, the last 8,192 bytes of each of the build's stdout log, its stderr log and rbw-build-app's own messages, rbw-start's exit code, and only rbw-start's status lines |
 | `submit` | both | ends the attempt |
 | `server_logs` | on only | a page of at most 16,384 bytes and a cursor |
 
 `read_file` and `write_file` take a path relative to the app's root, with no leading `/`, no `.`, `..` or empty segment; anything else is refused before the session sees it. A call to a tool the arm does not have, or with input that fails the tool's schema, is answered with an error by the AI SDK and never runs.
 
-The log scrub: rbw-start's `fail()` prints the last 50 lines of the Umami and Postgres logs. `rebuild_restart` removes every `--- /var/lib/rbw/logs/<umami|postgres>.*.log` section from the build stderr, and from rbw-start's output shows only lines that start with `rbw-start: `, `postgres_ready_ms=`, `ready_ms=` or `listening `. In both arms, runtime logs reach the model only through `server_logs`.
+The log scrub: rbw-start's `fail()` prints the last 50 lines of the Umami and Postgres logs. `rebuild_restart` removes every `--- /var/lib/rbw/logs/<umami|postgres>.*.log` section from the build output, and from rbw-start's output shows only lines that start with `rbw-start: `, `postgres_ready_ms=`, `ready_ms=` or `listening `. In both arms, runtime logs reach the model only through `server_logs`.
 
 The session runner implements `SolverSession` (`src/tools.ts`) against one container:
 
@@ -94,6 +94,8 @@ interface SolverSession {
   serverLogs(request: { cursor: string | null; maxBytes: number }): Promise<ServerLogsPage>;
 }
 ```
+
+`RebuildResult.build` is rbw-build-app's exit status with its own stdout and stderr, unchanged. rbw-build-app prints the build's logs on its stdout, under `--- build stdout (<path>)` and `--- build stderr (<path>)` headers followed by `build_exit=` and `build_wall_ms=` lines, and keeps its stderr for its precheck and font-server messages; `buildLogSections` cuts the two logs out, so a compile error reaches the model whichever log it is in. `RebuildResult.start` is rbw-start's exit status, stdout and stderr, or null when the build failed.
 
 A thrown error from the session is an infrastructure error: the attempt stops, to be rerun under the rerun rule.
 

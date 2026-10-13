@@ -158,7 +158,11 @@ describe("rebuild_restart in the loop", () => {
     const script = scriptedFetch([{ calls: [{ name: "rebuild_restart", input: {} }] }, { calls: [SUBMIT] }]);
     const session = new FakeSession();
     session.rebuildResult = {
-      build: { exit_code: 0, stderr: "synthetic compiler warning" },
+      build: {
+        exit_code: 0,
+        stdout: ["--- build stdout (/var/lib/rbw/logs/build.stdout.log)", "synthetic compiler warning", "--- build stderr (/var/lib/rbw/logs/build.stderr.log)", "build_exit=0"].join("\n"),
+        stderr: "",
+      },
       start: {
         exit_code: 1,
         stdout: "postgres_ready_ms=800",

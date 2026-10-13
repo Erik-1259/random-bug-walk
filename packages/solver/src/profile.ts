@@ -37,7 +37,8 @@ export const TOOL_OUTPUT_CAPS = Object.freeze({
   bash_output_bytes: 16_384,
   bash_timeout_ms: 120_000,
   read_file_bytes: 65_536,
-  build_stderr_bytes: 16_384,
+  /** Each of the build's stdout log, its stderr log and rbw-build-app's own messages. */
+  build_log_bytes: 8_192,
   server_logs_bytes: 16_384,
 });
 

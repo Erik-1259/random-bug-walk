@@ -49,6 +49,7 @@ export {
   ARMS,
   armToolNames,
   armToolSet,
+  buildLogSections,
   headBytes,
   isAppPath,
   newToolState,

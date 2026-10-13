@@ -58,8 +58,8 @@ describe("the profiles", () => {
   });
 
   it("have the digests the README lists", () => {
-    expect(profileSha256(SUPER_SOLVER_PROFILE)).toBe("5b598fadc14732748dcf2a00e876bcc34d6eed3c4f20fd8ff434a462a5f91b46");
-    expect(profileSha256(KIMI_SOLVER_PROFILE)).toBe("32e7014f4750c20663518f6a83439d2e8eab07b5f52d04688bc89501ed878898");
+    expect(profileSha256(SUPER_SOLVER_PROFILE)).toBe("978b87fdd5815b13cd42e5226080060526c65ed37d5328dd50045a57fb2586d4");
+    expect(profileSha256(KIMI_SOLVER_PROFILE)).toBe("2e799c711837f0168afe24ae2e67b765f7680d06167254e21113a4d6bdad14e3");
   });
 
   it("hash the attempt caps, so a changed cap changes runtime_profile_sha256", () => {

@@ -24,8 +24,13 @@ export interface CommandResult {
 }
 
 export interface RebuildResult {
-  /** rbw-build-app after the cold-build reset. `stderr` is the build's own stderr. */
-  build: { exit_code: number; stderr: string };
+  /**
+   * rbw-build-app after the cold-build reset: its exit status and its own stdout and stderr,
+   * unchanged. Its stdout carries the build's logs, under `--- build stdout (<path>)` and
+   * `--- build stderr (<path>)` headers, then `build_exit=` and `build_wall_ms=` lines; its stderr
+   * carries only its precheck and font-server messages. rebuildReport cuts the sections out.
+   */
+  build: { exit_code: number; stdout: string; stderr: string };
   /** rbw-start's exit status and output; null when the build failed and nothing was started. */
   start: { exit_code: number; stdout: string; stderr: string } | null;
 }
@@ -80,7 +85,7 @@ const DESCRIPTIONS: Record<ToolName, string> = {
   read_file: "Read a file of the app, by a path relative to the app's root directory.",
   write_file: "Replace the contents of an existing tracked file of the app. Creating new files is not allowed.",
   rebuild_restart:
-    "Stop the app, rebuild it from a clean state and start it again. Returns the build's exit status and stderr, and whether the app started. Builds take minutes.",
+    "Stop the app, rebuild it from a clean state and start it again. Returns the build's exit status and the end of its output, and whether the app started. Builds take minutes.",
   submit: "Finish the attempt. The current state of the files is the fix that is graded.",
   server_logs:
     "Read the running app's server logs (the app server's and the database's error output). Without a cursor it returns the latest lines; with the next_cursor of an earlier call it returns what was written since.",
@@ -151,10 +156,45 @@ export function scrubRuntimeLogs(text: string): string {
 /** The only rbw-start output lines the model sees: its own messages and timings, never log text. */
 const START_STATUS = /^(?:rbw-start: |postgres_ready_ms=|ready_ms=|listening )/;
 
-/** What rebuild_restart shows the model: exit statuses, the build's stderr and rbw-start's status lines. */
+const BUILD_STDOUT_HEADER = /^--- build stdout \(.*\)$/;
+const BUILD_STDERR_HEADER = /^--- build stderr \(.*\)$/;
+const BUILD_TRAILER = /^build_(?:exit|wall_ms)=/;
+
+/**
+ * The build's own stdout and stderr logs, cut out of rbw-build-app's stdout. Without the headers
+ * (the build never started), the whole stdout counts as the build's stdout.
+ */
+export function buildLogSections(stdout: string): { stdout: string; stderr: string } {
+  const lines = stdout.split("\n");
+  const out = lines.findIndex((line) => BUILD_STDOUT_HEADER.test(line));
+  const err = lines.findIndex((line, i) => i > out && BUILD_STDERR_HEADER.test(line));
+  if (out === -1 || err === -1) {
+    return { stdout, stderr: "" };
+  }
+  let end = lines.length;
+  while (end > err + 1 && (BUILD_TRAILER.test(lines[end - 1] ?? "") || lines[end - 1] === "")) {
+    end -= 1;
+  }
+  return { stdout: lines.slice(out + 1, err).join("\n"), stderr: lines.slice(err + 1, end).join("\n") };
+}
+
+/**
+ * What rebuild_restart shows the model: exit statuses, the tails of the build's stdout and stderr
+ * logs, rbw-build-app's own messages, and rbw-start's status lines.
+ */
 export function rebuildReport(result: RebuildResult): string {
-  const build = tailBytes(scrubRuntimeLogs(result.build.stderr), TOOL_OUTPUT_CAPS.build_stderr_bytes);
-  const lines = [`build_exit_code: ${String(result.build.exit_code)}`, "--- build stderr", build];
+  const sections = buildLogSections(result.build.stdout);
+  const show = (text: string) => tailBytes(scrubRuntimeLogs(text), TOOL_OUTPUT_CAPS.build_log_bytes);
+  const lines = [
+    `build_exit_code: ${String(result.build.exit_code)}`,
+    "--- build stdout",
+    show(sections.stdout),
+    "--- build stderr",
+    show(sections.stderr),
+  ];
+  if (result.build.stderr.trim() !== "") {
+    lines.push("--- rbw-build-app messages", show(result.build.stderr));
+  }
   if (result.start === null) {
     lines.push("start: not run (the build failed)");
     return lines.join("\n");
