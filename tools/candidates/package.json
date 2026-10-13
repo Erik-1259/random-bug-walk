@@ -1,0 +1,31 @@
+{
+  "name": "@rbw/candidates",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Candidate pipeline: list the sites a class rule matches in the host, plant each in a scratch copy, screen each, and rank the survivors",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "engines": {
+    "node": ">=24.21 <25"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint . --max-warnings 0",
+    "test": "vitest run",
+    "candidates": "node src/cli.ts"
+  },
+  "dependencies": {
+    "@rbw/schema": "workspace:*",
+    "@rbw/shapes": "workspace:*",
+    "diff": "9.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.1",
+    "typescript": "6.0.3",
+    "vitest": "5.0.3"
+  }
+}
