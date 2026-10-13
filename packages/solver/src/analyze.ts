@@ -438,7 +438,7 @@ export function futility(off: readonly AttemptRow[], on: readonly AttemptRow[]):
 interface RankTest {
   /** The interval's coverage under the no-ties null distribution. */
   interval_level: string;
-  /** True when a value occurs in both arms: the coverage is then approximate (pre-registration, Outcomes). */
+  /** True when any value repeats in the pooled samples: the coverage is then approximate. */
   interval_coverage_approximate: boolean;
   mann_whitney_p: string;
   holm_p: string;
@@ -489,12 +489,13 @@ interface Shift {
 }
 
 function shiftOnMinusOff(off: readonly number[], on: readonly number[]): Shift {
-  const offValues = new Set(off);
+  // Any repeated value in the pooled samples breaks the no-ties distribution, within an arm or across arms.
+  const pooled = [...off, ...on];
   return {
     hl: hodgesLehmann(on, off, ALPHA),
     // The registered statistic is the on arm's rank sum; the two-sided p is the same either way.
     p: mannWhitneyExact(on, off),
-    ties: on.some((value) => offValues.has(value)),
+    ties: new Set(pooled).size < pooled.length,
   };
 }
 

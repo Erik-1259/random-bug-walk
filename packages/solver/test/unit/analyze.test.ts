@@ -243,6 +243,13 @@ describe("the per-bug analysis", () => {
     });
   });
 
+  it("marks the coverage approximate when a value repeats within one arm only", () => {
+    // Off turns [1, 1] repeat inside the off arm, and no value is shared with on [2, 3]: the
+    // no-ties distribution still does not hold, so the coverage is approximate.
+    const rows = [row("on", 1, false, { turns: 2 }), row("on", 2, false, { turns: 3 }), row("off", 3, false, { turns: 1 }), row("off", 4, false, { turns: 1 })];
+    expect(analyzeBug("race-synthetic-1", rows).turns?.interval_coverage_approximate).toBe(true);
+  });
+
   it("enters a solve test the futility rule stopped into Holm as p = 1", () => {
     // Both arms 0/6, with the reference token samples and distinct turn counts.
     const rows: AttemptRow[] = [];
