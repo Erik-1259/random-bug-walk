@@ -1,0 +1,79 @@
+{
+  "format_version": 1,
+  "provenance": "synthetic",
+  "model_id": "nvidia/Nemotron-3_5-Lightning",
+  "recorded_at": "2026-10-05T00:00:00Z",
+  "request": {
+    "body": {
+      "model": "nvidia/Nemotron-3_5-Lightning",
+      "max_tokens": 8192,
+      "response_format": {
+        "type": "json_schema",
+        "json_schema": {
+          "schema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "title": {
+                "type": "string",
+                "minLength": 1
+              },
+              "reproduction_steps": {
+                "minItems": 1,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "expected_result": {
+                "type": "string",
+                "minLength": 1
+              },
+              "actual_result": {
+                "type": "string",
+                "minLength": 1
+              },
+              "environment": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "title",
+              "reproduction_steps",
+              "expected_result",
+              "actual_result",
+              "environment"
+            ],
+            "additionalProperties": false
+          },
+          "strict": true,
+          "name": "response"
+        }
+      },
+      "messages": [
+        {
+          "role": "system",
+          "content": "You write a bug report the way a user of a web analytics product would file it.\nYou are given one observation as JSON: what the user did, the public request, two requests that used the same one-time sign-in code at the same time with each one's response status, outcome and timing in milliseconds, how many of them should have been accepted and refused and how many were, a sequential example where the same code was used twice one after the other, and excerpts from the user documentation.\n\nRules:\n- Describe only what the user sees. You may name the public endpoint, the response statuses, the error codes and product settings.\n- Do not guess at an internal cause and do not suggest a fix. Write \"one backup code signs in twice when it is entered in two places at the same time\", not how the code should change.\n- Never write a backup code, a token or a password.\n- Use only numbers that appear in the observation. Do not compute totals, differences or new times.\n- expected_result states, in this order and as digits, how many of the requests sent at the same time should be accepted and how many refused, taken from the observation's expected counts, for example \"Of the two requests sent at the same time, 1 should be accepted and 1 refused.\"\n- actual_result states, in this order and as digits, how many of them were accepted and how many refused, taken from the observation's observed counts. It may add each request's status and timing.\n- reproduction_steps is a list of short steps a user can follow.\n- environment names the locale and the response statuses.\nAnswer with JSON that matches the schema."
+        },
+        {
+          "role": "user",
+          "content": "Observation:\n{\n  \"schema_version\": 1,\n  \"symptom_kind\": \"concurrent_double_acceptance\",\n  \"user_action\": \"Signed in from two browser tabs and entered the same unused backup code in both at the same moment (synthetic case race-valid).\",\n  \"request\": {\n    \"method\": \"POST\",\n    \"path\": \"/api/synthetic/verify\",\n    \"query\": {}\n  },\n  \"locale\": \"en-US\",\n  \"fixture_description\": \"One synthetic account with two-step sign-in and ten unused backup codes.\",\n  \"concurrent_attempts\": [\n    {\n      \"label\": \"request a\",\n      \"sent_ms\": 0,\n      \"settled_ms\": 87,\n      \"http_status\": 200,\n      \"outcome\": \"accepted\",\n      \"error_code\": null\n    },\n    {\n      \"label\": \"request b\",\n      \"sent_ms\": 1,\n      \"settled_ms\": 92,\n      \"http_status\": 200,\n      \"outcome\": \"accepted\",\n      \"error_code\": null\n    }\n  ],\n  \"overlap_ms\": 86,\n  \"expected\": {\n    \"accepted\": 1,\n    \"refused\": 1\n  },\n  \"observed\": {\n    \"accepted\": 2,\n    \"refused\": 0\n  },\n  \"sequential_attempts\": [\n    {\n      \"label\": \"first use\",\n      \"sent_ms\": 0,\n      \"settled_ms\": 64,\n      \"http_status\": 200,\n      \"outcome\": \"accepted\",\n      \"error_code\": null\n    },\n    {\n      \"label\": \"reuse after the first use finished\",\n      \"sent_ms\": 130,\n      \"settled_ms\": 171,\n      \"http_status\": 400,\n      \"outcome\": \"refused\",\n      \"error_code\": \"synthetic-invalid-code\"\n    }\n  ],\n  \"doc_excerpts\": [\n    {\n      \"text\": \"Synthetic excerpt: each backup code can be used once.\",\n      \"source_url\": \"https://docs.example.invalid/two-step\"\n    }\n  ]\n}"
+        }
+      ],
+      "chat_template_kwargs": {
+        "enable_thinking": false
+      }
+    }
+  },
+  "request_sha256": "faffc880f012038a55e2ab50163617341533bd39fe17782a083c874d472cc54c",
+  "response": {
+    "status": 200,
+    "body": "{\"id\":\"synthetic-completion\",\"object\":\"chat.completion\",\"created\":1767225600,\"model\":\"nvidia/Nemotron-3_5-Lightning\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"{\\\"title\\\":\\\"One backup code signs in twice when it is entered in two tabs at the same time\\\",\\\"reproduction_steps\\\":[\\\"Sign in to an account with two-step sign-in in two browser tabs until each asks for a code.\\\",\\\"Enter the same unused backup code in both tabs and submit them at the same moment.\\\"],\\\"expected_result\\\":\\\"Of the two requests sent at the same time, 1 should be accepted and 1 refused.\\\",\\\"actual_result\\\":\\\"2 were accepted and 0 refused: both requests returned HTTP 200 and each tab was signed in.\\\",\\\"environment\\\":\\\"Locale en-US; the concurrent requests returned 200 and 200, a later reuse returned 400.\\\"}\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":1200,\"completion_tokens\":300,\"total_tokens\":1500}}"
+  },
+  "usage": {
+    "prompt_tokens": 1200,
+    "completion_tokens": 300
+  }
+}

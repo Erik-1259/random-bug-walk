@@ -5,7 +5,8 @@ import { z } from "zod";
 import { CARD_FIELD_IDENTIFIERS } from "./card-schema.ts";
 import { IssueOutputSchema, issueFields } from "./issue-schema.ts";
 import type { IssueOutput } from "./issue-schema.ts";
-import type { ObservedSymptom } from "./observed-symptom.ts";
+import { isRaceSymptom } from "./race-symptom.ts";
+import type { WriterSymptom } from "./race-symptom.ts";
 
 export type IssueCheckCode = "invalid_structure" | "numeric_mismatch" | "excluded_identifier";
 
@@ -84,7 +85,7 @@ function containsInOrder(runs: bigint[], vector: bigint[]): boolean {
   return next === vector.length;
 }
 
-function checkNumbers(issue: IssueOutput, symptom: ObservedSymptom): NumericViolation[] {
+function checkNumbers(issue: IssueOutput, symptom: WriterSymptom): NumericViolation[] {
   const supported = new Set(symptomValues(symptom).flatMap(digitRuns).map((run) => BigInt(run)));
   const violations: NumericViolation[] = [];
   for (const { field, text } of issueFields(issue)) {
@@ -94,11 +95,15 @@ function checkNumbers(issue: IssueOutput, symptom: ObservedSymptom): NumericViol
       }
     }
   }
-  const counts = (buckets: { count: number }[]) => buckets.map((b) => BigInt(b.count));
-  if (!containsInOrder(countRuns(issue.expected_result), counts(symptom.expected))) {
+  // The time-zone family's vectors are its bucket counts in bucket order; the race family's are
+  // the accepted count, then the refused count.
+  const counts = isRaceSymptom(symptom)
+    ? (key: "expected" | "observed") => [BigInt(symptom[key].accepted), BigInt(symptom[key].refused)]
+    : (key: "expected" | "observed") => symptom[key].map((b) => BigInt(b.count));
+  if (!containsInOrder(countRuns(issue.expected_result), counts("expected"))) {
     violations.push({ field: "expected_result", reason: "missing_expected_vector", number: null });
   }
-  if (!containsInOrder(countRuns(issue.actual_result), counts(symptom.observed))) {
+  if (!containsInOrder(countRuns(issue.actual_result), counts("observed"))) {
     violations.push({ field: "actual_result", reason: "missing_observed_vector", number: null });
   }
   return violations;
@@ -155,7 +160,7 @@ function checkIdentifiers(issue: IssueOutput, excluded: readonly string[]): Iden
   return [...listed, ...builtIn];
 }
 
-/** Words that hint at a cause without naming it, with the forms each one matches. */
+/** Words that hint at a cause without naming it, with the forms each one matches (time-zone family). */
 const HINT_WORDS: { word: string; pattern: RegExp }[] = [
   { word: "argument", pattern: wordPattern("arguments?") },
   { word: "parameter", pattern: wordPattern("parameters?") },
@@ -168,9 +173,21 @@ const HINT_WORDS: { word: string; pattern: RegExp }[] = [
   { word: "dropped", pattern: wordPattern("dropped") },
 ];
 
-function findHintWords(issue: IssueOutput): HintWord[] {
+/** The race family's hint words: names for a kind of fix rather than for what the user saw. */
+const RACE_HINT_WORDS: { word: string; pattern: RegExp }[] = [
+  { word: "race", pattern: wordPattern("rac(?:e|es|ing)") },
+  { word: "atomic", pattern: wordPattern("atomic(?:ally|ity)?") },
+  { word: "lock", pattern: wordPattern("lock(?:s|ed|ing)?") },
+  { word: "transaction", pattern: wordPattern("transactions?") },
+  { word: "mutex", pattern: wordPattern("mutex(?:es)?") },
+  { word: "compare-and-swap", pattern: wordPattern("compare[-\\s]and[-\\s]swap") },
+  { word: "check then write", pattern: wordPattern("check(?:s|ed)?[-\\s]then[-\\s](?:write|update|act)") },
+];
+
+function findHintWords(issue: IssueOutput, symptom: WriterSymptom): HintWord[] {
+  const words = isRaceSymptom(symptom) ? RACE_HINT_WORDS : HINT_WORDS;
   return issueFields(issue).flatMap(({ field, text }) =>
-    HINT_WORDS.flatMap(({ word, pattern }) =>
+    words.flatMap(({ word, pattern }) =>
       [...text.matchAll(pattern)].map((match) => ({ field, offset: match.index, word })),
     ).sort((a, b) => a.offset - b.offset),
   );
@@ -192,7 +209,7 @@ export function structureFailure(detail: string): IssueCheckReport {
  * Runs the four checks on a model output. `excluded` is the caller's list of internal names for
  * the fixture (function and helper names, source paths, check IDs, shape ID, source-fix commit).
  */
-export function checkIssue(output: unknown, symptom: ObservedSymptom, excluded: readonly string[]): IssueCheckReport {
+export function checkIssue(output: unknown, symptom: WriterSymptom, excluded: readonly string[]): IssueCheckReport {
   const parsed = IssueOutputSchema.safeParse(output);
   if (!parsed.success) {
     return structureFailure(z.prettifyError(parsed.error));
@@ -210,6 +227,6 @@ export function checkIssue(output: unknown, symptom: ObservedSymptom, excluded: 
     structure: { ok: true, detail: null },
     numeric: { ok: numeric.length === 0, violations: numeric },
     identifiers: { ok: identifiers.length === 0, violations: identifiers },
-    hint_words: findHintWords(issue),
+    hint_words: findHintWords(issue, symptom),
   };
 }
