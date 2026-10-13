@@ -1,0 +1,123 @@
+{
+  "schema_version": 1,
+  "fixture_id": "rc-1-backup-code-001",
+  "date": "2026-10-13",
+  "kind": "local_development_proof",
+  "setup": {
+    "script": "packages/umami-fixture-rc1/host/live-proof.sh",
+    "image": "a kit image built locally for arm64 from kit/umami (not the released amd64 image)",
+    "umami_commit": "ec0ff50388c264ed8ce46f00967e92f7e71476ae",
+    "clean_route_sha256_matches_pinned_kit_image": true,
+    "database_delay": "none (no proxy between Umami and Postgres)",
+    "container_limits": "4 CPUs, 6 GB",
+    "rounds": "each round after a template reset, both checks in one Playwright run"
+  },
+  "runs": [
+    {
+      "run": "clean-1",
+      "code_state": "clean",
+      "route_sha256": "3e766a0ba16e2547c234442176c04a0f2fd096d033a7079d21938dd9796acb87",
+      "rounds": 5,
+      "checks": [
+        {
+          "check_id": "rc1.backup-code-serial-reuse",
+          "outcomes": {
+            "pass": 5
+          }
+        },
+        {
+          "check_id": "rc1.backup-code-concurrent-double-spend",
+          "outcomes": {
+            "pass": 5
+          },
+          "in_flight_together_ms": {
+            "min": 632,
+            "max": 972
+          }
+        }
+      ]
+    },
+    {
+      "run": "planted-1",
+      "code_state": "planted",
+      "route_sha256": "30426f040a2c4ea1730827644b8947feed39dc8f2487fec1372139f5be9d66fb",
+      "rounds": 10,
+      "checks": [
+        {
+          "check_id": "rc1.backup-code-serial-reuse",
+          "outcomes": {
+            "pass": 10
+          }
+        },
+        {
+          "check_id": "rc1.backup-code-concurrent-double-spend",
+          "outcomes": {
+            "assertion_fail:double_spend": 8,
+            "pass": 2
+          },
+          "in_flight_together_ms": {
+            "min": 639,
+            "max": 1128
+          }
+        }
+      ]
+    },
+    {
+      "run": "planted-2",
+      "code_state": "planted",
+      "route_sha256": "30426f040a2c4ea1730827644b8947feed39dc8f2487fec1372139f5be9d66fb",
+      "rounds": 20,
+      "checks": [
+        {
+          "check_id": "rc1.backup-code-serial-reuse",
+          "outcomes": {
+            "pass": 20
+          }
+        },
+        {
+          "check_id": "rc1.backup-code-concurrent-double-spend",
+          "outcomes": {
+            "assertion_fail:double_spend": 9,
+            "pass": 11
+          },
+          "in_flight_together_ms": {
+            "min": 660,
+            "max": 1167
+          }
+        }
+      ]
+    },
+    {
+      "run": "clean-2",
+      "code_state": "clean",
+      "route_sha256": "3e766a0ba16e2547c234442176c04a0f2fd096d033a7079d21938dd9796acb87",
+      "rounds": 20,
+      "checks": [
+        {
+          "check_id": "rc1.backup-code-serial-reuse",
+          "outcomes": {
+            "pass": 20
+          }
+        },
+        {
+          "check_id": "rc1.backup-code-concurrent-double-spend",
+          "outcomes": {
+            "pass": 20
+          },
+          "in_flight_together_ms": {
+            "min": 526,
+            "max": 1118
+          }
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "clean_rounds": 25,
+    "clean_failures": 0,
+    "planted_rounds": 30,
+    "planted_double_spend": 17,
+    "serial_control_passes": 55,
+    "finding": "With no database delay the planted race showed in 17 of 30 rounds, so it is not repeatable enough for ADM-05 (20 of 20). In the 13 planted rounds that passed, both requests were still in flight together for at least 639 ms: the in-flight overlap the harness records is necessary but does not show that the second request read the code before the first marked it used."
+  }
+}

@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, lstatSync, mkdirSync, readlinkSync, realpathSync, symlinkSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -12,6 +13,28 @@ import { hex, tempDir } from "../helpers.ts";
 import { verifier } from "../trial-harness.ts";
 
 const REPO = fileURLToPath(new URL("../../../../", import.meta.url));
+
+/**
+ * The added_suite_sha256 of the released time-zone family's staged fixture: the value the
+ * released kit image's fixture hashes to, and the one tools/local-runner/README.md records.
+ * Staging another family's fixture must never change it.
+ */
+const TZ_ADDED_SUITE_SHA256 = "42c50a8bf10c9d4139584f8f8d7e602293e91e0e9cc1d7abfbd3a13e5694c1ca";
+
+/** Every file's SHA-256 and every symlink's target under a directory, by relative path. */
+function treeDigest(root: string): Record<string, string> {
+  const digest: Record<string, string> = {};
+  const visit = (prefix: string): void => {
+    for (const entry of readdirSync(join(root, prefix), { withFileTypes: true })) {
+      const path = prefix === "" ? entry.name : `${prefix}/${entry.name}`;
+      if (entry.isSymbolicLink()) digest[path] = `-> ${readlinkSync(join(root, path))}`;
+      else if (entry.isDirectory()) visit(path);
+      else digest[path] = createHash("sha256").update(readFileSync(join(root, path))).digest("hex");
+    }
+  };
+  visit("");
+  return digest;
+}
 
 describe("staging the driver and fixture for the kit image", () => {
   it("lays out the driver, the fixture and the schema, with @rbw/schema linked and its dependencies copied", async () => {
@@ -27,6 +50,43 @@ describe("staging the driver and fixture for the kit image", () => {
     expect(existsSync(join(dest, "node_modules/pg"))).toBe(false);
     expect(existsSync(join(dest, "umami-driver/test"))).toBe(false);
     expect(staged.addedSuiteSha256).toBe(await addedSuiteSha256(join(dest, "umami-fixture")));
+  });
+
+  it("stages the time-zone fixture by default, byte for byte as when it is named, with its unchanged added_suite_sha256", async () => {
+    const byDefault = join(tempDir(), "kit");
+    const named = join(tempDir(), "kit");
+    const staged = await stageKit(REPO, byDefault);
+    await stageKit(REPO, named, { fixturePackage: "packages/umami-fixture" });
+    expect(treeDigest(byDefault)).toEqual(treeDigest(named));
+    expect(existsSync(join(byDefault, "umami-fixture/data/umami-tz-arg-001.v1.json"))).toBe(true);
+    expect(staged.addedSuiteSha256).toBe(TZ_ADDED_SUITE_SHA256);
+  });
+
+  it("stages a named fixture package into the same umami-fixture slot, leaving the driver and the schema as by default", async () => {
+    const byDefault = join(tempDir(), "kit");
+    const race = join(tempDir(), "kit");
+    const tz = await stageKit(REPO, byDefault);
+    const staged = await stageKit(REPO, race, { fixturePackage: "packages/umami-fixture-rc1" });
+    expect(existsSync(join(race, "umami-fixture/data/rc-1-backup-code-001.v1.json"))).toBe(true);
+    expect(existsSync(join(race, "umami-fixture/checks/rc1.check.ts"))).toBe(true);
+    expect(existsSync(join(race, "umami-fixture/data/umami-tz-arg-001.v1.json"))).toBe(false);
+    expect(existsSync(join(race, "umami-fixture/test"))).toBe(false);
+    expect(staged.addedSuiteSha256).toBe(await addedSuiteSha256(join(race, "umami-fixture")));
+    expect(staged.addedSuiteSha256).not.toBe(tz.addedSuiteSha256);
+    const outsideFixture = (digest: Record<string, string>) => Object.fromEntries(Object.entries(digest).filter(([path]) => !path.startsWith("umami-fixture/")));
+    expect(outsideFixture(treeDigest(race))).toEqual(outsideFixture(treeDigest(byDefault)));
+  });
+
+  it.each(["packages/schema", "packages/umami-driver", "packages/umami-fixturex", "../umami-fixture", "packages/umami-fixture/../schema", "/tmp/umami-fixture-x"])("refuses %s as a fixture package", async (path) => {
+    await expect(stageKit(REPO, join(tempDir(), "kit"), { fixturePackage: path })).rejects.toThrow(/--fixture-package/);
+  });
+
+  it("takes --fixture-package on the command line and prints the staged fixture's hash", async () => {
+    const dest = join(tempDir(), "kit");
+    const result = spawnSync(process.execPath, [join(REPO, "packages/umami-driver/scripts/stage-kit.ts"), "--dest", dest, "--fixture-package", "packages/umami-fixture-rc1"], { encoding: "utf8" });
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe(`added_suite_sha256=${await addedSuiteSha256(join(dest, "umami-fixture"))}\n`);
+    expect(existsSync(join(dest, "umami-fixture/data/rc-1-backup-code-001.v1.json"))).toBe(true);
   });
 
   it("gives a staged driver that starts from a verifier root, resolving its imports there", async () => {
