@@ -7,7 +7,7 @@ The pipeline calls two functions it does not implement. Both are passed in as ar
 | Function | Comes from | Contract |
 | --- | --- | --- |
 | `findSites(rule, hostDir)` | the class-level site finder in `@rbw/shapes` | Returns `[{ file, line, diff, confidence }]`: a host-relative path with `/` separators, the 1-based line of the match in the clean file, a unified diff that changes only that file from the clean to the planted form (`a/` and `b/` prefixes allowed), and a confidence from 0 to 1. It may return a promise. |
-| `screen(plantedTree, symptom, budget)` | the static-headroom screen | Reads the planted copy at `plantedTree`, told only the symptom text, and returns `{ verdict, hits, attempts, costMicrousd }`. `verdict` is `located` (some attempt found the planted change from the source alone: the candidate fails the screen), `not_located` (no attempt did: it survives) or `inconclusive`. `hits` counts the attempts that found it. It must keep to `budget.maxAttempts` and `budget.maxCostMicrousd`. It may return a promise. |
+| `screen(plantedTree, symptom, budget)` | the static-headroom screen | Reads the planted copy at `plantedTree`, told only the symptom text, and returns `{ verdict, hits, attempts, costMicrousd }`. `verdict` is `located` (some attempt found the planted change from the source alone: the candidate fails the screen), `not_located` (no attempt did: it survives) or `inconclusive` (with no hits). `hits` counts the attempts that found it. It must keep to `budget.maxAttempts` and `budget.maxCostMicrousd`. It may return a promise. |
 
 The types are in `src/types.ts`. Until a real implementation lands, `src/wiring.ts` holds a placeholder that throws and names what should replace it. Wiring one is a one-line change in that file, for example `export { findSites } from "@rbw/shapes";` in place of the placeholder line. `@rbw/shapes` is already a dependency; the screen's package will need adding to `package.json` when it exists.
 
@@ -26,7 +26,7 @@ A dry run does steps 1 and 2 only: it makes no copies, calls no screen and spend
 
 The record is canonical JSON (`@rbw/schema`'s `encodeCanonical`: sorted keys, integers only). It holds the record kind `candidate_run` and version 1, the run ID and time, whether it was a dry run, the rule's ID and SHA-256, the host commit when given, the symptom's SHA-256 (not its text), the finder and screen implementation names, the caps, every site with its status, reason, confidence in parts per million, diff, screen result, amount charged and rank, the ranking of survivor IDs, why screening stopped (if it did), and totals. A candidate's ID is the SHA-256 of its file, line and diff. See `RunRecord` in `src/pipeline.ts`.
 
-The record lists candidate sites in the host, and a list of sites in a real host is private. The command line refuses an `--out` path inside this repository, and never overwrites an existing file. It claims the `--out` file before the pipeline runs, so an existing file or a missing directory is refused before any screen spends. If the record cannot be encoded as canonical JSON, it is kept as plain JSON; if it cannot be written to `--out`, it is written to a new file in the `--scratch` directory. Either way the spend is printed. Tests use a synthetic host tree only.
+The record lists candidate sites in the host, and a list of sites in a real host is private. The command line refuses an `--out` path inside this repository or inside `--host` (following symbolic links), and never overwrites an existing file. It claims the `--out` file before the pipeline runs, so an existing file or a missing directory is refused before any screen spends. If the record cannot be encoded as canonical JSON, it is kept as plain JSON; if it cannot be written to `--out`, it is written to a new file in the `--scratch` directory. Either way the spend is printed. Tests use a synthetic host tree only.
 
 ## Command line
 
@@ -48,7 +48,7 @@ node tools/candidates/src/cli.ts --rule <class rule file> --host <host tree> --s
 
 Amounts are decimal USD with at most six decimals and are held as integer micro-USD. A run without `--dry-run` is refused while the screen is not wired. It prints a short summary and the record's path.
 
-Exit codes: 0 the run finished and the record was written; 1 the pipeline could not run or finish (an implementation is not wired, the finder failed, or the run failed after screening began), and once screening has begun the record of the spend so far is still kept and its path printed; 2 a usage or input error found before anything ran (including an `--out` that exists or sits in a missing directory, or a `--scratch` that is not a directory or sits inside `--host`), nothing written.
+Exit codes: 0 the run finished and the record was written; 1 the pipeline could not run or finish (an implementation is not wired, the finder failed, or the run failed after screening began), and once screening has begun the record of the spend so far is still kept and its path printed; 2 a usage or input error found before anything ran (including an `--out` that exists, sits in a missing directory or sits inside `--host`, or a `--scratch` that is not a directory or sits inside `--host`), nothing written.
 
 ## Tests
 

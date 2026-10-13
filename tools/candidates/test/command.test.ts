@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { parseCanonical } from "@rbw/schema";
 import { describe, expect, it } from "vitest";
@@ -159,6 +159,29 @@ describe("command line", () => {
     expect(result.err).toMatch(/--scratch must be outside --host/);
     expect(screen.calls).toHaveLength(0);
     expect(existsSync(result.outFile)).toBe(false);
+  });
+
+  it("refuses a record path inside the host before anything runs, and writes nothing there", async () => {
+    const host = makeHost();
+    const inside = join(host, "candidate-run.json");
+    const findSites = finder(threeSites());
+    const screen = scripted([miss(), miss(), miss()]);
+    const result = await run([], { findSites, screen }, inside, undefined, host);
+    expect(result.code).toBe(2);
+    expect(result.err).toMatch(/--out must be outside --host/);
+    expect(screen.calls).toHaveLength(0);
+    expect(existsSync(inside)).toBe(false);
+  });
+
+  it("refuses a record path that reaches the host through a symbolic link", async () => {
+    const host = makeHost();
+    const link = join(tempDir("rbw-candidates-cli-"), "host-link");
+    symlinkSync(host, link);
+    const inside = join(link, "candidate-run.json");
+    const result = await run(["--dry-run"], { findSites: finder(threeSites()), screen: wiring.screen }, inside, undefined, host);
+    expect(result.code).toBe(2);
+    expect(result.err).toMatch(/--out must be outside --host/);
+    expect(existsSync(join(host, "candidate-run.json"))).toBe(false);
   });
 
   it("refuses the host itself as the --scratch directory", async () => {

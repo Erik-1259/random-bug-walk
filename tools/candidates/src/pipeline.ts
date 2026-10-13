@@ -172,6 +172,9 @@ export function screenResultProblem(result: unknown, budget: ScreenBudget): stri
   if (verdict === "not_located" && (hits !== 0 || attempts === 0)) {
     return "screen returned not_located with hits or with no attempts";
   }
+  if (verdict === "inconclusive" && hits !== 0) {
+    return "screen returned inconclusive with hits";
+  }
   return null;
 }
 

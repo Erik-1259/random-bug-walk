@@ -352,6 +352,7 @@ describe("screenResultProblem", () => {
     [{ verdict: "located", hits: 0, attempts: 2, costMicrousd: 0 }, "screen returned located with no hits"],
     [{ verdict: "not_located", hits: 1, attempts: 2, costMicrousd: 0 }, "screen returned not_located with hits or with no attempts"],
     [{ verdict: "not_located", hits: 0, attempts: 0, costMicrousd: 0 }, "screen returned not_located with hits or with no attempts"],
+    [{ verdict: "inconclusive", hits: 1, attempts: 2, costMicrousd: 0 }, "screen returned inconclusive with hits"],
   ])("rejects %j", (result, problem) => {
     expect(screenResultProblem(result, budget)).toBe(problem);
   });

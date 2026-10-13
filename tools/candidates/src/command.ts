@@ -73,6 +73,18 @@ function isInside(root: string, path: string): boolean {
   return rel === "" || (!isAbsolute(rel) && rel !== ".." && !rel.startsWith(`..${sep}`));
 }
 
+/** The real path of a file that may not exist yet: its parent's real path plus its name. */
+function realTarget(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    try {
+      return join(realpathSync(dirname(path)), basename(path));
+    } catch {
+      return path;
+    }
+  }
+}
 
 function isDirectory(path: string): boolean {
   try {
@@ -167,11 +179,17 @@ export async function runCommand(argv: readonly string[], deps: CommandDeps, io:
       throw new UsageError("--rule, --host, --symptom and --out are required");
     }
     const outPath = resolve(out);
-    if (isInside(resolve(deps.repoRoot ?? REPO_ROOT), outPath)) {
+    const realOut = realTarget(outPath);
+    if (isInside(resolve(deps.repoRoot ?? REPO_ROOT), outPath) || isInside(realTarget(resolve(deps.repoRoot ?? REPO_ROOT)), realOut)) {
       throw new UsageError("--out must be outside the repository: the record lists candidate sites in the host");
     }
     if (!isDirectory(host)) {
       throw new UsageError("--host must be a directory");
+    }
+    // Nothing this command writes (the record, a fallback record, scratch copies) may land in the host.
+    const realHost = realpathSync(host);
+    if (isInside(realHost, realOut)) {
+      throw new UsageError("--out must be outside --host");
     }
     const hostCommit = values["host-commit"];
     if (hostCommit !== undefined && !/^[0-9a-f]{40}$/.test(hostCommit)) {
@@ -199,8 +217,9 @@ export async function runCommand(argv: readonly string[], deps: CommandDeps, io:
     if (!dryRun && !isDirectory(scratchBase)) {
       throw new UsageError("--scratch must be a directory");
     }
-    // Each copy is made under --scratch; a copy inside the tree being copied cannot be made.
-    if (!dryRun && isInside(realpathSync(host), realpathSync(scratchBase))) {
+    // Each copy (and a fallback record) is made under --scratch; a copy inside the tree being
+    // copied cannot be made.
+    if (isDirectory(scratchBase) && isInside(realHost, realpathSync(scratchBase))) {
       throw new UsageError("--scratch must be outside --host");
     }
     // Claim the record file before anything runs, so a bad --out fails before any screen spends.

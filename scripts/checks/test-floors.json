@@ -20,7 +20,7 @@
     "packages/web": 143,
     "packages/writer": 188,
     "scripts/checks": 194,
-    "tools/candidates": 63,
+    "tools/candidates": 66,
     "tools/controller": 105,
     "tools/local-runner": 138,
     "tools/neon-ci": 98,
