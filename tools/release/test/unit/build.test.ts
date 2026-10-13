@@ -4,9 +4,10 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { loadRateSheet } from "@rbw/envelope";
 import type { Rates } from "@rbw/envelope";
 import { RATE_SHEET_PATH, judgeReservation } from "@rbw/controller";
-import { candidateIdentity, utcSeconds } from "@rbw/local-runner";
+import { FAMILIES, candidateIdentity, utcSeconds } from "@rbw/local-runner";
 import { buildJobRequest, buildPolicy, canonicalDigest, encodeCanonical, parseCanonical, parseRecord, sha256Hex, taskRevision } from "@rbw/schema";
 import type { ExpectedTrials, FamilyRegistry, HeldOutIdentityList, JobRequest, PublicationRecord } from "@rbw/schema";
+import { PROBE_DIR, loadProbeSet } from "@rbw/shapes";
 import { buildRelease } from "../../src/build.ts";
 import type { BuildDeps, BuildOptions } from "../../src/build.ts";
 import { checkRelease } from "../../src/check.ts";
@@ -462,6 +463,26 @@ describe("build: the family the admitted run's records name", () => {
     const opts = options({ run: runWithFamily({ ...RACE, race_latency_ms: null }) });
     await expect(buildRelease(opts, deps())).rejects.toMatchObject({ code: "family_conflict" });
     expect(existsSync(opts.out)).toBe(false);
+  });
+
+  it("builds the judge job from the recorded race family's inputs, never the given sources' time-zone family", async () => {
+    // No family flag: as given, these sources build a time-zone job from the time-zone probes. The
+    // recorded race family must replace them, so the job is built from the race probes (whose clean
+    // file the synthetic manifest does not hold, which is what refuses it here).
+    const flagless: BuildOptions["sources"] = { ...w.sources };
+    delete flagless.family;
+    const opts = options({ run: runWithFamily({ ...RACE, race_latency_ms: null }), sources: flagless });
+    const d = deps();
+    const outcome = await buildRelease(opts, d);
+    expect(outcome).toMatchObject({ ok: false, codes: ["judge_job_unbuildable"] });
+    const raceTarget = loadProbeSet(FAMILIES.race.probesDir).data.target_path;
+    const timeZoneTarget = loadProbeSet(PROBE_DIR).data.target_path;
+    expect(raceTarget).not.toBe(timeZoneTarget);
+    const refusal = d.logs.find((line) => line.startsWith("build judge_job_unbuildable"));
+    expect(refusal).toContain(raceTarget);
+    expect(refusal).not.toContain(timeZoneTarget);
+    expect(existsSync(opts.out)).toBe(false);
+    expect(existsSync(opts.localStore ?? "")).toBe(false);
   });
 });
 

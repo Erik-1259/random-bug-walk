@@ -199,7 +199,7 @@ export async function buildRelease(options: BuildOptions, deps: BuildDeps): Prom
       repoDigests = await inspectRepoDigests(deps.docker, sources.image);
     } catch (error) {
       if (error instanceof PlanError || error instanceof ExportError || error instanceof CodeStateRefusal || error instanceof InputsError) {
-        deps.log(`build judge_job_unbuildable ${error.name}`);
+        deps.log(`build judge_job_unbuildable ${error.name}: ${error.message}`);
         return { ok: false, codes: ["judge_job_unbuildable"], issueSha256 };
       }
       throw error;

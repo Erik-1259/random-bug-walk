@@ -39,9 +39,10 @@ function fixtureRelease(): Release {
 /**
  * The fixture's judge job rebuilt for the race family at `latency`, as the release tool freezes one:
  * the same frozen source, suites and audit inputs, with the race fixture's vectors, the synthetic
- * race probes' code states, the reference fix as fixed-01 and the latency's copy profile.
+ * race probes' code states, the reference fix as fixed-01 and the latency's copy profile (or
+ * `profile`, a hash given as is).
  */
-function raceJudgeJob(release: Release, probesDir: string, latency: number | null): { request: Uint8Array; expected: Uint8Array } {
+function raceJudgeJob(release: Release, probesDir: string, latency: number | null, profile = profileSha256(latency)): { request: Uint8Array; expected: Uint8Array } {
   const frozen = parseRecord("JobRequest", readFileSync(join(JOB_DIR, "request.json")));
   const frozenExpected = parseRecord("ExpectedTrials", readFileSync(join(JOB_DIR, "expected-trials.json")));
   const suiteBytes = readFileSync(join(JOB_DIR, "original-suite.json"));
@@ -65,7 +66,7 @@ function raceJudgeJob(release: Release, probesDir: string, latency: number | nul
     vectors: expectedVectors(FAMILIES.race.loadFixture(), probes),
     adm06: "not_applicable",
     judgeFixed: "fixed",
-    profileSha256: profileSha256(latency),
+    profileSha256: profile,
     deadlineAt: frozen.deadline_at,
     projectPolicy: { sha256: release.project_policy_sha256, policy_id: frozen.policy_id },
     issue: { sha256: "ab".repeat(32), style: "user-report" },
@@ -82,14 +83,14 @@ interface Replay {
 }
 
 /** The private store and ledger as the judge route leaves them, holding the fixture's judge job or, with `race`, a race one. */
-async function prepare(race?: { probesDir: string; latency: number | null }): Promise<Replay> {
+async function prepare(race?: { probesDir: string; latency: number | null; profile?: string }): Promise<Replay> {
   const clock = new FakeClock({ start: CREATED });
   const w = await world({ clock, sandbox: { collected: { runExit: 0 } } });
   const storeDir = tempDir("rbw-judge-family-store-");
   cpSync(join(FIXTURE, "private-store"), storeDir, { recursive: true });
   let release = fixtureRelease();
   if (race !== undefined) {
-    const job = raceJudgeJob(release, race.probesDir, race.latency);
+    const job = raceJudgeJob(release, race.probesDir, race.latency, race.profile);
     const dir = join(storeDir, "judge-jobs", RELEASE_ID);
     writeFileSync(join(dir, "request.json"), job.request);
     writeFileSync(join(dir, "expected-trials.json"), job.expected);
@@ -146,6 +147,15 @@ describe("a judge replay of a race release", () => {
     expect(outcome.summary.reason).toBeNull();
     expect(copyArgs(r.w).map((args) => args.length)).toEqual([3, 3, 3]);
     expect(outcome.summary.family).toMatchObject({ id: "race", race_latency_ms: null });
+  });
+
+  it("refuses, before any copy, a race job whose runtime profile is the copy profile at no latency (family_unreadable)", async () => {
+    const probesDir = writeRaceProbeDir();
+    const r = await prepare({ probesDir, latency: null, profile: "c".repeat(64) });
+    const outcome = await replay(r, { probesDir });
+    expect(outcome.summary.reason).toBe("cannot_build");
+    expect(outcome.summary.detail).toContain("family_unreadable");
+    expect(copyArgs(r.w)).toEqual([]);
   });
 });
 
