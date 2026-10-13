@@ -355,6 +355,20 @@ describe("find sites in one file", () => {
     expect(findSitesInSource(CLASSES, "lib/prefs.ts", code)).toEqual([]);
   });
 
+  it("does not match an upsert whose argument awaits or yields, which the non-async split callback cannot hold", () => {
+    const code = [
+      "export async function save(db, profileId, input) {",
+      "  await db.client.preference.upsert({ where: { profileId }, update: { value: await encode(input) }, create: { profileId } });",
+      "  await db.client.preference.upsert({ where: { profileId: await resolve(profileId) }, update: {}, create: { profileId } });",
+      "}",
+      "export function* seed(db, profileId) {",
+      "  yield db.client.preference.upsert({ where: { profileId }, update: {}, create: { profileId, value: yield profileId } });",
+      "}",
+      "",
+    ].join("\n");
+    expect(findSitesInSource(CLASSES, "lib/prefs.ts", code)).toEqual([]);
+  });
+
   it("gives each site a diff of that site alone", () => {
     for (const site of sitesIn("lib/documents.ts")) {
       const changed = site.diff.split("\n").filter((line) => /^[-+](?![-+])/.test(line));

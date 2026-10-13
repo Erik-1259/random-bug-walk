@@ -239,8 +239,10 @@ rule:
                   context: "({ create: $CREATE })"
                   selector: pair
             - matches: only-upsert-keys
-            # The rewrite binds the read result as `found` around the update and create values, so
-            # an argument that already names `found` would read the new binding instead.
+            # The rewrite moves the where, update and create values into a plain arrow callback that
+            # binds the read result as `found`. Refuse any argument whose meaning that move changes:
+            # a name `found` would read the new binding, and an `await` or `yield` cannot sit in a
+            # non-async, non-generator arrow.
             - not:
                 has:
                   stopBy: end
@@ -249,6 +251,8 @@ rule:
                       regex: ^found$
                     - kind: shorthand_property_identifier
                       regex: ^found$
+                    - kind: await_expression
+                    - kind: yield_expression
 fix: "$DB.$MODEL.findUnique({ where: $WHERE }).then((found) => (found ? $DB.$MODEL.update({ where: $WHERE, data: $UPDATE }) : $DB.$MODEL.create({ data: $CREATE })))"
 metadata:
   class_id: RACE.check-then-act
