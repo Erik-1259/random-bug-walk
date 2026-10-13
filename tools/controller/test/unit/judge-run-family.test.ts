@@ -140,13 +140,14 @@ describe("a judge replay of a race release", () => {
     expect(outcome.summary.family).toEqual({ id: "race", adm06: { status: "not_applicable", reason: RACE_REASON }, admission_copies: 11, race_latency_ms: 75 });
   });
 
-  it("keeps the image's default latency for a race job frozen with none", async () => {
+  it("refuses, before any copy, a race job frozen with no latency (family_unreadable)", async () => {
     const probesDir = writeRaceProbeDir();
     const r = await prepare({ probesDir, latency: null });
     const outcome = await replay(r, { probesDir });
-    expect(outcome.summary.reason).toBeNull();
-    expect(copyArgs(r.w).map((args) => args.length)).toEqual([3, 3, 3]);
-    expect(outcome.summary.family).toMatchObject({ id: "race", race_latency_ms: null });
+    expect(outcome.summary.reason).toBe("cannot_build");
+    expect(outcome.summary.detail).toContain("family_unreadable");
+    expect(outcome.summary.detail).toContain("no race latency");
+    expect(copyArgs(r.w)).toEqual([]);
   });
 
   it("refuses, before any copy, a race job whose runtime profile is the copy profile at no latency (family_unreadable)", async () => {

@@ -81,7 +81,7 @@ export interface BuildSources {
   originalSuite: string;
   /** The family the job is built for; the time-zone family when absent. */
   family?: Readonly<JudgeJobFamily<FamilyFixture>>;
-  /** A race family's database latency in ms, which every replay copy sets and the profile hash holds; null or absent keeps the image's default. */
+  /** A race family's database latency in ms, which every replay copy sets and the profile hash holds; required for the race family (race_latency_missing). */
   raceLatencyMs?: number | null;
 }
 
@@ -142,11 +142,24 @@ function checkStagedFixture(kitStage: string, fixtureFile: string | URL, fixture
 }
 
 /**
+ * A family with a database proxy needs a set latency: the race only shows under a delay, and the
+ * plain copy profile hash is the time-zone family's, so a race job without one would not name its
+ * family in the profile it is graded under. Checked before anything is exported or written.
+ */
+export function checkRaceLatency(sources: BuildSources): void {
+  const id = sources.family?.id;
+  if (id !== undefined && FAMILIES[id].proxy && (sources.raceLatencyMs === undefined || sources.raceLatencyMs === null)) {
+    throw new ReleaseInputError("race_latency_missing", `the ${id} family's judge job needs a race latency, and the admitted run set none`);
+  }
+}
+
+/**
  * A job context from the image and the host inputs, exactly as the controller's build makes one:
  * the image digest, the exported source and its kit manifest, the derived code states, the
  * fixture, both suites, the vectors and the copy profile.
  */
 export async function jobContext(docker: Docker, sources: BuildSources, options: ContextOptions): Promise<{ ctx: JobContext; sourceDir: string }> {
+  checkRaceLatency(sources);
   const family = sources.family ?? TIME_ZONE_FAMILY;
   // The same family selection and latency check as the controller's run (loadCopyInputs).
   const copyInputs = loadCopyInputs({
@@ -238,7 +251,7 @@ export interface JudgeJob {
   releaseId: string;
   /** The family the job was built for, which a replay reads back from the frozen job (frozenJobFamily). */
   family: FamilyId;
-  /** The race latency the profile hash holds and every replay copy sets; null for the image's default or a family without the proxy. */
+  /** The race latency the profile hash holds and every replay copy sets; null only for a family without the proxy. */
   raceLatencyMs: number | null;
   built: BuiltJob;
   /** The identity the request's task revision hashes: the release's complete revision. */

@@ -4,14 +4,14 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { loadRateSheet } from "@rbw/envelope";
 import type { Rates } from "@rbw/envelope";
 import { RATE_SHEET_PATH, judgeReservation } from "@rbw/controller";
-import { FAMILIES, candidateIdentity, utcSeconds } from "@rbw/local-runner";
+import { FAMILIES, candidateIdentity, profileSha256, utcSeconds } from "@rbw/local-runner";
 import { buildJobRequest, buildPolicy, canonicalDigest, encodeCanonical, parseCanonical, parseRecord, sha256Hex, taskRevision } from "@rbw/schema";
 import type { ExpectedTrials, FamilyRegistry, HeldOutIdentityList, JobRequest, PublicationRecord } from "@rbw/schema";
 import { PROBE_DIR, loadProbeSet } from "@rbw/shapes";
 import { buildRelease } from "../../src/build.ts";
 import type { BuildDeps, BuildOptions } from "../../src/build.ts";
 import { checkRelease } from "../../src/check.ts";
-import { JUDGE_PLACEHOLDERS } from "../../src/judge-job.ts";
+import { JUDGE_PLACEHOLDERS, TIME_ZONE_FAMILY } from "../../src/judge-job.ts";
 import { LocalPrivateStore } from "@rbw/publisher/private-store";
 import type { PrivateStore } from "@rbw/publisher/private-store";
 import { stage } from "../../src/stage.ts";
@@ -444,13 +444,27 @@ describe("build: a failing check stores and writes nothing", () => {
 describe("build: the family the admitted run's records name", () => {
   const RACE = { id: "race", adm06: { status: "not_applicable", reason: "Synthetic: a partial or stub fix of this race has no natural form." }, admission_copies: 11 };
 
-  /** The eligible published run with a family record added to its admission summary. */
-  function runWithFamily(family: Record<string, unknown>): string {
+  /** The eligible published run with a family record added to its admission summary, and its admission request under `profile` when given. */
+  function runWithFamily(family: Record<string, unknown>, profile?: string): string {
     const runDir = join(tempDir(), "run");
     cpSync(eligible.runDir, runDir, { recursive: true });
-    editJson(join(runDir, "results", factory.ids.executions.admission, "summary.json"), (summary) => ({ ...summary, family }));
+    const results = join(runDir, "results", factory.ids.executions.admission);
+    editJson(join(results, "summary.json"), (summary) => ({ ...summary, family }));
+    if (profile !== undefined) {
+      const request = parseRecord("JobRequest", readFileSync(join(results, "request.json")));
+      writeFileSync(join(results, "request.json"), buildJobRequest({ ...request, runtime_profile_sha256: profile }).bytes);
+    }
     return runDir;
   }
+
+  it("refuses a race run recorded with no latency before anything is built (race_latency_missing)", async () => {
+    const opts = options({ run: runWithFamily({ ...RACE, race_latency_ms: null }), sources: { ...w.sources, family: TIME_ZONE_FAMILY } });
+    const d = deps({ docker: kitDocker(w.kit) });
+    await expect(buildRelease(opts, d)).rejects.toMatchObject({ code: "race_latency_missing" });
+    expect((d.docker as ReturnType<typeof kitDocker>).calls).toEqual([]);
+    expect(existsSync(opts.out)).toBe(false);
+    expect(existsSync(opts.localStore ?? "")).toBe(false);
+  });
 
   it("refuses a recorded race latency that the admission's profile hash does not hold, before anything is built (run_family_mismatch)", async () => {
     const opts = options({ run: runWithFamily({ ...RACE, race_latency_ms: 75 }) });
@@ -471,7 +485,7 @@ describe("build: the family the admitted run's records name", () => {
     // file the synthetic manifest does not hold, which is what refuses it here).
     const flagless: BuildOptions["sources"] = { ...w.sources };
     delete flagless.family;
-    const opts = options({ run: runWithFamily({ ...RACE, race_latency_ms: null }), sources: flagless });
+    const opts = options({ run: runWithFamily({ ...RACE, race_latency_ms: 75 }, profileSha256(75)), sources: flagless });
     const d = deps();
     const outcome = await buildRelease(opts, d);
     expect(outcome).toMatchObject({ ok: false, codes: ["judge_job_unbuildable"] });

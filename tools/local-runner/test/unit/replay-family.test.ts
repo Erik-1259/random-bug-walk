@@ -32,8 +32,10 @@ describe("frozenJobFamily", () => {
     expect(frozenJobFamily(frozen("race", profileSha256(MAX_RACE_LATENCY_MS)))).toEqual({ ok: true, family: "race", raceLatencyMs: MAX_RACE_LATENCY_MS });
   });
 
-  it("reads a race job built with no latency as the image's default (null)", () => {
-    expect(frozenJobFamily(frozen("race", profileSha256()))).toEqual({ ok: true, family: "race", raceLatencyMs: null });
+  it("refuses a race job under the plain copy profile, which names no latency and is the time-zone family's", () => {
+    const outcome = frozenJobFamily(frozen("race", profileSha256()));
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) expect(outcome.detail).toMatch(/race job's runtime profile is the plain copy profile, with no race latency/);
   });
 
   it("reads a time-zone job as the default family with no latency, as every replay was before", () => {

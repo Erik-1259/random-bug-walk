@@ -2,7 +2,7 @@
 // probe set, the three-trial judge profile with no partial or stub state, and the copy profile hash
 // with the latency in it, so a replay reads both back from the frozen bytes. The family and latency
 // come from the admitted run's own records. The time-zone judge job stays what it was.
-import { cpSync, readFileSync } from "node:fs";
+import { cpSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -37,7 +37,7 @@ function raceWorld(raceLatencyMs: number | null, kit: KitImageOptions = { family
   return { docker: kitDocker(image), sources };
 }
 
-function judgeJob(docker: ReturnType<typeof kitDocker>, sources: BuildSources): Promise<JudgeJob> {
+function judgeJob(docker: ReturnType<typeof kitDocker>, sources: BuildSources, exportDir = join(tempDir(), "source")): Promise<JudgeJob> {
   const w = world();
   return buildJudgeJob(docker, sources, {
     releaseId: RELEASE_ID,
@@ -45,7 +45,7 @@ function judgeJob(docker: ReturnType<typeof kitDocker>, sources: BuildSources): 
     policy: { sha256: w.policy.sha256, policy_id: UC3 },
     issueSha256: "ab".repeat(32),
     reservationMicrousd: 600_000,
-    exportDir: join(tempDir(), "source"),
+    exportDir,
   });
 }
 
@@ -86,12 +86,22 @@ describe("a race release's judge job", () => {
   it("is read back from its frozen bytes as the race family at its latency, which every replay copy then sets", async () => {
     const at75 = raceWorld(75);
     expect(frozenJobFamily((await judgeJob(at75.docker, at75.sources)).built)).toEqual({ ok: true, family: "race", raceLatencyMs: 75 });
-    const imageDefault = raceWorld(null);
-    const job = await judgeJob(imageDefault.docker, imageDefault.sources);
-    expect(job.built.request.runtime_profile_sha256).toBe(profileSha256());
-    expect(frozenJobFamily(job.built)).toEqual({ ok: true, family: "race", raceLatencyMs: null });
     const w = world();
     expect(frozenJobFamily((await judgeJob(w.docker, w.sources)).built)).toEqual({ ok: true, family: "time-zone", raceLatencyMs: null });
+  });
+
+  it("refuses the race family with no latency before exporting anything (race_latency_missing)", async () => {
+    // The race only shows under a database delay, and the plain copy profile hash is the time-zone
+    // family's, so a race job without a latency would not name its family in the profile it is graded under.
+    for (const latency of [null, undefined]) {
+      const race = raceWorld(null);
+      const sources: BuildSources = { ...race.sources };
+      if (latency === undefined) delete sources.raceLatencyMs;
+      const exportDir = join(tempDir(), "source");
+      await expect(judgeJob(race.docker, sources, exportDir)).rejects.toMatchObject({ code: "race_latency_missing" });
+      expect(race.docker.calls).toEqual([]);
+      expect(existsSync(exportDir)).toBe(false);
+    }
   });
 
   it("refuses the race family on a time-zone kit image (kit_image_family_mismatch)", async () => {

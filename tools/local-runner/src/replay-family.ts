@@ -47,7 +47,8 @@ export function latencyOfProfile(sha256: string): number | null | undefined {
 /**
  * The family and race latency of a frozen job. A family with a database proxy takes its latency
  * from the runtime profile hash; a hash that no latency makes is refused, because the copies could
- * not reproduce the profile the job was graded under.
+ * not reproduce the profile the job was graded under. The plain profile (no latency) is refused
+ * too: it is the default family's, and a race job is only built with a latency.
  */
 export function frozenJobFamily(job: FrozenJob): FrozenFamily {
   const matches = Object.values(FAMILIES).filter((family) => family.id !== DEFAULT_FAMILY && holdsVectorsOf(family, job.expected));
@@ -57,5 +58,7 @@ export function frozenJobFamily(job: FrozenJob): FrozenFamily {
   if (!family.proxy) return { ok: true, family: family.id, raceLatencyMs: null };
   const latency = latencyOfProfile(job.request.runtime_profile_sha256);
   if (latency === undefined) return { ok: false, detail: `the frozen ${family.id} job's runtime profile is not the copy profile at any latency from 0 to ${String(MAX_RACE_LATENCY_MS)} ms` };
+  // The plain profile is the default family's; a race job is only ever built with a latency.
+  if (latency === null) return { ok: false, detail: `the frozen ${family.id} job's runtime profile is the plain copy profile, with no race latency` };
   return { ok: true, family: family.id, raceLatencyMs: latency };
 }

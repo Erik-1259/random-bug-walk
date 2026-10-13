@@ -14,7 +14,7 @@ import { RELEASE_FILE, admissionExecution, checkRelease } from "./check.ts";
 import type { PublishedRun } from "./check.ts";
 import { ReleaseInputError } from "./errors.ts";
 import { recordedFamily, sourcesForFamily } from "./family.ts";
-import { buildJudgeJob, storeJudgeJob } from "./judge-job.ts";
+import { buildJudgeJob, checkRaceLatency, storeJudgeJob } from "./judge-job.ts";
 import type { BuildSources, JudgeJob } from "./judge-job.ts";
 import { LocalPrivateStore } from "@rbw/publisher/private-store";
 import type { PrivateStore } from "@rbw/publisher/private-store";
@@ -180,6 +180,7 @@ export async function buildRelease(options: BuildOptions, deps: BuildDeps): Prom
   if (!reservation.ok) throw new ReleaseInputError("reservation_unpriced", reservation.code);
   // The judge job is the admitted run's own family, at the latency its admission was graded under.
   const sources = sourcesForFamily(options.sources, recordedFamily(options.run, admission));
+  checkRaceLatency(sources);
 
   const work = mkdtempSync(join(tmpdir(), "rbw-release-build-"));
   const cleanup = [work];
