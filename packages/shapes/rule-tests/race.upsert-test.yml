@@ -22,6 +22,10 @@ valid:
     const pending = db.preference.upsert({ where: { profileId }, update: {}, create: { profileId } });
   - |
     await db.$transaction([db.preference.upsert({ where: { profileId }, update: {}, create: { profileId } })]);
+  - |
+    await db.$transaction(ids.map((profileId) => db.preference.upsert({ where: { profileId }, update: {}, create: { profileId } })));
+  - |
+    const save = (tx) => tx.preference.upsert({ where: { profileId }, update: {}, create: { profileId } });
 invalid:
   - |
     await db.client.preference.upsert({ where: { profileId }, update: { theme }, create: { profileId, theme } });
