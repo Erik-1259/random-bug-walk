@@ -164,21 +164,21 @@ export interface NoveltySummary {
 const PHRASE_CALLS = ["phrase-1", "phrase-2", "phrase-3"];
 
 /**
- * A candidate's novelty result from its phrase records, for the phrase calls that were made (all
- * three unless a caller left one out). Any public match blocks release; any incomplete or missing
- * record leaves novelty incomplete; it is clear only when every call is `no_public_match`.
+ * A candidate's novelty result from its three phrase records. Any public match blocks release; any
+ * incomplete or missing record leaves novelty incomplete; it is clear only when all three are
+ * `no_public_match`.
  */
-export function summarizeNovelty(records: readonly SearchRecord[], calls: readonly string[] = PHRASE_CALLS): NoveltySummary {
+export function summarizeNovelty(records: readonly SearchRecord[]): NoveltySummary {
   const matching = records.filter((r) => r.kind === "phrase" && r.outcome === "public_match");
   const urls = matching.flatMap((r) => r.results.flatMap((item) => ("url" in item ? [item.url] : [])));
-  const incomplete_calls = calls.filter((name) => {
+  const incomplete_calls = PHRASE_CALLS.filter((name) => {
     const found = records.filter((r) => r.kind === "phrase" && r.call_name === name);
     return found.length !== 1 || found[0]?.outcome === "incomplete";
   });
   if (matching.length > 0) {
     return { status: "blocked", matching_urls: [...new Set(urls)], incomplete_calls };
   }
-  const exactlyOnce = calls.length > 0 && records.length === calls.length && incomplete_calls.length === 0;
-  const allClear = exactlyOnce && records.every((r) => r.kind === "phrase" && r.outcome === "no_public_match");
+  const exactlyThree = records.length === 3 && incomplete_calls.length === 0;
+  const allClear = exactlyThree && records.every((r) => r.kind === "phrase" && r.outcome === "no_public_match");
   return { status: allClear ? "clear" : "incomplete", matching_urls: [], incomplete_calls };
 }

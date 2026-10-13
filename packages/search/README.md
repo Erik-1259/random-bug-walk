@@ -133,7 +133,7 @@ Each call returns either a refusal (a local check above) or a `SearchRecord`, pl
 
 The SDK folds every failure into a plain `Error` and drops the cause, so the reason is read from the error message.
 
-**Novelty summary.** `summarizeNovelty(records)` takes a candidate's three phrase records and returns `clear`, `blocked` or `incomplete`. Any `public_match` gives `blocked`, which blocks release. Otherwise any `incomplete` or missing record gives `incomplete`. It returns `clear` only when all three records are `no_public_match`. A caller that leaves a phrase check out passes the calls it made, `summarizeNovelty(records, calls)`, and the summary then covers those calls only; with no calls it is never `clear`.
+**Novelty summary.** `summarizeNovelty(records)` takes a candidate's three phrase records and returns `clear`, `blocked` or `incomplete`. Any `public_match` gives `blocked`, which blocks release. Otherwise any `incomplete` or missing record gives `incomplete`. It returns `clear` only when all three records are `no_public_match`.
 
 ## Input
 

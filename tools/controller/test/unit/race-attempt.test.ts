@@ -236,12 +236,13 @@ describe("a race issue with short result prose and one reproduction step", () =>
     run = await raceAttempt({ issue: "short" });
   });
 
-  it("checks only the phrases of 6 words or more, records the left-out call, and finds novelty clear on the rest", () => {
-    expect(run.aw.search.queries).toHaveLength(2);
-    for (const query of run.aw.search.queries) expect(query.replace(/^"|"$/g, "").split(" ").length).toBeGreaterThanOrEqual(6);
-    expect(parseCanonical(readFileSync(join(run.work, "candidate", "novelty.json")))).toMatchObject({ status: "clear", incomplete_calls: [], omitted_calls: ["phrase-3"] });
+  it("searches no phrase, records the slot that had none, and ends novelty incomplete without admission", () => {
+    expect(run.aw.search.queries).toHaveLength(0);
+    expect(parseCanonical(readFileSync(join(run.work, "candidate", "novelty.json")))).toMatchObject({ status: "incomplete", matching_urls: [], incomplete_calls: ["phrase-3"], omitted_calls: ["phrase-3"] });
     expect(run.aw.lines).toContain("stage=novelty omitted=phrase-3 reason=no_phrase_of_6_words");
-    expect(run.outcome.rootRun).toMatchObject({ status: "terminal", outcome: "completed" });
+    expect(run.aw.lines).toContain("stage=novelty status=incomplete");
+    expect(run.outcome.rootRun).toMatchObject({ status: "terminal", outcome: "incomplete" });
+    expect(run.aw.lines.some((line) => line.startsWith("stage=admission"))).toBe(false);
   });
 });
 

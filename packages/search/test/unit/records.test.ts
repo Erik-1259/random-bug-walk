@@ -88,14 +88,6 @@ describe("novelty summary", () => {
     expect(summarizeNovelty(dup).status).toBe("incomplete");
   });
 
-  it("summarizes only the phrase calls made when a caller leaves one out, and is never clear for none", () => {
-    const two = [1, 2].map((n) => phraseRecord("no_public_match", n));
-    expect(summarizeNovelty(two, ["phrase-1", "phrase-2"])).toMatchObject({ status: "clear", incomplete_calls: [] });
-    expect(summarizeNovelty([phraseRecord("no_public_match", 1)], ["phrase-1", "phrase-2"])).toMatchObject({ status: "incomplete", incomplete_calls: ["phrase-2"] });
-    expect(summarizeNovelty(two, ["phrase-1"]).status).toBe("incomplete");
-    expect(summarizeNovelty([], []).status).toBe("incomplete");
-  });
-
   it("computes the summary from real records of a run", async () => {
     world = await makeWorld({ recordings: ["phrase-1.zero-results", "phrase-2.match", "phrase-3.zero-results"] });
     const records: SearchRecord[] = [];
