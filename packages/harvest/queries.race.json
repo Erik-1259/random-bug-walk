@@ -1,0 +1,20 @@
+{
+  "comment": "The searches a live harvest runs for the race class, shape RC-1.guarded-write. Commit search matches commit messages and issue search matches pull request titles and bodies, not diffs, so each query pairs a race word with the write API or the fix pattern a compare-and-swap or check-then-act fix names, and the candidate rule checks the diff later. `api` labels the query in the funnel's per-query report.",
+  "queries": [
+    { "kind": "commits", "api": "updateMany", "q": "updateMany race condition fix" },
+    { "kind": "commits", "api": "findOneAndUpdate", "q": "findOneAndUpdate race condition fix" },
+    { "kind": "commits", "api": "updateOne", "q": "updateOne race condition fix" },
+    { "kind": "commits", "api": "compare-and-swap", "q": "compare-and-swap race condition fix" },
+    { "kind": "commits", "api": "check-then-act", "q": "check-then-act race fix" },
+    { "kind": "commits", "api": "TOCTOU", "q": "TOCTOU race fix update" },
+    { "kind": "commits", "api": "double spend", "q": "\"double spend\" race condition fix" },
+    { "kind": "commits", "api": "atomic update", "q": "\"atomic update\" race condition fix" },
+    { "kind": "commits", "api": "optimistic concurrency", "q": "optimistic concurrency version race fix" },
+    { "kind": "pulls", "api": "updateMany", "q": "is:pr is:merged updateMany race condition" },
+    { "kind": "pulls", "api": "findOneAndUpdate", "q": "is:pr is:merged findOneAndUpdate race condition" },
+    { "kind": "pulls", "api": "compare-and-swap", "q": "is:pr is:merged compare-and-swap race condition" },
+    { "kind": "pulls", "api": "check-then-act", "q": "is:pr is:merged check-then-act race" },
+    { "kind": "pulls", "api": "double use", "q": "is:pr is:merged \"double use\" race condition" },
+    { "kind": "pulls", "api": "atomic update", "q": "is:pr is:merged \"atomic update\" race condition" }
+  ]
+}

@@ -1,21 +1,21 @@
-// The funnel for shape DT-1.tz-arg over GitHub search results. It reads only through a Transport,
+// The funnel for a harvest shape (DT-1.tz-arg by default, or the race class) over GitHub search results. It reads only through a Transport,
 // so a live run and a replay of its frozen responses go through the same code and give the same
 // funnel. Search results are taken round-robin across the queries, so every query that answers
 // contributes before the cap. Each candidate stops at its first drop. Candidates are checked in
 // harvest order up to their commit, de-duplicated by commit SHA and then by patch ID, keeping the
 // earliest commit, and the rest are checked one at a time.
 import { createHash } from "node:crypto";
-import { SHAPE_ID } from "@rbw/shapes";
-import { addedLines, addedText, candidateRuleBytes, CANDIDATE_RULE_IDS, examineFile, SOURCE_FILE, TIMEZONE_TEXT, type FileMatch } from "./confirm.ts";
+import { addedLines, addedText, SOURCE_FILE } from "./confirm.ts";
 import type { Transport } from "./frozen.ts";
 import { schemas, urls, type Commit, type CommitFile, type Content, type SearchCommits } from "./github-api.ts";
 import { licenseDecision } from "./license.ts";
 import { searchUrl, type Query } from "./queries.ts";
+import { DT1_HARVEST_SHAPE, type AnyFileMatch, type HarvestShape } from "./shapes.ts";
 
 export const STAGES = ["harvested", "license_permitted", "diff_fetched", "source_rule_matched", "structurally_confirmed"] as const;
 export type Stage = (typeof STAGES)[number];
 
-/** Every reason a candidate can drop, by the stage it failed to reach. */
+/** Every reason a candidate of the default shape, DT-1.tz-arg, can drop, by the stage it failed to reach. */
 export const DROP_REASONS: Readonly<Record<Stage, readonly string[]>> = {
   harvested: [],
   license_permitted: ["repo_unavailable", "fork", "license_missing", "license_unrecognized", "license_not_permitted"],
@@ -37,19 +37,18 @@ export const DROP_REASONS: Readonly<Record<Stage, readonly string[]>> = {
   structurally_confirmed: ["function_missing_before", "call_added", "before_has_timezone_argument", "timezone_is_constant", "timezone_unbound"],
 };
 
+/** Every reason a candidate of a shape can drop, by the stage it failed to reach. */
+export function dropReasons(shape: HarvestShape): Readonly<Record<Stage, readonly string[]>> {
+  return { ...DROP_REASONS, source_rule_matched: [shape.no_text_reason, "no_rule_match_on_added_line"], structurally_confirmed: shape.confirm_reasons };
+}
+
 /** GitHub's commit endpoint lists at most this many files on one page. */
 const MAX_COMMIT_FILES = 300;
-/** At most this many files per candidate have their blobs fetched. */
-const MAX_TIMEZONE_FILES = 10;
+/** At most this many files per candidate, those whose added lines pass the shape's text filter, have their blobs fetched. */
+const MAX_TEXT_FILES = 10;
 
-export const SOURCE_RULE = {
-  basis: "candidate_rule",
-  file: "packages/harvest/rules/tz-arg.candidate.yml",
-  ids: [CANDIDATE_RULE_IDS.TypeScript, CANDIDATE_RULE_IDS.Tsx],
-  reason:
-    "The shape's source rule dt-1.tz-arg.source in @rbw/shapes is pinned to one upstream component and commit, " +
-    "so candidates are matched with this package's rule for the candidate's call.",
-} as const;
+/** The default shape's source-rule record. */
+export const SOURCE_RULE = DT1_HARVEST_SHAPE.source_rule;
 
 export interface DropCount {
   readonly stage: Stage;
@@ -71,7 +70,7 @@ export interface QueryRecord {
   readonly drops: readonly DropCount[];
 }
 
-export interface Confirmation {
+interface ConfirmationBase {
   readonly license: string;
   readonly commit: string;
   readonly parent: string;
@@ -84,8 +83,10 @@ export interface Confirmation {
   readonly function: string;
   readonly before_line: number;
   readonly before_call: string;
-  readonly timezone: string;
 }
+
+/** A confirmed match: the time zone it passes (DT-1.tz-arg) or the guard it added (the race class). */
+export type Confirmation = (ConfirmationBase & { readonly timezone: string }) | (ConfirmationBase & { readonly guard: string });
 
 /** Where a permitted license was read: the search result, the repository record or the license endpoint. */
 export type LicenseSource = "search" | "repository" | "license_endpoint";
@@ -102,7 +103,7 @@ export interface CandidateRecord {
   patch_id: string | null;
   stage_reached: Stage;
   drop: { readonly stage: Stage; readonly reason: string; readonly detail: string } | null;
-  matches: (FileMatch & { readonly path: string })[];
+  matches: (AnyFileMatch & { readonly path: string })[];
   confirmation: Confirmation | null;
 }
 
@@ -115,7 +116,7 @@ export interface StageRecord {
 export interface FunnelCore {
   readonly schema_version: 2;
   readonly shape_id: string;
-  readonly source_rule: typeof SOURCE_RULE & { readonly sha256: string };
+  readonly source_rule: HarvestShape["source_rule"] & { readonly sha256: string };
   readonly queries: readonly QueryRecord[];
   readonly stages: readonly StageRecord[];
   readonly candidates: readonly CandidateRecord[];
@@ -426,7 +427,7 @@ async function fetchBlob(transport: Transport, repo: string, path: string, ref: 
 }
 
 /** After de-duplication: the commit's files and blobs, the source rule and the structural checks. */
-async function examine(transport: Transport, { candidate, license, commit }: Resolved): Promise<void> {
+async function examine(transport: Transport, shape: HarvestShape, { candidate, license, commit }: Resolved): Promise<void> {
   const sha = commit.sha;
   const [parent] = commit.parents;
   const skipped = unexaminable(commit);
@@ -444,12 +445,12 @@ async function examine(transport: Transport, { candidate, license, commit }: Res
   if (patched.length === 0) {
     throw new Drop("diff_fetched", "patch_missing", "GitHub gave no patch for any modified or renamed TypeScript or JavaScript file");
   }
-  const timezoneFiles = patched.filter((file) => TIMEZONE_TEXT.test(addedText(file.patch ?? "")));
-  if (timezoneFiles.length > MAX_TIMEZONE_FILES) {
-    throw new Drop("diff_fetched", "too_many_files", `${String(timezoneFiles.length)} files add time-zone text, more than ${String(MAX_TIMEZONE_FILES)}`);
+  const textFiles = patched.filter((file) => shape.text_filter.test(addedText(file.patch ?? "")));
+  if (textFiles.length > MAX_TEXT_FILES) {
+    throw new Drop("diff_fetched", "too_many_files", `${String(textFiles.length)} files add ${shape.text_label}, more than ${String(MAX_TEXT_FILES)}`);
   }
   const blobs: Blobs[] = [];
-  for (const file of timezoneFiles) {
+  for (const file of textFiles) {
     const before = await fetchBlob(transport, candidate.repo, file.previous_filename ?? file.filename, parent.sha, "parent");
     const after = await fetchBlob(transport, candidate.repo, file.filename, sha, "commit");
     if (after.sha !== file.sha) {
@@ -460,11 +461,11 @@ async function examine(transport: Transport, { candidate, license, commit }: Res
   candidate.stage_reached = "diff_fetched";
 
   if (blobs.length === 0) {
-    throw new Drop("source_rule_matched", "no_timezone_text_added", "no modified or renamed TypeScript or JavaScript file adds time-zone text");
+    throw new Drop("source_rule_matched", shape.no_text_reason, `no modified or renamed TypeScript or JavaScript file adds ${shape.text_label}`);
   }
   for (const blob of blobs) {
     const added = addedLines(blob.file.patch ?? "");
-    candidate.matches.push(...examineFile(blob.file.filename, blob.before.text, blob.after.text, added).map((match) => ({ ...match, path: blob.file.filename })));
+    candidate.matches.push(...shape.examineFile(blob.file.filename, blob.before.text, blob.after.text, added).map((match) => ({ ...match, path: blob.file.filename })));
   }
   if (candidate.matches.length === 0) {
     throw new Drop("source_rule_matched", "no_rule_match_on_added_line", "the candidate rule matches no call on an added line");
@@ -474,7 +475,11 @@ async function examine(transport: Transport, { candidate, license, commit }: Res
   for (const match of candidate.matches) {
     const blob = blobs.find((entry) => entry.file.filename === match.path);
     if (match.outcome.status === "confirmed" && blob !== undefined) {
+      const { outcome } = match;
       candidate.confirmation = {
+        ...("timezone" in outcome ? { timezone: outcome.timezone } : { guard: outcome.guard }),
+        before_line: outcome.before_line,
+        before_call: outcome.before_call,
         license,
         commit: sha,
         parent: parent.sha,
@@ -485,15 +490,12 @@ async function examine(transport: Transport, { candidate, license, commit }: Res
         call: match.call,
         callee: match.callee,
         function: match.function,
-        before_line: match.outcome.before_line,
-        before_call: match.outcome.before_call,
-        timezone: match.outcome.timezone,
       };
       candidate.stage_reached = "structurally_confirmed";
       return;
     }
   }
-  const rejection = candidate.matches.map((match) => match.outcome).find((outcome) => outcome.status === "rejected");
+  const rejection = candidate.matches.map((match): AnyFileMatch["outcome"] => match.outcome).find((outcome) => outcome.status === "rejected");
   if (rejection === undefined) {
     throw new Error("a matched candidate has neither a confirmation nor a rejection");
   }
@@ -517,7 +519,11 @@ async function attempt<T>(candidate: CandidateRecord, step: () => Promise<T>): P
   }
 }
 
-export async function runFunnel(transport: Transport, options: { readonly max: number; readonly queries: readonly Query[] }): Promise<FunnelCore> {
+export async function runFunnel(
+  transport: Transport,
+  options: { readonly max: number; readonly queries: readonly Query[]; readonly shape?: HarvestShape },
+): Promise<FunnelCore> {
+  const shape = options.shape ?? DT1_HARVEST_SHAPE;
   const harvested = await harvestCandidates(transport, options.queries, options.max);
   const resolved: Resolved[] = [];
   for (const [order, candidate] of harvested.candidates.entries()) {
@@ -531,7 +537,7 @@ export async function runFunnel(transport: Transport, options: { readonly max: n
     record(entry.candidate, drop);
   }
   for (const entry of kept) {
-    await attempt(entry.candidate, () => examine(transport, entry));
+    await attempt(entry.candidate, () => examine(transport, shape, entry));
   }
   const stages = STAGES.map((stage, index) => {
     const drops: Record<string, number> = {};
@@ -549,8 +555,8 @@ export async function runFunnel(transport: Transport, options: { readonly max: n
   });
   return {
     schema_version: 2,
-    shape_id: SHAPE_ID,
-    source_rule: { ...SOURCE_RULE, sha256: createHash("sha256").update(candidateRuleBytes()).digest("hex") },
+    shape_id: shape.id,
+    source_rule: { ...shape.source_rule, sha256: createHash("sha256").update(shape.rules.bytes).digest("hex") },
     queries,
     stages,
     candidates: harvested.candidates,
