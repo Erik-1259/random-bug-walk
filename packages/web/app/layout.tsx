@@ -40,7 +40,8 @@ code, .hash { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 
   .matrix td { margin-bottom: 0.5rem; }
   .matrix .cell-label { display: block; font-weight: 600; }
   .files, .files tbody, .files tr, .files th, .files td { display: block; }
-  .files thead { display: none; }
+  .files thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .files td[data-label]:not(:empty)::before { content: attr(data-label) ": "; font-weight: 600; }
   .files tr { border: 1px solid #c8c8c8; margin-bottom: 0.5rem; padding: 0.25rem 0.5rem; }
   .files th, .files td { border: 0; padding: 0; }
 }

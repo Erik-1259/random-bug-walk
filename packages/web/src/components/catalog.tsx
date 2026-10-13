@@ -22,19 +22,19 @@ export function RunFiles({ run }: { run: Run }) {
           <th scope="row">
             <a href={fileHref(root, "manifest.json", null)}>manifest.json</a>
           </th>
-          <td>Published</td>
-          <td />
-          <td />
+          <td data-label="Outcome">Published</td>
+          <td data-label="Size" />
+          <td data-label="SHA-256" />
         </tr>
         {run.manifest.entries.map((entry) => (
           <tr key={entry.path}>
             <th scope="row">{entry.sha256 === null ? entry.path : <a href={fileHref(root, entry.path, entry.public_uri)}>{entry.path}</a>}</th>
-            <td>
+            <td data-label="Outcome">
               {ENTRY_OUTCOME_TEXT[entry.outcome]}
               {entry.reason === null ? "" : ` (${entry.reason})`}
             </td>
-            <td>{entry.size_bytes === null ? "" : `${String(entry.size_bytes)} bytes`}</td>
-            <td className="hash">{entry.sha256 ?? ""}</td>
+            <td data-label="Size">{entry.size_bytes === null ? "" : `${String(entry.size_bytes)} bytes`}</td>
+            <td data-label="SHA-256" className="hash">{entry.sha256 ?? ""}</td>
           </tr>
         ))}
       </tbody>

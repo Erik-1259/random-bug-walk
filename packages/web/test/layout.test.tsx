@@ -80,6 +80,11 @@ describe("the run file index page", () => {
     expect(page).toContain(`Files of run ${DEVELOPMENT_ROOT}`);
     expect(page).toContain("Diagnostic archive, not validated");
     expect(page).toContain("logs/synthetic-39.log Published 17 bytes");
+    // Stacked on a phone, each cell shows its column's label; the headers stay for screen readers.
+    expect(html).toContain('<td data-label="Outcome">Published');
+    expect(html).toContain('<td data-label="Size">17 bytes</td>');
+    expect(html).toContain('data-label="SHA-256" class="hash"');
+    expect(html).toContain('<th scope="col">SHA-256</th>');
   });
 
   it("labels the released run and shows entries that were not produced", async () => {
