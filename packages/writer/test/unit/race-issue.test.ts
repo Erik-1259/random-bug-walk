@@ -216,6 +216,8 @@ describe("the race issue checks", () => {
     ["Accepted by POST /api/2fa and refused by none.", false],
     ["Request #2 was accepted and request 0 was refused.", false],
     ["2 accepted / 0 refused", true],
+    ["Accepted: 2\nRefused: 0", true],
+    ["- 2 accepted\n- 0 refused", true],
     ["2 accepted | 0 refused", true],
     ["2 accepted 0 refused", false],
     ["2 were not accepted and 0 were refused.", false],

@@ -69,7 +69,7 @@ function countRuns(text: string): bigint[] {
 // percentage, part of a path, word, decimal or date, or an ID or code (`request 2`, `#2`,
 // `HTTP 200`, `status 400`).
 const CLAUSE_BREAK =
-  /[.!?](?=\s|$)|[;,](?!\d)|[:\u2013\u2014](?!\s*\d)|\s-\s(?!\s*\d)|\s[/|]\s|(?<![\p{L}])(?:and|but|while|whereas)(?![\p{L}])/giu;
+  /[.!?](?=\s|$)|[;,](?!\d)|[:\u2013\u2014](?!\s*\d)|\s-\s(?!\s*\d)|\s[/|]\s|\r?\n|(?<![\p{L}])(?:and|but|while|whereas)(?![\p{L}])/giu;
 const LABEL_BREAK = /[:=\u2013\u2014]|\s-\s/u;
 const ACCEPTED_WORD = String.raw`accept\p{L}*|succe(?:ss|ed)\p{L}*`;
 const REFUSED_WORD = String.raw`refus\p{L}*|reject\p{L}*|denied|deny|denies|declin\p{L}*|fail\p{L}*`;
