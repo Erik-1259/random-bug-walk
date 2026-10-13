@@ -287,16 +287,39 @@ function withoutCountLines(text: string): string {
     .join("\n");
 }
 
-/** The first sentence, or the start of the field when that sentence is too short to be distinctive. */
-function resultPhrase(field: string): string {
-  const text = withoutCountLines(field);
-  const sentence = firstSentence(text);
-  return words(sentence.split(" ").length >= PHRASE_MIN_WORDS ? sentence : clean(text));
+function wordCount(text: string): number {
+  return text === "" ? 0 : text.split(" ").length;
 }
 
-/** The three exact phrases, picked by code from the frozen issue: the title and the first sentences of the expected and actual results (or their first 12 words when that sentence has fewer than 6), never a race issue's fixed count lines. */
+/** The first sentence, or the start of the text when that sentence is too short to be distinctive; null when even that is too short. */
+function distinctPhrase(text: string): string | null {
+  const sentence = firstSentence(text);
+  const phrase = words(wordCount(sentence) >= PHRASE_MIN_WORDS ? sentence : clean(text));
+  return wordCount(phrase) >= PHRASE_MIN_WORDS ? phrase : null;
+}
+
+/**
+ * A result field's phrase, never from a race issue's count lines. A race field's prose can be one short
+ * sentence, so when the field has fewer than 6 words of prose the phrase comes from the first
+ * reproduction step that has 6 and is not already taken; the short prose is the last resort.
+ */
+function resultPhrase(field: string, steps: readonly string[], taken: readonly string[]): string {
+  const text = withoutCountLines(field);
+  const own = distinctPhrase(text);
+  if (own !== null) return own;
+  for (const step of steps) {
+    const phrase = distinctPhrase(step);
+    if (phrase !== null && !taken.includes(phrase)) return phrase;
+  }
+  return words(clean(text));
+}
+
+/** The three exact phrases, picked by code from the frozen issue: the title and the first sentences of the expected and actual results (or their first 12 words when that sentence has fewer than 6, or a reproduction step when the field has fewer than 6 words of prose), never a race issue's fixed count lines. */
 export function pickPhrases(issue: IssueOutput): [string, string, string] {
-  return [words(clean(issue.title)), resultPhrase(issue.expected_result), resultPhrase(issue.actual_result)];
+  const title = words(clean(issue.title));
+  const expected = resultPhrase(issue.expected_result, issue.reproduction_steps, [title]);
+  const actual = resultPhrase(issue.actual_result, issue.reproduction_steps, [title, expected]);
+  return [title, expected, actual];
 }
 
 function writeOnce(path: string, bytes: string | Uint8Array): void {

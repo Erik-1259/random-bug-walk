@@ -143,6 +143,7 @@ describe("a race-family attempt, start to finish", () => {
     const issue = parseCanonical(readFileSync(join(run.work, "candidate", "issue.json"))) as never;
     const phrases = pickPhrases(issue);
     expect(phrases).toEqual(["Synthetic report: one backup code signs in twice when it is entered", "Of the two requests sent together, one should be accepted and the", "Both tabs were signed in with the same backup code."]);
+    for (const phrase of phrases) expect(phrase.split(" ").length).toBeGreaterThanOrEqual(6);
     expect(run.aw.search.queries.map((query) => query.replace(/^"|"$/g, ""))).toEqual(phrases);
     expect(parseCanonical(readFileSync(join(run.work, "candidate", "novelty.json")))).toMatchObject({ status: "clear" });
   });
@@ -163,18 +164,47 @@ describe("a race-family attempt, start to finish", () => {
 });
 
 describe("the phrase picker on a race issue", () => {
-  it("never takes a phrase from the fixed Expected and Observed count lines, even when the prose before them is short", () => {
+  const wordCount = (phrase: string): number => phrase.split(" ").length;
+  const steps = ["Sign in with a password and open the backup code prompt in two browser tabs.", "Enter the same backup code in both tabs and submit them at the same moment.", "Look at which tabs are signed in."];
+
+  it("never takes a phrase from the fixed Expected and Observed count lines, and uses distinct reproduction steps when the prose before them is under 6 words", () => {
     const issue = {
       title: "One backup code signs in twice when it is entered in two tabs",
-      reproduction_steps: ["Step."],
+      reproduction_steps: steps,
       expected_result: "One is refused.\nExpected: accepted=1, refused=1",
       actual_result: "Both tabs signed in.\nObserved: accepted=2, refused=0",
       environment: "Synthetic.",
     };
     const [, expected, actual] = pickPhrases(issue);
-    expect(expected).toBe("One is refused.");
-    expect(actual).toBe("Both tabs signed in.");
-    for (const phrase of [expected, actual]) expect(phrase).not.toMatch(/accepted=|refused=/);
+    expect(expected).toBe("Sign in with a password and open the backup code prompt in");
+    expect(actual).toBe("Enter the same backup code in both tabs and submit them at");
+    for (const phrase of [expected, actual]) {
+      expect(phrase).not.toMatch(/accepted=|refused=/);
+      expect(wordCount(phrase)).toBeGreaterThanOrEqual(6);
+      expect(wordCount(phrase)).toBeLessThanOrEqual(12);
+    }
+  });
+
+  it("falls back from a 5-word sentence but keeps a 6-word one", () => {
+    const issue = {
+      title: "One backup code signs in twice when it is entered in two tabs",
+      reproduction_steps: steps,
+      expected_result: "Only one should be accepted.\nExpected: accepted=1, refused=1",
+      actual_result: "Both tabs were signed in together.\nObserved: accepted=2, refused=0",
+      environment: "Synthetic.",
+    };
+    expect(pickPhrases(issue).slice(1)).toEqual(["Sign in with a password and open the backup code prompt in", "Both tabs were signed in together."]);
+  });
+
+  it("keeps the short prose only when no reproduction step has 6 words", () => {
+    const issue = {
+      title: "One backup code signs in twice when it is entered in two tabs",
+      reproduction_steps: ["Open two tabs."],
+      expected_result: "One is refused.\nExpected: accepted=1, refused=1",
+      actual_result: "Both tabs signed in.\nObserved: accepted=2, refused=0",
+      environment: "Synthetic.",
+    };
+    expect(pickPhrases(issue).slice(1)).toEqual(["One is refused.", "Both tabs signed in."]);
   });
 });
 
