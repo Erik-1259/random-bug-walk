@@ -1,0 +1,356 @@
+import type { PGlite } from "@electric-sql/pglite";
+import type { Spend } from "@rbw/spend";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { attemptKey, NO_TOOL_CALL_REMINDER, runAttempt, SOLVER_SYSTEM_PROMPT, transcriptLine } from "../../src/agent.ts";
+import { CHAT_COMPLETIONS_URL, SUPER_SOLVER_PROFILE } from "../../src/profile.ts";
+import { attemptOptions, FakeSession, freshSpend, openDb, scriptedFetch, spySpend, steppingClock, withCaps } from "../support.ts";
+
+let db: PGlite;
+
+beforeAll(async () => {
+  db = await openDb();
+});
+
+afterAll(async () => {
+  await db.close();
+});
+
+interface Body {
+  model: string;
+  temperature: number;
+  seed: number;
+  max_tokens: number;
+  messages: { role: string; content: unknown }[];
+  tools?: { function: { name: string } }[];
+  chat_template_kwargs?: unknown;
+}
+
+function parse(body: string): Body {
+  return JSON.parse(body) as Body;
+}
+
+/** Every operation in the schema, by call name, with its state as the ledger reports it. */
+async function operations(schema: string, spend: Spend): Promise<{ state: string; call_name: string }[]> {
+  const rows = await db.query<{ operation_id: string; call_name: string }>(`SELECT operation_id, call_name FROM ${schema}.operations ORDER BY call_name`);
+  const out: { state: string; call_name: string }[] = [];
+  for (const row of rows.rows) {
+    const status = await spend.operationStatus({ operation_id: row.operation_id });
+    out.push({ call_name: row.call_name, state: status.ok ? status.state : `error:${status.code}` });
+  }
+  return out;
+}
+
+const SUBMIT = { name: "submit", input: { summary: "synthetic fix" } };
+
+describe("the request each arm sends", () => {
+  it("differs between arms only in the server_logs tool", async () => {
+    const bodies: Record<string, Body> = {};
+    for (const arm of ["off", "on"] as const) {
+      const { spend } = await freshSpend(db);
+      const script = scriptedFetch([{ calls: [SUBMIT] }]);
+      const run = attemptOptions(spend, script.fetch, new FakeSession(), { spec: { arm, index: 4, rerun: 0 } });
+      await runAttempt(run.options);
+      bodies[arm] = parse(script.bodies[0] ?? "");
+    }
+    const { off, on } = bodies;
+    if (off === undefined || on === undefined) {
+      throw new Error("expected a request from each arm");
+    }
+    expect(off.tools?.map((t) => t.function.name)).toEqual(["bash", "read_file", "write_file", "rebuild_restart", "submit"]);
+    expect(on.tools?.map((t) => t.function.name)).toEqual(["bash", "read_file", "write_file", "rebuild_restart", "submit", "server_logs"]);
+    expect({ ...on, tools: on.tools?.slice(0, 5) }).toEqual(off);
+  });
+
+  it("carries the fixed prompt, the profile's model, sampling and extras, and the index as seed", async () => {
+    const { spend } = await freshSpend(db);
+    const script = scriptedFetch([{ calls: [SUBMIT] }]);
+    const run = attemptOptions(spend, script.fetch, new FakeSession(), { spec: { arm: "on", index: 17, rerun: 1 } });
+    await runAttempt(run.options);
+    const body = parse(script.bodies[0] ?? "");
+    expect(script.urls).toEqual([CHAT_COMPLETIONS_URL]);
+    expect(body.model).toBe("nvidia/nemotron-3-super-120b-a12b");
+    expect(body.temperature).toBe(0.6);
+    expect(body.seed).toBe(17);
+    expect(body.max_tokens).toBe(8_192);
+    expect(body.chat_template_kwargs).toEqual({ enable_thinking: false });
+    expect(body.messages[0]).toEqual({ role: "system", content: SOLVER_SYSTEM_PROMPT });
+    expect(body.messages[1]?.content).toContain("Synthetic report");
+  });
+});
+
+describe("a full attempt", () => {
+  it("runs the tools, submits, and meters every turn in reserve, launch, send, settle order", async () => {
+    const { spend, schema } = await freshSpend(db);
+    const events: string[] = [];
+    const script = scriptedFetch(
+      [
+        { calls: [{ name: "read_file", input: { path: "src/lib/date.ts" } }], usage: { prompt_tokens: 1200, completion_tokens: 40 } },
+        { calls: [{ name: "write_file", input: { path: "src/lib/date.ts", content: "export const offset = 1;\n" } }], usage: { prompt_tokens: 1400, completion_tokens: 60 } },
+        { calls: [{ name: "rebuild_restart", input: {} }], usage: { prompt_tokens: 1600, completion_tokens: 20 } },
+        { calls: [SUBMIT], usage: { prompt_tokens: 1800, completion_tokens: 30 } },
+      ],
+      events,
+    );
+    const session = new FakeSession();
+    const run = attemptOptions(spySpend(spend, events), script.fetch, session);
+    const result = await runAttempt(run.options);
+
+    expect(result.outcome).toBe("submitted");
+    expect(result.summary).toBe("synthetic fix");
+    expect(result.turns).toBe(4);
+    expect(result.input_tokens).toBe(6000);
+    expect(result.output_tokens).toBe(150);
+    expect(result.usage_complete).toBe(true);
+    expect(result.rebuilds).toBe(1);
+    expect(result.tool_calls).toMatchObject({ read_file: 1, write_file: 1, rebuild_restart: 1, submit: 1, server_logs: 0 });
+    expect(session.files.get("src/lib/date.ts")).toBe("export const offset = 1;\n");
+    // ceil(6000 × 0.3) + ceil(150 × 0.9) micro-USD, line by line per turn.
+    expect(result.settled_microusd).toBe(360 + 36 + 420 + 54 + 480 + 18 + 540 + 27);
+
+    const perTurn = ["reserve", "transition:launching", "fetch", "transition:terminal", "settle"];
+    expect(events).toEqual([...perTurn, ...perTurn, ...perTurn, ...perTurn]);
+    const ops = await operations(schema, spend);
+    expect(ops.map((op) => op.call_name)).toEqual([1, 2, 3, 4].map((n) => `solver.turn:off-001-r0:${String(n)}`));
+    expect(ops.every((op) => op.state === "reconciled")).toBe(true);
+  });
+
+  it("returns each tool's result to the model in the next request", async () => {
+    const { spend } = await freshSpend(db);
+    const script = scriptedFetch([{ calls: [{ name: "bash", input: { command: "ls src" } }] }, { calls: [SUBMIT] }]);
+    const session = new FakeSession();
+    session.bashResult = { exit_code: 0, stdout: "synthetic-listing\n", stderr: "", timed_out: false };
+    await runAttempt(attemptOptions(spend, script.fetch, session).options);
+    const second = parse(script.bodies[1] ?? "");
+    const tool = second.messages.find((m) => m.role === "tool");
+    expect(tool?.content).toContain("synthetic-listing");
+    expect(session.log).toEqual(["bash:ls src"]);
+  });
+
+  it("writes a transcript whose model calls carry the model, endpoint, dates and usage", async () => {
+    const { spend } = await freshSpend(db);
+    const script = scriptedFetch([{ calls: [SUBMIT], usage: { prompt_tokens: 900, completion_tokens: 12 } }], undefined, "synthetic-served-model");
+    const run = attemptOptions(spend, script.fetch, new FakeSession(), { now: steppingClock(1000, Date.UTC(2026, 9, 13, 12, 0, 0)) });
+    await runAttempt(run.options);
+    expect(run.events.map((e) => e.type)).toEqual(["attempt_start", "model_call", "tool_call", "attempt_end"]);
+    const call = run.events[1];
+    if (call?.type !== "model_call") {
+      throw new Error("expected a model call");
+    }
+    expect(call).toMatchObject({
+      model_id: SUPER_SOLVER_PROFILE.hashed.model,
+      endpoint: CHAT_COMPLETIONS_URL,
+      response_model: "synthetic-served-model",
+      usage: { prompt_tokens: 900, completion_tokens: 12 },
+      status: "completed",
+      http_status: 200,
+      settled_microusd: 270 + 11,
+    });
+    expect(call.requested_at).toMatch(/^2026-10-13T12:00:\d\d\.000Z$/);
+    expect(call.payload_sha256).toMatch(/^[0-9a-f]{64}$/);
+    const lines = run.events.map(transcriptLine).join("");
+    expect(lines.trimEnd().split("\n").map((line) => JSON.parse(line) as unknown)).toHaveLength(4);
+  });
+});
+
+describe("rebuild_restart in the loop", () => {
+  it("never passes rbw-start's runtime log tail to the model", async () => {
+    const { spend } = await freshSpend(db);
+    const script = scriptedFetch([{ calls: [{ name: "rebuild_restart", input: {} }] }, { calls: [SUBMIT] }]);
+    const session = new FakeSession();
+    session.rebuildResult = {
+      build: { exit_code: 0, stderr: "synthetic compiler warning" },
+      start: {
+        exit_code: 1,
+        stdout: "postgres_ready_ms=800",
+        stderr: [
+          "rbw-start: Umami exited before answering the heartbeat",
+          "--- /var/lib/rbw/logs/umami.stdout.log",
+          "synthetic stdout line",
+          "--- /var/lib/rbw/logs/umami.stderr.log",
+          'PrismaClientKnownRequestError: duplicate key value violates unique constraint "session_pkey"',
+        ].join("\n"),
+      },
+    };
+    await runAttempt(attemptOptions(spend, script.fetch, session).options);
+    const second = script.bodies[1] ?? "";
+    expect(second).toContain("rbw-start: Umami exited before answering the heartbeat");
+    expect(second).toContain("synthetic compiler warning");
+    expect(second).not.toContain("duplicate key value");
+    expect(second).not.toContain("synthetic stdout line");
+  });
+
+  it("refuses rebuilds past the cap without calling the session", async () => {
+    const { spend } = await freshSpend(db);
+    const rebuild = { calls: [{ name: "rebuild_restart", input: {} }] };
+    const script = scriptedFetch([rebuild, rebuild, rebuild, { calls: [SUBMIT] }]);
+    const session = new FakeSession();
+    const profile = withCaps(SUPER_SOLVER_PROFILE, { max_rebuilds: 2 });
+    const result = await runAttempt(attemptOptions(spend, script.fetch, session, { profile }).options);
+    expect(session.log).toEqual(["rebuild_restart", "rebuild_restart"]);
+    expect(result.rebuilds).toBe(2);
+    expect(script.bodies[3]).toContain("the rebuild limit of 2 is reached");
+  });
+});
+
+describe("tool calls the arm does not have", () => {
+  it("answers server_logs in the off arm with an error and never reads the logs", async () => {
+    const { spend } = await freshSpend(db);
+    const script = scriptedFetch([{ calls: [{ name: "server_logs", input: {} }] }, { calls: [SUBMIT] }]);
+    const session = new FakeSession();
+    const result = await runAttempt(attemptOptions(spend, script.fetch, session).options);
+    expect(session.log).toEqual([]);
+    expect(result.invalid_tool_calls).toBe(1);
+    expect(result.tool_calls.server_logs).toBe(0);
+    const second = parse(script.bodies[1] ?? "");
+    expect(JSON.stringify(second.messages.filter((m) => m.role === "tool"))).toContain("server_logs");
+  });
+
+  it("reads the logs in the on arm", async () => {
+    const { spend } = await freshSpend(db);
+    const script = scriptedFetch([{ calls: [{ name: "server_logs", input: {} }] }, { calls: [SUBMIT] }]);
+    const session = new FakeSession();
+    const result = await runAttempt(attemptOptions(spend, script.fetch, session, { spec: { arm: "on", index: 1, rerun: 0 } }).options);
+    expect(session.log).toEqual(["server_logs:tail"]);
+    expect(result.tool_calls.server_logs).toBe(1);
+    expect(script.bodies[1]).toContain("synthetic log line");
+  });
+
+  it("answers input that fails the tool's schema with an error and does not run it", async () => {
+    const { spend } = await freshSpend(db);
+    const script = scriptedFetch([{ calls: [{ name: "bash", input: { cmd: "ls" } }] }, { calls: [SUBMIT] }]);
+    const session = new FakeSession();
+    const result = await runAttempt(attemptOptions(spend, script.fetch, session).options);
+    expect(session.log).toEqual([]);
+    expect(result.invalid_tool_calls).toBe(1);
+  });
+});
+
+describe("a reply without a tool call", () => {
+  it("is answered with the fixed reminder and counts as a turn", async () => {
+    const { spend } = await freshSpend(db);
+    const script = scriptedFetch([{ text: "I think the bug is in the date code." }, { calls: [SUBMIT] }]);
+    const run = attemptOptions(spend, script.fetch, new FakeSession());
+    const result = await runAttempt(run.options);
+    expect(result.turns).toBe(2);
+    const second = parse(script.bodies[1] ?? "");
+    expect(second.messages.at(-1)).toEqual({ role: "user", content: NO_TOOL_CALL_REMINDER });
+    expect(run.events.some((e) => e.type === "reminder")).toBe(true);
+  });
+});
+
+describe("caps", () => {
+  it("stops at the turn cap without another request", async () => {
+    const { spend } = await freshSpend(db);
+    const bash = { calls: [{ name: "bash", input: { command: "true" } }] };
+    const script = scriptedFetch([bash, bash, bash, bash]);
+    const profile = withCaps(SUPER_SOLVER_PROFILE, { max_turns: 3 });
+    const result = await runAttempt(attemptOptions(spend, script.fetch, new FakeSession(), { profile }).options);
+    expect(result).toMatchObject({ outcome: "cap_reached", cap: "turns", turns: 3 });
+    expect(script.bodies).toHaveLength(3);
+  });
+
+  it("stops before a turn whose counted bound would pass the attempt's input-token cap, reserving nothing", async () => {
+    const { spend, schema } = await freshSpend(db);
+    const script = scriptedFetch([{ calls: [{ name: "bash", input: { command: "true" } }], usage: { prompt_tokens: 5000, completion_tokens: 10 } }]);
+    const profile = withCaps(SUPER_SOLVER_PROFILE, { max_input_tokens: 6000 });
+    const result = await runAttempt(attemptOptions(spend, script.fetch, new FakeSession(), { profile }).options);
+    expect(result).toMatchObject({ outcome: "cap_reached", cap: "input_tokens", turns: 1, input_tokens: 5000 });
+    expect(script.bodies).toHaveLength(1);
+    expect(await operations(schema, spend)).toHaveLength(1);
+  });
+
+  it("stops at the wall-clock cap", async () => {
+    const { spend } = await freshSpend(db);
+    const bash = { calls: [{ name: "bash", input: { command: "true" } }] };
+    const script = scriptedFetch([bash, bash, bash]);
+    const profile = withCaps(SUPER_SOLVER_PROFILE, { max_wall_ms: 5 * 60_000 });
+    const result = await runAttempt(attemptOptions(spend, script.fetch, new FakeSession(), { profile, now: steppingClock(60_000) }).options);
+    expect(result).toMatchObject({ outcome: "cap_reached", cap: "wall" });
+    expect(script.bodies.length).toBeLessThan(3);
+  });
+
+  it("refuses a request over the per-call input limit without reserving", async () => {
+    const { spend, schema } = await freshSpend(db);
+    const script = scriptedFetch([{ calls: [SUBMIT] }]);
+    const profile = { ...SUPER_SOLVER_PROFILE, hashed: { ...SUPER_SOLVER_PROFILE.hashed, max_input_tokens: 100 } };
+    const result = await runAttempt(attemptOptions(spend, script.fetch, new FakeSession(), { profile }).options);
+    expect(result).toMatchObject({ outcome: "cap_reached", cap: "context_window", turns: 0 });
+    expect(script.bodies).toHaveLength(0);
+    expect(await operations(schema, spend)).toHaveLength(0);
+  });
+});
+
+describe("spend refusals and infrastructure errors", () => {
+  it("sends nothing when the run's root does not hold the slot", async () => {
+    const { spend } = await freshSpend(db, { acquire: false });
+    const script = scriptedFetch([{ calls: [SUBMIT] }]);
+    const result = await runAttempt(attemptOptions(spend, script.fetch, new FakeSession()).options);
+    expect(result.outcome).toBe("spend_refused");
+    expect(result.refusal?.code).toBe("slot_not_held");
+    expect(script.bodies).toHaveLength(0);
+  });
+
+  it("sends nothing when the pool cannot cover a turn's worst case", async () => {
+    const { spend } = await freshSpend(db, { cap: 1000 });
+    const script = scriptedFetch([{ calls: [SUBMIT] }]);
+    const result = await runAttempt(attemptOptions(spend, script.fetch, new FakeSession()).options);
+    expect(result.outcome).toBe("spend_refused");
+    expect(script.bodies).toHaveLength(0);
+  });
+
+  it("records a lost response as uncertain and stops as an infrastructure error", async () => {
+    const { spend, schema } = await freshSpend(db);
+    const script = scriptedFetch([{ throws: true }]);
+    const result = await runAttempt(attemptOptions(spend, script.fetch, new FakeSession()).options);
+    expect(result.outcome).toBe("infrastructure_error");
+    expect(result.infrastructure?.reason).toBe("lost_response");
+    expect((await operations(schema, spend))[0]?.state).toBe("uncertain");
+    expect(result.usage_complete).toBe(false);
+  });
+
+  it("settles an HTTP error at its worst case and stops as an infrastructure error", async () => {
+    const { spend } = await freshSpend(db);
+    const script = scriptedFetch([{ status: 500, body: '{"error":"synthetic"}' }]);
+    const result = await runAttempt(attemptOptions(spend, script.fetch, new FakeSession()).options);
+    expect(result).toMatchObject({ outcome: "infrastructure_error", turns: 1 });
+    expect(result.infrastructure?.reason).toBe("http_status");
+    // No usage reported: each line retains its worst case, ceil(131072 × 0.3) + ceil(8192 × 0.9).
+    expect(result.settled_microusd).toBe(39_322 + 7_373);
+  });
+
+  it("stops as an infrastructure error when the session throws", async () => {
+    const { spend } = await freshSpend(db);
+    const script = scriptedFetch([{ calls: [{ name: "rebuild_restart", input: {} }] }]);
+    const session = new FakeSession();
+    session.failOn = "rebuild_restart";
+    const result = await runAttempt(attemptOptions(spend, script.fetch, session).options);
+    expect(result.outcome).toBe("infrastructure_error");
+    expect(result.infrastructure?.reason).toContain("synthetic rebuild_restart failure");
+  });
+});
+
+describe("attempt keys", () => {
+  it("name the arm, the zero-padded index and the rerun", () => {
+    expect(attemptKey({ arm: "on", index: 7, rerun: 2 })).toBe("on-007-r2");
+    expect(() => attemptKey({ arm: "off", index: 0, rerun: 0 })).toThrow();
+    expect(() => attemptKey({ arm: "off", index: 1, rerun: 10 })).toThrow();
+  });
+
+  it("give each rerun at an index its own operations", async () => {
+    const { spend, schema } = await freshSpend(db);
+    for (const rerun of [0, 1]) {
+      const script = scriptedFetch([{ calls: [SUBMIT] }]);
+      await runAttempt(attemptOptions(spend, script.fetch, new FakeSession(), { spec: { arm: "on", index: 3, rerun } }).options);
+    }
+    expect((await operations(schema, spend)).map((op) => op.call_name)).toEqual(["solver.turn:on-003-r0:1", "solver.turn:on-003-r1:1"]);
+  });
+});
+
+describe("contamination", () => {
+  it("is flagged from the attempt's bash commands", async () => {
+    const { spend } = await freshSpend(db);
+    const script = scriptedFetch([{ calls: [{ name: "bash", input: { command: "cd .next/standalone && node server.js &" } }] }, { calls: [SUBMIT] }]);
+    const result = await runAttempt(attemptOptions(spend, script.fetch, new FakeSession()).options);
+    expect(result.contamination.map((hit) => hit.kind)).toEqual(["starts_server"]);
+  });
+});
