@@ -261,6 +261,8 @@ describe("reading a grade", () => {
       ["no original-suite test ran", summary(2, route, { trial: { original_executed: 0 } }), "failed"],
       ["the import refused", summary(2, route, { refusal: "evidence_mismatch" }), "failed"],
       ["the import refused, as the controller ends it", summary(2, route, { status: "incomplete", refusal: "evidence_mismatch" }), "failed"],
+      ["the import refused, then a blocked slot release", summary(2, route, { status: "needs_reconciliation", reason: "slot_release_blocked", refusal: "evidence_mismatch" }), "failed"],
+      ["the import refused, then a ledger outage", summary(2, route, { status: "needs_reconciliation", reason: "ledger_unavailable", refusal: "evidence_mismatch", trial: null }), "failed"],
       ["a job left for reconciliation before a verdict", summary(2, route, { status: "needs_reconciliation", reason: "ledger_unavailable", trial: null }), "infrastructure"],
       ["a verdict match, then a ledger outage", summary(2, route, { status: "needs_reconciliation", reason: "ledger_unavailable" }), "passed"],
       ["a verdict reject, then a ledger outage", summary(2, route, { status: "needs_reconciliation", reason: "ledger_unavailable", trial: { added_verdict: "reject" } }), "failed"],

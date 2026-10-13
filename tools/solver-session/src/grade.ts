@@ -227,12 +227,12 @@ export function readGrade(work: string, grade: GradeNumber, route: GradeRoute, a
     placed_sha256: str(field(field(copy, "copy"), "placed_sha256")),
   };
   // A job that did not complete stopped on the slot, the ledger, the build, the launch or the copy,
-  // before any verdict on the attempt, except an import refusal of the copy's records (the job then
-  // ends incomplete with no stop reason): records the attempt's code may have touched are a failure.
-  // A job can also stop after the verdict (the slot release or the spend read failed): an imported
-  // complete fixed-01 is then judged like a complete job's.
+  // before any verdict on the attempt, except an import refusal of the copy's records: records the
+  // attempt's code may have touched are a failure, even when the slot release or the spend read then
+  // failed too (the job ends with that stop reason instead of none). A job can also stop after the
+  // verdict: an imported complete fixed-01 is then judged like a complete job's.
   const status = field(summary, "status");
-  if (status !== "complete" && field(summary, "reason") === null && typeof field(field(summary, "import"), "refusal") === "string") {
+  if (status !== "complete" && typeof field(field(summary, "import"), "refusal") === "string") {
     return result("failed", "the record set was refused at import", summarySha, trial);
   }
   const verdictImported = field(field(summary, "import"), "refusal") === null && trial.status === "complete" && trial.added_verdict !== null;
