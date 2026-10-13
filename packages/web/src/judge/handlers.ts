@@ -92,9 +92,12 @@ export async function postSession(request: Request, server: JudgeServer): Promis
   return respond(200, { state: "ready" }, { "set-cookie": cookie });
 }
 
-/** GET /api/judge/session: 200 while the session cookie is valid, 401 otherwise, so a reloaded page knows it is signed in. */
+/**
+ * GET /api/judge/session: ready while the session cookie is valid, signed_out otherwise, so a
+ * reloaded page knows it is signed in. Every public page load asks, so both answers are 200.
+ */
 export function getSession(request: Request, server: JudgeServer): Response {
-  return hasSession(request, server.config) ? respond(200, { state: "ready" }) : unauthorized();
+  return respond(200, { state: hasSession(request, server.config) ? "ready" : "signed_out" });
 }
 
 interface Context {
@@ -170,6 +173,10 @@ export async function postJudge(request: Request, server: JudgeServer): Promise<
     const expires = judge.tokenExpiresMs(token);
     if (expires === null || expires < createdMs + judge.CONTROLLER_TIMEOUT_MS) return unavailable(requestId, "token");
 
+    // An over-envelope settlement anywhere halts all spend until an operator resumes it; the
+    // reservation would be refused, so a halt answers before the slot, with no ledger write.
+    const halt = await spend.haltStatus();
+    if (halt.ok && halt.halted) return unavailable(requestId, "halted");
     if (judge.holdActive(await replays(judge, store), server.config.holdClearedAt)) return unavailable(requestId, "held");
     const whole = judge.judgeReservation(ctx.rates);
     const envelope = judge.controllerEnvelope(ctx.rates);
@@ -191,7 +198,7 @@ export async function postJudge(request: Request, server: JudgeServer): Promise<
       if (!reserved.ok) {
         const released = await spend.releaseSlot({ slot_key: judge.JUDGE_POOL.slot_key, root_execution_id: ids.root, actor_role: ACTOR, evidence: null, reason: null });
         server.log(`judge ${requestId} reserve refused ${reserved.code}; slot released ${String(released.ok)}`);
-        return unavailable(requestId, "budget");
+        return unavailable(requestId, reserved.code === "pool_halted" ? "halted" : "budget");
       }
 
       const deadlineMs = judge.judgeDeadlineMs(createdMs);

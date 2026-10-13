@@ -347,7 +347,7 @@ describe("the replay cell", () => {
   });
 
   it("shows each unavailable reason's text, even over an earlier replay's status", () => {
-    expect(Object.keys(REPLAY_UNAVAILABLE_TEXT).sort()).toEqual(["budget", "busy", "error", "held", "ledger", "release", "token"]);
+    expect(Object.keys(REPLAY_UNAVAILABLE_TEXT).sort()).toEqual(["budget", "busy", "error", "halted", "held", "ledger", "release", "token"]);
     for (const message of Object.values(REPLAY_UNAVAILABLE_TEXT)) {
       expect(message).toMatch(/\.$/);
       for (const earlier of [null, status("verified", false, [])]) {

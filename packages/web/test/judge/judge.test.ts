@@ -207,7 +207,7 @@ describe("the passcode session", () => {
     expect([...w.touched, ...rotated.touched]).toEqual([]);
   });
 
-  it("answers a session check with 200 for a valid cookie and 401 otherwise, before any call", async () => {
+  it("answers a session check with 200, ready for a valid cookie and signed_out otherwise, before any call", async () => {
     const w = await world();
     const check = (cookie: string | null) => getSession(new Request("https://example.invalid/api/judge/session", { headers: cookie === null ? {} : { cookie } }), w.server);
     const valid = check(await login(w));
@@ -215,9 +215,11 @@ describe("the passcode session", () => {
     expect(await json(valid)).toEqual({ state: "ready" });
     expect(valid.headers.get("set-cookie")).toBeNull();
     for (const cookie of [null, `${SESSION_COOKIE}=synthetic-forged`]) {
-      const refused = check(cookie);
-      expect(refused.status).toBe(401);
-      expect(await json(refused)).toMatchObject({ state: "unauthorized" });
+      // A public page checks on every load, so a missing session is an answer, not an error.
+      const signedOut = check(cookie);
+      expect(signedOut.status).toBe(200);
+      expect(await json(signedOut)).toEqual({ state: "signed_out" });
+      expect(signedOut.headers.get("set-cookie")).toBeNull();
     }
     expect(w.touched).toEqual([]);
   });
@@ -370,6 +372,45 @@ describe("the judge POST", () => {
     };
     const body = await json(await postJudge(post("/api/judge", { request_id: REQUEST }, await login(w)), w.server));
     expect(body).toMatchObject({ state: "unavailable", reason: "budget" });
+    expect(w.events).toContain("ledger:releaseSlot");
+    expect(await slotHolder(w)).toBeNull();
+    expect(w.sdk.creates).toEqual([]);
+  });
+
+  it("is unavailable as halted, with no ledger write, slot or sandbox, while an over-envelope settlement has halted all spend", async () => {
+    const w = await world();
+    await halt(w.spend);
+    w.events.length = 0;
+    w.reserves.length = 0;
+    w.touched.length = 0;
+    const body = await json(await postJudge(post("/api/judge", { request_id: REQUEST }, await login(w)), w.server));
+    expect(body).toMatchObject({ state: "unavailable", reason: "halted", message: "Paused: spending is halted for an operator check. Try again later." });
+    expect(w.events).toEqual([]);
+    expect(w.reserves).toEqual([]);
+    expect(w.touched).not.toContain("sandbox");
+    expect(await slotHolder(w)).toBeNull();
+    expect(w.sdk.creates).toEqual([]);
+    expect(await w.store.list("judge/")).toEqual([]);
+  });
+
+  it("releases the slot and answers halted when spend halts between the check and the reservation", async () => {
+    const w = await world();
+    const open = w.server.ledger;
+    w.server.ledger = async () => {
+      const ledger = await open();
+      return {
+        ...ledger,
+        spend: {
+          ...ledger.spend,
+          reserve: async (request) => {
+            await halt(w.spend);
+            return ledger.spend.reserve(request);
+          },
+        },
+      };
+    };
+    const body = await json(await postJudge(post("/api/judge", { request_id: REQUEST }, await login(w)), w.server));
+    expect(body).toMatchObject({ state: "unavailable", reason: "halted", message: REPLAY_UNAVAILABLE_TEXT.halted });
     expect(w.events).toContain("ledger:releaseSlot");
     expect(await slotHolder(w)).toBeNull();
     expect(w.sdk.creates).toEqual([]);
@@ -543,6 +584,59 @@ async function drain(spend: Spend, amount: number, allocation = "judge"): Promis
     envelope: [{ service: "synthetic", unit: "allowance", limit: amount, enforced_by: "fixed_allowance", price: { microusd: 1, per_units: 1 } }],
   });
   if (!result.ok) throw new Error(`synthetic: the drain was refused (${result.code})`);
+}
+
+/** Settles a public operation above its envelope, which halts new spend in every pool until an operator resumes it. */
+async function halt(spend: Spend): Promise<void> {
+  const op = sha256Hex(Buffer.from(`synthetic-overrun-${String(Math.random())}`));
+  const root = "00000000-0000-4000-8000-00000000e201";
+  const steps = [
+    () => spend.createSlotKey({ slot_key: "synthetic-overrun", actor_role: "owner", reason: "synthetic overrun" }),
+    () => spend.acquireSlot({ slot_key: "synthetic-overrun", root_execution_id: root, actor_role: "workflow" }),
+    () =>
+      spend.reserve({
+        operation_id: op,
+        payload_hash: op,
+        attempt_ordinal: 1,
+        previous_operation_id: null,
+        project_id: "00000000-0000-4000-8000-000000000001",
+        project_policy_sha256: "1".repeat(64),
+        batch_id: null,
+        task_revision: "2".repeat(64),
+        root_execution_id: root,
+        execution_id: root,
+        parent_execution_id: null,
+        kind: "synthetic.overrun",
+        call_name: "synthetic.overrun:1",
+        provider: "synthetic",
+        provider_replay_key: null,
+        pool_key: "judge-demo",
+        allocation_key: "public",
+        runtime_profile_sha256: "3".repeat(64),
+        rate_sheet_sha256: "4".repeat(64),
+        envelope: [{ service: "synthetic", unit: "input_token", limit: 1000, enforced_by: "request_parameter", price: { microusd: 1, per_units: 1 } }],
+      }),
+    () => spend.transition({ operation_id: op, from_state: "prepared", to_state: "launching", actor_role: "workflow", slot_key: "synthetic-overrun" }),
+    () => spend.transition({ operation_id: op, from_state: "launching", to_state: "terminal", actor_role: "workflow", terminal_status: "completed" }),
+    () =>
+      spend.settle({
+        schema_version: 1,
+        operation_id: op,
+        runtime_profile_sha256: "3".repeat(64),
+        rate_sheet_sha256: "4".repeat(64),
+        reserved_microusd: 1000,
+        service_lines: [{ service: "synthetic", unit: "input_token", actual_quantity: 1000, actual_microusd: 1001, retained_microusd: 0 }],
+        usage_state: "known",
+        terminal_evidence_key: null,
+        terminal_evidence_sha256: null,
+      }),
+  ];
+  for (const [index, step] of steps.entries()) {
+    const result = await step();
+    if (!result.ok) throw new Error(`synthetic: overrun step ${String(index)} was refused (${JSON.stringify(result)})`);
+  }
+  const status = await spend.haltStatus();
+  if (!status.ok || !status.halted) throw new Error("synthetic: spend did not halt");
 }
 
 async function put(w: World, key: string, value: unknown): Promise<void> {
