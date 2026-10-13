@@ -7,17 +7,28 @@
 //   <out>/store/sha256/<hash>         each large file's store object (manifest entries with a public_uri)
 // Every downloaded store object is checked against its manifest SHA-256. It reads public data
 // only and needs no credentials. The build checks the whole directory again (readResults).
-// Usage, from packages/web: node scripts/assemble-results.mjs <new out dir> <repository https url> <public store base uri>
+// A run the publisher wrote only as a status object (still running, or failed before its
+// manifest was published) has no repository directory, and the public store cannot be listed
+// without credentials, so such runs are included only when their root IDs are given.
+// Usage, from packages/web:
+//   node scripts/assemble-results.mjs <new out dir> <repository https url> <public store base uri> [<status-only root id> ...]
 /* global Buffer, URL, console, fetch, process */
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-const [out, repoUrl, base] = process.argv.slice(2);
+const [out, repoUrl, base, ...statusOnly] = process.argv.slice(2);
 if (!out || !repoUrl || !base) {
-  console.error("usage: assemble-results.mjs <new out dir> <repository url> <public store base uri>");
+  console.error("usage: assemble-results.mjs <new out dir> <repository url> <public store base uri> [<status-only root id> ...]");
   process.exit(2);
+}
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+for (const root of statusOnly) {
+  if (!UUID.test(root)) {
+    console.error(`not a root ID: ${root}`);
+    process.exit(2);
+  }
 }
 if (existsSync(out)) {
   console.error(`${out} already exists`);
@@ -51,5 +62,10 @@ for (const root of existsSync(runs) ? readdirSync(runs) : []) {
     objects++;
   }
   console.log(`run ${root}: status ok`);
+}
+for (const root of statusOnly) {
+  if (existsSync(join(runs, root))) continue;
+  writeFileSync(join(out, "store", "status", `${root}.json`), await fetchBytes(new URL(`status/${root}.json`, base).href));
+  console.log(`run ${root}: status only`);
 }
 console.log(`store objects: ${objects}`);
