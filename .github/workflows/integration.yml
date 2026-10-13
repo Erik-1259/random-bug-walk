@@ -1,6 +1,6 @@
 # Purpose: run Postgres integration tests for each pull request against a throwaway Neon branch.
 # Each run creates one branch, exposes it as DATABASE_URL to the smoke check and the tests only,
-# and deletes it afterwards, including when the run is cancelled.
+# and deletes it afterwards, including when the run is canceled.
 #
 # Secrets: NEON_API_KEY and NEON_PROJECT_ID (both repository secrets). Fork and Dependabot pull
 # requests receive no repository secrets, so the job fails there with a message naming what is missing.

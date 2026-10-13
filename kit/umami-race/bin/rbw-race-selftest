@@ -1,0 +1,198 @@
+#!/bin/sh
+# In-image checks of the race kit's additions: the pinned Toxiproxy binary, its loopback-only
+# listeners, its identity, the latency toxic, and that the app's database traffic goes through it.
+# Run as root in a fresh container, before rbw-start; rbw-kit-selftest runs it after the time-zone
+# kit's own checks. Prints "pass <name>" or "fail <name>" per check; exit status 1 if any failed.
+# shellcheck disable=SC2329 # the check functions and cleanup run indirectly, through check and trap
+set -u
+LAUNCH=/opt/rbw/bin/rbw-launch
+VERIFIER=/opt/rbw/verifier
+NODE=$VERIFIER/node/bin/node
+BINARY=/usr/local/bin/toxiproxy-server
+TOXIPROXY_VERSION=2.12.0
+failures=0
+
+[ "$(id -u)" = 0 ] || { echo "rbw-race-selftest: must run as root" >&2; exit 2; }
+scratch=$(mktemp -d /run/rbw-race-selftest.XXXXXX)
+
+cleanup() {
+  /opt/rbw/bin/rbw-stop > /dev/null 2>&1
+  rm -r -f "$scratch"
+}
+trap cleanup EXIT
+
+check() {
+  name=$1
+  shift
+  if "$@" > "$scratch/check.log" 2>&1; then
+    echo "pass $name"
+  else
+    echo "fail $name"
+    sed 's/^/    /' "$scratch/check.log" | head -n 40
+    failures=$((failures + 1))
+  fi
+}
+
+as_app() {
+  "$LAUNCH" --as app --timeout-ms 60000 "$@"
+}
+
+uptime_ms() {
+  awk '{ printf "%d", $1 * 1000 }' /proc/uptime
+}
+
+# The image default, which the manifest records.
+default_latency_ms() {
+  sed -n 's/^RBW_RACE_LATENCY_MS=//p' /opt/rbw/etc/race.environment
+}
+
+# The latency in effect, which root can change with "rbw-proxy set-latency".
+latency_ms() {
+  /opt/rbw/bin/rbw-proxy latency | sed -n 's/^proxy_latency latency_ms=\([0-9]*\) .*/\1/p'
+}
+
+# The PID of the running toxiproxy-server (its comm is cut to 15 characters).
+proxy_pid() {
+  for status in /proc/[0-9]*/status; do
+    if grep -qx 'Name:[[:space:]]*toxiproxy-serve' "$status" 2>/dev/null; then
+      basename "$(dirname "$status")"
+      return 0
+    fi
+  done
+  return 1
+}
+
+binary_matches_pinned_hash() {
+  case $(uname -m) in
+    x86_64) arch=amd64 ;;
+    aarch64) arch=arm64 ;;
+    *) echo "unknown machine $(uname -m)"; return 1 ;;
+  esac
+  expected=$(awk -v name="toxiproxy-server-linux-$arch" '$2 == name { print $1 }' "$VERIFIER/toxiproxy.sha256")
+  actual=$(sha256sum "$BINARY" | awk '{ print $1 }')
+  version=$("$BINARY" -version)
+  echo "arch=$arch expected=$expected actual=$actual version=$version"
+  [ -n "$expected" ] && [ "$expected" = "$actual" ] && [ "$version" = "toxiproxy-server version $TOXIPROXY_VERSION" ]
+}
+
+proxy_listens_on_loopback_only() {
+  /opt/rbw/bin/rbw-start --db-only || return 1
+  /opt/rbw/bin/rbw-listening > "$scratch/listening"
+  cat "$scratch/listening"
+  grep -qx 'tcp 127.0.0.1:5433' "$scratch/listening" || return 1
+  grep -qx 'tcp 127.0.0.1:8474' "$scratch/listening" || return 1
+  ! grep -v -e '^tcp 127\.' -e '^tcp6 \[::1\]' "$scratch/listening" | grep -q . || return 1
+  ! grep -e ':5433$' -e ':8474$' "$scratch/listening" | grep -qvx -e 'tcp 127.0.0.1:5433' -e 'tcp 127.0.0.1:8474'
+}
+
+proxy_runs_as_db_user() {
+  pid=$(proxy_pid) || { echo "toxiproxy-server is not running"; return 1; }
+  grep -e '^Uid:' -e '^Gid:' -e '^NoNewPrivs:' "/proc/$pid/status"
+  grep -q '^Uid:[[:space:]]*2002[[:space:]]' "/proc/$pid/status" && grep -q '^Gid:[[:space:]]*2002[[:space:]]' "/proc/$pid/status"
+}
+
+app_cannot_signal_proxy() {
+  pid=$(proxy_pid) || { echo "toxiproxy-server is not running"; return 1; }
+  ! as_app -- kill -0 "$pid"
+}
+
+proxy_has_configured_toxic() {
+  echo "configured latency_ms=$(latency_ms)"
+  /opt/rbw/bin/rbw-proxy check
+}
+
+app_url_points_at_proxy() {
+  url=$(sed -n 's/^DATABASE_URL=//p' /opt/rbw/etc/app.environment)
+  case $url in
+    *@127.0.0.1:5433/umami) ;;
+    *) echo "DATABASE_URL does not point at 127.0.0.1:5433"; return 1 ;;
+  esac
+}
+
+# The app role connects while the proxy runs and cannot once it is stopped, so its traffic goes
+# through the proxy and not straight to 5432.
+app_traffic_goes_through_proxy() {
+  # shellcheck disable=SC2016 # expanded by the app's shell
+  run_sql='psql "$DATABASE_URL" -X -tA -v ON_ERROR_STOP=1 -c "SELECT 1"'
+  started=$(uptime_ms)
+  [ "$(as_app --env-file /opt/rbw/etc/app.environment -- sh -c "$run_sql")" = 1 ] || { echo "cannot connect through the proxy"; return 1; }
+  elapsed=$(($(uptime_ms) - started))
+  latency=$(latency_ms)
+  echo "connect and query through the proxy: ${elapsed} ms, configured latency ${latency} ms"
+  [ "$elapsed" -ge "$latency" ] || { echo "the query took less than the configured latency"; return 1; }
+  /opt/rbw/bin/rbw-proxy stop || return 1
+  if as_app --env-file /opt/rbw/etc/app.environment -- sh -c "$run_sql"; then
+    echo "connected with the proxy stopped"
+    return 1
+  fi
+  /opt/rbw/bin/rbw-proxy start
+}
+
+manifest_records_proxy() {
+  # shellcheck disable=SC2016 # JavaScript template literals, not shell expansions
+  "$NODE" --input-type=module -e '
+    import { readFileSync } from "node:fs";
+    import { createHash } from "node:crypto";
+    const [manifestPath, baseManifestPath, binary, latency] = process.argv.slice(1);
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+    const base = JSON.parse(readFileSync(baseManifestPath, "utf8"));
+    const sha = createHash("sha256").update(readFileSync(binary)).digest("hex");
+    const baseSha = createHash("sha256").update(readFileSync(baseManifestPath)).digest("hex");
+    const problems = [];
+    if (manifest.schema !== "rbw-umami-race-kit-image-manifest/1") problems.push(`schema ${manifest.schema}`);
+    if (manifest.race?.toxiproxy?.sha256 !== sha) problems.push("toxiproxy hash differs from the binary");
+    if (manifest.race?.toxic?.latencyMs !== Number(latency)) problems.push("latency differs from race.environment");
+    if (manifest.race?.baseManifest?.sha256 !== baseSha) problems.push("base manifest hash differs");
+    if (base.schema !== "rbw-umami-kit-image-manifest/1") problems.push(`base schema ${base.schema}`);
+    for (const problem of problems) console.error(problem);
+    process.exitCode = problems.length === 0 ? 0 : 1;
+  ' "$VERIFIER/image-manifest.json" "$VERIFIER/base-image-manifest.json" "$BINARY" "$(default_latency_ms)"
+}
+
+# Root sets another latency for this container; the toxic and "check" follow it, the app cannot
+# write the override, and "set-latency default" goes back to the image's value.
+latency_set_per_container() {
+  default=$(default_latency_ms)
+  /opt/rbw/bin/rbw-proxy set-latency 25 || return 1
+  /opt/rbw/bin/rbw-proxy latency | grep -qx 'proxy_latency latency_ms=25 source=override' || return 1
+  curl -fsS http://127.0.0.1:8474/proxies/postgres/toxics/latency_downstream | grep -q '"latency":25,' || return 1
+  /opt/rbw/bin/rbw-proxy check || return 1
+  if as_app -- sh -c 'echo RBW_RACE_LATENCY_MS=0 > /run/rbw/race-latency.environment' 2>/dev/null; then
+    echo "the app wrote the latency override"
+    return 1
+  fi
+  /opt/rbw/bin/rbw-proxy set-latency default || return 1
+  /opt/rbw/bin/rbw-proxy latency | grep -qx "proxy_latency latency_ms=$default source=default" || return 1
+  /opt/rbw/bin/rbw-proxy check
+}
+
+# The app removes the toxic and puts an identical one back. The state then matches, but the check
+# still fails, because Toxiproxy logged the app's requests. A restart re-applies, and then passes.
+check_fails_after_app_changes_toxic() {
+  toxic='{"name":"latency_downstream","type":"latency","stream":"downstream","toxicity":1,"attributes":{"latency":'"$(latency_ms)"',"jitter":0}}'
+  as_app -- curl -fsS -o /dev/null -X DELETE http://127.0.0.1:8474/proxies/postgres/toxics/latency_downstream || return 1
+  as_app -- curl -fsS -o /dev/null -X POST -d "$toxic" http://127.0.0.1:8474/proxies/postgres/toxics || return 1
+  if /opt/rbw/bin/rbw-proxy check; then
+    echo "check passed after the app changed the toxic"
+    return 1
+  fi
+  /opt/rbw/bin/rbw-proxy start && /opt/rbw/bin/rbw-proxy check
+}
+
+check toxiproxy-binary-matches-pinned-hash binary_matches_pinned_hash
+check proxy-listens-on-loopback-only proxy_listens_on_loopback_only
+check proxy-runs-as-db-user proxy_runs_as_db_user
+check app-cannot-signal-proxy app_cannot_signal_proxy
+check proxy-has-configured-latency-toxic proxy_has_configured_toxic
+check app-database-url-points-at-proxy app_url_points_at_proxy
+check app-database-traffic-goes-through-proxy app_traffic_goes_through_proxy
+check manifest-records-proxy manifest_records_proxy
+check latency-can-be-set-per-container latency_set_per_container
+check proxy-check-detects-app-api-change check_fails_after_app_changes_toxic
+
+if [ "$failures" -eq 0 ]; then
+  echo "race checks: all passed"
+  exit 0
+fi
+echo "race checks: $failures check(s) failed"
+exit 1
