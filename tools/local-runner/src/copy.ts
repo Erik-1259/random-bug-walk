@@ -172,6 +172,26 @@ export function readExit(path: string): number | null {
   return existsSync(path) ? exitStatus(readFileSync(path, "utf8")) : null;
 }
 
+/** What rbw-proxy reported for a race-family copy that set a latency: its exit status and the latency it applied. */
+export interface ProxyReport {
+  exit: number | null;
+  /** From rbw-proxy's `proxy_latency latency_ms=<n> source=<default|override>` line; null when it printed none. */
+  latency_ms: number | null;
+  source: "default" | "override" | null;
+}
+
+/** The copy's rbw-proxy report, or null for a copy that set no latency (no `proxy.exit` was collected). */
+export function proxyReport(collected: string | null): ProxyReport | null {
+  if (collected === null || !existsSync(join(collected, "proxy.exit"))) return null;
+  const stdout = join(collected, "proxy.stdout");
+  const line = existsSync(stdout) ? /^proxy_latency latency_ms=(\d{1,5}) source=(default|override)$/m.exec(readFileSync(stdout, "utf8")) : null;
+  return {
+    exit: readExit(join(collected, "proxy.exit")),
+    latency_ms: line === null ? null : Number(line[1]),
+    source: line === null ? null : line[2] === "override" ? "override" : "default",
+  };
+}
+
 type Race = { kind: "exited"; result: CommandResult } | { kind: "limit" };
 
 /** Waits for the container, stopping it at the outer limit: TERM, then KILL after the grace period. */

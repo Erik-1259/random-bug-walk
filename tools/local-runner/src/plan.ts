@@ -7,7 +7,7 @@ import type { CodeState } from "@rbw/schema";
 import { DEFAULT_PHASE_LIMITS } from "@rbw/umami-driver";
 import { stateForPatch } from "./code-states.ts";
 import type { CodeStates, StateFile } from "./code-states.ts";
-import { COPY_OUTER_LIMIT_MS, COPY_RESOURCES, KILL_GRACE_MS } from "./copy.ts";
+import { COPY_OUTER_LIMIT_MS, COPY_RESOURCES, KILL_GRACE_MS, proxyReport } from "./copy.ts";
 import type { CopyPlan, CopyResult } from "./copy.ts";
 import type { Docker } from "./docker.ts";
 import type { CopyInputs } from "./inputs.ts";
@@ -112,6 +112,8 @@ export function planCopy(trial: TrialRef, p: CopyPlanInputs): CopyPlan {
 
 export function copySummary(copy: CopyResult, codeState: CodeState, merged: MergedTrial | undefined): CopySummary {
   const measured = measure(copy.records_dir, copy.trial_id);
+  // Only a race-family copy that set a latency has a proxy report, so other copies' summaries are unchanged.
+  const proxy = proxyReport(copy.collected_dir);
   return {
     trial_id: copy.trial_id,
     state: copy.state,
@@ -130,6 +132,7 @@ export function copySummary(copy: CopyResult, codeState: CodeState, merged: Merg
     driver_phases: measured.driver_phases,
     tests_phase: measured.tests_phase,
     artifact_bytes: measured.artifact_bytes,
+    ...(proxy === null ? {} : { proxy }),
   };
 }
 

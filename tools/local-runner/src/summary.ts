@@ -3,7 +3,7 @@
 import { encodeCanonical } from "@rbw/schema";
 import type { CodeState } from "@rbw/schema";
 import type { StateKey } from "./code-states.ts";
-import type { AuditResult, CopyStatus } from "./copy.ts";
+import type { AuditResult, CopyStatus, ProxyReport } from "./copy.ts";
 import type { PhaseSummary } from "./records.ts";
 import type { SandboxReport } from "./sandbox.ts";
 
@@ -44,6 +44,8 @@ export interface CopySummary {
   driver_phases: PhaseSummary[];
   tests_phase: { duration_ms: number; limit_ms: number; within_limit: boolean } | null;
   artifact_bytes: { total: number; limit: number; within_limit: boolean } | null;
+  /** Only for a race-family copy that set a latency: rbw-proxy's exit status and the latency it reported applying. */
+  proxy?: ProxyReport;
   /** Only for a copy on Vercel Sandbox: its name, the stop confirmation and the SDK call counts. */
   sandbox?: SandboxReport;
 }

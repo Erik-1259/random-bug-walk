@@ -198,6 +198,7 @@ export class KitImage {
       const accepted = Number(container.latency) <= 10000;
       writeFileSync(join(dir, "proxy.exit"), accepted ? "0\n" : "1\n");
       if (!accepted) return 91;
+      writeFileSync(join(dir, "proxy.stdout"), `proxy_latency latency_ms=${container.latency} source=override\n`);
     }
     writeFileSync(join(dir, "freeze.exit"), "0\n");
     if (container.mode === "freeze") {

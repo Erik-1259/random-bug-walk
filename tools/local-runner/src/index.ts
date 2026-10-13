@@ -3,7 +3,7 @@ export type { Clock } from "./clock.ts";
 export { ALTERNATIVE_FIX_DIR, CodeStateRefusal, STATE_KEYS, applyPatchChecked, deriveCodeStates, gitDiff, loadAlternativeFix, stateForPatch } from "./code-states.ts";
 export type { AlternativeFix, CodeStates, StateFile, StateKey } from "./code-states.ts";
 export { APP_DIR, COPY_OUTER_LIMIT_MS, COPY_RESOURCES, COPY_SCRIPT, KILL_GRACE_MS, RBW_PROXY, copyCommands, copyScriptArgs, runCopies, runCopy } from "./copy.ts";
-export type { AuditResult, CopyPlan, CopyResult } from "./copy.ts";
+export type { AuditResult, CopyPlan, CopyResult, ProxyReport } from "./copy.ts";
 export { commandLine, createDocker } from "./docker.ts";
 export type { CommandResult, Docker, RunOptions } from "./docker.ts";
 export { dryRun } from "./dry-run.ts";

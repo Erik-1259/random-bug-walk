@@ -26,6 +26,7 @@ import {
   containerName,
   deriveCodeStates,
   expectedVectors,
+  familyRecord,
   exportImage,
   importJob,
   inspectImage,
@@ -151,6 +152,14 @@ export interface CopyRecord {
   copy: CopySummary | null;
 }
 
+export type FamilySummary = ReturnType<typeof familyRecord> & { race_latency_ms: number | null };
+
+/** The summary's family record: none for the default family, so a time-zone summary is what it always was. */
+function familySummary(copyInputs: ReturnType<typeof loadCopyInputs>): FamilySummary | null {
+  if (copyInputs.family.id === DEFAULT_FAMILY) return null;
+  return { ...familyRecord(copyInputs.family, copyInputs.probes), race_latency_ms: copyInputs.raceLatencyMs };
+}
+
 export interface ControllerSummary {
   schema_version: 1;
   label: "development_evidence";
@@ -192,6 +201,12 @@ export interface ControllerSummary {
   import: { refusal: string | null; evidence_sha256: string | null; decision_sha256: string | null; trials: TrialSummary[] };
   spend: { reserved_microusd: number; settled_microusd: number; open_microusd: number };
   slot: { key: string; acquired: boolean; released: boolean; blockers: { child_resources: string[]; operation_ids: string[] } | null };
+  /**
+   * Off the default family only: the family, its ADM-06 record with the reason, the admission job's
+   * copy count and the database latency every copy set (null: the image's default). The job request
+   * does not name the latency, so this is where the published run files say which one was used.
+   */
+  family?: FamilySummary;
 }
 
 export interface JobOutcome {
@@ -427,6 +442,13 @@ interface Built {
 /** Inspects and exports the image, freezes the original suite when none is given, and builds the job with the local runner's builders. */
 async function build(inputs: JobInputs, deps: ControllerDeps, state: ControllerState, p: Paths, summary: ControllerSummary, deadlineMs: number): Promise<Built> {
   const copyInputs = loadCopyInputs(inputs);
+  // The kit stage and the probe set must be the family's own; checked before the export or any copy.
+  try {
+    checkKitStage(copyInputs.family, inputs.kitStage);
+    checkFamilyProbes(copyInputs.family, copyInputs.probes);
+  } catch (error) {
+    throw error instanceof FamilyError ? new InputsError(error.message) : error;
+  }
   const envelope = copyEnvelope(deps.rates);
   if (!envelope.ok) throw new JobRefusal(`the copy envelope was refused (${envelope.code})`);
   const tag = runTag(state.ids.root_execution_id);
@@ -470,12 +492,6 @@ async function build(inputs: JobInputs, deps: ControllerDeps, state: ControllerS
 
   const fixtureDir = join(inputs.kitStage, "umami-fixture");
   if (!existsSync(fixtureDir)) throw new InputsError("the kit stage has no umami-fixture directory (run the driver's stage-kit.ts)");
-  try {
-    checkKitStage(copyInputs.family, inputs.kitStage);
-    checkFamilyProbes(copyInputs.family, copyInputs.probes);
-  } catch (error) {
-    throw error instanceof FamilyError ? new InputsError(error.message) : error;
-  }
   const ctx: JobContext = {
     ids: state.ids,
     imageDigest: digest,
@@ -486,7 +502,9 @@ async function build(inputs: JobInputs, deps: ControllerDeps, state: ControllerS
     states,
     vectors: expectedVectors(copyInputs.family.loadFixture(), copyInputs.probes),
     adm06: adm06For(copyInputs.probes),
-    // A family without an alternative fix: a judge replay grades the reference fix as fixed-01.
+    // A family without an alternative fix: a judge replay built here (`run --job-kind judge_verify
+    // --family race`) grades the reference fix as fixed-01. Prebuilt judge replays do not reach
+    // this build and are not wired for families yet: judge-run.ts passes no family.
     ...(copyInputs.alternative === null ? { judgeFixed: "fixed" as const } : {}),
     profileSha256: profileSha256(),
     deadlineAt: utcSeconds(deadlineMs),
@@ -814,6 +832,8 @@ export async function runJob(inputs: JobInputs, deps: ControllerDeps): Promise<J
   mkdirSync(p.base, { recursive: true });
   writeFileSync(p.state, `${JSON.stringify(state, null, 2)}\n`);
   const summary = emptySummary(inputs, deps, state, utcSeconds(startedMs));
+  const family = familySummary(copyInputs);
+  if (family !== null) summary.family = family;
   const finish = (): JobOutcome => {
     summary.controller.ended_at = utcSeconds(deps.clock.now());
     const written = writeSummary(p, summary);

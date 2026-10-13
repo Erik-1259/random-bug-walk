@@ -318,6 +318,19 @@ describe("run-copy", () => {
     expect(sdk.ops().filter((op) => op === "create")).toHaveLength(1);
   });
 
+  it("refuses a race-family copy on a time-zone kit image after the export, before any copy container", async () => {
+    const kit = new KitImage();
+    const { root, jobDir } = await observeJob(kit, (actual) => actual);
+    const dir = tempDir();
+    const outcome = await runCopyCommand(
+      { job: jobDir, trial: "planted-01", root, image: "rbw-umami-kit:synthetic", manifest: writeManifest(dir), terms: writeTerms(dir), policy: null, work: join(dir, "work"), family: "race", raceLatencyMs: 50, probesDir: writeRaceProbeDir() },
+      { docker: kit.docker, clock: new FakeClock({ manual: true }) },
+    );
+    expect(outcome).toMatchObject({ exitCode: 1, copy: null, refusal: { reason: "image_family_mismatch" } });
+    expect(outcome.refusal?.detail).toContain("rbw-umami-race-kit-image-manifest/1");
+    expect(kit.created.filter((name) => !name.endsWith("-export"))).toEqual([]);
+  });
+
   it("refuses a VCR image that is not one of the local image's repository digests, before the export and any SDK call", async () => {
     const kit = new KitImage();
     const { root, jobDir } = await observeJob(kit, (actual) => actual);
@@ -357,6 +370,7 @@ describe("the race family: 11 admission copies, ADM-06 not applicable, a databas
       "planted-05",
     ]);
     expect(admission.copies.every((copy) => copy.status === "complete")).toBe(true);
+    expect(admission.copies.every((copy) => copy.proxy?.exit === 0 && copy.proxy.latency_ms === 50 && copy.proxy.source === "override")).toBe(true);
     expect(summary.admission).toMatchObject({
       decisions: { "ADM-02": "pass", "ADM-03": "pass", "ADM-04": "pass", "ADM-05": "pass", "ADM-06": "not_applicable" },
       comparison: "blind_spot_demonstrated",
@@ -372,8 +386,9 @@ describe("the race family: 11 admission copies, ADM-06 not applicable, a databas
   });
 
   it("passes no latency argument when the run keeps the race image's default", async () => {
-    const { result, kit } = await sequence({ family: "race" }, raceOverrides({ raceLatencyMs: null }));
+    const { result, kit, summary } = await sequence({ family: "race" }, raceOverrides({ raceLatencyMs: null }));
     expect(result.exitCode).toBe(0);
+    expect(summary.jobs.flatMap((item) => item.copies).every((copy) => copy.proxy === undefined)).toBe(true);
     expect([...kit.containers.values()].every((container) => container.latency === null)).toBe(true);
   });
 
