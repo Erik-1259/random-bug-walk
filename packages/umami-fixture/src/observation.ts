@@ -4,8 +4,8 @@ import { join } from "node:path";
 import type { FailureCode, Observed } from "./fixture.ts";
 
 /**
- * The written outcome of one executed check. Field names follow the shared `CheckObservation`
- * record in `@rbw/schema`; this package keeps its own type for the file it writes.
+ * The written outcome of one executed check. Field names follow the shared check-observation
+ * record; when the shared schema package gains that record (item W1-1), this type switches to it.
  */
 export interface Observation {
   check_id: string;
