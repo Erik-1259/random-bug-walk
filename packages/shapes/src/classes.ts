@@ -281,8 +281,8 @@ function upsertSignals(call: SgNode, path: string): Signals {
   const create = call.getMatch("CREATE");
   const whereEntries = kindOf(where) === "object" ? objectEntries(where) : new Map<string, string>();
   const createEntries = kindOf(create) === "object" ? objectEntries(create) : new Map<string, string>();
-  // Only an upsert in the array passed to `$transaction([...])` is batched; one inside an
-  // interactive `$transaction(async (tx) => ...)` callback can run the split form.
+  // Only an upsert in the array passed to `$transaction([...])` is batched. The rule already leaves
+  // out every upsert inside a `$transaction(...)` argument, so this is a second check.
   let inBatch = false;
   for (const node of call.ancestors()) {
     if (FUNCTION_KINDS.has(kindOf(node) ?? "")) {

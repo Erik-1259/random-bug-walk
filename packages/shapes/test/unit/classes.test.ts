@@ -208,18 +208,17 @@ describe("find sites in one file", () => {
     ]);
   });
 
-  it("finds a guard after a comment and removes the guard, keeping the comment and a trailing comma", () => {
+  it("leaves out a guard in a where that holds any comment, where removing it could leave a stray comma", () => {
     const text = [
       "export async function redeem(code: string) {",
       "  const row = await db.client.voucher.findFirst({ where: { code } });",
       "  await db.client.voucher.update({ where: { id: row.id, /* CAS */ used: false }, data: { used: true } });",
+      "  await db.client.voucher.update({ where: { id: row.id, /* CAS */ used: false, tenantId: row.tenantId }, data: { used: true } });",
+      "  await db.client.voucher.update({ where: { id: row.id, used: false /* CAS */ }, data: { used: true } });",
       "}",
       "",
     ].join("\n");
-    const sites = findSitesInSource(CLASSES, "lib/redeem.ts", text);
-    expect(sites.map((site) => site.matched)).toEqual(["used: false"]);
-    expect(sites[0]?.planted_form_confirmed).toBe(true);
-    expect(sites[0]?.diff).toContain("+  await db.client.voucher.update({ where: { id: row.id, /* CAS */  }, data: { used: true } });\n");
+    expect(findSitesInSource(CLASSES, "lib/redeem.ts", text)).toEqual([]);
   });
 
   it("gives the full confidence for operator and version guards", () => {
@@ -385,15 +384,18 @@ describe("find sites in one file", () => {
     expect(findSitesInSource(CLASSES, "lib/prefs.ts", code).map((site) => site.line)).toEqual([8, 9]);
   });
 
-  it("keeps the full score for an upsert inside an interactive transaction callback", () => {
+  it("does not match any upsert inside a transaction argument, or one returned from a plain function", () => {
     const code = [
-      "export async function POST(db, profileId) {",
-      "  return db.client.$transaction(async (tx) => tx.preference.upsert({ where: { profileId }, update: {}, create: { profileId } }));",
+      "export async function POST(db, profileId, ids) {",
+      "  await db.client.$transaction(async (tx) => tx.preference.upsert({ where: { profileId }, update: {}, create: { profileId } }));",
+      "  await db.client.$transaction(async (tx) => { return tx.preference.upsert({ where: { profileId }, update: {}, create: { profileId } }); });",
+      "  await db.client.$transaction(ids.map((id) => { return db.client.preference.upsert({ where: { profileId: id }, update: {}, create: { profileId: id } }); }));",
+      "  const build = (id) => { return db.client.preference.upsert({ where: { profileId: id }, update: {}, create: { profileId: id } }); };",
+      "  return build;",
       "}",
       "",
     ].join("\n");
-    const sites = findSitesInSource(CLASSES, "lib/prefs.ts", code);
-    expect(sites.map((site) => site.confidence.signals.not_in_batch_transaction)).toEqual([true]);
+    expect(findSitesInSource(CLASSES, "lib/prefs.ts", code)).toEqual([]);
   });
 
   it("counts only the read's where, not its select, as filtering on the guard", () => {

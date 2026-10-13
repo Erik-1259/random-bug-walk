@@ -44,6 +44,24 @@ valid:
     async function close(id: string) {
       await db.ticket.update({ where: { id, open: true }, data: { open: false } });
     }
+  - |
+    async function redeem(code: string) {
+      const row = await db.voucher.findFirst({ where: { code } });
+      await db.voucher.update({ where: { id: row.id, /* CAS */ used: false }, data: { used: true } });
+    }
+  - |
+    async function redeem(code: string) {
+      const row = await db.voucher.findFirst({ where: { code } });
+      await db.voucher.update({
+        where: {
+          id: row.id,
+          // only while unused
+          used: false,
+          tenantId: row.tenantId,
+        },
+        data: { used: true },
+      });
+    }
 invalid:
   - |
     async function redeem(id: string) {

@@ -51,14 +51,9 @@ utils:
   guard-pair:
     kind: pair
     all:
-      # A comma before the pair, past any comments between them, so the guard is not first. The fix
-      # removes the comma only when it is the pair's neighbor (the ast-grep CLI widens the edit over
-      # one sibling at most); after a comment it keeps the comment and leaves a trailing comma.
+      # A comma right before the pair, so the guard is not first; the fix removes that comma with it.
       - follows:
           pattern: ","
-          stopBy:
-            not:
-              kind: comment
       - has:
           field: key
           kind: property_identifier
@@ -88,6 +83,12 @@ rule:
   matches: guard-pair
   inside:
     kind: object
+    # A where holding a comment anywhere is left out: the fix removes only the guard and the comma
+    # next to it, and a comment beside either could leave a stray comma behind.
+    not:
+      has:
+        kind: comment
+        stopBy: end
     inside:
       kind: pair
       has:
@@ -255,8 +256,9 @@ rule:
     # The rewrite reads the where, update and create values only after the lookup resolves. An
     # upsert awaited or returned where it is called (`await db.m.upsert(...)`, `return db.m.upsert(...)`,
     # `async (tx) => tx.m.upsert(...)`) leaves its own code no chance to change those values in
-    # between; a promise kept for later, passed on or chained is not matched. The body of an arrow
-    # counts only when the arrow is async: a plain arrow such as `rows.map((row) => db.m.upsert(...))`
+    # between; a promise kept for later, passed on or chained is not matched. A return statement or
+    # the body of an arrow counts only when the nearest enclosing function is async: a plain
+    # function such as `rows.map((row) => db.m.upsert(...))` or `rows.map((row) => { return ... })`
     # may build the array of a batch `$transaction`, which takes only the query object that the
     # rewrite replaces with a plain promise.
     - any:
@@ -264,10 +266,35 @@ rule:
             kind: await_expression
         - inside:
             kind: return_statement
+            inside:
+              # stopBy is inclusive: the nearest enclosing function is the one tested.
+              stopBy:
+                any:
+                  - kind: function_declaration
+                  - kind: function_expression
+                  - kind: arrow_function
+                  - kind: method_definition
+              any:
+                - kind: function_declaration
+                - kind: function_expression
+                - kind: arrow_function
+                - kind: method_definition
+              regex: ^(?:(?:public|private|protected|static|override)\s+)*async\b
         - inside:
             kind: arrow_function
             field: body
             regex: ^async\b
+    # Any upsert inside an argument of `$transaction(...)`, whether a batch array or an interactive
+    # callback, is left out.
+    - not:
+        inside:
+          stopBy: end
+          kind: arguments
+          inside:
+            kind: call_expression
+            has:
+              field: function
+              regex: (^|\.)\$transaction$
     # The rewrite names the client three times, so a client computed by a call would run three times.
     - has:
         field: function

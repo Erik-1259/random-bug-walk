@@ -1,6 +1,54 @@
 id: race.upsert
 snapshots:
   ? |
+    async function bump(profileId) {
+      return db.stat.upsert({ create: { profileId, visits: 1 }, where: { profileId }, update: { visits: { increment: 1 } } });
+    }
+  : fixed: |
+      async function bump(profileId) {
+        return db.stat.findUnique({ where: { profileId } }).then((found) => (found ? db.stat.update({ where: { profileId }, data: { visits: { increment: 1 } } }) : db.stat.create({ data: { profileId, visits: 1 } })));
+      }
+    labels:
+    - source: 'db.stat.upsert({ create: { profileId, visits: 1 }, where: { profileId }, update: { visits: { increment: 1 } } })'
+      style: primary
+      start: 42
+      end: 154
+    - source: 'where: { profileId }'
+      style: secondary
+      start: 93
+      end: 113
+    - source: 'update: { visits: { increment: 1 } }'
+      style: secondary
+      start: 115
+      end: 151
+    - source: 'create: { profileId, visits: 1 }'
+      style: secondary
+      start: 59
+      end: 91
+    - source: '{ create: { profileId, visits: 1 }, where: { profileId }, update: { visits: { increment: 1 } } }'
+      style: secondary
+      start: 57
+      end: 153
+    - source: '{ create: { profileId, visits: 1 }, where: { profileId }, update: { visits: { increment: 1 } } }'
+      style: secondary
+      start: 57
+      end: 153
+    - source: |-
+        async function bump(profileId) {
+          return db.stat.upsert({ create: { profileId, visits: 1 }, where: { profileId }, update: { visits: { increment: 1 } } });
+        }
+      style: secondary
+      start: 0
+      end: 157
+    - source: 'return db.stat.upsert({ create: { profileId, visits: 1 }, where: { profileId }, update: { visits: { increment: 1 } } });'
+      style: secondary
+      start: 35
+      end: 155
+    - source: db.stat.upsert
+      style: secondary
+      start: 42
+      end: 56
+  ? |
     await db.client.preference.upsert({ where: { profileId }, update: { theme }, create: { profileId, theme } });
   : fixed: |
       await db.client.preference.findUnique({ where: { profileId } }).then((found) => (found ? db.client.preference.update({ where: { profileId }, data: { theme } }) : db.client.preference.create({ data: { profileId, theme } })));
@@ -121,6 +169,58 @@ snapshots:
       start: 6
       end: 23
   ? |
+    class Prefs {
+      public async save(profileId) {
+        return this.db.preference.upsert({ where: { profileId }, update: {}, create: { profileId } });
+      }
+    }
+  : fixed: |
+      class Prefs {
+        public async save(profileId) {
+          return this.db.preference.findUnique({ where: { profileId } }).then((found) => (found ? this.db.preference.update({ where: { profileId }, data: {} }) : this.db.preference.create({ data: { profileId } })));
+        }
+      }
+    labels:
+    - source: 'this.db.preference.upsert({ where: { profileId }, update: {}, create: { profileId } })'
+      style: primary
+      start: 58
+      end: 144
+    - source: 'where: { profileId }'
+      style: secondary
+      start: 86
+      end: 106
+    - source: 'update: {}'
+      style: secondary
+      start: 108
+      end: 118
+    - source: 'create: { profileId }'
+      style: secondary
+      start: 120
+      end: 141
+    - source: '{ where: { profileId }, update: {}, create: { profileId } }'
+      style: secondary
+      start: 84
+      end: 143
+    - source: '{ where: { profileId }, update: {}, create: { profileId } }'
+      style: secondary
+      start: 84
+      end: 143
+    - source: |-
+        public async save(profileId) {
+            return this.db.preference.upsert({ where: { profileId }, update: {}, create: { profileId } });
+          }
+      style: secondary
+      start: 16
+      end: 149
+    - source: 'return this.db.preference.upsert({ where: { profileId }, update: {}, create: { profileId } });'
+      style: secondary
+      start: 51
+      end: 145
+    - source: this.db.preference.upsert
+      style: secondary
+      start: 58
+      end: 83
+  ? |
     const save = async (tx) => tx.preference.upsert({ where: { profileId }, update: {}, create: { profileId } });
   : fixed: |
       const save = async (tx) => tx.preference.findUnique({ where: { profileId } }).then((found) => (found ? tx.preference.update({ where: { profileId }, data: {} }) : tx.preference.create({ data: { profileId } })));
@@ -157,40 +257,3 @@ snapshots:
       style: secondary
       start: 27
       end: 47
-  ? |
-    return db.stat.upsert({ create: { profileId, visits: 1 }, where: { profileId }, update: { visits: { increment: 1 } } });
-  : fixed: |
-      return db.stat.findUnique({ where: { profileId } }).then((found) => (found ? db.stat.update({ where: { profileId }, data: { visits: { increment: 1 } } }) : db.stat.create({ data: { profileId, visits: 1 } })));
-    labels:
-    - source: 'db.stat.upsert({ create: { profileId, visits: 1 }, where: { profileId }, update: { visits: { increment: 1 } } })'
-      style: primary
-      start: 7
-      end: 119
-    - source: 'where: { profileId }'
-      style: secondary
-      start: 58
-      end: 78
-    - source: 'update: { visits: { increment: 1 } }'
-      style: secondary
-      start: 80
-      end: 116
-    - source: 'create: { profileId, visits: 1 }'
-      style: secondary
-      start: 24
-      end: 56
-    - source: '{ create: { profileId, visits: 1 }, where: { profileId }, update: { visits: { increment: 1 } } }'
-      style: secondary
-      start: 22
-      end: 118
-    - source: '{ create: { profileId, visits: 1 }, where: { profileId }, update: { visits: { increment: 1 } } }'
-      style: secondary
-      start: 22
-      end: 118
-    - source: 'return db.stat.upsert({ create: { profileId, visits: 1 }, where: { profileId }, update: { visits: { increment: 1 } } });'
-      style: secondary
-      start: 0
-      end: 120
-    - source: db.stat.upsert
-      style: secondary
-      start: 7
-      end: 21
