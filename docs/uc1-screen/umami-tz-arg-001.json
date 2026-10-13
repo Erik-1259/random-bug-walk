@@ -6,7 +6,7 @@
   "shape": "DT-1.tz-arg: the planted call drops its time-zone argument",
   "screen": {
     "source": "Product spec §8.3, paragraph 'For UC1', and §2.4 (UC1 row)",
-    "criterion": "Skip a UC1 candidate whose omission is plain from the pre-fix source alone. The UC1 paired demonstration (server logs on versus off) needs a bug whose fix depends on runtime evidence the source does not give away.",
+    "criterion": "Skip a UC1 candidate whose omission is plain from the pre-fix source alone.",
     "binding": true,
     "judged_on": "2026-10-13",
     "judged_by": "builder lane race-screen (agent), written judgment from the pinned source; no model probe was run"

@@ -6,7 +6,7 @@
   "shape": "RC-1 atomic backup-code consumption (race class)",
   "screen": {
     "source": "Product spec §8.3, paragraph 'For UC1', and §2.4 (UC1 row)",
-    "criterion": "Skip a UC1 candidate whose omission is plain from the pre-fix source alone. The UC1 paired demonstration (server logs on versus off) needs a bug whose fix depends on runtime evidence the source does not give away.",
+    "criterion": "Skip a UC1 candidate whose omission is plain from the pre-fix source alone.",
     "binding": true,
     "judged_on": "2026-10-13",
     "judged_by": "builder lane race-screen (agent), written judgment from the pinned source; no model probe was run"
@@ -23,7 +23,7 @@
     "mutation": "@@ -94,7 +94,7 @@\n     }\n \n     const consumed = await prisma.client.twoFactorBackupCode.updateMany({\n-      where: { id: unusedCodes[matchIndex].id, used: false },\n+      where: { id: unusedCodes[matchIndex].id },\n       data: { used: true },\n     });\n "
   },
   "verdict": "fail",
-  "verdict_summary": "A careful reader can find the omission from the planted source alone, and server logs would carry nothing either arm lacks. Not a UC1 subject. The case remains suitable for the race class and UC3.",
+  "verdict_summary": "A careful reader can find the omission from the planted source alone (the static tells below), so the case fails the §8.3 screen and is not a UC1 subject. The case remains suitable for the race class and UC3. Separately, server logs would carry nothing either arm lacks; that point is the builder's inference in log_headroom_note and is not part of this verdict.",
   "static_tells": [
     {
       "location": "src/app/api/2fa/verify/route.ts:96-108",
@@ -52,12 +52,16 @@
     "observe_and_writer_evidence": "The planted observation is two HTTP 200 responses with full tokens, from one backup code. Nothing in that evidence is a Prisma or Postgres message, because none is raised.",
     "http_responses": "Off arm: both concurrent POST /api/2fa/verify requests return 200 with a token. On a clean copy one returns 400 two-factor-error-invalid-backup-code. The responses already show the full symptom.",
     "server_logs": "Empty for this bug. The double spend is two successful requests: Umami logs nothing on the success path (route.ts:133-149), and Postgres logs nothing for successful statements at the default settings. The log tool has no evidence to add in either arm.",
-    "leak_judgment": "Not a leak failure (no Prisma or Postgres message reaches the issue or the responses), but the case fails the purpose of the log-tool comparison: the on arm gains nothing to read."
+    "leak_judgment": "Not a leak failure: no Prisma or Postgres message reaches the issue or the responses, so the pre-registration's log-tool test does not fail this case."
+  },
+  "log_headroom_note": {
+    "status": "Builder's inference for the owner to weigh. Not part of the binding §8.3 verdict, and neither spec §8.3 nor the UC1 pre-registration states it as a rule.",
+    "note": "The server logs are empty for this bug in both arms, so the on arm would gain nothing to read even if the static tells were absent. The builder's view is that a UC1 race subject is more useful when it fails loudly in the server log and quietly in the response."
   },
   "consequences": [
     "Do not reuse this case as the UC1 paired-comparison subject (race-class plan decision #4 'build once, reuse' does not hold).",
     "The case still fits the race class and UC3: the original suite's src/app/api/2fa/verify/route.test.ts mocks updateMany and has no backup-code test, so the original suite is expected to pass on the planted copy (to be confirmed by the admission run).",
-    "Any RC-1 variant fails the log-tool purpose for the same reason (a silent double success logs nothing), whether or not the dead guard is also removed. A UC1 race subject has to fail loudly in the server log and quietly in the response.",
+    "Recommendation (builder's inference, see log_headroom_note; not a screen rule): prefer a UC1 race subject that fails loudly in the server log and quietly in the response. A backup-code double spend is a silent double success that logs nothing, whether or not the dead guard is also removed, so other variants at this site would likely give the on arm nothing to read either.",
     "Whether UC1 falls back to the time-zone case is the owner's call on Oct 18 at noon; this record does not decide it."
   ],
   "proposed_alternatives": {
@@ -65,19 +69,21 @@
     "candidates": [
       {
         "rank": 1,
-        "id_suggestion": "rc-2-lockout-retry-001",
+        "id_suggestion": "lockout-retry-001",
+        "shape_fit": "Outside the spec's shape table (§3.7 table: RC-1 is read, await, write back; RC-2 is find-or-create split across an await). This mutation changes which error code is retried, so it matches neither RC-1 nor RC-2. Choosing it adds a shape outside the spec's catalog, which is a scope decision for the owner.",
         "file": "src/lib/two-factor/rate-limit.ts",
         "line": 45,
         "mutation": "`if (err.code === 'P2034') {` -> `if (err.code === 'P2002') {`",
-        "behavior": "recordFailedAttempt runs a Serializable transaction (line 42) that upserts and increments the per-user attempt counter, retrying on a write conflict. With the wrong code, two concurrent failed 2FA attempts make one transaction fail with a serialization error that is no longer retried: that request returns HTTP 500 instead of 400, and its failed attempt is never counted, so concurrent guessing slips past the 5-attempt lockout (MAX_ATTEMPTS, line 4).",
+        "behavior": "recordFailedAttempt runs a Serializable transaction (line 42) that upserts and increments the per-user attempt counter, retrying on a write conflict. With the wrong code, two concurrent failed 2FA attempts against a seeded rate-limit row make one transaction fail with a serialization error that is no longer retried: that request returns HTTP 500 instead of 400, and its failed attempt is never counted. The planted signal is a lost attempt count at exactly two-way overlap: the attempts row shows fewer attempts than the failures returned (400 plus 500), while the clean tree retries the conflict and counts both. Lockout bypass is not the signal, because the clean tree also lets a concurrent burst past the lockout (see risks_to_measure).",
         "why_it_may_pass": "No in-tree twin: no other file handles P2034 or P2002. No dead or unused code is left. P2002 (unique constraint) is a plausible thing to retry around an upsert, so the line reads as deliberate. The callers (verify route lines 88, 102 and 121; setup/confirm/route.ts:64; disable/route.ts:104) mock recordFailedAttempt in their tests, and rate-limit.ts has no test of its own, so the original suite is expected to pass on the planted copy.",
         "log_headroom": "The thrown Prisma error is uncaught in POST /api/2fa/verify, so the response carries no message, while the server log carries the Prisma error with code P2034 and its write-conflict text. The log names the exact code the retry misses.",
-        "risks_to_measure": "Whether Postgres raises a serialization failure (Prisma P2034) on every overlapping pair, or sometimes waits; seed the rate-limit row so the first-insert path is not exercised. Whether Next's default 500 body for an uncaught route error is empty in this build. A Prisma-literate reader may still know P2034 from memory; the screen must weigh that.",
-        "cost": "A new shape: new ast-grep rule, probes and checks in place of rc-1.atomic-backup-code. The race kit (Toxiproxy, separate fixture package, template-baked 2FA state) carries over. The TOTP path (6-digit token) gives faster rounds than bcrypt backup codes."
+        "risks_to_measure": "The clean tree shares two symptoms, so the fixture must drive exactly two concurrent failed attempts against a seeded row. First, the clean tree lets a concurrent burst past the lockout: checkRateLimit (verify route.ts:66) reads lockedUntil before the guess is checked, and the lockout is written only later inside recordFailedAttempt (rate-limit.ts:35-37), so every request in an overlapping burst passes the check. Second, the clean retry is capped at MAX_RETRIES = 3 (rate-limit.ts:6); at wider overlap (plausibly four or more concurrent failures, not measured) one request can lose the retry race three times and throw 'recordFailedAttempt: max retries exceeded' (line 52), which also gives an HTTP 500, a server-log error and an uncounted attempt on the clean copy. Whether Postgres raises a serialization failure (Prisma P2034) on every overlapping pair, or sometimes waits; seed the rate-limit row so the first-insert path is not exercised. Whether Next's default 500 body for an uncaught route error is empty in this build. A Prisma-literate reader may still know P2034 from memory; the screen must weigh that.",
+        "cost": "A new shape outside the spec's catalog (see shape_fit): new ast-grep rule, probes and checks in place of rc-1.atomic-backup-code. The race kit (Toxiproxy, separate fixture package, template-baked 2FA state) carries over. The TOTP path (6-digit token) gives faster rounds than bcrypt backup codes."
       },
       {
         "rank": 2,
-        "id_suggestion": "rc-3-session-insert-001",
+        "id_suggestion": "rc-2-session-insert-001",
+        "shape_fit": "RC-2 in the spec's shape table; spec §2.5 names reverting createSession's `on conflict` (14f3db55) as a race site of the RC-2 kind.",
         "file": "src/queries/sql/sessions/createSession.ts",
         "line": 53,
         "mutation": "Delete `on conflict (session_id) do nothing`.",
