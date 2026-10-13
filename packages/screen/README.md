@@ -148,6 +148,8 @@ Under `--out`:
 
 `screen.json` is a `uc1-static-headroom-screen` record, version 1, as the written screen records use it: `record`, `record_version`, `case`, `case_status`, `shape`, `screen` (`source`, `criterion`, `binding`, `judged_on`, `judged_by`), `subject` (`host`, `host_commit`, `source_read_from`, `target_file`, `clean_sha256`, `planted_sha256`, plus `planted_site`, `planted_hunks` and `mutation`), `verdict`, `verdict_summary`, `static_tells`, `consequences` and `optional_static_probe`.
 
+The written records can also hold `evidence_comparison` (what each evidence channel would reveal) and `log_headroom_note`. Those are a person's judgment from reading the source and the logs, which the probe does not make, so the automated record leaves them out rather than filling them with placeholders. A test parses every committed record in `docs/uc1-screen/` with `ScreenRecordSchema` and checks that the automated record has every top-level key they have except those two.
+
 - A written record states `optional_static_probe` as text, such as "Not run.". This package fills it with the probe as an object: model, service, `runtime_profile_sha256`, `rate_sheet_sha256`, the SHA-256 of the prompt and of the symptom, the files shown, the run's root execution ID, `attempts_planned`, `attempts_run`, `answered`, `hits`, `fail_at_hits`, the scoring constants, `cost` (`budget_microusd`, `worst_case_microusd_per_call`, `reserved_microusd`, `settled_microusd`, `unsettled_operation_ids`), `stopped` and one entry per attempt.
 - `static_tells` lists one entry per hit: the answer's range, whether it located the site, gave the clean file or both, and a sentence written by code.
 - `verdict` is `pass`, `fail` or `inconclusive`; written records use the first two.

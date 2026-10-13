@@ -1,10 +1,13 @@
-import { writeFileSync } from "node:fs";
+import { readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { PGlite } from "@electric-sql/pglite";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { integerArg, runCommand } from "../../src/commands.ts";
 import { ScreenRecordSchema } from "../../src/record.ts";
+import { MISS, scriptedFetch } from "../fixtures/scripted.ts";
 import { CLEAN_REPORT } from "../fixtures/synthetic-source.ts";
-import { commandOptions, freshSpend, noNetwork, openDb, RATES, spySpend, syntheticTree } from "../support.ts";
+import { commandOptions, freshSpend, noNetwork, openDb, RATES, spySpend, syntheticTree, tempDir } from "../support.ts";
 
 /** A synthetic record in the shape of the written screen records: a judgment, no probe run. */
 const WRITTEN = {
@@ -48,6 +51,37 @@ describe("ScreenRecordSchema", () => {
     expect(() => ScreenRecordSchema.parse({ ...WRITTEN, record_version: 2 })).toThrow();
     expect(() => ScreenRecordSchema.parse({ ...WRITTEN, verdict: "maybe" })).toThrow();
     expect(() => ScreenRecordSchema.parse({ ...WRITTEN, optional_static_probe: { status: "run" } })).toThrow();
+  });
+});
+
+const WRITTEN_DIR = fileURLToPath(new URL("../../../../docs/uc1-screen/", import.meta.url));
+/** Judgment fields a written record can hold and the automated probe never writes. */
+const JUDGMENT_ONLY = ["evidence_comparison", "log_headroom_note"];
+
+describe("the committed screen records", () => {
+  const written = readdirSync(WRITTEN_DIR)
+    .filter((name) => name.endsWith(".json"))
+    .map((name) => ({ name, value: JSON.parse(readFileSync(join(WRITTEN_DIR, name), "utf8")) as Record<string, unknown> }));
+
+  it("all parse with ScreenRecordSchema", () => {
+    expect(written.length).toBeGreaterThanOrEqual(2);
+    for (const record of written) {
+      expect(ScreenRecordSchema.safeParse(record.value).success, record.name).toBe(true);
+    }
+  });
+
+  it("have no top-level key the automated record lacks, apart from the judgment fields", async () => {
+    const spend = await freshSpend(db);
+    const tree = syntheticTree();
+    const out = join(tempDir(), "out");
+    const argv = ["run", "--input", tree.input, "--tree", tree.tree, "--clean", tree.clean, "--rate-sheet", RATES, "--attempts", "1", "--budget-microusd", "100000"];
+    const code = await runCommand(commandOptions([...argv, "--out", out, "--slot-key", "development", "--pool", "development"], spend, scriptedFetch([MISS]).fetch, []));
+    expect(code).toBe(0);
+    const automated = new Set(Object.keys(JSON.parse(readFileSync(join(out, "screen.json"), "utf8")) as Record<string, unknown>));
+    for (const record of written) {
+      const missing = Object.keys(record.value).filter((key) => !automated.has(key) && !JUDGMENT_ONLY.includes(key));
+      expect(missing, record.name).toEqual([]);
+    }
   });
 });
 
