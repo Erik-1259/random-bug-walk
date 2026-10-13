@@ -552,10 +552,14 @@ TRIAL_REASON_VALUES: Final = (
 type AssertionFailureCode = Literal[
     "local_day_counts_mismatch",
     "bucket_labels_mismatch",
+    "double_spend",
+    "backup_code_reused",
 ]
 ASSERTION_FAILURE_CODE_VALUES: Final = (
     "local_day_counts_mismatch",
     "bucket_labels_mismatch",
+    "double_spend",
+    "backup_code_reused",
 )
 
 type CheckId = str

@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { decide, decisionErrors, importRecordSet, initialCells, type Cell, type Decision, type Evidence, type RuleDecision } from "../src/index.ts";
-import { AKL, KOL, LA, TEST_IDS, UTC, baselineDraft, cleanupRecordSets, dropObservation, observe, recordSet, testOutcome, trial, type RecordSetDraft } from "./support/record-set.ts";
+import { AKL, KOL, LA, RACE, RACE_FAMILY, TEST_IDS, UTC, baselineDraft, cleanupRecordSets, dropObservation, observe, recordSet, testOutcome, trial, type RecordSetDraft } from "./support/record-set.ts";
 
 afterAll(cleanupRecordSets);
 
@@ -298,6 +298,68 @@ describe("ADM-06 negative probes", () => {
       dropObservation(draft, "partial-01", LA, 1);
     });
     expect(rule(decision, "ADM-06")).toEqual({ decision: "incomplete", trials: [{ trial_id: "partial-01", basis: "trial_status", status: "incomplete", reason: "test_missing", code: "import:check_missing" }] });
+  });
+
+  it("ADM-06 stays incomplete, never not applicable, when a 13-copy job's partial-01 and stub-01 results are both missing", () => {
+    const { decision } = run((draft) => {
+      trial(draft, "partial-01").write = false;
+      trial(draft, "stub-01").write = false;
+    });
+    expect(rule(decision, "ADM-06").decision).toBe("incomplete");
+    expect(rule(decision, "ADM-06").trials.map((item) => item.trial_id)).toEqual(["partial-01", "stub-01"]);
+    expect(decision.outcome_verdict).toBe("incomplete");
+  });
+});
+
+describe("ADM-06 not applicable: a family without partial and stub probes", () => {
+  const raceRun = (mutate?: (draft: RecordSetDraft) => void): { evidence: Evidence; decision: Decision } => {
+    const evidence = importRecordSet(recordSet(mutate, undefined, "admission", RACE_FAMILY));
+    return { evidence, decision: decide(evidence) };
+  };
+
+  it("runs 11 copies, records ADM-06 as not applicable with no trials, and passes the other rules", () => {
+    const { evidence, decision } = raceRun();
+    expect(evidence.trials.map((item) => item.trial_id)).toEqual([
+      "clean-01",
+      "fixed-01",
+      "fixed-02",
+      "fixed-03",
+      "fixed-04",
+      "fixed-05",
+      "planted-01",
+      "planted-02",
+      "planted-03",
+      "planted-04",
+      "planted-05",
+    ]);
+    expect(rules(decision)).toEqual({ "ADM-02": "pass", "ADM-03": "pass", "ADM-04": "pass", "ADM-05": "pass", "ADM-06": "not_applicable" });
+    expect(rule(decision, "ADM-06").trials).toEqual([]);
+    expect(decision.outcome_verdict).toBe("pass");
+    expect(decision.comparison?.classification).toBe("blind_spot_demonstrated");
+    expect(decisionErrors(decision)).toEqual([]);
+  });
+
+  it("matches double_spend on the planted copies as the declared assertion failure", () => {
+    const { evidence } = raceRun();
+    const planted = evidence.trials.find((item) => item.trial_id === "planted-01");
+    expect(planted?.added?.verdict).toBe("match");
+    expect(planted?.added?.observations.filter((item) => item.failure_code === "double_spend")).toHaveLength(20);
+  });
+
+  it("ADM-05 still rejects one planted-01 repetition where the race was lost", () => {
+    const { decision } = raceRun((draft) => {
+      observe(draft, "planted-01", RACE, 13, "pass", null);
+    });
+    expect(rule(decision, "ADM-05").decision).toBe("reject");
+    expect(rule(decision, "ADM-06").decision).toBe("not_applicable");
+    expect(decision.outcome_verdict).toBe("reject");
+  });
+
+  it("ADM-04 is invalid when a planted copy reports backup_code_reused instead of double_spend", () => {
+    const { decision } = raceRun((draft) => {
+      observe(draft, "planted-03", RACE, 1, "assertion_fail", "backup_code_reused");
+    });
+    expect(rule(decision, "ADM-04").decision).toBe("invalid");
   });
 });
 
