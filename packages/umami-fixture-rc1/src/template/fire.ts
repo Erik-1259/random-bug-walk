@@ -5,7 +5,7 @@
 // the host's, supplied through a RequestPlan.
 
 import { execute } from "../http.ts";
-import type { AttemptTiming, Burst, Clock, FireFailure, RequestContext, RequestPlan, Sequence, SetupResult } from "./types.ts";
+import type { AttemptTiming, Burst, Clock, FireFailure, RequestContext, RequestOutcome, RequestPlan, Sequence, SetupResult } from "./types.ts";
 
 /** Milliseconds from the origin, rounded to 3 places, so recorded times and overlaps are stable. */
 function elapsed(now: number, origin: number): number {
@@ -25,14 +25,17 @@ export async function fireOne<State, Attempt>(
   origin: number,
 ): Promise<{ attempt: Attempt; timing: AttemptTiming }> {
   const sent = now();
+  // Only the send is caught: an error thrown by the plan's own record callback propagates, so it
+  // is never mistaken for a transport failure or recorded twice.
+  const request = plan.request(state);
+  let outcome: RequestOutcome;
   try {
-    const result = await execute(context, plan.request(state));
-    const timing = { sent_ms: elapsed(sent, origin), settled_ms: elapsed(now(), origin) };
-    return { attempt: plan.record({ settled: true, result }, timing, state), timing };
+    outcome = { settled: true, result: await execute(context, request) };
   } catch (error) {
-    const timing = { sent_ms: elapsed(sent, origin), settled_ms: elapsed(now(), origin) };
-    return { attempt: plan.record({ settled: false, error }, timing, state), timing };
+    outcome = { settled: false, error };
   }
+  const timing = { sent_ms: elapsed(sent, origin), settled_ms: elapsed(now(), origin) };
+  return { attempt: plan.record(outcome, timing, state), timing };
 }
 
 async function setUpAll<State, Attempt, Failure extends { ok: false }>(
@@ -79,14 +82,13 @@ export async function fireConcurrent<State, Attempt, Failure extends { ok: false
     return { ok: false, failure: prepared, attempts: [] };
   }
   const origin = now();
+  // setUpAll returns one state per context, in order; a state may itself be undefined for a plan
+  // that needs no per-context state, so the index is checked rather than the value.
+  if (prepared.states.length !== contexts.length) {
+    throw new Error("concurrency template: setup did not produce one state per context");
+  }
   const fired = await Promise.all(
-    contexts.map((context, index) => {
-      const state = prepared.states[index];
-      if (state === undefined) {
-        throw new Error("concurrency template: a setup state was undefined");
-      }
-      return fireOne(context, state, plan, now, origin);
-    }),
+    contexts.map((context, index) => fireOne(context, prepared.states[index] as State, plan, now, origin)),
   );
   return { ok: true, attempts: fired.map((item) => item.attempt), overlap_ms: overlapOf(fired.map((item) => item.timing)) };
 }

@@ -208,6 +208,38 @@ describe("fireConcurrent when a request throws", () => {
   });
 });
 
+describe("fireConcurrent with plans that need no per-context state", () => {
+  it("fires every request when setup returns an undefined state", async () => {
+    const app = new ClaimApp(false, false);
+    const stateless: RequestPlan<undefined, ClaimRecord, ClaimFailure> = {
+      setup: () => Promise.resolve({ ok: true, state: undefined }),
+      request: () => ({ method: "POST", path: "/claim", headers: {}, body: "{}" }),
+      record: (outcome, timing) => record(outcome, timing, { token: 0 }),
+    };
+    const burst = await fireConcurrent([app.context(), app.context()], stateless, steppingClock());
+    if (!burst.ok) throw new Error(burst.failure.reason);
+    expect(app.calls).toEqual(["/claim", "/claim"]);
+    expect(burst.attempts.map((a) => a.applied)).toEqual([true, true]);
+  });
+});
+
+describe("fireConcurrent when a record callback throws", () => {
+  it("propagates the record error and does not record the request a second time as unsettled", async () => {
+    const app = new ClaimApp(false, false);
+    const outcomes: boolean[] = [];
+    const throwing: RequestPlan<ClaimState, ClaimRecord, ClaimFailure> = {
+      ...plan(),
+      record: (outcome, timing, state) => {
+        outcomes.push(outcome.settled);
+        if (outcome.settled) throw new Error("could not decode the answer");
+        return record(outcome, timing, state);
+      },
+    };
+    await expect(fireConcurrent([app.context()], throwing, steppingClock())).rejects.toThrow("could not decode the answer");
+    expect(outcomes).toEqual([true]);
+  });
+});
+
 describe("fireSequential", () => {
   it("records a thrown first request and fires no follow-up when repeatAfter refuses it", async () => {
     const sequence = await fireSequential(rejecting(), plan(), (first) => first.applied, steppingClock());
