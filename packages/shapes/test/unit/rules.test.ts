@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
 import { RuleFileError, applyFix, findMatches, loadRules, type LoadedRule } from "../../src/rules.ts";
+import { RC1_FIXED_RULE_ID, RC1_PLANTED_RULE_ID, RC1_RULE_FILE, RC1_SOURCE_RULE_FILE, RC1_SOURCE_RULE_ID } from "../../src/rc1.ts";
 import { FIXED_RULE_ID, PLANTED_RULE_ID, RULE_FILE, SOURCE_RULE_FILE, SOURCE_RULE_ID } from "../../src/shape.ts";
 import { RULE, TARGET, plant } from "./support.ts";
 
@@ -20,7 +21,12 @@ interface RuleTestCase {
 }
 
 function allRules(): Map<string, LoadedRule> {
-  return new Map([...loadRules(RULE), ...loadRules(readFileSync(SOURCE_RULE_FILE))]);
+  return new Map([
+    ...loadRules(RULE),
+    ...loadRules(readFileSync(SOURCE_RULE_FILE)),
+    ...loadRules(readFileSync(RC1_RULE_FILE)),
+    ...loadRules(readFileSync(RC1_SOURCE_RULE_FILE)),
+  ]);
 }
 
 function ruleTestFiles(): RuleTestCase[] {
@@ -49,7 +55,14 @@ describe("rule files", () => {
   });
 
   it("covers every rule with valid and invalid test cases", () => {
-    expect(ruleTestFiles().map((file) => file.id)).toEqual([FIXED_RULE_ID, PLANTED_RULE_ID, SOURCE_RULE_ID]);
+    expect(ruleTestFiles().map((file) => file.id)).toEqual([
+      FIXED_RULE_ID,
+      PLANTED_RULE_ID,
+      SOURCE_RULE_ID,
+      RC1_FIXED_RULE_ID,
+      RC1_PLANTED_RULE_ID,
+      RC1_SOURCE_RULE_ID,
+    ]);
     for (const file of ruleTestFiles()) {
       expect(file.valid.length).toBeGreaterThan(0);
       expect(file.invalid.length).toBeGreaterThan(0);
@@ -68,13 +81,15 @@ describe("rule files", () => {
   });
 
   it("gives the CLI snapshot's fixed output when the napi engine applies the fix template", () => {
-    const snapshot = parse(readFileSync(join(TEST_DIR, "__snapshots__", "dt-1.tz-arg-snapshot.yml"), "utf8")) as {
-      snapshots: Record<string, { fixed?: string }>;
-    };
-    const entries = Object.entries(snapshot.snapshots);
-    expect(entries.length).toBeGreaterThan(0);
-    for (const [code, expected] of entries) {
-      expect(applyFix(rule(FIXED_RULE_ID), code)).toBe(expected.fixed);
+    for (const id of [FIXED_RULE_ID, RC1_FIXED_RULE_ID]) {
+      const snapshot = parse(readFileSync(join(TEST_DIR, "__snapshots__", `${id}-snapshot.yml`), "utf8")) as {
+        snapshots: Record<string, { fixed?: string }>;
+      };
+      const entries = Object.entries(snapshot.snapshots);
+      expect(entries.length, id).toBeGreaterThan(0);
+      for (const [code, expected] of entries) {
+        expect(applyFix(rule(id), code), id).toBe(expected.fixed);
+      }
     }
   });
 
@@ -107,7 +122,7 @@ function astGrep(args: string[], cwd = PACKAGE_DIR): { status: number | null; st
 describe("ast-grep CLI cross-check", () => {
   it("passes `ast-grep test` for every rule", () => {
     const result = astGrep(["test"]);
-    expect(result.stdout).toContain("test result: ok. 3 passed; 0 failed;");
+    expect(result.stdout).toContain("test result: ok. 6 passed; 0 failed;");
     expect(result.status).toBe(0);
   });
 

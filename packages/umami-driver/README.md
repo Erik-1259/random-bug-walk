@@ -123,6 +123,8 @@ node packages/umami-driver/scripts/stage-kit.ts --dest <dir>
 docker build --build-arg REGISTRY=docker.io --build-context rbw-kit=<dir> -t <tag> kit/umami
 ```
 
+`--fixture-package packages/<name>` stages another family's fixture package (a direct child of `packages/` named `umami-fixture` or `umami-fixture-<name>`, such as `packages/umami-fixture-rc1`) into the same `umami-fixture/` slot; each family builds its own image. Without it the script stages `packages/umami-fixture`, byte for byte as before.
+
 It holds `umami-driver/`, `umami-fixture/` and `schema/`, with `node_modules/@rbw/schema` as a symlink to `../../schema` and copies of the schema's runtime dependencies (`ajv` and its own). Node does not strip types from `.ts` files under `node_modules`, so the schema is linked rather than copied. `@playwright/test` and `pg` resolve from the verifier's own `node_modules`. The script prints the staged fixture's `added_suite_sha256`.
 
 `scripts/proof-job.ts` writes a synthetic `kit_check` job for a proof run, from a frozen manifest, the staged fixture's hash and the image digest. Its project, policy and profile fields are placeholders.

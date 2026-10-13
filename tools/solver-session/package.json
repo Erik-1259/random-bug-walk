@@ -1,0 +1,30 @@
+{
+  "name": "@rbw/solver-session",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Solver sessions for the paired comparison: grading an attempt's fix through the trusted controller",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    "./grade": "./src/grade.ts"
+  },
+  "engines": {
+    "node": ">=24.21 <25"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint . --max-warnings 0",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@rbw/local-runner": "workspace:*",
+    "@rbw/schema": "workspace:*",
+    "diff": "9.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.1",
+    "typescript": "6.0.3",
+    "vitest": "5.0.3"
+  }
+}

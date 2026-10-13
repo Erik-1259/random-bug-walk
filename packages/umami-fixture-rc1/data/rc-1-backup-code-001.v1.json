@@ -1,0 +1,154 @@
+{
+  "adm05": {
+    "repetitions": 20,
+    "trials": {
+      "fixed-01": [
+        {
+          "check_id": "rc1.backup-code-serial-reuse",
+          "failure_code": null,
+          "observed": "pass"
+        },
+        {
+          "check_id": "rc1.backup-code-concurrent-double-spend",
+          "failure_code": null,
+          "observed": "pass"
+        }
+      ],
+      "planted-01": [
+        {
+          "check_id": "rc1.backup-code-serial-reuse",
+          "failure_code": null,
+          "observed": "pass"
+        },
+        {
+          "check_id": "rc1.backup-code-concurrent-double-spend",
+          "failure_code": "double_spend",
+          "observed": "assertion_fail"
+        }
+      ]
+    }
+  },
+  "adm06": {
+    "reason": "A partial or stub fix of this lost-update race has no natural form: the fix is one compare-and-swap guard, present or absent. The owner recorded ADM-06 as not applicable for the race family on Oct 13, 2026, so the family is admitted on clean, fixed and planted copies only.",
+    "status": "not_applicable"
+  },
+  "checks": [
+    {
+      "backup_code_id": "synthetic-rc1-code-01",
+      "check_id": "rc1.backup-code-serial-reuse",
+      "kind": "serial_reuse"
+    },
+    {
+      "backup_code_id": "synthetic-rc1-code-10",
+      "check_id": "rc1.backup-code-concurrent-double-spend",
+      "kind": "concurrent_double_spend"
+    }
+  ],
+  "fixture_id": "rc-1-backup-code-001",
+  "host": {
+    "commit": "ec0ff50388c264ed8ce46f00967e92f7e71476ae",
+    "upstream": "umami"
+  },
+  "outcome_vectors": {
+    "clean": [
+      {
+        "check_id": "rc1.backup-code-serial-reuse",
+        "failure_code": null,
+        "observed": "pass"
+      },
+      {
+        "check_id": "rc1.backup-code-concurrent-double-spend",
+        "failure_code": null,
+        "observed": "pass"
+      }
+    ],
+    "fixed": [
+      {
+        "check_id": "rc1.backup-code-serial-reuse",
+        "failure_code": null,
+        "observed": "pass"
+      },
+      {
+        "check_id": "rc1.backup-code-concurrent-double-spend",
+        "failure_code": null,
+        "observed": "pass"
+      }
+    ],
+    "planted": [
+      {
+        "check_id": "rc1.backup-code-serial-reuse",
+        "failure_code": null,
+        "observed": "pass"
+      },
+      {
+        "check_id": "rc1.backup-code-concurrent-double-spend",
+        "failure_code": "double_spend",
+        "observed": "assertion_fail"
+      }
+    ]
+  },
+  "schema_version": 1,
+  "shape": "RC-1",
+  "target": {
+    "clean_line": "      where: { id: unusedCodes[matchIndex].id, used: false },",
+    "path": "src/app/api/2fa/verify/route.ts",
+    "planted_line": "      where: { id: unusedCodes[matchIndex].id },"
+  },
+  "two_factor": {
+    "backup_codes": [
+      {
+        "code_hash": "$2b$10$StPUkL9CXKim8p3Q8n.Ttef0J4o/r9q8IJ9CKl25asyJhltwo3u4i",
+        "id": "synthetic-rc1-code-01",
+        "plaintext": "SYNTHETIC-RC1-CODE-01"
+      },
+      {
+        "code_hash": "$2b$10$65eJRfO9vbMlT2C7kELte.LW3yz5L8UzIRq7zS2knm5OMTZeBeSS6",
+        "id": "synthetic-rc1-code-02",
+        "plaintext": "SYNTHETIC-RC1-CODE-02"
+      },
+      {
+        "code_hash": "$2b$10$cm7aYfOX7tg8tWa8ACxk/eJPTMBKXH5C0SY9MHPo6XCVRnXxo9hsG",
+        "id": "synthetic-rc1-code-03",
+        "plaintext": "SYNTHETIC-RC1-CODE-03"
+      },
+      {
+        "code_hash": "$2b$10$AfA1t2C6NOXt40c/O5B.I.P1mL8bsWUnvqZLQlPJ2qaTDznH28z9u",
+        "id": "synthetic-rc1-code-04",
+        "plaintext": "SYNTHETIC-RC1-CODE-04"
+      },
+      {
+        "code_hash": "$2b$10$2dQMAfrcnZ6iGgHBoIiFtuubb2JJxijaW9.F0YpK6WSarKDI2Jd2q",
+        "id": "synthetic-rc1-code-05",
+        "plaintext": "SYNTHETIC-RC1-CODE-05"
+      },
+      {
+        "code_hash": "$2b$10$/6jmXTS0q4z08ovqOiXymOPHWIrywOXiRlQ0QJcnoHSRD9WN7XkCC",
+        "id": "synthetic-rc1-code-06",
+        "plaintext": "SYNTHETIC-RC1-CODE-06"
+      },
+      {
+        "code_hash": "$2b$10$JXO80OQF3kPYtv9.wm99AuXXdhYJL0QvbqZ.76hgAb1DJuVugOVWy",
+        "id": "synthetic-rc1-code-07",
+        "plaintext": "SYNTHETIC-RC1-CODE-07"
+      },
+      {
+        "code_hash": "$2b$10$qte.93STuVAcxc50X.nymekEDRcgXrzitz.3bQ9lEsw7wRbXVO2Jm",
+        "id": "synthetic-rc1-code-08",
+        "plaintext": "SYNTHETIC-RC1-CODE-08"
+      },
+      {
+        "code_hash": "$2b$10$dBfNFG14gWJDd0A83v53aOPGdhIwCnjRZXahqGG7Zo2Y.gbLDwSLS",
+        "id": "synthetic-rc1-code-09",
+        "plaintext": "SYNTHETIC-RC1-CODE-09"
+      },
+      {
+        "code_hash": "$2b$10$PAsUxi03FOHE9JEX5fMg3eCLxmjqUggqgtB3rEzyoOLgDPSJ/DjEy",
+        "id": "synthetic-rc1-code-10",
+        "plaintext": "SYNTHETIC-RC1-CODE-10"
+      }
+    ],
+    "row_id": "synthetic-rc1-two-factor",
+    "secret_column": "synthetic-rc1-totp-column-unused",
+    "user_id": "41e2b680-648e-4b09-bcd7-3e2b10c06264"
+  }
+}
