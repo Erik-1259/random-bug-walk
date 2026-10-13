@@ -1,5 +1,8 @@
 // One model's vote, and the outcome of a candidate from both votes and the harvest's ast-grep result.
-import type { ReviewOutput } from "./prompt.ts";
+import type { ReviewAnswer } from "./prompt.ts";
+
+/** DT-1.tz-arg's evidence fields, the default. */
+const DT1_EVIDENCE: readonly string[] = ["zone_is_selected", "same_call"];
 
 export const VOTES = ["yes", "no", "unsure"] as const;
 export type Vote = (typeof VOTES)[number];
@@ -7,15 +10,19 @@ export type Vote = (typeof VOTES)[number];
 export const OUTCOMES = ["confirmed", "model_rejected", "needs_review", "not_reviewed"] as const;
 export type Outcome = (typeof OUTCOMES)[number];
 
-/** yes: a fix with both evidence fields yes; no: not_fix; unsure: anything else, a failed call included. */
-export function vote(output: ReviewOutput | null): Vote {
+/**
+ * yes: a fix with every evidence field of the shape yes; no: not_fix; unsure: anything else, a
+ * failed call included. The evidence fields are DT-1.tz-arg's unless a shape's are given.
+ */
+export function vote(output: ReviewAnswer | null, evidence: readonly string[] = DT1_EVIDENCE): Vote {
   if (output === null) {
     return "unsure";
   }
   if (output.verdict === "not_fix") {
     return "no";
   }
-  return output.verdict === "fix" && output.zone_is_selected === "yes" && output.same_call === "yes" ? "yes" : "unsure";
+  const fields: Readonly<Record<string, string>> = output;
+  return output.verdict === "fix" && evidence.length > 0 && evidence.every((field) => fields[field] === "yes") ? "yes" : "unsure";
 }
 
 /** Two yes votes confirm only what ast-grep confirmed; two no votes reject; anything else needs review. */

@@ -7,8 +7,10 @@ export { buildCandidateInput, buildInputs, parseReviewInputs, reviewedMatch } fr
 export type { CandidateInput, CandidateSource, FunctionText, ReviewInputs } from "./inputs.ts";
 export { ACTOR_ROLE, API_KEY_VARIABLE, KIMI_PROFILE, REVIEW_KIND, REVIEW_MODELS, SUPER_PROFILE } from "./profiles.ts";
 export type { ModelName, ReviewKind } from "./profiles.ts";
-export { ReviewOutputSchema, reviewPrompt, SHAPE_SENTENCE, SYSTEM_PROMPT, userMessage } from "./prompt.ts";
-export type { ReviewOutput } from "./prompt.ts";
+export { RACE_SHAPE_SENTENCE, RACE_SYSTEM_PROMPT, RaceReviewOutputSchema, ReviewOutputSchema, reviewPrompt, SHAPE_SENTENCE, SYSTEM_PROMPT, userMessage } from "./prompt.ts";
+export { DT1_REVIEW_SHAPE, RACE_REVIEW_SHAPE, REVIEW_SHAPES, reviewShape } from "./shapes.ts";
+export type { ReviewShape } from "./shapes.ts";
+export type { RaceReviewOutput, ReviewAnswer, ReviewOutput } from "./prompt.ts";
 export { candidateKey, executeReview, freshContext, MAX_CANDIDATES, runReview } from "./review.ts";
 export type { CallResult, CandidateResult, ReviewFile, ReviewOptions, ReviewRun, Stopped } from "./review.ts";
 export { combine, emptyMatrix, OUTCOMES, vote, VOTES } from "./vote.ts";

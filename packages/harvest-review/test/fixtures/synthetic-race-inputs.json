@@ -1,0 +1,208 @@
+{
+  "format_version": 1,
+  "shape_id": "RC-1.guarded-write",
+  "candidates": [
+    {
+      "candidate_id": "synthetic-org/synthetic-redeem@665a65b3e9c5dfb9bffd840b316e632c7e8eef18",
+      "repo": "synthetic-org/synthetic-redeem",
+      "commit": "665a65b3e9c5dfb9bffd840b316e632c7e8eef18",
+      "path": "src/routes/redeem.ts",
+      "previous_path": null,
+      "line": 6,
+      "call": "db.coupon.updateMany({\n    where: { id: coupon.id, redeemed: false },\n    data: { redeemed: true },\n  })",
+      "function": "redeem",
+      "ast_grep": "confirmed",
+      "after": {
+        "start_line": 1,
+        "end_line": 13,
+        "text": " 1 | export async function redeem(db, code) {\n 2 |   const coupon = await db.coupon.findFirst({ where: { code } });\n 3 |   if (!coupon || coupon.redeemed) {\n 4 |     throw new Error(\"already redeemed\");\n 5 |   }\n 6 |   const result = await db.coupon.updateMany({\n 7 |     where: { id: coupon.id, redeemed: false },\n 8 |     data: { redeemed: true },\n 9 |   });\n10 |   if (result.count === 0) {\n11 |     throw new Error(\"already redeemed\");\n12 |   }\n13 | }"
+      },
+      "before": [
+        {
+          "start_line": 1,
+          "end_line": 10,
+          "text": " 1 | export async function redeem(db, code) {\n 2 |   const coupon = await db.coupon.findFirst({ where: { code } });\n 3 |   if (!coupon || coupon.redeemed) {\n 4 |     throw new Error(\"already redeemed\");\n 5 |   }\n 6 |   await db.coupon.update({\n 7 |     where: { id: coupon.id },\n 8 |     data: { redeemed: true },\n 9 |   });\n10 | }"
+        }
+      ],
+      "hunks": [
+        "@@ -6,4 +6,7 @@\n-  await db.coupon.update({\n-    where: { id: coupon.id },\n-    data: { redeemed: true },\n-  });\n+  const result = await db.coupon.updateMany({\n+    where: { id: coupon.id, redeemed: false },\n+    data: { redeemed: true },\n+  });\n+  if (result.count === 0) {\n+    throw new Error(\"already redeemed\");\n+  }"
+      ]
+    },
+    {
+      "candidate_id": "synthetic-org/synthetic-claim#3",
+      "repo": "synthetic-org/synthetic-claim",
+      "commit": "8085e6f2d26c2dda671501513640da8951224795",
+      "path": "lib/claim.js",
+      "previous_path": null,
+      "line": 4,
+      "call": "Task.update({ status: \"taken\", worker }, { where: { id, status: \"open\" } })",
+      "function": "claim",
+      "ast_grep": "confirmed",
+      "after": {
+        "start_line": 1,
+        "end_line": 6,
+        "text": "1 | export async function claim(Task, id, worker) {\n2 |   const task = await Task.findByPk(id);\n3 |   if (task.status !== \"open\") return false;\n4 |   await Task.update({ status: \"taken\", worker }, { where: { id, status: \"open\" } });\n5 |   return true;\n6 | }"
+      },
+      "before": [
+        {
+          "start_line": 1,
+          "end_line": 6,
+          "text": "1 | export async function claim(Task, id, worker) {\n2 |   const task = await Task.findByPk(id);\n3 |   if (task.status !== \"open\") return false;\n4 |   await Task.update({ status: \"taken\", worker }, { where: { id } });\n5 |   return true;\n6 | }"
+        }
+      ],
+      "hunks": [
+        "@@ -4,1 +4,1 @@\n-  await Task.update({ status: \"taken\", worker }, { where: { id } });\n+  await Task.update({ status: \"taken\", worker }, { where: { id, status: \"open\" } });"
+      ]
+    },
+    {
+      "candidate_id": "synthetic-org/synthetic-stock@e66aef911798e8fff39e1a1c1619bc03014f8eaa",
+      "repo": "synthetic-org/synthetic-stock",
+      "commit": "e66aef911798e8fff39e1a1c1619bc03014f8eaa",
+      "path": "server/take.js",
+      "previous_path": null,
+      "line": 4,
+      "call": "orders.updateOne({ _id: id, stock: { $gt: 0 } }, { $inc: { stock: -1 } })",
+      "function": "take",
+      "ast_grep": "confirmed",
+      "after": {
+        "start_line": 1,
+        "end_line": 5,
+        "text": "1 | export const take = async (orders, id) => {\n2 |   const order = await orders.findOne({ _id: id });\n3 |   if (order.stock < 1) return null;\n4 |   return orders.updateOne({ _id: id, stock: { $gt: 0 } }, { $inc: { stock: -1 } });\n5 | };"
+      },
+      "before": [
+        {
+          "start_line": 1,
+          "end_line": 5,
+          "text": "1 | export const take = async (orders, id) => {\n2 |   const order = await orders.findOne({ _id: id });\n3 |   if (order.stock < 1) return null;\n4 |   return orders.updateOne({ _id: id }, { $inc: { stock: -1 } });\n5 | };"
+        }
+      ],
+      "hunks": [
+        "@@ -4,1 +4,1 @@\n-  return orders.updateOne({ _id: id }, { $inc: { stock: -1 } });\n+  return orders.updateOne({ _id: id, stock: { $gt: 0 } }, { $inc: { stock: -1 } });"
+      ]
+    },
+    {
+      "candidate_id": "synthetic-org/synthetic-new-function@93257b1cadcda33812a359ee999abf3defcc4852",
+      "repo": "synthetic-org/synthetic-new-function",
+      "commit": "93257b1cadcda33812a359ee999abf3defcc4852",
+      "path": "src/a.ts",
+      "previous_path": null,
+      "line": 7,
+      "call": "db.coupon.updateMany({\n    where: { id: coupon.id, redeemed: false },\n    data: { redeemed: true },\n  })",
+      "function": "redeem",
+      "ast_grep": "function_missing_before",
+      "after": {
+        "start_line": 2,
+        "end_line": 14,
+        "text": " 2 | export async function redeem(db, code) {\n 3 |   const coupon = await db.coupon.findFirst({ where: { code } });\n 4 |   if (!coupon || coupon.redeemed) {\n 5 |     throw new Error(\"already redeemed\");\n 6 |   }\n 7 |   const result = await db.coupon.updateMany({\n 8 |     where: { id: coupon.id, redeemed: false },\n 9 |     data: { redeemed: true },\n10 |   });\n11 |   if (result.count === 0) {\n12 |     throw new Error(\"already redeemed\");\n13 |   }\n14 | }"
+      },
+      "before": [],
+      "hunks": [
+        "@@ -2,0 +2,13 @@\n+export async function redeem(db, code) {\n+  const coupon = await db.coupon.findFirst({ where: { code } });\n+  if (!coupon || coupon.redeemed) {\n+    throw new Error(\"already redeemed\");\n+  }\n+  const result = await db.coupon.updateMany({\n+    where: { id: coupon.id, redeemed: false },\n+    data: { redeemed: true },\n+  });\n+  if (result.count === 0) {\n+    throw new Error(\"already redeemed\");\n+  }\n+}"
+      ]
+    },
+    {
+      "candidate_id": "synthetic-org/synthetic-new-write@20b5300bb88a1ad770922893761ebe3d66722bf9",
+      "repo": "synthetic-org/synthetic-new-write",
+      "commit": "20b5300bb88a1ad770922893761ebe3d66722bf9",
+      "path": "src/a.ts",
+      "previous_path": null,
+      "line": 6,
+      "call": "db.coupon.updateMany({ where: { id: coupon.id, redeemed: false }, data: { seen: true } })",
+      "function": "redeem",
+      "ast_grep": "call_added",
+      "after": {
+        "start_line": 1,
+        "end_line": 11,
+        "text": " 1 | export async function redeem(db, code) {\n 2 |   const coupon = await db.coupon.findFirst({ where: { code } });\n 3 |   if (!coupon || coupon.redeemed) {\n 4 |     throw new Error(\"already redeemed\");\n 5 |   }\n 6 |   await db.coupon.updateMany({ where: { id: coupon.id, redeemed: false }, data: { seen: true } });\n 7 |   await db.coupon.update({\n 8 |     where: { id: coupon.id },\n 9 |     data: { redeemed: true },\n10 |   });\n11 | }"
+      },
+      "before": [
+        {
+          "start_line": 1,
+          "end_line": 10,
+          "text": " 1 | export async function redeem(db, code) {\n 2 |   const coupon = await db.coupon.findFirst({ where: { code } });\n 3 |   if (!coupon || coupon.redeemed) {\n 4 |     throw new Error(\"already redeemed\");\n 5 |   }\n 6 |   await db.coupon.update({\n 7 |     where: { id: coupon.id },\n 8 |     data: { redeemed: true },\n 9 |   });\n10 | }"
+        }
+      ],
+      "hunks": [
+        "@@ -6,0 +6,1 @@\n+  await db.coupon.updateMany({ where: { id: coupon.id, redeemed: false }, data: { seen: true } });"
+      ]
+    },
+    {
+      "candidate_id": "synthetic-org/synthetic-renamed-filter@8f198f248cf2504d8614bcb87d8bc5840633771a",
+      "repo": "synthetic-org/synthetic-renamed-filter",
+      "commit": "8f198f248cf2504d8614bcb87d8bc5840633771a",
+      "path": "src/a.ts",
+      "previous_path": null,
+      "line": 6,
+      "call": "db.coupon.update({\n    where: { id: coupon.couponId },\n    data: { redeemed: true },\n  })",
+      "function": "redeem",
+      "ast_grep": "guard_not_added",
+      "after": {
+        "start_line": 1,
+        "end_line": 10,
+        "text": " 1 | export async function redeem(db, code) {\n 2 |   const coupon = await db.coupon.findFirst({ where: { code } });\n 3 |   if (!coupon || coupon.redeemed) {\n 4 |     throw new Error(\"already redeemed\");\n 5 |   }\n 6 |   await db.coupon.update({\n 7 |     where: { id: coupon.couponId },\n 8 |     data: { redeemed: true },\n 9 |   });\n10 | }"
+      },
+      "before": [
+        {
+          "start_line": 1,
+          "end_line": 10,
+          "text": " 1 | export async function redeem(db, code) {\n 2 |   const coupon = await db.coupon.findFirst({ where: { code } });\n 3 |   if (!coupon || coupon.redeemed) {\n 4 |     throw new Error(\"already redeemed\");\n 5 |   }\n 6 |   await db.coupon.update({\n 7 |     where: { id: coupon.id },\n 8 |     data: { redeemed: true },\n 9 |   });\n10 | }"
+        }
+      ],
+      "hunks": [
+        "@@ -7,1 +7,1 @@\n-    where: { id: coupon.id },\n+    where: { id: coupon.couponId },"
+      ]
+    },
+    {
+      "candidate_id": "synthetic-org/synthetic-owner-scope@a24a3599ac728a2646257349cc627727568a65f7",
+      "repo": "synthetic-org/synthetic-owner-scope",
+      "commit": "a24a3599ac728a2646257349cc627727568a65f7",
+      "path": "src/a.ts",
+      "previous_path": null,
+      "line": 6,
+      "call": "db.coupon.update({\n    where: { id: coupon.id, userId: session.user.id },\n    data: { redeemed: true },\n  })",
+      "function": "redeem",
+      "ast_grep": "guard_not_state",
+      "after": {
+        "start_line": 1,
+        "end_line": 10,
+        "text": " 1 | export async function redeem(db, code) {\n 2 |   const coupon = await db.coupon.findFirst({ where: { code } });\n 3 |   if (!coupon || coupon.redeemed) {\n 4 |     throw new Error(\"already redeemed\");\n 5 |   }\n 6 |   await db.coupon.update({\n 7 |     where: { id: coupon.id, userId: session.user.id },\n 8 |     data: { redeemed: true },\n 9 |   });\n10 | }"
+      },
+      "before": [
+        {
+          "start_line": 1,
+          "end_line": 10,
+          "text": " 1 | export async function redeem(db, code) {\n 2 |   const coupon = await db.coupon.findFirst({ where: { code } });\n 3 |   if (!coupon || coupon.redeemed) {\n 4 |     throw new Error(\"already redeemed\");\n 5 |   }\n 6 |   await db.coupon.update({\n 7 |     where: { id: coupon.id },\n 8 |     data: { redeemed: true },\n 9 |   });\n10 | }"
+        }
+      ],
+      "hunks": [
+        "@@ -7,1 +7,1 @@\n-    where: { id: coupon.id },\n+    where: { id: coupon.id, userId: session.user.id },"
+      ]
+    },
+    {
+      "candidate_id": "synthetic-org/synthetic-no-read@6a07dacc059e278090b920da60d176c45ce1f3e1",
+      "repo": "synthetic-org/synthetic-no-read",
+      "commit": "6a07dacc059e278090b920da60d176c45ce1f3e1",
+      "path": "src/close.ts",
+      "previous_path": null,
+      "line": 2,
+      "call": "db.ticket.update({ where: { id, open: true }, data: { open: false } })",
+      "function": "close",
+      "ast_grep": "no_read_before_write",
+      "after": {
+        "start_line": 1,
+        "end_line": 3,
+        "text": "1 | export async function close(db, id) {\n2 |   await db.ticket.update({ where: { id, open: true }, data: { open: false } });\n3 | }"
+      },
+      "before": [
+        {
+          "start_line": 1,
+          "end_line": 3,
+          "text": "1 | export async function close(db, id) {\n2 |   await db.ticket.update({ where: { id }, data: { open: false } });\n3 | }"
+        }
+      ],
+      "hunks": [
+        "@@ -2,1 +2,1 @@\n-  await db.ticket.update({ where: { id }, data: { open: false } });\n+  await db.ticket.update({ where: { id, open: true }, data: { open: false } });"
+      ]
+    }
+  ]
+}

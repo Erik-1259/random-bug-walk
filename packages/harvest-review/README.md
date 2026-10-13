@@ -1,6 +1,6 @@
 # @rbw/harvest-review
 
-Asks two models to judge each candidate that `@rbw/harvest` matched for shape `DT-1.tz-arg` (a caller holds the selected time zone but does not pass it to a date operation, which then uses its default). Their votes are combined with the harvest's ast-grep outcome into one of four outcomes. Every model call is metered through `@rbw/writer`'s `meteredStructuredCall`: bounded, priced, reserved in the spend ledger, launched, sent once and settled.
+Asks two models to judge each candidate that `@rbw/harvest` matched for its shape: `DT-1.tz-arg` (a caller holds the selected time zone but does not pass it to a date operation, which then uses its default), the default, or the race class `RC-1.guarded-write` (see [Race class](#race-class-rc-1guarded-write)). Their votes are combined with the harvest's ast-grep outcome into one of four outcomes. Every model call is metered through `@rbw/writer`'s `meteredStructuredCall`: bounded, priced, reserved in the spend ledger, launched, sent once and settled.
 
 The package makes no live call in its tests or in public CI. A replay `fetch` answers from committed synthetic recordings. The `review` and `acceptance` commands make live calls (`src/live-fetch.ts`); their outputs stay outside this repository (below). The limits were set from live calls on small synthetic inputs; nothing committed in this repository was produced by a live call.
 
@@ -10,7 +10,8 @@ The package makes no live call in its tests or in public CI. A replay `fetch` an
 | --- | --- |
 | `src/inputs.ts` | The input builder: candidates, the reviewed match, and the functions and hunks the models see. |
 | `src/profiles.ts` | The two frozen model profiles. |
-| `src/prompt.ts` | The system prompt, the user message and the output schema. |
+| `src/prompt.ts` | The system prompts, the user message and the output schemas, one prompt and schema per shape. |
+| `src/shapes.ts` | The shapes a review can judge: each names its system prompt, output schema and evidence fields. |
 | `src/vote.ts` | One model's vote and the combination table. |
 | `src/review.ts` | The `review` command. |
 | `src/acceptance.ts` | The acceptance set and the `acceptance` command. |
@@ -44,6 +45,7 @@ node packages/harvest-review/src/cli.ts acceptance --rate-sheet packages/harvest
 
 ### build-inputs
 
+- **Shape:** the funnel's `shape_id`. A shape other than `DT-1.tz-arg` is written into the inputs as `shape_id`; inputs with no `shape_id` are `DT-1.tz-arg` inputs. A structurally confirmed match must name what the shape's fix added (`timezone` or `guard`), or the build fails.
 - **Candidates:** every candidate whose `stage_reached` is `source_rule_matched` or `structurally_confirmed`, in funnel order.
 - **Match:** the candidate's structurally confirmed match if it has one, otherwise its first match.
 - **Per candidate:** the candidate ID, repository and commit; the match's path (and the parent's path of a renamed file), line, call text and function path; its ast-grep outcome (`confirmed`, or its drop reason); and the prompt inputs below.
@@ -84,7 +86,7 @@ Writes the input files of the writer's `record` command for the candidates whose
 - **Per `confirmed` candidate** (none for any other outcome), two files under `--out`:
   - `<candidate_key>.input.json`: `{ "candidate": <candidate_key>, "card": <source>, "issue": { "symptom": null, "excluded_identifiers": [] } }`, in `record`'s input format. The `issue` part is required by that format and unused with `--max-calls 1`.
   - `<candidate_key>.context.json`: a fresh run context, as `review` makes one.
-- **Card source:** `source_links` (the commit's GitHub URL, then the pull request's when the funnel record has a pull number), `repository` (the repository's GitHub URL), `date` (the UTC date of `committed_at`), `license` (the funnel record's), `diff_excerpt` (the review input's hunks, joined with newlines), `issue_text` (empty: the frozen responses keep no commit message or pull request body), and `confirmation` with `card_id` `card-<candidate_key>`, the funnel's `shape_id`, the candidate rule ID for the match's path as `rules_matched`, and the call text as `matched_lines`.
+- **Card source:** `source_links` (the commit's GitHub URL, then the pull request's when the funnel record has a pull number), `repository` (the repository's GitHub URL), `date` (the UTC date of `committed_at`), `license` (the funnel record's), `diff_excerpt` (the review input's hunks, joined with newlines), `issue_text` (empty: the frozen responses keep no commit message or pull request body), and `confirmation` with `card_id` `card-<candidate_key>`, the funnel's `shape_id`, the shape's candidate rule ID for the match's path as `rules_matched`, and the call text as `matched_lines`.
 - **Refusal:** when a `confirmed` candidate has no record with the same candidate ID and commit in the review inputs or in `funnel.json`, it prints `card-inputs: refused: unmatched <candidate_key>`, writes nothing and exits 1.
 - **stdout:** `model_confirmed <n>`, each candidate key and `--out`; never a candidate ID, repository name, link or source text.
 - **Funnel:** `model_confirmed` is the count `card-inputs` prints, and `card_written` is the number of card files the `record` runs write. It stops at confirmed, not admitted. The harvest's `funnel.json` is not rewritten.
@@ -117,6 +119,19 @@ A model's vote:
 - **yes:** `verdict` is `fix` and both evidence fields are `yes`;
 - **no:** `verdict` is `not_fix`;
 - **unsure:** everything else, including a failed call, invalid output, and a `fix` with an evidence field that is not `yes`.
+
+### Race class (`RC-1.guarded-write`)
+
+Inputs whose `shape_id` is `RC-1.guarded-write` are judged with the race prompt and output (`RACE_SYSTEM_PROMPT`, `RaceReviewOutputSchema`). The bug sentence: server code reads a record, waits on an asynchronous step, then writes the record without checking that the state it read still holds, so two concurrent requests can both act on it; the fix makes the write compare and swap. The user message, the models, the limits and the outcome table are the same. The output replaces `zone_is_selected` with `guard_rechecks_state`:
+
+| Field | Values | Meaning |
+| --- | --- | --- |
+| `verdict` | `fix`, `not_fix`, `unsure` | Whether the commit fixes this bug at this write. |
+| `guard_rechecks_state` | `yes`, `no`, `unsure` | A condition the commit added to the write's filter re-checks the state the code read, rather than scoping the write to an owner or changing which record is written. |
+| `same_call` | `yes`, `no`, `unsure` | The commit changed an existing write (a changed method, as `update` to `updateMany`, is the same write) rather than adding one. |
+| `reason` | at most 400 characters | Why. |
+
+A yes vote needs a `fix` verdict and both evidence fields `yes`. An answer in the other shape's fields fails the strict schema and votes `unsure`. `review.json` records the shape as `shape_id`. The acceptance set below is for `DT-1.tz-arg` only; the race class has none yet, and its prompt has not been run against a live model.
 
 ## Outcomes
 
@@ -209,6 +224,7 @@ Each case is a small hand-written change with what it must get: a positive must 
 - The live `fetch`: its `Agent`'s header and body timeouts cover Kimi's 600,000 ms, and Node's `fetch` applies the `Agent`'s header timeout (on a loopback server).
 - `--cases`: a range, a comma list, and the selections it refuses.
 - `card-inputs` on the harvest's synthetic run and a synthetic review: files only for confirmed candidates, every card source field (with and without a pull number, `.ts` and `.tsx`), the input and context formats, the refusal, and stdout with no repository name or link.
+- The race class: the shape lookup, its votes, its prompt and schema, `build-inputs` over the harvest's synthetic race run (`test/fixtures/synthetic-race-inputs.json`, which a test compares), a `review` of race inputs with a scripted `fetch` (the race prompt and schema in the request, race votes combined), and `card-inputs` naming the race rule.
 - `build-inputs`, `review` and `acceptance` end to end: one reservation per call with the fixed ordinals and call names, each profile's service, limits and model in the reservation and the request, the outcomes, counts and matrix, a fresh context per run, `too_large`, the cap, `acceptance` runs of cases 1-5 and 6-10, and an uncertain call that stops the run with the slot held.
 
 `test/fixtures/synthetic-inputs.json` is `build-inputs` over the harvest's synthetic run, and a test fails when it differs. `node test/fixtures/synthesize-recordings.ts` regenerates the recordings from `test/fixtures/scripted.ts`, splitting the synthetic inputs and the acceptance set into runs within the cap; a prompt or schema change needs a regeneration, and the end-to-end tests fail on a recording that no longer matches the request.

@@ -13,6 +13,8 @@ import type { ReviewOptions } from "../src/review.ts";
 
 export const HARVEST_RUN = fileURLToPath(new URL("../../harvest/test/fixtures/synthetic-run/", import.meta.url));
 export const SYNTHETIC_INPUTS = fileURLToPath(new URL("./fixtures/synthetic-inputs.json", import.meta.url));
+export const RACE_HARVEST_RUN = fileURLToPath(new URL("../../harvest/test/fixtures/synthetic-race-run/", import.meta.url));
+export const SYNTHETIC_RACE_INPUTS = fileURLToPath(new URL("./fixtures/synthetic-race-inputs.json", import.meta.url));
 export const RECORDINGS_DIR = fileURLToPath(new URL("./fixtures/recordings/", import.meta.url));
 export const RATES = fileURLToPath(new URL("../rates.json", import.meta.url));
 
