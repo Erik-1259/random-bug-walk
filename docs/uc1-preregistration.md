@@ -31,10 +31,10 @@ Nothing in this document reports a result. No counted attempt has run when it is
 
 ## Design
 
-- **Solver.** One fixed agent: a small TypeScript tool-calling loop on Nemotron 3 Super through Token Factory, with a fixed system prompt, and a fixed temperature and seed per attempt index, shared across arms.
+- **Solver.** One fixed agent: a small TypeScript tool-calling loop on Nemotron 3 Super through Token Factory, with a fixed system prompt and temperature. Each of the 40 attempt indexes has its own fixed seed, so no two attempts share a seed, within an arm or across arms.
 - **Arms.** Off and on. Both arms start from the same solver-visible planted projection, with the same prompt, issue text, caps and tools: `bash` (as the unprivileged app user), `read_file`, `write_file`, `rebuild_restart` and `submit`. The on arm also has `server_logs`, a byte-capped tail with a cursor over the Umami and Postgres stderr logs the kit already captures. `rebuild_restart` returns build output and exit status only; runtime log tails are scrubbed from it in both arms. The tool list is the only difference between the arms.
 - **Attempts.** k = 20 per arm per bug, 40 in total.
-- **Independence.** The two arms are independent samples. A shared seed does not pair attempts, because the tool list changes the prompt. Pairing exists only at the bug level.
+- **Independence.** The two arms are independent samples. No seed is shared between attempts, so no attempt is paired with another. Pairing exists only at the bug level.
 - **Order.** Attempt indexes 1 to 40 follow ABBA blocks (off, on, on, off, repeated ten times), fixed in advance. Order is by index, never by finish time. Up to 3 sessions run at once on local Docker.
 - **Grading.** Each attempt's extracted fix is graded twice: grade 1 is a local Docker `judge_verify` run on a fresh copy, and grade 2 is a protected fresh-copy regrade on Vercel Sandbox. Grade 2 is authoritative. Both grades are charged to the development pool and slot, never the judge allocation. Every disagreement between the grades is published.
 - **Pilot (excluded from all results).** 2 off and 2 on attempts on `umami-tz-arg-001`, plus seeded grade round trips with no model. The pilot checks the harness, the tool calling and the cost per attempt. It is published only as "harness pilot; bug fails the static-headroom screen; not a UC1 result".
