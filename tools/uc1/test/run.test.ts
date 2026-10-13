@@ -1,9 +1,9 @@
 // The counted run's rules in the dry-run world: the spend guard before every model call and
 // regrade, the refusals before anything starts, the rerun rule, the scope rule, concurrency and
 // the model freeze.
-import { existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { readSolverRateSheet, solverEnvelope, SUPER_SOLVER_PROFILE } from "@rbw/solver";
 import { describe, expect, it } from "vitest";
 import { DRY_CLEAN, DRY_COPY_MICROUSD, DRY_OTHER, DRY_TARGET, defaultScript, dryRunWorld } from "../src/fakes.ts";
@@ -29,6 +29,14 @@ function counted(w: DryRunWorld, overrides: Partial<SessionsOptions> = {}): Sess
 
 function pilot(w: DryRunWorld, overrides: Partial<SessionsOptions> = {}): SessionsOptions {
   return { mode: "pilot", runsDir: w.runsDir, name: "pilot-01", caseFile: w.pilotCase, policyFile: w.policy, model: "super", concurrency: 1, ...overrides };
+}
+
+/** A finalized, completed pilot root on this model under the runs directory, as finalize leaves it (only the fields the gate reads). */
+function completedPilot(w: DryRunWorld, model: "super" | "kimi" = "super"): void {
+  const dir = join(w.runsDir, `pilot-done-${model}`);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "run.json"), JSON.stringify({ schema_version: 1, kind: "uc1_run", mode: "pilot", name: `pilot-done-${model}`, model, root_execution_id: `00000000-0000-4000-8000-00000000${model === "super" ? "0f01" : "0f02"}`, plan: [] }));
+  writeFileSync(join(dir, "root-run.json"), JSON.stringify({ status: "terminal", outcome: "completed" }));
 }
 
 const TURN_WORST = (() => {
@@ -68,12 +76,30 @@ describe("refusals before anything starts", () => {
 
   it("refuses to switch the model after the first counted attempt, and to resume a run on another model", async () => {
     const w = await world();
+    completedPilot(w);
     // The pilot may run Kimi before any counted attempt.
     expect((await runSessions(pilot(w, { name: "pilot-kimi", model: "kimi" }), w.deps)).exitCode).toBe(0);
     expect((await runSessions(counted(w, { name: "race-01" }), w.deps)).exitCode).toBe(0);
     await expect(runSessions(counted(w, { name: "race-02", model: "kimi" }), w.deps)).rejects.toThrow("the model is frozen");
     await expect(runSessions(pilot(w, { name: "pilot-late", model: "kimi" }), w.deps)).rejects.toThrow("the model is frozen");
     await expect(runSessions(counted(w, { name: "race-01", model: "kimi" }), w.deps)).rejects.toThrow("ran on super");
+    await w.close();
+  });
+
+  it("refuses a counted run until a pilot on the same model is finalized and completed", async () => {
+    const w = await world({ controller: (call) => (call.name === "grade-2-sandbox-seed-clean-r0" ? "failed" : "passed") });
+    await expect(runSessions(counted(w), w.deps)).rejects.toThrow("needs a finalized, completed harness pilot on super");
+    // A pilot that has not been finalized does not count.
+    const first = await runSessions(pilot(w), w.deps);
+    await expect(runSessions(counted(w), w.deps)).rejects.toThrow("needs a finalized, completed harness pilot on super");
+    // Nor does one that finalized incomplete (a seeded round trip failed grade 2).
+    await runGrade2({ runDir: first.runDir }, w.deps);
+    expect((await finalize({ runDir: first.runDir }, w.deps)).rootRun.outcome).toBe("incomplete");
+    await expect(runSessions(counted(w), w.deps)).rejects.toThrow("needs a finalized, completed harness pilot on super");
+    expect(existsSync(join(w.runsDir, "race-01"))).toBe(false);
+    // A completed pilot admits its own model only.
+    completedPilot(w);
+    await expect(runSessions(counted(w, { model: "kimi" }), w.deps)).rejects.toThrow("needs a finalized, completed harness pilot on kimi");
     await w.close();
   });
 
@@ -103,6 +129,7 @@ describe("the spend guard", () => {
     // Each scripted turn settles 495 micro-USD (1 200 input and 150 output tokens on Super). With
     // room for one turn's worst case plus 742, turns 1 and 2 fit and turn 3 is refused.
     const w = await world({ view: (view) => ({ ...view, settled_microusd: view.settled_microusd + 40_000_000n - TURN_WORST - 742n }) });
+    completedPilot(w);
     const outcome = await runSessions(counted(w), w.deps);
     expect(outcome.exitCode).toBe(1);
     expect(outcome.stop).toMatchObject({ reason: "allowance_exceeded" });
@@ -154,6 +181,7 @@ describe("the spend guard", () => {
   it("holds sessions running at once to the cap: concurrent turns cannot pass it", async () => {
     // Three sessions at once, room for exactly two turns: two first turns are reserved, then everything stops.
     const w = await world({ sessionDelayMs: 5, view: (view) => ({ ...view, settled_microusd: view.settled_microusd + 40_000_000n - TURN_WORST * 2n }) });
+    completedPilot(w);
     const outcome = await runSessions(counted(w, { concurrency: 3 }), w.deps);
     expect(outcome.stop).toMatchObject({ reason: "allowance_exceeded" });
     const ledger = await w.deps.allowanceSource.view([outcome.rootExecutionId]);
@@ -167,6 +195,7 @@ describe("the spend guard", () => {
 describe("attempts, reruns and scope", () => {
   it("starts up to 3 sessions at once, in index order, and records by index", async () => {
     const w = await world({ sessionDelayMs: 2 });
+    completedPilot(w);
     const outcome = await runSessions(counted(w, { concurrency: 3 }), w.deps);
     expect(outcome.exitCode).toBe(0);
     const keys = w.sessions.map((session) => session.request.id.split("-").slice(-3).join("-"));
@@ -393,6 +422,24 @@ describe("resumes, reruns and exit codes", () => {
     await expect(runSessions(pilot(w), w.deps)).rejects.toThrow("solver profile or rate sheet");
     writeFileSync(path, original);
     expect((await runSessions(pilot(w), w.deps)).exitCode).toBe(0);
+    await w.close();
+  });
+
+  it("refuses to resume or regrade a run after a file or directory its case names changed", async () => {
+    let tight = true;
+    const w = await world({ view: (view) => (tight ? { ...view, settled_microusd: view.settled_microusd + 40_000_000n - TURN_WORST + 1n } : view) });
+    const first = await runSessions(pilot(w), w.deps);
+    expect(first.stop).toMatchObject({ reason: "allowance_exceeded" });
+    tight = false;
+    const inputs = dirname(w.pilotCase);
+    const manifest = join(inputs, "manifest.json");
+    writeFileSync(manifest, "changed\n");
+    await expect(runSessions(pilot(w), w.deps)).rejects.toThrow("the case's manifest changed since the run started");
+    await expect(runGrade2({ runDir: first.runDir }, w.deps)).rejects.toThrow("the case's manifest changed since the run started");
+    writeFileSync(manifest, "synthetic\n");
+    writeFileSync(join(inputs, "reference-fix", "extra.ts"), "export {};\n");
+    await expect(runSessions(pilot(w), w.deps)).rejects.toThrow("the case's reference_fix changed since the run started");
+    expect(w.sessions).toHaveLength(0);
     await w.close();
   });
 

@@ -143,6 +143,15 @@ function usd(microusd: number): string {
   return `$${(microusd / 1_000_000).toFixed(4)}`;
 }
 
+/** The turns outcome, the third co-primary outcome, which the analyzer's statement leaves out. */
+function turnsSentence(turns: ResultsRecord["bugs"][number]["turns"]): string {
+  if (turns === null) return "Turns were not tested: an arm has no counted attempt.";
+  const approximate = turns.interval_coverage_approximate ? " (approximate with ties)" : "";
+  const detail = `Turns: shift on minus off ${turns.hodges_lehmann_on_minus_off}, interval ${turns.interval_on_minus_off[0]} to ${turns.interval_on_minus_off[1]} at level ${turns.interval_level}${approximate}, Mann-Whitney p ${turns.mann_whitney_p}, Holm-adjusted p ${turns.holm_p}`;
+  if (!turns.holm_reject) return `${detail}; inconclusive at this sample size.`;
+  return `${detail}; the on arm took ${Number(turns.hodges_lehmann_on_minus_off) > 0 ? "more" : "fewer"} turns.`;
+}
+
 /** The run's report: the label, the plan, every attempt, both grades, spend and the analysis statements. */
 export function reportMarkdown(summary: RunSummary, analysis: ResultsRecord | null): string {
   const lines: string[] = [];
@@ -195,7 +204,7 @@ export function reportMarkdown(summary: RunSummary, analysis: ResultsRecord | nu
       const off = bug.arms.off;
       const on = bug.arms.on;
       lines.push(summary.mode === "pilot" ? `Harness pilot, k = ${String(off.counted)} off and ${String(on.counted)} on; not a UC1 result.` : `Illustration on 1 bug, k = ${String(off.counted)} off and ${String(on.counted)} on.`, "");
-      lines.push(bug.made_worse.statement, "");
+      lines.push(bug.made_worse.statement, "", turnsSentence(bug.turns), "");
     }
     lines.push(analysis.claim_scope, "");
   }

@@ -26,7 +26,7 @@ import { jobName, prepareGrade, runGrade, writeGradeIds } from "@rbw/solver-sess
 import type { GradeCommand, GradeNumber, GradeResult, GradeRoute, GradeTarget } from "@rbw/solver-session/grade";
 import { profileSha256 } from "@rbw/writer";
 import { Allowance, guardSpend } from "./allowance.ts";
-import { CaseError, checkCaseForMode, controllerBase, loadCase, screenStatus } from "./case.ts";
+import { CaseError, caseInputDigests, changedCaseInputs, checkCaseForMode, controllerBase, loadCase, screenStatus } from "./case.ts";
 import type { CaseConfig } from "./case.ts";
 import { SessionRefused } from "./deps.ts";
 import type { AttemptSession, Uc1Deps } from "./deps.ts";
@@ -109,6 +109,28 @@ function frozenModel(runsDir: string): { model: SolverModelName; name: string } 
     if (readAttempts(dir, run).some((record) => record.runs.some((entry) => entry.ended === "submitted" || entry.ended === "cap_reached"))) return { model: run.model, name: run.name };
   }
   return null;
+}
+
+/**
+ * A counted run needs the pilot behind it: a pilot root on the same model that finalize made
+ * terminal with outcome completed. The pre-registration makes the pilot, and the model decision
+ * after it, prerequisites of the counted run.
+ */
+function refuseWithoutCompletedPilot(runsDir: string, model: SolverModelName): void {
+  const completed = listRuns(runsDir).some(({ dir, run }) => {
+    if (run.mode !== "pilot" || run.model !== model) return false;
+    const path = join(dir, "root-run.json");
+    if (!existsSync(path)) return false;
+    const root = readJson(path) as Partial<RootRun>;
+    return root.status === "terminal" && root.outcome === "completed";
+  });
+  if (!completed) throw new RunRefusal(`a counted run needs a finalized, completed harness pilot on ${model} under the runs directory`);
+}
+
+/** Refuses to continue a run when a file or directory its case names no longer has the content the run started with. */
+function refuseChangedInputs(runDir: string, run: RunRecord): void {
+  const changed = changedCaseInputs(run.inputs_sha256, readJson(join(runDir, "case.json")) as CaseConfig);
+  if (changed.length > 0) throw new RunRefusal(`run ${run.name}: the case's ${changed.join(", ")} changed since the run started; restore ${changed.length === 1 ? "it" : "them"} or start a new run name`);
 }
 
 function rootRunRecord(run: RunRecord, status: RootRun["status"], outcome: RootRun["outcome"], children: readonly string[]): RootRun {
@@ -450,11 +472,13 @@ export async function runSessions(options: SessionsOptions, deps: Uc1Deps): Prom
       throw new RunRefusal(`run ${options.name} was started with another solver profile or rate sheet`);
     }
     refuseFinalized(runDir, options.name);
+    refuseChangedInputs(runDir, existing);
   } else if (existsSync(runDir) && readdirSync(runDir).length > 0) {
     throw new RunRefusal(`${runDir} exists and is not a UC1 run`);
   }
   const frozen = frozenModel(options.runsDir);
   if (frozen !== null && frozen.model !== options.model) throw new RunRefusal(`the model is frozen at ${frozen.model} after the first counted attempt (run ${frozen.name}); switching is refused`);
+  if (options.mode === "run") refuseWithoutCompletedPilot(options.runsDir, options.model);
 
   let run: RunRecord;
   if (existing === null) {
@@ -473,6 +497,7 @@ export async function runSessions(options: SessionsOptions, deps: Uc1Deps): Prom
       case_sha256: loaded.sha256,
       screen_record_sha256: sha256Hex(readFileSync(config.screen_record)),
       issue_sha256: issueSha,
+      inputs_sha256: caseInputDigests(config),
       model: options.model,
       model_id: profile.hashed.model,
       service: profile.service,
@@ -595,6 +620,7 @@ export async function runGrade2(options: { runDir: string }, deps: Uc1Deps): Pro
   const run = readRun(runDir);
   if (run === null) throw new RunRefusal(`${runDir} is not a UC1 run`);
   refuseFinalized(runDir, run.name);
+  refuseChangedInputs(runDir, run);
   const slot = await deps.spend.slotStatus({ slot_key: DEVELOPMENT_SLOT });
   if (!slot.ok) throw new RunRefusal(`the development slot is unavailable (${slot.code})`);
   if (slot.holder !== null) throw new RunRefusal(`the development slot is held by ${slot.holder}; grade 2 needs it free, since the controller takes it for each job`);
@@ -655,6 +681,7 @@ export async function finalize(options: { runDir: string }, deps: Pick<Uc1Deps, 
   const { runDir } = options;
   const run = readRun(runDir);
   if (run === null) throw new RunRefusal(`${runDir} is not a UC1 run`);
+  refuseChangedInputs(runDir, run);
   const records = readAttempts(runDir, run);
   const seeded = readSeeded(runDir);
   const target = (readJson(join(runDir, "states.json")) as StatesRecord).target_path;

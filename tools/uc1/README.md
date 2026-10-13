@@ -32,7 +32,7 @@ Each step is its own command, so grade 2 (the only step that spends on Vercel Sa
 2. **`grade2`: the protected regrade.** For every seeded round trip and every counted, graded attempt (the final run at its index), one controller `judge_verify` job on Vercel Sandbox, serially, on the development pool and slot under the root, each only when its worst case fits the allowance. A grade that stops for infrastructure reasons is retried as a grade only, up to 2 times. The slot must be free: the controller takes it for each job.
 3. **`finalize`: the records.** The analyzer's rows and its results record, the summary, the report, the publisher's staging directory, and the root's terminal status: `completed` when every planned index has a final status and, in a pilot, both seeded round trips took their expected routes and passed both grades; `incomplete` otherwise (for example when the run stopped); `needs_reconciliation` when the ledger shows an open or uncertain operation under the root. It refuses while any counted, graded attempt or seeded round trip has no finished grade 2.
 
-An existing run directory resumes until it is finalized: `pilot` or `run` with the same `--name` continues at the first index without a final status, with the same root, model, case, policy, issue, runtime profile and rate sheet. Once `finalize` has made the root terminal, `pilot`, `run` and `grade2` refuse that run, since the publisher freezes the root's first terminal snapshot; continuing after that takes a new `--name` (a new root).
+An existing run directory resumes until it is finalized: `pilot` or `run` with the same `--name` continues at the first index without a final status, with the same root, model, case, policy, issue, runtime profile and rate sheet, and the same content in every file and directory the case names (the run records their hashes). Once `finalize` has made the root terminal, `pilot`, `run` and `grade2` refuse that run, since the publisher freezes the root's first terminal snapshot; continuing after that takes a new `--name` (a new root).
 
 ## Commands
 
@@ -170,9 +170,11 @@ Refused before anything is written (exit 2):
 
 - a counted run whose screen record is not in the pre-registered format with both verdicts `pass`, which includes the time-zone case;
 - a pilot on any case but `umami-tz-arg-001`;
+- a counted run with no pilot on the same `--model` under `<runs>` that `finalize` made terminal with outcome `completed`;
 - a policy that is not `public_demo` and public;
 - `--concurrency` outside 1 to 3;
 - a different `--model` after the first counted attempt under `<runs>`, or a resumed run on another model, case, policy, issue, runtime profile or rate sheet;
+- a `pilot`, `run`, `grade2` or `finalize` on a run after a file or directory its case names (the screen record, issue, manifest, terms, audit policy, probes, reference fix, kit stage or original suite) changed content since the run started;
 - a `pilot`, `run` or `grade2` on a run whose root `finalize` already made terminal;
 - an image that resolves to another digest than the case's.
 

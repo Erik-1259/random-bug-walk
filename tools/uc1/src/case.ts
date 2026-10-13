@@ -1,8 +1,8 @@
 // A UC1 case file: the admitted bug a run is for, its screen record, the bug report every attempt
 // gets, the pinned kit image, and the inputs the session and the controller's grades need. Paths
 // are resolved against the current directory, as the other tools resolve theirs.
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { lstatSync, readFileSync, readdirSync, readlinkSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { sha256Hex } from "@rbw/schema";
 import { PILOT_CASE_ID } from "./plan.ts";
 import type { RunMode } from "./plan.ts";
@@ -78,6 +78,59 @@ export function parseCase(bytes: Uint8Array): CaseConfig {
 export function loadCase(path: string): { config: CaseConfig; sha256: string } {
   const bytes = readFileSync(path);
   return { config: parseCase(bytes), sha256: sha256Hex(bytes) };
+}
+
+/** The SHA-256 of a file's bytes, or of a directory tree: each entry's kind, relative path and content hash, in name order. */
+function contentSha256(path: string): string {
+  const stat = lstatSync(path);
+  if (stat.isSymbolicLink()) return sha256Hex(Buffer.from(`link ${readlinkSync(path)}`));
+  if (!stat.isDirectory()) return sha256Hex(readFileSync(path));
+  const lines: string[] = [];
+  const walk = (dir: string, prefix: string): void => {
+    for (const name of readdirSync(dir).sort()) {
+      const full = join(dir, name);
+      const relative = prefix === "" ? name : `${prefix}/${name}`;
+      const entry = lstatSync(full);
+      if (entry.isDirectory()) {
+        lines.push(`dir ${relative}`);
+        walk(full, relative);
+      } else {
+        lines.push(`${entry.isSymbolicLink() ? "link" : "file"} ${relative} ${contentSha256(full)}`);
+      }
+    }
+  };
+  walk(path, "");
+  return sha256Hex(Buffer.from(lines.join("\n")));
+}
+
+/**
+ * The content hash of every file and directory the case names (null for a null field). The case
+ * file holds only paths, so a run records these and refuses to continue when any of them changed:
+ * one root never mixes two projections, issues or grading inputs.
+ */
+export function caseInputDigests(config: CaseConfig): Record<string, string | null> {
+  const out: Record<string, string | null> = {};
+  for (const field of FIELDS) {
+    if (!PATHS.has(field)) continue;
+    const path = config[field];
+    out[field] = path === null ? null : contentSha256(path);
+  }
+  return out;
+}
+
+/** The fields whose content differs from what the run recorded (a field the record lacks counts as changed). */
+export function changedCaseInputs(recorded: Readonly<Record<string, string | null>> | undefined, config: CaseConfig): string[] {
+  return FIELDS.filter((field) => PATHS.has(field)).filter((field) => {
+    const path = config[field];
+    let now: string | null;
+    try {
+      now = path === null ? null : contentSha256(path);
+    } catch {
+      // A file that cannot be read any more has changed.
+      return true;
+    }
+    return recorded?.[field] !== now;
+  });
 }
 
 /** What a screen record says about using its case in a UC1 run. */

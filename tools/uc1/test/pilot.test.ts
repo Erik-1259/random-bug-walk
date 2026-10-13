@@ -182,7 +182,13 @@ describe("the harness pilot", () => {
     // The staging layout the publisher reads.
     const staging = join(outcome.runDir, "staging");
     expect(readdirSync(staging).sort()).toEqual(["inputs", "logs", "report.md", "results"]);
-    expect(readFileSync(join(staging, "report.md"), "utf8")).toContain(PILOT_LABEL);
+    const report = readFileSync(join(staging, "report.md"), "utf8");
+    expect(report).toContain(PILOT_LABEL);
+    // All three co-primary outcomes are in the report: solve, tokens and turns.
+    const turns = (analysis.bugs as { turns: { hodges_lehmann_on_minus_off: string; mann_whitney_p: string; holm_p: string } }[])[0]?.turns;
+    expect(turns).toBeDefined();
+    expect(report).toContain(`Turns: shift on minus off ${turns?.hodges_lehmann_on_minus_off ?? ""}`);
+    expect(report).toContain(`Mann-Whitney p ${turns?.mann_whitney_p ?? ""}, Holm-adjusted p ${turns?.holm_p ?? ""}`);
     expect(readdirSync(join(staging, "results"))).toContain("analysis.json");
     expect(readdirSync(join(staging, "logs"))).toContain("transcript-on-002-r0.jsonl");
     const staged = readFileSync(join(staging, "results", "attempt-002-on.json"), "utf8");

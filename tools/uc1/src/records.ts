@@ -28,6 +28,8 @@ export interface RunRecord {
   case_sha256: string;
   screen_record_sha256: string;
   issue_sha256: string;
+  /** The content hash of every file and directory the case names, keyed by case field (null for a null field). */
+  inputs_sha256: Record<string, string | null>;
   model: SolverModelName;
   model_id: string;
   service: string;
