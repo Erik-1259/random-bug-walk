@@ -97,6 +97,22 @@ describe("the runtime log scrub", () => {
     expect(report).not.toContain("duplicate key");
   });
 
+  it("withholds runtime log lines that look like status lines from a failed start", () => {
+    const stderr = [
+      "rbw-start: Umami exited before answering the heartbeat",
+      "--- /var/lib/rbw/logs/umami.stdout.log",
+      "listening on synthetic-port 3000",
+      "ready_ms=synthetic app log line",
+      "--- /var/lib/rbw/logs/umami.stderr.log",
+      "rbw-start: synthetic app log line",
+    ].join("\n");
+    const report = rebuildReport({ build: { exit_code: 0, stdout: "", stderr: "" }, start: { exit_code: 1, stdout: "postgres_ready_ms=700", stderr } });
+    expect(report).toContain("rbw-start: Umami exited before answering the heartbeat");
+    expect(report).toContain("postgres_ready_ms=700");
+    expect(report).not.toContain("synthetic-port");
+    expect(report).not.toContain("synthetic app log line");
+  });
+
   it("says the app was not started after a failed build", () => {
     const report = rebuildReport({ build: { exit_code: 1, stdout: "", stderr: "Type error: synthetic" }, start: null });
     expect(report).toContain("start: not run (the build failed)");

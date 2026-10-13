@@ -199,7 +199,10 @@ export function rebuildReport(result: RebuildResult): string {
     lines.push("start: not run (the build failed)");
     return lines.join("\n");
   }
-  const startLines = `${result.start.stdout}\n${result.start.stderr}`.split("\n").filter((line) => line !== "");
+  // rbw-start appends runtime log tails under `--- <log>` headers when it fails; those lines go
+  // before the status filter, so a log line shaped like a status line never reaches the model.
+  const startText = `${scrubRuntimeLogs(result.start.stdout)}\n${scrubRuntimeLogs(result.start.stderr)}`;
+  const startLines = startText.split("\n").filter((line) => line !== "");
   const shown = startLines.filter((line) => START_STATUS.test(line));
   const withheld = startLines.length - shown.length;
   lines.push(`start_exit_code: ${String(result.start.exit_code)}`, "--- start status", ...shown);
