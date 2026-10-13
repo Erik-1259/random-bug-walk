@@ -7,19 +7,24 @@ import {
   COMPARISON_TEXT,
   countExamples,
   diagnosticArchives,
+  factoryRuns,
   funnel,
   MATRIX_COLUMNS,
   MATRIX_ROWS,
   NO_VALIDATED_RESULT,
   NOT_IN_RECORDS,
   originalSuiteSize,
+  otherRuns,
   releaseHref,
+  REPLAY_VERDICT_NOTE,
   replayState,
   ROW_LABEL,
+  RUN_KIND_TEXT,
   runStatusText,
   suiteMatrix,
   VALIDATED_RESULT,
   VERDICT_TEXT,
+  verificationReplays,
 } from "../model.ts";
 import { ReplayControl } from "./replay-control.tsx";
 import { RunSummary } from "./run-summary.tsx";
@@ -245,6 +250,7 @@ function Provenance({ results }: { results: Results }) {
         <h3>The released run&apos;s files</h3>
         <RunSummary run={run} />
         <DiagnosticArchive results={results} archives={diagnosticArchives(results)} empty="No other published runs." />
+        <Replays replays={verificationReplays(results)} />
       </>
     );
   }
@@ -270,6 +276,26 @@ function Provenance({ results }: { results: Results }) {
       )}
       <p>Release files: none, because there is no validated release.</p>
       <DiagnosticArchive results={results} archives={run === null ? diagnosticArchives(results) : [run]} empty="No run has been published." />
+      <Replays replays={verificationReplays(results)} />
+    </>
+  );
+}
+
+/** Published judge replays: verification runs, listed apart so none reads as a failed or unvalidated factory run. */
+function Replays({ replays }: { replays: Run[] }) {
+  if (replays.length === 0) return null;
+  return (
+    <>
+      <h3>Verification replays (judge)</h3>
+      <p>These are judges&apos; replays, not factory runs, so they are not candidates for validation.</p>
+      {replays.map((replay) => (
+        <div key={replay.rootExecutionId}>
+          <p>
+            {replay.rootExecutionId} {RUN_KIND_TEXT.judge_replay.toLowerCase()}, {runStatusText(replay).outcome.toLowerCase()}
+          </p>
+          <RunSummary run={replay} />
+        </div>
+      ))}
     </>
   );
 }
@@ -295,31 +321,38 @@ function DiagnosticArchive({ results, archives, empty }: { results: Results; arc
   );
 }
 
-/** What the funnel counts: only the runs in this results directory, never every attempt. */
+/** What the funnel counts: only the factory runs in this results directory, never every attempt. */
 export function funnelScope(results: Results): string {
-  const unfinished = results.runs.some((run) => run.outcome === "failed" || run.outcome === "incomplete");
-  const scope = "It counts only the runs in this site's results repository and its public store.";
+  const unfinished = factoryRuns(results).some((run) => run.outcome === "failed" || run.outcome === "incomplete");
+  const scope = "It counts only the factory runs in this site's results repository and its public store; judge replays and kit checks are counted apart below.";
   return unfinished
     ? `${scope} Attempts that were not published here are not counted, so it is not a record of every attempt.`
     : `${scope} Failed and incomplete factory attempts are not published here, so it is not a record of every attempt.`;
 }
 
+function CountTable({ caption, steps }: { caption: string; steps: { label: string; count: number }[] }) {
+  return (
+    <table className="funnel">
+      <caption>{caption}</caption>
+      <tbody>
+        {steps.map((step) => (
+          <tr key={step.label}>
+            <th scope="row">{step.label}</th>
+            <td>{String(step.count)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
 function FunnelAndLimitations({ results }: { results: Results }) {
   return (
     <>
-      <table className="funnel">
-        <caption>Batch funnel, counted from the runs published for this site</caption>
-        <tbody>
-          {funnel(results).map((step) => (
-            <tr key={step.label}>
-              <th scope="row">{step.label}</th>
-              <td>{String(step.count)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <CountTable caption="Batch funnel, counted from the factory runs published for this site" steps={funnel(results)} />
       <p className="funnel-note">{funnelScope(results)}</p>
-      {/* Verification replays: when judge replay outcomes are published (judge_replay roots), their "N verified" line goes here. */}
+      <CountTable caption="Runs counted apart from the factory funnel" steps={otherRuns(results)} />
+      {results.runs.some((run) => run.kind === "judge_replay") ? <p className="funnel-note">{REPLAY_VERDICT_NOTE}</p> : null}
       <h3>Limitations</h3>
       <ul>
         <li>The planted bug is synthetic. It was introduced on purpose and is not a real Umami bug.</li>

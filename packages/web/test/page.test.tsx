@@ -126,11 +126,11 @@ describe("case page with admission records", () => {
     });
     const results = await readResults(built.dir);
     expect(funnel(results).map((step) => [step.label, step.count])).toEqual([
-      ["Runs recorded", 1],
-      ["Runs finished", 1],
-      ["Runs published", 1],
-      ["Runs with an observed symptom", 1],
-      ["Runs with an admission decision", 1],
+      ["Factory runs recorded", 1],
+      ["Factory runs finished", 1],
+      ["Factory runs published", 1],
+      ["Factory runs with an observed symptom", 1],
+      ["Factory runs with an admission decision", 1],
       ["Admission verdict pass", 0],
       ["Blind spot demonstrated (ADM-08)", 0],
       ["Validated releases (ADM-09)", 0],
@@ -162,9 +162,12 @@ describe("no-release state", () => {
 
   it("shows the honest funnel, the limitations and the method", async () => {
     const results = await readResults(NO_RELEASE);
-    expect(funnel(results).map((step) => step.count)).toEqual([3, 2, 2, 0, 0, 0, 0, 0]);
+    // The running kit check is not a factory run: it is counted apart.
+    expect(funnel(results).map((step) => step.count)).toEqual([2, 2, 2, 0, 0, 0, 0, 0]);
     const page = text(renderToStaticMarkup(<CasePage results={results} />));
-    expect(page).toContain("Runs recorded 3");
+    expect(page).toContain("Factory runs recorded 2");
+    expect(page).toContain("Runs counted apart from the factory funnel Verification replays (judge) 0 Kit checks 1");
+    expect(page).not.toContain("A replay's published records");
     expect(page).toContain("Calibration: not requested");
     expect(page).toContain("13 fresh app copies");
   });
@@ -263,17 +266,17 @@ describe("diagnostic catalog", () => {
   it("lists every run with its real status, including failed, incomplete and running runs", async () => {
     const html = renderToStaticMarkup(<Catalog results={await readResults(NO_RELEASE)} />);
     const page = text(html);
-    expect(page).toContain("00000000-0000-4000-8000-000000002001 factory Terminal Failed Published");
-    expect(page).toContain("00000000-0000-4000-8000-000000002003 factory Terminal Incomplete Published");
-    expect(page).toContain("00000000-0000-4000-8000-000000002005 kit_check Running None yet Not published");
+    expect(page).toContain("00000000-0000-4000-8000-000000002001 Factory run Terminal Failed Published");
+    expect(page).toContain("00000000-0000-4000-8000-000000002003 Factory run Terminal Incomplete Published");
+    expect(page).toContain("00000000-0000-4000-8000-000000002005 Kit check Running None yet Not published");
     expect(page).toContain("results/00000000-0000-4000-8000-000000002004/clean-01/trial-result.json Not produced (stage_failed)");
     expect(html).toContain('href="/runs/00000000-0000-4000-8000-000000002001/logs/00000000-0000-4000-8000-000000002002/run.log"');
   });
 
   it("marks the released run and says which run is the validated release", async () => {
     const page = text(renderToStaticMarkup(<Catalog results={await readResults(RELEASE)} />));
-    expect(page).toContain(`Run ${RELEASE_ROOT} is validated release ${RELEASE_ID}; the others are not validated.`);
-    expect(page).toContain(`${RELEASE_ROOT} Validated release ${RELEASE_ID} factory Terminal Completed Published`);
+    expect(page).toContain(`Run ${RELEASE_ROOT} is validated release ${RELEASE_ID}; the other factory runs are not validated.`);
+    expect(page).toContain(`${RELEASE_ROOT} Validated release ${RELEASE_ID} Factory run Terminal Completed Published`);
   });
 
   it("says that no run is a validated release without one", async () => {
@@ -284,7 +287,7 @@ describe("diagnostic catalog", () => {
 
   it("lists the development run's files with their hashes", async () => {
     const page = text(renderToStaticMarkup(<Catalog results={await readResults(DEVELOPMENT)} />));
-    expect(page).toContain(`${DEVELOPMENT_ROOT} factory Terminal Completed Published`);
+    expect(page).toContain(`${DEVELOPMENT_ROOT} Factory run Terminal Completed Published`);
     expect(page).toContain("generated/symptom.json Published 3441 bytes 1f0f71b985e1d4f7c336a51cb2371fad8ff0e1ac722c764dfc1d68668482cc7a");
   });
 });
