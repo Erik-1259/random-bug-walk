@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "case_id": "umami-tz-arg-001",
+  "recorded": "2026-10-13",
+  "recorded_by": "UC1 pre-registration step",
+  "target": {
+    "upstream": "https://github.com/umami-software/umami",
+    "host_commit": "ec0ff50388c264ed8ce46f00967e92f7e71476ae",
+    "path": "src/queries/sql/pageviews/getPageviewStats.ts",
+    "sha256": "1f679f7a666f2ca7888b9094fb85a69a31b546566f194e27ac6eef2e9aef9b1b",
+    "sha256_source": "DT1_TARGET.sha256 in packages/shapes/src/shape.ts; the file fetched from the host commit on 2026-10-13 hashed to the same value",
+    "mutation_patch": "packages/shapes/probes/dt-1.tz-arg/mutation.patch",
+    "mutation_id": "4c2531a343d8250607df3ab84491e2d7e655849c1dbcb477264a5c126b21ccca"
+  },
+  "static_headroom": {
+    "screen": "spec section 8.3: skip a bug whose omission is plain from the pre-fix source alone",
+    "verdict": "fail",
+    "judgment": "The omission is plain from the planted source alone. A reader of getPageviewStats.ts sees relationalQuery destructure a timezone it never uses, next to a ClickHouse branch that passes the same value to the same helper.",
+    "reasons": [
+      "Line 17 of the pinned file, in relationalQuery, destructures `const { timezone = 'utc', unit = 'day' } = filters;`.",
+      "The mutation changes line 28 from `getDateSQL('website_event.created_at', unit, timezone)` to `getDateSQL('website_event.created_at', unit)`. That call was the only use of `timezone` in relationalQuery, so after the mutation the destructured `timezone` is unused.",
+      "clickhouseQuery in the same file still calls `getDateSQL('website_event.created_at', unit, timezone)` on lines 66 and 86; the mutation leaves both calls unchanged."
+    ]
+  },
+  "leak_screen": {
+    "verdict": "not_assessed",
+    "reason": "The case already fails the static-headroom screen, so it cannot serve as a log-tool case whatever its issue text and responses reveal."
+  },
+  "uc1_use": "Harness pilot only, published as \"harness pilot; bug fails the static-headroom screen; not a UC1 result\". If the owner chooses the fallback on Oct 18, 2026, it runs as a low-headroom contrast, never as a tool-effect illustration."
+}
