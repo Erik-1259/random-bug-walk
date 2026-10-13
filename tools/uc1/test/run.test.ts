@@ -247,6 +247,34 @@ describe("attempts, reruns and scope", () => {
     await w.close();
   });
 
+  it("records a controller that cannot start as an infrastructure grade, retries it, and leaves the slot free", async () => {
+    const w = await world();
+    const controller = w.deps.runController.bind(w.deps);
+    w.deps.runController = (args) => (args.includes("grade-1-docker-on-002-r0-r0") || args.includes("grade-1-docker-on-002-r0-r1") ? Promise.reject(new Error("spawn node ENOENT")) : controller(args));
+    const outcome = await runSessions(pilot(w), w.deps);
+    expect(outcome.exitCode).toBe(0);
+    const run = runs(outcome.runDir, "002-on")[0] ?? {};
+    expect((run.grade1 as { result: { state: string; detail: string | null } }[]).map((item) => [item.result.state, item.result.detail])).toEqual([
+      ["infrastructure", "controller: spawn node ENOENT"],
+      ["infrastructure", "controller: spawn node ENOENT"],
+      ["passed", null],
+    ]);
+    const slot = await w.spend.slotStatus({ slot_key: "development" });
+    expect(slot.ok && slot.holder).toBeNull();
+    await w.close();
+  });
+
+  it("releases the development slot when a step throws", async () => {
+    const w = await world();
+    w.deps.report = (line) => {
+      if (line === "attempt=on-002-r0 status=starting") throw new Error("synthetic harness fault");
+    };
+    await expect(runSessions(pilot(w), w.deps)).rejects.toThrow("synthetic harness fault");
+    const slot = await w.spend.slotStatus({ slot_key: "development" });
+    expect(slot.ok && slot.holder).toBeNull();
+    await w.close();
+  });
+
   it("refuses to finalize while a counted attempt still waits for grade 2", async () => {
     const w = await world();
     const outcome = await runSessions(pilot(w), w.deps);

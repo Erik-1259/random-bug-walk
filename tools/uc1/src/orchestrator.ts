@@ -22,8 +22,8 @@ import { CanonicalError, RecordError, assertRecord, encodeCanonical, parseRecord
 import type { RootRun } from "@rbw/schema";
 import { SOLVER_PROFILES, analyze, attemptKey, readSolverRateSheet, resultsRecordJson, runAttempt, solverEnvelope, transcriptLine } from "@rbw/solver";
 import type { AttemptRow, ResultsRecord, SolverModelName, SolverProfile } from "@rbw/solver";
-import { prepareGrade, runGrade, writeGradeIds } from "@rbw/solver-session/grade";
-import type { GradeCommand, GradeNumber, GradeRoute, GradeTarget } from "@rbw/solver-session/grade";
+import { jobName, prepareGrade, runGrade, writeGradeIds } from "@rbw/solver-session/grade";
+import type { GradeCommand, GradeNumber, GradeResult, GradeRoute, GradeTarget } from "@rbw/solver-session/grade";
 import { profileSha256 } from "@rbw/writer";
 import { Allowance, guardSpend } from "./allowance.ts";
 import { CaseError, checkCaseForMode, controllerBase, loadCase, screenStatus } from "./case.ts";
@@ -169,7 +169,13 @@ async function gradeTry(ctx: RunContext, route: Exclude<GradeRoute, { route: "no
     ids,
     projectPolicy: join(ctx.runDir, "policy.json"),
   };
-  const result = await runGrade(route, grade, command, { runController: (args) => ctx.deps.runController(args) });
+  let result: GradeResult;
+  try {
+    result = await runGrade(route, grade, command, { runController: (args) => ctx.deps.runController(args) });
+  } catch (error) {
+    // The controller could not be started: no verdict on the attempt, so an infrastructure grade, retried as a grade only.
+    result = { grade, job: jobName(grade, label, retry), state: "infrastructure", detail: `controller: ${message(error)}`, summary_sha256: null, trial: null };
+  }
   const executionId = (readJson(ids[grade]) as RunIds).executions["alternative-fix"];
   const summaryPath = join(work, "jobs", result.job, "summary.json");
   let settled: number | null = null;
@@ -531,11 +537,15 @@ export async function runSessions(options: SessionsOptions, deps: Uc1Deps): Prom
         await runIndex(pass, item);
       }
     };
-    await Promise.all(Array.from({ length: options.concurrency }, () => worker()));
-    const released = await deps.spend.releaseSlot({ ...slot, evidence: null, reason: null });
-    if (!released.ok) {
-      pass.halt("slot_release_blocked", `${released.code}: ${released.detail ?? ""}`);
-      writeRootRun(runDir, run, "needs_reconciliation", null);
+    try {
+      await Promise.all(Array.from({ length: options.concurrency }, () => worker()));
+    } finally {
+      // Released even when a step threw, so a harness fault never leaves the development slot held.
+      const released = await deps.spend.releaseSlot({ ...slot, evidence: null, reason: null });
+      if (!released.ok) {
+        pass.halt("slot_release_blocked", `${released.code}: ${released.detail ?? ""}`);
+        writeRootRun(runDir, run, "needs_reconciliation", null);
+      }
     }
   }
 
