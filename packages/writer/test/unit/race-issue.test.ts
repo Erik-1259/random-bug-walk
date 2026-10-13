@@ -169,6 +169,8 @@ describe("the race issue checks", () => {
     expect(check({ actual_result: "Request b returned 200 at 0 ms and both tabs were signed in." }).numeric?.violations).toEqual(missing);
     expect(check({ actual_result: "Request a was sent at 0 ms and accepted; request b at 1 ms was refused." }).numeric?.violations).toEqual(missing);
     expect(check({ actual_result: "Accepted: 2, refused: 0." }).numeric?.ok).toBe(true);
+    expect(check({ actual_result: "accepted:2, refused:0" }).numeric?.ok).toBe(true);
+    expect(check({ actual_result: "accepted=2, refused=0" }).numeric?.ok).toBe(true);
     expect(check({ actual_result: "Of the 2 requests, 2 of them were accepted and 0 were refused." }).numeric?.ok).toBe(true);
   });
 

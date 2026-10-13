@@ -59,11 +59,13 @@ function countRuns(text: string): bigint[] {
 
 // A race count is a standalone number stated with its outcome: "2 were accepted", "1 refused",
 // "2 of them were accepted" or "accepted: 2". A digit run inside a path or word (`/api/2fa`), or
-// one followed by a unit or another number (`0 ms`, `1.5`), is never a count.
-const STANDALONE = String.raw`(?<![\p{L}\p{N}_./:-])(\d+)(?![\p{L}\p{N}_]|[.,:]\d)(?!\s*(?:ms|milliseconds?|seconds?|s|%)(?![\p{L}]))`;
+// one followed by a unit or another number (`0 ms`, `1.5`), is never a count. After an outcome
+// and its `:` or `=`, the digit run's start is already bounded, so `accepted:2` is a count.
+const COUNT = String.raw`(\d+)(?![\p{L}\p{N}_]|[.,:]\d)(?!\s*(?:ms|milliseconds?|seconds?|s|%)(?![\p{L}]))`;
+const STANDALONE = String.raw`(?<![\p{L}\p{N}_./:-])${COUNT}`;
 const OUTCOME = String.raw`(accept\p{L}*|refus\p{L}*|reject\p{L}*)`;
 const RACE_COUNT = new RegExp(
-  `${STANDALONE}\\s+(?:\\p{L}+\\s+){0,3}?${OUTCOME}(?![\\p{L}])|(?<![\\p{L}])${OUTCOME}\\s*[:=]\\s*${STANDALONE}`,
+  `${STANDALONE}\\s+(?:\\p{L}+\\s+){0,3}?${OUTCOME}(?![\\p{L}])|(?<![\\p{L}])${OUTCOME}\\s*[:=]\\s*${COUNT}`,
   "giu",
 );
 
