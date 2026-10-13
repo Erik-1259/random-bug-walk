@@ -303,7 +303,7 @@ async function prove(root: string, gitleaks: string): Promise<number> {
   );
   await git(clone, ["reset", "-q", "--hard", c3]);
 
-  // Additional: names that differ only in case or Unicode normalisation never share a temporary file.
+  // Additional: names that differ only in case or Unicode normalization never share a temporary file.
   const names = join(root, "names");
   await mkdir(names);
   await git(names, ["init", "-q", "-b", "main"]);

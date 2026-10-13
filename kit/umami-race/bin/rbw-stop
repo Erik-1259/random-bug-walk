@@ -1,0 +1,9 @@
+#!/bin/sh
+# Race kit stop: the time-zone kit's own stop script (Umami, then Postgres), kept as rbw-stop-base,
+# then the Toxiproxy launcher. Waits until every launcher has ended. Run as root.
+set -u
+BIN=/opt/rbw/bin
+status=0
+"$BIN/rbw-stop-base" || status=1
+"$BIN/rbw-proxy" stop || status=1
+exit "$status"

@@ -1,6 +1,6 @@
 // The live-set run: acquires the slot, runs the six calls in plan order (each reserved before and
 // settled after), writes one recording and one record per call, prints a summary per call and
-// releases the slot when nothing blocks it. The owner runs it later through `record-cli.ts`.
+// releases the slot when nothing blocks it. The owner runs it through `record-cli.ts`.
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Spend } from "@rbw/spend";

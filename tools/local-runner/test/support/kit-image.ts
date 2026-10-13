@@ -23,7 +23,7 @@ export const IMAGE_ID = `sha256:${"9".repeat(64)}`;
 
 type Behaviour = "clean" | "planted" | "partial" | "stub";
 
-/** What the simulated app does with each target file: the fix gives clean behaviour, as does the alternative fix. */
+/** What the simulated app does with each target file: the fix gives clean behavior, as does the alternative fix. */
 const BEHAVIOUR_BY_FILE = new Map<string, Behaviour>([
   [sha256(CLEAN), "clean"],
   [sha256(PLANTED), "planted"],
