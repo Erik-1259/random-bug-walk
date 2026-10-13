@@ -546,6 +546,9 @@ importers:
       '@rbw/schema':
         specifier: workspace:*
         version: link:../../packages/schema
+      '@rbw/shapes':
+        specifier: workspace:*
+        version: link:../../packages/shapes
       '@rbw/umami-driver':
         specifier: workspace:*
         version: link:../../packages/umami-driver
@@ -559,9 +562,6 @@ importers:
         specifier: 3.2.2
         version: 3.2.2
     devDependencies:
-      '@rbw/shapes':
-        specifier: workspace:*
-        version: link:../../packages/shapes
       '@types/node':
         specifier: 24.19.1
         version: 24.19.1

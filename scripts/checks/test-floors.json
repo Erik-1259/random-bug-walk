@@ -5,8 +5,8 @@
     "kit/umami-race": 97,
     "packages/admission": 130,
     "packages/envelope": 42,
-    "packages/harvest": 102,
-    "packages/harvest-review": 76,
+    "packages/harvest": 139,
+    "packages/harvest-review": 83,
     "packages/projection": 126,
     "packages/publisher": 181,
     "packages/schema": 922,
@@ -24,7 +24,7 @@
     "tools/local-runner": 189,
     "tools/neon-ci": 98,
     "tools/publication": 166,
-    "tools/release": 42,
+    "tools/release": 53,
     "tools/solver-session": 90
   },
   "pytest": {
