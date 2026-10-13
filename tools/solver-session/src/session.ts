@@ -148,8 +148,13 @@ export class Session implements SolverTools {
   private scoped: string[] = [];
   private digest = "";
   private rebuilds = 0;
-  /** Bumped on every rbw-start, which truncates both logs; a log cursor names the generation it read. */
+  /**
+   * Bumped at every build boundary: a started app's logs are truncated by rbw-start, and a failed
+   * build leaves no current logs. A log cursor names the generation it read.
+   */
   private logGeneration = 0;
+  /** rbw-start ran since the last build boundary, so the log files are this generation's. */
+  private logsCurrent = false;
   private staged = 0;
   /** Tool calls, end() and close() run one at a time, in call order. */
   private queue: Promise<unknown> = Promise.resolve();
@@ -361,6 +366,9 @@ export class Session implements SolverTools {
    * (for example a pnpm store under /tmp), so it is the agent's failed rebuild, not an error.
    */
   private async buildAndStart(label: string, byAgent: boolean): Promise<RebuildResult> {
+    // The files still hold the last start's logs until rbw-start truncates them; until then they are not served.
+    this.logGeneration += 1;
+    this.logsCurrent = false;
     const cold = await this.exec(["/opt/rbw/bin/rbw-check-cold"], SCRIPT_TIMEOUT_MS);
     if (cold.code !== 0) {
       const found = text(cold.stdout).trim();
@@ -372,8 +380,7 @@ export class Session implements SolverTools {
     const buildOutput = `${text(build.stdout)}${build.stderr}`;
     let start: CommandResult | null = null;
     if (build.code === 0) {
-      // rbw-start's launchers truncate both logs, so cursors from before it no longer apply.
-      this.logGeneration += 1;
+      this.logsCurrent = true;
       start = await this.exec(["/opt/rbw/bin/rbw-start"], START_TIMEOUT_MS);
     }
     const raw = { label, build: { exit_code: build.code, stdout: text(build.stdout), stderr: build.stderr }, start: start === null ? null : { exit_code: start.code, stdout: text(start.stdout), stderr: start.stderr } };
@@ -432,6 +439,12 @@ export class Session implements SolverTools {
       return { ok: false, reason: "server_logs_unavailable" };
     }
     const stale = cursor !== null && cursor.generation !== this.logGeneration;
+    if (!this.logsCurrent) {
+      // The last rebuild never started the app: the files are an earlier start's logs, not current.
+      this.event("server_logs", { umami_bytes: 0, postgres_bytes: 0, not_started: true });
+      const none: LogSlice = { text: "", size: 0, more: false, restarted: stale };
+      return { ok: true, umami: none, postgres: { ...none }, cursor: { generation: this.logGeneration, umami: 0, postgres: 0 } };
+    }
     const umami = await this.slice(LOG_FILES.umami, stale ? 0 : (cursor?.umami ?? null), stale);
     const postgres = await this.slice(LOG_FILES.postgres, stale ? 0 : (cursor?.postgres ?? null), stale);
     this.event("server_logs", { umami_bytes: Buffer.byteLength(umami.text), postgres_bytes: Buffer.byteLength(postgres.text) });
@@ -467,7 +480,8 @@ export class Session implements SolverTools {
   }
 
   /**
-   * Copies the runtime logs out (harness capture, both arms) and removes the container. Idempotent.
+   * Stops the app and the database, copies the runtime logs out (harness capture, both arms) and
+   * removes the container. Idempotent.
    * A failed copy keeps the container (the logs' only copy) and throws; calling close() again retries.
    */
   close(): Promise<void> {
@@ -481,16 +495,19 @@ export class Session implements SolverTools {
       this.removed = true;
       return;
     }
+    // Stop Umami and Postgres first: rbw-stop waits for their launchers, the logs' writers, to exit,
+    // so the copy holds everything they wrote. A failed stop is recorded; the copy is still made.
+    const stopped = await this.exec(["/opt/rbw/bin/rbw-stop"], STOP_TIMEOUT_MS);
     this.logCopies += 1;
     // A retry copies into a fresh directory: docker cp nests into a destination that already exists.
     const destination = join(this.work, this.logCopies === 1 ? "logs" : `logs-retry-${String(this.logCopies - 1)}`);
     const logs = await this.deps.docker.run(["cp", `${this.container}:${LOGS_DIR}`, destination], { timeoutMs: SCRIPT_TIMEOUT_MS });
     if (logs.code !== 0) {
-      this.event("closed", { logs_copied: false, removed: false });
+      this.event("closed", { stop_exit: stopped.code, logs_copied: false, removed: false });
       throw new SessionError("logs_copy_failed", `kept container ${this.container} for its runtime logs: ${logs.stderr.trim()}`);
     }
     const removed = await this.deps.docker.run(["rm", "--force", this.container], { timeoutMs: SCRIPT_TIMEOUT_MS });
-    this.event("closed", { logs_copied: true, logs_dir: destination.slice(this.work.length + 1), removed: removed.code === 0 });
+    this.event("closed", { stop_exit: stopped.code, logs_copied: true, logs_dir: destination.slice(this.work.length + 1), removed: removed.code === 0 });
     this.removed = true;
     if (removed.code !== 0) throw new SessionError("container_remove_failed", removed.stderr.trim());
   }

@@ -34,7 +34,7 @@ export interface RebuildResult {
 
 /** Byte offsets into each log, as the last server_logs call left them. */
 export interface LogCursor {
-  /** The app start the offsets belong to; each start truncates the logs. */
+  /** The build the offsets belong to; each start truncates the logs. */
   generation: number;
   umami: number;
   postgres: number;
@@ -48,7 +48,8 @@ export interface LogSlice {
   more: boolean;
   /**
    * The app was started again since the cursor (the slice then reads the new log from its
-   * start), or the log is shorter than the cursor (the slice is then its tail).
+   * start), or the log is shorter than the cursor (the slice is then its tail). After a rebuild
+   * that did not start the app, both slices are empty (size 0) until the next start.
    */
   restarted: boolean;
 }

@@ -274,6 +274,23 @@ describe("the agent's other tools", () => {
     expect(await session.serverLogs(after.cursor)).toMatchObject({ ok: true, umami: { text: "", restarted: false } });
   });
 
+  it("serves no log from before a rebuild whose build failed, and reads the next start's logs from byte 0", async () => {
+    const { kit, session } = await open({ build: (call) => (call === 2 ? failed(1) : ok("build_exit=0\n")) }, { limits: { logBytes: 64 } });
+    kit.logs.set("/var/lib/rbw/logs/umami.stderr.log", "old start\n");
+    const before = await session.serverLogs();
+    if (!before.ok) throw new Error("server logs refused");
+    expect(await session.rebuildRestart()).toMatchObject({ ok: false, start: null });
+    const reads = kit.ran.filter((name) => name === "rbw-log").length;
+    const idle = await session.serverLogs(before.cursor);
+    expect(idle).toMatchObject({ ok: true, umami: { text: "", size: 0, more: false, restarted: true }, postgres: { text: "", size: 0, restarted: true } });
+    expect(await session.serverLogs()).toMatchObject({ ok: true, umami: { text: "", size: 0, restarted: false } });
+    expect(kit.ran.filter((name) => name === "rbw-log")).toHaveLength(reads);
+    if (!idle.ok) throw new Error("server logs refused");
+    expect(await session.rebuildRestart()).toMatchObject({ ok: true });
+    kit.logs.set("/var/lib/rbw/logs/umami.stderr.log", "new start\n");
+    expect(await session.serverLogs(idle.cursor)).toMatchObject({ ok: true, umami: { text: "new start\n", restarted: true } });
+  });
+
   it("refuses server logs in the off arm without reading them", async () => {
     const { kit, session } = await open({}, { serverLogs: false });
     const before = kit.docker.calls.length;
@@ -337,6 +354,17 @@ describe("submit and close", () => {
     expect(kit.docker.named("rm").filter((call) => call[2] === "rbw-solver-uc1-test-on-01")).toHaveLength(1);
     await expect(session.readFile(TARGET)).rejects.toThrow(/session_closed/);
     expect(existsSync(join(session.work, "events.jsonl"))).toBe(true);
+  });
+
+  it("stops the app and the database before copying their logs out", async () => {
+    const { kit, session } = await open();
+    kit.ran.length = 0;
+    await session.close();
+    expect(kit.ran).toEqual(["rbw-stop"]);
+    const stop = kit.docker.calls.findIndex((call) => call[0] === "exec" && call[4] === "/opt/rbw/bin/rbw-stop");
+    const copy = kit.docker.calls.findIndex((call) => call[0] === "cp" && call[1] === "rbw-solver-uc1-test-on-01:/var/lib/rbw/logs");
+    expect(stop).toBeGreaterThan(-1);
+    expect(stop).toBeLessThan(copy);
   });
 
   it("keeps the container and fails when the runtime logs cannot be copied out, then retries", async () => {
