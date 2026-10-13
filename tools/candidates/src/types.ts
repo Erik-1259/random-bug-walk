@@ -1,5 +1,5 @@
 // The interfaces the pipeline calls. The real site finder comes from @rbw/shapes and the real
-// screen from the static-screen package; src/wiring.ts binds them, and tests pass fakes.
+// screen from @rbw/screen; src/wiring.ts binds them, and tests pass fakes.
 
 /** A class-level shape rule: the rule file the site finder runs over the host tree. */
 export interface ClassRule {
@@ -21,6 +21,12 @@ export interface Site {
   diff: string;
   /** The finder's confidence that this site is a real instance of the class, from 0 to 1. */
   confidence: number;
+  /**
+   * The bug class the finder matched here, for example `RACE.guarded-write`. The symptom template
+   * reads it to pick the per-class wording. The real finder sets it; fakes may leave it undefined,
+   * and the template then falls back to a generic race symptom. It is not part of the candidate ID.
+   */
+  classId?: string;
 }
 
 export type FindSites = (rule: ClassRule, hostDir: string) => Promise<readonly Site[]> | readonly Site[];
@@ -30,12 +36,35 @@ export interface Symptom {
   text: string;
 }
 
+/** The screen model profile a run uses; the names @rbw/screen's profiles carry. */
+export type ScreenModel = "super" | "kimi";
+
 /** The most one screen may spend. */
 export interface ScreenBudget {
   /** Most attempts (model probes) the screen may make. */
   maxAttempts: number;
   /** Most the screen may spend, in micro-USD (1 USD = 1,000,000). */
   maxCostMicrousd: number;
+}
+
+/**
+ * One screen job: a planted copy of the host tree, the clean copy of the one planted file (for
+ * scoring the model's answer; never shown to the model), the symptom the model is told, the budget,
+ * and the model profile. The model sees only the tree's source and the symptom.
+ */
+export interface ScreenJob {
+  /** Root of the planted copy. */
+  plantedTree: string;
+  /** Host-relative path of the planted file within `plantedTree`. */
+  targetPath: string;
+  /** The clean (unplanted) text of the planted file, used only for scoring. */
+  cleanText: string;
+  /** The per-candidate symptom text; the model is told only this. */
+  symptom: Symptom;
+  /** The spend and attempt budget for this one screen. */
+  budget: ScreenBudget;
+  /** The model profile to run. */
+  model: ScreenModel;
 }
 
 /**
@@ -57,4 +86,4 @@ export interface ScreenResult {
   costMicrousd: number;
 }
 
-export type Screen = (plantedTree: string, symptom: Symptom, budget: ScreenBudget) => Promise<ScreenResult> | ScreenResult;
+export type Screen = (job: ScreenJob) => Promise<ScreenResult> | ScreenResult;

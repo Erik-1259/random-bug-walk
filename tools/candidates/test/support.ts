@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createTwoFilesPatch } from "diff";
-import type { ClassRule, FindSites, Screen, ScreenBudget, ScreenResult, Site, Symptom } from "../src/types.ts";
+import type { ClassRule, FindSites, Screen, ScreenBudget, ScreenJob, ScreenModel, ScreenResult, Site, Symptom } from "../src/types.ts";
 
 export const CLEAN: Record<string, string> = {
   "src/alpha.ts": "export function alpha(store, id) {\n  const row = store.read(id);\n  store.lock(id);\n  return row;\n}\n",
@@ -50,6 +50,10 @@ export function threeSites(): Site[] {
 
 export const RULE: ClassRule = { id: "XX-1.synthetic", path: "rules/xx-1.synthetic.yml", text: "id: xx-1.synthetic\n" };
 export const SYMPTOM: Symptom = { text: "A record is sometimes written twice." };
+export const MODEL: ScreenModel = "super";
+
+/** The per-candidate symptom fixture: one fixed symptom for every site, so tests can assert on it. */
+export const symptomFor = (): Symptom => SYMPTOM;
 
 export function finder(sites: readonly Site[]): FindSites & { calls: number } {
   const fn = Object.assign(
@@ -66,6 +70,9 @@ export interface ScreenCall {
   tree: string;
   budget: ScreenBudget;
   symptom: Symptom;
+  targetPath: string;
+  cleanText: string;
+  model: ScreenModel;
   /** The text of each synthetic source file as the screen saw it. */
   files: Record<string, string>;
   hasGit: boolean;
@@ -76,15 +83,19 @@ export interface ScreenCall {
 export function scripted(results: readonly unknown[]): Screen & { calls: ScreenCall[] } {
   const calls: ScreenCall[] = [];
   const fn = Object.assign(
-    function fakeScreen(tree: string, symptom: Symptom, budget: ScreenBudget): ScreenResult {
+    function fakeScreen(job: ScreenJob): ScreenResult {
+      const tree = job.plantedTree;
       const files: Record<string, string> = {};
       for (const path of ["src/alpha.ts", "src/beta.ts", "src/gamma.ts"]) {
         files[path] = readFileSync(join(tree, path), "utf8");
       }
       calls.push({
         tree,
-        budget,
-        symptom,
+        budget: job.budget,
+        symptom: job.symptom,
+        targetPath: job.targetPath,
+        cleanText: job.cleanText,
+        model: job.model,
         files,
         hasGit: existsSync(join(tree, ".git")),
         hasNodeModules: existsSync(join(tree, "node_modules")),

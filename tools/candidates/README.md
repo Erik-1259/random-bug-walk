@@ -2,54 +2,81 @@
 
 The candidate pipeline. Given a class-level shape rule, it lists every site the rule matches in the host tree, plants each site in its own scratch copy, runs the static-headroom screen on each copy, and ranks the candidates that survive. The result is one run record, so checks (the expensive step of the bug generation pipeline) are written only for candidates worth building them for.
 
-The pipeline calls two functions it does not implement. Both are passed in as arguments, and the command line takes them from `src/wiring.ts`:
+The pipeline is wired to the real implementations:
 
 | Function | Comes from | Contract |
 | --- | --- | --- |
-| `findSites(rule, hostDir)` | the class-level site finder in `@rbw/shapes` | Returns `[{ file, line, diff, confidence }]`: a host-relative path with `/` separators, the 1-based line of the match in the clean file, a unified diff that changes only that file from the clean to the planted form (`a/` and `b/` prefixes allowed), and a confidence from 0 to 1. It may return a promise. |
-| `screen(plantedTree, symptom, budget)` | the static-headroom screen | Reads the planted copy at `plantedTree`, told only the symptom text, and returns `{ verdict, hits, attempts, costMicrousd }`. `verdict` is `located` (some attempt found the planted change from the source alone: the candidate fails the screen), `not_located` (no attempt did: it survives) or `inconclusive` (with no hits). `hits` counts the attempts that found it. It must keep to `budget.maxAttempts` and `budget.maxCostMicrousd`. It may return a promise. |
+| `findSites(rule, hostDir)` | `@rbw/shapes` (the class-level site finder) | Returns `[{ file, line, diff, confidence, classId }]`: a host-relative path with `/` separators, the 1-based line of the match in the clean file, a unified diff that changes only that file from the clean to the planted form (`a/` and `b/` prefixes allowed), a confidence from 0 to 1, and the class that matched. |
+| `screen(job)` | `@rbw/screen` (the static-headroom screen) | Reads the planted copy and is told only the symptom text; asks one model, up to `budget.maxAttempts` times, to locate and fix the bug from the source and the symptom alone; and returns `{ verdict, hits, attempts, costMicrousd }`. `verdict` is `located` (some attempt found the planted change from the source alone: the candidate fails the screen), `not_located` (no attempt did: it survives) or `inconclusive` (with no hits). Every model call is metered against the spend ledger named by `DATABASE_URL`. |
 
-The types are in `src/types.ts`. Until a real implementation lands, `src/wiring.ts` holds a placeholder that throws and names what should replace it. Wiring one is a one-line change in that file, for example `export { findSites } from "@rbw/shapes";` in place of the placeholder line. `@rbw/shapes` is already a dependency; the screen's package will need adding to `package.json` when it exists.
+`src/wiring.ts` binds them: `findSites` is `src/shapes-finder.ts` (the `@rbw/shapes` scan adapted to the pipeline's `Site` shape), and the screen is `src/static-screen.ts` (the `@rbw/screen` run adapted to the pipeline's `Screen`). The pipeline and its tests do not import `src/wiring.ts`; they take the two functions as arguments, so tests pass fakes for the model and the ledger. The interfaces are in `src/types.ts`.
+
+## The symptom
+
+A screen must be told a symptom — what a user sees — without being told where the bug is. The pipeline derives one **per candidate**, from the site alone, with no model call (`src/symptom.ts`): the endpoint the file implies (a file under an `api` directory becomes a path, a `route` filename dropping to its directory), and the model and action the diff touches. It never names the guard the fix removes or the line it is on. For the race class it describes what concurrent requests to that endpoint would show — for example that two requests arriving at once can both succeed when only one should. The run record keeps each candidate's symptom by SHA-256, never its text.
 
 ## What a run does
 
 1. Calls `findSites` once. Exact duplicates (same file, line and diff) are collapsed. Sites are ordered by confidence, highest first, then by file and line.
-2. Checks each site and plants it in memory: the path must stay inside the host, the line must be a positive integer, the confidence must be from 0 to 1, the file must be a regular file, and the diff must name only that file, apply exactly and change it. A site that fails is recorded as `invalid_site` or `plant_failed` with a reason code, and does not count toward the candidate cap. The first `--max-candidates` sites that plant become candidates; the rest are recorded as `over_candidate_cap`.
-3. For each candidate in order, copies the host tree into a fresh directory under the run's own scratch directory (leaving out `.git` and `node_modules`), writes the planted file, and calls `screen`. Screens run one at a time.
-4. Before each screen, checks that one whole per-screen budget still fits in what is left of the total spend cap. If it does not, that candidate and the rest are recorded as `skipped_spend_cap`. A screen that throws or returns a malformed result is recorded as `screen_error` and charged its whole budget, because its real cost is unknown; a malformed result that reports a cost above the budget is charged that cost instead. A screen that reports spending more than its budget, malformed or not, is recorded, and no further screens start (`skipped_after_overspend`). If the run itself fails after screening begins (for example a scratch directory cannot be made or removed), the candidates not yet screened are recorded as `skipped_after_error`, the scratch directory is removed, and the record of the spend so far is still written, with stop reason `pipeline_error`.
+2. Checks each site and plants it in memory: the path must stay inside the host, the line must be a positive integer, the confidence must be from 0 to 1, the file must be a regular file, and the diff must name only that file, apply exactly and change it. A site that fails is recorded as `invalid_site` or `plant_failed` with a reason code, and does not count toward the candidate cap. The first `--max-candidates` sites that plant become candidates; the rest are recorded as `over_candidate_cap`. Each planted candidate gets its symptom (and the symptom's SHA-256 in the record).
+3. For each candidate in order, copies the host tree into a fresh directory under the run's own scratch directory (leaving out `.git` and `node_modules`), writes the planted file, and calls `screen` with the planted copy, the candidate's symptom, the budget and the model. Screens run one at a time. The screen's own working files (its record, the model's answers and the call recordings) are written to a scratch directory outside the repository and removed, because they can name source from a real host.
+4. Before each screen, checks that one whole per-screen budget still fits in what is left of the total spend cap. If it does not, that candidate and the rest are recorded as `skipped_spend_cap`. A screen that throws or returns a malformed result is recorded as `screen_error` and charged its whole budget, because its real cost is unknown; a malformed result that reports a cost above the budget is charged that cost instead. A screen that reports spending more than its budget, malformed or not, is recorded, and no further screens start (`skipped_after_overspend`). If the run itself fails after screening begins, the candidates not yet screened are recorded as `skipped_after_error`, the scratch directory is removed, and the record of the spend so far is still written, with stop reason `pipeline_error`.
 5. Ranks the survivors (`not_located`): more attempts first (more independent misses is stronger evidence that the bug cannot be found by reading), then higher finder confidence, then file and line.
 6. Removes each scratch copy after its screen unless `--keep-scratch` is given, in which case the summary prints the kept scratch directory. The host tree is never written.
 
-A dry run does steps 1 and 2 only: it makes no copies, calls no screen and spends nothing, and records the most the screens could spend under the caps.
+A dry run does steps 1 and 2 only: it makes no copies, calls no screen and spends nothing, derives each candidate's symptom (recording its SHA-256) and records the most the screens could spend under the caps. A dry run needs neither `DATABASE_URL` nor the Token Factory key.
 
 ## The run record
 
-The record is canonical JSON (`@rbw/schema`'s `encodeCanonical`: sorted keys, integers only). It holds the record kind `candidate_run` and version 1, the run ID and time, whether it was a dry run, the rule's ID and SHA-256, the host commit when given, the symptom's SHA-256 (not its text), the finder and screen implementation names, the caps, every site with its status, reason, confidence in parts per million, diff, screen result, amount charged and rank, the ranking of survivor IDs, why screening stopped (if it did), and totals. A candidate's ID is the SHA-256 of its file, line and diff. See `RunRecord` in `src/pipeline.ts`.
+The record is canonical JSON (`@rbw/schema`'s `encodeCanonical`: sorted keys, integers only). It holds the record kind `candidate_run` and version 1, the run ID and time, whether it was a dry run, the rule's ID and SHA-256, the host commit when given, how the symptoms were made (`symptom_source`), the screen model (`screen_model`), the finder and screen implementation names, the caps, every site with its status, reason, confidence in parts per million, diff, its symptom's SHA-256 (not the text; null for a site that did not plant), screen result, amount charged and rank, the ranking of survivor IDs, why screening stopped (if it did), and totals. A candidate's ID is the SHA-256 of its file, line and diff. See `RunRecord` in `src/pipeline.ts`.
 
 The record lists candidate sites in the host, and a list of sites in a real host is private. The command line refuses an `--out` path inside this repository or inside `--host` (following symbolic links), and never overwrites an existing file. It claims the `--out` file before the pipeline runs, so an existing file or a missing directory is refused before any screen spends. If the record cannot be encoded as canonical JSON, it is kept as plain JSON; if it cannot be written to `--out`, it is written to a new file in the `--scratch` directory. Either way the spend is printed. Tests use a synthetic host tree only.
 
 ## Command line
 
 ```sh
-node tools/candidates/src/cli.ts --rule <class rule file> --host <host tree> --symptom <symptom file> --out <new record file> \
-  [--rule-id <id>] [--host-commit <40-hex sha>] [--dry-run] \
+node tools/candidates/src/cli.ts --rule <class rule file> --host <host tree> --out <new record file> \
+  [--rule-id <id>] [--host-commit <40-hex sha>] [--dry-run] [--model super|kimi] \
   [--max-candidates <n>] [--max-spend-usd <usd>] [--screen-budget-usd <usd>] [--screen-attempts <n>] \
+  [--slot-key <key>] [--pool <key>] [--rate-sheet <path>] \
   [--scratch <dir>] [--keep-scratch]
 ```
+
+A real run (no `--dry-run`) reads `DATABASE_URL` and `TOKEN_FACTORY_SCREEN_KEY` from the environment and never prints either value. The spend ledger named by `DATABASE_URL` must already have the `@rbw/spend` migrations applied.
 
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `--rule-id` | the rule file's name without `.yml` | The rule ID recorded and passed to the finder. |
+| `--model` | `super` | The screen model profile (`super` or `kimi`). |
 | `--max-candidates` | 10 | Most candidates planted and screened. |
 | `--max-spend-usd` | 2.00 | Cap on the total the screens may spend. |
 | `--screen-budget-usd` | 0.25 | Budget given to each screen. |
 | `--screen-attempts` | 3 | Attempts allowed to each screen. |
+| `--slot-key`, `--pool` | `development` | The spend ledger slot each run acquires and the pool each call reserves from. |
+| `--rate-sheet` | `packages/screen/rates.json` | The price file hashed into every reservation. |
 | `--scratch` | the system temporary directory | Where the run makes its scratch directory. It must be outside `--host`. |
 
-Amounts are decimal USD with at most six decimals and are held as integer micro-USD. A run without `--dry-run` is refused while the screen is not wired. It prints a short summary and the record's path.
+Amounts are decimal USD with at most six decimals and are held as integer micro-USD. It prints a short summary and the record's path.
 
-Exit codes: 0 the run finished and the record was written; 1 the pipeline could not run or finish (an implementation is not wired, the finder failed, or the run failed after screening began), and once screening has begun the record of the spend so far is still kept and its path printed; 2 a usage or input error found before anything ran (including an `--out` that exists, sits in a missing directory or sits inside `--host`, or a `--scratch` that is not a directory or sits inside `--host`), nothing written.
+Exit codes: 0 the run finished and the record was written; 1 the pipeline could not run or finish (the finder failed, or the run failed after screening began), and once screening has begun the record of the spend so far is still kept and its path printed; 2 a usage or input error found before anything ran (including an `--out` that exists, sits in a missing directory or sits inside `--host`, a `--scratch` that is not a directory or sits inside `--host`, or an unknown `--model`), nothing written.
+
+### Screening the race class over a host tree
+
+With `DATABASE_URL` and `TOKEN_FACTORY_SCREEN_KEY` set, and the record written **outside** this repository (a list of real host sites is private):
+
+```sh
+DATABASE_URL=… TOKEN_FACTORY_SCREEN_KEY=… \
+node tools/candidates/src/cli.ts \
+  --rule packages/shapes/rules/race.class.yml \
+  --rule-id race.class \
+  --host /path/to/host/checkout \
+  --out /path/to/private/race-run.json \
+  --model super \
+  --max-candidates 10 --max-spend-usd 2.00 --screen-budget-usd 0.25 --screen-attempts 3
+```
+
+Try it first with `--dry-run` (no `DATABASE_URL`, no key): it lists and checks the candidates, derives their symptoms and reports the most the screens could spend, without a copy, a screen or any spend.
 
 ## Tests
 
-`pnpm --filter @rbw/candidates test` runs the unit tests against a synthetic host tree with a fake finder and a scripted screen. No model, network or Docker is used.
+`pnpm --filter @rbw/candidates test` runs the unit tests. They use a synthetic host tree with a fake finder and a scripted screen, the real `@rbw/shapes` finder over `@rbw/shapes`'s synthetic race fixtures, and the real `@rbw/screen` run driven end to end with a scripted fake model and an in-memory PGlite ledger. No model, network or real database is used.

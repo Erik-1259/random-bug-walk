@@ -1,8 +1,8 @@
 // The command line, as a function the tests can call with fake implementations.
 // Exit codes: 0 the run finished and the record was written; 1 the pipeline could not run or
-// finish (an implementation is not wired, the finder or a setup step failed, or the run failed
-// after screening began), and once screening has begun the record of the spend so far is still
-// kept and its path printed; 2 a usage or input error found before anything ran, nothing written.
+// finish (the finder or a setup step failed, or the run failed after screening began), and once
+// screening has begun the record of the spend so far is still kept and its path printed; 2 a usage
+// or input error found before anything ran, nothing written.
 // The --out file is claimed before the pipeline runs, so a bad --out never costs a screen.
 import { randomUUID } from "node:crypto";
 import { closeSync, openSync, readFileSync, realpathSync, statSync, unlinkSync, writeFileSync } from "node:fs";
@@ -11,25 +11,44 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "nod
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { encodeCanonical } from "@rbw/schema";
-import { implementationName, isWired } from "./not-wired.ts";
+import { API_KEY_VARIABLE, isScreenModelName } from "@rbw/screen";
+import { implementationName } from "./not-wired.ts";
 import { formatUsd, PipelineError, runPipeline, type RunRecord } from "./pipeline.ts";
+import { SYMPTOM_SOURCE, symptomFor } from "./symptom.ts";
 import type { FindSites, Screen } from "./types.ts";
 
-export const USAGE = `usage: cli.ts --rule <class rule file> --host <host tree> --symptom <symptom file> --out <new record file>
-  [--rule-id <id>] [--host-commit <sha>] [--dry-run]
+export const USAGE = `usage: cli.ts --rule <class rule file> --host <host tree> --out <new record file>
+  [--rule-id <id>] [--host-commit <sha>] [--dry-run] [--model super|kimi]
   [--max-candidates <n>] (default 10)
   [--max-spend-usd <usd>] (total screen spend cap, default 2.00)
   [--screen-budget-usd <usd>] (per screen, default 0.25)
   [--screen-attempts <n>] (per screen, default 3)
+  [--slot-key <key>] [--pool <key>] (spend ledger slot and pool, default "development")
+  [--rate-sheet <path>] (default packages/screen/rates.json)
   [--scratch <dir>] (default the system temporary directory) [--keep-scratch]
+A real run reads DATABASE_URL and ${API_KEY_VARIABLE} from the environment and never prints either.
 `;
 
 /** The repository root; a record lists candidate sites in the host and must stay out of it. */
 export const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 
+/** The default rate sheet: @rbw/screen's committed prices. */
+export const DEFAULT_RATE_SHEET = join(REPO_ROOT, "packages", "screen", "rates.json");
+
+/** Builds the real screen from the options a run supplies; cli.ts passes @rbw/screen's. */
+export interface ScreenConfig {
+  env: Record<string, string | undefined>;
+  slotKey: string;
+  pool: string;
+  rateSheetPath: string;
+}
+
 export interface CommandDeps {
   findSites: FindSites;
-  screen: Screen;
+  /** A ready screen (tests pass a fake). When absent and the run is not a dry run, buildScreen is used. */
+  screen?: Screen;
+  /** Builds the real screen from the parsed options; used when `screen` is absent. */
+  buildScreen?: (config: ScreenConfig) => Screen;
   now?: () => Date;
   runId?: () => string;
   repoRoot?: string;
@@ -163,20 +182,23 @@ export async function runCommand(argv: readonly string[], deps: CommandDeps, io:
         "rule-id": { type: "string" },
         host: { type: "string" },
         "host-commit": { type: "string" },
-        symptom: { type: "string" },
         out: { type: "string" },
         "dry-run": { type: "boolean", default: false },
+        model: { type: "string", default: "super" },
         "max-candidates": { type: "string", default: "10" },
         "max-spend-usd": { type: "string", default: "2.00" },
         "screen-budget-usd": { type: "string", default: "0.25" },
         "screen-attempts": { type: "string", default: "3" },
+        "slot-key": { type: "string", default: "development" },
+        pool: { type: "string", default: "development" },
+        "rate-sheet": { type: "string" },
         scratch: { type: "string" },
         "keep-scratch": { type: "boolean", default: false },
       },
     });
-    const { rule: rulePath, host, symptom: symptomPath, out } = values;
-    if (rulePath === undefined || host === undefined || symptomPath === undefined || out === undefined) {
-      throw new UsageError("--rule, --host, --symptom and --out are required");
+    const { rule: rulePath, host, out } = values;
+    if (rulePath === undefined || host === undefined || out === undefined) {
+      throw new UsageError("--rule, --host and --out are required");
     }
     const outPath = resolve(out);
     const realOut = realTarget(outPath);
@@ -191,12 +213,15 @@ export async function runCommand(argv: readonly string[], deps: CommandDeps, io:
     if (isInside(realHost, realOut)) {
       throw new UsageError("--out must be outside --host");
     }
+    const model = values.model;
+    if (!isScreenModelName(model)) {
+      throw new UsageError("--model must be super or kimi");
+    }
     const hostCommit = values["host-commit"];
     if (hostCommit !== undefined && !/^[0-9a-f]{40}$/.test(hostCommit)) {
       throw new UsageError("--host-commit must be a 40-character lowercase hex commit");
     }
     const ruleText = readText(rulePath, "rule");
-    const symptomText = readText(symptomPath, "symptom");
     const ruleId = values["rule-id"] ?? basename(rulePath).replace(/\.ya?ml$/, "");
     const caps = {
       maxCandidates: parseCount(values["max-candidates"], "--max-candidates"),
@@ -210,9 +235,6 @@ export async function runCommand(argv: readonly string[], deps: CommandDeps, io:
       throw new UsageError("--screen-budget-usd must be more than zero");
     }
     const dryRun = values["dry-run"];
-    if (!dryRun && !isWired(deps.screen)) {
-      throw new PipelineError("screen is not wired yet: use --dry-run, or bind the screen in tools/candidates/src/wiring.ts");
-    }
     const scratchBase = values.scratch ?? tmpdir();
     if (!dryRun && !isDirectory(scratchBase)) {
       throw new UsageError("--scratch must be a directory");
@@ -222,6 +244,17 @@ export async function runCommand(argv: readonly string[], deps: CommandDeps, io:
     if (isDirectory(scratchBase) && isInside(realHost, realpathSync(scratchBase))) {
       throw new UsageError("--scratch must be outside --host");
     }
+
+    // The screen: a fake when one is given (tests), otherwise the real one built from the options.
+    // A dry run never screens, so it needs none.
+    const screen = buildRunScreen(deps, dryRun, {
+      env: process.env,
+      slotKey: values["slot-key"],
+      pool: values.pool,
+      rateSheetPath: values["rate-sheet"] ?? DEFAULT_RATE_SHEET,
+    });
+    const screenName = dryRun ? "none" : implementationName(screen);
+
     // Claim the record file before anything runs, so a bad --out fails before any screen spends.
     let fd: number;
     try {
@@ -236,9 +269,11 @@ export async function runCommand(argv: readonly string[], deps: CommandDeps, io:
       ({ record, scratchDir } = await runPipeline({
         rule: { id: ruleId, path: rulePath, text: ruleText },
         hostDir: resolve(host),
-        symptom: { text: symptomText },
+        symptomFor: (site) => ({ text: symptomFor(site) }),
+        symptomSource: SYMPTOM_SOURCE,
+        screenModel: model,
         findSites: deps.findSites,
-        screen: deps.screen,
+        screen,
         caps,
         dryRun,
         scratchBase,
@@ -246,7 +281,7 @@ export async function runCommand(argv: readonly string[], deps: CommandDeps, io:
         hostCommit: hostCommit ?? null,
         runId,
         now: deps.now ?? (() => new Date()),
-        implementations: { findSites: implementationName(deps.findSites), screen: dryRun ? "none" : implementationName(deps.screen) },
+        implementations: { findSites: implementationName(deps.findSites), screen: screenName },
       }));
     } catch (error) {
       if (error instanceof PipelineError && error.record !== null) {
@@ -277,4 +312,20 @@ export async function runCommand(argv: readonly string[], deps: CommandDeps, io:
     }
     throw error;
   }
+}
+
+/** The screen the run uses; a given fake, the built real one, or a never-called stub for a dry run. */
+function buildRunScreen(deps: CommandDeps, dryRun: boolean, config: ScreenConfig): Screen {
+  if (deps.screen !== undefined) {
+    return deps.screen;
+  }
+  if (dryRun) {
+    return () => {
+      throw new PipelineError("a dry run does not screen");
+    };
+  }
+  if (deps.buildScreen === undefined) {
+    throw new PipelineError("no screen is configured");
+  }
+  return deps.buildScreen(config);
 }

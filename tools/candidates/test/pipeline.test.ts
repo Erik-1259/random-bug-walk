@@ -4,7 +4,7 @@ import { encodeCanonical } from "@rbw/schema";
 import { describe, expect, it } from "vitest";
 import { PipelineError, runPipeline, screenResultProblem, type Caps, type PipelineInput } from "../src/pipeline.ts";
 import type { FindSites, Screen, Site } from "../src/types.ts";
-import { CLEAN, RULE, SYMPTOM, diffFor, finder, hit, makeHost, miss, scripted, site, tempDir, threeSites } from "./support.ts";
+import { CLEAN, MODEL, RULE, SYMPTOM, diffFor, finder, hit, makeHost, miss, scripted, site, symptomFor, tempDir, threeSites } from "./support.ts";
 
 const CAPS: Caps = { maxCandidates: 10, maxScreenSpendMicrousd: 2_000_000, screenBudget: { maxAttempts: 3, maxCostMicrousd: 250_000 } };
 
@@ -12,7 +12,9 @@ function input(findSites: FindSites, screen: Screen, overrides: Partial<Pipeline
   return {
     rule: RULE,
     hostDir: makeHost(),
-    symptom: SYMPTOM,
+    symptomFor,
+    symptomSource: "test-symptom",
+    screenModel: MODEL,
     findSites,
     screen,
     caps: CAPS,
@@ -271,8 +273,8 @@ describe("unexpected failures", () => {
   it("removes the scratch directory and throws a pipeline error that carries the record of the spend so far", async () => {
     // The screen leaves a stray file in the run's scratch directory, so the final removal fails.
     const screen = Object.assign(
-      function strayScreen(tree: string) {
-        writeFileSync(join(dirname(tree), "stray"), "x");
+      function strayScreen(job: { plantedTree: string }) {
+        writeFileSync(join(dirname(job.plantedTree), "stray"), "x");
         return miss(3, 100_000);
       },
       {},
@@ -323,10 +325,12 @@ describe("run record", () => {
       created_at: "2026-10-13T12:00:00.000Z",
       rule: { id: "XX-1.synthetic" },
       host_commit: "a".repeat(40),
+      symptom_source: "test-symptom",
+      screen_model: "super",
       implementations: { find_sites: "fakeFindSites", screen: "fakeScreen" },
     });
     expect(record.rule.sha256).toMatch(/^[0-9a-f]{64}$/);
-    expect(record.symptom_sha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(record.candidates[0]?.symptom_sha256).toMatch(/^[0-9a-f]{64}$/);
     expect(JSON.stringify(record)).not.toContain(SYMPTOM.text);
     expect(record.candidates[0]).toMatchObject({ file: "src/alpha.ts", line: 3, confidence_ppm: 500_000, screen: { verdict: "not_located", hits: 0, attempts: 3, cost_microusd: 100_000 } });
     expect(record.candidates[0]?.diff).toContain("-  store.lock(id);");
