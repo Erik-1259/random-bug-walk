@@ -148,6 +148,38 @@ describe("runDoubleSpend against an app that follows the pinned verify route", (
   });
 });
 
+/** Passes sign-in to the app but rejects the verify, naming the request's partial token and code in the error. */
+function verifyThrows(appContext: RequestContext): RequestContext {
+  return {
+    fetch: (url, options) => {
+      if (url !== "/api/2fa/verify") return appContext.fetch(url, options);
+      const token = (options.headers.authorization ?? "").replace("Bearer ", "");
+      const code = (JSON.parse(options.data ?? "{}") as { backupCode: string }).backupCode;
+      return Promise.reject(new Error(`reset by peer ${token} ${code}`));
+    },
+  };
+}
+
+describe("a verify request that throws", () => {
+  it("in the race keeps both records, with the thrown one's partial token and code redacted", async () => {
+    const app = new FakeApp(fixture, "clean");
+    const result = await runDoubleSpend([app.context(), verifyThrows(app.context())], fixture, raceCheck, credentials, steppingClock());
+    if (!result.ok) throw new Error(result.reason);
+    const [a, b] = result.evidence.attempts;
+    expect(a).toMatchObject({ status: 200, token_issued: true, failure: null });
+    expect(b).toMatchObject({ status: null, token_issued: false, failure: "reset by peer [redacted] [redacted]" });
+    expect(classify(result.evidence)).toMatchObject({ observed: "setup_fail" });
+  });
+
+  it("in the control is recorded redacted and is not reused", async () => {
+    const app = new FakeApp(fixture, "clean");
+    const result = await runSerialReuse(verifyThrows(app.context()), fixture, serialCheck, credentials, steppingClock());
+    if (!result.ok) throw new Error(result.reason);
+    expect(result.evidence.attempts).toEqual([{ sent_ms: 1, settled_ms: 2, status: null, error_code: null, token_issued: false, failure: "reset by peer [redacted] [redacted]" }]);
+    expect(classify(result.evidence)).toMatchObject({ observed: "setup_fail" });
+  });
+});
+
 describe("runSerialReuse", () => {
   it.each(["clean", "planted"] as const)("passes on the %s route: the reuse after the first use settled is refused", async (variant) => {
     const app = new FakeApp(fixture, variant);
