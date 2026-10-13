@@ -16,7 +16,7 @@
     "@rbw/spend": "workspace:*",
     "@rbw/writer": "workspace:*",
     "pg": "8.23.1",
-    "undici": "7.30.0",
+    "undici": "8.11.2",
     "zod": "4.6.5"
   },
   "devDependencies": {
