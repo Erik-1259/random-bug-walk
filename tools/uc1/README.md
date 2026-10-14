@@ -14,6 +14,7 @@ It is its own tool rather than a command in `tools/solver-session` because that 
 - [Costs](#costs)
 - [The run directory](#the-run-directory)
 - [Rows for the analyzer](#rows-for-the-analyzer)
+- [The report](#the-report)
 - [Refusals and stops](#refusals-and-stops)
 - [Tests](#tests)
 - [Not built here](#not-built-here)
@@ -153,7 +154,7 @@ The Super pilot and the counted run together can reach about $42.81 at their cap
 | `stops.jsonl` | every stop, with its reason and time |
 | `results/rows.json` | the analyzer's input, one `AttemptRow` per index with a final status |
 | `results/analysis.json` | `resultsRecordJson(analyze(rows))`, canonical JSON |
-| `results/summary.json` | every attempt's numbers, the seeded round trips, grade disagreements, spend (this root's, and the ledger's settled and open amounts across every UC1 root under `<runs>`, which the cap covers), stops. Every spend figure is read from the ledger's settled operations by execution (each attempt run's execution for model calls, each grade 2 try's for grade 2), not from the records' in-memory results |
+| `results/summary.json` | every attempt's numbers (with each run that ended on infrastructure and its cause), the seeded round trips, grade disagreements, spend (this root's, and the ledger's settled and open amounts across every UC1 root under `<runs>`, which the cap covers), each arm's wall time and spend, stops. Every spend figure is read from the ledger's settled operations by execution (each attempt run's execution for model calls, each grade 2 try's for grade 2), not from the records' in-memory results |
 | `staging/` | the publisher's layout: `report.md`, `results/` (rows, analysis, summary, each attempt and round trip record), `logs/` (each run's transcript), `inputs/screen-record.json`; no local path appears in a staged file |
 
 ## Rows for the analyzer
@@ -169,6 +170,17 @@ One row per index whose status is final:
 A spend refusal after at least one model turn counts the attempt as capped: the pre-registration counts an attempt that hits a cap "with its capped token and turn values recorded as they are and its solve status from its grade (unsolved if it submitted nothing)", and "no other reason permits a rerun" than an infrastructure error. It is never restarted, so its turns and tokens stay in the outcomes, and like any capped attempt its current target file is saved and graded. A refusal before the first model turn ran no model call; the next pass restarts that index from scratch (not an infrastructure rerun), once a whole attempt's worst case fits.
 
 The 40-minute wall cap is checked before each model turn and before each tool call, so an attempt runs past it by at most one model response and one tool call; a `submit` the model asks for after the cap does not run, and the attempt counts as capped. A cap used up before the solver's first turn (the session's open and cold build took the whole 40-minute wall cap) is an infrastructure error, rerun at the same index within the rerun limit: such an attempt has zero turns and zero tokens, so the analysis never receives a counted attempt without a positive token count.
+
+## The report
+
+`report.md` (staged as written, with the run directory replaced by `.` like every other staged file) shows numbers from `results/summary.json` and `results/analysis.json` only. In both modes:
+
+- **Attempts:** every index with its status, runs, outcome, cap, turns, tokens, `server_logs` calls, scope, both grades and model spend.
+- **Per arm** (what the pre-registration reports per arm without tests): counted attempts, infrastructure errors and reruns, out_of_scope and prohibited-edit counts, contaminated attempts, attempts that called `server_logs`, and the calls of each tool, all from the analysis; then wall time over the counted attempts (total, median and largest; the solver's, from the session's open to the attempt's end, which is what the wall cap limits) and spend (model calls and grade 2, from the ledger, reruns included), from the summary. Without an analysis, only wall time and spend are shown, with a note.
+- **Infrastructure errors and reruns:** each run that ended on an infrastructure error, with its cause and whether it was rerun or its index was excluded, apart from the failures.
+- The seeded round trips, grade disagreements, spend against the cap, stops, the analysis's statements and the turns outcome.
+
+A pilot report carries the label, the per-arm measurements as harness evidence and the analysis's statements, and none of the counted run's own wording. A counted run's report adds, per the pre-registration's claim wording: the headline with each arm's counted attempts; the detectable difference from the pre-registration's table (`DETECTABLE_DIFFERENCE` in `src/report.ts`, checked against the table by the tests), or the note that it is omitted when an arm has fewer than 20 counted attempts; the made-worse statement (the off-minus-on solve rate, then plainly whether the tool made this bug worse on solves and on tokens, from the analysis's verdicts, with a non-detection read as inconclusive at this sample size); each arm's solves with a 95% Clopper–Pearson interval; and the tool-use and contamination checks. The fallback branch's "low-headroom contrast" wording is not built (see [Not built here](#not-built-here)).
 
 ## Refusals and stops
 
@@ -192,7 +204,7 @@ An infrastructure error (the session cannot start, the model endpoint fails or t
 
 ## Tests
 
-`pnpm --filter @rbw/uc1 test` runs the orchestrator in the dry-run world (`src/fakes.ts`): a PGlite ledger with the `@rbw/spend` migrations, a scripted model behind the injected fetch, fake sessions, and a fake controller that writes grade summaries and, for grade 2, reserves and settles one Sandbox copy under the root as the controller does. No test makes a live call. They cover the order, arms and seeds in the requests, the root before the first attempt, the seeded round trips' routes with no model, the stop before any session when a seeded round trip does not pass, each grade's kit image, grade 2 as its own step, the run directory and the staged files, the spend guard (before an attempt, mid-attempt, for regrades, with concurrent sessions, on uncertainty), every refusal, infrastructure reruns, the scope rule, grade retries, resuming, and the command line's exit codes.
+`pnpm --filter @rbw/uc1 test` runs the orchestrator in the dry-run world (`src/fakes.ts`): a PGlite ledger with the `@rbw/spend` migrations, a scripted model behind the injected fetch, fake sessions, and a fake controller that writes grade summaries and, for grade 2, reserves and settles one Sandbox copy under the root as the controller does. No test makes a live call. They cover the order, arms and seeds in the requests, the root before the first attempt, the seeded round trips' routes with no model, the stop before any session when a seeded round trip does not pass, each grade's kit image, grade 2 as its own step, the run directory and the staged files, the spend guard (before an attempt, mid-attempt, for regrades, with concurrent sessions, on uncertainty), every refusal, infrastructure reruns, the scope rule, grade retries, resuming, the report's per-arm diagnostics and claim wording, and the command line's exit codes.
 
 ## Known limits
 
@@ -201,6 +213,6 @@ An infrastructure error (the session cannot start, the model endpoint fails or t
 ## Not built here
 
 - The fallback branch (decision 6): running the time-zone case as a counted low-headroom contrast is an amendment to the pre-registration, so `run` refuses it until the amendment and a code change say otherwise.
-- The futility rule, the analysis and the claim wording are `packages/solver`'s `analyze`; this tool supplies its rows. The report adds the headline and, for a counted run, the detectable difference from the pre-registration's table (`DETECTABLE_DIFFERENCE` in `src/report.ts`, checked against the table by the tests), or the note that it is omitted when an arm has fewer than 20 counted attempts.
+- The futility rule, the statistical tests and the analysis's statements are `packages/solver`'s `analyze`; this tool supplies its rows. The report's own wording is listed under [The report](#the-report).
 - The ledger reconciliation after a stop, the confirmation of what the cap covers, and the model decision after the pilot are operator steps.
 - `host-health.sh` between batches of sessions is not run by the orchestrator.

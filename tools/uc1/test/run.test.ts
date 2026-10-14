@@ -303,6 +303,51 @@ describe("attempts, reruns and scope", () => {
     await w.close();
   });
 
+  it("reports every run that ended on infrastructure with its cause, and each arm's counts, wall time and spend", async () => {
+    const w = await world({
+      sessionFault: (request) => {
+        if (request.id.endsWith("on-002-r0") || request.id.endsWith("on-002-r1")) return "error";
+        if (request.id.includes("on-003-")) return "error";
+        return null;
+      },
+    });
+    const outcome = await runSessions(pilot(w), w.deps);
+    await runGrade2({ runDir: outcome.runDir }, w.deps);
+    const done = await finalize({ runDir: outcome.runDir }, w.deps);
+    const report = readFileSync(join(outcome.runDir, "staging", "report.md"), "utf8");
+    const cause = "session_open: container_start_failed: synthetic";
+    expect(report).toContain(
+      [
+        `- Index 2 (on), run r0: ${cause}; rerun at the same index.`,
+        `- Index 2 (on), run r1: ${cause}; rerun at the same index.`,
+        `- Index 3 (on), run r0: ${cause}; rerun at the same index.`,
+        `- Index 3 (on), run r1: ${cause}; rerun at the same index.`,
+        `- Index 3 (on), run r2: ${cause}; excluded from every outcome after its reruns.`,
+      ].join("\n"),
+    );
+    expect(report).toContain("| Counted attempts | 2 | 1 |");
+    expect(report).toContain("| Infrastructure errors (excluded from every outcome) | 0 | 1 |");
+    expect(report).toContain("| Infrastructure reruns | 0 | 4 |");
+    expect(report).toContain("| `rebuild_restart` calls | 2 | 1 |");
+    // Each arm's spend is its share of the run's, from the ledger: every run at its indexes, reruns included.
+    const { arms, spend, attempts, seeded } = done.summary;
+    expect(arms.off.model_settled_microusd).toBeGreaterThan(0);
+    expect(arms.on.model_settled_microusd).toBeGreaterThan(0);
+    expect(arms.off.model_settled_microusd + arms.on.model_settled_microusd).toBe(spend.model_settled_microusd);
+    expect(arms.off.grade2_settled_microusd + arms.on.grade2_settled_microusd + seeded.reduce((sum, item) => sum + item.grade2_settled_microusd, 0)).toBe(spend.grade2_settled_microusd);
+    expect(arms.on.grade2_settled_microusd).toBe(DRY_COPY_MICROUSD);
+    const usd = (microusd: number) => `$${(microusd / 1_000_000).toFixed(4)}`;
+    expect(report).toContain(`| Model spend, every run at the arm's indexes | ${usd(arms.off.model_settled_microusd)} | ${usd(arms.on.model_settled_microusd)} |`);
+    // Wall time over each arm's counted attempts, from their records.
+    const walls = attempts.filter((item) => item.arm === "off" && item.status === "counted").map((item) => item.wall_ms ?? 0);
+    const [first = 0, second = 0] = walls;
+    expect(walls).toHaveLength(2);
+    expect(arms.off.wall_ms).toEqual({ attempts: 2, total: first + second, median: (first + second) / 2, max: Math.max(first, second) });
+    expect(arms.on.wall_ms?.attempts).toBe(1);
+    expect(attempts.find((item) => item.index === 3)?.infrastructure_runs).toEqual([0, 1, 2].map((rerun) => ({ rerun, cause })));
+    await w.close();
+  });
+
   it("stops the run on a session refusal (an audit or image mismatch) without rerunning it", async () => {
     const w = await world({ sessionFault: (request) => (request.id.endsWith("on-002-r0") ? "refused" : null) });
     const outcome = await runSessions(pilot(w), w.deps);
