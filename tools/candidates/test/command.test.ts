@@ -1,10 +1,10 @@
 import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { parseCanonical } from "@rbw/schema";
-import { describe, expect, it } from "vitest";
-import { parseUsd, REPO_ROOT, runCommand, type CommandDeps } from "../src/command.ts";
-import { notWired } from "../src/not-wired.ts";
-import * as wiring from "../src/wiring.ts";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { DEFAULT_RATE_SHEET, parseUsd, REPO_ROOT, runCommand, type CommandDeps, type ScreenConfig } from "../src/command.ts";
+import { ScreenStopError } from "../src/pipeline.ts";
+import type { Screen } from "../src/types.ts";
 import { finder, makeHost, miss, scripted, site, tempDir, threeSites } from "./support.ts";
 
 interface Run {
@@ -14,13 +14,11 @@ interface Run {
   outFile: string;
 }
 
-function files(): { rule: string; symptom: string; outFile: string; scratch: string } {
+function files(): { rule: string; outFile: string; scratch: string } {
   const dir = tempDir("rbw-candidates-cli-");
   const rule = join(dir, "xx-1.synthetic.yml");
-  const symptom = join(dir, "symptom.txt");
   writeFileSync(rule, "id: xx-1.synthetic\n");
-  writeFileSync(symptom, "A record is sometimes written twice.\n");
-  return { rule, symptom, outFile: join(dir, "record.json"), scratch: tempDir("rbw-candidates-cli-scratch-") };
+  return { rule, outFile: join(dir, "record.json"), scratch: tempDir("rbw-candidates-cli-scratch-") };
 }
 
 async function run(extra: string[], deps: CommandDeps, outFile?: string, scratch?: string, host?: string): Promise<Run> {
@@ -29,7 +27,7 @@ async function run(extra: string[], deps: CommandDeps, outFile?: string, scratch
   let out = "";
   let err = "";
   const code = await runCommand(
-    ["--rule", paths.rule, "--host", host ?? makeHost(), "--symptom", paths.symptom, "--out", target, "--scratch", scratch ?? paths.scratch, ...extra],
+    ["--rule", paths.rule, "--host", host ?? makeHost(), "--out", target, "--scratch", scratch ?? paths.scratch, ...extra],
     { now: () => new Date("2026-10-13T12:00:00.000Z"), runId: () => "11111111-1111-4111-8111-111111111111", ...deps },
     { out: (text) => (out += text), err: (text) => (err += text) },
   );
@@ -41,12 +39,20 @@ function readRecord(path: string): Record<string, unknown> {
 }
 
 describe("command line", () => {
-  it("writes a canonical dry-run record with an unwired screen", async () => {
-    const result = await run(["--dry-run"], { findSites: finder(threeSites()), screen: wiring.screen });
+  it("writes a canonical dry-run record and needs no screen", async () => {
+    const result = await run(["--dry-run"], { findSites: finder(threeSites()) });
     expect(result.err).toBe("");
     expect(result.code).toBe(0);
     const record = readRecord(result.outFile);
-    expect(record).toMatchObject({ dry_run: true, rule: { id: "xx-1.synthetic" }, implementations: { find_sites: "fakeFindSites", screen: "none" } });
+    expect(record).toMatchObject({
+      dry_run: true,
+      rule: { id: "xx-1.synthetic" },
+      screen_model: "super",
+      symptom_source: "race-class-template-v2",
+      implementations: { find_sites: "fakeFindSites", screen: "none" },
+    });
+    // Each planted candidate carries its own symptom's hash, computed without a model.
+    expect((record.candidates as { symptom_sha256: string | null }[]).every((c) => typeof c.symptom_sha256 === "string")).toBe(true);
     expect(result.out).toContain("would screen 3 candidates");
     expect(result.out).toContain("$0.75");
   });
@@ -74,25 +80,24 @@ describe("command line", () => {
     expect(result.out).toContain("2 survived");
   });
 
-  it("refuses a real run while the screen is unwired, and writes nothing", async () => {
-    const result = await run([], { findSites: finder(threeSites()), screen: wiring.screen });
-    expect(result.code).toBe(1);
-    expect(result.err).toMatch(/screen is not wired yet/);
+  it("rejects an unknown --model", async () => {
+    const result = await run(["--model", "gpt"], { findSites: finder(threeSites()), screen: scripted([]) });
+    expect(result.code).toBe(2);
+    expect(result.err).toMatch(/--model must be super or kimi/);
     expect(existsSync(result.outFile)).toBe(false);
   });
 
-  it("reports an unwired site finder, and writes nothing", async () => {
-    const result = await run(["--dry-run"], { findSites: wiring.findSites, screen: notWired("screen", "x") });
-    expect(result.code).toBe(1);
-    expect(result.err).toMatch(/findSites is not wired yet/);
-    expect(existsSync(result.outFile)).toBe(false);
+  it("records the model a real run used", async () => {
+    const result = await run(["--model", "kimi"], { findSites: finder(threeSites().slice(0, 1)), screen: scripted([miss()]) });
+    expect(result.code).toBe(0);
+    expect(readRecord(result.outFile)).toMatchObject({ screen_model: "kimi" });
   });
 
   it("reports a site finder that throws as a pipeline failure, and writes nothing", async () => {
     const broken = () => {
       throw new Error("rule did not compile");
     };
-    const result = await run(["--dry-run"], { findSites: broken, screen: wiring.screen });
+    const result = await run(["--dry-run"], { findSites: broken });
     expect(result.code).toBe(1);
     expect(result.err).toMatch(/the site finder failed: Error: rule did not compile/);
     expect(existsSync(result.outFile)).toBe(false);
@@ -100,7 +105,7 @@ describe("command line", () => {
 
   it("refuses a record path inside the repository", async () => {
     const inside = join(REPO_ROOT, "tools", "candidates", "never-written.json");
-    const result = await run(["--dry-run"], { findSites: finder(threeSites()), screen: wiring.screen }, inside);
+    const result = await run(["--dry-run"], { findSites: finder(threeSites()) }, inside);
     expect(result.code).toBe(2);
     expect(result.err).toMatch(/outside the repository/);
     expect(existsSync(inside)).toBe(false);
@@ -111,9 +116,30 @@ describe("command line", () => {
     expect(existsSync(join(REPO_ROOT, "pnpm-workspace.yaml"))).toBe(true);
   });
 
+  it("refuses a --scratch inside the repository before anything runs", async () => {
+    const inside = join(REPO_ROOT, "tools", "candidates");
+    const screen = scripted([miss(), miss(), miss()]);
+    const result = await run([], { findSites: finder(threeSites()), screen }, undefined, inside);
+    expect(result.code).toBe(2);
+    expect(result.err).toMatch(/--scratch must be outside the repository/);
+    expect(screen.calls).toHaveLength(0);
+    expect(existsSync(result.outFile)).toBe(false);
+  });
+
+  it("refuses a --scratch that is a symbolic link into the repository", async () => {
+    const link = join(tempDir("rbw-candidates-cli-link-"), "scratch");
+    symlinkSync(join(REPO_ROOT, "tools", "candidates"), link, "dir");
+    const screen = scripted([miss(), miss(), miss()]);
+    const result = await run([], { findSites: finder(threeSites()), screen }, undefined, link);
+    expect(result.code).toBe(2);
+    expect(result.err).toMatch(/--scratch must be outside the repository/);
+    expect(screen.calls).toHaveLength(0);
+    expect(existsSync(result.outFile)).toBe(false);
+  });
+
   it("refuses a record path at the repository root", async () => {
     const inside = join(REPO_ROOT, "never-written.json");
-    const result = await run(["--dry-run"], { findSites: finder(threeSites()), screen: wiring.screen }, inside);
+    const result = await run(["--dry-run"], { findSites: finder(threeSites()) }, inside);
     expect(result.code).toBe(2);
     expect(result.err).toMatch(/outside the repository/);
     expect(existsSync(inside)).toBe(false);
@@ -178,7 +204,7 @@ describe("command line", () => {
     const link = join(tempDir("rbw-candidates-cli-"), "host-link");
     symlinkSync(host, link);
     const inside = join(link, "candidate-run.json");
-    const result = await run(["--dry-run"], { findSites: finder(threeSites()), screen: wiring.screen }, inside, undefined, host);
+    const result = await run(["--dry-run"], { findSites: finder(threeSites()), screen: scripted([]) }, inside, undefined, host);
     expect(result.code).toBe(2);
     expect(result.err).toMatch(/--out must be outside --host/);
     expect(existsSync(join(host, "candidate-run.json"))).toBe(false);
@@ -213,8 +239,8 @@ describe("command line", () => {
 
   it("writes the partial record and reports the spend when the pipeline fails after screens ran", async () => {
     const screen = Object.assign(
-      function strayScreen(tree: string) {
-        writeFileSync(join(dirname(tree), "stray"), "x");
+      function strayScreen(job: { plantedTree: string }) {
+        writeFileSync(join(dirname(job.plantedTree), "stray"), "x");
         return miss(3, 100_000);
       },
       {},
@@ -240,7 +266,7 @@ describe("command line", () => {
   it("does not overwrite an existing record", async () => {
     const paths = files();
     writeFileSync(paths.outFile, "keep");
-    const result = await run(["--dry-run"], { findSites: finder(threeSites()), screen: wiring.screen }, paths.outFile);
+    const result = await run(["--dry-run"], { findSites: finder(threeSites()) }, paths.outFile);
     expect(result.code).toBe(2);
     expect(readFileSync(paths.outFile, "utf8")).toBe("keep");
   });
@@ -252,10 +278,127 @@ describe("command line", () => {
     [["--host-commit", "abc"], /--host-commit/],
     [["--unknown"], /Unknown option/],
   ])("rejects bad usage %j", async (extra, message) => {
-    const result = await run([...extra, "--dry-run"], { findSites: finder(threeSites()), screen: wiring.screen });
+    const result = await run([...extra, "--dry-run"], { findSites: finder(threeSites()) });
     expect(result.code).toBe(2);
     expect(result.err).toMatch(message);
     expect(existsSync(result.outFile)).toBe(false);
+  });
+});
+
+describe("command line with the real screen builder", () => {
+  const REAL_ENV = { DATABASE_URL: "postgres://synthetic.invalid/x", TOKEN_FACTORY_SCREEN_KEY: "synthetic-key" };
+
+  function builder(screen: Screen): ((config: ScreenConfig) => Screen) & { configs: ScreenConfig[] } {
+    const configs: ScreenConfig[] = [];
+    return Object.assign(
+      (config: ScreenConfig): Screen => {
+        configs.push(config);
+        return screen;
+      },
+      { configs },
+    );
+  }
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("builds the screen from the run's ledger, rate sheet, scratch and environment options, and uses it", async () => {
+    vi.stubEnv("DATABASE_URL", REAL_ENV.DATABASE_URL);
+    vi.stubEnv("TOKEN_FACTORY_SCREEN_KEY", REAL_ENV.TOKEN_FACTORY_SCREEN_KEY);
+    const screen = scripted([miss()]);
+    const buildScreen = builder(screen);
+    const scratch = tempDir("rbw-candidates-cli-scratch-");
+    const result = await run([], { findSites: finder(threeSites().slice(0, 1)), buildScreen }, undefined, scratch);
+    expect(result.err).toBe("");
+    expect(result.code).toBe(0);
+    expect(screen.calls).toHaveLength(1);
+    expect(buildScreen.configs).toHaveLength(1);
+    expect(buildScreen.configs[0]).toMatchObject({ slotKey: "development", pool: "development", rateSheetPath: DEFAULT_RATE_SHEET, scratchBase: scratch, keepScratch: false });
+    expect(buildScreen.configs[0]?.env.DATABASE_URL).toBe(REAL_ENV.DATABASE_URL);
+
+    const sheet = join(tempDir("rbw-candidates-cli-rates-"), "rates.json");
+    writeFileSync(sheet, readFileSync(DEFAULT_RATE_SHEET));
+    const other = builder(scripted([miss()]));
+    const overridden = await run(["--slot-key", "uc1", "--pool", "uc1-pool", "--rate-sheet", sheet, "--keep-scratch"], {
+      findSites: finder(threeSites().slice(0, 1)),
+      buildScreen: other,
+    });
+    expect(overridden.code).toBe(0);
+    expect(other.configs[0]).toMatchObject({ slotKey: "uc1", pool: "uc1-pool", rateSheetPath: sheet, keepScratch: true });
+  });
+
+  it("exits 2 when the --rate-sheet cannot be read, before the screen is built", async () => {
+    vi.stubEnv("DATABASE_URL", REAL_ENV.DATABASE_URL);
+    vi.stubEnv("TOKEN_FACTORY_SCREEN_KEY", REAL_ENV.TOKEN_FACTORY_SCREEN_KEY);
+    const screen = scripted([miss(), miss(), miss()]);
+    // Like the real builder, this reads the rate sheet as soon as it is called.
+    const buildScreen = (config: ScreenConfig): Screen => {
+      readFileSync(config.rateSheetPath);
+      return screen;
+    };
+    const missing = join(tempDir("rbw-candidates-cli-rates-"), "missing.json");
+    const result = await run(["--rate-sheet", missing], { findSites: finder(threeSites()), buildScreen });
+    expect(result.code).toBe(2);
+    expect(result.err).toMatch(/cannot read the --rate-sheet file/);
+    expect(screen.calls).toHaveLength(0);
+    expect(existsSync(result.outFile)).toBe(false);
+  });
+
+  it("refuses a real run with no screen configured", async () => {
+    const result = await run([], { findSites: finder(threeSites()) });
+    expect(result.code).toBe(1);
+    expect(result.err).toMatch(/no screen is configured/);
+    expect(existsSync(result.outFile)).toBe(false);
+  });
+
+  it.each([
+    ["DATABASE_URL", /DATABASE_URL is not set/],
+    ["TOKEN_FACTORY_SCREEN_KEY", /TOKEN_FACTORY_SCREEN_KEY is not set/],
+  ])("refuses a real run without %s before anything runs, and writes nothing", async (missing, message) => {
+    for (const [name, value] of Object.entries(REAL_ENV)) {
+      vi.stubEnv(name, name === missing ? "" : value);
+    }
+    const screen = scripted([miss(), miss(), miss()]);
+    const buildScreen = builder(screen);
+    const result = await run([], { findSites: finder(threeSites()), buildScreen });
+    expect(result.code).toBe(2);
+    expect(result.err).toMatch(message);
+    expect(screen.calls).toHaveLength(0);
+    expect(existsSync(result.outFile)).toBe(false);
+  });
+
+  it("refuses a model whose planned attempts cannot fit the per-screen budget, with the screen's own reason", async () => {
+    vi.stubEnv("DATABASE_URL", REAL_ENV.DATABASE_URL);
+    vi.stubEnv("TOKEN_FACTORY_SCREEN_KEY", REAL_ENV.TOKEN_FACTORY_SCREEN_KEY);
+    const screen = scripted([miss(), miss(), miss()]);
+    // Kimi's worst-case call is priced above a third of the default $0.25 budget.
+    const result = await run(["--model", "kimi"], { findSites: finder(threeSites()), buildScreen: builder(screen) });
+    expect(result.code).toBe(2);
+    expect(result.err).toMatch(/--screen-budget-usd is too small for 3 attempts on kimi: 3 attempts at a worst case of \d+ micro-USD each/);
+    expect(screen.calls).toHaveLength(0);
+    expect(existsSync(result.outFile)).toBe(false);
+  });
+
+  it("checks the budget on a dry run of the real screen too", async () => {
+    const result = await run(["--dry-run", "--model", "kimi"], { findSites: finder(threeSites()) });
+    expect(result.code).toBe(2);
+    expect(result.err).toMatch(/--screen-budget-usd is too small/);
+  });
+
+  it("refuses more attempts than the screen allows", async () => {
+    const result = await run(["--dry-run", "--screen-attempts", "9"], { findSites: finder(threeSites()) });
+    expect(result.code).toBe(2);
+    expect(result.err).toMatch(/--screen-attempts must be from 1 to 8/);
+  });
+
+  it("exits 1 and names the reason when a screen stopped the run, keeping the record", async () => {
+    const screen = scripted([new ScreenStopError("operation op-9 is unsettled", 250_000), miss()]);
+    const result = await run([], { findSites: finder(threeSites()), screen });
+    expect(result.code).toBe(1);
+    expect(result.err).toMatch(/stopped screening: screen_stopped/);
+    expect(result.err).toContain("op-9");
+    expect(readRecord(result.outFile)).toMatchObject({ stop_reason: "screen_stopped", totals: { spend_microusd: 250_000 } });
   });
 });
 

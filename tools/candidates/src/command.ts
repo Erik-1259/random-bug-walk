@@ -1,8 +1,10 @@
 // The command line, as a function the tests can call with fake implementations.
 // Exit codes: 0 the run finished and the record was written; 1 the pipeline could not run or
-// finish (an implementation is not wired, the finder or a setup step failed, or the run failed
-// after screening began), and once screening has begun the record of the spend so far is still
-// kept and its path printed; 2 a usage or input error found before anything ran, nothing written.
+// finish (the finder or a setup step failed, the run failed after screening began, or a screen
+// stopped the run), and once screening has begun the record of the spend so far is still kept and
+// its path printed; 2 a usage or input error found before anything ran (including a real screen
+// that would refuse every run: a missing key or DATABASE_URL, or a budget the attempts cannot fit),
+// nothing written.
 // The --out file is claimed before the pipeline runs, so a bad --out never costs a screen.
 import { randomUUID } from "node:crypto";
 import { closeSync, openSync, readFileSync, realpathSync, statSync, unlinkSync, writeFileSync } from "node:fs";
@@ -11,25 +13,48 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "nod
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { encodeCanonical } from "@rbw/schema";
-import { implementationName, isWired } from "./not-wired.ts";
+import { API_KEY_VARIABLE, budgetRefusal, isScreenModelName, MAX_ATTEMPTS, SCREEN_PROFILES, worstCasePerCall } from "@rbw/screen";
+import { implementationName } from "./not-wired.ts";
 import { formatUsd, PipelineError, runPipeline, type RunRecord } from "./pipeline.ts";
-import type { FindSites, Screen } from "./types.ts";
+import { SYMPTOM_SOURCE, symptomFor } from "./symptom.ts";
+import type { FindSites, Screen, ScreenBudget, ScreenModel } from "./types.ts";
 
-export const USAGE = `usage: cli.ts --rule <class rule file> --host <host tree> --symptom <symptom file> --out <new record file>
-  [--rule-id <id>] [--host-commit <sha>] [--dry-run]
+export const USAGE = `usage: cli.ts --rule <class rule file> --host <host tree> --out <new record file>
+  [--rule-id <id>] [--host-commit <sha>] [--dry-run] [--model super|kimi]
   [--max-candidates <n>] (default 10)
   [--max-spend-usd <usd>] (total screen spend cap, default 2.00)
   [--screen-budget-usd <usd>] (per screen, default 0.25)
-  [--screen-attempts <n>] (per screen, default 3)
+  [--screen-attempts <n>] (per screen, 1 to 8, default 3)
+  [--slot-key <key>] [--pool <key>] (spend ledger slot and pool, default "development")
+  [--rate-sheet <path>] (default packages/screen/rates.json)
   [--scratch <dir>] (default the system temporary directory) [--keep-scratch]
+A real run reads DATABASE_URL and ${API_KEY_VARIABLE} from the environment and never prints either.
 `;
 
 /** The repository root; a record lists candidate sites in the host and must stay out of it. */
 export const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 
+/** The default rate sheet: @rbw/screen's committed prices. */
+export const DEFAULT_RATE_SHEET = join(REPO_ROOT, "packages", "screen", "rates.json");
+
+/** Builds the real screen from the options a run supplies; cli.ts passes @rbw/screen's. */
+export interface ScreenConfig {
+  env: Record<string, string | undefined>;
+  slotKey: string;
+  pool: string;
+  rateSheetPath: string;
+  /** Where the screen makes its own scratch output directory (the run's --scratch). */
+  scratchBase: string;
+  /** Keeps the screen's scratch output too (the run's --keep-scratch). */
+  keepScratch: boolean;
+}
+
 export interface CommandDeps {
   findSites: FindSites;
-  screen: Screen;
+  /** A ready screen (tests pass a fake). When absent and the run is not a dry run, buildScreen is used. */
+  screen?: Screen;
+  /** Builds the real screen from the parsed options; used when `screen` is absent. */
+  buildScreen?: (config: ScreenConfig) => Screen;
   now?: () => Date;
   runId?: () => string;
   repoRoot?: string;
@@ -163,20 +188,23 @@ export async function runCommand(argv: readonly string[], deps: CommandDeps, io:
         "rule-id": { type: "string" },
         host: { type: "string" },
         "host-commit": { type: "string" },
-        symptom: { type: "string" },
         out: { type: "string" },
         "dry-run": { type: "boolean", default: false },
+        model: { type: "string", default: "super" },
         "max-candidates": { type: "string", default: "10" },
         "max-spend-usd": { type: "string", default: "2.00" },
         "screen-budget-usd": { type: "string", default: "0.25" },
         "screen-attempts": { type: "string", default: "3" },
+        "slot-key": { type: "string", default: "development" },
+        pool: { type: "string", default: "development" },
+        "rate-sheet": { type: "string" },
         scratch: { type: "string" },
         "keep-scratch": { type: "boolean", default: false },
       },
     });
-    const { rule: rulePath, host, symptom: symptomPath, out } = values;
-    if (rulePath === undefined || host === undefined || symptomPath === undefined || out === undefined) {
-      throw new UsageError("--rule, --host, --symptom and --out are required");
+    const { rule: rulePath, host, out } = values;
+    if (rulePath === undefined || host === undefined || out === undefined) {
+      throw new UsageError("--rule, --host and --out are required");
     }
     const outPath = resolve(out);
     const realOut = realTarget(outPath);
@@ -191,12 +219,15 @@ export async function runCommand(argv: readonly string[], deps: CommandDeps, io:
     if (isInside(realHost, realOut)) {
       throw new UsageError("--out must be outside --host");
     }
+    const model = values.model;
+    if (!isScreenModelName(model)) {
+      throw new UsageError("--model must be super or kimi");
+    }
     const hostCommit = values["host-commit"];
     if (hostCommit !== undefined && !/^[0-9a-f]{40}$/.test(hostCommit)) {
       throw new UsageError("--host-commit must be a 40-character lowercase hex commit");
     }
     const ruleText = readText(rulePath, "rule");
-    const symptomText = readText(symptomPath, "symptom");
     const ruleId = values["rule-id"] ?? basename(rulePath).replace(/\.ya?ml$/, "");
     const caps = {
       maxCandidates: parseCount(values["max-candidates"], "--max-candidates"),
@@ -209,10 +240,10 @@ export async function runCommand(argv: readonly string[], deps: CommandDeps, io:
     if (caps.screenBudget.maxCostMicrousd < 1) {
       throw new UsageError("--screen-budget-usd must be more than zero");
     }
-    const dryRun = values["dry-run"];
-    if (!dryRun && !isWired(deps.screen)) {
-      throw new PipelineError("screen is not wired yet: use --dry-run, or bind the screen in tools/candidates/src/wiring.ts");
+    if (caps.screenBudget.maxAttempts > MAX_ATTEMPTS) {
+      throw new UsageError(`--screen-attempts must be from 1 to ${String(MAX_ATTEMPTS)}`);
     }
+    const dryRun = values["dry-run"];
     const scratchBase = values.scratch ?? tmpdir();
     if (!dryRun && !isDirectory(scratchBase)) {
       throw new UsageError("--scratch must be a directory");
@@ -222,6 +253,32 @@ export async function runCommand(argv: readonly string[], deps: CommandDeps, io:
     if (isDirectory(scratchBase) && isInside(realHost, realpathSync(scratchBase))) {
       throw new UsageError("--scratch must be outside --host");
     }
+    // Planted copies of the host, the screen's working files and a fallback record all go under
+    // --scratch, so it must not be where they could be committed by accident.
+    const repoRoot = resolve(deps.repoRoot ?? REPO_ROOT);
+    if (isInside(repoRoot, resolve(scratchBase)) || isInside(realTarget(repoRoot), realTarget(resolve(scratchBase)))) {
+      throw new UsageError("--scratch must be outside the repository: real runs keep host material there");
+    }
+
+    // The screen: a fake when one is given (tests), otherwise the real one built from the options.
+    // A dry run never screens, so it needs none.
+    const config: ScreenConfig = {
+      env: process.env,
+      slotKey: values["slot-key"],
+      pool: values.pool,
+      rateSheetPath: values["rate-sheet"] ?? DEFAULT_RATE_SHEET,
+      scratchBase,
+      keepScratch: values["keep-scratch"],
+    };
+    if (deps.screen === undefined && (dryRun || deps.buildScreen !== undefined)) {
+      // The real screen refuses a run for these reasons before it spends; checking them here makes a
+      // misconfigured run fail before anything runs, instead of once per candidate. It runs before
+      // the screen is built, because building it reads the rate sheet.
+      checkRealScreen(config, model, caps.screenBudget, dryRun);
+    }
+    const screen = buildRunScreen(deps, dryRun, config);
+    const screenName = dryRun ? "none" : implementationName(screen);
+
     // Claim the record file before anything runs, so a bad --out fails before any screen spends.
     let fd: number;
     try {
@@ -236,9 +293,11 @@ export async function runCommand(argv: readonly string[], deps: CommandDeps, io:
       ({ record, scratchDir } = await runPipeline({
         rule: { id: ruleId, path: rulePath, text: ruleText },
         hostDir: resolve(host),
-        symptom: { text: symptomText },
+        symptomFor: (site) => ({ text: symptomFor(site) }),
+        symptomSource: SYMPTOM_SOURCE,
+        screenModel: model,
         findSites: deps.findSites,
-        screen: deps.screen,
+        screen,
         caps,
         dryRun,
         scratchBase,
@@ -246,7 +305,7 @@ export async function runCommand(argv: readonly string[], deps: CommandDeps, io:
         hostCommit: hostCommit ?? null,
         runId,
         now: deps.now ?? (() => new Date()),
-        implementations: { findSites: implementationName(deps.findSites), screen: dryRun ? "none" : implementationName(deps.screen) },
+        implementations: { findSites: implementationName(deps.findSites), screen: screenName },
       }));
     } catch (error) {
       if (error instanceof PipelineError && error.record !== null) {
@@ -264,6 +323,12 @@ export async function runCommand(argv: readonly string[], deps: CommandDeps, io:
       io.err(`candidates: ${where.note}`);
       return 1;
     }
+    if (record.stop_reason === "screen_stopped") {
+      // A screen stopped the run, possibly with spend to reconcile: say why on stderr and exit 1.
+      const stopper = record.candidates.find((entry) => entry.status === "screen_error" && entry.reason?.startsWith("ScreenStopError") === true);
+      io.err(`${summary(record, outPath, scratchDir)}candidates: ${stopper?.reason ?? "a screen stopped the run"}\n`);
+      return 1;
+    }
     io.out(summary(record, outPath, scratchDir));
     return 0;
   } catch (error) {
@@ -277,4 +342,51 @@ export async function runCommand(argv: readonly string[], deps: CommandDeps, io:
     }
     throw error;
   }
+}
+
+/**
+ * The real screen's own start checks, run once up front: the rate sheet prices the model, the planned
+ * attempts at the worst case fit the per-screen budget (on a dry run too, so its projection is
+ * honest) and, for a real run, the key and DATABASE_URL are set. Neither value is printed.
+ */
+function checkRealScreen(config: ScreenConfig, model: ScreenModel, budget: ScreenBudget, dryRun: boolean): void {
+  let sheet: Uint8Array;
+  try {
+    sheet = readFileSync(config.rateSheetPath);
+  } catch {
+    throw new UsageError("cannot read the --rate-sheet file");
+  }
+  const worst = worstCasePerCall(sheet, SCREEN_PROFILES[model]);
+  if (!worst.ok) {
+    throw new UsageError(`--rate-sheet does not price the ${model} profile: ${worst.detail}`);
+  }
+  const refusal = budgetRefusal(budget.maxAttempts, worst.per_call_microusd, budget.maxCostMicrousd);
+  if (refusal !== null) {
+    throw new UsageError(`--screen-budget-usd is too small for ${String(budget.maxAttempts)} attempts on ${model}: ${refusal}`);
+  }
+  if (dryRun) {
+    return;
+  }
+  for (const name of [API_KEY_VARIABLE, "DATABASE_URL"]) {
+    const value = config.env[name];
+    if (value === undefined || value === "") {
+      throw new UsageError(`${name} is not set; a real run needs it`);
+    }
+  }
+}
+
+/** The screen the run uses; a given fake, the built real one, or a never-called stub for a dry run. */
+function buildRunScreen(deps: CommandDeps, dryRun: boolean, config: ScreenConfig): Screen {
+  if (deps.screen !== undefined) {
+    return deps.screen;
+  }
+  if (dryRun) {
+    return () => {
+      throw new PipelineError("a dry run does not screen");
+    };
+  }
+  if (deps.buildScreen === undefined) {
+    throw new PipelineError("no screen is configured");
+  }
+  return deps.buildScreen(config);
 }
