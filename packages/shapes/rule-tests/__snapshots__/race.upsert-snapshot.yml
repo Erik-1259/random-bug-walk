@@ -1,0 +1,234 @@
+id: race.upsert
+snapshots:
+  ? |
+    async function bump(profileId) {
+      const stat = await db.stat.upsert({ create: { profileId, visits: 1 }, where: { profileId }, update: { visits: { increment: 1 } } });
+      return stat;
+    }
+  : fixed: |
+      async function bump(profileId) {
+        const stat = await db.stat.findUnique({ where: { profileId } }).then((found) => (found ? db.stat.update({ where: { profileId }, data: { visits: { increment: 1 } } }) : db.stat.create({ data: { profileId, visits: 1 } })));
+        return stat;
+      }
+    labels:
+    - source: 'db.stat.upsert({ create: { profileId, visits: 1 }, where: { profileId }, update: { visits: { increment: 1 } } })'
+      style: primary
+      start: 54
+      end: 166
+    - source: 'where: { profileId }'
+      style: secondary
+      start: 105
+      end: 125
+    - source: 'update: { visits: { increment: 1 } }'
+      style: secondary
+      start: 127
+      end: 163
+    - source: 'create: { profileId, visits: 1 }'
+      style: secondary
+      start: 71
+      end: 103
+    - source: '{ create: { profileId, visits: 1 }, where: { profileId }, update: { visits: { increment: 1 } } }'
+      style: secondary
+      start: 69
+      end: 165
+    - source: '{ create: { profileId, visits: 1 }, where: { profileId }, update: { visits: { increment: 1 } } }'
+      style: secondary
+      start: 69
+      end: 165
+    - source: 'stat = await db.stat.upsert({ create: { profileId, visits: 1 }, where: { profileId }, update: { visits: { increment: 1 } } })'
+      style: secondary
+      start: 41
+      end: 166
+    - source: 'await db.stat.upsert({ create: { profileId, visits: 1 }, where: { profileId }, update: { visits: { increment: 1 } } })'
+      style: secondary
+      start: 48
+      end: 166
+    - source: db.stat.upsert
+      style: secondary
+      start: 54
+      end: 68
+  ? |
+    await db.client.preference.upsert({ where: { profileId }, update: { theme }, create: { profileId, theme } });
+  : fixed: |
+      await db.client.preference.findUnique({ where: { profileId } }).then((found) => (found ? db.client.preference.update({ where: { profileId }, data: { theme } }) : db.client.preference.create({ data: { profileId, theme } })));
+    labels:
+    - source: 'db.client.preference.upsert({ where: { profileId }, update: { theme }, create: { profileId, theme } })'
+      style: primary
+      start: 6
+      end: 108
+    - source: 'where: { profileId }'
+      style: secondary
+      start: 36
+      end: 56
+    - source: 'update: { theme }'
+      style: secondary
+      start: 58
+      end: 75
+    - source: 'create: { profileId, theme }'
+      style: secondary
+      start: 77
+      end: 105
+    - source: '{ where: { profileId }, update: { theme }, create: { profileId, theme } }'
+      style: secondary
+      start: 34
+      end: 107
+    - source: '{ where: { profileId }, update: { theme }, create: { profileId, theme } }'
+      style: secondary
+      start: 34
+      end: 107
+    - source: 'await db.client.preference.upsert({ where: { profileId }, update: { theme }, create: { profileId, theme } });'
+      style: secondary
+      start: 0
+      end: 109
+    - source: 'await db.client.preference.upsert({ where: { profileId }, update: { theme }, create: { profileId, theme } })'
+      style: secondary
+      start: 0
+      end: 108
+    - source: db.client.preference.upsert
+      style: secondary
+      start: 6
+      end: 33
+  ? |
+    await tx.setting.upsert({
+      where: { key: 'mode' },
+      update: { value },
+      create: {
+        key: 'mode',
+        value,
+      },
+    });
+  : fixed: |
+      await tx.setting.findUnique({ where: { key: 'mode' } }).then((found) => (found ? tx.setting.update({ where: { key: 'mode' }, data: { value } }) : tx.setting.create({ data: {
+        key: 'mode',
+        value,
+      } })));
+    labels:
+    - source: |-
+        tx.setting.upsert({
+          where: { key: 'mode' },
+          update: { value },
+          create: {
+            key: 'mode',
+            value,
+          },
+        })
+      style: primary
+      start: 6
+      end: 120
+    - source: 'where: { key: ''mode'' }'
+      style: secondary
+      start: 28
+      end: 50
+    - source: 'update: { value }'
+      style: secondary
+      start: 54
+      end: 71
+    - source: |-
+        create: {
+            key: 'mode',
+            value,
+          }
+      style: secondary
+      start: 75
+      end: 116
+    - source: |-
+        {
+          where: { key: 'mode' },
+          update: { value },
+          create: {
+            key: 'mode',
+            value,
+          },
+        }
+      style: secondary
+      start: 24
+      end: 119
+    - source: |-
+        {
+          where: { key: 'mode' },
+          update: { value },
+          create: {
+            key: 'mode',
+            value,
+          },
+        }
+      style: secondary
+      start: 24
+      end: 119
+    - source: |-
+        await tx.setting.upsert({
+          where: { key: 'mode' },
+          update: { value },
+          create: {
+            key: 'mode',
+            value,
+          },
+        });
+      style: secondary
+      start: 0
+      end: 121
+    - source: |-
+        await tx.setting.upsert({
+          where: { key: 'mode' },
+          update: { value },
+          create: {
+            key: 'mode',
+            value,
+          },
+        })
+      style: secondary
+      start: 0
+      end: 120
+    - source: tx.setting.upsert
+      style: secondary
+      start: 6
+      end: 23
+  ? |
+    class Prefs {
+      public async save(profileId) {
+        await this.db.preference.upsert({ where: { profileId }, update: {}, create: { profileId } });
+      }
+    }
+  : fixed: |
+      class Prefs {
+        public async save(profileId) {
+          await this.db.preference.findUnique({ where: { profileId } }).then((found) => (found ? this.db.preference.update({ where: { profileId }, data: {} }) : this.db.preference.create({ data: { profileId } })));
+        }
+      }
+    labels:
+    - source: 'this.db.preference.upsert({ where: { profileId }, update: {}, create: { profileId } })'
+      style: primary
+      start: 57
+      end: 143
+    - source: 'where: { profileId }'
+      style: secondary
+      start: 85
+      end: 105
+    - source: 'update: {}'
+      style: secondary
+      start: 107
+      end: 117
+    - source: 'create: { profileId }'
+      style: secondary
+      start: 119
+      end: 140
+    - source: '{ where: { profileId }, update: {}, create: { profileId } }'
+      style: secondary
+      start: 83
+      end: 142
+    - source: '{ where: { profileId }, update: {}, create: { profileId } }'
+      style: secondary
+      start: 83
+      end: 142
+    - source: 'await this.db.preference.upsert({ where: { profileId }, update: {}, create: { profileId } });'
+      style: secondary
+      start: 51
+      end: 144
+    - source: 'await this.db.preference.upsert({ where: { profileId }, update: {}, create: { profileId } })'
+      style: secondary
+      start: 51
+      end: 143
+    - source: this.db.preference.upsert
+      style: secondary
+      start: 57
+      end: 82

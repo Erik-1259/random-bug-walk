@@ -1,0 +1,25 @@
+import type { Store } from './store';
+
+export class QuotaService {
+  constructor(private readonly store: Store) {}
+
+  async consume(accountId: string, limit: number) {
+    const bucket = await this.store.client.quotaBucket.findFirst({ where: { accountId } });
+    if (!bucket || bucket.count >= limit) {
+      return false;
+    }
+    const result = await this.store.client.quotaBucket.updateMany({
+      where: { id: bucket.id, count: { lt: limit } },
+      data: { count: { increment: 1 } },
+    });
+    return result.count === 1;
+  }
+
+  async consumeLeading(accountId: string) {
+    const bucket = await this.store.client.quotaBucket.findFirst({ where: { accountId } });
+    await this.store.client.quotaBucket.updateMany({
+      where: { frozen: false, id: bucket.id },
+      data: { count: { increment: 1 } },
+    });
+  }
+}

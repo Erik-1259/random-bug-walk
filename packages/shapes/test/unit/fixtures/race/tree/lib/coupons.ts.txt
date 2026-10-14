@@ -1,0 +1,18 @@
+import { db } from './db';
+
+// The write's identity comes from the parameter, not from the read.
+export async function applyCoupon(couponId: string) {
+  const coupon = await db.client.coupon.findUnique({ where: { id: couponId } });
+  if (!coupon || coupon.spent) {
+    return false;
+  }
+  await db.client.coupon.update({ where: { id: couponId, spent: false }, data: { spent: true } });
+  return true;
+}
+
+// Two reads of the model; only the second, the last before the write, filters on the guard.
+export async function claimPass(passId: string) {
+  const first = await db.client.pass.findFirst({ where: { id: passId } });
+  const fresh = await db.client.pass.findFirst({ where: { id: passId, claimed: false } });
+  await db.client.pass.update({ where: { id: fresh.id, claimed: false }, data: { claimed: true, holder: first.holder } });
+}

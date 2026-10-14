@@ -1,0 +1,18 @@
+import { db } from './db';
+
+export async function saveDocument(documentId: string, body: string) {
+  const current = await db.client.document.findUniqueOrThrow({ where: { id: documentId } });
+  const rendered = await renderMarkdown(body);
+  await db.client.document.update({
+    where: { id: current.id, version: current.version },
+    data: { body, rendered, version: current.version + 1 },
+  });
+}
+
+export async function archiveDocument(documentId: string) {
+  const document = await db.client.document.findFirst({ where: { id: documentId, archived: false } });
+  await db.client.document.updateMany({
+    where: { id: document.id, archived: false, locked: false },
+    data: { archived: true },
+  });
+}

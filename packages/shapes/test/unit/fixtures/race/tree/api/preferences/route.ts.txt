@@ -1,0 +1,39 @@
+import { db } from '@/lib/db';
+
+export async function POST(request: Request) {
+  const { profileId, theme } = await request.json();
+
+  await db.client.preference.upsert({
+    where: { profileId },
+    update: { theme },
+    create: {
+      profileId,
+      theme,
+    },
+  });
+
+  return Response.json({ ok: true });
+}
+
+export async function touchProfile(profileId: string) {
+  const stat = await db.client.profileStat.upsert({ create: { profileId, visits: 1 }, where: { profileId }, update: { visits: { increment: 1 } } });
+  return stat;
+}
+
+export async function readPreference(profileId: string) {
+  return db.client.preference.upsert({ where: { profileId }, update: {}, create: { profileId }, select: { theme: true } });
+}
+
+export async function resetPreferences(profileId: string) {
+  await db.client.$transaction([
+    db.client.preference.upsert({ where: { profileId }, update: { theme: null }, create: { profileId } }),
+  ]);
+}
+
+export async function mergePreference(base: { select: { theme: true } }, profileId: string) {
+  return db.client.preference.upsert({ ...base, where: { profileId }, update: {}, create: { profileId } });
+}
+
+export async function readTheme(profileId: string, select: { theme: true }) {
+  return db.client.preference.upsert({ where: { profileId }, update: {}, create: { profileId }, select });
+}

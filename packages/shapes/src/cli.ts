@@ -1,10 +1,12 @@
-// Command line for shape DT-1.tz-arg confirmation. Records are canonical JSON (sorted keys).
-// Exit codes: 0 confirmed; 1 not_applicable, unsupported_source_match or refused (the reason is
+// Command line for shape DT-1.tz-arg confirmation and for listing the sites of a bug class in a
+// host tree. Records are canonical JSON (sorted keys). Exit codes: 0 confirmed (or, for
+// find-sites, the scan ran); 1 not_applicable, unsupported_source_match or refused (the reason is
 // printed to stderr); 2 the command cannot run (bad usage, unreadable input, malformed rule or
 // probe data, a failing git command).
 import { spawnSync } from "node:child_process";
 import { lstatSync, readFileSync, writeFileSync } from "node:fs";
 import { parseArgs } from "node:util";
+import { CLASS_RULE_FILE, findSites } from "./classes.ts";
 import { canonicalJson } from "./json.ts";
 import { checkProbes, loadProbeSet } from "./probes.ts";
 import { PROBE_DIR, RULE_FILE, SHAPE_ID, SOURCE_RULE_FILE } from "./shape.ts";
@@ -15,7 +17,8 @@ const USAGE = `usage:
   cli.ts confirm-target --file <file> --path <repository path> --route <route file> [--mode <git mode>]
                         [--rule <rule file>] [--record <out>] [--declared-mutation <out>]
   cli.ts confirm-source --git-dir <dir> --commit <sha> --parent <sha> [--rule <rule file>] [--record <out>]
-  cli.ts check-probes --planted <file> [--record <out>]`;
+  cli.ts check-probes --planted <file> [--record <out>]
+  cli.ts find-sites --root <source dir> [--prefix <repository path prefix>] [--rule <class rule file>] [--record <out>]`;
 
 class CannotRun extends Error {}
 
@@ -113,6 +116,8 @@ const OPTIONS = {
   commit: { type: "string" },
   parent: { type: "string" },
   planted: { type: "string" },
+  root: { type: "string" },
+  prefix: { type: "string" },
 } as const;
 
 function run(argv: string[]): number {
@@ -166,6 +171,22 @@ function run(argv: string[]): number {
     const [planted] = required(values, ["planted"]) as [string];
     const outcome = checkProbes(loadProbeSet(PROBE_DIR), read(planted));
     return finish(outcome, outcome.status === "confirmed" ? outcome.record : undefined, values.record);
+  }
+
+  if (command === "find-sites") {
+    const [root] = required(values, ["root"]) as [string];
+    let report;
+    try {
+      report = findSites(root, read(values.rule ?? CLASS_RULE_FILE), values.prefix ?? "");
+    } catch (error) {
+      if (error instanceof CannotRun) {
+        throw error;
+      }
+      throw new CannotRun(error instanceof Error ? error.message : String(error), { cause: error });
+    }
+    emit(canonicalJson(report), values.record);
+    process.stderr.write(`find-sites: ${String(report.site_count)} sites in ${String(report.files_scanned)} files\n`);
+    return 0;
   }
 
   throw new CannotRun(USAGE);
