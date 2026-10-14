@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -224,6 +224,26 @@ describe("the grade commands", () => {
     // Another retry is another job, with fresh executions.
     const retry = writeGradeIds(root, dir, ATTEMPT, uuid, 2);
     expect(readFileSync(retry[1], "utf8")).not.toBe(before[0]);
+  });
+
+  it("replaces a partial ids file only while its controller job has no state, and leaves no temporary file behind", () => {
+    const root = newRunIds(() => "11111111-1111-4111-8111-111111111111");
+    let next = 0;
+    const uuid = () => `44444444-4444-4444-8444-${String(next++).padStart(12, "0")}`;
+    const dir = temp();
+    const work = temp();
+    const partial = join(dir, `${jobName(1, ATTEMPT)}.ids.json`);
+    writeFileSync(partial, '{"root_execution_id": "1111');
+    const files = writeGradeIds(root, dir, ATTEMPT, uuid, 0, work);
+    expect(files[1]).toBe(partial);
+    expect((JSON.parse(readFileSync(partial, "utf8")) as typeof root).root_execution_id).toBe(root.root_execution_id);
+    expect(readdirSync(dir).sort()).toEqual([`${jobName(1, ATTEMPT)}.ids.json`, `${jobName(2, ATTEMPT)}.ids.json`]);
+    // Once the controller holds the job, a partial ids file is not regenerated: the job's inputs are lost.
+    writeFileSync(partial, "{");
+    mkdirSync(join(work, "jobs", jobName(1, ATTEMPT)), { recursive: true });
+    expect(() => writeGradeIds(root, dir, ATTEMPT, uuid, 0, work)).toThrow(`the ids file ${partial} cannot be read, but controller job ${jobName(1, ATTEMPT)} already has state`);
+    // Without the work directory there is no telling, so a partial file stops the grade.
+    expect(() => writeGradeIds(root, dir, ATTEMPT, uuid)).toThrow("cannot be read");
   });
 
   it("runs one grade on its own, so the runner can run grade 2 serially after concurrent sessions", async () => {

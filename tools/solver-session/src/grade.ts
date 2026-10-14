@@ -24,7 +24,7 @@
 // grade gets its own ids file (writeGradeIds) with the root's IDs and a fresh alternative-fix
 // execution. Grade 1 and grade 2 are separate calls (runGrade), so a runner can run grade 1 as each
 // session ends and grade 2 serially, since every grade 2 takes the one development slot.
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { structuredPatch } from "diff";
 import { CodeStateRefusal, applyPatchChecked } from "@rbw/local-runner";
@@ -135,19 +135,38 @@ export function jobName(grade: GradeNumber, attempt: string, retry = 0): string 
   return `${grade === 1 ? "grade-1-docker" : "grade-2-sandbox"}-${attempt}-r${String(retry)}`;
 }
 
+/** Whether an ids file holds a complete JSON object (a write the process stopped in the middle of does not). */
+function readableIds(path: string): boolean {
+  try {
+    return isRecord(JSON.parse(readFileSync(path, "utf8")));
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Writes one ids file per grade into `dir`: the root's IDs with a fresh alternative-fix execution, so
  * both grades of every attempt share the root and policy but record under their own execution. A file
  * already written for the same grade, attempt and retry is kept, never regenerated: the ids are part
  * of the controller job's inputs, so a resumed grade replays the job that ran instead of being refused.
+ * Each file is written to a temporary file in `dir` and renamed into place. An existing file that cannot
+ * be read is written again only when `work` (the grades' controller work directory) holds no state for
+ * its job; otherwise the grade stops, since the job's inputs are lost.
  */
-export function writeGradeIds(root: RunIds, dir: string, attempt: string, uuid: () => string, retry = 0): Record<GradeNumber, string> {
+export function writeGradeIds(root: RunIds, dir: string, attempt: string, uuid: () => string, retry = 0, work?: string): Record<GradeNumber, string> {
   mkdirSync(dir, { recursive: true });
   const file = (grade: GradeNumber): string => {
-    const path = join(dir, `${jobName(grade, attempt, retry)}.ids.json`);
-    if (existsSync(path)) return path;
+    const name = jobName(grade, attempt, retry);
+    const path = join(dir, `${name}.ids.json`);
+    if (existsSync(path)) {
+      if (readableIds(path)) return path;
+      if (work === undefined) throw new Error(`the ids file ${path} cannot be read, and without the work directory its controller job's state is unknown`);
+      if (existsSync(join(work, "jobs", name))) throw new Error(`the ids file ${path} cannot be read, but controller job ${name} already has state`);
+    }
     const ids: RunIds = { ...root, executions: { ...root.executions, "alternative-fix": uuid() } };
-    writeFileSync(path, `${JSON.stringify(ids, null, 2)}\n`);
+    const temporary = `${path}.tmp`;
+    writeFileSync(temporary, `${JSON.stringify(ids, null, 2)}\n`);
+    renameSync(temporary, path);
     return path;
   };
   return { 1: file(1), 2: file(2) };

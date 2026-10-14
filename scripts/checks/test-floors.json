@@ -27,8 +27,8 @@
     "tools/neon-ci": 98,
     "tools/publication": 166,
     "tools/release": 74,
-    "tools/solver-session": 91,
-    "tools/uc1": 85
+    "tools/solver-session": 92,
+    "tools/uc1": 86
   },
   "pytest": {
     "python/schema": 921
