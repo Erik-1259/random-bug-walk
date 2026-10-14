@@ -7,7 +7,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { ControllerSummary, CopyRecord } from "@rbw/controller";
-import { buildJob, containerName, importJob, mergeRecordSet, runCopyCommand, runTag, summaryBytes, trialSummaries, writeJobDir } from "@rbw/local-runner";
+import { buildJob, containerName, copyTag, importJob, mergeRecordSet, runCopyCommand, runTag, summaryBytes, trialSummaries, writeJobDir } from "@rbw/local-runner";
 import type { BuiltJob, CopyResult, JobContext, JobLabel, RunIds } from "@rbw/local-runner";
 import { buildJobRequest, buildPolicy, canonicalDigest, encodeCanonical, sha256Hex } from "@rbw/schema";
 import type { FamilyRegistry, HeldOutIdentityList, RootRun } from "@rbw/schema";
@@ -147,7 +147,7 @@ export async function runJobCopies(w: World, run: string, name: string, label: J
   const built: BuiltJob = { ...first, request: request.request, requestBytes: request.bytes, requestSha256: request.sha256 };
   const base = join(run, "jobs", name);
   writeJobDir(join(base, "job"), built);
-  const tag = runTag(ctx.ids.root_execution_id);
+  const tag = copyTag(built.request.root_execution_id, built.request.execution_id);
   const records: CopyRecord[] = [];
   const results: CopyResult[] = [];
   for (const trial of built.expected.trials) {

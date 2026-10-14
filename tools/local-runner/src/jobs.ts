@@ -12,9 +12,9 @@ import { UMAMI_COMMIT } from "@rbw/umami-driver";
 import type { CodeStates, StateFile, StateKey } from "./code-states.ts";
 import { adm06For } from "./family.ts";
 import type { FamilyFixture } from "./family.ts";
-import { runTag } from "./shared.ts";
+import { copyTag, runTag } from "./shared.ts";
 
-export { runTag };
+export { copyTag, runTag };
 
 export type JobLabel = "kit-check" | "observe" | "admission" | "alternative-fix";
 

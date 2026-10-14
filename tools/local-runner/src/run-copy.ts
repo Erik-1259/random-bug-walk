@@ -17,7 +17,7 @@ import type { Docker } from "./docker.ts";
 import { FamilyError, checkFamilyImage } from "./family.ts";
 import { loadCopyInputs } from "./inputs.ts";
 import type { CopyInputOptions } from "./inputs.ts";
-import { JOB_KINDS, JOB_LABELS, checkBaseline, runTag } from "./jobs.ts";
+import { JOB_KINDS, JOB_LABELS, checkBaseline, copyTag } from "./jobs.ts";
 import type { JobLabel } from "./jobs.ts";
 import { PlanError, copySummary, inspectImage, inspectRepoDigests, planCopy } from "./plan.ts";
 import { ExportError, exportImage } from "./projection.ts";
@@ -99,7 +99,7 @@ export async function runCopyCommand(options: RunCopyOptions, deps: RunCopyDeps)
   }
   const inputs = loadCopyInputs(options);
   const label = labelOf(request.kind);
-  const tag = runTag(request.root_execution_id);
+  const tag = copyTag(request.root_execution_id, request.execution_id);
   try {
     let digest = request.image_digest;
     let sourceDir = options.prebuiltSource;

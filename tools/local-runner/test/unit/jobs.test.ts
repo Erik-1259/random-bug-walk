@@ -6,7 +6,7 @@ import { loadProbeSet } from "@rbw/shapes";
 import { loadFixture } from "@rbw/umami-fixture";
 import { deriveCodeStates, loadAlternativeFix } from "../../src/code-states.ts";
 import { COPY_OUTER_LIMIT_MS } from "../../src/copy.ts";
-import { BASELINE_KEY, JOB_LABELS, JobRefusal, POLICY_ID, buildJob, candidateIdentity, checkBaseline, expectedVectors, kitCheckIncomplete, newRunIds, runTag, writeJobDir } from "../../src/jobs.ts";
+import { BASELINE_KEY, JOB_LABELS, JobRefusal, POLICY_ID, buildJob, candidateIdentity, checkBaseline, copyTag, expectedVectors, kitCheckIncomplete, newRunIds, runTag, writeJobDir } from "../../src/jobs.ts";
 import type { BuiltJob, JobContext, JobLabel } from "../../src/jobs.ts";
 import * as shared from "../../src/shared.ts";
 import { invalidTrial, writeKitCheckBaseline } from "../support/kit-check.ts";
@@ -319,5 +319,18 @@ describe("shared.ts", () => {
     expect(runTag("00000000-0000-4000-8000-000000000001")).toBe(sha256Hex(Buffer.from("00000000-0000-4000-8000-000000000001")).slice(0, 8));
     expect(COPY_OUTER_LIMIT_MS).toBe(shared.COPY_OUTER_LIMIT_MS);
     expect(COPY_OUTER_LIMIT_MS).toBe(720_000);
+  });
+
+  it("holds the copy tag: the run tag, then the job's own execution's tag, so two jobs under one root name their copies apart", () => {
+    const root = "00000000-0000-4000-8000-000000000001";
+    const [first, second] = ["00000000-0000-4000-8000-0000000000f1", "00000000-0000-4000-8000-0000000000f2"];
+    expect(copyTag).toBe(shared.copyTag);
+    expect(copyTag(root, first)).toBe(`${runTag(root)}-${runTag(first)}`);
+    expect(copyTag(root, first)).not.toBe(copyTag(root, second));
+    // A sandbox name may hold only letters, digits, - and _, and at most 128 characters. An upper
+    // bound: the longest label, a ten-character trial ID and the export container's suffix.
+    const longest = `rbw-${copyTag(root, first)}-alternative-fix-planted-01-export`;
+    expect(longest).toMatch(/^[a-zA-Z0-9_-]+$/);
+    expect(longest.length).toBeLessThanOrEqual(128);
   });
 });
