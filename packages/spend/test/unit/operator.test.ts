@@ -289,7 +289,7 @@ describe("operator CLI", () => {
   function cli(url?: string) {
     const environment = { ...process.env }; delete environment.DATABASE_URL;
     if (url !== undefined) environment.DATABASE_URL = url;
-    return spawnSync(process.execPath, ["src/operator-cli.ts", "status"], { env: environment, encoding: "utf8", timeout: 20_000 });
+    return spawnSync(process.execPath, [join(import.meta.dirname, "..", "..", "src", "operator-cli.ts"), "status"], { env: environment, encoding: "utf8", timeout: 20_000 });
   }
   it("names unset DATABASE_URL and exits 2", () => { const result = cli(); expect(result.status).toBe(2); expect(result.stderr).toContain("DATABASE_URL"); });
   it("prints no connection-string parts on connection failure", () => {
