@@ -254,15 +254,15 @@ function awaitedInOwnStatement(call: SgNode): boolean {
 }
 
 /**
- * Whether the statement holding a read (or an await) sits directly in a block that also encloses
- * `call` (the write's own block or a block around it). A node in a sibling branch, such as the `if`
- * side of an `if`/`else` whose `else` side holds the write, never runs before the write in the same
- * execution.
+ * Whether the nearest statement holding a node (a read, an await or a guard test) sits directly in
+ * a block that also encloses `call` (the write's own block or a block around it). A node in a
+ * sibling branch, such as the `if` side of an `if`/`else` whose `else` side holds the write, never
+ * runs before the write in the same execution; the condition of an `if` around the write does.
  */
-function blockEncloses(read: SgNode, call: SgNode): boolean {
-  const statement = read.ancestors().find((node) => {
-    const kind = kindOf(node);
-    return kind === "expression_statement" || kind === "lexical_declaration" || kind === "variable_declaration";
+function blockEncloses(node: SgNode, call: SgNode): boolean {
+  const statement = node.ancestors().find((ancestor) => {
+    const kind = kindOf(ancestor) ?? "";
+    return kind.endsWith("_statement") || kind === "lexical_declaration" || kind === "variable_declaration";
   });
   const block = statement?.parent();
   const blockKind = kindOf(block);
@@ -412,7 +412,9 @@ function guardedWriteSignals(guard: SgNode): Signals {
     (pair) => pairKey(pair) === key && fieldOf(pair, "value")?.text().replace(/\s+/g, " ") === value,
   );
   const readNames = read === undefined ? [] : boundNames(read);
-  // The code tests the guarded field of what it read (`if (seat.status !== 'open')`) before writing.
+  // The code tests the guarded field of what it read (`if (seat.status !== 'open')`) before writing,
+  // in a statement whose block encloses the write: a test in a sibling branch never runs on the way
+  // to the write.
   const testedInCode =
     read !== undefined &&
     fn
@@ -422,6 +424,7 @@ function guardedWriteSignals(guard: SgNode): Signals {
           before(read, node) &&
           node.range().end.index <= call.range().end.index &&
           inFlowOf(node, call) &&
+          blockEncloses(node, call) &&
           fieldOf(node, "property")?.text() === key &&
           readNames.includes(fieldOf(node, "object")?.text() ?? ""),
       );

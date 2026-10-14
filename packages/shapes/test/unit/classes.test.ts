@@ -827,6 +827,44 @@ describe("find sites in one file", () => {
     ]);
   });
 
+  it("counts a test of the read's guard field only when its statement's block encloses the write", () => {
+    const code = [
+      "export async function close(db, audit, id, fresh) {",
+      "  const room = await db.client.room.findFirst({ where: { id } });",
+      "  if (fresh) {",
+      "    if (room.active !== true) throw new Error('closed');",
+      "  } else {",
+      "    const result = await db.client.room.updateMany({ where: { id: room.id, active: true }, data: { active: false } });",
+      "    if (result.count === 0) throw new Error('closed');",
+      "  }",
+      "}",
+      "export async function closeBare(db, audit, id, fresh) {",
+      "  const room = await db.client.room.findFirst({ where: { id } });",
+      "  if (fresh) audit.log(room.active);",
+      "  else {",
+      "    const result = await db.client.room.updateMany({ where: { id: room.id, active: true }, data: { active: false } });",
+      "    if (result.count === 0) throw new Error('closed');",
+      "  }",
+      "}",
+      "export async function closeChecked(db, audit, id) {",
+      "  const room = await db.client.room.findFirst({ where: { id } });",
+      "  if (room.active !== true) {",
+      "    throw new Error('closed');",
+      "  } else {",
+      "    const result = await db.client.room.updateMany({ where: { id: room.id, active: true }, data: { active: false } });",
+      "    if (result.count === 0) throw new Error('closed');",
+      "  }",
+      "}",
+      "",
+    ].join("\n");
+    const sites = findSitesInSource(CLASSES, "lib/rooms.ts", code);
+    expect(sites.map((site) => [site.line, site.confidence.signals.read_before_write, site.confidence.signals.read_checks_guard])).toEqual([
+      [6, true, false],
+      [14, true, false],
+      [23, true, true],
+    ]);
+  });
+
   it("gives each site a diff of that site alone", () => {
     for (const site of sitesIn("lib/documents.ts")) {
       const changed = site.diff.split("\n").filter((line) => /^[-+](?![-+])/.test(line));

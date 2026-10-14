@@ -92,11 +92,11 @@ The rules leave out, by design: a guard in the first position of `where` (the re
 
 | Class | Signal | Weight | Holds when |
 | --- | --- | --- | --- |
-| `RACE.guarded-write` | `read_before_write` | 0.3 | A read of the same model, awaited directly in its own statement or initializer, ends before the write starts. |
-| | `read_checks_guard` | 0.25 | That read filters on the guard key with the same value, or the code reads `<read result>.<guard key>` between the read and the end of the write. |
+| `RACE.guarded-write` | `read_before_write` | 0.3 | A read of the same model, awaited directly in its own statement or initializer, ends before the write starts, in a statement that sits directly in a block enclosing the write (a read in a sibling branch, such as the `if` side of an `if`/`else` whose `else` side holds the write, does not count). |
+| | `read_checks_guard` | 0.25 | That read filters on the guard key with the same value, or the code reads `<read result>.<guard key>` between the read and the end of the write, in a statement that sits directly in a block enclosing the write (the condition of an `if` around the write counts; a test in a sibling branch does not). |
 | | `write_result_used` | 0.2 | The write's result is bound to a name that is used after the write (for example, a `count` check). |
 | | `identity_from_read` | 0.15 | Another key of the `where` uses the read's result. |
-| | `await_between` | 0.1 | Another `await` sits between the read and the write. |
+| | `await_between` | 0.1 | Another `await` sits between the read and the write, in a statement that sits directly in a block enclosing the write. |
 | `RACE.check-then-act` | `not_in_batch_transaction` | 0.3 | The `upsert` is not inside the array of a batch `$transaction([...])`, where the split form would not run. The rule already leaves out every `upsert` inside a `$transaction(...)` argument, so this holds for every match; it stays as a second check. |
 | | `create_covers_where` | 0.25 | Every key of `where` appears in `create` with the same value. |
 | | `request_handler` | 0.25 | An enclosing function is named `GET`, `POST`, `PUT`, `PATCH` or `DELETE`, or the path has an `api` directory. |
