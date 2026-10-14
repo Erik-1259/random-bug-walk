@@ -227,7 +227,7 @@ interface GradeIds {
 async function chargeCopy(spend: Spend, ids: GradeIds, policySha: string, name: string): Promise<{ ok: true; settled: number } | { ok: false; reason: string }> {
   const root = ids.root_execution_id;
   const hold = await spend.acquireSlot({ slot_key: DEVELOPMENT_SLOT, root_execution_id: root, actor_role: "controller" });
-  if (!hold.ok) return { ok: false, reason: `slot_${hold.code}` };
+  if (!hold.ok) return { ok: false, reason: hold.code };
   const operation = sha256Hex(Buffer.from(`fake-copy:${root}:${name}`));
   const reserved = await spend.reserve({
     operation_id: operation,

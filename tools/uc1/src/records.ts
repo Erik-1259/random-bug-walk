@@ -61,6 +61,11 @@ export interface GradeTry {
   execution_id: string;
   /** The controller summary's settled spend, kept as evidence; spend totals read the ledger by execution_id instead. */
   settled_microusd: number | null;
+  /**
+   * True when the controller found the development slot held by another root and ran nothing: kept
+   * so its job name is never reused, but no grade try, so it consumes no retry and the grade stays pending.
+   */
+  slot_held?: true;
 }
 
 /** How a run at an index ended; null while it runs (and after a crash, until the next pass marks it interrupted). */
@@ -234,8 +239,8 @@ export function attemptStatus(runs: readonly AttemptRun[]): AttemptStatus {
 /** Whether a grade's tries call for another: none yet, or an infrastructure stop with retries left. */
 export function needsGrade(tries: readonly GradeTry[]): boolean {
   const last = tries.at(-1);
-  if (last === undefined) return true;
-  return last.result.state === "infrastructure" && tries.length <= MAX_GRADE_RETRIES;
+  if (last === undefined || last.slot_held === true) return true;
+  return last.result.state === "infrastructure" && tries.filter((item) => item.slot_held !== true).length <= MAX_GRADE_RETRIES;
 }
 
 export function isGraded(route: GradeRoute | null): route is Exclude<GradeRoute, { route: "not_graded" }> {

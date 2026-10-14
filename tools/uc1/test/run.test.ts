@@ -10,6 +10,7 @@ import { DRY_CLEAN, DRY_COPY_MICROUSD, DRY_DIGEST, DRY_MUTATION, DRY_OTHER, DRY_
 import type { DryRunOptions, DryRunWorld } from "../src/fakes.ts";
 import { RunRefusal, finalize, runGrade2, runSessions } from "../src/orchestrator.ts";
 import type { SessionsOptions } from "../src/orchestrator.ts";
+import { MAX_GRADE_RETRIES } from "../src/plan.ts";
 
 function temp(): string {
   return mkdtempSync(join(tmpdir(), "rbw-uc1-run-"));
@@ -438,6 +439,66 @@ describe("attempts, reruns and scope", () => {
     const resumed = await runGrade2({ runDir: outcome.runDir }, w.deps);
     expect(resumed.exitCode).toBe(0);
     expect((json(path).grade2 as { result: { state: string } }[]).map((item) => item.result.state)).toEqual(["infrastructure", "passed"]);
+    await w.close();
+  });
+
+  it("stops grade 2 without consuming a retry when another root takes the slot between two serial jobs, and a resume grades normally", async () => {
+    const w = await world();
+    const outcome = await runSessions(pilot(w), w.deps);
+    const other = "00000000-0000-4000-8000-00000000beef";
+    const controller = w.deps.runController.bind(w.deps);
+    // Another ordinary development job takes the slot as soon as the first grade 2 job ends.
+    w.deps.runController = async (args) => {
+      const exit = await controller(args);
+      if (args.includes("grade-2-sandbox-seed-alternative-fix-r0")) await w.spend.acquireSlot({ slot_key: "development", root_execution_id: other, actor_role: "test" });
+      return exit;
+    };
+    const calls = w.controllerCalls.length;
+    const first = await runGrade2({ runDir: outcome.runDir }, w.deps);
+    expect(first.stop).toMatchObject({ reason: "slot_held" });
+    expect(first.exitCode).toBe(1);
+    expect(w.controllerCalls.slice(calls).map((call) => call.name)).toEqual(["grade-2-sandbox-seed-alternative-fix-r0"]);
+    const clean = join(outcome.runDir, "seeded", "seed-clean", "seeded.json");
+    expect(json(clean).grade2).toEqual([]);
+    await w.spend.releaseSlot({ slot_key: "development", root_execution_id: other, actor_role: "test", evidence: null, reason: null });
+    w.deps.runController = controller;
+    const resumed = await runGrade2({ runDir: outcome.runDir }, w.deps);
+    expect(resumed.stop).toBeNull();
+    expect(resumed.exitCode).toBe(0);
+    expect((json(clean).grade2 as { result: { state: string } }[]).map((item) => item.result.state)).toEqual(["passed"]);
+    await w.close();
+  });
+
+  it("does not count a controller job that found the slot held as a grade retry, and a resume after the release grades normally", async () => {
+    const w = await world();
+    const outcome = await runSessions(pilot(w), w.deps);
+    const other = "00000000-0000-4000-8000-00000000beef";
+    const controller = w.deps.runController.bind(w.deps);
+    // The slot is taken after the pass's own check and before the controller's acquire, on more passes than there are retries.
+    let blocking = true;
+    w.deps.runController = async (args) => {
+      if (blocking && args.some((arg) => arg.startsWith("grade-2-sandbox-seed-clean-"))) await w.spend.acquireSlot({ slot_key: "development", root_execution_id: other, actor_role: "test" });
+      return controller(args);
+    };
+    const calls = w.controllerCalls.length;
+    for (let pass = 0; pass <= MAX_GRADE_RETRIES; pass += 1) {
+      const stopped = await runGrade2({ runDir: outcome.runDir }, w.deps);
+      expect(stopped.stop).toMatchObject({ reason: "slot_held" });
+      expect(stopped.exitCode).toBe(1);
+      await w.spend.releaseSlot({ slot_key: "development", root_execution_id: other, actor_role: "test", evidence: null, reason: null });
+    }
+    const clean = join(outcome.runDir, "seeded", "seed-clean", "seeded.json");
+    blocking = false;
+    const resumed = await runGrade2({ runDir: outcome.runDir }, w.deps);
+    expect(resumed.stop).toBeNull();
+    expect(resumed.exitCode).toBe(0);
+    const tries = json(clean).grade2 as { result: { state: string }; slot_held?: boolean }[];
+    // Each slot-held job is kept under its own name, so the next job is fresh, and consumes no retry.
+    const held = Array.from({ length: MAX_GRADE_RETRIES + 1 }, () => ["infrastructure", true]);
+    expect(tries.map((item) => [item.result.state, item.slot_held === true])).toEqual([...held, ["passed", false]]);
+    expect(w.controllerCalls.slice(calls).filter((call) => call.name.startsWith("grade-2-sandbox-seed-clean")).map((call) => call.name)).toEqual(
+      Array.from({ length: MAX_GRADE_RETRIES + 2 }, (_, retry) => `grade-2-sandbox-seed-clean-r${String(retry)}`),
+    );
     await w.close();
   });
 

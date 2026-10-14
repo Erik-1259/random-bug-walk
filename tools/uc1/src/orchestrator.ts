@@ -221,6 +221,17 @@ function summaryParses(path: string): boolean {
   }
 }
 
+/** Whether a controller summary says the job stopped because another root held the development slot. */
+function slotHeldJob(path: string): boolean {
+  if (!existsSync(path)) return false;
+  try {
+    const summary = readJson(path) as { status?: unknown; reason?: unknown };
+    return summary.status !== "complete" && summary.reason === "slot_held";
+  } catch {
+    return false;
+  }
+}
+
 async function gradeTry(ctx: RunContext, route: Exclude<GradeRoute, { route: "not_graded" }>, grade: GradeNumber, work: string, label: string, retry: number): Promise<GradeTry> {
   const ids = writeGradeIds(ctx.ids, join(work, "ids", `grade-${String(grade)}`), label, () => ctx.deps.uuid(), retry, work);
   const command: GradeCommand = {
@@ -849,18 +860,44 @@ export async function runGrade2(options: { runDir: string }, deps: Uc1Deps): Pro
         writeAttempt(runDir, record);
       } });
   }
+  const halt = (reason: string, detail: string): StopRecord => {
+    const record = { reason, detail, at: deps.now().toISOString() };
+    appendStop(runDir, record);
+    deps.report(`stop=${reason} detail=${detail}`);
+    return record;
+  };
   outer: for (const item of items) {
     while (needsGrade(item.tries)) {
       const retry = item.tries.length;
-      const grade = () => gradeTry(ctx, item.route, 2, item.work, item.label, retry);
+      const job = join(item.work, "jobs", jobName(2, item.label, retry), "summary.json");
       // A job that already wrote its summary (the process stopped before its try was saved) has
       // settled: the controller replays it with no new spend, so it takes no allowance hold.
-      const settled = summaryParses(join(item.work, "jobs", jobName(2, item.label, retry), "summary.json"));
+      const settled = summaryParses(job);
+      // Another root may take the slot between two of these serial jobs: a new job waits for a later invocation.
+      if (!settled) {
+        const status = await deps.spend.slotStatus({ slot_key: DEVELOPMENT_SLOT });
+        if (!status.ok) {
+          stop = halt("slot_unavailable", `the development slot could not be read (${status.code}); resume with the same command`);
+          break outer;
+        }
+        if (status.holder !== null) {
+          stop = halt("slot_held", `slot busy: the development slot is held by ${status.holder}; resume with the same command once it is free`);
+          break outer;
+        }
+      }
+      const grade = () => gradeTry(ctx, item.route, 2, item.work, item.label, retry);
       const held = settled ? { ok: true as const, value: await grade() } : await allowance.withHold(`${item.label}-r${String(retry)}`, deps.grade2WorstCaseMicrousd, grade);
       if (!held.ok) {
-        stop = { reason: held.reason, detail: held.detail, at: deps.now().toISOString() };
-        appendStop(runDir, stop);
-        deps.report(`stop=${held.reason} detail=${held.detail}`);
+        stop = halt(held.reason, held.detail);
+        break outer;
+      }
+      if (held.value.result.state === "infrastructure" && held.value.result.summary_sha256 !== null && slotHeldJob(job)) {
+        // The controller found the slot taken after the check above and ran nothing: kept so the next
+        // job is a fresh one, but no grade try. A new job stops the pass; a replayed one goes on to the check.
+        item.tries.push({ ...held.value, slot_held: true });
+        item.save();
+        if (settled) continue;
+        stop = halt("slot_held", `slot busy: the controller found the development slot held at ${jobName(2, item.label, retry)}; resume with the same command once it is free`);
         break outer;
       }
       item.tries.push(held.value);
