@@ -105,8 +105,8 @@ export async function cli(args: string[]): Promise<CliResult> {
   return { code, stdout, stderr };
 }
 
-export function spawnCli(args: string[], env: NodeJS.ProcessEnv = process.env): CliResult {
-  const result = spawnSync(process.execPath, [CLI, ...args], { encoding: "utf8", env });
+export function spawnCli(args: string[], env: NodeJS.ProcessEnv = process.env, cwd?: string): CliResult {
+  const result = spawnSync(process.execPath, [CLI, ...args], { encoding: "utf8", env, cwd });
   return { code: result.status ?? -1, stdout: result.stdout, stderr: result.stderr };
 }
 
