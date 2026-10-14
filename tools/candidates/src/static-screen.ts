@@ -161,10 +161,10 @@ export function makeStaticScreen(deps: StaticScreenDeps): Screen {
       const costMicrousd = probe.cost.settled_microusd;
       // The screen's verdict says whether the run decided anything. It is inconclusive when a call's
       // reported prompt exceeded the counted bound (that call spent outside its reserved envelope, so
-      // the run decides nothing) or when the run stopped before every planned attempt gave a scored
-      // answer. Such a run stays inconclusive here, whatever hits it counted before it stopped. In a
-      // decided run, any located answer means the bug is findable from the source alone, so the
-      // candidate fails the screen; only a pass with no hits survives.
+      // the run decides nothing) or when not every planned attempt gave a scored answer. Such a run
+      // stays inconclusive here, whatever hits it counted. In a decided run, any located answer
+      // means the bug is findable from the source alone, so the candidate fails the screen; only a
+      // pass with no hits survives.
       if (record.verdict === "inconclusive") {
         return { verdict: "inconclusive", hits: 0, attempts, costMicrousd };
       }

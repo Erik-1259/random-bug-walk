@@ -254,7 +254,7 @@ describe("the real screen over @rbw/screen with a fake model and ledger", () => 
     expect(result).toMatchObject({ verdict: "inconclusive", hits: 0, attempts: 2 });
   });
 
-  it("keeps the screen's inconclusive verdict when the ledger refuses a later call after a located answer", async () => {
+  it("keeps the screen's inconclusive verdict when a later reservation is refused after a located answer", async () => {
     const spend = await freshSpend();
     let reservations = 0;
     const refusing: Spend = {
