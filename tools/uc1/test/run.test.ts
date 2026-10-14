@@ -979,6 +979,14 @@ describe("resumes, reruns and exit codes", () => {
     await w.close();
   });
 
+  it("does not complete a pilot whose attempt's grade 1 is still infrastructure after its retries", async () => {
+    const w = await world({ controller: (call) => (call.name.startsWith("grade-1-docker-off-001") ? "infrastructure" : "passed") });
+    const outcome = await runSessions(pilot(w), w.deps);
+    await runGrade2({ runDir: outcome.runDir }, w.deps);
+    expect((await finalize({ runDir: outcome.runDir }, w.deps)).rootRun.outcome).toBe("incomplete");
+    await w.close();
+  });
+
   it("exits 1 when an attempt ends an infrastructure error after its reruns", async () => {
     const w = await world({ sessionFault: (request) => (request.id.includes("on-003-") ? "error" : null) });
     const outcome = await runSessions(pilot(w), w.deps);

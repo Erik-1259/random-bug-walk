@@ -929,7 +929,10 @@ function rootCompleted(run: RunRecord, records: readonly AttemptRecord[], seeded
   });
   const attemptsCounted = run.plan.every((item) => {
     const record = final(item.index);
-    return record?.status === "counted" && !gradingPending(record);
+    if (record?.status !== "counted" || gradingPending(record)) return false;
+    // A grade whose last try is still infrastructure after its retries never reached a verdict: the pilot is incomplete.
+    const last = record.runs.at(-1);
+    return [last?.grade1.at(-1), last?.grade2.at(-1)].every((tried) => tried?.result.state !== "infrastructure");
   });
   const seededPassed = SEEDED_ROUND_TRIPS.every((seed) => {
     const item = seeded.find((entry) => entry.label === seed.label);
