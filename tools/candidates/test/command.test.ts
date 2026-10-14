@@ -183,7 +183,7 @@ describe("command line", () => {
     const link = join(tempDir("rbw-candidates-cli-"), "host-link");
     symlinkSync(host, link);
     const inside = join(link, "candidate-run.json");
-    const result = await run(["--dry-run"], { findSites: finder(threeSites()), screen: wiring.screen }, inside, undefined, host);
+    const result = await run(["--dry-run"], { findSites: finder(threeSites()), screen: scripted([]) }, inside, undefined, host);
     expect(result.code).toBe(2);
     expect(result.err).toMatch(/--out must be outside --host/);
     expect(existsSync(join(host, "candidate-run.json"))).toBe(false);
