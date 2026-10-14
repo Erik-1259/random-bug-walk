@@ -1,7 +1,7 @@
 import pg from "pg";
 import { loadFixture, type Fixture } from "./fixture.ts";
 
-/** The database that holds a copy of the migrated fixture database with the two-factor state baked in. */
+/** The database that holds a copy of the migrated application database with the two-factor state baked in. */
 export const TEMPLATE_DATABASE = "rbw_fixture_template";
 
 const OBJECT_IN_USE = "55006";
@@ -40,7 +40,7 @@ export function twoFactorSeedStatements(fixture: Fixture): Statement[] {
   ];
 }
 
-/** Runs the seed statements on the application database in one transaction, after checking the admin user exists. */
+/** Runs the seed statements on the given (template) database in one transaction, after checking the admin user exists. */
 async function bakeTwoFactorState(connectionString: string, fixture: Fixture): Promise<void> {
   const client = new pg.Client({ connectionString });
   await client.connect();
@@ -90,15 +90,24 @@ function isObjectInUse(error: unknown): boolean {
   return error instanceof Error && "code" in error && error.code === OBJECT_IN_USE;
 }
 
+/** The same connection string with its database replaced by the given one. */
+function onDatabase(connectionString: string, database: string): string {
+  const url = new URL(connectionString);
+  url.pathname = `/${encodeURIComponent(database)}`;
+  return url.toString();
+}
+
 /**
- * Bakes the two-factor state into the freshly migrated application database, then copies it to
- * the template database. Run once, right after Umami has migrated and before any check. Copying
- * needs the source to have no other sessions, so the app's pooled connections are closed first;
- * the pool reconnects on its next query. Needs the owner role, which may create databases.
+ * Copies the freshly migrated application database to the template database, then bakes the
+ * two-factor state into the template copy only. Run once, right after Umami has migrated. The
+ * application database itself stays stock Umami, so the upstream suite that runs before the
+ * first reset signs in as admin without a two-factor challenge; `resetFixture` then gives every
+ * round the baked state. Copying needs the source to have no other sessions, so the app's pooled
+ * connections are closed first; the pool reconnects on its next query. Needs the owner role,
+ * which may create databases and owns the copy it creates.
  */
 export async function createFixtureTemplate(connectionString: string, template: string = TEMPLATE_DATABASE): Promise<void> {
   target(connectionString);
-  await bakeTwoFactorState(connectionString, loadFixture());
   await withMaintenance(connectionString, async (client, database) => {
     await client.query(`DROP DATABASE IF EXISTS ${quoteIdent(template)}`);
     for (let attempt = 1; ; attempt += 1) {
@@ -113,6 +122,7 @@ export async function createFixtureTemplate(connectionString: string, template: 
       }
     }
   });
+  await bakeTwoFactorState(onDatabase(connectionString, template), loadFixture());
 }
 
 /**
