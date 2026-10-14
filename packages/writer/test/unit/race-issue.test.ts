@@ -226,12 +226,12 @@ describe("the issue writer on recorded race responses", () => {
     expect(outcome.issue).toEqual(RACE_ISSUE_OUTPUTS["race-valid"]);
   });
 
-  it("replaces a count line that misstates the acceptances with the observation's counts", async () => {
+  it("keeps an issue whose own count line misstates the acceptances rejected, as the model wrote it", async () => {
     const outcome = await run("race-numeric-mismatch");
     expect(outcome.call.status).toBe("completed");
-    expect(outcome.call.response_body).toContain("Observed: accepted=1, refused=1");
-    expect(outcome.report?.status).toBe("ready_for_review");
-    expect(outcome.issue?.actual_result).toBe("Both tabs were signed in.\nObserved: accepted=2, refused=0");
+    expect(outcome.report?.status).toBe("rejected");
+    expect(outcome.report?.codes).toContain("numeric_mismatch");
+    expect(outcome.issue?.actual_result).toContain("Observed: accepted=1, refused=1");
   });
 });
 
@@ -260,22 +260,29 @@ describe("the count lines the writer adds to a race issue", () => {
     expect(outcome.report?.status).toBe("ready_for_review");
   });
 
-  it("drops wrong, duplicated and malformed count lines in any case and ends each field with exactly the canonical line", async () => {
-    const outcome = await writeWith(raceSymptom("lines-wrong"), {
+  it("drops duplicated and malformed count lines that agree with the observation and ends each field with exactly the canonical line", async () => {
+    const outcome = await writeWith(raceSymptom("lines-duplicated"), {
       ...VALID,
-      expected_result: `Expected: accepted=2, refused=0\n${EXPECTED_PROSE}\n  expected: one accepted, one refused\nEXPECTED : accepted=1, refused=1`,
-      actual_result: `Observed: accepted=2, refused=0\r\n${ACTUAL_PROSE}\nObserved: accepted=1, refused=1\n`,
+      expected_result: `Expected: accepted=1, refused=1\n${EXPECTED_PROSE}\n  expected: one accepted, one refused\nEXPECTED : accepted=1, refused=1`,
+      actual_result: `Observed: accepted=2, refused=0\r\n${ACTUAL_PROSE}\nobserved:accepted=2,refused=0\n`,
     });
     expect(outcome.issue?.expected_result).toBe(`${EXPECTED_PROSE}\nExpected: accepted=1, refused=1`);
     expect(outcome.issue?.actual_result).toBe(`${ACTUAL_PROSE}\nObserved: accepted=2, refused=0`);
     expect(outcome.report?.status).toBe("ready_for_review");
   });
 
+  it("keeps the model's issue, rejected, when its own count line contradicts the observation", async () => {
+    const actual = "1 request was accepted and 1 refused.\nObserved: accepted=1, refused=1";
+    const outcome = await writeWith(raceSymptom("lines-contradict"), { ...VALID, expected_result: EXPECTED_PROSE, actual_result: actual });
+    expect(outcome.issue?.actual_result).toBe(actual);
+    expect(outcome.report?.status).toBe("rejected");
+  });
+
   it("drops a count line placed in the other result field, so each field holds only its own canonical line", async () => {
     const outcome = await writeWith(raceSymptom("lines-misplaced"), {
       ...VALID,
-      expected_result: `${EXPECTED_PROSE}\nObserved: accepted=1, refused=1`,
-      actual_result: `${ACTUAL_PROSE}\nexpected: accepted=2, refused=0`,
+      expected_result: `${EXPECTED_PROSE}\nObserved: accepted=2, refused=0`,
+      actual_result: `${ACTUAL_PROSE}\nexpected: accepted=1, refused=1`,
     });
     expect(outcome.issue?.expected_result).toBe(`${EXPECTED_PROSE}\nExpected: accepted=1, refused=1`);
     expect(outcome.issue?.actual_result).toBe(`${ACTUAL_PROSE}\nObserved: accepted=2, refused=0`);
