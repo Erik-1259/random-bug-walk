@@ -84,7 +84,7 @@ For each copy, in order:
 2. **Reserve** the copy's priced envelope (operation kind `sandbox.copy`, call name `sandbox.copy:<job>:<trial_id>`, provider `vercel-sandbox` or `docker`). This happens before the copy's sandbox exists.
 3. Mark it **launching** under the slot key.
 4. Run the copy through `runCopyCommand`. The controller passes it a wrapped SDK and Docker layer, which only note whether the create was called and what it returned, and refuse the create when the child deadline no longer allows the copy.
-5. Record the sandbox (or container) as a **child resource** with the `running` transition.
+5. Record the sandbox (or container) as a **child resource** with the `running` transition. Its ID is the copy's name, `rbw-<run tag>-<execution tag>-<job>-<trial_id>`, which the reservation also carries as its provider replay key. The execution tag keeps two jobs of one kind under one root apart (the local runner's README, Vercel Sandbox backend).
 6. **Confirm** its terminal state with `confirmChild`. The evidence is `jobs/<name>/stops/<trial_id>.json` and its SHA-256: the stop confirmation, the final status, the call counts and the phase timings.
 7. Mark the copy **terminal**: `completed` when the copy completed, `failed` otherwise.
 8. **Settle** from the measured lifetime at the envelope's rates. The lifetime is measured directly, from the create call until the copy returns after its confirmed stop, so the untimed steps between phases count too. It is rounded up to whole seconds and recorded per copy as `live_ms`. Each line's actual cost is rounded up, and all usage is known, so the operation becomes `reconciled`.

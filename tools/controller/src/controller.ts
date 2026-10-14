@@ -24,6 +24,7 @@ import {
   checkFamilyProbes,
   checkKitStage,
   containerName,
+  copyTag,
   deriveCodeStates,
   expectedVectors,
   familyRecord,
@@ -541,6 +542,7 @@ interface Run {
   deps: ControllerDeps;
   p: Paths;
   built: Built;
+  /** The job's copy tag (root and execution), which names each copy's sandbox or container. */
   tag: string;
   deadline: number;
   summary: ControllerSummary;
@@ -889,7 +891,8 @@ export async function runJob(given: JobInputs, deps: ControllerDeps): Promise<Jo
   };
   summary.controller.copy_reserved_microusd = Number(built.envelope.reserved_microusd);
 
-  const run: Run = { inputs, deps, p, built, tag: runTag(state.ids.root_execution_id), deadline, summary, reconcile: false, copyResults: [] };
+  // The copy tag, as run-copy derives it from the same request: the sandbox's name is the ledger's replay key and child resource.
+  const run: Run = { inputs, deps, p, built, tag: copyTag(built.job.request.root_execution_id, built.job.request.execution_id), deadline, summary, reconcile: false, copyResults: [] };
   let hold: Awaited<ReturnType<Spend["acquireSlot"]>>;
   try {
     hold = await ledger(() => deps.spend.acquireSlot({ slot_key: inputs.ledger.slot_key, root_execution_id: state.ids.root_execution_id, actor_role: ACTOR }));

@@ -7,7 +7,7 @@ import { addedSuiteSha256 } from "@rbw/umami-driver";
 import { loadFixture } from "@rbw/umami-fixture";
 import { deriveCodeStates, loadAlternativeFix } from "../../src/code-states.ts";
 import { dryRun } from "../../src/dry-run.ts";
-import { BASELINE_KEY, buildJob, expectedVectors, newRunIds, writeJobDir } from "../../src/jobs.ts";
+import { BASELINE_KEY, buildJob, copyTag, expectedVectors, newRunIds, writeJobDir } from "../../src/jobs.ts";
 import { RECORDED_SYNTHETIC_DIR } from "../../src/recorded.ts";
 import type { Docker } from "../../src/docker.ts";
 import { exportImage } from "../../src/projection.ts";
@@ -249,7 +249,7 @@ describe("run-copy", () => {
     const { evidenceSha256 } = writeKitCheckBaseline(root, mutate);
     const observe = buildJob("observe", ctx, { key: BASELINE_KEY, sha256: baselineSha(evidenceSha256) });
     writeJobDir(join(root, "jobs", "observe", "job"), observe);
-    return { root, jobDir: join(root, "jobs", "observe", "job") };
+    return { root, jobDir: join(root, "jobs", "observe", "job"), ids };
   }
 
   it("refuses to start an observation whose baseline does not match the kit-check records, before any docker command", async () => {
@@ -300,7 +300,7 @@ describe("run-copy", () => {
 
   it("runs the copy on Vercel Sandbox with --backend sandbox, and reports its stop and call counts", async () => {
     const kit = new KitImage();
-    const { root, jobDir } = await observeJob(kit, (actual) => actual);
+    const { root, jobDir, ids } = await observeJob(kit, (actual) => actual);
     const dir = tempDir();
     const docker = pushedDocker(kit, [`vcr.example.invalid/synthetic-team/synthetic-project/rbw-umami-kit@${VCR_DIGEST}`]);
     const sdk = new FakeSandboxSdk({ collected: { runExit: 0 } });
@@ -310,10 +310,12 @@ describe("run-copy", () => {
     );
     expect(outcome.refusal).toBeNull();
     expect(outcome.copy).toMatchObject({ trial_id: "planted-01", status: "complete", placed_sha256: sha256(PLANTED), sandbox: { stop_confirmed: true, calls: { mutating: 3, artifact_reads: 2, stops: 1 } } });
-    expect(kit.created.filter((name) => !name.endsWith("-export"))).toEqual([]);
+    // The copy is named by its root and its job's own execution, so another job under the root names its copies apart.
+    const name = `rbw-${copyTag(ids.root_execution_id, ids.executions.observe)}-observe-planted-01`;
+    expect(kit.created).toEqual([`${name}-export`]);
     expect(sdk.ops()).toEqual(["create", "writeFiles", "runCommand", "readFile", "readFile", "stop", "get"]);
     const written = parseCanonical(readFileSync(join(dir, "work", "copy-summary.json"))) as { sandbox?: { name: string } };
-    expect(written.sandbox?.name).toMatch(/-observe-planted-01$/);
+    expect(written.sandbox?.name).toBe(name);
     expect(outcome.exitCode).toBe(0);
   });
 

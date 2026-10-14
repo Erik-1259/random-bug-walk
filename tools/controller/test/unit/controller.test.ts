@@ -2,7 +2,7 @@ import { readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseCanonical, sha256Hex } from "@rbw/schema";
-import { deriveCodeStates } from "@rbw/local-runner";
+import { deriveCodeStates, newRunIds } from "@rbw/local-runner";
 import type { Docker } from "@rbw/local-runner";
 import { loadProbeSet } from "@rbw/shapes";
 import { runJob } from "../../src/controller.ts";
@@ -10,7 +10,7 @@ import { JUDGE } from "../../src/limits.ts";
 import { FakeClock, FakeDocker } from "../../../local-runner/test/support/fakes.ts";
 import type { JobInputs } from "../../src/controller.ts";
 import { CLEAN, writeProbeDir, writeRaceProbeDir } from "../../../local-runner/test/support/synthetic.ts";
-import { jobInputs, world } from "../support/harness.ts";
+import { jobInputs, uuids, world } from "../support/harness.ts";
 import type { LedgerCall, World } from "../support/harness.ts";
 import { SERIAL_CHECKS } from "../support/serial-checks.ts";
 
@@ -90,7 +90,7 @@ describe("the ledger flow of one job on the sandbox backend", () => {
       ["clean-02", "complete", "confirmed", "reconciled"],
     ]);
     const [first] = summary.copies;
-    expect(first?.child_resource_id).toMatch(/^rbw-[0-9a-f]{8}-kit-check-clean-01$/);
+    expect(first?.child_resource_id).toMatch(/^rbw-[0-9a-f]{8}-[0-9a-f]{8}-kit-check-clean-01$/);
     expect(first?.reserved_microusd).toBe(147_682);
     expect(first?.settled_microusd).toBeGreaterThan(0);
     expect(first?.settled_microusd).toBeLessThanOrEqual(147_682);
@@ -182,6 +182,36 @@ describe("the ledger flow of one job on the sandbox backend", () => {
     expect(outcome.summary.copies[0]).toMatchObject({ status: "complete", launch: "confirmed", ledger_state: "reconciled" });
     expect(outcome.summary.import.trials[0]).toMatchObject({ trial_id: "clean-01", status: "complete", added_verdict: "match" });
     expect((index(w.ledgerCalls, "reserve").request as { provider: string }).provider).toBe("docker");
+  });
+});
+
+describe("two jobs of one kind under one root on the sandbox backend", () => {
+  it("names each job's copy after its own execution, so the second job's create does not meet the first job's stopped sandbox", async () => {
+    // The platform keeps a stopped named sandbox and refuses a create on its name; the fake does the same.
+    const w = await world();
+    const root = newRunIds(uuids("9300"));
+    const job = (name: string, execution: string) =>
+      jobInputs(w, { kind: "judge_verify", name, trials: ["fixed-01"], ids: { ...root, executions: { ...root.executions, "alternative-fix": execution } } });
+    const first = await runJob(job("verify-first", "00000000-0000-4000-9300-0000000000f1"), w.deps);
+    const second = await runJob(job("verify-second", "00000000-0000-4000-9300-0000000000f2"), w.deps);
+    expect(first.status).toBe("complete");
+    expect(second.summary.copies[0]).toMatchObject({ trial_id: "fixed-01", status: "complete", reason: null, launch: "confirmed", ledger_state: "reconciled" });
+    expect(second.status).toBe("complete");
+
+    const names = w.sdk.calls.flatMap((call) => (call.op === "create" ? [call.params.name] : []));
+    expect(names).toHaveLength(2);
+    expect(new Set(names).size).toBe(2);
+    for (const name of names) {
+      expect(name).toMatch(/^rbw-[0-9a-f]{8}-[0-9a-f]{8}-alternative-fix-fixed-01$/);
+      expect(name.length).toBeLessThanOrEqual(128);
+    }
+    // The ledger names the resource the platform made: the child, the replay key and the sandbox's own name agree.
+    const copies = [first, second].map((outcome) => outcome.summary.copies[0]);
+    expect(copies.map((copy) => copy?.child_resource_id)).toEqual(names);
+    expect(copies.map((copy) => copy?.copy?.sandbox?.name)).toEqual(names);
+    const replayKeys = w.ledgerCalls.filter((call) => call.method === "reserve").map((call) => (call.request as { provider_replay_key: string }).provider_replay_key);
+    expect(replayKeys).toEqual(names);
+    expect((await slot(w)).holder).toBeNull();
   });
 });
 
