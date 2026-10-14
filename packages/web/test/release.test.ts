@@ -160,10 +160,11 @@ describe("malformed release directories are refused", () => {
     expect(await refusal(dir)).toBe("release_invalid");
   });
 
-  it("an empty releases directory is no release", async () => {
+  it("an empty releases directory (no releases/ at all is no release)", async () => {
     const dir = copyFixture(DEVELOPMENT);
-    mkdirSync(join(dir, "repository", "releases"));
     expect((await readResults(dir)).release).toBeNull();
+    mkdirSync(join(dir, "repository", "releases"));
+    expect(await refusal(dir)).toBe("release_invalid");
   });
 });
 

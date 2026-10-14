@@ -4,7 +4,7 @@
 //   repository/runs/<root>/<entry path>    the run's published files below the large-file threshold
 //   store/status/<root>.json               each run's PublicRunStatus
 //   store/sha256/<hex>                     large published files (optional here; linked by public_uri)
-//   repository/releases/<id>/release.json  the release (at most one), with the files its record lists
+//   repository/releases/<id>/release.json  each release (1 to 99 when releases/ exists), with the files its record lists
 // Inside a run it reads generated/symptom.json (an ObservedSymptom, or a RaceSymptom when it has a
 // symptom_kind) and, for each job execution, results/<execution>/evidence.json and decision.json
 // as @rbw/admission writes them.
@@ -19,7 +19,10 @@ import { recordPackages, type RecordPackages } from "./records.ts";
 export const MANIFEST_FILE = "manifest.json";
 export const SYMPTOM_PATH = "generated/symptom.json";
 export const RELEASE_FILE = "release.json";
+/** The most releases one site shows; more is refused. */
+export const MAX_RELEASES = 99;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const REQUEST_PATH = /^results\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/request\.json$/;
 const JOB_OUTPUT = /^results\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/(evidence|decision)\.json$/;
 
 /** Either family's symptom: the time-zone family's ObservedSymptom or the race family's RaceSymptom. */
@@ -75,6 +78,22 @@ export interface Run {
   symptom: CaseSymptom | null;
   /** The admission job's records; null when the run published none. */
   admission: AdmissionRecords | null;
+  /**
+   * For a published judge replay, the release its judge_verify request names (results/<execution>/request.json);
+   * null for any other run, or a replay whose request is not published or not a judge_verify request.
+   */
+  replayReleaseId: string | null;
+}
+
+/** A case's bug family, from its symptom: the race family's RaceSymptom or the time-zone family's ObservedSymptom. */
+export type CaseFamily = "race" | "time-zone";
+
+/** One released case: the release and the published run it names. */
+export interface ReleasedCase {
+  release: PublishedRelease;
+  run: Run;
+  /** Null when the released run holds no symptom. */
+  family: CaseFamily | null;
 }
 
 export interface Results {
@@ -82,8 +101,13 @@ export interface Results {
   runs: Run[];
   /** The run the case page shows (see chooseCase), if any published run holds an observed symptom. */
   caseRun: Run | null;
-  /** The published release (ADM-09), or null. With a release, caseRun is its run. */
+  /**
+   * The release the page shows (ADM-09), or null. With one release it is that release; with several
+   * it is the first one created, which / showed while it was the only one. With a release, caseRun is its run.
+   */
   release: PublishedRelease | null;
+  /** Every release with its run, newest first (by created_at, then release ID); empty without releases. */
+  releases: ReleasedCase[];
 }
 
 export interface PublishedRelease {
@@ -194,16 +218,26 @@ class Reader {
   }
 
   /**
-   * The one release, if any: a UUID-named directory holding a canonical, schema-valid release.json
-   * named after it, and exactly the files its record lists, with their bytes.
+   * Every release: none when releases/ is absent; otherwise 1 to MAX_RELEASES UUID-named directories,
+   * each holding a canonical, schema-valid release.json named after it and exactly the files its
+   * record lists, with their bytes. An empty releases/ or more than MAX_RELEASES is refused.
    */
-  async readRelease(): Promise<PublishedRelease | null> {
-    const found = await entries(join(this.dir, "repository", "releases"));
-    if (found.length > 1) throw new ReleaseError("release_invalid", "releases/ holds more than one release");
-    const [entry] = found;
-    if (entry === undefined) return null;
-    const id = entry.name;
-    if (!entry.isDirectory() || !UUID.test(id)) throw new ReleaseError("release_invalid", `releases/${id} is not a release directory`);
+  async readReleases(): Promise<PublishedRelease[]> {
+    const dir = join(this.dir, "repository", "releases");
+    if (!(await isDirectory(dir))) return [];
+    const found = (await entries(dir)).sort((a, b) => (a.name < b.name ? -1 : 1));
+    if (found.length === 0) throw new ReleaseError("release_invalid", "releases/ holds no release");
+    if (found.length > MAX_RELEASES) throw new ReleaseError("release_invalid", `releases/ holds ${String(found.length)} entries; at most ${String(MAX_RELEASES)} releases are supported`);
+    const releases: PublishedRelease[] = [];
+    for (const entry of found) {
+      if (!entry.isDirectory() || !UUID.test(entry.name)) throw new ReleaseError("release_invalid", `releases/${entry.name} is not a release directory`);
+      releases.push(await this.readRelease(entry.name));
+    }
+    return releases;
+  }
+
+  /** One release directory, checked as readReleases describes. */
+  async readRelease(id: string): Promise<PublishedRelease> {
     const bytes = await readFile(join(this.releaseDir(id), RELEASE_FILE)).catch((error: unknown) => {
       if (isMissing(error)) throw new ReleaseError("release_invalid", `releases/${id} has no ${RELEASE_FILE}`);
       throw error;
@@ -325,6 +359,25 @@ class Reader {
     return found[0] ?? null;
   }
 
+  /**
+   * The release a published judge replay's judge_verify request names. A request that is missing, not a
+   * JobRequest or not a judge_verify request attributes the replay to no release; it does not fail the read.
+   */
+  async readReplayRelease(manifest: RunManifest): Promise<string | null> {
+    if (manifest.kind !== "judge_replay") return null;
+    for (const entry of manifest.entries) {
+      if (!REQUEST_PATH.test(entry.path) || entry.outcome !== "published") continue;
+      const bytes = await this.entryBytes(manifest.root_execution_id, entry);
+      try {
+        const request = this.packages.schema.parseRecord("JobRequest", bytes);
+        if (request.kind === "judge_verify" && request.release_id !== null) return request.release_id;
+      } catch (error) {
+        if (!(error instanceof this.packages.schema.RecordError || error instanceof this.packages.schema.CanonicalError)) throw error;
+      }
+    }
+    return null;
+  }
+
   async readStatuses(): Promise<Map<string, PublicRunStatus>> {
     const statuses = new Map<string, PublicRunStatus>();
     for (const entry of await entries(join(this.dir, "store", "status"))) {
@@ -403,6 +456,7 @@ export async function readResults(dir: string): Promise<Results> {
       manifest,
       symptom: await reader.readSymptom(manifest),
       admission: await reader.readAdmission(manifest),
+      replayReleaseId: await reader.readReplayRelease(manifest),
     });
   }
   for (const [root, status] of statuses) {
@@ -418,12 +472,39 @@ export async function readResults(dir: string): Promise<Results> {
       manifest: null,
       symptom: null,
       admission: null,
+      replayReleaseId: null,
     });
   }
   runs.sort((a, b) => (a.rootExecutionId < b.rootExecutionId ? -1 : 1));
-  const release = await reader.readRelease();
-  if (release === null) return { runs, caseRun: chooseCase(runs), release: null };
-  return { runs, caseRun: await reader.releaseRun(release.record, runs), release };
+  const published = await reader.readReleases();
+  if (published.length === 0) return { runs, caseRun: chooseCase(runs), release: null, releases: [] };
+  const releases: ReleasedCase[] = [];
+  const named = new Map<string, string>();
+  for (const release of published) {
+    const run = await reader.releaseRun(release.record, runs);
+    const other = named.get(run.rootExecutionId);
+    if (other !== undefined) throw new ReleaseError("release_invalid", `releases/${other} and releases/${release.record.release_id} both name runs/${run.rootExecutionId}`);
+    named.set(run.rootExecutionId, release.record.release_id);
+    releases.push({ release, run, family: run.symptom === null ? null : isRaceSymptom(run.symptom) ? "race" : "time-zone" });
+  }
+  const byAge = (a: ReleasedCase, b: ReleasedCase): number => {
+    const [x, y] = [a.release.record, b.release.record];
+    if (x.created_at !== y.created_at) return x.created_at < y.created_at ? -1 : 1;
+    return x.release_id < y.release_id ? -1 : 1;
+  };
+  const [first] = [...releases].sort(byAge);
+  releases.sort((a, b) => byAge(b, a));
+  if (first === undefined) throw new Error("unreachable: a release was read");
+  return { runs, caseRun: first.run, release: first.release, releases };
+}
+
+/**
+ * The results as one released case's page shows them: that release and its run as the case, every
+ * other field unchanged. Null for a release ID the results do not hold.
+ */
+export function caseView(results: Results, releaseId: string): Results | null {
+  const found = results.releases.find((item) => item.release.record.release_id === releaseId);
+  return found === undefined ? null : { ...results, release: found.release, caseRun: found.run };
 }
 
 /** A checked results directory, with where each file readPublishedFile serves lives on disk. */
@@ -491,16 +572,19 @@ export function publishedFiles(results: Results): { root: string; path: string }
   );
 }
 
-/** A file of the published release, or its release.json, for download; any other path gives null. */
+/** A file of a published release, or its release.json, for download; any other path gives null. */
 export async function readReleaseFile(dir: string, releaseId: string, path: string): Promise<PublishedFile | null> {
   const file = (await loadResults(dir)).releaseFiles.get(`${releaseId}/${path}`);
   if (file === undefined) return null;
   return { bytes: await readFile(file.location), mediaType: file.mediaType };
 }
 
-/** Every file readReleaseFile serves, for prerendering: release.json, then the record's files. */
-export function releaseFiles(results: Results): { release: string; path: string }[] {
-  const record = results.release?.record;
-  if (record === undefined) return [];
+/** One release's files: release.json, then the record's files. */
+export function filesOfRelease(record: Release): { release: string; path: string }[] {
   return [RELEASE_FILE, ...record.files.map((file) => file.path)].map((path) => ({ release: record.release_id, path }));
+}
+
+/** Every file readReleaseFile serves, for prerendering: each release's files, newest release first. */
+export function releaseFiles(results: Results): { release: string; path: string }[] {
+  return results.releases.flatMap((item) => filesOfRelease(item.release.record));
 }
