@@ -75,6 +75,19 @@ function statesRaceCounts(text: string, key: "expected" | "observed", counts: { 
   return match !== null && BigInt(match[1] ?? "") === BigInt(counts.accepted) && BigInt(match[2] ?? "") === BigInt(counts.refused);
 }
 
+// In a race issue the counts live only on the fixed lines, so a digit run in the result prose is a
+// count stated outside them, unless it is a date or time, an HTTP status or a timing.
+const RACE_PROSE_ALLOWED = /\b(?:HTTP|status)\s*\d{3}\b|\b\d+(?:\.\d+)?\s*(?:ms|milliseconds?|s|seconds?)\b/gi;
+
+/** The digit runs in a race result field outside its count lines, dates, times, statuses and timings. */
+function raceProseRuns(text: string): string[] {
+  const prose = text
+    .split(/\r?\n/)
+    .filter((line) => !/^\s*(?:expected|observed)\s*:/i.test(line))
+    .join("\n");
+  return digitRuns(prose.replace(DATE_OR_TIME, " ").replace(RACE_PROSE_ALLOWED, " "));
+}
+
 /** Every string and number value in the observation (never its keys). */
 function symptomValues(value: unknown): string[] {
   if (typeof value === "string") {
@@ -110,6 +123,15 @@ function checkNumbers(issue: IssueOutput, symptom: WriterSymptom): NumericViolat
     for (const run of digitRuns(text)) {
       if (!supported.has(BigInt(run))) {
         violations.push({ field, reason: "unsupported_number", number: run });
+      }
+    }
+  }
+  if (isRaceSymptom(symptom)) {
+    for (const [field, text] of [["expected_result", issue.expected_result], ["actual_result", issue.actual_result]] as const) {
+      for (const run of raceProseRuns(text)) {
+        if (!violations.some((item) => item.field === field && item.number === run)) {
+          violations.push({ field, reason: "unsupported_number", number: run });
+        }
       }
     }
   }

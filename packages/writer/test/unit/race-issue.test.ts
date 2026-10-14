@@ -156,7 +156,7 @@ describe("the race issue checks", () => {
   const missingObserved = [{ field: "actual_result", reason: "missing_observed_vector", number: null }];
 
   it("need the exact Expected line in expected_result", () => {
-    expect(check({ expected_result: "Of the two requests sent at the same time, 1 should be accepted and 1 refused." }).numeric?.violations).toEqual(missingExpected);
+    expect(check({ expected_result: "Of the two requests sent at the same time, 1 should be accepted and 1 refused." }).numeric?.violations).toEqual(expect.arrayContaining(missingExpected));
     expect(check({ expected_result: "One should go through.\nExpected: accepted=2, refused=0" }).numeric?.violations).toEqual(missingExpected);
     expect(check({ expected_result: "Expected: accepted=1, refused=1" }).numeric?.ok).toBe(true);
   });
@@ -184,7 +184,10 @@ describe("the race issue checks", () => {
     ["labeled free-text counts without the line", "Accepted: 2, refused: 0.", false],
   ];
   it.each(OBSERVED_LINES)("read the observed counts from %s", (_name, actual, states) => {
-    expect(check({ actual_result: actual }).numeric?.violations).toEqual(states ? [] : missingObserved);
+    // A count outside the line is also an unsupported number in a race issue; the missing vector is what this table checks.
+    const violations = check({ actual_result: actual }).numeric?.violations;
+    if (states) expect(violations).toEqual([]);
+    else expect(violations).toEqual(expect.arrayContaining(missingObserved));
   });
 
   it("reject a number the observation does not hold, such as a computed total", () => {
@@ -276,6 +279,18 @@ describe("the count lines the writer adds to a race issue", () => {
     const outcome = await writeWith(raceSymptom("lines-contradict"), { ...VALID, expected_result: EXPECTED_PROSE, actual_result: actual });
     expect(outcome.issue?.actual_result).toBe(actual);
     expect(outcome.report?.status).toBe("rejected");
+  });
+
+  it("rejects counts written as digits in the result prose, even when the count lines come from the observation", async () => {
+    const outcome = await writeWith(raceSymptom("prose-digits"), { ...VALID, expected_result: EXPECTED_PROSE, actual_result: "1 request was accepted and 1 refused." });
+    expect(outcome.issue?.actual_result).toBe("1 request was accepted and 1 refused.\nObserved: accepted=2, refused=0");
+    expect(outcome.report?.status).toBe("rejected");
+    expect(outcome.report?.numeric?.violations).toContainEqual({ field: "actual_result", reason: "unsupported_number", number: "1" });
+  });
+
+  it("allows an HTTP status in the result prose", async () => {
+    const outcome = await writeWith(raceSymptom("prose-status"), { ...VALID, expected_result: EXPECTED_PROSE, actual_result: "Both requests returned HTTP 200." });
+    expect(outcome.report?.numeric?.violations.filter((item) => item.field === "actual_result")).toEqual([]);
   });
 
   it("drops a count line placed in the other result field, so each field holds only its own canonical line", async () => {
