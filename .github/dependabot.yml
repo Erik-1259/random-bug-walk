@@ -30,6 +30,10 @@ updates:
       # describe APIs Node 24 does not have. Raise this bound together with the runtime.
       - dependency-name: "@types/node"
         versions: [">=25.0.0"]
+      # Majors of any npm dependency are taken by hand after a review of their breaking changes, so
+      # Dependabot proposes only minor and patch releases.
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
     commit-message:
       prefix: chore(deps)
       prefix-development: chore(deps-dev)

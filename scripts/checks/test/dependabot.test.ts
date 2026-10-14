@@ -78,11 +78,16 @@ describe("dependabot.yml", () => {
   });
 
   it("ignores undici majors and @types/node from 25, which do not match the Node 24 runtime, and uv-build, kept equal to the uv tool", () => {
-    expect(update("npm").ignore?.slice(1)).toEqual([
+    expect(update("npm").ignore?.slice(1, 3)).toEqual([
       { "dependency-name": "undici", "update-types": ["version-update:semver-major"] },
       { "dependency-name": "@types/node", versions: [">=25.0.0"] },
     ]);
     expect(update("uv").ignore).toEqual([{ "dependency-name": "uv-build" }]);
+  });
+
+  it("ignores every npm major, which is taken by hand after review", () => {
+    expect(update("npm").ignore?.slice(3)).toEqual([{ "dependency-name": "*", "update-types": ["version-update:semver-major"] }]);
+    expect(configText).toMatch(/# Majors .*by hand/);
   });
 
   it("uses conventional commit prefixes", () => {
