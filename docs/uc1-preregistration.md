@@ -144,7 +144,7 @@ Nemotron 3 Super, frozen after the pilot. Kimi-K2.7-Code is used only if the pil
 ## Checks
 
 - **Tool use.** The share of on-arm attempts that call `server_logs` at least once, with the call counts. A low share is reported next to the result, since an unused tool cannot help.
-- **Contamination.** In either arm, attempts that start their own server process or read Umami or Postgres process output other than through `server_logs`, detected from the bash transcripts. Reported per arm. It cannot be blocked cheaply (the app user can read the env files and the app tree), so it is counted, and a high off-arm rate weakens the claim.
+- **Contamination.** In either arm, attempts that start their own server process or read Umami or Postgres process output other than through `server_logs`, detected from the bash transcripts and from any `read_file` or `write_file` path into the runtime log directory. Reported per arm. It cannot be blocked cheaply (the app user can read the env files and the app tree), so it is counted, and a high off-arm rate weakens the claim.
 - **Scope.** A fix that changes anything except the target file is out_of_scope: unsolved and not graded. Counted per arm.
 - **Leak screen.** The bug's screen record (race-class work) must already show that the issue text and HTTP responses do not carry the log evidence.
 

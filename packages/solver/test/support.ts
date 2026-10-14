@@ -176,8 +176,12 @@ export class FakeSession implements SolverSession {
     }
   }
 
-  bash(command: string): Promise<CommandResult> {
+  /** The timeout of every bash call, in order. */
+  readonly bashTimeouts: number[] = [];
+
+  bash(command: string, options: { timeoutMs: number }): Promise<CommandResult> {
     this.check(`bash:${command}`);
+    this.bashTimeouts.push(options.timeoutMs);
     return Promise.resolve(this.bashResult);
   }
 

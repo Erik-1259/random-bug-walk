@@ -13,7 +13,7 @@
     "packages/screen": 60,
     "packages/search": 84,
     "packages/shapes": 131,
-    "packages/solver": 122,
+    "packages/solver": 138,
     "packages/spend": 344,
     "packages/umami-driver": 236,
     "packages/umami-fixture": 109,
@@ -27,7 +27,8 @@
     "tools/neon-ci": 98,
     "tools/publication": 166,
     "tools/release": 78,
-    "tools/solver-session": 90
+    "tools/solver-session": 99,
+    "tools/uc1": 104
   },
   "pytest": {
     "python/schema": 921

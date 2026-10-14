@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { failed, ok } from "../../../local-runner/test/support/fakes.ts";
 import { CLEAN, PLANTED, SOURCE_FILES, STRICT_TERM, TARGET, sha256 } from "../../../local-runner/test/support/synthetic.ts";
-import { DEFAULT_LIMITS, Session, SessionError, SessionRefusal } from "../../src/session.ts";
+import { DEFAULT_LIMITS, READ_SCRIPT, Session, SessionError, SessionRefusal } from "../../src/session.ts";
 import type { SessionOptions } from "../../src/session.ts";
 import { IMAGE_ID, START_OK, SessionKit } from "../support/session-kit.ts";
 import type { SessionKitOptions } from "../support/session-kit.ts";
@@ -199,15 +199,39 @@ describe("the agent's other tools", () => {
   it("reads a file as rbw-app, capped, and reports a read error", async () => {
     const { session } = await open({}, { limits: { readBytes: 10 } });
     expect(await session.readFile(TARGET)).toEqual({ ok: true, content: PLANTED.slice(0, 10), truncated: true });
-    expect(await session.readFile("missing.ts")).toEqual({ ok: false, reason: "head: /workspace/app/missing.ts: No such file or directory" });
+    expect(await session.readFile("missing.ts")).toEqual({ ok: false, reason: "no such file: missing.ts" });
+  });
+
+  it("reads through the confining script as rbw-app, with the app root and a relative path", async () => {
+    const { kit, session } = await open({}, { limits: { readBytes: 10 } });
+    await session.readFile(TARGET);
+    expect(kit.execs().at(-1)).toEqual(["/opt/rbw/bin/rbw-launch", "--as", "app", "--cwd", "/workspace/app", "--timeout-ms", "30000", "--max-stream-bytes", "1034", "--", "/bin/sh", "-c", READ_SCRIPT, "rbw-read", "/workspace/app", TARGET, "11"]);
+  });
+
+  it("refuses an absolute path or a .. segment as a tool error, without running anything", async () => {
+    const { kit, session } = await open();
+    const before = kit.execs().length;
+    for (const path of ["/var/lib/rbw/logs/umami.stderr.log", `/workspace/app/${TARGET}`, "../../var/lib/rbw/logs/umami.stderr.log", "src/../../x", ".."]) {
+      expect(await session.readFile(path)).toEqual({ ok: false, reason: "outside_app_tree" });
+    }
+    expect(kit.execs()).toHaveLength(before);
+  });
+
+  it("refuses a path the script finds resolving outside the app tree as a tool error", async () => {
+    const { kit, session } = await open();
+    kit.outsideLinks.add("src/log.txt");
+    expect(await session.readFile("src/log.txt")).toEqual({ ok: false, reason: "outside_app_tree" });
   });
 
   it("writes only tracked files under the app", async () => {
     const { kit, session } = await open();
-    for (const path of ["src/proxy.ts", ".next/server.js", "../../etc/passwd", "/etc/passwd", "src/../../x"]) {
+    for (const path of ["src/proxy.ts", ".next/server.js"]) {
       expect(await session.writeFile(path, "x")).toEqual({ ok: false, reason: "not_tracked" });
     }
-    expect(await session.writeFile(`/workspace/app/${TARGET}`, CLEAN)).toEqual({ ok: true, sha256: sha256(CLEAN), bytes: Buffer.byteLength(CLEAN) });
+    for (const path of ["../../etc/passwd", "/etc/passwd", "src/../../x", `/workspace/app/${TARGET}`]) {
+      expect(await session.writeFile(path, "x")).toEqual({ ok: false, reason: "outside_app_tree" });
+    }
+    expect(await session.writeFile(TARGET, CLEAN)).toEqual({ ok: true, sha256: sha256(CLEAN), bytes: Buffer.byteLength(CLEAN) });
     expect(kit.files.get(TARGET)?.bytes.toString()).toBe(CLEAN);
   });
 

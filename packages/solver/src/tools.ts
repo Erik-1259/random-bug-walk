@@ -231,12 +231,17 @@ export function isAppPath(path: string): boolean {
   return path.split("/").every((segment) => segment !== "" && segment !== "." && segment !== "..");
 }
 
+/** The minimum useful bash call time: with less of the attempt's wall time left, no bash call starts. */
+export const MIN_TOOL_TIMEOUT_MS = 5_000;
+
 /** Per-attempt tool state: the rebuild count and per-tool call counts. */
 export interface ToolState {
   rebuilds: number;
   calls: Record<ToolName, number>;
   /** Every bash command in order, for the contamination check. */
   bash_commands: string[];
+  /** Every read_file and write_file path in order, refused ones included, for the contamination check. */
+  file_paths: string[];
 }
 
 export function newToolState(): ToolState {
@@ -244,6 +249,7 @@ export function newToolState(): ToolState {
     rebuilds: 0,
     calls: { bash: 0, read_file: 0, write_file: 0, rebuild_restart: 0, submit: 0, server_logs: 0 },
     bash_commands: [],
+    file_paths: [],
   };
 }
 
@@ -263,6 +269,9 @@ function isToolName(name: string): name is ToolName {
 /**
  * Runs one validated tool call of `arm` against the session. A call to a tool outside the arm,
  * or with invalid input, is answered with an error text and never reaches the session.
+ * `remainingMs` is the attempt's remaining wall time: a bash call's timeout is the smaller of its
+ * own and that, so it never runs past the cap (the caller starts no bash call with less than
+ * MIN_TOOL_TIMEOUT_MS left).
  */
 export async function runTool(
   arm: Arm,
@@ -271,6 +280,7 @@ export async function runTool(
   session: SolverSession,
   state: ToolState,
   caps: AttemptCaps,
+  remainingMs = Number.POSITIVE_INFINITY,
 ): Promise<ToolOutcome> {
   const reply = (output: string): ToolOutcome => ({ output, submitted: false, summary: null });
   if (!isToolName(name) || !armToolNames(arm).includes(name)) {
@@ -285,10 +295,12 @@ export async function runTool(
     case "bash": {
       const { command } = INPUT_SCHEMAS.bash.parse(input);
       state.bash_commands.push(command);
-      return reply(commandReport(await session.bash(command, { timeoutMs: TOOL_OUTPUT_CAPS.bash_timeout_ms })));
+      const timeoutMs = Math.min(TOOL_OUTPUT_CAPS.bash_timeout_ms, Math.floor(remainingMs));
+      return reply(commandReport(await session.bash(command, { timeoutMs })));
     }
     case "read_file": {
       const { path } = INPUT_SCHEMAS.read_file.parse(input);
+      state.file_paths.push(path);
       if (!isAppPath(path)) {
         return reply("error: the path must be relative to the app's root directory, without . or .. segments");
       }
@@ -297,6 +309,7 @@ export async function runTool(
     }
     case "write_file": {
       const { path, content } = INPUT_SCHEMAS.write_file.parse(input);
+      state.file_paths.push(path);
       if (!isAppPath(path)) {
         return reply("error: the path must be relative to the app's root directory, without . or .. segments");
       }

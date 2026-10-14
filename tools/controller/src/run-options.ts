@@ -65,6 +65,7 @@ export const RUN_OPTIONS = {
   ids: { type: "string" },
   "project-policy": { type: "string" },
   "judge-fixed": { type: "string" },
+  "probes-dir": { type: "string" },
   "request-id": { type: "string" },
   prebuilt: { type: "string" },
   release: { type: "string" },
@@ -72,7 +73,7 @@ export const RUN_OPTIONS = {
 } as const;
 
 /** The run options that only a factory or grade job takes; the judge controller refuses them. */
-export const NOT_FOR_PREBUILT = ["trials", "ledger", "ids", "project-policy", "judge-fixed", "fix", "family", "race-latency-ms"] as const;
+export const NOT_FOR_PREBUILT = ["trials", "ledger", "ids", "project-policy", "judge-fixed", "fix", "probes-dir", "family", "race-latency-ms"] as const;
 
 export type CommonInputs = Omit<JobInputs, "kind" | "name" | "trials" | "alternativeDir" | "ledger">;
 
@@ -192,6 +193,7 @@ export function runJobInputs(values: Values): JobInputs {
   const policyFile = path(values, "project-policy");
   const policy = policyFile === null ? null : projectPolicy(readFileSync(policyFile), ids);
   const graded = judgeFixed(values["judge-fixed"], jobKind);
+  const probes = path(values, "probes-dir");
   return {
     ...inputs,
     ...familyOptions(values),
@@ -203,5 +205,6 @@ export function runJobInputs(values: Values): JobInputs {
     ...(ids === null ? {} : { ids }),
     ...(policy === null ? {} : { projectPolicy: policy }),
     ...(graded === null ? {} : { judgeFixed: graded }),
+    ...(probes === null ? {} : { probesDir: probes }),
   };
 }
