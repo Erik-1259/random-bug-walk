@@ -92,16 +92,17 @@ function checkThenActSymptom(site: Site): string {
 }
 
 /**
- * The symptom for a `RACE.guarded-write` site (in the code, a one-time state change whose guard was
- * removed). It says only what a user sees: a one-time action, sent twice at once, takes effect twice.
+ * The symptom for a `RACE.guarded-write` site (in the code, a conditional write whose guard was
+ * removed: a one-time state change or a versioned update). It says only what a user sees, in words
+ * that fit both: two conflicting requests sent at once both take effect.
  */
 function guardedWriteSymptom(site: Site): string {
   const thing = thingName(site.diff);
-  const subject = thing === null ? "the same one-time action" : `the same ${thing}`;
+  const subject = thing === null ? "the record" : `the ${thing}`;
   return [
-    `When the same request is sent ${placeOf(site)} twice at the same moment, both succeed even though only one should.`,
-    `An action that should take effect once takes effect twice — for example, ${subject} is accepted for both requests.`,
-    `Sent one after the other, the second request is correctly refused.`,
+    `When two conflicting requests arrive ${placeOf(site)} at the same moment, both succeed even though the second should have been refused.`,
+    `Afterwards ${subject} keeps only one request's change while both were reported as saved, or an action meant to take effect once takes effect twice.`,
+    `Sent one after the other, the second request is refused or works from the earlier request's result.`,
   ].join(" ");
 }
 

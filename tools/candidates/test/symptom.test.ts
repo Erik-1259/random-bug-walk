@@ -16,6 +16,18 @@ const GUARDED_WRITE_DIFF = [
   "",
 ].join("\n");
 
+const VERSIONED_UPDATE_DIFF = [
+  "--- a/lib/documents.ts",
+  "+++ b/lib/documents.ts",
+  "@@ -20,7 +20,7 @@",
+  "   const saved = await db.client.document.updateMany({",
+  "-    where: { id, version },",
+  "+    where: { id },",
+  "     data: { body, version: version + 1 },",
+  "   });",
+  "",
+].join("\n");
+
 const UPSERT_DIFF = [
   "--- a/api/preferences/route.ts",
   "+++ b/api/preferences/route.ts",
@@ -68,6 +80,12 @@ describe("symptomFor", () => {
     expect(text).toContain("/api/vouchers/redeem");
     expect(text).toContain("at the same moment");
     expect(text).toMatch(/twice/);
+  });
+
+  it("words a guarded-write race so it also fits a versioned update, not only a one-time action", () => {
+    const text = symptomFor(site("lib/documents.ts", VERSIONED_UPDATE_DIFF, "RACE.guarded-write"));
+    expect(text).toContain("keeps only one request's change");
+    expect(text).not.toMatch(/correctly refused|is accepted for both/);
   });
 
   it("describes a check-then-act race as a duplicate record under concurrency", () => {
