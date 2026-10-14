@@ -232,7 +232,17 @@ export function appendStop(runDir: string, stop: StopRecord): void {
   if (existsSync(path)) {
     const bytes = readFileSync(path);
     if (bytes.length > 0 && bytes[bytes.length - 1] !== 0x0a) {
-      truncateSync(path, bytes.lastIndexOf(0x0a) + 1);
+      // An unterminated tail that parses is a whole record that lost its newline: keep it.
+      // One that does not parse is an interrupted append: drop it.
+      const start = bytes.lastIndexOf(0x0a) + 1;
+      let whole = true;
+      try {
+        JSON.parse(bytes.subarray(start).toString("utf8"));
+      } catch {
+        whole = false;
+      }
+      if (whole) appendFileSync(path, "\n");
+      else truncateSync(path, start);
     }
   }
   appendFileSync(path, `${JSON.stringify(stop)}\n`);

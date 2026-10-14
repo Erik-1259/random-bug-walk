@@ -46,6 +46,14 @@ describe("the stop log", () => {
     expect(readStops(dir)).toEqual([first, second]);
   });
 
+  it("keeps a complete record whose newline was lost and adds the newline before appending", () => {
+    const dir = mkdtempSync(join(tmpdir(), "rbw-uc1-records-"));
+    writeFileSync(join(dir, "stops.jsonl"), JSON.stringify(first));
+    appendStop(dir, second);
+    expect(readFileSync(join(dir, "stops.jsonl"), "utf8")).toBe(`${JSON.stringify(first)}\n${JSON.stringify(second)}\n`);
+    expect(readStops(dir)).toEqual([first, second]);
+  });
+
   it("still refuses a complete line that does not parse", () => {
     const dir = mkdtempSync(join(tmpdir(), "rbw-uc1-records-"));
     writeFileSync(join(dir, "stops.jsonl"), `${JSON.stringify(first)}\nnot json\n`);
