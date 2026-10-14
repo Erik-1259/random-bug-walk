@@ -5,7 +5,9 @@
 // again every 15 seconds; a temporary unavailable answer keeps it asking, less often, with the
 // start button still disabled. There is no cancel action. On a site with several releases the
 // control names its page's release in the start and status requests, and keeps that release's
-// request ID under its own key.
+// request ID under its own key. The first-created release, which / shows, also takes over a
+// request ID kept under the one key before the other releases existed, so a replay started then
+// is still followed after a refresh.
 import { useEffect, useState, type CSSProperties, type SyntheticEvent } from "react";
 import type { ReplayState, ReplayStatus } from "../model.ts";
 import { ReplayPanel } from "./replay.tsx";
@@ -28,11 +30,13 @@ interface Props {
   initial: ReplayState;
   /** The site has several releases: the requests name this page's release. */
   choose?: boolean;
+  /** This page's release is the first created, the one / shows by default. */
+  firstCreated?: boolean;
 }
 
 type Answer = Omit<Partial<ReplayStatus>, "state"> & { state: string; message?: string };
 
-export function ReplayControl({ release, initial, choose = false }: Props) {
+export function ReplayControl({ release, initial, choose = false, firstCreated = false }: Props) {
   const named = choose && release !== null ? release.release_id : null;
   const requestKey = named === null ? REQUEST_KEY : `${REQUEST_KEY}:${named}`;
   const statusQuery = named === null ? "" : `&release_id=${named}`;
@@ -95,7 +99,14 @@ export function ReplayControl({ release, initial, choose = false }: Props) {
   // shows it, or with no stored replay the session check does. The stored replay may still be
   // running, so an outage on this first check is retried like one during a poll.
   useEffect(() => {
-    const requestId = enabled ? window.localStorage.getItem(requestKey) : null;
+    let requestId = enabled ? window.localStorage.getItem(requestKey) : null;
+    if (enabled && requestId === null && named !== null && firstCreated) {
+      requestId = window.localStorage.getItem(REQUEST_KEY);
+      if (requestId !== null) {
+        window.localStorage.setItem(requestKey, requestId);
+        window.localStorage.removeItem(REQUEST_KEY);
+      }
+    }
     if (requestId !== null) void refresh(requestId, true);
     else if (enabled) void checkSession();
   }, [enabled]);

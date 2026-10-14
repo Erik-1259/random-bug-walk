@@ -415,6 +415,38 @@ describe("the replay control on a site with several releases", () => {
     expect(sent[2]).toEqual({ url: `/api/judge/status?request_id=${requestId ?? ""}&release_id=${releaseId}`, method: "GET", body: null });
   });
 
+  it("follows a replay started on the single-release site after a refresh once a second release exists, on the first-created release's page", async () => {
+    vi.useFakeTimers();
+    const stored = new Map<string, string>();
+    stubWindow(stored);
+    const sent: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string, init?: { method?: string }) => {
+        sent.push(`${init?.method ?? "GET"} ${url}`);
+        const body = url === "/api/judge/session" ? { state: "ready" } : init?.method === "POST" ? { state: "starting", message: "Starting" } : { state: "running", release_id: releaseId, message: "Running", cells: [] };
+        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+      }),
+    );
+    // One release: the replay starts and its request ID is kept under the one key.
+    let rendered: unknown = null;
+    hooks.mount(() => (rendered = ReplayControl({ release, initial: { state: "ready", reason: "" } })));
+    await vi.advanceTimersByTimeAsync(0);
+    startButton(rendered)?.props.onClick?.();
+    await vi.advanceTimersByTimeAsync(0);
+    const legacyId = stored.get("rbw-judge-request-id") ?? "";
+    expect(legacyId).toMatch(/^[0-9a-f-]{36}$/);
+    // A second release is deployed and the judge refreshes /, which still shows this release.
+    sent.length = 0;
+    hooks.mount(() => (rendered = ReplayControl({ release, initial: { state: "ready", reason: "" }, choose: true, firstCreated: true })));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(sent).toEqual([`GET /api/judge/status?request_id=${legacyId}&release_id=${releaseId}`]);
+    expect((rendered as Element).props.status).toMatchObject({ state: "running" });
+    // The request ID moves to the release's own key.
+    expect(stored.get(`rbw-judge-request-id:${releaseId}`)).toBe(legacyId);
+    expect(stored.has("rbw-judge-request-id")).toBe(false);
+  });
+
   it("sends exactly { request_id } and uses the one key when the site has one release", async () => {
     vi.useFakeTimers();
     const stored = new Map<string, string>();

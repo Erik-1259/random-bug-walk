@@ -588,6 +588,7 @@ export function CasePage({ results, judgeEnabled = false, home = false }: { resu
           release={results.release === null ? null : { release_id: results.release.record.release_id, created_at: results.release.record.created_at }}
           initial={replayState(results, judgeEnabled)}
           choose={results.releases.length > 1}
+          firstCreated={results.release !== null && results.releases.at(-1)?.release.record.release_id === results.release.record.release_id}
         />
       </Cell>
       <Cell index={5} title="Provenance and downloads">
