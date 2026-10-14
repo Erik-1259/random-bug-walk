@@ -773,6 +773,32 @@ describe("find sites in one file", () => {
     ]);
   });
 
+  it("scores a write against a read only when the read's block encloses the write", () => {
+    const code = [
+      "export async function close(db, id, fresh) {",
+      "  if (fresh) {",
+      "    const room = await db.client.room.findFirst({ where: { id, active: true } });",
+      "  } else {",
+      "    const result = await db.client.room.updateMany({ where: { id, active: true }, data: { active: false } });",
+      "    if (result.count === 0) throw new Error('closed');",
+      "  }",
+      "}",
+      "export async function closeInner(db, id, fresh) {",
+      "  const room = await db.client.room.findFirst({ where: { id, active: true } });",
+      "  if (fresh) {",
+      "    const result = await db.client.room.updateMany({ where: { id, active: true }, data: { active: false } });",
+      "    if (result.count === 0) throw new Error('closed');",
+      "  }",
+      "}",
+      "",
+    ].join("\n");
+    const sites = findSitesInSource(CLASSES, "lib/rooms.ts", code);
+    expect(sites.map((site) => [site.line, site.confidence.signals.read_before_write, site.confidence.signals.read_checks_guard])).toEqual([
+      [5, false, false],
+      [12, true, true],
+    ]);
+  });
+
   it("gives each site a diff of that site alone", () => {
     for (const site of sitesIn("lib/documents.ts")) {
       const changed = site.diff.split("\n").filter((line) => /^[-+](?![-+])/.test(line));

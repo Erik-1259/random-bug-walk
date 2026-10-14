@@ -254,9 +254,31 @@ function awaitedInOwnStatement(call: SgNode): boolean {
 }
 
 /**
+ * Whether the statement holding a read sits directly in a block that also encloses `call` (the
+ * write's own block or a block around it). A read in a sibling branch, such as the `if` side of an
+ * `if`/`else` whose `else` side holds the write, never runs before the write in the same execution.
+ */
+function blockEncloses(read: SgNode, call: SgNode): boolean {
+  const statement = read.ancestors().find((node) => {
+    const kind = kindOf(node);
+    return kind === "expression_statement" || kind === "lexical_declaration" || kind === "variable_declaration";
+  });
+  const block = statement?.parent();
+  const blockKind = kindOf(block);
+  return (
+    block !== undefined &&
+    block !== null &&
+    (blockKind === "statement_block" || blockKind === "program") &&
+    block.range().start.index <= call.range().start.index &&
+    call.range().end.index <= block.range().end.index
+  );
+}
+
+/**
  * The write around a guard, the outermost function enclosing it, and the read it is scored
- * against: the last read of the same model that ends before the write, in the write's flow, and is
- * awaited directly in its own statement or initializer (see `awaitedInOwnStatement`).
+ * against: the last read of the same model that ends before the write, in the write's flow, is
+ * awaited directly in its own statement or initializer (see `awaitedInOwnStatement`), and sits in
+ * a block that encloses the write (see `blockEncloses`).
  */
 function writeContext(guard: SgNode): { call: SgNode; fn: SgNode; read: SgNode | undefined } | undefined {
   const call = guard.ancestors().find((node) => kindOf(node) === "call_expression");
@@ -271,7 +293,7 @@ function writeContext(guard: SgNode): { call: SgNode; fn: SgNode; read: SgNode |
     .findAll({ rule: { kind: "call_expression" } })
     .filter((node) => {
       const found = modelCall(node);
-      return found?.model === write.model && READ_METHODS.has(found.method) && before(node, call) && inFlowOf(node, call) && awaitedInOwnStatement(node);
+      return found?.model === write.model && READ_METHODS.has(found.method) && before(node, call) && inFlowOf(node, call) && awaitedInOwnStatement(node) && blockEncloses(node, call);
     })
     .at(-1);
   return { call, fn, read };
