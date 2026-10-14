@@ -185,9 +185,14 @@ export class Session implements SolverTools {
   private constructor(options: SessionOptions, deps: SessionDeps) {
     this.options = options;
     this.deps = deps;
-    this.container = `rbw-solver-${options.id}`;
+    this.container = Session.containerName(options.id);
     this.work = options.work;
     this.limits = { ...DEFAULT_LIMITS, ...options.limits };
+  }
+
+  /** The container a session with this ID runs in. */
+  static containerName(id: string): string {
+    return `rbw-solver-${id}`;
   }
 
   /** Opens a session: refuses (SessionRefusal) before any container on a bad input or audit. */

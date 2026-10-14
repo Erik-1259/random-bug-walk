@@ -350,6 +350,8 @@ export interface DryRunWorld {
   spend: Spend;
   model: ScriptedModel;
   sessions: FakeKitSession[];
+  /** The session IDs removeSession was called with, in order. */
+  removedSessions: string[];
   controllerCalls: ControllerCall[];
   /** The time-zone pilot case (synthetic inputs, the committed screen record). */
   pilotCase: string;
@@ -422,6 +424,7 @@ export async function dryRunWorld(options: DryRunOptions): Promise<DryRunWorld> 
 
   const model = scriptedModel(options.script ?? defaultScript);
   const sessions: FakeKitSession[] = [];
+  const removedSessions: string[] = [];
   const controllerCalls: ControllerCall[] = [];
   const reports: string[] = [];
   const real = ledgerAllowanceSource(db, spend);
@@ -442,6 +445,10 @@ export async function dryRunWorld(options: DryRunOptions): Promise<DryRunWorld> 
       sessions.push(session);
       return Promise.resolve(session);
     },
+    removeSession: (id) => {
+      removedSessions.push(id);
+      return Promise.resolve();
+    },
     deriveStates: (config: CaseConfig): Promise<CaseStates> =>
       Promise.resolve({ target_path: DRY_TARGET, digest: config.image_digest, clean: Buffer.from(DRY_CLEAN), planted: Buffer.from(DRY_PLANTED), alternative: Buffer.from(DRY_ALTERNATIVE) }),
     resolveImage: () => Promise.resolve(options.imageDigest?.() ?? DRY_DIGEST),
@@ -459,5 +466,5 @@ export async function dryRunWorld(options: DryRunOptions): Promise<DryRunWorld> 
       reports.push(line);
     },
   };
-  return { deps, db, spend, model, sessions, controllerCalls, pilotCase, raceCase, policy, privatePolicy, runsDir, reports, close: () => db.close() };
+  return { deps, db, spend, model, sessions, removedSessions, controllerCalls, pilotCase, raceCase, policy, privatePolicy, runsDir, reports, close: () => db.close() };
 }

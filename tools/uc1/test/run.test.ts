@@ -566,6 +566,56 @@ describe("resumes, reruns and exit codes", () => {
     await w.close();
   });
 
+  /** Stops the process right after off-001's first run is saved as started, so its session is left behind. */
+  async function interruptFirstRun(w: DryRunWorld): Promise<void> {
+    const report = w.deps.report.bind(w.deps);
+    let fault = true;
+    w.deps.report = (line) => {
+      if (fault && line === "attempt=off-001-r0 status=starting") {
+        fault = false;
+        throw new Error("synthetic stop during the run");
+      }
+      report(line);
+    };
+    await expect(runSessions(pilot(w), w.deps)).rejects.toThrow("synthetic stop");
+  }
+
+  it("removes an interrupted run's saved session before opening its rerun", async () => {
+    const w = await world();
+    await interruptFirstRun(w);
+    const saved = runs(join(w.runsDir, "pilot-01"), "001-off")[0]?.session_id as string;
+    expect(w.removedSessions).toEqual([]);
+    const opened: string[] = [];
+    const open = w.deps.openSession.bind(w.deps);
+    w.deps.openSession = (request) => {
+      opened.push(`open:${request.id}`);
+      return open(request);
+    };
+    const remove = w.deps.removeSession.bind(w.deps);
+    w.deps.removeSession = (id) => {
+      opened.push(`remove:${id}`);
+      return remove(id);
+    };
+    const outcome = await runSessions(pilot(w), w.deps);
+    expect(outcome.exitCode).toBe(0);
+    expect(w.removedSessions).toEqual([saved]);
+    expect(opened.slice(0, 2)).toEqual([`remove:${saved}`, `open:${saved.replace(/r0$/, "r1")}`]);
+    expect(runs(outcome.runDir, "001-off").map((run) => run.ended)).toEqual(["infrastructure_error", "submitted"]);
+    await w.close();
+  });
+
+  it("stops before the rerun when an interrupted run's session cannot be removed", async () => {
+    const w = await world();
+    await interruptFirstRun(w);
+    w.deps.removeSession = () => Promise.reject(new Error("synthetic docker failure"));
+    const sessions = w.sessions.length;
+    const outcome = await runSessions(pilot(w), w.deps);
+    expect(outcome.stop).toMatchObject({ reason: "stale_session" });
+    expect(w.sessions.length).toBe(sessions);
+    expect(runs(outcome.runDir, "001-off")).toHaveLength(1);
+    await w.close();
+  });
+
   /** Stops the process after the controller wrote grade 1's summary for off-001 but before its grade was saved. */
   async function stopAfterGrade1(w: DryRunWorld): Promise<string> {
     const report = w.deps.report.bind(w.deps);

@@ -55,6 +55,11 @@ export interface Uc1Deps {
   /** The solver role's Token Factory key, sent only as the bearer header. */
   apiKey?: string;
   openSession(request: SessionRequest): Promise<AttemptSession>;
+  /**
+   * Removes the container a session with this ID left behind (the process ended before close()),
+   * so an interrupted run's session never outlives it. Resolves when no such container exists.
+   */
+  removeSession(id: string): Promise<void>;
   deriveStates(config: CaseConfig, work: string): Promise<CaseStates>;
   /** The content digest (local image ID) a local image reference resolves to now. */
   resolveImage(image: string): Promise<string>;

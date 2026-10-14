@@ -227,6 +227,27 @@ function solvesSentence(off: ArmResult, on: ArmResult): string {
   return `Solves over all counted attempts (grade 2), with 95% Clopper–Pearson intervals: ${armSolves("off", off)}; ${armSolves("on", on)}.`;
 }
 
+/** Below this share of on-arm attempts calling server_logs, the report flags a low share. The pre-registration sets no cutoff. */
+export const LOW_TOOL_USE_SHARE = 0.5;
+
+/**
+ * The pre-registration's tool-use and contamination checks ("Checks"): the share of on-arm
+ * attempts that called `server_logs`, with the call count and a warning when the share is low, and
+ * each arm's contaminated attempts.
+ */
+function checksSentences(off: ArmResult, on: ArmResult): string[] {
+  const calls = on.tool_calls.server_logs;
+  const share = on.counted === 0 ? null : on.used_server_logs / on.counted;
+  const toolUse =
+    share === null
+      ? "Tool use: the on arm has no counted attempts."
+      : `Tool use: ${String(on.used_server_logs)} of ${String(on.counted)} counted on-arm attempts (${String(Math.round(share * 100))}%) called \`server_logs\` at least once, ${String(calls)} call${calls === 1 ? "" : "s"} in all.${
+          share < LOW_TOOL_USE_SHARE ? " This is a low share (under half, the report's reading; the pre-registration sets no cutoff): an unused tool cannot help, so the result says little about the tool's effect." : ""
+        }`;
+  const contamination = `Contamination (attempts that started their own server process or read the app's or the database's process output other than through \`server_logs\`): off ${String(off.contaminated)}/${String(off.counted)}, on ${String(on.contaminated)}/${String(on.counted)}. A high off-arm rate weakens the claim.`;
+  return [toolUse, contamination];
+}
+
 /** The run's report: the label, the plan, every attempt, both grades, spend and the analysis statements. */
 export function reportMarkdown(summary: RunSummary, analysis: ResultsRecord | null): string {
   const lines: string[] = [];
@@ -281,7 +302,10 @@ export function reportMarkdown(summary: RunSummary, analysis: ResultsRecord | nu
       if (summary.mode === "pilot") lines.push(`Harness pilot, k = ${String(off.counted)} off and ${String(on.counted)} on; not a UC1 result.`, "");
       else lines.push(`Illustration on 1 bug, k = ${String(off.counted)} off and ${String(on.counted)} on.`, "", detectableSentence(off.solved, off.counted, on.counted), "");
       lines.push(bug.made_worse.statement, "");
-      if (summary.mode !== "pilot") lines.push(solvesSentence(off, on), "");
+      if (summary.mode !== "pilot") {
+        lines.push(solvesSentence(off, on), "");
+        for (const sentence of checksSentences(off, on)) lines.push(sentence, "");
+      }
       lines.push(turnsSentence(bug.turns), "");
     }
     lines.push(analysis.claim_scope, "");

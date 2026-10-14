@@ -191,7 +191,7 @@ An infrastructure error (the session cannot start, the model endpoint fails or t
 
 ## Known limits
 
-- After an interruption (the process or the machine stops mid-step), resume with the same command and `--name`. A run the process lost before saving its result is rerun as an infrastructure error, and a grade job that ended without a summary is retried. A grade 2 job that wrote its summary before the process saved its try is replayed from that summary on resume without a new allowance hold, since its spend has already settled. The ledger is authoritative for spend: what an interrupted run settled is counted from the ledger under that run's execution, so the summary and the report never show it as zero.
+- After an interruption (the process or the machine stops mid-step), resume with the same command and `--name`. A run the process lost before saving its result is rerun as an infrastructure error; its saved session's container (`rbw-solver-<session>`) is removed first, and the run stops with `stale_session` if it cannot be. And a grade job that ended without a summary is retried. A grade 2 job that wrote its summary before the process saved its try is replayed from that summary on resume without a new allowance hold, since its spend has already settled. The ledger is authoritative for spend: what an interrupted run settled is counted from the ledger under that run's execution, so the summary and the report never show it as zero.
 
 ## Not built here
 

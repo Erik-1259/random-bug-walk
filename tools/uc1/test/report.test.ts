@@ -135,3 +135,35 @@ describe("the per-arm solve counts", () => {
     expect(pilot).not.toContain("Clopper–Pearson");
   });
 });
+
+describe("the pre-registered tool-use and contamination checks", () => {
+  /** Marks the first `n` rows of an arm with a change to each. */
+  function mark(rows: AttemptRow[], n: number, change: (item: AttemptRow) => AttemptRow): AttemptRow[] {
+    return rows.map((item, i) => (i < n ? change(item) : item));
+  }
+  const noLogs = (item: AttemptRow): AttemptRow => ({ ...item, tool_calls: { ...item.tool_calls, server_logs: 0 } });
+  const contaminated = (item: AttemptRow): AttemptRow => ({ ...item, contaminated: true });
+
+  it("reports the on arm's server_logs share with the call count, and each arm's contamination, next to the result", () => {
+    const rows = [...mark(arm("off", 20, 2), 3, contaminated), ...mark(mark(arm("on", 20, 9), 4, noLogs), 1, contaminated)];
+    const report = reportMarkdown(summary("run"), analyze(rows));
+    expect(report).toContain("Tool use: 16 of 20 counted on-arm attempts (80%) called `server_logs` at least once, 16 calls in all.");
+    expect(report).toContain("Contamination (attempts that started their own server process or read the app's or the database's process output other than through `server_logs`): off 3/20, on 1/20. A high off-arm rate weakens the claim.");
+    expect(report).not.toContain("low share");
+    const result = report.indexOf("Solves over all counted attempts");
+    expect(report.indexOf("Tool use:")).toBeGreaterThan(result);
+    expect(report.indexOf("Contamination (")).toBeGreaterThan(result);
+  });
+
+  it("warns next to the result when fewer than half of the on-arm attempts used the tool", () => {
+    const report = reportMarkdown(summary("run"), analyze([...arm("off", 20, 2), ...mark(arm("on", 20, 9), 11, noLogs)]));
+    expect(report).toContain("Tool use: 9 of 20 counted on-arm attempts (45%) called `server_logs` at least once, 9 calls in all.");
+    expect(report).toContain("This is a low share (under half, the report's reading; the pre-registration sets no cutoff): an unused tool cannot help, so the result says little about the tool's effect.");
+  });
+
+  it("does not put the checks in a pilot report", () => {
+    const pilot = reportMarkdown(summary("pilot"), analyze([...arm("off", 2, 0), ...arm("on", 2, 1)]));
+    expect(pilot).not.toContain("Tool use:");
+    expect(pilot).not.toContain("Contamination (");
+  });
+});

@@ -470,6 +470,14 @@ async function runIndex(pass: Pass, item: PlannedAttempt): Promise<void> {
   const record: AttemptRecord = readAttempt(pass.runDir, item) ?? { schema_version: 1, index: item.index, arm: item.arm, seed: item.seed, status: "pending", runs: [] };
   for (const run of record.runs) {
     if (run.ended === null) {
+      // The process ended during this run, so its session was never closed: remove its container
+      // before anything else starts, or it keeps its share of the host while the rerun runs.
+      try {
+        await pass.deps.removeSession(run.session_id);
+      } catch (error) {
+        pass.halt("stale_session", `${run.attempt_key}: the interrupted run's session ${run.session_id} could not be removed: ${message(error)}`);
+        return;
+      }
       run.ended = "infrastructure_error";
       run.infrastructure = "interrupted: the process ended during this run";
     }

@@ -78,6 +78,13 @@ async function openSession(request: { id: string; work: string; serverLogs: bool
   };
 }
 
+/** Removes a session's leftover container; a container that does not exist is already removed. */
+async function removeSession(id: string): Promise<void> {
+  const removed = await createDocker().run(["rm", "--force", Session.containerName(id)], { timeoutMs: 60_000 });
+  if (removed.code === 0 || /no such container/i.test(removed.stderr)) return;
+  throw new Error(`docker rm exited ${String(removed.code)}${removed.timedOut ? " (timed out)" : ""}: ${removed.stderr.trim().slice(0, 300)}`);
+}
+
 /** Runs the controller's `run` command; its own output goes to this process's stderr. */
 function runController(args: readonly string[]): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -127,6 +134,7 @@ export async function liveDeps(options: LiveOptions, report: (line: string) => v
     fetch: (input, init) => globalThis.fetch(input, init),
     ...(apiKey === undefined ? {} : { apiKey }),
     openSession,
+    removeSession,
     deriveStates,
     resolveImage: (image) => inspectImage(createDocker(), image),
     runController,
