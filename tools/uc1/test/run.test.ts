@@ -50,6 +50,17 @@ function runs(runDir: string, dir: string): Record<string, unknown>[] {
 }
 
 describe("refusals before anything starts", () => {
+  it("removes the scratch directory the case states were exported into", async () => {
+    const w = await world();
+    const works: string[] = [];
+    const derive = w.deps.deriveStates.bind(w.deps);
+    const deps = { ...w.deps, deriveStates: (config: Parameters<typeof derive>[0], work: string) => { works.push(work); mkdirSync(join(work, "source"), { recursive: true }); return derive(config, work); } };
+    await runSessions(pilot(w), deps);
+    expect(works).toHaveLength(1);
+    expect(works.filter((work) => existsSync(work))).toEqual([]);
+    await w.close();
+  });
+
   it("refuses a counted run on the time-zone case, whose screen record fails it", async () => {
     const w = await world();
     await expect(runSessions(counted(w, { caseFile: w.pilotCase }), w.deps)).rejects.toThrow(RunRefusal);

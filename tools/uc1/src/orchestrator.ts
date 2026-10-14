@@ -12,7 +12,7 @@
 //      case fits the allowance, with the slot free for the controller to take.
 //   3. finalize: the analyzer's rows and results record, the summary, the report, the publisher's
 //      staging directory, and the root's terminal status.
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { appendFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -590,7 +590,14 @@ export async function runSessions(options: SessionsOptions, deps: Uc1Deps): Prom
 
   let run: RunRecord;
   if (existing === null) {
-    const states = await deps.deriveStates(config, mkdtempSync(join(tmpdir(), "rbw-uc1-states-")));
+    // The states come back as bytes, so the exported source tree is removed as soon as they are read.
+    const scratch = mkdtempSync(join(tmpdir(), "rbw-uc1-states-"));
+    let states;
+    try {
+      states = await deps.deriveStates(config, scratch);
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
     if (states.digest !== config.image_digest) throw new RunRefusal(`the image resolves to ${states.digest}, not the case's ${config.image_digest}`);
     if (options.mode === "run") {
       try {
