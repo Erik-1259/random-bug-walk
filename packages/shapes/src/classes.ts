@@ -180,17 +180,18 @@ function patternNames(pattern: SgNode | null): string[] {
 /**
  * Whether a value text holds the read's own `id`: `<record>.id` (or `<records>[<index>].id` for a
  * list read) when the read is bound to a `const` name, the name an `id` key of a `const`
- * destructuring binds (without a default), or the read's own `where` id value.
+ * destructuring binds (without a default), or the read's own `where` id value when that value is
+ * fixed between the read and the write `call` (see `fixedValue`).
  */
-function readIdTest(read: SgNode | undefined): (value: string) => boolean {
+function readIdTest(read: SgNode | undefined, call: SgNode | undefined): (value: string) => boolean {
   const values = new Set<string>();
   let record: RegExp | undefined;
   if (read === undefined) {
     return () => false;
   }
-  const whereId = objectEntries(fieldOf(readWhereOf(read), "value")).get("id");
-  if (whereId !== undefined) {
-    values.add(whereId);
+  const whereId = objectEntryNodes(fieldOf(readWhereOf(read), "value")).get("id");
+  if (whereId !== undefined && fixedValue(whereId, read, call)) {
+    values.add(whereId.text());
   }
   const declarator = constReadDeclarator(read);
   const name = declarator === undefined ? null : fieldOf(declarator, "name");
@@ -300,7 +301,7 @@ function survivorsPinRecord(guard: SgNode): boolean {
     return false;
   }
   const readEntries = objectEntries(fieldOf(readWhereOf(read), "value"));
-  const holdsReadId = readIdTest(read);
+  const holdsReadId = readIdTest(read, context?.call);
   const norm = (text: string | undefined): string | undefined => text?.replace(/\s+/g, " ");
   return (guard.parent()?.children() ?? [])
     .filter((child) => child.id() !== guard.id() && (kindOf(child) === "pair" || kindOf(child) === "shorthand_property_identifier"))
@@ -310,21 +311,22 @@ function survivorsPinRecord(guard: SgNode): boolean {
       if (key === "id") {
         return value !== undefined && holdsReadId(value);
       }
-      return key !== undefined && readEntries.has(key) && norm(readEntries.get(key)) === norm(value) && fixedValue(child, context?.call);
+      return key !== undefined && readEntries.has(key) && norm(readEntries.get(key)) === norm(value) && fixedValue(kindOf(child) === "pair" ? fieldOf(child, "value") : child, read, context?.call);
     });
 }
 
 const LITERAL_KINDS = new Set(["string", "number", "true", "false", "null"]);
 
 /**
- * Whether a surviving scope entry's value cannot change between the read and the write: a literal,
- * or a name bound by `const` in the write's own function, in a block that encloses the write. A
- * `let` or `var` binding, a parameter, or any other expression may be reassigned between the two,
- * so the same text need not hold the value the read used.
+ * Whether a value cannot change between the read and the write: a literal, or a name bound by
+ * `const` in a declaration that is a direct statement of the write's own function body and ends
+ * before the read, when no other declaration of that name in the function sits in a block around
+ * the read or the write. A `let` or `var` binding, a parameter, a `const` in an inner block or any
+ * other expression may hold a different value, or name a different binding, at the write than at
+ * the read, so the same text need not hold the value the read used.
  */
-function fixedValue(entry: SgNode, call: SgNode | undefined): boolean {
-  const value = kindOf(entry) === "pair" ? fieldOf(entry, "value") : entry;
-  if (value === null || call === undefined) {
+function fixedValue(value: SgNode | null | undefined, read: SgNode | undefined, call: SgNode | undefined): boolean {
+  if (value === null || value === undefined || read === undefined || call === undefined) {
     return false;
   }
   const valueKind = kindOf(value) ?? "";
@@ -334,24 +336,42 @@ function fixedValue(entry: SgNode, call: SgNode | undefined): boolean {
   if (valueKind !== "identifier" && valueKind !== "shorthand_property_identifier") {
     return false;
   }
+  const name = value.text();
   const nearestFunction = (node: SgNode): SgNode | undefined => node.ancestors().find((ancestor) => FUNCTION_KINDS.has(kindOf(ancestor) ?? ""));
   const fn = nearestFunction(call);
-  return (
-    fn?.findAll({ rule: { kind: "lexical_declaration" } }).some((declaration) => {
-      const block = declaration.parent();
-      return (
-        declaration.children()[0]?.text() === "const" &&
-        nearestFunction(declaration)?.id() === fn.id() &&
-        block !== null &&
-        block.range().start.index <= call.range().start.index &&
-        call.range().end.index <= block.range().end.index &&
-        declaration
-          .children()
-          .filter((child) => kindOf(child) === "variable_declarator")
-          .some((declarator) => patternNames(fieldOf(declarator, "name")).includes(value.text()))
-      );
-    }) ?? false
-  );
+  const body = fn === undefined ? null : fieldOf(fn, "body");
+  if (fn === undefined || body === null || kindOf(body) !== "statement_block") {
+    return false;
+  }
+  const declares = (declaration: SgNode): boolean =>
+    declaration
+      .children()
+      .filter((child) => kindOf(child) === "variable_declarator")
+      .some((declarator) => patternNames(fieldOf(declarator, "name")).includes(name));
+  const top = body
+    .children()
+    .find((statement) => kindOf(statement) === "lexical_declaration" && statement.children()[0]?.text() === "const" && declares(statement) && before(statement, read));
+  if (top === undefined) {
+    return false;
+  }
+  const encloses = (scope: SgNode, node: SgNode): boolean => scope.range().start.index <= node.range().start.index && node.range().end.index <= scope.range().end.index;
+  // Every other binding of the name in this function, with the node its scope covers.
+  const shadows = fn
+    .findAll({ rule: { any: [{ kind: "variable_declarator" }, { kind: "for_in_statement" }, { kind: "catch_clause" }, { kind: "function_declaration" }, { kind: "class_declaration" }] } })
+    .filter((node) => nearestFunction(node)?.id() === fn.id())
+    .flatMap((node): SgNode[] => {
+      switch (kindOf(node)) {
+        case "variable_declarator":
+          return node.parent()?.id() !== top.id() && patternNames(fieldOf(node, "name")).includes(name) ? [node.parent()?.parent() ?? fn] : [];
+        case "for_in_statement":
+          return patternNames(fieldOf(node, "left")).includes(name) ? [node] : [];
+        case "catch_clause":
+          return patternNames(fieldOf(node, "parameter")).includes(name) ? [node] : [];
+        default:
+          return fieldOf(node, "name")?.text() === name ? [node.parent() ?? fn] : [];
+      }
+    });
+  return !shadows.some((scope) => encloses(scope, read) || encloses(scope, call));
 }
 
 function guardedWriteSignals(guard: SgNode): Signals {
@@ -405,6 +425,18 @@ function guardedWriteSignals(guard: SgNode): Signals {
     identity_from_read: identity,
     await_between: awaitBetween,
   };
+}
+
+/** The value node of each direct entry of an object literal, by key (a shorthand entry is its own value). */
+function objectEntryNodes(object: SgNode | null | undefined): Map<string, SgNode> {
+  const entries = new Map<string, SgNode>();
+  for (const child of object?.children() ?? []) {
+    const value = kindOf(child) === "pair" ? fieldOf(child, "value") : kindOf(child) === "shorthand_property_identifier" ? child : null;
+    if (value !== null) {
+      entries.set(kindOf(child) === "pair" ? (pairKey(child) ?? "") : child.text(), value);
+    }
+  }
+  return entries;
 }
 
 function objectEntries(object: SgNode | null | undefined): Map<string, string> {

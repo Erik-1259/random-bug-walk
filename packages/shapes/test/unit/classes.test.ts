@@ -242,6 +242,89 @@ describe("find sites in one file", () => {
     ]);
   });
 
+  it("confirms the read's where id only when it is a literal or a const name", () => {
+    const text = [
+      "export async function mutable(first: string, second: string) {",
+      "  let id = first;",
+      "  await db.client.document.findFirst({ where: { id, active: true } });",
+      "  id = second;",
+      "  await db.client.document.updateMany({ where: { id, active: true }, data: { active: false } });",
+      "}",
+      "export async function parameter(id: string) {",
+      "  await db.client.document.findFirst({ where: { id } });",
+      "  await db.client.document.updateMany({ where: { id, active: true }, data: { active: false } });",
+      "}",
+      "export async function literal() {",
+      "  await db.client.document.findFirst({ where: { id: 'doc-1' } });",
+      "  await db.client.document.updateMany({ where: { id: 'doc-1', active: true }, data: { active: false } });",
+      "}",
+      "export async function constant(input: string) {",
+      "  const id = input;",
+      "  await db.client.document.findFirst({ where: { id } });",
+      "  await db.client.document.updateMany({ where: { id, active: true }, data: { active: false } });",
+      "}",
+      "",
+    ].join("\n");
+    const sites = findSitesInSource(CLASSES, "lib/activate.ts", text);
+    expect(sites.map((site) => [site.line, site.planted_form_confirmed])).toEqual([
+      [5, false],
+      [9, false],
+      [13, true],
+      [18, true],
+    ]);
+  });
+
+  it("confirms a const name only when it is declared in the function's top-level block before the read and not redeclared in a block around the write", () => {
+    const text = [
+      "export async function shadowedParameter(docId: string, tenantId: string, otherTenant: string) {",
+      "  const row = await db.client.document.findFirst({ where: { id: docId, tenantId } });",
+      "  {",
+      "    const tenantId = otherTenant;",
+      "    await db.client.document.updateMany({ where: { id: row.id, tenantId, active: true }, data: { active: false } });",
+      "  }",
+      "}",
+      "export async function shadowedConst(docId: string, scope: { tenantId: string }, otherTenant: string) {",
+      "  const { tenantId } = scope;",
+      "  const row = await db.client.document.findFirst({ where: { id: docId, tenantId } });",
+      "  if (row) {",
+      "    const tenantId = otherTenant;",
+      "    await db.client.document.updateMany({ where: { id: row.id, tenantId, active: true }, data: { active: false } });",
+      "  }",
+      "}",
+      "export async function shadowedId(input: string, other: string) {",
+      "  const id = input;",
+      "  await db.client.document.findFirst({ where: { id } });",
+      "  {",
+      "    const id = other;",
+      "    await db.client.document.updateMany({ where: { id, active: true }, data: { active: false } });",
+      "  }",
+      "}",
+      "export async function innerBlock(docId: string, scope: { tenantId: string }) {",
+      "  if (scope) {",
+      "    const { tenantId } = scope;",
+      "    const row = await db.client.document.findFirst({ where: { id: docId, tenantId } });",
+      "    await db.client.document.updateMany({ where: { id: row.id, tenantId, active: true }, data: { active: false } });",
+      "  }",
+      "}",
+      "export async function topLevel(docId: string, scope: { tenantId: string }) {",
+      "  const { tenantId } = scope;",
+      "  const row = await db.client.document.findFirst({ where: { id: docId, tenantId } });",
+      "  if (row) {",
+      "    await db.client.document.updateMany({ where: { id: row.id, tenantId, active: true }, data: { active: false } });",
+      "  }",
+      "}",
+      "",
+    ].join("\n");
+    const sites = findSitesInSource(CLASSES, "lib/activate.ts", text);
+    expect(sites.map((site) => [site.line, site.planted_form_confirmed])).toEqual([
+      [5, false],
+      [13, false],
+      [21, false],
+      [28, false],
+      [35, true],
+    ]);
+  });
+
   it("never confirms a write that sits in a function nested inside the read's, not even through the read's own id", () => {
     const text = [
       "export async function activate(docId: string, tenant: { id: string }, items: string[]) {",
@@ -282,7 +365,8 @@ describe("find sites in one file", () => {
       "  await db.client.document.updateMany({ where: { id: row.ownerId, active: false }, data: { active: true } });",
       "  await db.client.document.updateMany({ where: { id, active: false }, data: { active: true } });",
       "}",
-      "export async function pinned(docId: string) {",
+      "export async function pinned(input: string) {",
+      "  const docId = input;",
       "  const { id: readId, title = docId } = await db.client.document.findFirst({ where: { id: docId } });",
       "  await db.client.document.updateMany({ where: { id: docId, active: false }, data: { active: true } });",
       "  await db.client.document.updateMany({ where: { id: readId, active: false }, data: { active: true } });",
@@ -304,11 +388,11 @@ describe("find sites in one file", () => {
       [4, true],
       [5, false],
       [6, false],
-      [10, true],
       [11, true],
-      [12, false],
-      [16, true],
-      [20, false],
+      [12, true],
+      [13, false],
+      [17, true],
+      [21, false],
     ]);
   });
 
@@ -389,9 +473,11 @@ describe("find sites in one file", () => {
   it("does not count identity from the read when the write's identity comes from a parameter", () => {
     const site = sitesIn("lib/coupons.ts").find((found) => found.function === "applyCoupon");
     expect(site?.matched).toBe("spent: false");
+    // A parameter id never confirms the planted form, so the level is low whatever the score.
+    expect(site?.planted_form_confirmed).toBe(false);
     expect(site?.confidence).toEqual({
       score: 0.55,
-      level: "medium",
+      level: "low",
       signals: { read_before_write: true, read_checks_guard: true, write_result_used: false, identity_from_read: false, await_between: false },
     });
   });
@@ -652,7 +738,8 @@ describe("find sites in one file", () => {
       "  const result = await db.client.seat.updateMany({ where: { id, open: true }, data: { open: false } });",
       "  if (result.count === 0) throw new Error('taken');",
       "}",
-      "export async function claimAwaited(db, id) {",
+      "export async function claimAwaited(db, seatId) {",
+      "  const id = seatId;",
       "  await db.client.seat.findFirst({ where: { id, open: true } });",
       "  const result = await db.client.seat.updateMany({ where: { id, open: true }, data: { open: false } });",
       "  if (result.count === 0) throw new Error('taken');",
@@ -665,7 +752,7 @@ describe("find sites in one file", () => {
     ).toEqual([
       [3, false, false, false, "low"],
       [9, false, false, false, "low"],
-      [14, true, true, true, "high"],
+      [15, true, true, true, "high"],
     ]);
   });
 
