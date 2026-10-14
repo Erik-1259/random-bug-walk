@@ -1,7 +1,7 @@
 // The judge routes (design note section 6), with their dependencies injected so tests use a local
 // ledger, store and Sandbox SDK. The passcode session is checked first, and a refusal makes no
-// ledger, Blob or Sandbox call. The POST then follows the route steps in order: the release, an
-// existing root, the hold and the budget, the slot, the controller's reservation, and the writes,
+// ledger, Blob or Sandbox call. The POST then follows the route steps in order: the release (the
+// one the judge picked, which must be frozen in the build and on the allowlist), an existing root, the hold and the budget, the slot, the controller's reservation, and the writes,
 // the launch record and the one create. The status route reads judge/<root>/ and the ledger and
 // returns only the projection in ReplayStatus: never resource IDs, operation IDs, keys or paths.
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
@@ -9,7 +9,7 @@ import type { JudgeModule, JudgeSandboxSdk, JudgeStore, ReplayProgress } from "@
 import type { Release } from "@rbw/schema";
 import type { Spend } from "@rbw/spend";
 import type { Evidence } from "@rbw/admission";
-import type { JudgeConfig } from "../config.ts";
+import { allowedReleases, type JudgeConfig } from "../config.ts";
 import { REPLAY_STATE_TEXT, REPLAY_UNAVAILABLE_TEXT, type ReplayCell, type ReplayStatus, type UnavailableReason } from "../model.ts";
 
 export const SESSION_COOKIE = "rbw_judge_session";
@@ -20,10 +20,30 @@ const JSON_TYPE = "application/json";
 const SMALL_BYTES = 1024 * 1024;
 const EVIDENCE_BYTES = 64 * 1024 * 1024;
 
-/** What the build froze into the server bundle: release.json's text and the pinned rate sheet. */
+/**
+ * What the build froze into the server bundle: each release's release.json text and the pinned rate
+ * sheet. `release` is the earlier one-release form, still read when `releases` is absent.
+ */
 export interface FrozenJudge {
-  release: string;
+  release?: string;
+  releases?: readonly string[];
   rateSheet: string;
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/** The release.json texts the build froze. */
+function frozenReleases(frozen: FrozenJudge | null): readonly string[] {
+  if (frozen === null) return [];
+  return frozen.releases ?? (frozen.release === undefined ? [] : [frozen.release]);
+}
+
+/**
+ * Whether a request may name its release: when the build froze more than one release, or the allowlist
+ * comes from RBW_JUDGE_RELEASES. Otherwise the routes take exactly the requests they took with one release.
+ */
+export function choosesRelease(server: Pick<JudgeServer, "config" | "frozen">): boolean {
+  return frozenReleases(server.frozen).length > 1 || server.config.releaseList !== null;
 }
 
 export interface JudgeLedger {
@@ -107,16 +127,25 @@ interface Context {
   rates: ReturnType<JudgeModule["parseRateSheet"]>;
 }
 
-/** Route step 2: the frozen release is the configured one, by ID and by SHA-256. */
-async function context(server: JudgeServer): Promise<Context | null> {
-  const { frozen, config } = server;
-  if (frozen === null || config.releaseId === null || config.releaseSha256 === null) return null;
+/**
+ * Route step 2: the release to replay is frozen in the build and allowlisted, by ID and by the SHA-256
+ * of its frozen release.json. `releaseId` is the judge's pick; without one, there must be exactly one
+ * such release. Null otherwise.
+ */
+async function context(server: JudgeServer, releaseId: string | null): Promise<Context | null> {
+  const { frozen } = server;
+  const allowed = allowedReleases(server.config);
+  if (frozen === null || allowed.length === 0) return null;
+  const candidates = frozenReleases(frozen).flatMap((text) => {
+    const releaseBytes = new TextEncoder().encode(text);
+    const sha256 = createHash("sha256").update(releaseBytes).digest("hex");
+    const release = JSON.parse(text) as Release;
+    return allowed.some((item) => item.releaseId === release.release_id && item.sha256 === sha256) ? [{ release, releaseBytes }] : [];
+  });
+  const chosen = releaseId === null ? (candidates.length === 1 ? candidates[0] : undefined) : candidates.find((item) => item.release.release_id === releaseId);
   const judge = await server.judge();
-  const releaseBytes = new TextEncoder().encode(frozen.release);
-  if (createHash("sha256").update(releaseBytes).digest("hex") !== config.releaseSha256) return null;
-  const release = JSON.parse(frozen.release) as Release;
-  if (release.release_id !== config.releaseId) return null;
-  return { judge, release, releaseBytes, rates: judge.parseRateSheet(frozen.rateSheet) };
+  if (chosen === undefined) return null;
+  return { judge, ...chosen, rates: judge.parseRateSheet(frozen.rateSheet) };
 }
 
 function unavailable(requestId: string, reason: UnavailableReason): Response {
@@ -139,15 +168,21 @@ async function replays(judge: JudgeModule, store: JudgeStore): Promise<ReplayPro
   return found;
 }
 
-/** POST /api/judge { request_id }: the route steps 1 to 7. */
+/**
+ * POST /api/judge { request_id } or { request_id, release_id }: the route steps 1 to 7. A release_id
+ * is taken only when the site may name one (choosesRelease).
+ */
 export async function postJudge(request: Request, server: JudgeServer): Promise<Response> {
   if (!hasSession(request, server.config)) return unauthorized();
   const given = await body(request);
-  if (!isObject(given) || Object.keys(given).length !== 1 || typeof given.request_id !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(given.request_id)) {
-    return badRequest("The body must be exactly { request_id } with a lowercase UUID.");
+  const choosing = choosesRelease(server);
+  const fields = isObject(given) ? Object.keys(given).sort().join(",") : "";
+  const named = choosing && fields === "release_id,request_id" && isObject(given) && typeof given.release_id === "string" && UUID.test(given.release_id);
+  if (!isObject(given) || !(fields === "request_id" || named) || typeof given.request_id !== "string" || !UUID.test(given.request_id)) {
+    return badRequest(choosing ? "The body must be { request_id } or { request_id, release_id }, each a lowercase UUID." : "The body must be exactly { request_id } with a lowercase UUID.");
   }
   const requestId = given.request_id;
-  const ctx = await context(server);
+  const ctx = await context(server, named ? (given.release_id as string) : null);
   if (ctx === null) return unavailable(requestId, "release");
   const { judge, release } = ctx;
 
@@ -306,12 +341,15 @@ async function projection(server: JudgeServer, ctx: Context, spend: Spend, store
   return { ...view, state, known_condition: known, message: known ? judge.KNOWN_CONDITION_MESSAGE : REPLAY_STATE_TEXT[state], cells: cellsOf(evidence) };
 }
 
-/** GET /api/judge/status?request_id=<uuid>. */
+/** GET /api/judge/status?request_id=<uuid>[&release_id=<uuid>]; the release_id is read only when the site may name one. */
 export async function getStatus(request: Request, server: JudgeServer): Promise<Response> {
   if (!hasSession(request, server.config)) return unauthorized();
-  const requestId = new URL(request.url).searchParams.get("request_id") ?? "";
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(requestId)) return badRequest("request_id must be a lowercase UUID.");
-  const ctx = await context(server);
+  const params = new URL(request.url).searchParams;
+  const requestId = params.get("request_id") ?? "";
+  if (!UUID.test(requestId)) return badRequest("request_id must be a lowercase UUID.");
+  const releaseId = choosesRelease(server) ? params.get("release_id") : null;
+  if (releaseId !== null && !UUID.test(releaseId)) return badRequest("release_id must be a lowercase UUID.");
+  const ctx = await context(server, releaseId);
   if (ctx === null) return unavailable(requestId, "release");
   const token = await server.oidcToken().catch((error: unknown) => {
     if (error instanceof Error) return null;
