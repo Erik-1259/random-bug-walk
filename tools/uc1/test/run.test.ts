@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { readSolverRateSheet, solverEnvelope, SUPER_SOLVER_PROFILE } from "@rbw/solver";
 import { describe, expect, it } from "vitest";
-import { DRY_CLEAN, DRY_COPY_MICROUSD, DRY_DIGEST, DRY_OTHER, DRY_TARGET, defaultScript, dryRunWorld } from "../src/fakes.ts";
+import { DRY_CLEAN, DRY_COPY_MICROUSD, DRY_DIGEST, DRY_MUTATION, DRY_OTHER, DRY_TARGET, defaultScript, dryRunWorld } from "../src/fakes.ts";
 import type { DryRunOptions, DryRunWorld } from "../src/fakes.ts";
 import { RunRefusal, finalize, runGrade2, runSessions } from "../src/orchestrator.ts";
 import type { SessionsOptions } from "../src/orchestrator.ts";
@@ -82,6 +82,27 @@ describe("refusals before anything starts", () => {
     await expect(runSessions(counted(w), w.deps)).rejects.toThrow(`the screen record's target SHA-256 is ${"0".repeat(64)}, but the case's clean target hashes to ${target.sha256 as string}`);
     expect(w.sessions).toHaveLength(0);
     expect(existsSync(join(w.runsDir, "race-01"))).toBe(false);
+    await w.close();
+  });
+
+  it("refuses a counted run whose screen record's mutation does not plant the case's derived planted file", async () => {
+    const w = await world();
+    completedPilot(w);
+    const screenPath = json(w.raceCase).screen_record as string;
+    const screen = json(screenPath);
+    const target = screen.target as Record<string, unknown>;
+    // Another mutation of the same clean file: the screen's verdicts are about a different bug.
+    const other = join(dirname(screenPath), "other-mutation.patch");
+    writeFileSync(other, DRY_MUTATION.replace("+  return range(unit);", "+  return range(zone);"));
+    writeFileSync(screenPath, JSON.stringify({ ...screen, target: { ...target, mutation: `${other}: another change` } }));
+    await expect(runSessions(counted(w), w.deps)).rejects.toThrow(`the screen record's mutation (${other}) does not plant the case's planted file`);
+    writeFileSync(screenPath, JSON.stringify({ ...screen, target: { ...target, mutation: join(dirname(screenPath), "missing.patch") } }));
+    await expect(runSessions(counted(w), w.deps)).rejects.toThrow("the screen record's mutation patch cannot be read");
+    expect(w.sessions).toHaveLength(0);
+    expect(existsSync(join(w.runsDir, "race-01"))).toBe(false);
+    // The screened mutation itself is admitted.
+    writeFileSync(screenPath, JSON.stringify(screen));
+    expect((await runSessions(counted(w), w.deps)).exitCode).toBe(0);
     await w.close();
   });
 
@@ -161,7 +182,8 @@ describe("the spend guard", () => {
     expect(outcome.stop).toMatchObject({ reason: "allowance_exceeded" });
     expect(w.sessions).toHaveLength(1);
     const record = json(join(outcome.runDir, "attempts", "001-off", "attempt.json"));
-    expect(record.status).toBe("stopped");
+    // Two turns ran, so the refused attempt counts as capped and is never rerun.
+    expect(record.status).toBe("counted");
     const result = runs(outcome.runDir, "001-off")[0]?.result as { outcome: string; refusal: { code: string; detail: string } };
     expect(result.outcome).toBe("spend_refused");
     expect(result.refusal.detail).toMatch(/^uc1_allowance_exceeded/);
@@ -231,14 +253,29 @@ describe("attempts, reruns and scope", () => {
     await w.close();
   });
 
-  it("counts the session's open and initial build against the attempt's 40-minute wall cap", async () => {
+  it("counts the session's open and initial build against the 40-minute wall cap, and reruns an attempt the cap ended before its first turn as an infrastructure error", async () => {
+    const w = await world({ sessionOpenMs: (request) => (request.id.endsWith("off-001-r0") ? 41 * 60_000 : 0) });
+    const outcome = await runSessions(pilot(w), w.deps);
+    const first = runs(outcome.runDir, "001-off") as { ended: string; infrastructure: string | null; result: { cap: string; turns: number; wall_ms: number } }[];
+    // No model turn ran, so nothing the solver did is in it: an infrastructure error, rerun at the same index.
+    expect(first.map((run) => run.ended)).toEqual(["infrastructure_error", "submitted"]);
+    expect(first[0]?.infrastructure).toContain("the wall cap was reached before the solver's first turn");
+    expect(first[0]?.result).toMatchObject({ cap: "wall", turns: 0 });
+    expect(first[0]?.result.wall_ms).toBeGreaterThanOrEqual(41 * 60_000);
+    expect(json(join(outcome.runDir, "attempts", "001-off", "attempt.json")).status).toBe("counted");
+    await w.close();
+  });
+
+  it("never hands the analysis a counted zero-turn attempt: slow startups everywhere end as reported infrastructure errors", async () => {
     const w = await world({ sessionOpenMs: 41 * 60_000 });
     const outcome = await runSessions(pilot(w), w.deps);
-    const first = runs(outcome.runDir, "001-off")[0] as { ended: string; result: { cap: string; turns: number; wall_ms: number } };
-    expect(first.ended).toBe("cap_reached");
-    expect(first.result).toMatchObject({ cap: "wall", turns: 0 });
-    expect(first.result.wall_ms).toBeGreaterThanOrEqual(41 * 60_000);
     expect(w.model.bodies).toHaveLength(0);
+    for (const dir of readdirSync(join(outcome.runDir, "attempts"))) expect(json(join(outcome.runDir, "attempts", dir, "attempt.json")).status).toBe("infrastructure_error");
+    await runGrade2({ runDir: outcome.runDir }, w.deps);
+    const done = await finalize({ runDir: outcome.runDir }, w.deps);
+    expect(done.rootRun).toMatchObject({ status: "terminal", outcome: "incomplete" });
+    const rows = JSON.parse(readFileSync(join(outcome.runDir, "results", "rows.json"), "utf8")) as { status: string }[];
+    expect(rows.every((row) => row.status === "infrastructure_error")).toBe(true);
     await w.close();
   });
 
@@ -405,23 +442,49 @@ describe("attempts, reruns and scope", () => {
     await w.close();
   });
 
-  it("resumes a stopped run at the stopped index after the ledger is reconciled", async () => {
+  it("never restarts an attempt the spend guard refused mid-attempt: after reconciliation it counts as capped and unsolved", async () => {
     let tight = true;
     // Attempt 1 settles 4 turns (1 980); attempt 2's first turn fits and its second is refused.
     const w = await world({ view: (view) => (tight ? { ...view, settled_microusd: view.settled_microusd + 40_000_000n - TURN_WORST - 2_227n } : view) });
     const first = await runSessions(pilot(w), w.deps);
     expect(first.stop).toMatchObject({ reason: "allowance_exceeded" });
+    expect(json(join(first.runDir, "attempts", "002-on", "attempt.json")).status).toBe("counted");
     tight = false;
     const second = await runSessions(pilot(w), w.deps);
     expect(second.exitCode).toBe(0);
     expect(second.rootExecutionId).toBe(first.rootExecutionId);
-    const record = json(join(second.runDir, "attempts", "002-on", "attempt.json"));
-    expect(record.status).toBe("counted");
-    expect((record.runs as { ended: string }[]).map((run) => run.ended)).toEqual(["spend_refused", "submitted"]);
+    expect((runs(second.runDir, "002-on") as { ended: string }[]).map((run) => run.ended)).toEqual(["spend_refused"]);
+    expect(w.sessions.some((session) => session.request.id.endsWith("on-002-r1"))).toBe(false);
     await runGrade2({ runDir: second.runDir }, w.deps);
     await finalize({ runDir: second.runDir }, w.deps);
-    const rows = JSON.parse(readFileSync(join(second.runDir, "results", "rows.json"), "utf8")) as { index: number; reruns: number }[];
-    expect(rows.find((row) => row.index === 2)?.reruns).toBe(0);
+    const rows = JSON.parse(readFileSync(join(second.runDir, "results", "rows.json"), "utf8")) as { index: number; status: string; reruns: number; turns: number; tokens: number; grade2: string | null }[];
+    // Its one turn and its tokens stay in the outcomes; it submitted nothing, so it is unsolved.
+    expect(rows.find((row) => row.index === 2)).toMatchObject({ status: "counted", reruns: 0, turns: 1, tokens: 1_350, grade2: "fail" });
+    await w.close();
+  });
+
+  it("refuses to resume after a spend refusal until the ledger shows no open or uncertain operation", async () => {
+    let view: "tight" | "open" | "uncertain" | "clean" = "tight";
+    const w = await world({
+      view: (real) => {
+        if (view === "tight") return { ...real, settled_microusd: real.settled_microusd + 40_000_000n - TURN_WORST - 2_227n };
+        if (view === "open") return { ...real, open_microusd: real.open_microusd + 1n };
+        if (view === "uncertain") return { ...real, uncertain: ["a".repeat(64)] };
+        return real;
+      },
+    });
+    const first = await runSessions(pilot(w), w.deps);
+    expect(first.stop).toMatchObject({ reason: "allowance_exceeded" });
+    const sessions = w.sessions.length;
+    const bodies = w.model.bodies.length;
+    view = "open";
+    expect((await runSessions(pilot(w), w.deps)).stop).toMatchObject({ reason: "ledger_unreconciled" });
+    view = "uncertain";
+    expect((await runSessions(pilot(w), w.deps)).stop).toMatchObject({ reason: "ledger_unreconciled" });
+    expect(w.sessions).toHaveLength(sessions);
+    expect(w.model.bodies).toHaveLength(bodies);
+    view = "clean";
+    expect((await runSessions(pilot(w), w.deps)).exitCode).toBe(0);
     await w.close();
   });
 
@@ -522,13 +585,20 @@ describe("resumes, reruns and exit codes", () => {
     await w.close();
   });
 
-  it("restarts an index stopped by a spend refusal only when a whole attempt's worst case fits", async () => {
-    let room = TURN_WORST + 2_227n;
-    // Attempt 1 settles 4 turns (1 980); attempt 2's first turn fits and its second is refused.
-    const w = await world({ view: (view) => ({ ...view, settled_microusd: view.settled_microusd + 40_000_000n - room }) });
+  it("restarts an index the spend guard refused before its first model turn only when a whole attempt's worst case fits", async () => {
+    let room: bigint | null = null;
+    const w = await world({
+      // Other work takes the room while attempt 2's session opens: its first turn is refused, so no model call ran.
+      sessionFault: (request) => {
+        if (request.id.endsWith("on-002-r0")) room = TURN_WORST - 1n;
+        return null;
+      },
+      view: (view) => (room === null ? view : { ...view, settled_microusd: view.settled_microusd + 40_000_000n - room }),
+    });
     const first = await runSessions(pilot(w), w.deps);
     expect(first.stop).toMatchObject({ reason: "allowance_exceeded" });
-    expect(runs(first.runDir, "002-on").map((run) => run.ended)).toEqual(["spend_refused"]);
+    expect((runs(first.runDir, "002-on") as { ended: string; result: { turns: number } }[]).map((run) => [run.ended, run.result.turns])).toEqual([["spend_refused", 0]]);
+    expect(json(join(first.runDir, "attempts", "002-on", "attempt.json")).status).toBe("stopped");
     const sessions = w.sessions.length;
     // Reconciliation frees room for more than one turn but less than a whole attempt.
     room = ATTEMPT_WORST - 1n;
@@ -538,7 +608,7 @@ describe("resumes, reruns and exit codes", () => {
     expect(w.sessions).toHaveLength(sessions);
     room = 40_000_000n;
     expect((await runSessions(pilot(w), w.deps)).exitCode).toBe(0);
-    expect(runs(second.runDir, "002-on").map((run) => run.ended)).toEqual(["spend_refused", "submitted"]);
+    expect((runs(second.runDir, "002-on") as { ended: string }[]).map((run) => run.ended)).toEqual(["spend_refused", "submitted"]);
     await w.close();
   });
 

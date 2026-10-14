@@ -3,7 +3,7 @@
 // are resolved against the current directory, as the other tools resolve theirs.
 import { lstatSync, readFileSync, readdirSync, readlinkSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { DEFAULT_FAMILY, FAMILY_IDS } from "@rbw/local-runner";
+import { CodeStateRefusal, DEFAULT_FAMILY, FAMILY_IDS, applyPatchChecked } from "@rbw/local-runner";
 import type { FamilyId } from "@rbw/local-runner";
 import { sha256Hex } from "@rbw/schema";
 import { PILOT_CASE_ID } from "./plan.ts";
@@ -144,8 +144,12 @@ export interface ScreenStatus {
   /** The record has every pre-registered field, well formed, and both verdicts are `pass`. */
   eligible: boolean;
   detail: string;
-  /** The screened target file (`target.path`) and its clean SHA-256 (`target.sha256`); null unless the record is well formed. */
-  target: { path: string; sha256: string } | null;
+  /**
+   * The screened target file (`target.path`), its clean SHA-256 (`target.sha256`) and the mutation
+   * reference (`target.mutation`: the patch file's path, optionally followed by `: ` and a note);
+   * null unless the record is well formed.
+   */
+  target: { path: string; sha256: string; mutation: string } | null;
 }
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -208,20 +212,35 @@ export function screenStatus(bytes: Uint8Array): ScreenStatus {
   const headroom = (data.static_headroom as Record<string, unknown>).verdict as string;
   const leak = (data.leak_screen as Record<string, unknown>).verdict as string;
   const recorded = data.target as Record<string, unknown>;
-  const target = { path: recorded.path as string, sha256: recorded.sha256 as string };
+  const target = { path: recorded.path as string, sha256: recorded.sha256 as string, mutation: recorded.mutation as string };
   if (headroom === "pass" && leak === "pass") return { case_id: caseId, eligible: true, detail: "static headroom pass, leak screen pass", target };
   return { case_id: caseId, eligible: false, detail: `static headroom ${headroom}, leak screen ${leak}`, target };
 }
 
 /**
- * A counted run's screen must be of the target the case derives: the screened file's path and the
+ * A counted run's screen must be of the bug the case derives: the screened file's path and the
  * SHA-256 of its clean bytes (upstream at the host commit, before the mutation) must equal the case's
- * derived target path and clean state, so a run never admits a projection that was not screened.
+ * derived target path and clean state, and the mutation the screen references must turn those clean
+ * bytes into the case's planted file exactly, so a run never admits a bug that was not screened.
  */
-export function checkScreenTarget(screen: ScreenStatus, targetPath: string, cleanSha256: string): void {
+export function checkScreenTarget(screen: ScreenStatus, states: { target_path: string; clean: Uint8Array; planted: Uint8Array }): void {
   if (screen.target === null) throw new CaseError("the screen record names no target");
-  if (screen.target.path !== targetPath) throw new CaseError(`the screen record's target path is ${screen.target.path}, but the case's target is ${targetPath}`);
+  const cleanSha256 = sha256Hex(states.clean);
+  if (screen.target.path !== states.target_path) throw new CaseError(`the screen record's target path is ${screen.target.path}, but the case's target is ${states.target_path}`);
   if (screen.target.sha256 !== cleanSha256) throw new CaseError(`the screen record's target SHA-256 is ${screen.target.sha256}, but the case's clean target hashes to ${cleanSha256}`);
+  const patchPath = screen.target.mutation.split(": ")[0]?.trim() ?? "";
+  let patch: string;
+  try {
+    patch = readFileSync(resolve(patchPath), "utf8");
+  } catch {
+    throw new CaseError(`the screen record's mutation patch cannot be read: ${patchPath}`);
+  }
+  try {
+    applyPatchChecked(states.clean, patch, { target: states.target_path, base_sha256: cleanSha256, result_sha256: sha256Hex(states.planted) });
+  } catch (error) {
+    if (error instanceof CodeStateRefusal) throw new CaseError(`the screen record's mutation (${patchPath}) does not plant the case's planted file: ${error.message}`);
+    throw error;
+  }
 }
 
 /**

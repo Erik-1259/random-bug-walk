@@ -87,7 +87,7 @@ One JSON object; every field is required, unknown fields are refused, and paths 
 - `reference_fix` is the case's committed alternative fix. The session and the code states read it, and the clean-equal route passes it to the controller.
 - `family` is `time-zone` or `race`. The session, the code states and both grades use that family's fixture, kit stage and probe checks; a race case's grades pass the controller `--family race`.
 - `probes_dir` null uses the shapes package's probes, which are the time-zone case's. A race case names its probe directory; the session, the code states and both grades (the controller's `--probes-dir`) use it.
-- A counted run takes a race case's file (`family` `race`) with that case's screen record. The record must be in the pre-registered format, every field present and well formed: `schema_version` 1, `case_id`, `recorded` (YYYY-MM-DD), `recorded_by`, `target` (`upstream`, `host_commit`, `path`, `sha256` as 64 hex, `mutation`), `static_headroom` (`verdict`, a non-empty `judgment` and at least one entry in `reasons`), `leak_screen` (`verdict` and non-empty `issue_text`, `observe_and_writer_evidence`, `http_responses` and `server_logs`) and `uc1_use`; both verdicts must be `pass`.
+- A counted run takes a race case's file (`family` `race`) with that case's screen record. The record must be in the pre-registered format, every field present and well formed: `schema_version` 1, `case_id`, `recorded` (YYYY-MM-DD), `recorded_by`, `target` (`upstream`, `host_commit`, `path`, `sha256` as 64 hex, `mutation`: the mutation patch's path, optionally followed by `: ` and a note), `static_headroom` (`verdict`, a non-empty `judgment` and at least one entry in `reasons`), `leak_screen` (`verdict` and non-empty `issue_text`, `observe_and_writer_evidence`, `http_responses` and `server_logs`) and `uc1_use`; both verdicts must be `pass`. The screened target must be the case's bug: `path` and `sha256` must equal the derived target path and its clean bytes' hash, and the patch `mutation` names must turn those clean bytes into the case's derived planted file exactly, so a probe set with a different mutation of the same file is refused.
 
 The policy file is a canonical `ProjectPolicy` with purpose `public_demo`, as the publisher's `policy` command writes it (`node packages/publisher/src/cli.ts policy ...`).
 
@@ -113,7 +113,7 @@ The pre-registration's rule: no model call, regrade or rerun starts unless its w
 - **Attempts.** Before an attempt starts, one turn's worst case must fit. Before an infrastructure rerun starts, a whole attempt's worst case at its caps must fit.
 - **Regrades.** A grade 2 job starts only when one Sandbox copy's worst case fits; it counts as open until the job ends.
 - **Concurrency.** The check and the reservation run under one lock in the process, so 3 sessions at once cannot carry the run past the cap.
-- **Stops.** An allowance that does not fit, an uncertain operation under the roots, or a halted ledger stops the run: nothing billable starts again in that process, running attempts are refused at their next turn, no new attempt starts, and the stop goes to `stops.jsonl`. After the ledger is reconciled, the same command resumes.
+- **Stops.** An allowance that does not fit, an uncertain operation under the roots, or a halted ledger stops the run: nothing billable starts again in that process, running attempts are refused at their next turn, no new attempt starts, and the stop goes to `stops.jsonl`. After the ledger is reconciled, the same command resumes. After a spend refusal, the pre-registration's spend stop applies ("the run stops and the ledger is reconciled before anything else happens"): the resume stops with `ledger_unreconciled` while the ledger shows any open, uncertain or halted operation under the UC1 roots.
 
 The development pool's own cap still applies underneath; it does not enforce the UC1 cap.
 
@@ -158,13 +158,15 @@ The Super pilot and the counted run together can reach about $42.81 at their cap
 
 One row per index whose status is final:
 
-- **Counted** (submit or a cap): tokens are input plus output over every call, turns are model calls, the cap and history elisions as the solver recorded them.
+- **Counted** (submit, a cap, or a spend refusal after at least one model turn): tokens are input plus output over every call, turns are model calls, the cap and history elisions as the solver recorded them.
 - **Out of scope** (a tracked file besides the target changed): `out_of_scope`, no grades, unsolved. `prohibited_edits` counts the changed files besides the target.
 - **No gradeable change** (the target unchanged, or not a single-file patch): `fail` in both grades, unsolved.
 - **Graded:** grade 1 is `pass`, `fail`, or null when it never reached a verdict. Grade 2 is `pass` only when it passed; an invalid or (after its retries) infrastructure grade is `fail`, as the pre-registration counts it unsolved. A controller job that ended without a summary (any exit without a verdict, for example after an interruption) is an `infrastructure` grade and is retried within the retry limit, never a missing, unsolved grade.
 - **Infrastructure error** (every allowed rerun failed): `infrastructure_error`, no grades; `reruns` counts the infrastructure reruns before the reported run.
 
-A run that stopped on spend at an index is not an infrastructure rerun; the next pass reruns that index from scratch.
+A spend refusal after at least one model turn counts the attempt as capped: the pre-registration counts an attempt that hits a cap "with its capped token and turn values recorded as they are and its solve status from its grade (unsolved if it submitted nothing)", and "no other reason permits a rerun" than an infrastructure error. It is never restarted, so its turns and tokens stay in the outcomes. A refusal before the first model turn ran no model call; the next pass restarts that index from scratch (not an infrastructure rerun), once a whole attempt's worst case fits.
+
+A cap used up before the solver's first turn (the session's open and cold build took the whole 40-minute wall cap) is an infrastructure error, rerun at the same index within the rerun limit: such an attempt has zero turns and zero tokens, so the analysis never receives a counted attempt without a positive token count.
 
 ## Refusals and stops
 

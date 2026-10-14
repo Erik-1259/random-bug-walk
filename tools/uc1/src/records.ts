@@ -93,9 +93,11 @@ export interface AttemptRun {
 }
 
 /**
- * `counted`: the final run reached submit or a cap. `infrastructure_error`: every allowed rerun
- * failed on infrastructure. `stopped`: the run stopped (spend, a refusal or a failed close) during this index; the
- * next pass runs it again. `pending`: not run yet, or an infrastructure rerun is due.
+ * `counted`: the final run reached submit or a cap, or the spend guard refused one of its model
+ * calls after at least one turn ran (the run's spend cap, counted as a cap: never rerun).
+ * `infrastructure_error`: every allowed rerun failed on infrastructure. `stopped`: the run stopped
+ * (a spend refusal before any model turn, a session refusal or a failed close) during this index;
+ * the next pass runs it again. `pending`: not run yet, or an infrastructure rerun is due.
  */
 export type AttemptStatus = "counted" | "infrastructure_error" | "stopped" | "pending";
 
@@ -207,11 +209,21 @@ export function isInfrastructure(run: AttemptRun): boolean {
   return run.ended === "infrastructure_error" || run.ended === null;
 }
 
+/**
+ * Whether a run ended as a counted attempt: submit, a cap, or a spend refusal after at least one
+ * model turn. The pre-registration counts an attempt that hits a cap with its token and turn values
+ * as they are, unsolved if it submitted nothing, and permits a rerun only for an infrastructure
+ * error; a refusal before the first turn ran no model call, so a restart drops nothing.
+ */
+export function isCountedEnd(run: AttemptRun): boolean {
+  return run.ended === "submitted" || run.ended === "cap_reached" || (run.ended === "spend_refused" && (run.result?.turns ?? 0) > 0);
+}
+
 /** The record's status from its runs (see AttemptStatus). */
 export function attemptStatus(runs: readonly AttemptRun[]): AttemptStatus {
   const last = runs.at(-1);
   if (last === undefined) return "pending";
-  if (last.ended === "submitted" || last.ended === "cap_reached") return "counted";
+  if (isCountedEnd(last)) return "counted";
   if (last.ended === "spend_refused" || last.ended === "refused" || last.ended === "close_failed") return "stopped";
   return runs.filter(isInfrastructure).length > MAX_INFRASTRUCTURE_RERUNS ? "infrastructure_error" : "pending";
 }

@@ -25,6 +25,8 @@ export const DRY_TARGET = "src/synthetic/getStats.ts";
 export const DRY_CLEAN = ["export function stats(unit, zone) {", "  const start = 0;", "  const end = 1;", "  return range(unit, zone);", "}", ""].join("\n");
 export const DRY_PLANTED = DRY_CLEAN.replace("range(unit, zone)", "range(unit)");
 export const DRY_ALTERNATIVE = DRY_CLEAN.replace("range(unit, zone)", "range(unit, zone || 'UTC')");
+/** The mutation patch the race case's screen record references: clean to planted. */
+export const DRY_MUTATION = [`--- a/${DRY_TARGET}`, `+++ b/${DRY_TARGET}`, "@@ -1,5 +1,5 @@", " export function stats(unit, zone) {", "   const start = 0;", "   const end = 1;", "-  return range(unit, zone);", "+  return range(unit);", " }", ""].join("\n");
 export const DRY_OTHER = "src/synthetic/other.ts";
 export const DRY_DIGEST = `sha256:${"d1".repeat(32)}`;
 export const DRY_ISSUE = "Synthetic report: the daily chart counts visits on the wrong day for some time zones.";
@@ -346,8 +348,8 @@ export interface DryRunOptions {
   /** Changes what the ledger shows (for example spend already settled under the roots). */
   view?: (real: LedgerView) => LedgerView;
   sessionDelayMs?: number;
-  /** How far the clock moves while a session opens (its cold build and app start). */
-  sessionOpenMs?: number;
+  /** How far the clock moves while a session opens (its cold build and app start), for every session or per session. */
+  sessionOpenMs?: number | ((request: SessionRequest) => number);
   /** What the case's image tag resolves to now; the case's digest by default. */
   imageDigest?: () => string;
 }
@@ -398,6 +400,7 @@ export async function dryRunWorld(options: DryRunOptions): Promise<DryRunWorld> 
   for (const name of ["manifest.json", "terms.txt", "original-suite.json"]) writeFileSync(join(inputs, name), "synthetic\n");
   mkdirSync(join(inputs, "stage"), { recursive: true });
   mkdirSync(join(inputs, "reference-fix"), { recursive: true });
+  writeFileSync(join(inputs, "mutation.patch"), DRY_MUTATION);
   const base = {
     issue: join(inputs, "issue.txt"),
     image: "rbw-umami-kit:synthetic",
@@ -416,7 +419,7 @@ export async function dryRunWorld(options: DryRunOptions): Promise<DryRunWorld> 
     case_id: "umami-race-synthetic-001",
     recorded: "2026-10-13",
     recorded_by: "synthetic",
-    target: { upstream: "synthetic", host_commit: "synthetic", path: DRY_TARGET, sha256: sha256Hex(Buffer.from(DRY_CLEAN)), mutation: "synthetic" },
+    target: { upstream: "synthetic", host_commit: "synthetic", path: DRY_TARGET, sha256: sha256Hex(Buffer.from(DRY_CLEAN)), mutation: `${join(inputs, "mutation.patch")}: synthetic, the return drops the zone` },
     static_headroom: { verdict: "pass", judgment: "synthetic", reasons: ["synthetic"] },
     leak_screen: { verdict: "pass", issue_text: "synthetic", observe_and_writer_evidence: "synthetic", http_responses: "synthetic", server_logs: "synthetic" },
     uc1_use: "synthetic",
@@ -446,7 +449,7 @@ export async function dryRunWorld(options: DryRunOptions): Promise<DryRunWorld> 
     fetch: model.fetch,
     openSession: (request) => {
       opened += 1;
-      clock += options.sessionOpenMs ?? 0;
+      clock += typeof options.sessionOpenMs === "function" ? options.sessionOpenMs(request) : (options.sessionOpenMs ?? 0);
       const fault = options.sessionFault?.(request, opened) ?? null;
       if (fault === "refused") return Promise.reject(new SessionRefused("audit_not_passed: synthetic refusal"));
       if (fault === "error") return Promise.reject(new Error("container_start_failed: synthetic"));

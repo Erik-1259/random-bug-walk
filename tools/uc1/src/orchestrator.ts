@@ -7,7 +7,9 @@
 //      attempts in index order (up to 3 at once): a fresh session on the pinned kit image, the
 //      solver loop with the arm's tools, the diff, then grade 1 on local Docker. Every model call
 //      passes the spend guard first. Infrastructure errors are rerun at the same index, up to 2
-//      times; a stop (spend, ledger or a session refusal) ends the pass, and the next pass resumes.
+//      times; a stop (spend, ledger or a session refusal) ends the pass, and the next pass resumes
+//      (after a spend refusal, only once the ledger is reconciled). An attempt the spend guard
+//      refused after a model turn counts as capped and is never rerun.
 //   2. grade2: the protected regrade on Vercel Sandbox, serially, each job only when its worst
 //      case fits the allowance, with the slot free for the controller to take.
 //   3. finalize: the analyzer's rows and results record, the summary, the report, the publisher's
@@ -37,6 +39,7 @@ import {
   attemptDirName,
   attemptRow,
   attemptStatus,
+  isCountedEnd,
   isGraded,
   listRuns,
   needsGrade,
@@ -108,7 +111,7 @@ function loadPolicy(path: string): { bytes: Buffer; sha256: string; projectId: s
 function frozenModel(runsDir: string): { model: SolverModelName; name: string } | null {
   for (const { dir, run } of listRuns(runsDir)) {
     if (run.mode !== "run") continue;
-    if (readAttempts(dir, run).some((record) => record.runs.some((entry) => entry.ended === "submitted" || entry.ended === "cap_reached"))) return { model: run.model, name: run.name };
+    if (readAttempts(dir, run).some((record) => record.runs.some(isCountedEnd))) return { model: run.model, name: run.name };
   }
   return null;
 }
@@ -414,13 +417,20 @@ async function runOnce(pass: Pass, item: PlannedAttempt, record: AttemptRecord, 
       run.result = result;
       run.ended = result.outcome;
       if (result.outcome === "infrastructure_error") run.infrastructure = result.infrastructure?.reason ?? "infrastructure_error";
+      if (result.outcome === "cap_reached" && result.turns === 0) {
+        // A cap used up before the solver's first turn (a slow session open or cold build against the
+        // wall cap) leaves nothing the solver did: an infrastructure error, rerun at the same index,
+        // never a counted attempt with zero turns and zero tokens.
+        run.ended = "infrastructure_error";
+        run.infrastructure = `cap_before_first_turn: the ${result.cap ?? "attempt"} cap was reached before the solver's first turn`;
+      }
       if (result.outcome === "spend_refused") {
         const stop = pass.allowance.stop;
         pass.halt(stop?.reason ?? "ledger_refused", stop?.detail ?? `${result.refusal?.code ?? "refused"}: ${result.refusal?.detail ?? ""}`);
       }
-      if (result.outcome === "submitted" || result.outcome === "cap_reached") {
+      if (run.ended === "submitted" || run.ended === "cap_reached") {
         try {
-          const ended = await session.end(result.outcome === "submitted" ? "submit" : "cap");
+          const ended = await session.end(run.ended === "submitted" ? "submit" : "cap");
           run.submission = ended.submission;
           // Kept beside the record before the run is saved as counted, so a stop before grade 1 finishes can grade these bytes on resume.
           if (ended.target !== null) writeAtomic(join(dir, TARGET_FILE), ended.target);
@@ -499,7 +509,7 @@ async function runIndex(pass: Pass, item: PlannedAttempt): Promise<void> {
     if (record.status === "infrastructure_error") return;
     if (pass.stop !== null) return;
     // Any restart of an index that already has a run (an infrastructure rerun, or a restart after a
-    // spend refusal) is a whole new attempt, so its own worst case must fit before it starts, and it
+    // spend refusal before the first model turn) is a whole new attempt, so its own worst case must fit before it starts, and it
     // stays held until its session ends, so a restart starting meanwhile cannot count on the same room.
     // Only a never-started index starts on one turn's worst case.
     const hold = record.runs.length > 0 ? `rerun-${attemptKey({ arm: item.arm, index: item.index, rerun: record.runs.length })}` : null;
@@ -546,6 +556,21 @@ async function removeLeftoverSessions(pass: Pass): Promise<void> {
       record.status = attemptStatus(record.runs);
       writeAttempt(pass.runDir, record);
     }
+  }
+}
+
+/**
+ * The pre-registration's spend stop: after a spend refusal "the run stops and the ledger is
+ * reconciled before anything else happens". A resume of a run with a spend-refused attempt goes on
+ * only when the ledger shows no open, uncertain or halted operation under the UC1 roots.
+ */
+async function refuseUnreconciledAfterSpendStop(pass: Pass, runsDir: string): Promise<void> {
+  if (pass.stop !== null) return;
+  const refused = readAttempts(pass.runDir, pass.run).some((record) => record.runs.some((run) => run.ended === "spend_refused"));
+  if (!refused) return;
+  const view = await pass.deps.allowanceSource.view(uc1Roots(runsDir));
+  if (view.halted || view.uncertain.length > 0 || view.open_microusd > 0n) {
+    pass.halt("ledger_unreconciled", `a spend refusal stopped this run; reconcile the ledger before resuming (open ${view.open_microusd.toString()} micro-USD, uncertain ${String(view.uncertain.length)}, halted ${String(view.halted)})`);
   }
 }
 
@@ -618,7 +643,7 @@ export async function runSessions(options: SessionsOptions, deps: Uc1Deps): Prom
     if (states.digest !== config.image_digest) throw new RunRefusal(`the image resolves to ${states.digest}, not the case's ${config.image_digest}`);
     if (options.mode === "run") {
       try {
-        checkScreenTarget(screen, states.target_path, sha256Hex(states.clean));
+        checkScreenTarget(screen, states);
       } catch (error) {
         if (error instanceof CaseError) throw new RunRefusal(error.message);
         throw error;
@@ -692,6 +717,7 @@ export async function runSessions(options: SessionsOptions, deps: Uc1Deps): Prom
   };
 
   await removeLeftoverSessions(pass);
+  await refuseUnreconciledAfterSpendStop(pass, options.runsDir);
 
   // The slot is taken before any grade job, the pilot's seeded round trips included: a slot another
   // root holds stops the pass before any job runs, so no grade retry is spent on the contention and
