@@ -8,7 +8,7 @@
 //   stops.jsonl                                                  every stop, with its reason
 //   results/{rows.json,analysis.json,summary.json}               the analyzer's input and output
 //   staging/                                                     the publisher's staging layout
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, truncateSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { AttemptOutcome, AttemptResult, AttemptRow, Arm, Grade, SolverModelName, ToolName } from "@rbw/solver";
 import { TOOL_NAMES } from "@rbw/solver";
@@ -203,13 +203,39 @@ export function writeSeeded(runDir: string, record: SeededRecord): void {
   writeJson(join(runDir, "seeded", record.label, "seeded.json"), record);
 }
 
+/**
+ * Reads every stop. A final line without its newline is an interrupted append, so it is ignored
+ * when it does not parse; any complete line that does not parse is an error.
+ */
 export function readStops(runDir: string): StopRecord[] {
   const path = join(runDir, "stops.jsonl");
   if (!existsSync(path)) return [];
-  return readFileSync(path, "utf8")
-    .split("\n")
-    .filter((line) => line !== "")
-    .map((line) => JSON.parse(line) as StopRecord);
+  const lines = readFileSync(path, "utf8").split("\n");
+  const tail = lines.pop() ?? "";
+  const stops = lines.filter((line) => line !== "").map((line) => JSON.parse(line) as StopRecord);
+  if (tail !== "") {
+    try {
+      stops.push(JSON.parse(tail) as StopRecord);
+    } catch {
+      // An interrupted append: the record was never complete.
+    }
+  }
+  return stops;
+}
+
+/**
+ * Appends one stop as a single write of a complete line. An interrupted earlier append (a final
+ * fragment without its newline) is dropped first, so it cannot join the new record's line.
+ */
+export function appendStop(runDir: string, stop: StopRecord): void {
+  const path = join(runDir, "stops.jsonl");
+  if (existsSync(path)) {
+    const bytes = readFileSync(path);
+    if (bytes.length > 0 && bytes[bytes.length - 1] !== 0x0a) {
+      truncateSync(path, bytes.lastIndexOf(0x0a) + 1);
+    }
+  }
+  appendFileSync(path, `${JSON.stringify(stop)}\n`);
 }
 
 export function isInfrastructure(run: AttemptRun): boolean {

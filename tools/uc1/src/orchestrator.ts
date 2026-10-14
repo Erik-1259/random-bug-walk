@@ -36,6 +36,7 @@ import { DECLARED_STAGES, DEVELOPMENT_POOL, DEVELOPMENT_SLOT, MAX_CONCURRENCY, M
 import type { PlannedAttempt, RunMode } from "./plan.ts";
 import {
   PendingGrade,
+  appendStop,
   attemptDirName,
   attemptRow,
   attemptStatus,
@@ -604,10 +605,6 @@ async function refuseUnreconciledAfterSpendStop(pass: Pass, runsDir: string): Pr
 /** Every UC1 root under the runs directory, read when the allowance asks, so a new root counts at once. */
 function uc1Roots(runsDir: string): string[] {
   return listRuns(runsDir).map(({ run }) => run.root_execution_id);
-}
-
-function appendStop(runDir: string, stop: StopRecord): void {
-  appendFileSync(join(runDir, "stops.jsonl"), `${JSON.stringify(stop)}\n`);
 }
 
 /** Step 1: the pilot or the counted run's attempts, with grade 1. */
