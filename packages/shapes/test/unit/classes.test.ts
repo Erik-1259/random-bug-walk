@@ -182,7 +182,8 @@ describe("find sites in one file", () => {
 
   it("confirms the planted form when the only other surviving key is one the read filters on", () => {
     const text = [
-      "export async function publish(documentId: string, ownerId: string) {",
+      "export async function publish(documentId: string, owner: { id: string }) {",
+      "  const ownerId = owner.id;",
       "  const row = await db.client.document.findFirst({ where: { id: documentId, ownerId } });",
       "  await db.client.document.update({ where: { id: row.id, ownerId, version: row.version }, data: { active: true } });",
       "}",
@@ -194,7 +195,8 @@ describe("find sites in one file", () => {
 
   it("leaves the planted form unconfirmed when a surviving scope key holds a different value than the read's", () => {
     const text = [
-      "export async function publish(documentId: string, readTenant: string, writeTenant: string) {",
+      "export async function publish(documentId: string, tenants: string[]) {",
+      "  const [readTenant, writeTenant] = tenants;",
       "  const row = await db.client.document.findFirst({ where: { id: documentId, tenantId: readTenant } });",
       "  await db.client.document.update({ where: { id: row.id, tenantId: writeTenant, version: row.version }, data: { active: true } });",
       "  await db.client.document.update({ where: { id: row.id, tenantId: readTenant, version: row.version }, data: { active: true } });",
@@ -203,14 +205,47 @@ describe("find sites in one file", () => {
     ].join("\n");
     const sites = findSitesInSource(CLASSES, "lib/publish.ts", text);
     expect(sites.map((site) => [site.line, site.planted_form_confirmed])).toEqual([
-      [3, false],
-      [4, true],
+      [4, false],
+      [5, true],
+    ]);
+  });
+
+  it("confirms a surviving scope key only when its value is a literal or a const name of the enclosing function", () => {
+    const text = [
+      "export async function reassigned(docId: string, first: string, second: string) {",
+      "  let tenantId = first;",
+      "  const row = await db.client.document.findFirst({ where: { id: docId, tenantId } });",
+      "  tenantId = second;",
+      "  await db.client.document.updateMany({ where: { id: row.id, tenantId, active: true }, data: { active: false } });",
+      "}",
+      "export async function parameter(docId: string, tenantId: string) {",
+      "  const row = await db.client.document.findFirst({ where: { id: docId, tenantId } });",
+      "  await db.client.document.updateMany({ where: { id: row.id, tenantId, active: true }, data: { active: false } });",
+      "}",
+      "export async function member(docId: string, scope: { tenantId: string }) {",
+      "  const row = await db.client.document.findFirst({ where: { id: docId, tenantId: scope.tenantId } });",
+      "  await db.client.document.updateMany({ where: { id: row.id, tenantId: scope.tenantId, active: true }, data: { active: false } });",
+      "}",
+      "export async function constant(docId: string, scope: { tenantId: string }) {",
+      "  const { tenantId } = scope;",
+      "  const row = await db.client.document.findFirst({ where: { id: docId, tenantId, orgId: 'acme' } });",
+      "  await db.client.document.updateMany({ where: { id: row.id, tenantId, orgId: 'acme', active: true }, data: { active: false } });",
+      "}",
+      "",
+    ].join("\n");
+    const sites = findSitesInSource(CLASSES, "lib/activate.ts", text);
+    expect(sites.map((site) => [site.line, site.planted_form_confirmed])).toEqual([
+      [5, false],
+      [9, false],
+      [13, false],
+      [18, true],
     ]);
   });
 
   it("never confirms a write that sits in a function nested inside the read's, not even through the read's own id", () => {
     const text = [
-      "export async function activate(docId: string, tenantId: string, items: string[]) {",
+      "export async function activate(docId: string, tenant: { id: string }, items: string[]) {",
+      "  const tenantId = tenant.id;",
       "  const row = await db.client.document.findFirst({ where: { id: docId, tenantId } });",
       "  await Promise.all(items.map(async (tenantId) => db.client.document.updateMany({ where: { id: row.id, tenantId, active: true }, data: { active: false } })));",
       "  await Promise.all(items.map(async () => db.client.document.updateMany({ where: { id: row.id, active: true }, data: { active: false } })));",
@@ -220,9 +255,9 @@ describe("find sites in one file", () => {
     ].join("\n");
     const sites = findSitesInSource(CLASSES, "lib/activate.ts", text);
     expect(sites.map((site) => [site.line, site.planted_form_confirmed])).toEqual([
-      [3, false],
       [4, false],
-      [5, true],
+      [5, false],
+      [6, true],
     ]);
   });
 

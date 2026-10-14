@@ -284,7 +284,8 @@ function readWhereOf(read: SgNode | undefined): SgNode | undefined {
 /**
  * Whether every entry the rewrite leaves in the guard's `where` pins the record the code read: an
  * `id` entry whose value is the read's own id (see `readIdTest`), or a direct entry of the read's
- * own `where` with the same key and the same value text. Any other entry, including an `id` from
+ * own `where` with the same key and the same value text, when that value is fixed (see
+ * `fixedValue`). Any other entry, including an `id` from
  * elsewhere or a read key with a different value, may write another record or keep the write
  * conditional, so the planted form is then not confirmed. When the write sits in a function nested
  * inside the read's, the same text may name a different binding there (a callback parameter can
@@ -309,8 +310,48 @@ function survivorsPinRecord(guard: SgNode): boolean {
       if (key === "id") {
         return value !== undefined && holdsReadId(value);
       }
-      return key !== undefined && readEntries.has(key) && norm(readEntries.get(key)) === norm(value);
+      return key !== undefined && readEntries.has(key) && norm(readEntries.get(key)) === norm(value) && fixedValue(child, context?.call);
     });
+}
+
+const LITERAL_KINDS = new Set(["string", "number", "true", "false", "null"]);
+
+/**
+ * Whether a surviving scope entry's value cannot change between the read and the write: a literal,
+ * or a name bound by `const` in the write's own function, in a block that encloses the write. A
+ * `let` or `var` binding, a parameter, or any other expression may be reassigned between the two,
+ * so the same text need not hold the value the read used.
+ */
+function fixedValue(entry: SgNode, call: SgNode | undefined): boolean {
+  const value = kindOf(entry) === "pair" ? fieldOf(entry, "value") : entry;
+  if (value === null || call === undefined) {
+    return false;
+  }
+  const valueKind = kindOf(value) ?? "";
+  if (LITERAL_KINDS.has(valueKind) || (valueKind === "template_string" && !value.children().some((child) => kindOf(child) === "template_substitution"))) {
+    return true;
+  }
+  if (valueKind !== "identifier" && valueKind !== "shorthand_property_identifier") {
+    return false;
+  }
+  const nearestFunction = (node: SgNode): SgNode | undefined => node.ancestors().find((ancestor) => FUNCTION_KINDS.has(kindOf(ancestor) ?? ""));
+  const fn = nearestFunction(call);
+  return (
+    fn?.findAll({ rule: { kind: "lexical_declaration" } }).some((declaration) => {
+      const block = declaration.parent();
+      return (
+        declaration.children()[0]?.text() === "const" &&
+        nearestFunction(declaration)?.id() === fn.id() &&
+        block !== null &&
+        block.range().start.index <= call.range().start.index &&
+        call.range().end.index <= block.range().end.index &&
+        declaration
+          .children()
+          .filter((child) => kindOf(child) === "variable_declarator")
+          .some((declarator) => patternNames(fieldOf(declarator, "name")).includes(value.text()))
+      );
+    }) ?? false
+  );
 }
 
 function guardedWriteSignals(guard: SgNode): Signals {
