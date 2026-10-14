@@ -10,7 +10,7 @@ import type { ProcView, VerifiedIdentity } from "./environment.ts";
 import type { Timers } from "./limits.ts";
 import { DEFAULT_STOP, stopProcessGroup } from "./process.ts";
 import type { CommandSpec, GroupControl, LongProcess, ProcessRunner, StopRecord } from "./process.ts";
-import type { AppStack, StepResult, StopReport } from "./trial.ts";
+import type { AppStack, StepResult, StopReport, TestStage } from "./trial.ts";
 
 export const KIT = {
   appDir: "/workspace/app",
@@ -38,6 +38,15 @@ export const KIT_SCRIPTS = {
 
 /** The owner role, which the kit lets in only through the Postgres socket in /run/rbw-pg (etc/owner.environment). */
 export const OWNER_DATABASE_URL = "postgresql://umami_owner@localhost/umami?host=/run/rbw-pg";
+
+/**
+ * The race kit's control of the Toxiproxy between Umami and Postgres (kit/umami-race/bin/rbw-proxy).
+ * The time-zone kit has none.
+ */
+export const RBW_PROXY = "/opt/rbw/bin/rbw-proxy";
+
+/** `rbw-proxy latency`'s answer: the latency in effect and whether it is the image default or this container's setting. */
+const PROXY_LATENCY_LINE = /^proxy_latency latency_ms=(\d{1,5}) source=(default|override)$/m;
 
 /** Holds the application role's connection string, with its synthetic password. */
 export const APP_ENVIRONMENT_FILE = `${KIT.etcDir}/app.environment`;
@@ -134,8 +143,12 @@ export class KitStack implements AppStack {
   private readonly groups: GroupControl;
   private readonly database: FixtureDatabase | null;
   private readonly heartbeat: (signal: AbortSignal) => Promise<boolean>;
+  /** True on the race kit, whose database proxy the test stages set (see enterStage). */
+  private readonly proxy: boolean;
   /** rbw-start's process group, which keeps the Postgres and Umami launchers after rbw-start exits. */
   private starter: LongProcess | null = null;
+  /** The race latency the original-suite stage lowered to 0 ms, as `rbw-proxy set-latency` takes it back; null when none was lowered. */
+  private raceLatency: string | null = null;
 
   constructor(options: {
     runner: ProcessRunner;
@@ -144,6 +157,8 @@ export class KitStack implements AppStack {
     groups: GroupControl;
     database: FixtureDatabase | null;
     heartbeat?: (signal: AbortSignal) => Promise<boolean>;
+    /** The kit has the race family's database proxy (RBW_PROXY exists). */
+    proxy?: boolean;
   }) {
     this.runner = options.runner;
     this.timers = options.timers;
@@ -151,6 +166,7 @@ export class KitStack implements AppStack {
     this.groups = options.groups;
     this.database = options.database;
     this.heartbeat = options.heartbeat ?? ((signal) => heartbeat(this.baseUrl, signal));
+    this.proxy = options.proxy ?? false;
   }
 
   async build(signal: AbortSignal): Promise<StepResult> {
@@ -196,6 +212,38 @@ export class KitStack implements AppStack {
       launcher: "umami",
       proc: this.proc,
     });
+  }
+
+  /**
+   * The race kit runs the original suite with its database proxy at 0 ms and the added checks at
+   * the race latency, the one rbw-start applied (this container's `rbw-proxy set-latency`, or the
+   * image default): the delay only widens the race window the added checks probe, and the suite at
+   * that delay does not fit the tests phase. Both changes go through `rbw-proxy set-latency`, which
+   * replaces the toxic, re-marks the API log and runs `rbw-proxy check`, so the rounds start on a
+   * freshly checked proxy at the race latency. Without the proxy (the time-zone kit) this runs nothing.
+   */
+  async enterStage(stage: TestStage, signal: AbortSignal): Promise<StepResult> {
+    if (!this.proxy) return ok();
+    if (stage === "added_checks") {
+      if (this.raceLatency === null) return ok();
+      return this.setLatency(this.raceLatency, "proxy-added-checks", [], signal);
+    }
+    const shown = await this.runner.run({ ...rootCommand(RBW_PROXY), args: ["latency"], signal });
+    const logs = [{ name: "proxy-latency", result: shown }];
+    if (shown.aborted) return ok(logs);
+    const line = shown.code === 0 ? PROXY_LATENCY_LINE.exec(shown.stdout.bytes.toString("utf8")) : null;
+    if (line === null) return failed("startup_failed", "rbw-proxy latency did not report the race latency", logs);
+    const step = await this.setLatency("0", "proxy-original-suite", logs, signal);
+    if (step.reason === null) this.raceLatency = line[2] === "default" ? "default" : (line[1] ?? "default");
+    return step;
+  }
+
+  private async setLatency(value: string, name: string, logs: StepResult["logs"], signal: AbortSignal): Promise<StepResult> {
+    const result = await this.runner.run({ ...rootCommand(RBW_PROXY), args: ["set-latency", value], signal });
+    const all = [...logs, { name, result }];
+    if (result.aborted) return ok(all);
+    if (result.code !== 0) return failed("startup_failed", `rbw-proxy set-latency ${value} exited with ${String(result.code ?? result.signal)}`, all);
+    return ok(all);
   }
 
   /** Recreates the database from the template while Umami runs, then checks the application role and the app. */
@@ -279,6 +327,10 @@ export class ExternalStack implements AppStack {
 
   resetFixture(): Promise<StepResult> {
     return Promise.resolve(failed("seed_failed", "an external app cannot be reset by the driver"));
+  }
+
+  enterStage(): Promise<StepResult> {
+    return Promise.resolve(ok());
   }
 
   stop(): Promise<StopReport> {

@@ -100,6 +100,15 @@ Nothing is read from log text or exit codes. A failing check never stops later r
 
 The reset is the fixture's template copy. After `rbw-start`, the driver calls `createFixtureTemplate`; before each round it calls `resetFixture`, which drops the application database `WITH (FORCE)` and recreates it from the template while Umami keeps running. Both connect as `umami_owner` over the socket: `postgresql://umami_owner@localhost/umami?host=/run/rbw-pg`. `CREATE DATABASE` does not copy database-level grants, so after each copy the driver restores the kit's grants (`etc/bootstrap.sql`): `PUBLIC` has no access to either database, and `umami_app` may connect only to `umami`. Before the round starts, the driver then checks that `umami_app` can connect and query, with the password from `/opt/rbw/etc/app.environment`, and that Umami answers `/api/heartbeat` within 30 seconds.
 
+### The race kit's database latency
+
+On the race kit image (`kit/umami-race`, which has `/opt/rbw/bin/rbw-proxy`), `rbw-start` starts Toxiproxy between Umami and Postgres at the race latency: the copy's `rbw-proxy set-latency <ms>`, or the image default. The delay only widens the window the race checks probe, and the original suite at that delay does not fit the tests phase, so the driver runs the original suite at 0 ms and the added checks at the race latency:
+
+- before the original suite it reads `rbw-proxy latency` (the latency in effect and whether it is the image default or the copy's setting), then runs `rbw-proxy set-latency 0`;
+- after the suite, before the first reset, it runs `rbw-proxy set-latency <ms>` with the latency it read, or `set-latency default` when that was the image default.
+
+`set-latency` replaces the toxic, re-marks Toxiproxy's API log and runs `rbw-proxy check`, so the rounds start on a proxy just checked at the race latency, with the API log audited from that point. The race latency recorded for the run (the copy's `proxy` report, `race_latency_ms` and the runtime profile hash) is the latency the rounds ran under; **the original suite always runs at 0 ms**. Each command's output is kept under `tests/` (`proxy-latency`, `proxy-original-suite`, `proxy-added-checks`); the last two print `proxy_latency latency_ms=<ms> source=override|default`, the latency of each stage. A failure of any of them gives `startup_failed` and runs no later stage: a failure before the suite runs neither the suite nor a round, and a failure before the rounds runs no round. A trial without an original suite leaves the latency as `rbw-start` set it. The time-zone kit has no proxy, so none of this runs there and its records are unchanged.
+
 `added_suite_sha256` is the SHA-256 of the canonical JSON of `{ <relative path>: <SHA-256> }` for every file in the fixture directory, leaving out `node_modules` and a top-level `test-results`.
 
 ## Limits
@@ -108,7 +117,7 @@ The reset is the fixture's template copy. After `rbw-start`, the driver calls `c
 |---|---|
 | build | 240 s |
 | readiness (Postgres, Umami, template copy) | 60 s |
-| tests (the original suite, every reset and every round) | 240 s |
+| tests (the original suite, every reset and every round; on the race kit also the two latency changes) | 240 s |
 | stop, artifacts and setup | 60 s |
 | whole copy | 600 s |
 

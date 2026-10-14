@@ -38,7 +38,9 @@ race image.
 | `/opt/rbw/verifier/rbw-proxy-check.ts` | Added (root, 0600): `src/proxy-check.ts`. |
 
 The driver and the local runner call `rbw-start`, `rbw-stop` and `rbw-kit-selftest` by their usual
-paths, so they need no change to use the race image.
+paths. The driver also finds `rbw-proxy` on this image and runs Umami's original suite at 0 ms,
+then puts the race latency back with `rbw-proxy set-latency` before the added checks' rounds (see
+[Latency](#latency)).
 
 ## The proxy
 
@@ -78,6 +80,13 @@ settings, or a check of a fix under each of them, runs against the one image dig
 and the release record. A caller that sets a latency records, for each round, the
 `rbw-proxy latency` line and the `rbw-proxy check` results from before and after the round.
 
+In a trial, the driver (`packages/umami-driver`, README, "The race kit's database latency") reads
+`rbw-proxy latency` after `rbw-start`, runs `rbw-proxy set-latency 0` for Umami's original suite,
+then `rbw-proxy set-latency <ms>` (or `default`) with the latency it read before the first round.
+So the original suite always runs at 0 ms and the race rounds at the latency the run records;
+both changes go through `set-latency`, whose `check` must pass, and the second re-marks the API
+log, so the audit window starts just before the rounds.
+
 ### The app and the proxy
 
 The Toxiproxy API has no authentication, and `rbw-app` can reach it on loopback, so code running
@@ -87,8 +96,9 @@ to `/var/lib/rbw/toxiproxy/api.log`, which only `rbw-db` (the server) and root c
 check fails on any `POST`, `DELETE` or other non-`GET` request logged after rbw-proxy's own last
 write. It also fails when its own `GET /proxies` does not appear in the log within 5 s, or when the
 log has reached 16 MiB, so a log that stopped recording cannot pass. A round counts only when
-`rbw-proxy check` passes both before and after it; the driver lane runs those two checks and
-records them (not done in this package).
+`rbw-proxy check` passes both before and after it. The driver's `set-latency` before the first
+round runs the check before the rounds and keeps its output; a check after the rounds is not run
+yet.
 
 The server writes this log itself, not through `rbw-launch`, because the launcher's capture holds
 output back in blocks, and a request could stay out of the log for as long as the API is quiet.
