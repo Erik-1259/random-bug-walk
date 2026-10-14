@@ -1,13 +1,14 @@
 // The real site finder over a synthetic race tree, and a dry run end to end over that tree. The
 // tree is built from @rbw/shapes's synthetic fixtures (never a real host) by copying each
 // `<name>.ts.txt` fixture to `<name>.ts`.
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseCanonical } from "@rbw/schema";
 import { describe, expect, it } from "vitest";
 import { runCommand } from "../src/command.ts";
+import { candidateId, sha256Hex } from "../src/plant.ts";
 import { findClassSites } from "../src/shapes-finder.ts";
 import { symptomFor } from "../src/symptom.ts";
 import type { ClassRule, RunRecord } from "../src/index.ts";
@@ -52,6 +53,15 @@ describe("findClassSites over the synthetic race tree", () => {
     const classes = new Set(sites.map((s) => s.classId));
     expect(classes.has("RACE.guarded-write")).toBe(true);
     expect(classes.has("RACE.check-then-act")).toBe(true);
+  });
+
+  it("carries the planted-form confirmation and level, and marks a rewrite that keeps another guard unconfirmed", async () => {
+    const sites = await findClassSites(RULE, syntheticRaceTree());
+    const archive = sites.filter((s) => s.file === "lib/documents.ts" && s.classId === "RACE.guarded-write");
+    expect(archive.length).toBeGreaterThan(0);
+    expect(archive.some((s) => s.plantedFormConfirmed === false && s.confidenceLevel === "low")).toBe(true);
+    expect(sites.some((s) => s.plantedFormConfirmed === true)).toBe(true);
+    expect(sites.every((s) => typeof s.plantedFormConfirmed === "boolean" && ["high", "medium", "low"].includes(s.confidenceLevel ?? ""))).toBe(true);
   });
 
   it("derives a symptom from a found guarded-write site that names its endpoint and action", async () => {
@@ -101,7 +111,22 @@ describe("a dry run end to end over the synthetic race tree", () => {
     const planted = record.candidates.filter((c) => c.status === "would_screen");
     expect(planted.length).toBe(record.totals.planted);
     expect(planted.every((c) => typeof c.symptom_sha256 === "string")).toBe(true);
-    // The record keeps no symptom text and no model was called to make one.
-    writeFileSync(join(outDir, "seen"), JSON.stringify(record));
+    // The record keeps each planted candidate's symptom by SHA-256 only, never its text.
+    const sites = await findClassSites(RULE, host);
+    const byId = new Map(sites.map((s) => [candidateId(s), s]));
+    const recordText = JSON.stringify(record);
+    for (const entry of planted) {
+      const found = byId.get(entry.candidate_id);
+      expect(found).toBeDefined();
+      if (found === undefined) continue;
+      const text = symptomFor(found);
+      expect(text.length).toBeGreaterThan(0);
+      expect(recordText).not.toContain(text);
+      expect(entry.symptom_sha256).toBe(sha256Hex(text));
+    }
+    // Unconfirmed planted forms are listed after every confirmed one.
+    const confirmed = record.candidates.map((c) => c.planted_form_confirmed);
+    expect(confirmed.includes(false)).toBe(true);
+    expect(confirmed.indexOf(false)).toBeGreaterThan(confirmed.lastIndexOf(true));
   });
 });

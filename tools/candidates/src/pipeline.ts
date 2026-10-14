@@ -70,6 +70,10 @@ export interface CandidateRecord {
   line: number;
   /** The finder's confidence in parts per million; canonical JSON holds integers only. */
   confidence_ppm: number;
+  /** Whether the finder confirmed the planted form; null when the finder does not report it. */
+  planted_form_confirmed: boolean | null;
+  /** The finder's confidence level; null when the finder does not report one. */
+  confidence_level: "high" | "medium" | "low" | null;
   diff: string;
   status: CandidateStatus;
   reason: string | null;
@@ -208,15 +212,23 @@ export function screenResultProblem(result: unknown, budget: ScreenBudget): stri
   return null;
 }
 
+/** 1 for a site whose planted form the finder could not confirm, so it sorts after the rest. */
+function unconfirmed(confirmed: boolean | null | undefined): number {
+  return confirmed === false ? 1 : 0;
+}
+
 function compareSites(a: Site, b: Site): number {
-  return b.confidence - a.confidence || (a.file < b.file ? -1 : a.file > b.file ? 1 : 0) || a.line - b.line;
+  return unconfirmed(a.plantedFormConfirmed) - unconfirmed(b.plantedFormConfirmed) || b.confidence - a.confidence || (a.file < b.file ? -1 : a.file > b.file ? 1 : 0) || a.line - b.line;
 }
 
 /**
- * Survivors first by attempts (more independent misses is stronger evidence that the bug is
- * not findable from the source), then by finder confidence, then by file, line and ID.
+ * Survivors with a confirmed planted form first (an unconfirmed rewrite may not plant the bug at
+ * all), then by attempts (more independent misses is stronger evidence that the bug is not findable
+ * from the source), then by finder confidence, then by file, line and ID.
  */
 function compareSurvivors(a: CandidateRecord, b: CandidateRecord): number {
+  const confirmation = unconfirmed(a.planted_form_confirmed) - unconfirmed(b.planted_form_confirmed);
+  if (confirmation !== 0) return confirmation;
   const attempts = (b.screen?.attempts ?? 0) - (a.screen?.attempts ?? 0);
   if (attempts !== 0) return attempts;
   if (a.confidence_ppm !== b.confidence_ppm) return b.confidence_ppm - a.confidence_ppm;
@@ -236,6 +248,8 @@ function candidate(site: Site, status: CandidateStatus, reason: string | null = 
     file: site.file,
     line: Number.isSafeInteger(site.line) ? site.line : 0,
     confidence_ppm: Number.isFinite(site.confidence) ? Math.round(site.confidence * 1_000_000) : 0,
+    planted_form_confirmed: typeof site.plantedFormConfirmed === "boolean" ? site.plantedFormConfirmed : null,
+    confidence_level: site.confidenceLevel === "high" || site.confidenceLevel === "medium" || site.confidenceLevel === "low" ? site.confidenceLevel : null,
     diff: site.diff,
     status,
     reason,

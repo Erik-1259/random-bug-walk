@@ -116,6 +116,27 @@ describe("command line", () => {
     expect(existsSync(join(REPO_ROOT, "pnpm-workspace.yaml"))).toBe(true);
   });
 
+  it("refuses a --scratch inside the repository before anything runs", async () => {
+    const inside = join(REPO_ROOT, "tools", "candidates");
+    const screen = scripted([miss(), miss(), miss()]);
+    const result = await run([], { findSites: finder(threeSites()), screen }, undefined, inside);
+    expect(result.code).toBe(2);
+    expect(result.err).toMatch(/--scratch must be outside the repository/);
+    expect(screen.calls).toHaveLength(0);
+    expect(existsSync(result.outFile)).toBe(false);
+  });
+
+  it("refuses a --scratch that is a symbolic link into the repository", async () => {
+    const link = join(tempDir("rbw-candidates-cli-link-"), "scratch");
+    symlinkSync(join(REPO_ROOT, "tools", "candidates"), link, "dir");
+    const screen = scripted([miss(), miss(), miss()]);
+    const result = await run([], { findSites: finder(threeSites()), screen }, undefined, link);
+    expect(result.code).toBe(2);
+    expect(result.err).toMatch(/--scratch must be outside the repository/);
+    expect(screen.calls).toHaveLength(0);
+    expect(existsSync(result.outFile)).toBe(false);
+  });
+
   it("refuses a record path at the repository root", async () => {
     const inside = join(REPO_ROOT, "never-written.json");
     const result = await run(["--dry-run"], { findSites: finder(threeSites()) }, inside);
@@ -305,6 +326,23 @@ describe("command line with the real screen builder", () => {
     });
     expect(overridden.code).toBe(0);
     expect(other.configs[0]).toMatchObject({ slotKey: "uc1", pool: "uc1-pool", rateSheetPath: sheet, keepScratch: true });
+  });
+
+  it("exits 2 when the --rate-sheet cannot be read, before the screen is built", async () => {
+    vi.stubEnv("DATABASE_URL", REAL_ENV.DATABASE_URL);
+    vi.stubEnv("TOKEN_FACTORY_SCREEN_KEY", REAL_ENV.TOKEN_FACTORY_SCREEN_KEY);
+    const screen = scripted([miss(), miss(), miss()]);
+    // Like the real builder, this reads the rate sheet as soon as it is called.
+    const buildScreen = (config: ScreenConfig): Screen => {
+      readFileSync(config.rateSheetPath);
+      return screen;
+    };
+    const missing = join(tempDir("rbw-candidates-cli-rates-"), "missing.json");
+    const result = await run(["--rate-sheet", missing], { findSites: finder(threeSites()), buildScreen });
+    expect(result.code).toBe(2);
+    expect(result.err).toMatch(/cannot read the --rate-sheet file/);
+    expect(screen.calls).toHaveLength(0);
+    expect(existsSync(result.outFile)).toBe(false);
   });
 
   it("refuses a real run with no screen configured", async () => {

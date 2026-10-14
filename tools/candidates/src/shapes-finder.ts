@@ -1,6 +1,8 @@
 // The real site finder: @rbw/shapes runs the class rules over the host tree and returns every site
 // with its planted diff and a structural confidence. This adapter turns the shapes site report into
-// the pipeline's Site shape. It reads source only; it calls no model and no network.
+// the pipeline's Site shape. The score sums signal weights and ignores whether the planted form was
+// confirmed, so the confirmation is carried separately and the pipeline orders on it first. It reads
+// source only; it calls no model and no network.
 import { findSites as findSitesInTree } from "@rbw/shapes";
 import type { FindSites, Site } from "./types.ts";
 
@@ -13,5 +15,7 @@ export const findClassSites: FindSites = (rule, hostDir): readonly Site[] => {
     diff: site.diff,
     confidence: site.confidence.score,
     classId: site.class_id,
+    plantedFormConfirmed: site.planted_form_confirmed,
+    confidenceLevel: site.confidence.level,
   }));
 };

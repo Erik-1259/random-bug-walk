@@ -253,6 +253,12 @@ export async function runCommand(argv: readonly string[], deps: CommandDeps, io:
     if (isDirectory(scratchBase) && isInside(realHost, realpathSync(scratchBase))) {
       throw new UsageError("--scratch must be outside --host");
     }
+    // Planted copies of the host, the screen's working files and a fallback record all go under
+    // --scratch, so it must not be where they could be committed by accident.
+    const repoRoot = resolve(deps.repoRoot ?? REPO_ROOT);
+    if (isInside(repoRoot, resolve(scratchBase)) || isInside(realTarget(repoRoot), realTarget(resolve(scratchBase)))) {
+      throw new UsageError("--scratch must be outside the repository: real runs keep host material there");
+    }
 
     // The screen: a fake when one is given (tests), otherwise the real one built from the options.
     // A dry run never screens, so it needs none.
@@ -264,12 +270,13 @@ export async function runCommand(argv: readonly string[], deps: CommandDeps, io:
       scratchBase,
       keepScratch: values["keep-scratch"],
     };
-    const screen = buildRunScreen(deps, dryRun, config);
-    if (deps.screen === undefined) {
+    if (deps.screen === undefined && (dryRun || deps.buildScreen !== undefined)) {
       // The real screen refuses a run for these reasons before it spends; checking them here makes a
-      // misconfigured run fail before anything runs, instead of once per candidate.
+      // misconfigured run fail before anything runs, instead of once per candidate. It runs before
+      // the screen is built, because building it reads the rate sheet.
       checkRealScreen(config, model, caps.screenBudget, dryRun);
     }
+    const screen = buildRunScreen(deps, dryRun, config);
     const screenName = dryRun ? "none" : implementationName(screen);
 
     // Claim the record file before anything runs, so a bad --out fails before any screen spends.

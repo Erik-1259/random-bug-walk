@@ -404,6 +404,37 @@ describe("run record", () => {
   });
 });
 
+describe("planted-form confirmation", () => {
+  it("plants a confirmed site before an unconfirmed one of higher confidence and records the state", async () => {
+    const [, beta, gamma] = threeSites();
+    if (beta === undefined || gamma === undefined) throw new Error("fixture sites missing");
+    const unconfirmed: Site = { ...beta, confidence: 0.9, plantedFormConfirmed: false, confidenceLevel: "low" };
+    const confirmed: Site = { ...gamma, confidence: 0.6, plantedFormConfirmed: true, confidenceLevel: "medium" };
+    const screen = scripted([miss()]);
+    const { record } = await runPipeline(input(finder([unconfirmed, confirmed]), screen, { caps: { ...CAPS, maxCandidates: 1 } }));
+    expect(screen.calls).toHaveLength(1);
+    expect(record.candidates.map((entry) => [entry.file, entry.status, entry.planted_form_confirmed, entry.confidence_level])).toEqual([
+      [confirmed.file, "screened", true, "medium"],
+      [unconfirmed.file, "over_candidate_cap", false, "low"],
+    ]);
+  });
+
+  it("ranks a confirmed survivor before an unconfirmed one with as many misses", async () => {
+    const [, beta, gamma] = threeSites();
+    if (beta === undefined || gamma === undefined) throw new Error("fixture sites missing");
+    const unconfirmed: Site = { ...beta, confidence: 0.9, plantedFormConfirmed: false, confidenceLevel: "low" };
+    const confirmed: Site = { ...gamma, confidence: 0.6, plantedFormConfirmed: true, confidenceLevel: "medium" };
+    const { record } = await runPipeline(input(finder([unconfirmed, confirmed]), scripted([miss(), miss()])));
+    const byId = new Map(record.candidates.map((entry) => [entry.candidate_id, entry.file]));
+    expect(record.ranking.map((id) => byId.get(id))).toEqual([confirmed.file, unconfirmed.file]);
+  });
+
+  it("records null for both fields when the finder does not report them", async () => {
+    const { record } = await runPipeline(input(finder(threeSites()), scripted([miss(), miss(), miss()])));
+    expect(record.candidates.every((entry) => entry.planted_form_confirmed === null && entry.confidence_level === null)).toBe(true);
+  });
+});
+
 describe("screenResultProblem", () => {
   const budget = { maxAttempts: 3, maxCostMicrousd: 100 };
   it.each([

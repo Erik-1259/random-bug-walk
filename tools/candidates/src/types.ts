@@ -27,6 +27,14 @@ export interface Site {
    * and the template then falls back to a generic race symptom. It is not part of the candidate ID.
    */
   classId?: string;
+  /**
+   * Whether the finder confirmed that the rewrite plants the bug's form (for a guarded write: no
+   * other guard is left, so the write is no longer conditional). An unconfirmed site is planted and
+   * ranked after every confirmed one. Undefined when the finder does not report it.
+   */
+  plantedFormConfirmed?: boolean;
+  /** The finder's confidence level, for the record; undefined when the finder does not report one. */
+  confidenceLevel?: "high" | "medium" | "low";
 }
 
 export type FindSites = (rule: ClassRule, hostDir: string) => Promise<readonly Site[]> | readonly Site[];
