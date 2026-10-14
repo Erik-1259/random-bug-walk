@@ -49,7 +49,7 @@ node tools/controller/src/cli.ts run --job-kind judge_verify --request-id <uuid>
 - `--prebuilt` is prebuilt mode, the judge controller: it runs the release's frozen judge job with no Docker and writes `judge/<root>/` in the private store (`BLOB_PRIVATE_STORE_ID` and `VERCEL_OIDC_TOKEN`, or a local store directory). The judge route starts it; `src/judge-run.ts` describes its checks and its end order. The route and the controller each compute the controller operation's ID and payload hash, so the judge web deploy must be built from the commit the controller image was built from, or from a later commit that leaves `tools/controller/src/{envelope,limits,judge-web}.ts` and `packages/envelope` (with its rate sheet) unchanged.
 - `create-slot-key` is an owner action on the database in `DATABASE_URL`. The migrations seed the pools but no slot key, so `development` and `judge` are each created once.
 
-The job goes in `<run dir>/jobs/<name>/`. The name defaults to `kit-check`, `observe`, `admission` or `judge`. An observation reads its baseline from `<run dir>/jobs/kit-check/evidence.json`, so the kit check and the observation share one run directory.
+The job goes in `<run dir>/jobs/<name>/`. The name defaults to `kit-check`, `observe`, `admission` or `judge`. An observation reads its baseline from `<run dir>/jobs/kit-check/evidence.json`, so the kit check and the observation share one run directory. The baseline must come from a kit check whose every trial is `complete` with no invalid reason. Otherwise the observation is refused (`cannot_build`, detail `kit_check_incomplete: ...` naming each such trial and its reason) before the export, the freeze copy, the slot or any reservation.
 
 Exit codes:
 - 0: the job is complete (for `proof`, every case held).
@@ -220,7 +220,7 @@ Exit codes: 0 when the root ends `terminal` and `completed`; 1 when `root-run.js
 
 The attempt makes one `RunIds` with the policy's `project_id`. Every stage runs under that root, in this order, and each one gates the next:
 
-1. **`kit_check` and `observe`:** `runJob` with the root's IDs and the policy, `policy_id` `umami-uc3-v1` (the release check requires it, and `ProjectPolicy` has no such field), on the development pool and slot. Without `--original-suite`, the kit check's freeze copy makes it, and every later job takes that same file.
+1. **`kit_check` and `observe`:** `runJob` with the root's IDs and the policy, `policy_id` `umami-uc3-v1` (the release check requires it, and `ProjectPolicy` has no such field), on the development pool and slot. Without `--original-suite`, the kit check's freeze copy makes it, and every later job takes that same file. A kit check whose job is complete still stops the root, `incomplete` with reason `kit_check_incomplete`, when any of its trials is not `complete` with no invalid reason; the report line names each such trial and its reason, and no observe or admission copy is reserved.
 2. **`write`:** the symptom, the two source searches (`source-1`, `source-2`) and the docs extract (`docs-1`), then one card call and one issue call. There are no repairs.
 3. **`novelty`:** the three exact-phrase checks, then `summarizeNovelty`.
 4. **`admission`:** `runJob`, 13 copies (11 for the race family), with the same IDs, policy and original suite.

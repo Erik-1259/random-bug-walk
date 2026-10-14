@@ -9,7 +9,6 @@ import { deriveCodeStates, loadAlternativeFix } from "../../src/code-states.ts";
 import { dryRun } from "../../src/dry-run.ts";
 import { BASELINE_KEY, buildJob, expectedVectors, newRunIds, writeJobDir } from "../../src/jobs.ts";
 import { RECORDED_SYNTHETIC_DIR } from "../../src/recorded.ts";
-import { importJob } from "../../src/records.ts";
 import type { Docker } from "../../src/docker.ts";
 import { exportImage } from "../../src/projection.ts";
 import { runCopyCommand } from "../../src/run-copy.ts";
@@ -19,6 +18,7 @@ import { summaryText } from "../../src/summary.ts";
 import type { Summary } from "../../src/summary.ts";
 import { FakeClock, FakeDocker, ok } from "../support/fakes.ts";
 import { FakeSandboxSdk } from "../support/fake-sandbox.ts";
+import { invalidTrial, writeKitCheckBaseline } from "../support/kit-check.ts";
 import { IMAGE_ID, KitImage } from "../support/kit-image.ts";
 import type { KitImageOptions } from "../support/kit-image.ts";
 import { CLEAN, PARTIAL, PLANTED, STUB, sha256, tempDir, writeAlternativeDir, writeManifest, writeProbeDir, writeRaceProbeDir, writeTerms } from "../support/synthetic.ts";
@@ -187,6 +187,19 @@ describe("the full local sequence over the real driver code paths, without Docke
     expect(summary.admission?.comparison).toBe("incomplete");
   });
 
+  it("refuses the observation when a kit-check trial is invalid, though every kit-check copy returned and its records imported", async () => {
+    const { summary, result, kit } = await sequence({ stack: { "clean-02": { resetFailsAt: 1 } } });
+    const kitCheck = job(summary, "kit-check");
+    expect(kitCheck.copies.every((copy) => copy.status === "complete")).toBe(true);
+    expect(kitCheck.import.refusal).toBeNull();
+    expect(kitCheck.import.trials.find((trial) => trial.trial_id === "clean-02")).toMatchObject({ status: "invalid", reason: "seed_failed" });
+    const observe = job(summary, "observe");
+    expect(observe.refusal).toEqual({ reason: "kit_check_incomplete", detail: "1 of 5 kit-check trials did not complete: clean-02 invalid (seed_failed)" });
+    expect(observe.copies).toEqual([]);
+    expect(kit.created.some((name) => name.includes("-observe-"))).toBe(false);
+    expect(result.exitCode).toBe(1);
+  });
+
   it("records a copy stopped at the outer limit as incomplete, and imports nothing from it", async () => {
     const { summary, result } = await sequence({ hang: ["stub-01"] });
     const copy = job(summary, "admission").copies.find((item) => item.trial_id === "stub-01");
@@ -213,7 +226,7 @@ describe("the dry run", () => {
 });
 
 describe("run-copy", () => {
-  async function observeJob(kit: KitImage, baselineSha: (actual: string) => string) {
+  async function observeJob(kit: KitImage, baselineSha: (actual: string) => string, mutate?: Parameters<typeof writeKitCheckBaseline>[1]) {
     const root = tempDir();
     const probes = loadProbeSet(writeProbeDir());
     let counter = 100;
@@ -233,10 +246,8 @@ describe("run-copy", () => {
       profileSha256: "b".repeat(64),
       deadlineAt: "2026-10-06T21:00:00Z",
     };
-    const records = join(root, "jobs", "kit-check", "records");
-    writeJobDir(records, buildJob("kit-check", ctx));
-    const imported = importJob(records, join(root, "jobs", "kit-check"));
-    const observe = buildJob("observe", ctx, { key: BASELINE_KEY, sha256: baselineSha(imported.evidence_sha256 ?? "") });
+    const { evidenceSha256 } = writeKitCheckBaseline(root, mutate);
+    const observe = buildJob("observe", ctx, { key: BASELINE_KEY, sha256: baselineSha(evidenceSha256) });
     writeJobDir(join(root, "jobs", "observe", "job"), observe);
     return { root, jobDir: join(root, "jobs", "observe", "job") };
   }
@@ -251,6 +262,18 @@ describe("run-copy", () => {
     );
     expect(kit.docker.calls).toEqual([]);
     expect(outcome).toMatchObject({ exitCode: 1, refusal: { reason: "baseline_mismatch" } });
+  });
+
+  it("refuses to start an observation whose kit check has an invalid trial, before any docker command", async () => {
+    const kit = new KitImage();
+    const { root, jobDir } = await observeJob(kit, (actual) => actual, invalidTrial("clean-03"));
+    const dir = tempDir();
+    const outcome = await runCopyCommand(
+      { job: jobDir, trial: "planted-01", root, image: "rbw-umami-kit:synthetic", manifest: writeManifest(dir), terms: writeTerms(dir), policy: null, work: join(dir, "work"), probesDir: writeProbeDir(), alternativeDir: writeAlternativeDir() },
+      { docker: kit.docker, clock: new FakeClock({ manual: true }) },
+    );
+    expect(kit.docker.calls).toEqual([]);
+    expect(outcome).toMatchObject({ exitCode: 1, refusal: { reason: "kit_check_incomplete", detail: "1 of 5 kit-check trials did not complete: clean-03 invalid (seed_failed)" } });
   });
 
   it("runs exactly one copy from a job directory and a trial ID when the baseline matches", async () => {
