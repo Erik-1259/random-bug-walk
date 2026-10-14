@@ -155,6 +155,8 @@ export interface AttemptOptions {
   transcript: (event: TranscriptEvent) => void | Promise<void>;
   /** The clock; injected in tests. */
   now?: () => Date;
+  /** When the attempt started, if before this call (its session's open and initial build): the wall cap and wall_ms count from it. */
+  startedAt?: Date;
 }
 
 /** The transcript event as one JSONL line. */
@@ -510,7 +512,7 @@ export async function runAttempt(options: AttemptOptions): Promise<AttemptResult
     now,
   };
   const caps = profile.hashed.attempt_caps;
-  const startedAt = now();
+  const startedAt = options.startedAt ?? now();
   const state = newToolState();
   const result: AttemptResult = {
     attempt_key: key,

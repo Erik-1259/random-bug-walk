@@ -231,6 +231,17 @@ describe("attempts, reruns and scope", () => {
     await w.close();
   });
 
+  it("counts the session's open and initial build against the attempt's 40-minute wall cap", async () => {
+    const w = await world({ sessionOpenMs: 41 * 60_000 });
+    const outcome = await runSessions(pilot(w), w.deps);
+    const first = runs(outcome.runDir, "001-off")[0] as { ended: string; result: { cap: string; turns: number; wall_ms: number } };
+    expect(first.ended).toBe("cap_reached");
+    expect(first.result).toMatchObject({ cap: "wall", turns: 0 });
+    expect(first.result.wall_ms).toBeGreaterThanOrEqual(41 * 60_000);
+    expect(w.model.bodies).toHaveLength(0);
+    await w.close();
+  });
+
   it("reruns an infrastructure error from scratch at the same index up to 2 times, then reports it", async () => {
     const w = await world({
       sessionFault: (request) => {

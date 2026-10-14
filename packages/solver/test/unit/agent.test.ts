@@ -275,6 +275,21 @@ describe("caps", () => {
     expect(script.bodies.length).toBeLessThan(3);
   });
 
+  it("counts time before the loop (the session's open and initial build) against the wall-clock cap", async () => {
+    const { spend, schema } = await freshSpend(db);
+    const script = scriptedFetch([{ calls: [{ name: "bash", input: { command: "true" } }] }]);
+    const profile = withCaps(SUPER_SOLVER_PROFILE, { max_wall_ms: 5 * 60_000 });
+    const start = Date.UTC(2026, 9, 13, 12, 0, 0);
+    const startedAt = new Date(start - 6 * 60_000);
+    const run = attemptOptions(spend, script.fetch, new FakeSession(), { profile, now: steppingClock(1_000, start), startedAt });
+    const result = await runAttempt(run.options);
+    expect(result).toMatchObject({ outcome: "cap_reached", cap: "wall", turns: 0 });
+    expect(result.wall_ms).toBeGreaterThanOrEqual(6 * 60_000);
+    expect(run.events[0]).toMatchObject({ type: "attempt_start", started_at: startedAt.toISOString() });
+    expect(script.bodies).toHaveLength(0);
+    expect(await operations(schema, spend)).toHaveLength(0);
+  });
+
   it.each(["off", "on"] as const)(
     "keeps a 20-turn %s-arm session with many capped outputs under the per-call limit by eliding the oldest tool results",
     async (arm) => {

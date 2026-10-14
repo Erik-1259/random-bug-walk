@@ -125,12 +125,17 @@ export interface StopRecord {
   at: string;
 }
 
-/** Writes JSON through a temporary file and a rename, so a record is never half written. */
-export function writeJson(path: string, value: unknown): void {
+/** Writes bytes through a temporary file in the same directory and a rename, so a record is never half written. */
+export function writeAtomic(path: string, bytes: string | Uint8Array): void {
   mkdirSync(dirname(path), { recursive: true });
   const temporary = `${path}.tmp`;
-  writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`);
+  writeFileSync(temporary, bytes);
   renameSync(temporary, path);
+}
+
+/** Writes JSON atomically (see writeAtomic). */
+export function writeJson(path: string, value: unknown): void {
+  writeAtomic(path, `${JSON.stringify(value, null, 2)}\n`);
 }
 
 /** A record this tool wrote; the caller names its type. */

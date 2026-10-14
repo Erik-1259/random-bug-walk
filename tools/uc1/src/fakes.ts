@@ -340,6 +340,8 @@ export interface DryRunOptions {
   /** Changes what the ledger shows (for example spend already settled under the roots). */
   view?: (real: LedgerView) => LedgerView;
   sessionDelayMs?: number;
+  /** How far the clock moves while a session opens (its cold build and app start). */
+  sessionOpenMs?: number;
   /** What the case's image tag resolves to now; the case's digest by default. */
   imageDigest?: () => string;
 }
@@ -438,6 +440,7 @@ export async function dryRunWorld(options: DryRunOptions): Promise<DryRunWorld> 
     fetch: model.fetch,
     openSession: (request) => {
       opened += 1;
+      clock += options.sessionOpenMs ?? 0;
       const fault = options.sessionFault?.(request, opened) ?? null;
       if (fault === "refused") return Promise.reject(new SessionRefused("audit_not_passed: synthetic refusal"));
       if (fault === "error") return Promise.reject(new Error("container_start_failed: synthetic"));

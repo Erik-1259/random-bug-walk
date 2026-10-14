@@ -12,7 +12,7 @@
 //      case fits the allowance, with the slot free for the controller to take.
 //   3. finalize: the analyzer's rows and results record, the summary, the report, the publisher's
 //      staging directory, and the root's terminal status.
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { appendFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -46,6 +46,7 @@ import {
   readRun,
   readSeeded,
   readStops,
+  writeAtomic,
   writeAttempt,
   writeJson,
   writeSeeded,
@@ -163,7 +164,7 @@ function childExecutions(records: readonly AttemptRecord[], seeded: readonly See
 
 function writeRootRun(runDir: string, run: RunRecord, status: RootRun["status"], outcome: RootRun["outcome"]): RootRun {
   const record = rootRunRecord(run, status, outcome, childExecutions(readAttempts(runDir, run), readSeeded(runDir)));
-  writeFileSync(join(runDir, "root-run.json"), encodeCanonical(record));
+  writeAtomic(join(runDir, "root-run.json"), encodeCanonical(record));
   return record;
 }
 
@@ -393,6 +394,8 @@ async function runOnce(pass: Pass, item: PlannedAttempt, record: AttemptRecord, 
           appendFileSync(transcript, transcriptLine(event));
         },
         now: () => deps.now(),
+        // The pre-registered wall cap covers the whole attempt, so the session's open and initial build count against it.
+        startedAt: opened,
       });
       run.result = result;
       run.ended = result.outcome;
@@ -406,7 +409,7 @@ async function runOnce(pass: Pass, item: PlannedAttempt, record: AttemptRecord, 
           const ended = await session.end(result.outcome === "submitted" ? "submit" : "cap");
           run.submission = ended.submission;
           // Kept beside the record before the run is saved as counted, so a stop before grade 1 finishes can grade these bytes on resume.
-          if (ended.target !== null) writeFileSync(join(dir, TARGET_FILE), ended.target);
+          if (ended.target !== null) writeAtomic(join(dir, TARGET_FILE), ended.target);
         } catch (error) {
           run.ended = "infrastructure_error";
           run.infrastructure = `submission: ${message(error)}`;
@@ -637,13 +640,13 @@ export async function runSessions(options: SessionsOptions, deps: Uc1Deps): Prom
       created_at: deps.now().toISOString(),
     };
     mkdirSync(join(runDir, "states"), { recursive: true });
-    writeFileSync(join(runDir, "states", "clean.bin"), states.clean);
-    writeFileSync(join(runDir, "states", "planted.bin"), states.planted);
-    writeFileSync(join(runDir, "states", "alternative.bin"), states.alternative);
+    writeAtomic(join(runDir, "states", "clean.bin"), states.clean);
+    writeAtomic(join(runDir, "states", "planted.bin"), states.planted);
+    writeAtomic(join(runDir, "states", "alternative.bin"), states.alternative);
     const statesRecord: StatesRecord = { target_path: states.target_path, digest: states.digest, clean_sha256: sha256Hex(states.clean), planted_sha256: plantedSha, alternative_sha256: sha256Hex(states.alternative) };
     writeJson(join(runDir, "states.json"), statesRecord);
     writeJson(join(runDir, "case.json"), config);
-    writeFileSync(join(runDir, "policy.json"), policy.bytes);
+    writeAtomic(join(runDir, "policy.json"), policy.bytes);
     writeJson(join(runDir, "ids.json"), ids);
     writeJson(join(runDir, "run.json"), run);
     // The root exists, under the public_demo policy, before the first attempt or grade.
@@ -884,7 +887,7 @@ export async function finalize(options: { runDir: string }, deps: Pick<Uc1Deps, 
   const summary = buildSummary(run, records, seeded, readStops(runDir), ledger, analysisRef, { roots: roots.length, view: allRoots });
   writeJson(join(runDir, "results", "rows.json"), rows);
   writeJson(join(runDir, "results", "summary.json"), summary);
-  if (analysisJson !== null) writeFileSync(join(runDir, "results", "analysis.json"), analysisJson);
+  if (analysisJson !== null) writeAtomic(join(runDir, "results", "analysis.json"), analysisJson);
   const report = reportMarkdown(summary, analysis);
   const config = readJson(join(runDir, "case.json")) as CaseConfig;
   writeStaging(runDir, { run, records, seeded, rows, analysisJson, summary, report, screenRecord: config.screen_record });
