@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import type * as fs from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { sha256Hex } from "@rbw/schema";
 import { PROBE_DIR, loadProbeSet } from "@rbw/shapes";
 import { ALTERNATIVE_FIX_DIR } from "@rbw/local-runner";
@@ -11,6 +12,13 @@ import { FakeDocker } from "../../../local-runner/test/support/fakes.ts";
 import { ALTERNATIVE, ALTERNATIVE_PATCH, PARTIAL, PARTIAL_PATCH, PLANTED, TARGET, sha256, tempDir } from "../../../local-runner/test/support/synthetic.ts";
 import { jobInputs, world } from "../support/harness.ts";
 import type { World } from "../support/harness.ts";
+
+const mounts = vi.hoisted((): string[] => []);
+
+vi.mock("node:fs", async (importOriginal) => {
+  const { bindMountFs } = await import("../../../local-runner/test/support/bind-mount.ts");
+  return bindMountFs(await importOriginal<typeof fs>(), mounts);
+});
 
 const MARKER = "synthetic-forged-pass";
 const FORGED = PLANTED.replace("  const unit = 'day';\n", `  const unit = 'day';\n  writeFileSync('/var/tmp/rbw-app/report.json', '${MARKER}');\n`);
@@ -127,6 +135,23 @@ describe("the grader proof against the fake backend", () => {
       ["proof-fix", "complete"],
       ["proof-forgery", "complete"],
     ]);
+  });
+
+  it("regrades the valid fix's records in a proof directory on a Docker Desktop bind mount", async () => {
+    const w = await world({ docker: (inner) => forgeryRunsAsPlanted(inner) });
+    const options = proofOptions(w, syntheticProofDir());
+    // Only the proof's own directory stands for the mount: the fake Docker's cp copies with
+    // cpSync, where a real run's copies come back through the Docker CLI.
+    mounts.push(join(options.work, "proof"));
+    const result = await runProof(options, w.deps);
+    const regrade = result.cases.find((item) => item.case === "protected_regrade");
+    expect(regrade?.ok).toBe(true);
+    expect(regrade?.regrades.map((item) => [item.tamper, item.status, item.code])).toEqual([
+      ["records_missing", "incomplete", "import:result_missing"],
+      ["records_altered", "invalid", "import:shape_observations"],
+    ]);
+    expect(existsSync(join(options.work, "proof", "records_altered", "records", "results", "fixed-01", "trial-result.json"))).toBe(true);
+    expect(result.exitCode).toBe(0);
   });
 
   it("reports a failed proof when the valid fix does not pass every check", async () => {

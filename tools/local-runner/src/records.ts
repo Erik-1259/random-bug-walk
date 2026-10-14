@@ -1,13 +1,14 @@
 // Each job's record set: the job's request and expected trials, plus each copy's own
 // results/<trial_id>/ as the driver wrote it. The set is imported with @rbw/admission's own
 // command, which writes the evidence before it derives the decision.
-import { cpSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { runCli } from "@rbw/admission";
 import type { Decision, Evidence } from "@rbw/admission";
 import { parseRecord, sha256Hex } from "@rbw/schema";
 import { DEFAULT_PHASE_LIMITS, trialKeys } from "@rbw/umami-driver";
 import type { CopyResult } from "./copy.ts";
+import { copyTree } from "./copy-tree.ts";
 import { writeJobDir } from "./jobs.ts";
 import type { BuiltJob } from "./jobs.ts";
 
@@ -36,7 +37,7 @@ export function mergeRecordSet(job: BuiltJob, copies: readonly CopyResult[], dir
     const trialDir = join(copy.records_dir, "results", copy.trial_id);
     if (!existsSync(trialDir)) return { trial_id: copy.trial_id, merged: false, reason: null };
     mkdirSync(join(dir, "results"), { recursive: true });
-    cpSync(trialDir, join(dir, "results", copy.trial_id), { recursive: true, verbatimSymlinks: true });
+    copyTree(trialDir, join(dir, "results", copy.trial_id));
     return { trial_id: copy.trial_id, merged: true, reason: null };
   });
 }

@@ -4,7 +4,7 @@
 // the empty build outputs listed in kit/umami/build-outputs.txt. Each copy's projection is that
 // source with the copy's verified target file in place, given a neutral history and audited by
 // @rbw/projection against the pinned manifest, the copy's declared mutation and the term list.
-import { copyFileSync, cpSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { audit, canonicalJson, commitNeutral, InputError, parsePolicy } from "@rbw/projection";
@@ -14,6 +14,7 @@ import type { Header } from "tar-stream";
 import type { StateFile } from "./code-states.ts";
 import { APP_DIR, COMMAND_TIMEOUT_MS } from "./copy.ts";
 import type { AuditResult } from "./copy.ts";
+import { copyTree } from "./copy-tree.ts";
 import type { Docker } from "./docker.ts";
 
 export const KIT_BUILD_OUTPUTS = fileURLToPath(new URL("../../../kit/umami/build-outputs.txt", import.meta.url));
@@ -165,7 +166,7 @@ export function auditCopy(inputs: AuditInputs): AuditResult {
   if (inputs.state.declared_mutation === null) return { verdict: "not_applicable", reason: "no_declared_change", report_sha256: null, findings: 0 };
   const projection = join(inputs.workDir, "projection");
   mkdirSync(inputs.workDir, { recursive: true });
-  cpSync(inputs.sourceDir, projection, { recursive: true, verbatimSymlinks: true });
+  copyTree(inputs.sourceDir, projection);
   writeFileSync(join(projection, inputs.state.path), inputs.state.bytes);
   const policyPath = inputs.policyPath ?? join(inputs.workDir, "policy.json");
   if (inputs.policyPath === null) writeFileSync(policyPath, DEFAULT_POLICY);
