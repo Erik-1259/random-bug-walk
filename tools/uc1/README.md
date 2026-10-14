@@ -166,7 +166,7 @@ One row per index whose status is final:
 
 A spend refusal after at least one model turn counts the attempt as capped: the pre-registration counts an attempt that hits a cap "with its capped token and turn values recorded as they are and its solve status from its grade (unsolved if it submitted nothing)", and "no other reason permits a rerun" than an infrastructure error. It is never restarted, so its turns and tokens stay in the outcomes, and like any capped attempt its current target file is saved and graded. A refusal before the first model turn ran no model call; the next pass restarts that index from scratch (not an infrastructure rerun), once a whole attempt's worst case fits.
 
-A cap used up before the solver's first turn (the session's open and cold build took the whole 40-minute wall cap) is an infrastructure error, rerun at the same index within the rerun limit: such an attempt has zero turns and zero tokens, so the analysis never receives a counted attempt without a positive token count.
+The 40-minute wall cap is checked before each model turn and before each tool call, so an attempt runs past it by at most one model response and one tool call; a `submit` the model asks for after the cap does not run, and the attempt counts as capped. A cap used up before the solver's first turn (the session's open and cold build took the whole 40-minute wall cap) is an infrastructure error, rerun at the same index within the rerun limit: such an attempt has zero turns and zero tokens, so the analysis never receives a counted attempt without a positive token count.
 
 ## Refusals and stops
 
@@ -183,7 +183,7 @@ Refused before anything is written (exit 2):
 - a `pilot`, `run` or `grade2` on a run whose root `finalize` already made terminal;
 - an image that resolves to another digest than the case's, on a new run or a resumed one.
 
-Stops during a step (exit 1, recorded in `stops.jsonl`): the allowance, an uncertain operation or a halted ledger, a session refused before its container (an audit or image mismatch: the run stops, nothing is rerun), the slot held by another root (`slot_held`, "slot busy": checked before any grade job, the pilot's seeded round trips included, so no grade retry is spent and the same command resumes once the slot is free), and a slot that cannot be released (the root becomes `needs_reconciliation`).
+Stops during a step (exit 1, recorded in `stops.jsonl`): the allowance, an uncertain operation or a halted ledger, a session refused before its container (an audit or image mismatch: the run stops, nothing is rerun; the refusal is terminal for that index, recorded with status `refused`, and a resume stops again with `session_refused` rather than rerun it, so continuing takes a corrected new run under a new `--name`), the slot held by another root (`slot_held`, "slot busy": checked before any grade job, the pilot's seeded round trips included, so no grade retry is spent and the same command resumes once the slot is free), and a slot that cannot be released (the root becomes `needs_reconciliation`).
 
 An infrastructure error (the session cannot start, the model endpoint fails or times out, the diff cannot be read, or a process interrupted mid-run) is rerun from scratch at the same index, up to 2 times, with a new session, execution and rerun number. A lost model response leaves its operation `uncertain`, so the guard stops the run before that rerun until the ledger is reconciled.
 

@@ -308,6 +308,12 @@ describe("attempts, reruns and scope", () => {
     expect(outcome.exitCode).toBe(1);
     expect(outcome.stop).toMatchObject({ reason: "session_refused" });
     expect(w.sessions).toHaveLength(1);
+    expect(json(join(outcome.runDir, "attempts", "002-on", "attempt.json")).status).toBe("refused");
+    // The refusal is terminal: a resume reruns nothing at that index and stops again.
+    const resumed = await runSessions(pilot(w), w.deps);
+    expect(resumed.exitCode).toBe(1);
+    expect(resumed.stop).toMatchObject({ reason: "session_refused" });
+    expect((runs(outcome.runDir, "002-on") as { ended: string }[]).map((run) => run.ended)).toEqual(["refused"]);
     await w.close();
   });
 

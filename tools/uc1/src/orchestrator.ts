@@ -518,6 +518,11 @@ async function runIndex(pass: Pass, item: PlannedAttempt): Promise<void> {
       return;
     }
     if (record.status === "infrastructure_error") return;
+    if (record.status === "refused") {
+      // A session refusal is terminal: a resume stops again rather than rerun the index.
+      pass.halt("session_refused", `${record.runs.at(-1)?.attempt_key ?? attemptDirName(item)}: ${record.runs.at(-1)?.refusal ?? "the session was refused"}; start a corrected new run`);
+      return;
+    }
     if (pass.stop !== null) return;
     // Any restart of an index that already has a run (an infrastructure rerun, or a restart after a
     // spend refusal before the first model turn) is a whole new attempt, so its own worst case must fit before it starts, and it

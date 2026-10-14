@@ -119,7 +119,7 @@ Each turn: render the exact body (a preview that sends nothing), count its bound
 | Outcome | When |
 | --- | --- |
 | `submitted` | the model called `submit` |
-| `cap_reached` | a cap was reached (`turns`, `input_tokens`, `wall`, or `context_window` when one request is still over the per-call limit after the history policy) |
+| `cap_reached` | a cap was reached (`turns`, `input_tokens`, `wall`, or `context_window` when one request is still over the per-call limit after the history policy). The wall cap is checked before each turn and before each tool call: once it has passed, the turn's remaining tool calls do not run (a `submit` after the cap is not a submission), so an attempt overshoots the cap by at most one model response and one tool call |
 | `spend_refused` | the slot is not held, or the ledger refused the reservation or the launch; nothing was sent |
 | `infrastructure_error` | a lost response (the operation is left `uncertain` for the operator), an HTTP error, an unreadable response, a ledger refusal after launch, a ledger call that threw from the reservation on (`ledger_exception: <message>`, with the operation's ID for the operator), or a session error |
 

@@ -95,11 +95,13 @@ export interface AttemptRun {
 /**
  * `counted`: the final run reached submit or a cap, or the spend guard refused one of its model
  * calls after at least one turn ran (the run's spend cap, counted as a cap: never rerun).
- * `infrastructure_error`: every allowed rerun failed on infrastructure. `stopped`: the run stopped
- * (a spend refusal before any model turn, a session refusal or a failed close) during this index;
- * the next pass runs it again. `pending`: not run yet, or an infrastructure rerun is due.
+ * `infrastructure_error`: every allowed rerun failed on infrastructure. `refused`: the session was
+ * refused (its inputs, image digest or projection audit); the refusal is deterministic for the run's
+ * inputs, so it is terminal: no pass reruns it, and a corrected new run is needed. `stopped`: the run
+ * stopped (a spend refusal before any model turn, or a failed close) during this index; the next pass
+ * runs it again. `pending`: not run yet, or an infrastructure rerun is due.
  */
-export type AttemptStatus = "counted" | "infrastructure_error" | "stopped" | "pending";
+export type AttemptStatus = "counted" | "infrastructure_error" | "refused" | "stopped" | "pending";
 
 export interface AttemptRecord {
   schema_version: 1;
@@ -224,7 +226,8 @@ export function attemptStatus(runs: readonly AttemptRun[]): AttemptStatus {
   const last = runs.at(-1);
   if (last === undefined) return "pending";
   if (isCountedEnd(last)) return "counted";
-  if (last.ended === "spend_refused" || last.ended === "refused" || last.ended === "close_failed") return "stopped";
+  if (last.ended === "refused") return "refused";
+  if (last.ended === "spend_refused" || last.ended === "close_failed") return "stopped";
   return runs.filter(isInfrastructure).length > MAX_INFRASTRUCTURE_RERUNS ? "infrastructure_error" : "pending";
 }
 

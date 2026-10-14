@@ -658,6 +658,11 @@ export async function runAttempt(options: AttemptOptions): Promise<AttemptResult
         result.invalid_tool_calls += 1;
         continue;
       }
+      // The wall cap holds between tool calls too: once it has passed, no further call runs (a submit
+      // after the cap is not a submission), so the overshoot is at most one model response and one tool call.
+      if (now().getTime() - startedAt.getTime() >= caps.max_wall_ms) {
+        return stopOnCap("wall");
+      }
       const toolStarted = now();
       let ran: ToolOutcome;
       try {

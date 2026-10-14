@@ -275,6 +275,27 @@ describe("caps", () => {
     expect(script.bodies.length).toBeLessThan(3);
   });
 
+  it("runs no tool call once the wall-clock cap has passed, so a submit after the cap is not a submission", async () => {
+    const { spend } = await freshSpend(db);
+    const script = scriptedFetch([{ calls: [{ name: "bash", input: { command: "sleep 120" } }, SUBMIT, { name: "read_file", input: { path: "src/lib/date.ts" } }] }]);
+    const profile = withCaps(SUPER_SOLVER_PROFILE, { max_wall_ms: 5 * 60_000 });
+    const start = Date.UTC(2026, 9, 13, 12, 0, 0);
+    // The clock stands still except while the bash command runs; the turn starts one second before the cap.
+    let t = start;
+    const session = new FakeSession();
+    const slowBash = session.bash.bind(session);
+    session.bash = (command: string) => {
+      t += 2 * 60_000;
+      return slowBash(command);
+    };
+    const run = attemptOptions(spend, script.fetch, session, { profile, now: () => new Date(t), startedAt: new Date(start - 5 * 60_000 + 1_000) });
+    const result = await runAttempt(run.options);
+    expect(result).toMatchObject({ outcome: "cap_reached", cap: "wall", turns: 1, summary: null });
+    expect(result.tool_calls).toMatchObject({ bash: 1, submit: 0, read_file: 0 });
+    expect(session.log).toEqual(["bash:sleep 120"]);
+    expect(run.events.filter((e) => e.type === "tool_call")).toHaveLength(1);
+  });
+
   it("counts time before the loop (the session's open and initial build) against the wall-clock cap", async () => {
     const { spend, schema } = await freshSpend(db);
     const script = scriptedFetch([{ calls: [{ name: "bash", input: { command: "true" } }] }]);
