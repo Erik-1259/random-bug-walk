@@ -254,37 +254,20 @@ rule:
                     - kind: assignment_expression
                     - kind: augmented_assignment_expression
                     - kind: update_expression
-    # The rewrite reads the where, update and create values only after the lookup resolves. An
-    # upsert awaited or returned where it is called (`await db.m.upsert(...)`, `return db.m.upsert(...)`,
-    # `async (tx) => tx.m.upsert(...)`) leaves its own code no chance to change those values in
-    # between; a promise kept for later, passed on or chained is not matched. A return statement or
-    # the body of an arrow counts only when the nearest enclosing function is async: a plain
-    # function such as `rows.map((row) => db.m.upsert(...))` or `rows.map((row) => { return ... })`
-    # may build the array of a batch `$transaction`, which takes only the query object that the
-    # rewrite replaces with a plain promise.
-    - any:
-        - inside:
-            kind: await_expression
-        - inside:
-            kind: return_statement
-            inside:
-              # stopBy is inclusive: the nearest enclosing function is the one tested.
-              stopBy:
-                any:
-                  - kind: function_declaration
-                  - kind: function_expression
-                  - kind: arrow_function
-                  - kind: method_definition
-              any:
-                - kind: function_declaration
-                - kind: function_expression
-                - kind: arrow_function
-                - kind: method_definition
-              regex: ^(?:(?:public|private|protected|static|override)\s+)*async\b
-        - inside:
-            kind: arrow_function
-            field: body
-            regex: ^async\b
+    # The rewrite reads the where, update and create values only after the lookup resolves. Only an
+    # upsert that is the direct operand of `await` in its own statement (`await db.m.upsert(...);` or
+    # `const row = await db.m.upsert(...);`) leaves no code a chance to change those values in
+    # between. A returned upsert (`return db.m.upsert(...)`, `return await ...`, or the body of an
+    # arrow) is not matched: its caller may keep the promise and change an input object before
+    # awaiting it. A promise kept for later, passed on or chained is not matched either.
+    - inside:
+        kind: await_expression
+        any:
+          - inside:
+              kind: expression_statement
+          - inside:
+              kind: variable_declarator
+              field: value
     # Any upsert inside an argument of `$transaction(...)`, whether a batch array or an interactive
     # callback, is left out.
     - not:

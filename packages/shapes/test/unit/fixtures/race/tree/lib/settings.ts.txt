@@ -9,10 +9,12 @@ export async function POST(request: Request) {
 
 // A plain function whose create leaves out the key of a compound where.
 export async function saveScopedSetting(key: string, scope: string, value: string) {
-  return db.client.setting.upsert({ where: { key_scope: { key, scope } }, update: { value }, create: { key, value } });
+  const row = await db.client.setting.upsert({ where: { key_scope: { key, scope } }, update: { value }, create: { key, value } });
+  return row;
 }
 
 // A where passed by name rather than as an object literal.
 export async function saveSetting(lookup: { key: string }, value: string) {
-  return db.client.setting.upsert({ where: lookup, update: { value }, create: { ...lookup, value } });
+  const row = await db.client.setting.upsert({ where: lookup, update: { value }, create: { ...lookup, value } });
+  return row;
 }

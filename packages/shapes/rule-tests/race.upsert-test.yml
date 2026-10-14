@@ -36,17 +36,26 @@ valid:
     await db.$transaction(async (tx) => tx.preference.upsert({ where: { profileId }, update: {}, create: { profileId } }));
   - |
     await db.client.$transaction(async (tx) => { await tx.preference.upsert({ where: { profileId }, update: {}, create: { profileId } }); });
-invalid:
-  - |
-    await db.client.preference.upsert({ where: { profileId }, update: { theme }, create: { profileId, theme } });
   - |
     async function bump(profileId) {
       return db.stat.upsert({ create: { profileId, visits: 1 }, where: { profileId }, update: { visits: { increment: 1 } } });
     }
   - |
+    const save = async (tx) => tx.preference.upsert({ where: { profileId }, update: {}, create: { profileId } });
+  - |
+    async function save(profileId) { return await db.preference.upsert({ where: { profileId }, update: {}, create: { profileId } }); }
+invalid:
+  - |
+    await db.client.preference.upsert({ where: { profileId }, update: { theme }, create: { profileId, theme } });
+  - |
+    async function bump(profileId) {
+      const stat = await db.stat.upsert({ create: { profileId, visits: 1 }, where: { profileId }, update: { visits: { increment: 1 } } });
+      return stat;
+    }
+  - |
     class Prefs {
       public async save(profileId) {
-        return this.db.preference.upsert({ where: { profileId }, update: {}, create: { profileId } });
+        await this.db.preference.upsert({ where: { profileId }, update: {}, create: { profileId } });
       }
     }
   - |
@@ -58,5 +67,3 @@ invalid:
         value,
       },
     });
-  - |
-    const save = async (tx) => tx.preference.upsert({ where: { profileId }, update: {}, create: { profileId } });

@@ -208,6 +208,24 @@ describe("find sites in one file", () => {
     ]);
   });
 
+  it("confirms only the read's own id, no other surviving key, when the write sits in a function nested inside the read's", () => {
+    const text = [
+      "export async function activate(docId: string, tenantId: string, items: string[]) {",
+      "  const row = await db.client.document.findFirst({ where: { id: docId, tenantId } });",
+      "  await Promise.all(items.map(async (tenantId) => db.client.document.updateMany({ where: { id: row.id, tenantId, active: true }, data: { active: false } })));",
+      "  await Promise.all(items.map(async () => db.client.document.updateMany({ where: { id: row.id, active: true }, data: { active: false } })));",
+      "  await db.client.document.updateMany({ where: { id: row.id, tenantId, active: true }, data: { active: false } });",
+      "}",
+      "",
+    ].join("\n");
+    const sites = findSitesInSource(CLASSES, "lib/activate.ts", text);
+    expect(sites.map((site) => [site.line, site.planted_form_confirmed])).toEqual([
+      [3, false],
+      [4, true],
+      [5, true],
+    ]);
+  });
+
   it("confirms a surviving id only when it holds the read's own id", () => {
     const text = [
       "export async function activate(ownerId: string, targetId: string, docId: string) {",
@@ -454,7 +472,7 @@ describe("find sites in one file", () => {
     expect(sitesIn("api/preferences/route.ts").some((site) => site.function === "resetPreferences")).toBe(false);
   });
 
-  it("matches only an upsert that is awaited or returned where it is called, whose values cannot change before the split read", () => {
+  it("matches only an upsert that is the direct operand of await in its own statement, whose values cannot change before the split read", () => {
     const code = [
       "export async function save(db, profileId, next) {",
       "  const pending = db.client.preference.upsert({ where: { profileId }, update: {}, create: { profileId } });",
@@ -464,11 +482,26 @@ describe("find sites in one file", () => {
       "  await Promise.all([db.client.preference.upsert({ where: { profileId }, update: {}, create: { profileId } })]);",
       "  await db.client.preference.upsert({ where: { profileId }, update: {}, create: { profileId } }).catch(() => null);",
       "  await db.client.preference.upsert({ where: { profileId }, update: {}, create: { profileId } });",
+      "  const row = await db.client.preference.upsert({ where: { profileId }, update: {}, create: { profileId } });",
       "  return db.client.preference.upsert({ where: { profileId }, update: {}, create: { profileId } });",
       "}",
       "",
     ].join("\n");
     expect(findSitesInSource(CLASSES, "lib/prefs.ts", code).map((site) => site.line)).toEqual([8, 9]);
+  });
+
+  it("does not match an upsert returned from or forming the body of an async function, whose caller may keep the promise", () => {
+    const code = [
+      "export async function save(db, input) {",
+      "  return db.client.preference.upsert({ where: { profileId: input.id }, update: { name: input.name }, create: { profileId: input.id } });",
+      "}",
+      "export const touch = async (db, profileId) => db.client.preference.upsert({ where: { profileId }, update: {}, create: { profileId } });",
+      "export async function relay(db, profileId) {",
+      "  return await db.client.preference.upsert({ where: { profileId }, update: {}, create: { profileId } });",
+      "}",
+      "",
+    ].join("\n");
+    expect(findSitesInSource(CLASSES, "lib/prefs.ts", code)).toEqual([]);
   });
 
   it("does not match any upsert inside a transaction argument, or one returned from a plain function", () => {
@@ -606,7 +639,7 @@ describe("find sites in a tree", () => {
       "src/lib/quota.ts:12",
       "src/lib/settings.ts:6",
       "src/lib/settings.ts:12",
-      "src/lib/settings.ts:17",
+      "src/lib/settings.ts:18",
     ]);
     expect(report.sites[3]?.diff).toContain("--- a/src/api/vouchers/redeem.ts\n");
     expect(JSON.stringify(findSites(root, RULES, "src/"))).toBe(JSON.stringify(report));

@@ -271,10 +271,15 @@ function readWhereOf(read: SgNode | undefined): SgNode | undefined {
  * `id` entry whose value is the read's own id (see `readIdTest`), or a direct entry of the read's
  * own `where` with the same key and the same value text. Any other entry, including an `id` from
  * elsewhere or a read key with a different value, may write another record or keep the write
- * conditional, so the planted form is then not confirmed.
+ * conditional, so the planted form is then not confirmed. When the write sits in a function nested
+ * inside the read's, the same text may name a different binding there (a callback parameter can
+ * shadow the read's value), so only the read's own id confirms the form.
  */
 function survivorsPinRecord(guard: SgNode): boolean {
-  const read = writeContext(guard)?.read;
+  const context = writeContext(guard);
+  const read = context?.read;
+  const nearestFunction = (node: SgNode): SgNode | undefined => node.ancestors().find((ancestor) => FUNCTION_KINDS.has(kindOf(ancestor) ?? ""));
+  const nested = read !== undefined && context !== undefined && nearestFunction(read)?.id() !== nearestFunction(context.call)?.id();
   const readEntries = objectEntries(fieldOf(readWhereOf(read), "value"));
   const holdsReadId = readIdTest(read);
   const norm = (text: string | undefined): string | undefined => text?.replace(/\s+/g, " ");
@@ -286,7 +291,7 @@ function survivorsPinRecord(guard: SgNode): boolean {
       if (key === "id") {
         return value !== undefined && holdsReadId(value);
       }
-      return key !== undefined && readEntries.has(key) && norm(readEntries.get(key)) === norm(value);
+      return !nested && key !== undefined && readEntries.has(key) && norm(readEntries.get(key)) === norm(value);
     });
 }
 

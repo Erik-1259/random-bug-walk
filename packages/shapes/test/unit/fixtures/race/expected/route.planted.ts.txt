@@ -12,7 +12,8 @@ export async function POST(request: Request) {
 }
 
 export async function touchProfile(profileId: string) {
-  return db.client.profileStat.upsert({ create: { profileId, visits: 1 }, where: { profileId }, update: { visits: { increment: 1 } } });
+  const stat = await db.client.profileStat.upsert({ create: { profileId, visits: 1 }, where: { profileId }, update: { visits: { increment: 1 } } });
+  return stat;
 }
 
 export async function readPreference(profileId: string) {
