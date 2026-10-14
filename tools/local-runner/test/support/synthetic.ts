@@ -254,10 +254,10 @@ export const RACE_CHECK = "rc1.backup-code-concurrent-double-spend";
  * A race-family probe directory over the synthetic target: the mutation alone, the race
  * fixture's two checks, and ADM-06 recorded as not applicable.
  */
-export function writeRaceProbeDir(): string {
+export function writeRaceProbeDir(pair: { clean: string; planted: string; mutationPatch: string } = { clean: CLEAN, planted: PLANTED, mutationPatch: MUTATION_PATCH }): string {
   const dir = tempDir("rbw-local-runner-race-probes-");
-  const clean = sha256(CLEAN);
-  const planted = sha256(PLANTED);
+  const clean = sha256(pair.clean);
+  const planted = sha256(pair.planted);
   const data = {
     adm_06: { reason: "Synthetic: a partial or stub fix of this race has no natural form.", status: "not_applicable" },
     checks: [SERIAL_CHECK, RACE_CHECK],
@@ -281,6 +281,30 @@ export function writeRaceProbeDir(): string {
     target_path: TARGET,
   };
   writeFileSync(join(dir, "probes.json"), `${JSON.stringify(data, null, 2)}\n`);
-  writeFileSync(join(dir, "mutation.patch"), MUTATION_PATCH);
+  writeFileSync(join(dir, "mutation.patch"), pair.mutationPatch);
   return dir;
 }
+
+/** A clean and planted pair whose one hunk holds an empty context line, as the race family's target does. */
+export const BLANK_CLEAN = [
+  "// synthetic target with an empty line inside the hunk",
+  "export function synthetic(zone: string) {",
+  "",
+  "  return range('day', zone);",
+  "}",
+  "",
+].join("\n");
+export const BLANK_PLANTED = BLANK_CLEAN.replace("range('day', zone)", "range('day')");
+
+/** The standard diff of the pair: the empty context line carries its one-space prefix. */
+export const BLANK_PATCH = `${HEADER}@@ -1,5 +1,5 @@
+ // synthetic target with an empty line inside the hunk
+ export function synthetic(zone: string) {
+${" "}
+-  return range('day', zone);
++  return range('day');
+ }
+`;
+
+/** The same diff after an editor trimmed trailing whitespace: the empty context line is bare. */
+export const BLANK_PATCH_TRIMMED = BLANK_PATCH.replace("{\n \n", "{\n\n");
