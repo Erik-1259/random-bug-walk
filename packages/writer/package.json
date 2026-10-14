@@ -15,10 +15,10 @@
     "record": "node src/record-cli.ts"
   },
   "dependencies": {
-    "@ai-sdk/openai-compatible": "3.0.62",
+    "@ai-sdk/openai-compatible": "3.0.65",
     "@rbw/schema": "workspace:*",
     "@rbw/spend": "workspace:*",
-    "ai": "7.0.127",
+    "ai": "7.0.130",
     "pg": "8.23.1",
     "zod": "4.6.5"
   },
