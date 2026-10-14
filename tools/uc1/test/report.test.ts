@@ -5,11 +5,12 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { analyze } from "@rbw/solver";
-import type { AttemptRow } from "@rbw/solver";
+import type { AttemptRow, BugAnalysis } from "@rbw/solver";
 import { describe, expect, it } from "vitest";
-import { DETECTABLE_DIFFERENCE, detectableSentence, reportMarkdown, writeStaging } from "../src/report.ts";
+import type { LedgerView } from "../src/allowance.ts";
+import { DETECTABLE_DIFFERENCE, buildSummary, detectableSentence, reportMarkdown, writeStaging } from "../src/report.ts";
 import type { RunSummary } from "../src/report.ts";
-import type { RunRecord } from "../src/records.ts";
+import type { AttemptRecord, AttemptRun, RunRecord } from "../src/records.ts";
 
 const PREREGISTRATION = new URL("../../../docs/uc1-preregistration.md", import.meta.url);
 
@@ -210,6 +211,14 @@ describe("the per-arm diagnostics", () => {
     expect(unanalyzed).not.toContain("| Counted attempts |");
   });
 
+  it("notes that the infrastructure counts cover only indexes with a final status and that the arms' grade 2 spend leaves out the seeded round trips", () => {
+    for (const mode of ["run", "pilot"] as const) {
+      const report = reportMarkdown(summary(mode), analyze([...arm("off", 2, 0), ...arm("on", 2, 1)]));
+      expect(report).toContain("except the infrastructure errors and reruns, which cover only the indexes with a final status (counted, or excluded after their reruns): an index with a rerun due is not in them yet.");
+      expect(report).toContain("Grade 2 spend per arm leaves out the seeded round trips, so in a pilot the two arms do not add up to the grade 2 total under Spend.");
+    }
+  });
+
   it("puts the same per-arm measurements in a pilot report, as harness evidence", () => {
     const pilot = reportMarkdown(summary("pilot"), analyze([...arm("off", 2, 0), ...arm("on", 2, 1)]));
     expect(pilot).toContain("| Counted attempts | 2 | 2 |");
@@ -219,13 +228,31 @@ describe("the per-arm diagnostics", () => {
 });
 
 describe("the made-worse statement", () => {
-  it("states the off-minus-on solve rate and plainly that the tool made this bug worse on solves", () => {
+  /** The token ratio with its interval, as the analysis holds it. */
+  function tokenRatio(bug: BugAnalysis | undefined): string {
+    const tokens = bug?.tokens;
+    if (tokens === undefined || tokens === null) return "missing";
+    const approximate = tokens.interval_coverage_approximate ? " (approximate with ties)" : "";
+    return `token ratio (on over off, Hodges–Lehmann) ${tokens.ratio_on_over_off}, interval ${tokens.ratio_interval_on_over_off[0]} to ${tokens.ratio_interval_on_over_off[1]} at level ${tokens.interval_level}${approximate}`;
+  }
+
+  it("states the off-minus-on solve rate and the token ratio with its interval, then plainly that the tool made this bug worse on solves", () => {
     const analysis = analyze([...arm("off", 20, 15), ...arm("on", 20, 2)]);
     const bug = analysis.bugs[0];
     expect(bug?.made_worse).toMatchObject({ solve: "worse", tokens: "inconclusive" });
     const report = reportMarkdown(summary("run"), analysis);
-    const sentence = "Made worse: off-minus-on solve rate 0.650000. On solves, the tool made this bug worse: the on arm solved fewer. On tokens, whether the tool made this bug worse is inconclusive at this sample size.";
+    const sentence = `Made worse: off-minus-on solve rate 0.650000; ${tokenRatio(bug)}. On solves, the tool made this bug worse: the on arm solved fewer attempts. On tokens, whether the tool made this bug worse is inconclusive at this sample size.`;
     expect(report).toContain(`${bug?.made_worse.statement ?? "missing"}\n\n${sentence}`);
+  });
+
+  it("is complete on its own: the token ratio is the analysis's, on over off, with both interval ends", () => {
+    const heavy = (item: AttemptRow): AttemptRow => ({ ...item, tokens: item.tokens * 2 });
+    const analysis = analyze([...arm("off", 20, 2), ...arm("on", 20, 9).map(heavy)]);
+    const tokens = analysis.bugs[0]?.tokens;
+    expect(Number(tokens?.ratio_on_over_off)).toBeGreaterThan(1.9);
+    const report = reportMarkdown(summary("run"), analysis);
+    const sentence = report.split("\n").find((line) => line.startsWith("Made worse:")) ?? "missing";
+    expect(sentence).toContain(`; token ratio (on over off, Hodges–Lehmann) ${tokens?.ratio_on_over_off ?? "missing"}, interval ${tokens?.ratio_interval_on_over_off[0] ?? "missing"} to ${tokens?.ratio_interval_on_over_off[1] ?? "missing"} at level `);
   });
 
   it("says plainly when the tool did not make this bug worse, and when it made it worse on tokens", () => {
@@ -233,21 +260,56 @@ describe("the made-worse statement", () => {
     const analysis = analyze([...arm("off", 20, 2), ...arm("on", 20, 15).map(heavy)]);
     expect(analysis.bugs[0]?.made_worse).toMatchObject({ solve: "not_worse", tokens: "worse" });
     expect(reportMarkdown(summary("run"), analysis)).toContain(
-      "Made worse: off-minus-on solve rate -0.650000. On solves, the tool did not make this bug worse: the on arm solved more. On tokens, the tool made this bug worse: the on arm used more.",
+      `Made worse: off-minus-on solve rate -0.650000; ${tokenRatio(analysis.bugs[0])}. On solves, the tool did not make this bug worse: the on arm solved more attempts. On tokens, the tool made this bug worse: the on arm used more tokens.`,
     );
   });
 
-  it("does not claim either way on solves when the futility rule stopped the solve test", () => {
-    const analysis = analyze([...arm("off", 19, 0, 1), ...arm("on", 20, 0)]);
-    expect(analysis.bugs[0]?.futility.triggered).toBe(true);
-    expect(reportMarkdown(summary("run"), analysis)).toContain(
-      "Made worse: off-minus-on solve rate 0.000000. On solves, the futility rule stopped the test, so this report does not say whether the tool made this bug worse on solves.",
+  it("reads a solve test the futility rule stopped as inconclusive at this sample size, naming the floor or the ceiling", () => {
+    const floor = analyze([...arm("off", 19, 0, 1), ...arm("on", 20, 0)]);
+    expect(floor.bugs[0]?.futility).toEqual({ triggered: true, extreme: "floor" });
+    const floorReport = reportMarkdown(summary("run"), floor);
+    expect(floorReport).toContain(
+      `Made worse: off-minus-on solve rate 0.000000; ${tokenRatio(floor.bugs[0])}. On solves, whether the tool made this bug worse is inconclusive at this sample size (the futility rule stopped the solve test at the floor).`,
     );
+    expect(floorReport).not.toContain("does not say");
+    const ceiling = analyze([...arm("off", 20, 20), ...arm("on", 20, 20)]);
+    expect(ceiling.bugs[0]?.futility).toEqual({ triggered: true, extreme: "ceiling" });
+    expect(reportMarkdown(summary("run"), ceiling)).toContain("On solves, whether the tool made this bug worse is inconclusive at this sample size (the futility rule stopped the solve test at the ceiling).");
   });
 
   it("does not put the made-worse statement in a pilot report", () => {
     const pilot = reportMarkdown(summary("pilot"), analyze([...arm("off", 2, 0), ...arm("on", 2, 1)]));
     expect(pilot).not.toContain("Made worse:");
+  });
+});
+
+describe("the infrastructure list", () => {
+  const ledger: LedgerView = { settled_microusd: 0n, open_microusd: 0n, settled_by_execution: new Map(), uncertain: [], halted: false };
+  const plan = [
+    { index: 1, arm: "off" as const, seed: 1 },
+    { index: 2, arm: "on" as const, seed: 2 },
+  ];
+  const run = { mode: "run", label: null, case_id: "umami-race-synthetic-001", model: "super", model_id: "synthetic-model", runtime_profile_sha256: "a", rate_sheet_sha256: "b", root_execution_id: "r", project_policy_sha256: "c", cap_microusd: "0", plan } as RunRecord;
+
+  function attemptRun(rerun: number, ended: AttemptRun["ended"], infrastructure: string | null): AttemptRun {
+    return { rerun, attempt_key: `k-${String(rerun)}`, execution_id: `e-${String(rerun)}`, session_id: `s-${String(rerun)}`, seed: 1, started_at: "t", ended_at: null, session_wall_ms: null, ended, infrastructure, refusal: null, result: null, submission: null, close_error: null, route: null, grade1: [], grade2: [] };
+  }
+
+  it("lists a run the process ended during that no pass has marked yet, as interrupted, with a rerun due", () => {
+    const records: AttemptRecord[] = [{ schema_version: 1, index: 1, arm: "off", seed: 1, status: "pending", runs: [attemptRun(0, "infrastructure_error", "session_open: synthetic"), attemptRun(1, null, null)] }];
+    const built = buildSummary(run, records, [], [], ledger, null);
+    expect(built.attempts[0]?.infrastructure_runs).toEqual([
+      { rerun: 0, cause: "session_open: synthetic" },
+      { rerun: 1, cause: "interrupted (not yet marked)" },
+    ]);
+    expect(reportMarkdown(built, null)).toContain(["- Index 1 (off), run r0: session_open: synthetic; rerun at the same index.", "- Index 1 (off), run r1: interrupted (not yet marked); a rerun is due."].join("\n"));
+  });
+
+  it("drops a cause's final period before the semicolon", () => {
+    const records: AttemptRecord[] = [{ schema_version: 1, index: 2, arm: "on", seed: 2, status: "pending", runs: [attemptRun(0, "infrastructure_error", "harness: the session did not open.")] }];
+    const report = reportMarkdown(buildSummary(run, records, [], [], ledger, null), null);
+    expect(report).toContain("- Index 2 (on), run r0: harness: the session did not open; a rerun is due.");
+    expect(report).not.toContain(".;");
   });
 });
 

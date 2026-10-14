@@ -1,15 +1,18 @@
 // The run's summary, its report and the publisher's staging directory. Every number the report
-// shows is in the summary or the analysis: the summary's each traced to an attempt record (and
-// every spend figure to the ledger's settled operations under that record's executions), the
-// analysis's to the rows. The staging layout is the publisher's (inputs/, logs/, results/,
-// report.md), with no local path in any staged file.
+// shows is in the summary or the analysis (the summary's each traced to an attempt record, and
+// every spend figure to the ledger's settled operations under that record's executions; the
+// analysis's to the rows), or is computed from their counts (the off-minus-on solve rate when the
+// futility rule stopped the solve test, the observed off-arm rate, the tool-use share), or is one of
+// the report's constants (the pre-registration's detectable-difference table and its arm size, the
+// rerun limit, and the report's own low tool-use share of one half). The staging layout is the
+// publisher's (inputs/, logs/, results/, report.md), with no local path in any staged file.
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { TOOL_NAMES, decimal } from "@rbw/solver";
 import type { Arm, AttemptRow, BugAnalysis, ResultsRecord, Verdict } from "@rbw/solver";
 import type { LedgerView } from "./allowance.ts";
 import { MAX_INFRASTRUCTURE_RERUNS } from "./plan.ts";
-import { attemptDirName, grade2Executions, ledgerSettled, settledTotals, writeJson } from "./records.ts";
+import { attemptDirName, grade2Executions, isInfrastructure, ledgerSettled, settledTotals, writeJson } from "./records.ts";
 import type { AttemptRecord, GradeTry, RunRecord, SeededRecord, StopRecord } from "./records.ts";
 
 export interface RunSummary {
@@ -70,7 +73,11 @@ export interface AttemptSummary {
   grade1: string | null;
   grade2: string | null;
   grade2_settled_microusd: number;
-  /** Every run at this index that ended on an infrastructure error, with its cause (the final run's too, when the index is one). */
+  /**
+   * Every run at this index that ended on an infrastructure error, with its cause (the final run's
+   * too, when the index is one), and every run the process ended during that no pass has marked yet
+   * (ended null), which the next pass marks as an infrastructure error and reruns under the same limit.
+   */
   infrastructure_runs: { rerun: number; cause: string }[];
 }
 
@@ -83,9 +90,12 @@ export interface ArmTotals {
   wall_ms: { attempts: number; total: number; median: number; max: number } | null;
   /** What the ledger settled for the arm's model calls: every run at its indexes, reruns included. */
   model_settled_microusd: number;
-  /** What the ledger settled for the arm's grade 2 jobs: every try of every run at its indexes. */
+  /** What the ledger settled for the arm's grade 2 jobs: every try of every run at its indexes (not the seeded round trips'). */
   grade2_settled_microusd: number;
 }
+
+/** The cause of a run the process ended during, before a pass marks it an infrastructure error. */
+const INTERRUPTED_CAUSE = "interrupted (not yet marked)";
 
 function state(tries: readonly GradeTry[]): string | null {
   return tries.at(-1)?.result.state ?? null;
@@ -126,7 +136,7 @@ export function buildSummary(run: RunRecord, records: readonly AttemptRecord[], 
       grade1: final === undefined ? null : state(final.grade1),
       grade2: final === undefined ? null : state(final.grade2),
       grade2_settled_microusd: final === undefined ? 0 : sum(final.grade2),
-      infrastructure_runs: (record?.runs ?? []).filter((entry) => entry.ended === "infrastructure_error").map((entry) => ({ rerun: entry.rerun, cause: entry.infrastructure ?? "infrastructure_error" })),
+      infrastructure_runs: (record?.runs ?? []).filter(isInfrastructure).map((entry) => ({ rerun: entry.rerun, cause: entry.ended === null ? INTERRUPTED_CAUSE : (entry.infrastructure ?? "infrastructure_error") })),
     };
   });
   const armTotals = (arm: Arm): ArmTotals => {
@@ -316,10 +326,14 @@ function perArmLines(summary: RunSummary, bug: BugAnalysis | undefined): string[
   row("Wall time over counted attempts (total; median; largest)", wall(off), wall(on));
   row("Model spend, every run at the arm's indexes", usd(off.model_settled_microusd), usd(on.model_settled_microusd));
   row("Grade 2 spend, every try", usd(off.grade2_settled_microusd), usd(on.grade2_settled_microusd));
+  const counts =
+    bug === undefined
+      ? ""
+      : "Counts are over each arm's counted attempts (from the analysis), except the infrastructure errors and reruns, which cover only the indexes with a final status (counted, or excluded after their reruns): an index with a rerun due is not in them yet. ";
   const lines = [
     "## Per arm",
     "",
-    "Counts are over each arm's counted attempts (from the analysis), except the infrastructure errors and reruns. Wall time is the solver's, from the session's open to the attempt's end. Spend is what the ledger settled, reruns included.",
+    `${counts}Wall time is the solver's, from the session's open to the attempt's end. Spend is what the ledger settled, reruns included. Grade 2 spend per arm leaves out the seeded round trips, so in a pilot the two arms do not add up to the grade 2 total under Spend.`,
     "",
     "| Measure | Off | On |",
     "|---|---|---|",
@@ -330,12 +344,16 @@ function perArmLines(summary: RunSummary, bug: BugAnalysis | undefined): string[
   return lines;
 }
 
-/** Every run that ended on an infrastructure error, with its cause, apart from the failures ("Reruns and infrastructure errors"). */
+/**
+ * Every run that ended on an infrastructure error (or that the process ended during, not yet
+ * marked), with its cause, apart from the failures ("Reruns and infrastructure errors").
+ */
 function infrastructureLines(summary: RunSummary): string[] {
   const items = summary.attempts.flatMap((item) =>
     item.infrastructure_runs.map((run) => {
       const then = run.rerun < item.runs - 1 ? "rerun at the same index" : item.status === "infrastructure_error" ? "excluded from every outcome after its reruns" : "a rerun is due";
-      return `- Index ${String(item.index)} (${item.arm}), run r${String(run.rerun)}: ${run.cause.replace(/\s+/g, " ").trim()}; ${then}.`;
+      const cause = run.cause.replace(/\s+/g, " ").trim().replace(/\.+$/, "");
+      return `- Index ${String(item.index)} (${item.arm}), run r${String(run.rerun)}: ${cause}; ${then}.`;
     }),
   );
   if (items.length === 0) return [];
@@ -349,31 +367,51 @@ function infrastructureLines(summary: RunSummary): string[] {
   ];
 }
 
+/** The pre-registration's only reading of a non-detection. */
+const INCONCLUSIVE = "whether the tool made this bug worse is inconclusive at this sample size";
+
 const VERDICT_CLAUSES: Record<"solves" | "tokens", Record<Verdict, string>> = {
   solves: {
-    worse: "the tool made this bug worse: the on arm solved fewer",
-    not_worse: "the tool did not make this bug worse: the on arm solved more",
-    inconclusive: "whether the tool made this bug worse is inconclusive at this sample size",
-    not_tested: "the futility rule stopped the test, so this report does not say whether the tool made this bug worse on solves",
+    worse: "the tool made this bug worse: the on arm solved fewer attempts",
+    not_worse: "the tool did not make this bug worse: the on arm solved more attempts",
+    inconclusive: INCONCLUSIVE,
+    not_tested: "the solve test did not run, so this report does not say whether the tool made this bug worse on solves",
   },
   tokens: {
-    worse: "the tool made this bug worse: the on arm used more",
-    not_worse: "the tool did not make this bug worse: the on arm used fewer",
-    inconclusive: "whether the tool made this bug worse is inconclusive at this sample size",
-    not_tested: "the test did not run, so this report does not say whether the tool made this bug worse on tokens",
+    worse: "the tool made this bug worse: the on arm used more tokens",
+    not_worse: "the tool did not make this bug worse: the on arm used fewer tokens",
+    inconclusive: INCONCLUSIVE,
+    not_tested: "the token test did not run, so this report does not say whether the tool made this bug worse on tokens",
   },
 };
 
 /**
- * The pre-registration's "made worse" statement ("Claim wording"), after the analysis's statement
- * (which holds the token ratio with its interval): the off-minus-on solve rate, then plainly whether
- * the tool made this bug worse on each outcome, from the analysis's verdicts.
+ * The solve verdict's clause. A solve test the futility rule stopped is fixed at p = 1, a
+ * non-detection, so it reads as inconclusive at this sample size, with the extreme that stopped it.
+ */
+function solveClause(bug: BugAnalysis): string {
+  if (bug.futility.triggered) return `${INCONCLUSIVE} (the futility rule stopped the solve test at the ${bug.futility.extreme})`;
+  return VERDICT_CLAUSES.solves[bug.made_worse.solve];
+}
+
+/** The token ratio, on over off from the Hodges–Lehmann shift on log tokens, with its interval. */
+function tokenRatio(tokens: BugAnalysis["tokens"]): string {
+  if (tokens === null) return "token ratio not tested";
+  const approximate = tokens.interval_coverage_approximate ? " (approximate with ties)" : "";
+  return `token ratio (on over off, Hodges–Lehmann) ${tokens.ratio_on_over_off}, interval ${tokens.ratio_interval_on_over_off[0]} to ${tokens.ratio_interval_on_over_off[1]} at level ${tokens.interval_level}${approximate}`;
+}
+
+/**
+ * The pre-registration's "made worse" statement ("Claim wording"), complete on its own: the
+ * off-minus-on solve rate and the token ratio with its interval, then plainly whether the tool made
+ * this bug worse on each outcome, from the analysis's verdicts. When the futility rule stopped the
+ * solve test the analysis holds no solve result, so the rate is computed from its counts.
  */
 function madeWorseSentence(bug: BugAnalysis): string {
   const { off, on } = bug.arms;
   if (off.counted === 0 || on.counted === 0) return "Made worse: not tested, since an arm has no counted attempt.";
   const rate = bug.solve?.off_minus_on_rate ?? decimal(off.solved / off.counted - on.solved / on.counted);
-  return `Made worse: off-minus-on solve rate ${rate}. On solves, ${VERDICT_CLAUSES.solves[bug.made_worse.solve]}. On tokens, ${VERDICT_CLAUSES.tokens[bug.made_worse.tokens]}.`;
+  return `Made worse: off-minus-on solve rate ${rate}; ${tokenRatio(bug.tokens)}. On solves, ${solveClause(bug)}. On tokens, ${VERDICT_CLAUSES.tokens[bug.made_worse.tokens]}.`;
 }
 
 /** The run's report: the label, the plan, every attempt, both grades, spend and the analysis statements. */
