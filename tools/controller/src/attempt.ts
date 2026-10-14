@@ -291,6 +291,11 @@ function wordCount(text: string): number {
   return text === "" ? 0 : text.split(" ").length;
 }
 
+/** The text when it has 6 or more words, else null. */
+function sixPlusWords(text: string): string | null {
+  return wordCount(text) >= PHRASE_MIN_WORDS ? text : null;
+}
+
 /** The first sentence, or the start of the text when that sentence is too short to be distinctive; null when even that is too short. */
 function distinctPhrase(text: string): string | null {
   const sentence = firstSentence(text);
@@ -300,17 +305,23 @@ function distinctPhrase(text: string): string | null {
 
 /**
  * The field's own phrase when it has one; else a phrase from adjacent
- * reproduction steps joined in order, the first such run of 6 or more words not already taken; else
+ * reproduction steps joined in order, the first such run of 6 or more words not already taken (preferring
+ * the shortest run from each start, then a run extended past a taken phrase); else
  * null, and novelty is incomplete. A phrase under 6 words is never returned.
  */
 function phraseFrom(own: string | null, steps: readonly string[], taken: readonly string[]): string | null {
   if (own !== null) return own;
-  for (let start = 0; start < steps.length; start += 1) {
-    for (let end = start + 1; end <= steps.length; end += 1) {
-      const phrase = distinctPhrase(steps.slice(start, end).join(" "));
-      if (phrase === null) continue;
-      if (!taken.includes(phrase)) return phrase;
-      break;
+  // First the shortest untaken run from each start; only then a run extended past a taken phrase.
+  for (const extendPastTaken of [false, true]) {
+    for (let start = 0; start < steps.length; start += 1) {
+      for (let end = start + 1; end <= steps.length; end += 1) {
+        const run = steps.slice(start, end).join(" ");
+        // An extended run takes its own first 12 words, so a taken first sentence cannot repeat.
+        const phrase = extendPastTaken ? sixPlusWords(words(clean(run))) : distinctPhrase(run);
+        if (phrase === null) continue;
+        if (!taken.includes(phrase)) return phrase;
+        if (!extendPastTaken) break;
+      }
     }
   }
   return null;
