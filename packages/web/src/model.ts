@@ -1,8 +1,8 @@
 // What the pages show, derived from the published records only. Every count here is a count of
 // records in the results directory.
 import type { Cell, Comparison, RuleOutcome } from "@rbw/admission";
-import type { BucketCount, CodeState, ObservedSymptom, RaceAttempt, RaceSymptom, RootRunKind } from "@rbw/schema";
-import type { AdmissionRecords, Results, Run } from "./release.ts";
+import type { BucketCount, CodeState, ObservedSymptom, RaceAttempt, RaceSymptom, Release, RootRunKind } from "@rbw/schema";
+import type { AdmissionRecords, CaseFamily, Results, Run } from "./release.ts";
 
 export const NO_VALIDATED_RESULT = "No validated blind-spot example yet";
 export const VALIDATED_RESULT = "Validated blind-spot example";
@@ -208,13 +208,30 @@ export function funnel(results: Results): FunnelStep[] {
     { label: "Factory runs with an admission decision", count: decided.length },
     { label: "Admission verdict pass", count: decided.filter((decision) => decision.outcome_verdict === "pass").length },
     { label: "Blind spot demonstrated (ADM-08)", count: decided.filter((decision) => decision.comparison?.classification === "blind_spot_demonstrated").length },
-    { label: "Validated releases (ADM-09)", count: results.release === null ? 0 : 1 },
+    { label: "Validated releases (ADM-09)", count: results.releases.length },
   ];
 }
 
-/** Published judge replays, which the case page lists apart from the diagnostic archive. */
+/**
+ * The judge replays a case page counts: every replay while the site has at most one release; with
+ * several, only the replays whose published request names the page's release.
+ */
+export function caseReplays(results: Results): Run[] {
+  const replays = results.runs.filter((run) => run.kind === "judge_replay");
+  if (results.releases.length <= 1) return replays;
+  const releaseId = results.release?.record.release_id;
+  return replays.filter((run) => run.replayReleaseId === releaseId);
+}
+
+/** The judge replays no release of this site can be named for yet: unpublished, or without a judge_verify request naming one. */
+export function unattributedReplays(results: Results): Run[] {
+  const known = new Set(results.releases.map((item) => item.release.record.release_id));
+  return results.runs.filter((run) => run.kind === "judge_replay" && (run.replayReleaseId === null || !known.has(run.replayReleaseId)));
+}
+
+/** Published judge replays (of this page's release when the site has several), which the case page lists apart from the diagnostic archive. */
 export function verificationReplays(results: Results): Run[] {
-  return results.runs.filter((run) => run.kind === "judge_replay" && run.manifest !== null);
+  return caseReplays(results).filter((run) => run.manifest !== null);
 }
 
 /**
@@ -230,7 +247,7 @@ export const REPLAY_VERDICT_NOTE =
  * checks when there are any.
  */
 export function otherRuns(results: Results): FunnelStep[] {
-  const replays = results.runs.filter((run) => run.kind === "judge_replay");
+  const replays = caseReplays(results);
   const outcomes = (Object.keys(OUTCOME_WORDS) as (keyof typeof OUTCOME_WORDS)[]).map((outcome) => ({
     label: `Replays ${OUTCOME_WORDS[outcome].toLowerCase()}`,
     count: replays.filter((run) => run.outcome === outcome).length,
@@ -238,7 +255,53 @@ export function otherRuns(results: Results): FunnelStep[] {
   const unfinished = { label: "Replays not finished", count: replays.filter((run) => run.outcome === null).length };
   const paired = { label: "Paired comparisons", count: results.runs.filter((run) => run.kind === "paired_comparison").length };
   const kitChecks = { label: "Kit checks", count: results.runs.filter((run) => run.kind === "kit_check").length };
-  return [{ label: "Verification replays (judge)", count: replays.length }, ...[...outcomes, unfinished, paired, kitChecks].filter((step) => step.count > 0)];
+  const several = results.releases.length > 1;
+  const unattributed = { label: "Verification replays not yet matched to a release", count: several ? unattributedReplays(results).length : 0 };
+  return [
+    { label: several ? "Verification replays (judge) of this release" : "Verification replays (judge)", count: replays.length },
+    ...[...outcomes, unfinished, unattributed, paired, kitChecks].filter((step) => step.count > 0),
+  ];
+}
+
+/** How each family is named on the pages. */
+export const FAMILY_TEXT: Record<CaseFamily, string> = { "time-zone": "Time-zone", race: "Race" };
+
+/** One line of the case list: a released case, its family and its verified status, from the records. */
+export interface CaseSummary {
+  releaseId: string;
+  createdAt: string;
+  family: string;
+  /** What the release records about its admission, e.g. "Validated release (ADM-09): admission pass, blind spot demonstrated". */
+  status: string;
+  /** The published judge replays whose request names this release. */
+  replays: number;
+  href: string;
+}
+
+/** The released cases, newest first, for the case list. */
+export function caseSummaries(results: Results): CaseSummary[] {
+  return results.releases.map((item) => {
+    const { record } = item.release;
+    const { admission } = record;
+    return {
+      releaseId: record.release_id,
+      createdAt: record.created_at,
+      family: item.family === null ? record.family.family_id : FAMILY_TEXT[item.family],
+      status: `Validated release (ADM-09): admission ${VERDICT_TEXT[admission.outcome_verdict]}, ${COMPARISON_TEXT[admission.classification]}`,
+      replays: results.runs.filter((run) => run.kind === "judge_replay" && run.manifest !== null && run.replayReleaseId === record.release_id).length,
+      href: caseHref(record.release_id),
+    };
+  });
+}
+
+/** The release that names this run, if any. */
+export function releaseOfRun(results: Results, root: string): Release | undefined {
+  return results.releases.find((item) => item.run.rootExecutionId === root)?.release.record;
+}
+
+/** A released case's own page. */
+export function caseHref(releaseId: string): string {
+  return `/cases/${releaseId}`;
 }
 
 /** The replay control's states (design note section 6). Every state is written in text; color only repeats it. */
@@ -327,8 +390,8 @@ export interface ReplayStatus {
  * the judge replays and the paired comparisons, which are not factory candidates for validation.
  */
 export function diagnosticArchives(results: Results): Run[] {
-  const released = results.release?.record.run.root_execution_id;
-  return results.runs.filter((run) => run.manifest !== null && run.kind !== "judge_replay" && run.kind !== "paired_comparison" && run.rootExecutionId !== released);
+  const released = new Set(results.releases.map((item) => item.run.rootExecutionId));
+  return results.runs.filter((run) => run.manifest !== null && run.kind !== "judge_replay" && run.kind !== "paired_comparison" && !released.has(run.rootExecutionId));
 }
 
 const PUBLICATION_TEXT = { prepared: "Prepared", published: "Published", blocked: "Blocked", failed: "Publication failed" } as const;
