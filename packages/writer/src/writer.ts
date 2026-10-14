@@ -30,7 +30,8 @@ import type { IssueCheckReport } from "./issue-checks.ts";
 import { buildIssuePrompt } from "./issue-prompt.ts";
 import { IssueOutputSchema } from "./issue-schema.ts";
 import type { IssueOutput } from "./issue-schema.ts";
-import { parseWriterSymptom } from "./race-symptom.ts";
+import { withRaceCountLines } from "./race-count-lines.ts";
+import { isRaceSymptom, parseWriterSymptom } from "./race-symptom.ts";
 import { profileSha256 } from "./profile.ts";
 import type { ModelProfile } from "./profile.ts";
 import { countPromptBound } from "./prompt-bound.ts";
@@ -740,13 +741,17 @@ export function createWriter(options: WriterOptions): Writer {
         return result;
       }
       const { call, output } = result;
+      // A race issue's count lines come from the observation, not the model. The issue returned
+      // (and frozen by the caller) is the one the checks saw; the model's reply stays in the call.
+      const symptom = parsed.symptom;
+      const issue = output !== null && isRaceSymptom(symptom) ? withRaceCountLines(output, symptom) : output;
       let report: IssueCheckReport | null = null;
-      if (output !== null) {
-        report = checkIssue(output, parsed.symptom, excluded.data);
+      if (issue !== null) {
+        report = checkIssue(issue, symptom, excluded.data);
       } else if (call.failure === "invalid_output") {
         report = structureFailure("the response did not match the issue schema");
       }
-      return { ok: true, call, issue: report?.structure.ok === true ? output : null, report };
+      return { ok: true, call, issue: report?.structure.ok === true ? issue : null, report };
     }),
 
     writeCard: (request) =>

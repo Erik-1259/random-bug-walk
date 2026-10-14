@@ -75,6 +75,22 @@ function statesRaceCounts(text: string, key: "expected" | "observed", counts: { 
   return match !== null && BigInt(match[1] ?? "") === BigInt(counts.accepted) && BigInt(match[2] ?? "") === BigInt(counts.refused);
 }
 
+// In a race issue the counts live only on the fixed lines. Outside them, in the title, the steps and
+// the result fields, a standalone number is a count stated elsewhere unless it is a date or time, a
+// timing, or a three-digit HTTP status the observation holds. Digits inside a word or a path ("2FA",
+// "/api/2fa") are not standalone numbers.
+const TIMING = /\b\d+(?:\.\d+)?\s*(?:ms|milliseconds?|s|sec|seconds?|min|minutes?)\b/gi;
+const STANDALONE_NUMBER = /(?<![\w/.-])\d+(?![\w/.-])/g;
+
+/** The standalone numbers in a race issue's text outside its count lines, dates, times and timings. */
+function raceProseNumbers(text: string): string[] {
+  const prose = text
+    .split(/\r?\n/)
+    .filter((line) => !/^\s*(?:expected|observed)\s*:/i.test(line))
+    .join("\n");
+  return prose.replace(DATE_OR_TIME, " ").replace(TIMING, " ").match(STANDALONE_NUMBER) ?? [];
+}
+
 /** Every string and number value in the observation (never its keys). */
 function symptomValues(value: unknown): string[] {
   if (typeof value === "string") {
@@ -110,6 +126,17 @@ function checkNumbers(issue: IssueOutput, symptom: WriterSymptom): NumericViolat
     for (const run of digitRuns(text)) {
       if (!supported.has(BigInt(run))) {
         violations.push({ field, reason: "unsupported_number", number: run });
+      }
+    }
+  }
+  if (isRaceSymptom(symptom)) {
+    const statuses = new Set(symptomValues(symptom).flatMap(digitRuns).filter((run) => /^[1-5]\d\d$/.test(run)));
+    for (const { field, text } of issueFields(issue).filter((item) => item.field !== "environment")) {
+      for (const run of raceProseNumbers(text)) {
+        if (statuses.has(run)) continue;
+        if (!violations.some((item) => item.field === field && item.number === run)) {
+          violations.push({ field, reason: "unsupported_number", number: run });
+        }
       }
     }
   }
