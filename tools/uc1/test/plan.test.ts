@@ -87,27 +87,35 @@ describe("case files and screen records", () => {
     expect(() => parseCase(Buffer.from(JSON.stringify({ ...caseJson, sandbox_image: "registry.example/kit:latest" })))).toThrow("pinned by digest");
   });
 
-  it("passes the case's controller options to both grades", () => {
+  it("passes the case's controller options to both grades: grade 1 on the native kit digest, grade 2 on the pinned registry build", () => {
     const config = parseCase(Buffer.from(JSON.stringify({ ...caseJson, original_suite: "suite.json" })));
-    const base = controllerBase(config);
-    // The kit image by the case's content digest, never by its tag, so a retagged image cannot be graded.
+    const base = controllerBase(config, 1);
+    // Grade 1's kit image by the case's content digest, never by its tag, so a retagged image cannot be graded.
     expect(base.slice(0, 2)).toEqual(["--image", `sha256:${"f9".repeat(32)}`]);
     expect(base).not.toContain("rbw-umami-kit:local");
     expect(base).toContain("--original-suite");
     expect(base).not.toContain("--policy");
     expect(base).not.toContain("--probes-dir");
+    // Grade 2's job image is the registry build its Sandbox copies run, by its pinned reference; every other option is grade 1's.
+    const second = controllerBase(config, 2);
+    expect(second.slice(0, 2)).toEqual(["--image", `registry.example/kit@sha256:${"ab".repeat(32)}`]);
+    expect(second.slice(2)).toEqual(base.slice(2));
   });
 
   it("passes the case's probe directory to both grades, so they grade the same probes the session planted", () => {
     const config = parseCase(Buffer.from(JSON.stringify({ ...caseJson, probes_dir: "packages/shapes/probes/rc-1" })));
-    const base = controllerBase(config);
-    expect(base[base.indexOf("--probes-dir") + 1]).toBe(config.probes_dir);
+    for (const grade of [1, 2] as const) {
+      const base = controllerBase(config, grade);
+      expect(base[base.indexOf("--probes-dir") + 1]).toBe(config.probes_dir);
+    }
   });
 
   it("passes a race case's family to both grades with its probes, and refuses an unknown family", () => {
-    const race = controllerBase(parseCase(Buffer.from(JSON.stringify({ ...caseJson, family: "race", probes_dir: "packages/shapes/probes/rc-1" }))));
-    expect(race[race.indexOf("--family") + 1]).toBe("race");
-    expect(controllerBase(parseCase(Buffer.from(JSON.stringify(caseJson))))).not.toContain("--family");
+    for (const grade of [1, 2] as const) {
+      const race = controllerBase(parseCase(Buffer.from(JSON.stringify({ ...caseJson, family: "race", probes_dir: "packages/shapes/probes/rc-1" }))), grade);
+      expect(race[race.indexOf("--family") + 1]).toBe("race");
+      expect(controllerBase(parseCase(Buffer.from(JSON.stringify(caseJson))), grade)).not.toContain("--family");
+    }
     expect(() => parseCase(Buffer.from(JSON.stringify({ ...caseJson, family: "sql" })))).toThrow("family");
     const missing: Record<string, unknown> = { ...caseJson };
     delete missing.family;

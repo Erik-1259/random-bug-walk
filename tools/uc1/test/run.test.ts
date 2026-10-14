@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { readSolverRateSheet, solverEnvelope, SUPER_SOLVER_PROFILE } from "@rbw/solver";
 import { describe, expect, it } from "vitest";
-import { DRY_CLEAN, DRY_COPY_MICROUSD, DRY_DIGEST, DRY_MUTATION, DRY_OTHER, DRY_TARGET, defaultScript, dryRunWorld } from "../src/fakes.ts";
+import { DRY_CLEAN, DRY_COPY_MICROUSD, DRY_DIGEST, DRY_MUTATION, DRY_OTHER, DRY_SANDBOX_IMAGE, DRY_TARGET, defaultScript, dryRunWorld } from "../src/fakes.ts";
 import type { DryRunOptions, DryRunWorld } from "../src/fakes.ts";
 import { RunRefusal, finalize, runGrade2, runSessions } from "../src/orchestrator.ts";
 import type { SessionsOptions } from "../src/orchestrator.ts";
@@ -407,6 +407,35 @@ describe("attempts, reruns and scope", () => {
     await w.close();
   });
 
+  it.each([
+    { seed: "seed-clean", state: "failed" },
+    { seed: "seed-alternative-fix", state: "infrastructure" },
+  ] as const)("starts no session and makes no model call when the seeded round trip $seed ends $state after its retries", async ({ seed, state }) => {
+    const w = await world({ controller: (call) => (call.name.startsWith(`grade-1-docker-${seed}-`) ? state : "passed") });
+    const outcome = await runSessions(pilot(w), w.deps);
+    expect(outcome.exitCode).toBe(1);
+    expect(outcome.stop).toMatchObject({ reason: "seeded_failed" });
+    expect(outcome.stop?.detail).toContain(`${seed}: grade 1 ended ${state}`);
+    expect(readFileSync(join(outcome.runDir, "stops.jsonl"), "utf8").trim().split("\n").map((line) => (JSON.parse(line) as { reason: string }).reason)).toEqual(["seeded_failed"]);
+    // The seed had its allowed tries (a verdict ends it at once; infrastructure is retried), and nothing ran after them.
+    expect((json(join(outcome.runDir, "seeded", seed, "seeded.json")).grade1 as unknown[]).length).toBe(state === "failed" ? 1 : MAX_GRADE_RETRIES + 1);
+    expect(w.sessions).toHaveLength(0);
+    expect(w.model.bodies).toHaveLength(0);
+    expect(w.controllerCalls.every((call) => call.grade === 1 && call.name.startsWith("grade-1-docker-seed-"))).toBe(true);
+    expect(existsSync(join(outcome.runDir, "attempts"))).toBe(false);
+    // The normal cleanup still ran: the slot is released and the progress view is written.
+    const slot = await w.spend.slotStatus({ slot_key: "development" });
+    expect(slot.ok && slot.holder).toBeNull();
+    expect(existsSync(join(outcome.runDir, "results", "summary.json"))).toBe(true);
+    // A resume stops again before any session.
+    const resumed = await runSessions(pilot(w), w.deps);
+    expect(resumed.exitCode).toBe(1);
+    expect(resumed.stop).toMatchObject({ reason: "seeded_failed" });
+    expect(w.sessions).toHaveLength(0);
+    expect(w.model.bodies).toHaveLength(0);
+    await w.close();
+  });
+
   it("replays a grade 2 job that settled before its try was saved, without a new hold, even near the cap", async () => {
     let tight = false;
     const w = await world({ view: (view) => (tight ? { ...view, settled_microusd: 40_000_000n - view.open_microusd - BigInt(DRY_COPY_MICROUSD) + 1n } : view) });
@@ -782,6 +811,27 @@ describe("resumes, reruns and exit codes", () => {
     expect(w.sessions).toHaveLength(0);
     digest = DRY_DIGEST;
     expect((await runSessions(pilot(w), w.deps)).exitCode).toBe(0);
+    await w.close();
+  });
+
+  it("refuses grade 2 before any job or try when the case's sandbox_image does not resolve locally, and grades normally once it is pulled", async () => {
+    const w = await world();
+    const outcome = await runSessions(pilot(w), w.deps);
+    const resolve = w.deps.resolveImage.bind(w.deps);
+    w.deps.resolveImage = (image) => (image === DRY_SANDBOX_IMAGE ? Promise.reject(new Error(`docker cannot inspect the image ${image}`)) : resolve(image));
+    const calls = w.controllerCalls.length;
+    const refused = runGrade2({ runDir: outcome.runDir }, w.deps);
+    await expect(refused).rejects.toThrow(RunRefusal);
+    await expect(refused).rejects.toThrow(`the case's sandbox_image ${DRY_SANDBOX_IMAGE} does not resolve locally`);
+    expect(w.controllerCalls).toHaveLength(calls);
+    const clean = join(outcome.runDir, "seeded", "seed-clean", "seeded.json");
+    expect(json(clean).grade2).toEqual([]);
+    expect(runs(outcome.runDir, "001-off")[0]?.grade2).toEqual([]);
+    expect(existsSync(join(outcome.runDir, "stops.jsonl"))).toBe(false);
+    w.deps.resolveImage = resolve;
+    const graded = await runGrade2({ runDir: outcome.runDir }, w.deps);
+    expect(graded.exitCode).toBe(0);
+    expect((json(clean).grade2 as { result: { state: string } }[]).map((item) => item.result.state)).toEqual(["passed"]);
     await w.close();
   });
 

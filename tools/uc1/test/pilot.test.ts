@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseRecord } from "@rbw/schema";
 import { describe, expect, it } from "vitest";
-import { DRY_ALTERNATIVE, DRY_CLEAN, DRY_COPY_MICROUSD, DRY_DIGEST, dryRunWorld } from "../src/fakes.ts";
+import { DRY_ALTERNATIVE, DRY_CLEAN, DRY_COPY_MICROUSD, DRY_DIGEST, DRY_SANDBOX_IMAGE, dryRunWorld } from "../src/fakes.ts";
 import type { DryRunOptions, DryRunWorld } from "../src/fakes.ts";
 import { finalize, runGrade2, runSessions } from "../src/orchestrator.ts";
 import type { SessionsOptions } from "../src/orchestrator.ts";
@@ -117,9 +117,33 @@ describe("the harness pilot", () => {
     expect(cleanCall?.args[cleanCall.args.indexOf("--judge-fixed") + 1]).toBe("fixed");
     const altCall = w.controllerCalls.find((call) => call.name === "grade-1-docker-seed-alternative-fix-r0");
     expect(altCall?.args[altCall.args.indexOf("--judge-fixed") + 1]).toBe("alternative_fix");
-    for (const call of w.controllerCalls) expect(call.args[call.args.indexOf("--image") + 1]).toBe(DRY_DIGEST);
-    // The 4 attempts made every model call: 5 turns in the on arm, 4 in the off arm, none for the seeded grades.
+    // Both seeds passed, so the attempts ran after them: the 4 attempts made every model call (5 turns
+    // in the on arm, 4 in the off arm), none for the seeded grades.
+    expect(outcome.stop).toBeNull();
+    expect(w.sessions).toHaveLength(4);
     expect(turns).toBe(18);
+    await w.close();
+  });
+
+  it("runs the sessions and grade 1 on the case's native kit digest, and grade 2 on its pinned registry build", async () => {
+    const w = await world();
+    const outcome = await runSessions(pilot(w), w.deps);
+    expect((await runGrade2({ runDir: outcome.runDir }, w.deps)).exitCode).toBe(0);
+    const image = (args: readonly string[]) => args[args.indexOf("--image") + 1];
+    const first = w.controllerCalls.filter((call) => call.grade === 1);
+    const second = w.controllerCalls.filter((call) => call.grade === 2);
+    // 2 seeded round trips and 4 attempts, each graded once by each grade.
+    expect(first).toHaveLength(6);
+    expect(second).toHaveLength(6);
+    for (const call of first) expect(image(call.args)).toBe(DRY_DIGEST);
+    // Grade 2's job image is the registry build its Sandbox copies run, so it carries that build's repository digest.
+    for (const call of second) {
+      expect(image(call.args)).toBe(DRY_SANDBOX_IMAGE);
+      expect(call.args[call.args.indexOf("--sandbox-image") + 1]).toBe(DRY_SANDBOX_IMAGE);
+    }
+    expect(w.sessions).toHaveLength(4);
+    // Each session opens the case's native kit image and expects its digest, never the registry build.
+    for (const session of w.sessions) expect([session.request.config.image, session.request.config.image_digest]).toEqual(["rbw-umami-kit:synthetic", DRY_DIGEST]);
     await w.close();
   });
 

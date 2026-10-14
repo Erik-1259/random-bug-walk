@@ -2,16 +2,18 @@
 // own command:
 //
 //   1. sessions (`pilot` or `run`): refuse anything the pre-registration does not allow, create and
-//      persist the paired_comparison root under the public_demo policy, run the pilot's seeded
-//      grade round trips (grade 1, no model), hold the development slot for the root, and run the
-//      attempts in index order (up to 3 at once): a fresh session on the pinned kit image, the
-//      solver loop with the arm's tools, the diff, then grade 1 on local Docker. Every model call
-//      passes the spend guard first. Infrastructure errors are rerun at the same index, up to 2
-//      times; a stop (spend, ledger or a session refusal) ends the pass, and the next pass resumes
-//      (after a spend refusal, only once the ledger is reconciled). An attempt the spend guard
-//      refused after a model turn counts as capped and is never rerun.
+//      persist the paired_comparison root under the public_demo policy, hold the development slot
+//      for the root, run the pilot's seeded grade round trips (grade 1, no model; a seed that does
+//      not pass stops the pass before any session or model call), and run the attempts in index
+//      order (up to 3 at once): a fresh session on the pinned kit image, the solver loop with the
+//      arm's tools, the diff, then grade 1 on local Docker. Every model call passes the spend
+//      guard first. Infrastructure errors are rerun at the same index, up to 2 times; a stop
+//      (spend, ledger or a session refusal) ends the pass, and the next pass resumes (after a
+//      spend refusal, only once the ledger is reconciled). An attempt the spend guard refused
+//      after a model turn counts as capped and is never rerun.
 //   2. grade2: the protected regrade on Vercel Sandbox, serially, each job only when its worst
-//      case fits the allowance, with the slot free for the controller to take.
+//      case fits the allowance, with the slot free for the controller to take. Its job image is
+//      the case's pinned registry build (sandbox_image), which must be pulled.
 //   3. finalize: the analyzer's rows and results record, the summary, the report, the publisher's
 //      staging directory, and the root's terminal status.
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
@@ -239,7 +241,7 @@ async function gradeTry(ctx: RunContext, route: Exclude<GradeRoute, { route: "no
     work,
     attempt: label,
     retry,
-    base: controllerBase(ctx.config),
+    base: controllerBase(ctx.config, grade),
     sandboxImage: ctx.config.sandbox_image,
     referenceFix: ctx.config.reference_fix,
     ids,
@@ -294,10 +296,14 @@ async function grade1(ctx: RunContext, route: Exclude<GradeRoute, { route: "not_
   }
 }
 
-/** The pilot's seeded round trips: the alternative fix through the fix route, the clean bytes through the clean-equal route. */
-async function seededGrades(ctx: RunContext): Promise<boolean> {
+/**
+ * The pilot's seeded round trips: the alternative fix through the fix route, the clean bytes through
+ * the clean-equal route. Returns each one that did not take its expected route or did not end grade 1
+ * passed after its retries; none means both passed.
+ */
+async function seededGrades(ctx: RunContext): Promise<string[]> {
   const target = gradeTarget(ctx.runDir);
-  let matches = true;
+  const failed: string[] = [];
   for (const seed of SEEDED_ROUND_TRIPS) {
     const dir = join(ctx.runDir, "seeded", seed.label);
     const existing = existsSync(join(dir, "seeded.json")) ? (readJson(join(dir, "seeded.json")) as SeededRecord) : null;
@@ -309,9 +315,11 @@ async function seededGrades(ctx: RunContext): Promise<boolean> {
     if (isGraded(route)) await grade1(ctx, route, join(dir, "grade"), seed.label, record.grade1, () => {
         writeSeeded(ctx.runDir, record);
       });
-    matches &&= record.route_matches && record.grade1.at(-1)?.result.state === "passed";
+    const state = record.grade1.at(-1)?.result.state ?? "not_graded";
+    if (!record.route_matches) failed.push(`${seed.label}: route ${route.route}, expected ${seed.route}`);
+    else if (state !== "passed") failed.push(`${seed.label}: grade 1 ended ${state}`);
   }
-  return matches;
+  return failed;
 }
 
 interface Pass extends RunContext {
@@ -780,7 +788,13 @@ export async function runSessions(options: SessionsOptions, deps: Uc1Deps): Prom
       }
     };
     try {
-      if (run.mode === "pilot") seededOk = await seededGrades(pass);
+      if (run.mode === "pilot") {
+        const failed = await seededGrades(pass);
+        seededOk = failed.length === 0;
+        // The grading path is not shown to work: no session starts and no model is called. The seeds'
+        // grade 1 records are final, so a resume stops here again.
+        if (!seededOk) pass.halt("seeded_failed", `${failed.join("; ")}; no session started; start a corrected new run under a new --name`);
+      }
       await Promise.all(Array.from({ length: options.concurrency }, () => worker()));
     } finally {
       // Released even when a step threw, so a harness fault never leaves the development slot held.
@@ -822,6 +836,18 @@ export interface Grade2Outcome {
   stop: StopRecord | null;
 }
 
+/**
+ * Refuses grade 2 when the case's pinned registry build is not on this host: every grade 2 job runs
+ * it as its --image (the controller exports and audits it locally), so it must have been pulled.
+ */
+async function refuseUnpulledSandboxImage(config: CaseConfig, deps: Uc1Deps): Promise<void> {
+  try {
+    await deps.resolveImage(config.sandbox_image);
+  } catch (error) {
+    throw new RunRefusal(`the case's sandbox_image ${config.sandbox_image} does not resolve locally (${message(error)}); grade 2 runs it as its job image, so pull it first`);
+  }
+}
+
 /** Step 2: the protected regrade on Vercel Sandbox for every graded attempt and seeded round trip, serially. */
 export async function runGrade2(options: { runDir: string }, deps: Uc1Deps): Promise<Grade2Outcome> {
   const { runDir } = options;
@@ -829,10 +855,12 @@ export async function runGrade2(options: { runDir: string }, deps: Uc1Deps): Pro
   if (run === null) throw new RunRefusal(`${runDir} is not a UC1 run`);
   refuseFinalized(runDir, run.name);
   refuseChangedInputs(runDir, run);
+  const config = readJson(join(runDir, "case.json")) as CaseConfig;
+  await refuseUnpulledSandboxImage(config, deps);
   const slot = await deps.spend.slotStatus({ slot_key: DEVELOPMENT_SLOT });
   if (!slot.ok) throw new RunRefusal(`the development slot is unavailable (${slot.code})`);
   if (slot.holder !== null) throw new RunRefusal(`the development slot is held by ${slot.holder}; grade 2 needs it free, since the controller takes it for each job`);
-  const ctx: RunContext = { runDir, run, config: readJson(join(runDir, "case.json")) as CaseConfig, ids: readJson(join(runDir, "ids.json")) as RunIds, deps };
+  const ctx: RunContext = { runDir, run, config, ids: readJson(join(runDir, "ids.json")) as RunIds, deps };
   const allowance = new Allowance(deps.allowanceSource, BigInt(run.cap_microusd), () => uc1Roots(dirname(runDir)));
   let stop: StopRecord | null = null;
   let graded = 0;

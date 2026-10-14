@@ -22,7 +22,7 @@ export interface CaseConfig {
   image: string;
   /** The content digest the case admits (the local image ID); grade 1 runs it, and a session on any other digest is refused. */
   image_digest: string;
-  /** Grade 2's kit image in the registry, pinned by digest (the controller's --sandbox-image). */
+  /** Grade 2's kit image in the registry, pinned by digest: grade 2's job image (pulled locally) and the controller's --sandbox-image. */
   sandbox_image: string;
   manifest: string;
   terms: string;
@@ -259,14 +259,16 @@ export function checkCaseForMode(mode: RunMode, config: CaseConfig, screen: Scre
 }
 
 /**
- * The controller options of the case that both grades share. The kit image goes by the case's
- * content digest, not its tag, so a grade runs the image the case admits even if the tag moved.
+ * The case's controller options for one grade. Grade 1 runs the native kit build the sessions run,
+ * by the case's content digest rather than its tag, so it grades the image the case admits even if
+ * the tag moved. Grade 2 runs the pinned registry build (sandbox_image) that its Sandbox copies run,
+ * so its job image carries that build's repository digest. Every other option is the same for both.
  */
-export function controllerBase(config: CaseConfig): string[] {
+export function controllerBase(config: CaseConfig, grade: 1 | 2): string[] {
   return [
     ...(config.family === DEFAULT_FAMILY ? [] : ["--family", config.family]),
     "--image",
-    config.image_digest,
+    grade === 1 ? config.image_digest : config.sandbox_image,
     "--manifest",
     config.manifest,
     "--terms",
