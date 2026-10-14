@@ -2,9 +2,10 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, symlinkSync, writeFil
 import { dirname, join } from "node:path";
 import { encodeCanonical } from "@rbw/schema";
 import { describe, expect, it } from "vitest";
-import { PipelineError, runPipeline, screenResultProblem, type Caps, type PipelineInput } from "../src/pipeline.ts";
+import { sha256Hex } from "../src/plant.ts";
+import { PipelineError, runPipeline, ScreenStopError, screenResultProblem, type Caps, type PipelineInput } from "../src/pipeline.ts";
 import type { FindSites, Screen, Site } from "../src/types.ts";
-import { CLEAN, RULE, SYMPTOM, diffFor, finder, hit, makeHost, miss, scripted, site, tempDir, threeSites } from "./support.ts";
+import { CLEAN, MODEL, RULE, SYMPTOM, diffFor, finder, hit, makeHost, miss, scripted, site, symptomFor, tempDir, threeSites } from "./support.ts";
 
 const CAPS: Caps = { maxCandidates: 10, maxScreenSpendMicrousd: 2_000_000, screenBudget: { maxAttempts: 3, maxCostMicrousd: 250_000 } };
 
@@ -12,7 +13,9 @@ function input(findSites: FindSites, screen: Screen, overrides: Partial<Pipeline
   return {
     rule: RULE,
     hostDir: makeHost(),
-    symptom: SYMPTOM,
+    symptomFor,
+    symptomSource: "test-symptom",
+    screenModel: MODEL,
     findSites,
     screen,
     caps: CAPS,
@@ -40,7 +43,7 @@ describe("planting", () => {
     expect(alpha?.files["src/alpha.ts"]).not.toContain("store.lock(id);");
     expect(new Set(screen.calls.map((call) => call.tree)).size).toBe(3);
     expect(screen.calls.every((call) => !call.hasGit && !call.hasNodeModules)).toBe(true);
-    expect(screen.calls.every((call) => call.symptom === SYMPTOM)).toBe(true);
+    expect(screen.calls.every((call) => call.symptom.text.startsWith(SYMPTOM.text))).toBe(true);
   });
 
   it("never changes the host tree", async () => {
@@ -160,6 +163,64 @@ describe("planting", () => {
   });
 });
 
+describe("screen jobs", () => {
+  it("gives each screen its own target path, clean text, symptom and the run's model", async () => {
+    const screen = scripted([miss(), miss(), miss()]);
+    const { record } = await runPipeline(input(finder(threeSites()), screen, { screenModel: "kimi" }));
+    expect(screen.calls.map((call) => call.targetPath)).toEqual(["src/beta.ts", "src/gamma.ts", "src/alpha.ts"]);
+    for (const [index, call] of screen.calls.entries()) {
+      const entry = record.candidates[index];
+      // The clean text is the unplanted file, for scoring; the model never sees it.
+      expect(call.cleanText).toBe(CLEAN[call.targetPath]);
+      expect(call.model).toBe("kimi");
+      // Each symptom was made for its own site, and the record holds that symptom's hash.
+      expect(entry?.file).toBe(call.targetPath);
+      expect(call.symptom.text).toContain(`(${call.targetPath}:${String(entry?.line)})`);
+      expect(entry?.symptom_sha256).toBe(sha256Hex(call.symptom.text));
+    }
+  });
+
+  it("records no symptom hash for a site that was not planted", async () => {
+    const sites: Site[] = [
+      { file: "../outside.ts", line: 1, diff: "", confidence: 0.99 },
+      { file: "src/missing.ts", line: 1, diff: "x", confidence: 0.97 },
+      ...threeSites(),
+    ];
+    const { record } = await runPipeline(input(finder(sites), scripted([miss(), miss()]), { caps: { ...CAPS, maxCandidates: 2 } }));
+    expect(record.candidates.map((entry) => [entry.status, entry.symptom_sha256 === null])).toEqual([
+      ["invalid_site", true],
+      ["plant_failed", true],
+      ["screened", false],
+      ["screened", false],
+      ["over_candidate_cap", true],
+    ]);
+  });
+});
+
+describe("a screen that stops the run", () => {
+  it("records the stop, charges what the screen says, and starts no further screen", async () => {
+    const stop = new ScreenStopError("operation op-1 is unsettled; root execution root-1", 250_000);
+    const screen = scripted([miss(3, 50_000), stop, miss(), miss()]);
+    const sites = [...threeSites(), site("src/alpha.ts", "return row;", "return null;", 0.1, 4)];
+    const { record } = await runPipeline(input(finder(sites), screen));
+    expect(screen.calls).toHaveLength(2);
+    expect(record.stop_reason).toBe("screen_stopped");
+    expect(record.candidates.map((entry) => entry.status)).toEqual(["screened", "screen_error", "skipped_after_screen_stop", "skipped_after_screen_stop"]);
+    expect(record.candidates[1]).toMatchObject({ charged_microusd: 250_000, screen: null });
+    expect(record.candidates[1]?.reason).toContain("op-1");
+    expect(record.candidates[1]?.reason).toContain("root-1");
+    expect(record.totals.spend_microusd).toBe(300_000);
+  });
+
+  it("charges nothing for a screen that stopped before it started", async () => {
+    const screen = scripted([new ScreenStopError("the screen did not start: DATABASE_URL is not set", 0), miss()]);
+    const { record } = await runPipeline(input(finder(threeSites()), screen));
+    expect(screen.calls).toHaveLength(1);
+    expect(record.candidates[0]).toMatchObject({ status: "screen_error", charged_microusd: 0 });
+    expect(record.totals.spend_microusd).toBe(0);
+  });
+});
+
 describe("caps", () => {
   it("plants at most the candidate cap, taking the most confident sites, and an unplantable site takes no slot", async () => {
     const broken: Site = { file: "src/missing.ts", line: 1, diff: "x", confidence: 0.95 };
@@ -271,8 +332,8 @@ describe("unexpected failures", () => {
   it("removes the scratch directory and throws a pipeline error that carries the record of the spend so far", async () => {
     // The screen leaves a stray file in the run's scratch directory, so the final removal fails.
     const screen = Object.assign(
-      function strayScreen(tree: string) {
-        writeFileSync(join(dirname(tree), "stray"), "x");
+      function strayScreen(job: { plantedTree: string }) {
+        writeFileSync(join(dirname(job.plantedTree), "stray"), "x");
         return miss(3, 100_000);
       },
       {},
@@ -323,10 +384,12 @@ describe("run record", () => {
       created_at: "2026-10-13T12:00:00.000Z",
       rule: { id: "XX-1.synthetic" },
       host_commit: "a".repeat(40),
+      symptom_source: "test-symptom",
+      screen_model: "super",
       implementations: { find_sites: "fakeFindSites", screen: "fakeScreen" },
     });
     expect(record.rule.sha256).toMatch(/^[0-9a-f]{64}$/);
-    expect(record.symptom_sha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(record.candidates[0]?.symptom_sha256).toMatch(/^[0-9a-f]{64}$/);
     expect(JSON.stringify(record)).not.toContain(SYMPTOM.text);
     expect(record.candidates[0]).toMatchObject({ file: "src/alpha.ts", line: 3, confidence_ppm: 500_000, screen: { verdict: "not_located", hits: 0, attempts: 3, cost_microusd: 100_000 } });
     expect(record.candidates[0]?.diff).toContain("-  store.lock(id);");
@@ -338,6 +401,37 @@ describe("run record", () => {
     expect(() => encodeCanonical(record)).not.toThrow();
     expect(record.candidates.map((entry) => entry.confidence_ppm)).toEqual([900_000, 700_000, 500_000, 333_333]);
     expect(record.candidates[3]).toMatchObject({ line: 0, status: "invalid_site", reason: "bad_line" });
+  });
+});
+
+describe("planted-form confirmation", () => {
+  it("plants a confirmed site before an unconfirmed one of higher confidence and records the state", async () => {
+    const [, beta, gamma] = threeSites();
+    if (beta === undefined || gamma === undefined) throw new Error("fixture sites missing");
+    const unconfirmed: Site = { ...beta, confidence: 0.9, plantedFormConfirmed: false, confidenceLevel: "low" };
+    const confirmed: Site = { ...gamma, confidence: 0.6, plantedFormConfirmed: true, confidenceLevel: "medium" };
+    const screen = scripted([miss()]);
+    const { record } = await runPipeline(input(finder([unconfirmed, confirmed]), screen, { caps: { ...CAPS, maxCandidates: 1 } }));
+    expect(screen.calls).toHaveLength(1);
+    expect(record.candidates.map((entry) => [entry.file, entry.status, entry.planted_form_confirmed, entry.confidence_level])).toEqual([
+      [confirmed.file, "screened", true, "medium"],
+      [unconfirmed.file, "over_candidate_cap", false, "low"],
+    ]);
+  });
+
+  it("ranks a confirmed survivor before an unconfirmed one with as many misses", async () => {
+    const [, beta, gamma] = threeSites();
+    if (beta === undefined || gamma === undefined) throw new Error("fixture sites missing");
+    const unconfirmed: Site = { ...beta, confidence: 0.9, plantedFormConfirmed: false, confidenceLevel: "low" };
+    const confirmed: Site = { ...gamma, confidence: 0.6, plantedFormConfirmed: true, confidenceLevel: "medium" };
+    const { record } = await runPipeline(input(finder([unconfirmed, confirmed]), scripted([miss(), miss()])));
+    const byId = new Map(record.candidates.map((entry) => [entry.candidate_id, entry.file]));
+    expect(record.ranking.map((id) => byId.get(id))).toEqual([confirmed.file, unconfirmed.file]);
+  });
+
+  it("records null for both fields when the finder does not report them", async () => {
+    const { record } = await runPipeline(input(finder(threeSites()), scripted([miss(), miss(), miss()])));
+    expect(record.candidates.every((entry) => entry.planted_form_confirmed === null && entry.confidence_level === null)).toBe(true);
   });
 });
 

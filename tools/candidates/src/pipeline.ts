@@ -3,8 +3,9 @@
 // a run record. Screens run one at a time, so the spend cap is checked before every screen.
 import { mkdtempSync, rmSync, rmdirSync } from "node:fs";
 import { join } from "node:path";
+import { readFileSync } from "node:fs";
 import { candidateId, copyName, PlantError, plantCopy, plantedText, sha256Hex } from "./plant.ts";
-import type { ClassRule, FindSites, Screen, ScreenBudget, ScreenResult, Site, Symptom } from "./types.ts";
+import type { ClassRule, FindSites, Screen, ScreenBudget, ScreenModel, ScreenResult, Site, Symptom } from "./types.ts";
 
 export const RECORD_KIND = "candidate_run";
 export const RECORD_VERSION = 1;
@@ -21,7 +22,12 @@ export interface Caps {
 export interface PipelineInput {
   rule: ClassRule;
   hostDir: string;
-  symptom: Symptom;
+  /** Builds the per-candidate symptom from the site. The model is told only this text. */
+  symptomFor: (site: Site) => Symptom;
+  /** A name for how the symptoms were made (for example the template's name), recorded as given. */
+  symptomSource: string;
+  /** The screen model profile each screen runs; recorded and passed to every screen job. */
+  screenModel: ScreenModel;
   findSites: FindSites;
   screen: Screen;
   caps: Caps;
@@ -48,6 +54,7 @@ export type CandidateStatus =
   | "screen_error"
   | "skipped_spend_cap"
   | "skipped_after_overspend"
+  | "skipped_after_screen_stop"
   | "skipped_after_error";
 
 export interface ScreenRecord {
@@ -63,16 +70,22 @@ export interface CandidateRecord {
   line: number;
   /** The finder's confidence in parts per million; canonical JSON holds integers only. */
   confidence_ppm: number;
+  /** Whether the finder confirmed the planted form; null when the finder does not report it. */
+  planted_form_confirmed: boolean | null;
+  /** The finder's confidence level; null when the finder does not report one. */
+  confidence_level: "high" | "medium" | "low" | null;
   diff: string;
   status: CandidateStatus;
   reason: string | null;
+  /** SHA-256 of the symptom this candidate was (or would be) screened with; null when not planted. */
+  symptom_sha256: string | null;
   screen: ScreenRecord | null;
   /** What the run charged against the spend cap for this candidate, in micro-USD. */
   charged_microusd: number;
   rank: number | null;
 }
 
-export type StopReason = "spend_cap" | "screen_overspent" | "pipeline_error" | null;
+export type StopReason = "spend_cap" | "screen_overspent" | "screen_stopped" | "pipeline_error" | null;
 
 export interface RunRecord {
   record: typeof RECORD_KIND;
@@ -82,7 +95,10 @@ export interface RunRecord {
   dry_run: boolean;
   rule: { id: string; sha256: string };
   host_commit: string | null;
-  symptom_sha256: string;
+  /** How the per-candidate symptoms were made (each candidate carries its own symptom's SHA-256). */
+  symptom_source: string;
+  /** The screen model profile the run used. */
+  screen_model: ScreenModel;
   implementations: { find_sites: string; screen: string };
   caps: {
     max_candidates: number;
@@ -121,6 +137,24 @@ export class PipelineError extends Error {
     super(message);
     this.name = "PipelineError";
     this.record = record;
+  }
+}
+
+/**
+ * Thrown by a screen when no further screen should start: the screen never started for a reason
+ * that would repeat for every candidate (a missing key, a held slot, a budget that cannot fit), or it
+ * left spend that must be reconciled by hand (an uncertain call, an unsettled operation, a slot it
+ * could not release). The pipeline records the candidate as a screen error, charges
+ * `chargedMicrousd` against the spend cap and stops screening. The message carries what an operator
+ * needs to reconcile the spend.
+ */
+export class ScreenStopError extends Error {
+  readonly chargedMicrousd: number;
+
+  constructor(message: string, chargedMicrousd: number) {
+    super(message);
+    this.name = "ScreenStopError";
+    this.chargedMicrousd = chargedMicrousd;
   }
 }
 
@@ -178,15 +212,23 @@ export function screenResultProblem(result: unknown, budget: ScreenBudget): stri
   return null;
 }
 
+/** 1 for a site whose planted form the finder could not confirm, so it sorts after the rest. */
+function unconfirmed(confirmed: boolean | null | undefined): number {
+  return confirmed === false ? 1 : 0;
+}
+
 function compareSites(a: Site, b: Site): number {
-  return b.confidence - a.confidence || (a.file < b.file ? -1 : a.file > b.file ? 1 : 0) || a.line - b.line;
+  return unconfirmed(a.plantedFormConfirmed) - unconfirmed(b.plantedFormConfirmed) || b.confidence - a.confidence || (a.file < b.file ? -1 : a.file > b.file ? 1 : 0) || a.line - b.line;
 }
 
 /**
- * Survivors first by attempts (more independent misses is stronger evidence that the bug is
- * not findable from the source), then by finder confidence, then by file, line and ID.
+ * Survivors with a confirmed planted form first (an unconfirmed rewrite may not plant the bug at
+ * all), then by attempts (more independent misses is stronger evidence that the bug is not findable
+ * from the source), then by finder confidence, then by file, line and ID.
  */
 function compareSurvivors(a: CandidateRecord, b: CandidateRecord): number {
+  const confirmation = unconfirmed(a.planted_form_confirmed) - unconfirmed(b.planted_form_confirmed);
+  if (confirmation !== 0) return confirmation;
   const attempts = (b.screen?.attempts ?? 0) - (a.screen?.attempts ?? 0);
   if (attempts !== 0) return attempts;
   if (a.confidence_ppm !== b.confidence_ppm) return b.confidence_ppm - a.confidence_ppm;
@@ -206,9 +248,12 @@ function candidate(site: Site, status: CandidateStatus, reason: string | null = 
     file: site.file,
     line: Number.isSafeInteger(site.line) ? site.line : 0,
     confidence_ppm: Number.isFinite(site.confidence) ? Math.round(site.confidence * 1_000_000) : 0,
+    planted_form_confirmed: typeof site.plantedFormConfirmed === "boolean" ? site.plantedFormConfirmed : null,
+    confidence_level: site.confidenceLevel === "high" || site.confidenceLevel === "medium" || site.confidenceLevel === "low" ? site.confidenceLevel : null,
     diff: site.diff,
     status,
     reason,
+    symptom_sha256: null,
     screen: null,
     charged_microusd: 0,
     rank: null,
@@ -252,13 +297,15 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineOutcome
 
   // Check and plant in memory; the first maxCandidates sites that plant become candidates.
   const records: CandidateRecord[] = [];
-  const planted: { site: Site; record: CandidateRecord }[] = [];
+  const planted: { site: Site; record: CandidateRecord; symptom: Symptom; cleanText: string }[] = [];
   for (const site of unique) {
     if (planted.length >= caps.maxCandidates) {
       records.push(candidate(site, "over_candidate_cap"));
       continue;
     }
     try {
+      // Validates the site and that the diff applies; the clean text is read again below only for
+      // a site that passed, where the file is known to be a readable regular file.
       plantedText(input.hostDir, site);
     } catch (error) {
       if (!(error instanceof PlantError)) throw error;
@@ -266,9 +313,12 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineOutcome
       records.push(candidate(site, invalid ? "invalid_site" : "plant_failed", error.reason));
       continue;
     }
+    const cleanText = readFileSync(join(input.hostDir, ...site.file.split("/")), "utf8");
     const record = candidate(site, input.dryRun ? "would_screen" : "screened");
+    const symptom = input.symptomFor(site);
+    record.symptom_sha256 = sha256Hex(symptom.text);
     records.push(record);
-    planted.push({ site, record });
+    planted.push({ site, record, symptom, cleanText });
   }
 
   let spent = 0;
@@ -280,9 +330,9 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineOutcome
   if (!input.dryRun && planted.length > 0) {
     try {
       scratchDir = mkdtempSync(join(input.scratchBase, "rbw-candidates-"));
-      for (const [index, { site, record }] of planted.entries()) {
+      for (const [index, { site, record, symptom, cleanText }] of planted.entries()) {
         if (stopReason !== null) {
-          record.status = stopReason === "spend_cap" ? "skipped_spend_cap" : "skipped_after_overspend";
+          record.status = stopReason === "spend_cap" ? "skipped_spend_cap" : stopReason === "screen_stopped" ? "skipped_after_screen_stop" : "skipped_after_overspend";
           settled.add(record);
           continue;
         }
@@ -304,7 +354,14 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineOutcome
           continue;
         }
         try {
-          const result: unknown = await input.screen(copy, input.symptom, budget);
+          const result: unknown = await input.screen({
+            plantedTree: copy,
+            targetPath: site.file,
+            cleanText,
+            symptom,
+            budget,
+            model: input.screenModel,
+          });
           const problem = screenResultProblem(result, budget);
           if (problem !== null) {
             // A malformed result's cost is not trusted below the budget, so at least the whole
@@ -328,8 +385,15 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineOutcome
           }
         } catch (error) {
           record.status = "screen_error";
-          record.reason = shortMessage(error);
-          record.charged_microusd = budget.maxCostMicrousd;
+          if (error instanceof ScreenStopError) {
+            // Kept whole (not shortened): it names the operations to reconcile.
+            record.reason = `${error.name}: ${error.message}`;
+            record.charged_microusd = isNonNegativeInteger(error.chargedMicrousd) ? error.chargedMicrousd : budget.maxCostMicrousd;
+            stopReason = "screen_stopped";
+          } else {
+            record.reason = shortMessage(error);
+            record.charged_microusd = budget.maxCostMicrousd;
+          }
         }
         spent += record.charged_microusd;
         settled.add(record);
@@ -381,7 +445,8 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineOutcome
     dry_run: input.dryRun,
     rule: { id: input.rule.id, sha256: sha256Hex(input.rule.text) },
     host_commit: input.hostCommit ?? null,
-    symptom_sha256: sha256Hex(input.symptom.text),
+    symptom_source: input.symptomSource,
+    screen_model: input.screenModel,
     implementations: { find_sites: input.implementations.findSites, screen: input.implementations.screen },
     caps: {
       max_candidates: caps.maxCandidates,
