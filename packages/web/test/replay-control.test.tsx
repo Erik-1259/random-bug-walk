@@ -382,3 +382,57 @@ describe("the replay control's start without an answer", () => {
     });
   }
 });
+
+describe("the replay control on a site with several releases", () => {
+  const releaseId = "00000000-0000-4000-8000-000000000602";
+  const release = { release_id: releaseId, created_at: "2026-10-12T09:00:00Z" };
+
+  it("names its page's release in the start and status requests, and keeps the request ID under that release's key", async () => {
+    vi.useFakeTimers();
+    const stored = new Map<string, string>([["rbw-judge-request-id", "00000000-0000-4000-8000-00000000b701"]]);
+    stubWindow(stored);
+    const sent: { url: string; method: string; body: unknown }[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string, init?: { method?: string; body?: string }) => {
+        const method = init?.method ?? "GET";
+        sent.push({ url, method, body: init?.body === undefined ? null : JSON.parse(init.body) });
+        const body = url === "/api/judge/session" ? { state: "ready" } : method === "POST" ? { state: "starting", message: "Starting" } : { state: "running", release_id: releaseId, message: "Running", cells: [] };
+        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+      }),
+    );
+    let rendered: unknown = null;
+    hooks.mount(() => (rendered = ReplayControl({ release, initial: { state: "ready", reason: "" }, choose: true })));
+    await vi.advanceTimersByTimeAsync(0);
+    // The other release's stored replay is not this page's: the control checks the session instead.
+    expect(sent).toEqual([{ url: "/api/judge/session", method: "GET", body: null }]);
+    startButton(rendered)?.props.onClick?.();
+    await vi.advanceTimersByTimeAsync(0);
+    const requestId = stored.get(`rbw-judge-request-id:${releaseId}`);
+    expect(requestId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(stored.get("rbw-judge-request-id")).toBe("00000000-0000-4000-8000-00000000b701");
+    expect(sent[1]).toEqual({ url: "/api/judge", method: "POST", body: { request_id: requestId, release_id: releaseId } });
+    expect(sent[2]).toEqual({ url: `/api/judge/status?request_id=${requestId ?? ""}&release_id=${releaseId}`, method: "GET", body: null });
+  });
+
+  it("sends exactly { request_id } and uses the one key when the site has one release", async () => {
+    vi.useFakeTimers();
+    const stored = new Map<string, string>();
+    stubWindow(stored);
+    const bodies: unknown[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string, init?: { method?: string; body?: string }) => {
+        if (init?.body !== undefined) bodies.push(JSON.parse(init.body));
+        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(url === "/api/judge/session" ? { state: "ready" } : { state: "unavailable", reason: "busy", message: "Busy" }) });
+      }),
+    );
+    let rendered: unknown = null;
+    hooks.mount(() => (rendered = ReplayControl({ release, initial: { state: "ready", reason: "" } })));
+    await vi.advanceTimersByTimeAsync(0);
+    startButton(rendered)?.props.onClick?.();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(bodies).toEqual([{ request_id: expect.stringMatching(/^[0-9a-f-]{36}$/) as unknown }]);
+    expect([...stored.keys()]).toEqual([]);
+  });
+});

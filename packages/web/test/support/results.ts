@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { decide, importRecordSet, type Evidence } from "@rbw/admission";
-import { canonicalDigest, encodeCanonical, parseRecord, sha256Hex, type RunManifest, type RunManifestEntry } from "@rbw/schema";
+import { buildJobRequest, canonicalDigest, encodeCanonical, parseRecord, sha256Hex, type JobRequestFields, type Release, type RunManifest, type RunManifestEntry } from "@rbw/schema";
 import { cleanupRecordSets, RACE_FAMILY, recordSet, type RecordSetDraft } from "../../../../packages/admission/test/support/record-set.ts";
 
 export const FIXTURES = fileURLToPath(new URL("../../fixtures/", import.meta.url));
@@ -161,6 +161,19 @@ export interface JudgeReplayOptions {
   published: boolean;
   /** The root's kind: a judge replay unless set. */
   kind?: "judge_replay" | "paired_comparison";
+  /** For a published judge replay: publish its judge_verify request.json naming this release. */
+  releaseId?: string;
+}
+
+/** @rbw/schema's synthetic judge_verify request, the template of a replay's published request.json. */
+const JUDGE_REQUEST_SOURCE = fileURLToPath(new URL("../../../../packages/schema/fixtures/records/job-request-judge-verify.json", import.meta.url));
+
+/** A replay's judge_verify request.json naming a release, with its operation ID and payload hash derived again. */
+export function judgeRequestBytes(root: string, execution: string, releaseId: string): Uint8Array {
+  const fields = JSON.parse(readFileSync(JUDGE_REQUEST_SOURCE, "utf8")) as JobRequestFields & { operation_id?: string; payload_hash?: string };
+  delete fields.operation_id;
+  delete fields.payload_hash;
+  return buildJobRequest({ ...fields, root_execution_id: root, execution_id: execution, parent_execution_id: root, expected_trials_key: `jobs/${execution}/expected-trials.json`, release_id: releaseId }).bytes;
 }
 
 /**
@@ -169,7 +182,7 @@ export interface JudgeReplayOptions {
  * With kind paired_comparison it adds a paired comparison root of the same shape instead.
  * Its policy hash is the first published run's, so it passes the status check.
  */
-export function addJudgeReplay(results: string, root: string, { outcome, published, kind = "judge_replay" }: JudgeReplayOptions): void {
+export function addJudgeReplay(results: string, root: string, { outcome, published, kind = "judge_replay", releaseId }: JudgeReplayOptions): void {
   const [first] = readdirSync(join(results, "repository", "runs")).sort();
   if (first === undefined) throw new Error("synthetic: the results directory holds no published run to take a policy from");
   const policy = readManifest(results, first).project_policy_sha256;
@@ -178,6 +191,12 @@ export function addJudgeReplay(results: string, root: string, { outcome, publish
     if (outcome === null) throw new Error("synthetic: a published run has an outcome");
     const report = new TextEncoder().encode(`# Run ${root}\n\nKind: ${kind}. Outcome: ${outcome}. The planted bug is synthetic.\n`);
     writeFile(join(runDir(results, root), "report.md"), report);
+    const entries = [publishedEntry("report.md", root, report, "text/markdown")];
+    if (releaseId !== undefined) {
+      const request = judgeRequestBytes(root, child, releaseId);
+      writeFile(join(runDir(results, root), "results", child, "request.json"), request);
+      entries.push(publishedEntry(`results/${child}/request.json`, child, request));
+    }
     writeManifest(results, {
       schema_version: 1,
       project_id: "00000000-0000-4000-8000-000000000001",
@@ -190,7 +209,7 @@ export function addJudgeReplay(results: string, root: string, { outcome, publish
         { execution_id: root, parent_execution_id: null },
         { execution_id: child, parent_execution_id: root },
       ],
-      entries: [publishedEntry("report.md", root, report, "text/markdown")],
+      entries,
     });
   }
   const status = encodeCanonical({
@@ -228,4 +247,66 @@ export function releaseWithPairedComparisons(): string {
   addJudgeReplay(dir, PAIRED_ROOTS[0], { outcome: "completed", published: true, kind: "paired_comparison" });
   addJudgeReplay(dir, PAIRED_ROOTS[1], { outcome: null, published: false, kind: "paired_comparison" });
   return dir;
+}
+
+export interface ReleaseOptions {
+  releaseId: string;
+  /** The released run, already published in the results directory. */
+  root: string;
+  createdAt: string;
+}
+
+/** The release fixture's release.json, the template of a synthetic release. */
+export function releaseTemplate(): Release {
+  return parseRecord("Release", readFileSync(join(releaseDir(RELEASE), "release.json")));
+}
+
+/**
+ * A synthetic release record for a run: the release fixture's record with another release ID, run,
+ * creation time, judge job key and controller image, so each release's frozen judge job differs.
+ */
+export function releaseRecord(results: string, { releaseId, root, createdAt }: ReleaseOptions): Release {
+  const template = releaseTemplate();
+  const tag = releaseId.slice(-2);
+  return {
+    ...template,
+    release_id: releaseId,
+    created_at: createdAt,
+    run: { ...template.run, root_execution_id: root, manifest_sha256: sha256Hex(readFileSync(join(runDir(results, root), "manifest.json"))) },
+    judge_job: { index_key: `judge-jobs/${releaseId}/judge-job.json`, index_sha256: template.judge_job.index_sha256 },
+    images: { ...template.images, controller_image: template.images.controller_image.replace(/@sha256:.*$/, `@sha256:${tag.repeat(32)}`) },
+  };
+}
+
+/** Adds a release to a results directory: its release.json (canonical, schema-checked) and the release fixture's listed files. */
+export function addRelease(results: string, options: ReleaseOptions): Release {
+  const record = releaseRecord(results, options);
+  const bytes = encodeCanonical(record);
+  parseRecord("Release", bytes);
+  writeFile(join(releaseDir(results, options.releaseId), "release.json"), bytes);
+  for (const file of record.files) writeFile(join(releaseDir(results, options.releaseId), file.path), readFileSync(join(releaseDir(RELEASE), file.path)));
+  return record;
+}
+
+/** The second synthetic release: a race-family case, created after the time-zone release fixture. */
+export const RACE_RELEASE_ID = "00000000-0000-4000-8000-000000000602";
+export const RACE_RELEASE_CREATED = "2026-10-12T09:00:00Z";
+
+export interface TwoReleases {
+  dir: string;
+  /** The race case's released run. */
+  raceRoot: string;
+}
+
+/**
+ * Two synthetic releases in one results directory: the release fixture's time-zone release
+ * (RELEASE_ID, created 2026-10-06) and a race-family release (RACE_RELEASE_ID, created later) of a
+ * race case run whose admission records come from the real importer.
+ */
+export function twoReleases(): TwoReleases {
+  const dir = copyRelease();
+  const race = syntheticCase(undefined, { symptom: raceSymptomBytes(), raceFamily: true });
+  cpSync(runDir(race.dir, race.root), runDir(dir, race.root), { recursive: true });
+  addRelease(dir, { releaseId: RACE_RELEASE_ID, root: race.root, createdAt: RACE_RELEASE_CREATED });
+  return { dir, raceRoot: race.root };
 }

@@ -3,7 +3,9 @@
 // the request ID, so a refresh resumes the same replay, and a refresh while the session cookie is
 // valid needs no new sign-in. While a replay starts or runs, the control asks the status route
 // again every 15 seconds; a temporary unavailable answer keeps it asking, less often, with the
-// start button still disabled. There is no cancel action.
+// start button still disabled. There is no cancel action. On a site with several releases the
+// control names its page's release in the start and status requests, and keeps that release's
+// request ID under its own key.
 import { useEffect, useState, type CSSProperties, type SyntheticEvent } from "react";
 import type { ReplayState, ReplayStatus } from "../model.ts";
 import { ReplayPanel } from "./replay.tsx";
@@ -24,11 +26,16 @@ const INPUT_STYLE: CSSProperties = { font: "inherit", margin: "0.25rem 0", paddi
 interface Props {
   release: { release_id: string; created_at: string } | null;
   initial: ReplayState;
+  /** The site has several releases: the requests name this page's release. */
+  choose?: boolean;
 }
 
 type Answer = Omit<Partial<ReplayStatus>, "state"> & { state: string; message?: string };
 
-export function ReplayControl({ release, initial }: Props) {
+export function ReplayControl({ release, initial, choose = false }: Props) {
+  const named = choose && release !== null ? release.release_id : null;
+  const requestKey = named === null ? REQUEST_KEY : `${REQUEST_KEY}:${named}`;
+  const statusQuery = named === null ? "" : `&release_id=${named}`;
   const [view, setView] = useState<ReplayState>(initial);
   const [status, setStatus] = useState<ReplayStatus | null>(null);
   const [passcode, setPasscode] = useState("");
@@ -57,7 +64,7 @@ export function ReplayControl({ release, initial }: Props) {
   /** `live` is true while the replay is known to be starting or running. */
   const refresh = async (requestId: string, live: boolean) => {
     try {
-      const response = await fetch(`/api/judge/status?request_id=${requestId}`, { cache: "no-store" });
+      const response = await fetch(`/api/judge/status?request_id=${requestId}${statusQuery}`, { cache: "no-store" });
       const answer = (await response.json()) as Answer;
       if (live && answer.state === "unavailable") {
         // A ledger or token outage says nothing about the replay, which may still run.
@@ -88,14 +95,14 @@ export function ReplayControl({ release, initial }: Props) {
   // shows it, or with no stored replay the session check does. The stored replay may still be
   // running, so an outage on this first check is retried like one during a poll.
   useEffect(() => {
-    const requestId = enabled ? window.localStorage.getItem(REQUEST_KEY) : null;
+    const requestId = enabled ? window.localStorage.getItem(requestKey) : null;
     if (requestId !== null) void refresh(requestId, true);
     else if (enabled) void checkSession();
   }, [enabled]);
 
   const polling = view.state === "starting" || view.state === "running" || misses > 0;
   useEffect(() => {
-    const requestId = window.localStorage.getItem(REQUEST_KEY);
+    const requestId = window.localStorage.getItem(requestKey);
     if (requestId === null || !polling) return undefined;
     const wait = misses === 0 ? POLL_MS : POLL_MS * Math.min(2 ** (misses - 1), BACKOFF_CAP);
     const timer = window.setTimeout(() => void refresh(requestId, true), wait);
@@ -137,16 +144,16 @@ export function ReplayControl({ release, initial }: Props) {
   const start = async () => {
     // The new request ID is kept before the POST, so a refresh during it resumes the replay; a
     // refused POST puts back the earlier replay's ID.
-    const previous = window.localStorage.getItem(REQUEST_KEY);
+    const previous = window.localStorage.getItem(requestKey);
     const requestId = crypto.randomUUID();
-    window.localStorage.setItem(REQUEST_KEY, requestId);
+    window.localStorage.setItem(requestKey, requestId);
     // A new start drops the earlier replay's status, so a refusal shows its own reason.
     setStatus(null);
     setMisses(0);
     setView({ state: "starting", reason: "" });
     let answer: Answer;
     try {
-      const response = await fetch("/api/judge", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ request_id: requestId }) });
+      const response = await fetch("/api/judge", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(named === null ? { request_id: requestId } : { request_id: requestId, release_id: named }) });
       answer = (await response.json()) as Answer;
     } catch {
       // No answer, or one that is not JSON (a platform error page): the replay may have started,
@@ -155,8 +162,8 @@ export function ReplayControl({ release, initial }: Props) {
       return;
     }
     if (["unavailable", "bad_request", "unauthorized"].includes(answer.state)) {
-      if (previous === null) window.localStorage.removeItem(REQUEST_KEY);
-      else window.localStorage.setItem(REQUEST_KEY, previous);
+      if (previous === null) window.localStorage.removeItem(requestKey);
+      else window.localStorage.setItem(requestKey, previous);
     }
     show(answer);
     if (answer.state === "starting") await refresh(requestId, true);

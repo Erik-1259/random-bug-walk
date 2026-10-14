@@ -1,9 +1,11 @@
-// The one case page. Its six cells keep a fixed order: symptom, counts, suite matrix, replay,
-// provenance and downloads, funnel and limitations.
+// The case page, for one released case (or the case chosen without a release). Its six cells keep
+// a fixed order: symptom, counts, suite matrix, replay, provenance and downloads, funnel and
+// limitations. With more than one release, a list of every released case comes before the cells.
 import type { ReactNode } from "react";
 import type { ObservedSymptom, RaceSymptom } from "@rbw/schema";
 import {
   admissionCopies,
+  caseSummaries,
   COLUMN_LABEL,
   COMPARISON_TEXT,
   countExamples,
@@ -31,7 +33,7 @@ import {
 } from "../model.ts";
 import { ReplayControl } from "./replay-control.tsx";
 import { RunSummary } from "./run-summary.tsx";
-import { isRaceSymptom, releaseFiles, type AdmissionRecords, type CaseSymptom, type PublishedRelease, type Results, type Run } from "../release.ts";
+import { filesOfRelease, isRaceSymptom, type AdmissionRecords, type CaseSymptom, type PublishedRelease, type Results, type Run } from "../release.ts";
 
 function Cell({ index, title, children }: { index: number; title: string; children: ReactNode }) {
   return (
@@ -301,8 +303,12 @@ function Matrix({ admission }: { admission: AdmissionRecords | null }) {
 export function notValidatedReason(results: Results, run: Run): string | null {
   const decision = run.admission?.decision;
   const release = results.release?.record;
-  if (release === undefined || release.run.root_execution_id === run.rootExecutionId) return null;
+  if (release === undefined || results.releases.some((item) => item.run.rootExecutionId === run.rootExecutionId)) return null;
   if (decision?.outcome_verdict !== "pass" || decision.comparison?.classification !== "blind_spot_demonstrated") return null;
+  if (results.releases.length > 1) {
+    const roots = results.releases.map((item) => item.run.rootExecutionId).sort();
+    return `Its admission also passed with a blind spot demonstrated, but no release names it: the ${String(roots.length)} published releases are for runs ${roots.join(", ")}, whose issues passed the human check (ADM-07).`;
+  }
   return `Its admission also passed with a blind spot demonstrated, but no release names it: the one published release is for run ${release.run.root_execution_id}, whose issue passed the human check (ADM-07).`;
 }
 
@@ -361,7 +367,7 @@ function Provenance({ results }: { results: Results }) {
         <ReleaseProvenance release={release} run={run} />
         <h3>Release files</h3>
         <ul>
-          {releaseFiles(results).map((file) => (
+          {filesOfRelease(release.record).map((file) => (
             <li key={file.path}>
               <a href={releaseHref(file.release, file.path)}>{file.path}</a>
             </li>
@@ -481,7 +487,9 @@ function FunnelAndLimitations({ results }: { results: Results }) {
         <li>
           {results.release === null
             ? "No release has been published yet, so no result here is validated."
-            : "A human check (ADM-07) approved this issue, and one release (ADM-09) was published."}
+            : results.releases.length > 1
+              ? `A human check (ADM-07) approved this issue, and ${String(results.releases.length)} releases (ADM-09) were published; this page shows one of them.`
+              : "A human check (ADM-07) approved this issue, and one release (ADM-09) was published."}
         </li>
         <li>A verified replay is open only to judges with the passcode, one replay at a time, and it can be held for inspection after two replays in a row that do not reproduce the release.</li>
         <li>This is a hackathon prototype.</li>
@@ -510,14 +518,62 @@ function Intro() {
   );
 }
 
-/** `judgeEnabled`: the judge routes are configured for this release (src/config.ts, judgeEnabled). */
-export function CasePage({ results, judgeEnabled = false }: { results: Results; judgeEnabled?: boolean }) {
+/** The released cases, newest first, each with its family and what its release records; shown only with more than one release. */
+export function CaseList({ results, home }: { results: Results; home: boolean }) {
+  if (results.releases.length <= 1) return null;
+  const current = results.release?.record.release_id;
+  return (
+    <section className="cases" aria-labelledby="cases">
+      <h2 id="cases">Released cases</h2>
+      <p>
+        {`This site has ${String(results.releases.length)} released cases, newest first. Each has its own page, and the replay on that page replays that case.`}
+        {home ? " This page shows the first released case, so links shared before the other cases were added still show it." : ""}
+      </p>
+      <div className="table-scroll">
+        <table className="case-list">
+          <thead>
+            <tr>
+              <th scope="col">Released</th>
+              <th scope="col">Family</th>
+              <th scope="col">Status</th>
+              <th scope="col">Verification replays published</th>
+              <th scope="col">Case</th>
+            </tr>
+          </thead>
+          <tbody>
+            {caseSummaries(results).map((item) => (
+              <tr key={item.releaseId}>
+                <td>{item.createdAt.slice(0, "YYYY-MM-DD".length)}</td>
+                <td>{item.family}</td>
+                <td>{item.status}</td>
+                <td>{String(item.replays)}</td>
+                <td>
+                  <a href={item.href} aria-current={item.releaseId === current ? "page" : undefined}>
+                    {`Release ${item.releaseId}`}
+                  </a>
+                  {item.releaseId === current ? " (shown below)" : ""}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+/**
+ * `judgeEnabled`: the judge routes are configured for this release (src/config.ts, judgeEnabled).
+ * `home`: the page at /, which shows the first released case when there are several.
+ */
+export function CasePage({ results, judgeEnabled = false, home = false }: { results: Results; judgeEnabled?: boolean; home?: boolean }) {
   const run = results.caseRun;
   return (
     <main>
       <h1>Random Bug Walk results</h1>
       <p className="headline">{results.release === null ? NO_VALIDATED_RESULT : VALIDATED_RESULT}</p>
       <Intro />
+      <CaseList results={results} home={home} />
       <Cell index={1} title="Symptom">
         <Symptom symptom={run?.symptom ?? null} validated={results.release !== null} />
       </Cell>
@@ -531,6 +587,7 @@ export function CasePage({ results, judgeEnabled = false }: { results: Results; 
         <ReplayControl
           release={results.release === null ? null : { release_id: results.release.record.release_id, created_at: results.release.record.created_at }}
           initial={replayState(results, judgeEnabled)}
+          choose={results.releases.length > 1}
         />
       </Cell>
       <Cell index={5} title="Provenance and downloads">
