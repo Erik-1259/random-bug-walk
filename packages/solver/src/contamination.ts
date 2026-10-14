@@ -4,6 +4,8 @@
 // log directory (whether or not the session refused it), so it is a heuristic: it is counted and
 // reported per arm, and never used to exclude an attempt.
 
+import { posix } from "node:path";
+
 export type ContaminationKind = "starts_server" | "reads_process_output";
 
 export interface ContaminationHit {
@@ -27,8 +29,19 @@ const PATTERNS: readonly { kind: ContaminationKind; name: string; regex: RegExp 
   { kind: "reads_process_output", name: "journalctl", regex: /\bjournalctl\b/ },
 ];
 
-/** A file-tool path naming the rbw log directory or a file in it, absolute or by a ../ traversal. */
-const LOG_DIRECTORY_PATH = /(?:^|\/)var\/lib\/rbw\/logs(?:\/|$)/;
+/** The app's root directory in the container, from which the session resolves relative file-tool paths. */
+const APP_ROOT = "/workspace/app";
+const LOG_DIRECTORY = "/var/lib/rbw/logs";
+
+/**
+ * Whether a file-tool path, resolved as the session would from the app's root directory, lands in
+ * the rbw log directory: an absolute path into it, or a ../ traversal that reaches it. A relative
+ * path such as var/lib/rbw/logs/x names a file in the app tree and does not count.
+ */
+function isLogDirectoryPath(path: string): boolean {
+  const resolved = posix.resolve(APP_ROOT, path);
+  return resolved === LOG_DIRECTORY || resolved.startsWith(`${LOG_DIRECTORY}/`);
+}
 
 /** Every pattern hit in the attempt's bash commands, in command order, then its file-tool paths into the log directory. */
 export function contaminationHits(commands: readonly string[], filePaths: readonly string[] = []): ContaminationHit[] {
@@ -41,7 +54,7 @@ export function contaminationHits(commands: readonly string[], filePaths: readon
     }
   });
   filePaths.forEach((path, index) => {
-    if (LOG_DIRECTORY_PATH.test(path)) {
+    if (isLogDirectoryPath(path)) {
       hits.push({ kind: "reads_process_output", tool: "file", command_index: index, pattern: "rbw log directory" });
     }
   });
