@@ -23,7 +23,7 @@
     "scripts/checks": 195,
     "tools/candidates": 66,
     "tools/controller": 183,
-    "tools/local-runner": 210,
+    "tools/local-runner": 211,
     "tools/neon-ci": 98,
     "tools/publication": 166,
     "tools/release": 78,

@@ -1,4 +1,5 @@
-import { lstatSync, mkdirSync, readFileSync, readlinkSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import type * as fs from "node:fs";
 import { dirname, join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -66,6 +67,22 @@ describe("copying a tree into a run or job directory", () => {
     expect(readlinkSync(join(dest, "bin", "a-link"))).toBe("../a.js");
     expect(readlinkSync(join(dest, "dangling"))).toBe("missing.txt");
     expect(lstatSync(join(dest, "dangling")).isSymbolicLink()).toBe(true);
+  });
+
+  it("skips a named pipe as cpSync does and copies everything else", () => {
+    const src = tempDir();
+    write(join(src, "a.js"), "export {};\n", 0o644);
+    write(join(src, "results", "fixed-01", "trial-result.json"), "{}\n", 0o600);
+    execFileSync("mkfifo", [join(src, "pipe"), join(src, "results", "fixed-01", "pipe")]);
+    const dest = join(tempDir(), "copy");
+
+    copyTree(src, dest);
+
+    expect(readdirSync(dest).sort()).toEqual(["a.js", "results"]);
+    expect(readdirSync(join(dest, "results", "fixed-01"))).toEqual(["trial-result.json"]);
+    expect(readFileSync(join(dest, "a.js"), "utf8")).toBe("export {};\n");
+    expect(readFileSync(join(dest, "results", "fixed-01", "trial-result.json"), "utf8")).toBe("{}\n");
+    expect(mode(join(dest, "results", "fixed-01", "trial-result.json"))).toBe(0o600);
   });
 
   it("audits a copy's projection in a work directory on a Docker Desktop bind mount", () => {
