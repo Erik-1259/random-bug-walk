@@ -41,8 +41,6 @@ export interface StaticScreenDeps {
   /** `live` for a real run, `synthetic` in tests; it labels every call recording. */
   provenance: "live" | "synthetic";
   now?: () => Date;
-  /** Hits at which a case fails the screen; default 1 (any located answer fails it). */
-  failAtHits?: number;
   /** Where the screen's scratch output directory is made; default the system temporary directory. */
   outBase?: string;
   /** Keeps the screen's scratch output directory after every run (the command's --keep-scratch). */
@@ -68,7 +66,6 @@ function hostCommitLabel(cleanText: string): string {
  */
 export function makeStaticScreen(deps: StaticScreenDeps): Screen {
   const execute = deps.execute ?? executeScreen;
-  const failAtHits = deps.failAtHits ?? 1;
   const now = deps.now ?? ((): Date => new Date());
 
   async function staticHeadroomScreen(job: ScreenJob): Promise<ScreenResult> {
@@ -111,7 +108,9 @@ export function makeStaticScreen(deps: StaticScreenDeps): Screen {
           subject,
           model: job.model,
           attempts: job.budget.maxAttempts,
-          failAtHits: Math.min(failAtHits, job.budget.maxAttempts),
+          // Any located answer fails the candidate, so the screen fails at the first hit and its
+          // verdict and hit count cannot disagree about a run.
+          failAtHits: 1,
           budgetMicrousd: job.budget.maxCostMicrousd,
           rateSheet: deps.rateSheet,
           out,
@@ -160,8 +159,15 @@ export function makeStaticScreen(deps: StaticScreenDeps): Screen {
       const hits = probe.hits;
       const attempts = probe.attempts_run;
       const costMicrousd = probe.cost.settled_microusd;
-      // Any located answer means the bug is findable from the source alone, so the candidate fails
-      // the screen. Only a clean pass with no hits survives; anything else is inconclusive.
+      // The screen's verdict says whether the run decided anything. It is inconclusive when a call's
+      // reported prompt exceeded the counted bound (that call spent outside its reserved envelope, so
+      // the run decides nothing) or when the run stopped before every planned attempt gave a scored
+      // answer. Such a run stays inconclusive here, whatever hits it counted before it stopped. In a
+      // decided run, any located answer means the bug is findable from the source alone, so the
+      // candidate fails the screen; only a pass with no hits survives.
+      if (record.verdict === "inconclusive") {
+        return { verdict: "inconclusive", hits: 0, attempts, costMicrousd };
+      }
       if (hits > 0) {
         return { verdict: "located", hits, attempts, costMicrousd };
       }

@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { readFileSync } from "node:fs";
 import { PGlite } from "@electric-sql/pglite";
-import type { executeScreen } from "@rbw/screen";
+import { executeScreen } from "@rbw/screen";
 import { createSpend, migrate } from "@rbw/spend";
 import type { Spend } from "@rbw/spend";
 import type { FetchFunction } from "@rbw/writer";
@@ -42,25 +42,32 @@ const LOCATED: Answer = { file: "src/x.ts", start_line: 6, end_line: 6, fixed_co
 const MISS: Answer = { file: "src/x.ts", start_line: 2, end_line: 2, fixed_code: "  const sum = rows.reduce((a, b) => a + b, 1);", reason: "synthetic: a far miss" };
 /** A reply whose content is not an answer at all: the call settles, but it counts as no answer. */
 const GARBAGE = "not an answer";
+/** A located answer whose reply reports prompt tokens far above the counted bound. */
+const LOCATED_OVER_BOUND = { overBound: LOCATED } as const;
+
+type Scripted = Answer | typeof GARBAGE | typeof LOCATED_OVER_BOUND;
 
 /**
  * A fetch that answers each model call from a script in call order, in Token Factory's shape. A call
  * past the end of the script rejects, which the writer treats as a lost response (an uncertain call).
  */
-function scriptedFetch(script: readonly (Answer | typeof GARBAGE)[]): FetchFunction {
+function scriptedFetch(script: readonly Scripted[]): FetchFunction {
   const queue = [...script];
   return () => {
-    const next = queue.shift();
-    if (next === undefined) {
+    const entry = queue.shift();
+    if (entry === undefined) {
       return Promise.reject(new Error("the script has no answer for this call"));
     }
+    const overBound = typeof entry === "object" && "overBound" in entry;
+    const next = overBound ? entry.overBound : entry;
+    const promptTokens = overBound ? 10_000_000 : 800;
     const body = JSON.stringify({
       id: "synthetic",
       object: "chat.completion",
       created: 1_767_225_600,
       model: "nvidia/nemotron-3-super-120b-a12b",
       choices: [{ index: 0, message: { role: "assistant", content: next === GARBAGE ? next : JSON.stringify(next) }, finish_reason: "stop" }],
-      usage: { prompt_tokens: 800, completion_tokens: 40, total_tokens: 840 },
+      usage: { prompt_tokens: promptTokens, completion_tokens: 40, total_tokens: promptTokens + 40 },
     });
     return Promise.resolve(new Response(body, { status: 200, headers: { "content-type": "application/json" } }));
   };
@@ -106,6 +113,12 @@ function job(): ScreenJob {
   };
 }
 
+/**
+ * The real screen, failing only at two hits, so a located answer can be followed by a call that ends
+ * the run without a verdict.
+ */
+const failAtTwoHits: typeof executeScreen = (options, run) => executeScreen(options, { ...run, failAtHits: 2 });
+
 /** Runs a screen and returns its result or the error it threw. */
 async function settle(screen: Screen, screenJob: ScreenJob): Promise<unknown> {
   try {
@@ -118,7 +131,7 @@ async function settle(screen: Screen, screenJob: ScreenJob): Promise<unknown> {
 const ENV = { DATABASE_URL: "postgres://synthetic.invalid/x", TOKEN_FACTORY_SCREEN_KEY: "synthetic-key" };
 
 /** A screen over a fresh ledger whose working files go to a fresh directory the test can inspect. */
-async function screenWith(script: readonly (Answer | typeof GARBAGE)[], overrides: Partial<StaticScreenDeps> = {}) {
+async function screenWith(script: readonly Scripted[], overrides: Partial<StaticScreenDeps> = {}) {
   const spend = await freshSpend();
   const outBase = mkdtempSync(join(tmpdir(), "rbw-candidates-screen-out-"));
   const screen = makeStaticScreen({
@@ -217,14 +230,45 @@ describe("the real screen over @rbw/screen with a fake model and ledger", () => 
     expect(readdirSync(outBase)).toHaveLength(1);
   });
 
-  it("never asks the screen for more hits than it has attempts", async () => {
+  it("asks the screen to fail at the first hit, so its verdict matches any located answer", async () => {
     const seen: number[] = [];
     const fake: typeof executeScreen = (_options, run) => {
       seen.push(run.failAtHits);
       return Promise.resolve({ code: 1, record: null });
     };
-    const { screen } = await screenWith([], { failAtHits: 5, execute: fake });
+    const { screen } = await screenWith([], { execute: fake });
     await settle(screen, job());
-    expect(seen).toEqual([2]);
+    expect(seen).toEqual([1]);
+  });
+
+  it("does not count a located answer from a call whose reported prompt exceeded the counted bound", async () => {
+    const { screen } = await screenWith([LOCATED_OVER_BOUND, LOCATED]);
+    const result = await screen(job());
+    expect(result).toMatchObject({ verdict: "inconclusive", hits: 0, attempts: 1 });
+  });
+
+  it("keeps the screen's inconclusive verdict when a call exceeds the counted bound after a located answer", async () => {
+    // The screen counts the first answer as a hit, then stops without a verdict on the second call.
+    const { screen } = await screenWith([LOCATED, LOCATED_OVER_BOUND], { execute: failAtTwoHits });
+    const result = await screen(job());
+    expect(result).toMatchObject({ verdict: "inconclusive", hits: 0, attempts: 2 });
+  });
+
+  it("keeps the screen's inconclusive verdict when the ledger refuses a later call after a located answer", async () => {
+    const spend = await freshSpend();
+    let reservations = 0;
+    const refusing: Spend = {
+      ...spend,
+      reserve: (request) => {
+        reservations += 1;
+        return reservations === 1 ? spend.reserve(request) : Promise.resolve({ ok: false, code: "insufficient_funds", detail: "synthetic refusal" });
+      },
+    };
+    const { screen } = await screenWith([LOCATED, LOCATED], {
+      execute: failAtTwoHits,
+      connect: () => Promise.resolve({ spend: refusing, close: () => Promise.resolve() }),
+    });
+    const result = await screen(job());
+    expect(result).toMatchObject({ verdict: "inconclusive", hits: 0, attempts: 1 });
   });
 });
