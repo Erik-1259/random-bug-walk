@@ -300,17 +300,21 @@ function distinctPhrase(text: string): string | null {
 
 /**
  * The field's own phrase when it has one; else a phrase from adjacent
- * reproduction steps joined in order, the first such run of 6 or more words not already taken; else
+ * reproduction steps joined in order, the first such run of 6 or more words not already taken (preferring
+ * the shortest run from each start, then a run extended past a taken phrase); else
  * null, and novelty is incomplete. A phrase under 6 words is never returned.
  */
 function phraseFrom(own: string | null, steps: readonly string[], taken: readonly string[]): string | null {
   if (own !== null) return own;
-  for (let start = 0; start < steps.length; start += 1) {
-    for (let end = start + 1; end <= steps.length; end += 1) {
-      const phrase = distinctPhrase(steps.slice(start, end).join(" "));
-      if (phrase === null) continue;
-      if (!taken.includes(phrase)) return phrase;
-      break;
+  // First the shortest untaken run from each start; only then a run extended past a taken phrase.
+  for (const extendPastTaken of [false, true]) {
+    for (let start = 0; start < steps.length; start += 1) {
+      for (let end = start + 1; end <= steps.length; end += 1) {
+        const phrase = distinctPhrase(steps.slice(start, end).join(" "));
+        if (phrase === null) continue;
+        if (!taken.includes(phrase)) return phrase;
+        if (!extendPastTaken) break;
+      }
     }
   }
   return null;

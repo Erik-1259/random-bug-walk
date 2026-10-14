@@ -218,6 +218,17 @@ describe("the phrase picker on a race issue", () => {
     expect(pickPhrases(issue)).toEqual(["One backup code signs in twice when it is entered in two", "Sign in with a password and open the backup code prompt in", null]);
   });
 
+  it("keeps extending a fallback run past a phrase already taken, so a longer distinct run still fills the slot", () => {
+    const issue = {
+      title: "One backup code signs in twice when it is entered in two tabs",
+      reproduction_steps: ["Open the prompt in two tabs", "Submit both."],
+      expected_result: "One is refused.\nExpected: accepted=1, refused=1",
+      actual_result: "Both tabs signed in.\nObserved: accepted=2, refused=0",
+      environment: "Synthetic.",
+    };
+    expect(pickPhrases(issue).slice(1)).toEqual(["Open the prompt in two tabs", "Open the prompt in two tabs Submit both."]);
+  });
+
   it("leaves out every slot whose field and steps have under 6 words, the title's too", () => {
     const issue = {
       title: "Backup code works twice",
