@@ -28,7 +28,7 @@ describe("the solver's tools over a session", () => {
     const { kit, session, adapted } = await open();
     expect(await call("off", "bash", { command: "echo hi" }, adapted)).toBe("exit_code: 0\n--- stdout\nran: echo hi\n\n--- stderr\n");
     expect(await call("off", "read_file", { path: TARGET }, adapted)).toBe(PLANTED);
-    expect(await call("off", "read_file", { path: "missing.ts" }, adapted)).toMatch(/^error: head: .*No such file/);
+    expect(await call("off", "read_file", { path: "missing.ts" }, adapted)).toBe("error: no such file: missing.ts");
     expect(await call("off", "write_file", { path: TARGET, content: "fixed\n" }, adapted)).toBe(`wrote ${TARGET} (6 bytes)`);
     expect(kit.files.get(TARGET)?.bytes.toString()).toBe("fixed\n");
     expect(await call("off", "write_file", { path: "not-tracked.ts", content: "x" }, adapted)).toBe("error: not_tracked");

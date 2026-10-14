@@ -237,6 +237,8 @@ export interface ToolState {
   calls: Record<ToolName, number>;
   /** Every bash command in order, for the contamination check. */
   bash_commands: string[];
+  /** Every read_file and write_file path in order, refused ones included, for the contamination check. */
+  file_paths: string[];
 }
 
 export function newToolState(): ToolState {
@@ -244,6 +246,7 @@ export function newToolState(): ToolState {
     rebuilds: 0,
     calls: { bash: 0, read_file: 0, write_file: 0, rebuild_restart: 0, submit: 0, server_logs: 0 },
     bash_commands: [],
+    file_paths: [],
   };
 }
 
@@ -289,6 +292,7 @@ export async function runTool(
     }
     case "read_file": {
       const { path } = INPUT_SCHEMAS.read_file.parse(input);
+      state.file_paths.push(path);
       if (!isAppPath(path)) {
         return reply("error: the path must be relative to the app's root directory, without . or .. segments");
       }
@@ -297,6 +301,7 @@ export async function runTool(
     }
     case "write_file": {
       const { path, content } = INPUT_SCHEMAS.write_file.parse(input);
+      state.file_paths.push(path);
       if (!isAppPath(path)) {
         return reply("error: the path must be relative to the app's root directory, without . or .. segments");
       }

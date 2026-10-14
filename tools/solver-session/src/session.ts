@@ -100,14 +100,33 @@ const LOG_FILES = { umami: `${LOGS_DIR}/umami.stderr.log`, postgres: `${LOGS_DIR
 
 /**
  * Writes the staging file $3 over the tracked file $2 under the app directory $1 in place, so the
- * file keeps its owner and mode, and removes the staging file. Exit 3: not a regular file.
+ * file keeps its owner and mode, and removes the staging file. Exit 3: not a regular file, or a
+ * path that resolves outside the app directory (a directory on the way replaced by a symlink).
+ * readlink -f is BusyBox's and coreutils' both, so the script runs in the Alpine kit.
  */
 export const PLACE_SCRIPT = `set -eu
+root=$(readlink -f "$1")
 target="$1/$2"
+real=$(readlink -f "$target" 2>/dev/null) || real=""
+case "$real" in "$root"/*) ;; *) rm -f "$3"; echo "outside the app tree" >&2; exit 3 ;; esac
 if [ -L "$target" ] || [ ! -f "$target" ]; then rm -f "$3"; echo "not a regular file" >&2; exit 3; fi
 cat "$3" > "$target"
 rm -f "$3"
 sha256sum "$target"
+`;
+
+/**
+ * Prints at most $3 bytes of the file at the relative path $2 under the app directory $1, after
+ * resolving every symlink: exit 3 when it resolves outside the app directory (nothing is read),
+ * exit 4 when it does not exist. Run as rbw-app, so the app user's permissions still apply.
+ */
+export const READ_SCRIPT = `set -eu
+root=$(readlink -f "$1")
+real=$(readlink -f "$1/$2" 2>/dev/null) || real=""
+if [ -z "$real" ]; then echo "no such file: $2" >&2; exit 4; fi
+case "$real" in "$root"/*) ;; *) echo "outside the app tree" >&2; exit 3 ;; esac
+if [ ! -e "$real" ]; then echo "no such file: $2" >&2; exit 4; fi
+exec head -c "$3" "$real"
 `;
 
 /**
@@ -132,6 +151,14 @@ fi
 printf '%s %s\\n' "$size" "$start"
 if [ "$size" -gt 0 ]; then tail -c +$((start + 1)) "$f" | head -c "$max"; fi
 `;
+
+/**
+ * A file tool's path names something under the app root only when it is relative and has no ..
+ * segment; symlinks that resolve outside are refused in the container (READ_SCRIPT, PLACE_SCRIPT).
+ */
+export function insideApp(path: string): boolean {
+  return path !== "" && !path.startsWith("/") && !path.split("/").includes("..");
+}
 
 function text(buffer: Buffer): string {
   return buffer.toString("utf8");
@@ -342,23 +369,25 @@ export class Session implements SolverTools {
   private async readFileNow(path: string): Promise<ReadResult> {
     this.live();
     if (path === "" || path.includes("\0") || path.length > 4096) return { ok: false, reason: "bad_path" };
-    const absolute = path.startsWith("/") ? path : `${APP_DIR}/${path}`;
+    if (!insideApp(path)) {
+      this.event("read_file", { path, refused: "outside_app_tree" });
+      return { ok: false, reason: "outside_app_tree" };
+    }
     const limit = this.limits.readBytes;
     const result = await this.exec(
-      ["/opt/rbw/bin/rbw-launch", "--as", "app", "--cwd", APP_DIR, "--timeout-ms", "30000", "--max-stream-bytes", String(limit + 1024), "--", "head", "-c", String(limit + 1), "--", absolute],
+      ["/opt/rbw/bin/rbw-launch", "--as", "app", "--cwd", APP_DIR, "--timeout-ms", "30000", "--max-stream-bytes", String(limit + 1024), "--", "/bin/sh", "-c", READ_SCRIPT, "rbw-read", APP_DIR, path, String(limit + 1)],
       30_000,
     );
     this.event("read_file", { path, exit_code: result.code });
+    if (result.code === 3) return { ok: false, reason: "outside_app_tree" };
     if (result.code !== 0) return { ok: false, reason: result.stderr.trim().slice(0, 500) || `exit ${String(result.code)}` };
     const truncated = result.stdout.length > limit;
     return { ok: true, content: text(truncated ? result.stdout.subarray(0, limit) : result.stdout), truncated };
   }
 
-  /** A tracked path from what the agent wrote: relative to the app, or absolute under it. */
+  /** A tracked path from what the agent wrote, relative to the app root. */
   private trackedPath(path: string): string | null {
-    let relative = path.startsWith(`${APP_DIR}/`) ? path.slice(APP_DIR.length + 1) : path;
-    if (relative.startsWith("/") || relative.includes("\0")) return null;
-    relative = posix.normalize(relative);
+    const relative = posix.normalize(path);
     return this.writable.has(relative) ? relative : null;
   }
 
@@ -368,6 +397,10 @@ export class Session implements SolverTools {
 
   private async writeFileNow(path: string, content: string): Promise<WriteResult> {
     this.live();
+    if (path.includes("\0") || !insideApp(path)) {
+      this.event("write_file", { path, refused: "outside_app_tree" });
+      return { ok: false, reason: "outside_app_tree" };
+    }
     const tracked = this.trackedPath(path);
     if (tracked === null) {
       this.event("write_file", { path, refused: "not_tracked" });

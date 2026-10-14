@@ -129,7 +129,7 @@ The sink receives one event per step, and `transcriptLine` writes each as one JS
 
 ## Contamination check
 
-`contaminationHits(commands)` flags bash commands that start a server (`node server.js`, `next start` or `dev`, a package `start` or `dev` script, `rbw-start`, `postgres -D`, `pg_ctl start`) or read process output (`/var/lib/rbw/logs`, `/proc/<pid>/fd`, `strace`, `ltrace`, `journalctl`). It is a pattern check: attempts are counted per arm, never excluded.
+`contaminationHits(commands)` flags bash commands that start a server (`node server.js`, `next start` or `dev`, a package `start` or `dev` script, `rbw-start`, `postgres -D`, `pg_ctl start`) or read process output (`/var/lib/rbw/logs`, `/proc/<pid>/fd`, `strace`, `ltrace`, `journalctl`); `contaminationHits(commands, filePaths)` also flags every `read_file` or `write_file` path into `/var/lib/rbw/logs`, absolute or by `../`, including the ones refused before the session sees them. It is a pattern check: attempts are counted per arm, never excluded.
 
 ## Analysis and the results record
 

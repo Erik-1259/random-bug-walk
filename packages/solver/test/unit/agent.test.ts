@@ -446,4 +446,11 @@ describe("contamination", () => {
     const result = await runAttempt(attemptOptions(spend, script.fetch, new FakeSession()).options);
     expect(result.contamination.map((hit) => hit.kind)).toEqual(["starts_server"]);
   });
+
+  it("is flagged when a file tool is pointed at the rbw log directory in the off arm", async () => {
+    const { spend } = await freshSpend(db);
+    const script = scriptedFetch([{ calls: [{ name: "read_file", input: { path: "/var/lib/rbw/logs/umami.stderr.log" } }] }, { calls: [SUBMIT] }]);
+    const result = await runAttempt(attemptOptions(spend, script.fetch, new FakeSession(), { spec: { arm: "off", index: 1, rerun: 0 } }).options);
+    expect(result.contamination).toEqual([{ kind: "reads_process_output", tool: "file", command_index: 0, pattern: "rbw log directory" }]);
+  });
 });

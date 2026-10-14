@@ -555,7 +555,7 @@ export async function runAttempt(options: AttemptOptions): Promise<AttemptResult
   const finish = async (): Promise<AttemptResult> => {
     const ended = now();
     result.rebuilds = state.rebuilds;
-    result.contamination = contaminationHits(state.bash_commands);
+    result.contamination = contaminationHits(state.bash_commands, state.file_paths);
     result.wall_ms = ended.getTime() - startedAt.getTime();
     await options.transcript({ type: "attempt_end", result, ended_at: ended.toISOString() });
     return result;

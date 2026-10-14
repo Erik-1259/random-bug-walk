@@ -177,4 +177,13 @@ describe("runTool", () => {
     await runTool("off", "bash", { command: "ls" }, new FakeSession(), state, ATTEMPT_CAPS);
     expect(state.bash_commands).toEqual(["ls"]);
   });
+
+  it("records every file-tool path for the contamination check, including a path it refuses", async () => {
+    const session = new FakeSession();
+    const state = newToolState();
+    await runTool("off", "read_file", { path: "/var/lib/rbw/logs/umami.stderr.log" }, session, state, ATTEMPT_CAPS);
+    await runTool("off", "write_file", { path: "../../var/lib/rbw/logs/x", content: "x" }, session, state, ATTEMPT_CAPS);
+    expect(state.file_paths).toEqual(["/var/lib/rbw/logs/umami.stderr.log", "../../var/lib/rbw/logs/x"]);
+    expect(session.log).toEqual([]);
+  });
 });

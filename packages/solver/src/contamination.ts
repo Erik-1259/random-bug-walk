@@ -1,13 +1,16 @@
 // The pre-registered contamination check: an attempt, in either arm, that starts its own server
 // process or reads Umami's or Postgres's process output outside server_logs. It is detected from
-// the attempt's bash commands by pattern, so it is a heuristic: it is counted and reported per
-// arm, and never used to exclude an attempt.
+// the attempt's bash commands by pattern, and from any read_file or write_file path into the rbw
+// log directory (whether or not the session refused it), so it is a heuristic: it is counted and
+// reported per arm, and never used to exclude an attempt.
 
 export type ContaminationKind = "starts_server" | "reads_process_output";
 
 export interface ContaminationHit {
   kind: ContaminationKind;
-  /** The index of the bash command in the attempt's order. */
+  /** Where it was seen: a bash command, or a read_file or write_file path. */
+  tool: "bash" | "file";
+  /** The index of the bash command, or of the file-tool path, in the attempt's order. */
   command_index: number;
   pattern: string;
 }
@@ -24,20 +27,28 @@ const PATTERNS: readonly { kind: ContaminationKind; name: string; regex: RegExp 
   { kind: "reads_process_output", name: "journalctl", regex: /\bjournalctl\b/ },
 ];
 
-/** Every pattern hit in the attempt's bash commands, in command order. */
-export function contaminationHits(commands: readonly string[]): ContaminationHit[] {
+/** A file-tool path naming the rbw log directory or a file in it, absolute or by a ../ traversal. */
+const LOG_DIRECTORY_PATH = /(?:^|\/)var\/lib\/rbw\/logs(?:\/|$)/;
+
+/** Every pattern hit in the attempt's bash commands, in command order, then its file-tool paths into the log directory. */
+export function contaminationHits(commands: readonly string[], filePaths: readonly string[] = []): ContaminationHit[] {
   const hits: ContaminationHit[] = [];
   commands.forEach((command, index) => {
     for (const pattern of PATTERNS) {
       if (pattern.regex.test(command)) {
-        hits.push({ kind: pattern.kind, command_index: index, pattern: pattern.name });
+        hits.push({ kind: pattern.kind, tool: "bash", command_index: index, pattern: pattern.name });
       }
+    }
+  });
+  filePaths.forEach((path, index) => {
+    if (LOG_DIRECTORY_PATH.test(path)) {
+      hits.push({ kind: "reads_process_output", tool: "file", command_index: index, pattern: "rbw log directory" });
     }
   });
   return hits;
 }
 
 /** Whether the attempt is flagged as contaminated. */
-export function isContaminated(commands: readonly string[]): boolean {
-  return contaminationHits(commands).length > 0;
+export function isContaminated(commands: readonly string[], filePaths: readonly string[] = []): boolean {
+  return contaminationHits(commands, filePaths).length > 0;
 }

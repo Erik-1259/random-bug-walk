@@ -59,6 +59,8 @@ export class SessionKit {
   ]);
   readonly docker: FakeDocker;
   readonly clock = new FakeClock();
+  /** App-relative paths the read script finds resolving outside the app tree (symlinks out). */
+  readonly outsideLinks = new Set<string>();
   /** The scripts the container ran, by their $0 name or command, in order. */
   readonly ran: string[] = [];
   /** Staged write_file contents, by their container path. */
@@ -190,11 +192,13 @@ export class SessionKit {
 
   private launch(command: string[]): CommandResult {
     this.ran.push(`launch:${command[0] ?? ""}`);
-    if (command[0] === "head") {
-      const path = String(command[4]).replace("/workspace/app/", "");
-      const file = this.files.get(path);
-      if (file === undefined) return failed(1, `head: ${String(command[4])}: No such file or directory`);
-      return ok(file.bytes.subarray(0, Number(command[2])));
+    if (command[0] === "/bin/sh" && command[3] === "rbw-read") {
+      const [root, path, max] = command.slice(4).map(String);
+      if (root !== "/workspace/app") return failed(2, `unexpected read root ${String(root)}`);
+      if (this.outsideLinks.has(String(path))) return failed(3, "outside the app tree");
+      const file = this.files.get(String(path));
+      if (file === undefined) return failed(4, `no such file: ${String(path)}`);
+      return ok(file.bytes.subarray(0, Number(max)));
     }
     if (command[2] === "sleep 999") return { code: 124, stdout: Buffer.alloc(0), stderr: "rbw-launch: timed out after 120000 ms\n", timedOut: false };
     return ok(`ran: ${String(command[2])}\n`);

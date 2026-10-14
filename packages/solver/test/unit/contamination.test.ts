@@ -22,7 +22,15 @@ describe("the contamination check", () => {
 
   it("names the command index of each hit", () => {
     expect(contaminationHits(["ls", "cat /var/lib/rbw/logs/x"])).toEqual([
-      { kind: "reads_process_output", command_index: 1, pattern: "rbw log directory" },
+      { kind: "reads_process_output", tool: "bash", command_index: 1, pattern: "rbw log directory" },
     ]);
+  });
+
+  it.each(["/var/lib/rbw/logs/umami.stderr.log", "../../../var/lib/rbw/logs/postgres.stderr.log", "/var/lib/rbw/logs"])("flags a file-tool path into the rbw log directory: %s", (path) => {
+    expect(contaminationHits([], [path])).toEqual([{ kind: "reads_process_output", tool: "file", command_index: 0, pattern: "rbw log directory" }]);
+  });
+
+  it.each(["src/lib/date.ts", "docs/var/lib/rbw/logs-notes.md"])("does not flag the file-tool path %s", (path) => {
+    expect(contaminationHits([], [path])).toEqual([]);
   });
 });
