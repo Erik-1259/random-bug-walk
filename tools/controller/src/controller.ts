@@ -31,6 +31,7 @@ import {
   frozenJobFamily,
   importJob,
   inspectImage,
+  kitCheckIncomplete,
   loadCopyInputs,
   mergeRecordSet,
   newRunIds,
@@ -43,7 +44,7 @@ import {
   utcSeconds,
   writeJobDir,
 } from "@rbw/local-runner";
-import type { BuiltJob, Clock, CopyResult, CopySummary, Docker, FamilyId, JobContext, JobLabel, RunCopyOutcome, RunIds, SandboxSdk, TrialSummary } from "@rbw/local-runner";
+import type { BuiltJob, Clock, CopyResult, CopySummary, Docker, FamilyId, JobContext, JobLabel, KitCheckTrial, RunCopyOutcome, RunIds, SandboxSdk, TrialSummary } from "@rbw/local-runner";
 import { buildJobRequest, callName, canonicalDigest, operationId, parseCanonical, providerCallIdentity, sha256Hex } from "@rbw/schema";
 import type { ExpectedTrial, JobKind } from "@rbw/schema";
 import type { OperationState, Refusal, Result, Spend } from "@rbw/spend";
@@ -450,6 +451,18 @@ async function build(inputs: JobInputs, deps: ControllerDeps, state: ControllerS
   } catch (error) {
     throw error instanceof FamilyError ? new InputsError(error.message) : error;
   }
+  // An observation's baseline is read before the export, the freeze copy or any reservation.
+  let baseline: { key: string; sha256: string } | null = null;
+  if (inputs.kind === "observe") {
+    const path = join(inputs.work, ...BASELINE_KEY.split("/"));
+    if (!existsSync(path)) throw new JobRefusal(`baseline_missing: no kit-check evidence at ${BASELINE_KEY} in the run directory`);
+    const bytes = readFileSync(path);
+    // A kit check counts as the baseline only when every one of its trials completed.
+    const evidence = JSON.parse(bytes.toString("utf8")) as { trials?: unknown };
+    const incomplete = kitCheckIncomplete(Array.isArray(evidence.trials) ? (evidence.trials as KitCheckTrial[]) : []);
+    if (incomplete !== null) throw new JobRefusal(`kit_check_incomplete: ${incomplete}`);
+    baseline = { key: BASELINE_KEY, sha256: sha256Hex(bytes) };
+  }
   const envelope = copyEnvelope(deps.rates);
   if (!envelope.ok) throw new JobRefusal(`the copy envelope was refused (${envelope.code})`);
   const tag = runTag(state.ids.root_execution_id);
@@ -512,12 +525,6 @@ async function build(inputs: JobInputs, deps: ControllerDeps, state: ControllerS
     ...(inputs.projectPolicy === undefined ? {} : { projectPolicy: inputs.projectPolicy }),
     ...(inputs.judgeFixed === undefined ? {} : { judgeFixed: inputs.judgeFixed }),
   };
-  let baseline: { key: string; sha256: string } | null = null;
-  if (inputs.kind === "observe") {
-    const path = join(inputs.work, ...BASELINE_KEY.split("/"));
-    if (!existsSync(path)) throw new JobRefusal(`baseline_missing: no kit-check evidence at ${BASELINE_KEY} in the run directory`);
-    baseline = { key: BASELINE_KEY, sha256: sha256Hex(readFileSync(path)) };
-  }
   const first = buildJob(LABELS[inputs.kind], ctx, baseline);
   const trials = selectTrials(first.expected.trials, inputs.trials);
   const limits = JOB_LIMITS[inputs.kind];

@@ -26,8 +26,8 @@ export {
 export type { Family, FamilyFixture, FamilyId } from "./family.ts";
 export { InputsError, loadCopyInputs, loadRunInputs } from "./inputs.ts";
 export type { CopyInputOptions, CopyInputs } from "./inputs.ts";
-export { BASELINE_KEY, JOB_KINDS, JobRefusal, buildJob, candidateIdentity, checkBaseline, expectedVectors, newRunIds, runTag, writeJobDir } from "./jobs.ts";
-export type { BuiltJob, JobContext, JobLabel, RunIds } from "./jobs.ts";
+export { BASELINE_KEY, JOB_KINDS, JobRefusal, buildJob, candidateIdentity, checkBaseline, expectedVectors, kitCheckIncomplete, newRunIds, runTag, writeJobDir } from "./jobs.ts";
+export type { BuiltJob, JobContext, JobLabel, KitCheckTrial, RunIds } from "./jobs.ts";
 export { PlanError, containerName, inspectImage, inspectRepoDigests, profileSha256, trialSummaries } from "./plan.ts";
 export { ExportError, KIT_BUILD_OUTPUTS, auditCopy, exportImage, kitNonSource } from "./projection.ts";
 export { RECORDED_SYNTHETIC_DIR, RecordedModeError, loadRecordedDir, runRecorded } from "./recorded.ts";

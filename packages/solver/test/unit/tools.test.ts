@@ -172,9 +172,27 @@ describe("runTool", () => {
     expect(outcome).toEqual({ output: "submitted", submitted: true, summary: "done" });
   });
 
+  it("bounds the bash timeout by the attempt's remaining wall time, with no minimum past it", async () => {
+    const session = new FakeSession();
+    await runTool("off", "bash", { command: "a" }, session, newToolState(), ATTEMPT_CAPS);
+    await runTool("off", "bash", { command: "b" }, session, newToolState(), ATTEMPT_CAPS, 45_000.7);
+    await runTool("off", "bash", { command: "c" }, session, newToolState(), ATTEMPT_CAPS, 10);
+    await runTool("off", "bash", { command: "d" }, session, newToolState(), ATTEMPT_CAPS, 10 * 60_000);
+    expect(session.bashTimeouts).toEqual([TOOL_OUTPUT_CAPS.bash_timeout_ms, 45_000, 10, TOOL_OUTPUT_CAPS.bash_timeout_ms]);
+  });
+
   it("records bash commands for the contamination check", async () => {
     const state = newToolState();
     await runTool("off", "bash", { command: "ls" }, new FakeSession(), state, ATTEMPT_CAPS);
     expect(state.bash_commands).toEqual(["ls"]);
+  });
+
+  it("records every file-tool path for the contamination check, including a path it refuses", async () => {
+    const session = new FakeSession();
+    const state = newToolState();
+    await runTool("off", "read_file", { path: "/var/lib/rbw/logs/umami.stderr.log" }, session, state, ATTEMPT_CAPS);
+    await runTool("off", "write_file", { path: "../../var/lib/rbw/logs/x", content: "x" }, session, state, ATTEMPT_CAPS);
+    expect(state.file_paths).toEqual(["/var/lib/rbw/logs/umami.stderr.log", "../../var/lib/rbw/logs/x"]);
+    expect(session.log).toEqual([]);
   });
 });

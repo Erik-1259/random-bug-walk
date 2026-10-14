@@ -5,6 +5,7 @@ import type { ModelMessage } from "ai";
 import { attemptKey, elideOldestToolResult, HISTORY_ELISION_NOTE, NO_TOOL_CALL_REMINDER, runAttempt, SOLVER_SYSTEM_PROMPT, transcriptLine } from "../../src/agent.ts";
 import { countSolverPromptBound } from "../../src/envelope.ts";
 import { CHAT_COMPLETIONS_URL, SUPER_SOLVER_PROFILE } from "../../src/profile.ts";
+import { MIN_TOOL_TIMEOUT_MS } from "../../src/tools.ts";
 import { attemptOptions, FakeSession, freshSpend, openDb, scriptedFetch, spySpend, steppingClock, withCaps } from "../support.ts";
 
 let db: PGlite;
@@ -275,6 +276,61 @@ describe("caps", () => {
     expect(script.bodies.length).toBeLessThan(3);
   });
 
+  it("bounds a tool call by the remaining wall time and ends the attempt when the cap cuts it off", async () => {
+    const { spend } = await freshSpend(db);
+    const script = scriptedFetch([{ calls: [{ name: "bash", input: { command: "sleep 120" } }, SUBMIT, { name: "read_file", input: { path: "src/lib/date.ts" } }] }]);
+    const profile = withCaps(SUPER_SOLVER_PROFILE, { max_wall_ms: 5 * 60_000 });
+    const start = Date.UTC(2026, 9, 13, 12, 0, 0);
+    // The clock stands still except while the bash command runs; the turn starts 30 seconds before the cap.
+    let t = start;
+    const session = new FakeSession();
+    const fakeBash = session.bash.bind(session);
+    session.bash = async (command: string, options: { timeoutMs: number }) => {
+      const ran = Math.min(2 * 60_000, options.timeoutMs);
+      t += ran;
+      const result = await fakeBash(command, options);
+      return ran < 2 * 60_000 ? { exit_code: null, stdout: "", stderr: "", timed_out: true } : result;
+    };
+    const run = attemptOptions(spend, script.fetch, session, { profile, now: () => new Date(t), startedAt: new Date(start - 5 * 60_000 + 30_000) });
+    const result = await runAttempt(run.options);
+    expect(session.bashTimeouts).toEqual([30_000]);
+    expect(result).toMatchObject({ outcome: "cap_reached", cap: "wall", turns: 1, summary: null });
+    expect(result.wall_ms).toBe(5 * 60_000);
+    expect(result.tool_calls).toMatchObject({ bash: 1, submit: 0, read_file: 0 });
+    expect(session.log).toEqual(["bash:sleep 120"]);
+    expect(run.events.filter((e) => e.type === "tool_call")).toHaveLength(1);
+  });
+
+  it("does not start a bash call when less than the minimum useful call time remains, and ends the attempt at the cap", async () => {
+    const { spend } = await freshSpend(db);
+    const script = scriptedFetch([{ calls: [{ name: "bash", input: { command: "true" } }, SUBMIT] }]);
+    const profile = withCaps(SUPER_SOLVER_PROFILE, { max_wall_ms: 5 * 60_000 });
+    const start = Date.UTC(2026, 9, 13, 12, 0, 0);
+    const session = new FakeSession();
+    const run = attemptOptions(spend, script.fetch, session, { profile, now: () => new Date(start), startedAt: new Date(start - 5 * 60_000 + 100) });
+    const result = await runAttempt(run.options);
+    expect(MIN_TOOL_TIMEOUT_MS).toBeGreaterThan(100);
+    expect(session.bashTimeouts).toEqual([]);
+    expect(session.log).toEqual([]);
+    expect(result).toMatchObject({ outcome: "cap_reached", cap: "wall", summary: null });
+    expect(result.tool_calls).toMatchObject({ bash: 0, submit: 0 });
+  });
+
+  it("counts time before the loop (the session's open and initial build) against the wall-clock cap", async () => {
+    const { spend, schema } = await freshSpend(db);
+    const script = scriptedFetch([{ calls: [{ name: "bash", input: { command: "true" } }] }]);
+    const profile = withCaps(SUPER_SOLVER_PROFILE, { max_wall_ms: 5 * 60_000 });
+    const start = Date.UTC(2026, 9, 13, 12, 0, 0);
+    const startedAt = new Date(start - 6 * 60_000);
+    const run = attemptOptions(spend, script.fetch, new FakeSession(), { profile, now: steppingClock(1_000, start), startedAt });
+    const result = await runAttempt(run.options);
+    expect(result).toMatchObject({ outcome: "cap_reached", cap: "wall", turns: 0 });
+    expect(result.wall_ms).toBeGreaterThanOrEqual(6 * 60_000);
+    expect(run.events[0]).toMatchObject({ type: "attempt_start", started_at: startedAt.toISOString() });
+    expect(script.bodies).toHaveLength(0);
+    expect(await operations(schema, spend)).toHaveLength(0);
+  });
+
   it.each(["off", "on"] as const)(
     "keeps a 20-turn %s-arm session with many capped outputs under the per-call limit by eliding the oldest tool results",
     async (arm) => {
@@ -430,5 +486,12 @@ describe("contamination", () => {
     const script = scriptedFetch([{ calls: [{ name: "bash", input: { command: "cd .next/standalone && node server.js &" } }] }, { calls: [SUBMIT] }]);
     const result = await runAttempt(attemptOptions(spend, script.fetch, new FakeSession()).options);
     expect(result.contamination.map((hit) => hit.kind)).toEqual(["starts_server"]);
+  });
+
+  it("is flagged when a file tool is pointed at the rbw log directory in the off arm", async () => {
+    const { spend } = await freshSpend(db);
+    const script = scriptedFetch([{ calls: [{ name: "read_file", input: { path: "/var/lib/rbw/logs/umami.stderr.log" } }] }, { calls: [SUBMIT] }]);
+    const result = await runAttempt(attemptOptions(spend, script.fetch, new FakeSession(), { spec: { arm: "off", index: 1, rerun: 0 } }).options);
+    expect(result.contamination).toEqual([{ kind: "reads_process_output", tool: "file", command_index: 0, pattern: "rbw log directory" }]);
   });
 });

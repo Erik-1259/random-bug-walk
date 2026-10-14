@@ -9,7 +9,7 @@ import { extract } from "tar-stream";
 import { describe, expect, it } from "vitest";
 import { sha256, tempDir } from "../../../local-runner/test/support/synthetic.ts";
 import { KILL_APP_SCRIPT } from "../../src/reset.ts";
-import { CLEAR_LOGS_SCRIPT, LOG_SLICE_SCRIPT, PLACE_SCRIPT } from "../../src/session.ts";
+import { CLEAR_LOGS_SCRIPT, LOG_SLICE_SCRIPT, PLACE_SCRIPT, READ_SCRIPT } from "../../src/session.ts";
 import { TRACKED_TAR_SCRIPT } from "../../src/tracked.ts";
 
 function sh(script: string, args: readonly string[], env: Record<string, string> = {}): { code: number | null; stdout: Buffer; stderr: string } {
@@ -67,6 +67,54 @@ describe("the write_file placement script", () => {
     expect(sh(PLACE_SCRIPT, ["rbw-place", dir, "src/missing.ts", staging]).code).toBe(3);
     expect(existsSync(join(dir, "src/missing.ts"))).toBe(false);
     expect(existsSync(staging)).toBe(false);
+  });
+
+  it("refuses a tracked path whose directory is a symlink out of the app tree, with exit 3", () => {
+    const { app: dir, staging } = app();
+    const outside = tempDir("rbw-solver-session-outside-");
+    writeFileSync(join(outside, "target.ts"), "outside\n");
+    mkdirSync(join(dir, "lib"));
+    symlinkSync(outside, join(dir, "lib/out"));
+    expect(sh(PLACE_SCRIPT, ["rbw-place", dir, "lib/out/target.ts", staging])).toMatchObject({ code: 3 });
+    expect(readFileSync(join(outside, "target.ts"), "utf8")).toBe("outside\n");
+    expect(existsSync(staging)).toBe(false);
+  });
+});
+
+describe("the read_file script", () => {
+  function tree(): { dir: string; outside: string } {
+    const root = tempDir("rbw-solver-session-read-");
+    const dir = join(root, "app");
+    mkdirSync(join(dir, "src"), { recursive: true });
+    writeFileSync(join(dir, "src/target.ts"), "planted\n");
+    const outside = join(root, "logs");
+    mkdirSync(outside);
+    writeFileSync(join(outside, "umami.stderr.log"), "secret log line\n");
+    return { dir, outside };
+  }
+
+  it("reads a file under the app root, at most max bytes, through a symlink that stays inside", () => {
+    const { dir } = tree();
+    symlinkSync("target.ts", join(dir, "src/link.ts"));
+    expect(sh(READ_SCRIPT, ["rbw-read", dir, "src/target.ts", "100"])).toMatchObject({ code: 0, stdout: Buffer.from("planted\n") });
+    expect(sh(READ_SCRIPT, ["rbw-read", dir, "src/link.ts", "4"])).toMatchObject({ code: 0, stdout: Buffer.from("plan") });
+  });
+
+  it("refuses, with exit 3 and nothing read, a symlinked file or directory that resolves outside the app root", () => {
+    const { dir, outside } = tree();
+    symlinkSync(join(outside, "umami.stderr.log"), join(dir, "src/log.txt"));
+    symlinkSync(outside, join(dir, "logs"));
+    for (const path of ["src/log.txt", "logs/umami.stderr.log"]) {
+      const result = sh(READ_SCRIPT, ["rbw-read", dir, path, "100"]);
+      expect(result).toMatchObject({ code: 3, stderr: "outside the app tree\n" });
+      expect(result.stdout.length).toBe(0);
+    }
+  });
+
+  it("reports a missing file with exit 4", () => {
+    const { dir } = tree();
+    expect(sh(READ_SCRIPT, ["rbw-read", dir, "src/missing.ts", "100"])).toMatchObject({ code: 4, stderr: "no such file: src/missing.ts\n" });
+    expect(sh(READ_SCRIPT, ["rbw-read", dir, "nodir/missing.ts", "100"]).code).toBe(4);
   });
 });
 

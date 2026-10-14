@@ -70,9 +70,12 @@ export interface SubmitResult {
 export interface SolverTools {
   /** `sh -c <cmd>` as the unprivileged app user (rbw-app) in /workspace/app, with a timeout. */
   run(cmd: string, timeoutMs?: number): Promise<RunResult>;
-  /** A file as the app user can read it; a relative path is under /workspace/app. */
+  /**
+   * A file under /workspace/app, by a relative path, as the app user can read it. An absolute
+   * path, a .. segment or a symlink resolving outside the app tree is refused ("outside_app_tree").
+   */
   readFile(path: string): Promise<ReadResult>;
-  /** Writes a tracked file under the app tree, as root, keeping the file's owner and mode; not one the build regenerates. */
+  /** Writes a tracked file under the app tree, by a relative path, as root, keeping the file's owner and mode; not one the build regenerates. */
   writeFile(path: string, content: string): Promise<WriteResult>;
   /** rbw-stop, ending every rbw-app process, the cold-build reset, rbw-build-app, then rbw-start. */
   rebuildRestart(): Promise<RebuildResult>;
