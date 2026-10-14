@@ -1,0 +1,32 @@
+import { db } from './db';
+
+// No read of the same model in the function: not a site.
+export async function closeTickets(ownerId: string) {
+  const owner = await db.client.owner.findUnique({ where: { id: ownerId } });
+  await db.client.ticket.updateMany({ where: { ownerId: owner.id, open: true }, data: { open: false } });
+}
+
+// The only extra key is a scope key, not a state guard: not a site.
+export async function moveTicket(ticketId: string, boardId: string) {
+  const ticket = await db.client.ticket.findUnique({ where: { id: ticketId } });
+  await db.client.ticket.update({ where: { id: ticket.id, boardId }, data: { boardId } });
+}
+
+// The guard sits in a nested AND, not directly in where: not a site.
+export async function closeNested(ticketId: string) {
+  const ticket = await db.client.ticket.findFirst({ where: { id: ticketId } });
+  await db.client.ticket.updateMany({ where: { AND: [{ id: ticket.id }, { open: true }] }, data: { open: false } });
+}
+
+// A create is not a guarded write: not a site.
+export async function copyTicket(ticketId: string) {
+  const ticket = await db.client.ticket.findUnique({ where: { id: ticketId } });
+  await db.client.ticket.create({ data: { title: ticket.title, open: true } });
+}
+
+// Shapes inside strings and comments are not code: not sites.
+export async function describeRule() {
+  const ticket = await db.client.ticket.findFirst({ where: {} });
+  // await db.client.ticket.updateMany({ where: { id: ticket.id, open: true }, data: {} });
+  return "db.client.ticket.upsert({ where: { id }, update: {}, create: { id } })";
+}

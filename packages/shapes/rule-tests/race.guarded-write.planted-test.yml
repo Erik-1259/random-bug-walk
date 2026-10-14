@@ -1,0 +1,57 @@
+id: race.guarded-write.planted
+valid:
+  - |
+    async function redeem(id: string) {
+      const codes = await db.client.code.findMany({ where: { ownerId: id, used: false } });
+      await db.client.code.updateMany({ where: { id: codes[0].id, used: false }, data: { used: true } });
+    }
+  - |
+    async function close(id: string) {
+      const owner = await db.owner.findUnique({ where: { id } });
+      await db.ticket.update({ where: { id: owner.id }, data: { open: false } });
+    }
+  - |
+    async function close(id: string) {
+      await db.ticket.update({ where: { id }, data: { open: false } });
+    }
+  - |
+    async function publish(id: string) {
+      const row = await db.document.findUnique({ where: { id } });
+      await db.document.update({ where: { active: false, id: row.id }, data: { active: true } });
+    }
+  - |
+    async function publish(id: string) {
+      const row = await db.document.findUnique({ where: { id } });
+      await db.document.update({ where: { id: row.id, status: row.status }, data: { active: true } });
+    }
+  - |
+    async function publish(id: string) {
+      const row = await db.document.findUnique({ where: { id } });
+      await db.document.update({ where: { id: row.id, AND: [{ status: row.status }] }, data: { active: true } });
+    }
+  - |
+    async function publish(id: string, status: string) {
+      const row = await db.document.findUnique({ where: { id } });
+      await db.document.update({ where: { id: row.id, status }, data: { active: true } });
+    }
+invalid:
+  - |
+    async function publish(id: string, ownerId: string) {
+      const row = await db.document.findFirst({ where: { id, ownerId } });
+      await db.document.update({ where: { id: row.id, ownerId }, data: { active: true } });
+    }
+  - |
+    async function redeem(id: string) {
+      const codes = await db.client.code.findMany({ where: { ownerId: id, used: false } });
+      await db.client.code.updateMany({ where: { id: codes[0].id }, data: { used: true } });
+    }
+  - |
+    const hold = async (seatId: string) => {
+      const seat = await tx.seat.findUnique({ where: { id: seatId } });
+      await tx.seat.update({
+        where: {
+          id: seat.id,
+        },
+        data: { status: 'held' },
+      });
+    };

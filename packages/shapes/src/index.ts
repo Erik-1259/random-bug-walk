@@ -1,3 +1,5 @@
+export { CLASS_RULE_FILE, findSites, findSitesInSource, loadClassRules, sourceFiles } from "./classes.ts";
+export type { ClassRule, ConfidenceLevel, SiteConfidence, SiteRecord, SiteReport } from "./classes.ts";
 export { canonicalJson } from "./json.ts";
 export { ProbeDataError, checkProbes, loadProbeSet } from "./probes.ts";
 export type { Adm06NotApplicable, ExpectedCheck, ProbeData, ProbeEntry, ProbeOutcome, ProbeRecord, ProbeSet } from "./probes.ts";
@@ -18,8 +20,8 @@ export {
   RC1_TARGET,
 } from "./rc1.ts";
 export type { Rc1SourceSpec, Rc1TargetSpec } from "./rc1.ts";
-export { RuleFileError, applyFix, findMatches, loadRules } from "./rules.ts";
-export type { LoadedRule } from "./rules.ts";
+export { RuleFileError, applyFix, findMatches, fixEdit, loadRules } from "./rules.ts";
+export type { LoadedRule, RuleLanguage } from "./rules.ts";
 export {
   DT1_SOURCE,
   DT1_TARGET,

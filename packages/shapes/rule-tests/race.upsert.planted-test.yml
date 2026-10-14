@@ -1,0 +1,11 @@
+id: race.upsert.planted
+valid:
+  - |
+    await db.client.preference.upsert({ where: { profileId }, update: { theme }, create: { profileId, theme } });
+  - |
+    await db.preference.findUnique({ where: { profileId } }).then((found) => found ?? db.preference.create({ data: { profileId } }));
+  - |
+    await db.preference.findUnique({ where: { profileId } }).then((found) => (found ? db.other.update({ where: { profileId }, data: {} }) : db.preference.create({ data: { profileId } })));
+invalid:
+  - |
+    await db.client.preference.findUnique({ where: { profileId } }).then((found) => (found ? db.client.preference.update({ where: { profileId }, data: { theme } }) : db.client.preference.create({ data: { profileId, theme } })));

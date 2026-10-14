@@ -6,6 +6,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
+import { CLASS_RULE_FILE } from "../../src/classes.ts";
 import { RuleFileError, applyFix, findMatches, loadRules, type LoadedRule } from "../../src/rules.ts";
 import { RC1_FIXED_RULE_ID, RC1_PLANTED_RULE_ID, RC1_RULE_FILE, RC1_SOURCE_RULE_FILE, RC1_SOURCE_RULE_ID } from "../../src/rc1.ts";
 import { FIXED_RULE_ID, PLANTED_RULE_ID, RULE_FILE, SOURCE_RULE_FILE, SOURCE_RULE_ID } from "../../src/shape.ts";
@@ -20,12 +21,15 @@ interface RuleTestCase {
   invalid: string[];
 }
 
+const CLASS_RULE_IDS = ["race.guarded-write", "race.guarded-write.planted", "race.upsert", "race.upsert.planted"];
+
 function allRules(): Map<string, LoadedRule> {
   return new Map([
     ...loadRules(RULE),
     ...loadRules(readFileSync(SOURCE_RULE_FILE)),
     ...loadRules(readFileSync(RC1_RULE_FILE)),
     ...loadRules(readFileSync(RC1_SOURCE_RULE_FILE)),
+    ...loadRules(readFileSync(CLASS_RULE_FILE)),
   ]);
 }
 
@@ -59,6 +63,7 @@ describe("rule files", () => {
       FIXED_RULE_ID,
       PLANTED_RULE_ID,
       SOURCE_RULE_ID,
+      ...CLASS_RULE_IDS,
       RC1_FIXED_RULE_ID,
       RC1_PLANTED_RULE_ID,
       RC1_SOURCE_RULE_ID,
@@ -122,7 +127,7 @@ function astGrep(args: string[], cwd = PACKAGE_DIR): { status: number | null; st
 describe("ast-grep CLI cross-check", () => {
   it("passes `ast-grep test` for every rule", () => {
     const result = astGrep(["test"]);
-    expect(result.stdout).toContain("test result: ok. 6 passed; 0 failed;");
+    expect(result.stdout).toContain("test result: ok. 10 passed; 0 failed;");
     expect(result.status).toBe(0);
   });
 

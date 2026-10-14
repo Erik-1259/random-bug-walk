@@ -1,0 +1,312 @@
+# Class-level rules for the race family. Unlike the site rules, these name no file, function,
+# model or variable: they match by structure, so running them over a host tree lists every site of
+# the class. Each class has a fixed-form rule, whose fix plants the bug at one site, and a
+# planted-form rule that matches what the fix produces.
+#
+# Class RACE.guarded-write: a function awaits a read of a record and later writes the same model
+# with a `where` that pins the record's identity and also a state guard (`used: false`,
+# `status: 'pending'`, `count: { lt: limit }`, `version: row.version`). The guard makes the write
+# a compare-and-swap: a request that lost the race matches no row. The fix drops the guard, so two
+# concurrent requests that both read the old state can both write (a lost update or a double spend).
+id: race.guarded-write
+language: TypeScript
+severity: info
+message: A write after a read of the same model keeps a state guard in its where, so it applies only while the state it read still holds.
+note: Without the guard the write no longer fails for a record another request already changed, so two concurrent requests can both succeed.
+utils:
+  write-call:
+    kind: call_expression
+    all:
+      - pattern: $DB.$MODEL.$WRITE($$$)
+      - has:
+          field: function
+          has:
+            field: property
+            regex: ^(update|updateMany|delete|deleteMany)$
+      # The read is any call of a read method on the same model in an enclosing function, outside
+      # any function nested in it: a read in a callback that may never run does not precede the
+      # write. The method test sits inside the search, so the write itself never satisfies it.
+      - inside:
+          any:
+            - kind: function_declaration
+            - kind: function_expression
+            - kind: arrow_function
+            - kind: method_definition
+          stopBy: end
+          has:
+            stopBy:
+              any:
+                - kind: function_declaration
+                - kind: function_expression
+                - kind: arrow_function
+                - kind: method_definition
+            kind: call_expression
+            all:
+              - pattern: $RDB.$MODEL.$READ($$$)
+              - has:
+                  field: function
+                  has:
+                    field: property
+                    regex: ^(findFirst|findFirstOrThrow|findUnique|findUniqueOrThrow|findMany|count)$
+  guard-pair:
+    kind: pair
+    all:
+      # A comma right before the pair, so the guard is not first; the fix removes that comma with it.
+      - follows:
+          pattern: ","
+      - has:
+          field: key
+          kind: property_identifier
+          not:
+            regex: ^(id|[A-Za-z_$][A-Za-z0-9_$]*Id|[A-Za-z0-9_$]*_id|AND|OR|NOT)$
+      - any:
+          - has:
+              field: value
+              any:
+                - kind: "false"
+                - kind: "true"
+                - kind: "null"
+                - kind: number
+                - kind: string
+          - has:
+              field: value
+              kind: object
+              has:
+                kind: pair
+                has:
+                  field: key
+                  regex: ^(lt|lte|gt|gte|not|equals)$
+          - has:
+              field: key
+              regex: ^(version|revision|updatedAt|updated_at|etag)$
+rule:
+  matches: guard-pair
+  inside:
+    kind: object
+    # A where holding a comment anywhere is left out: the fix removes only the guard and the comma
+    # next to it, and a comment beside either could leave a stray comma behind.
+    not:
+      has:
+        kind: comment
+        stopBy: end
+    inside:
+      kind: pair
+      has:
+        field: key
+        regex: ^where$
+      inside:
+        kind: object
+        inside:
+          kind: arguments
+          inside:
+            matches: write-call
+fix:
+  template: ""
+  expandStart:
+    pattern: ","
+metadata:
+  class_id: RACE.guarded-write
+  form: fixed
+  keywords: [race condition, lost update, double spend, compare-and-swap, conditional update, check-then-act]
+  cwe: CWE-367 Time-of-check Time-of-use (TOCTOU) Race Condition
+  related_lint_rule: require-atomic-updates
+---
+id: race.guarded-write.planted
+language: TypeScript
+severity: info
+message: A write after a read of the same model pins only the record's identity, so it applies even when another request changed the state it read.
+rule:
+  # After the rewrite the where must pin only the record's identity: every entry is a pair or a
+  # shorthand whose key is an identity key (`id`, `*Id`, `*_id`). Any other surviving entry can keep the write conditional
+  # whatever its value form (`status: row.status`, `AND: [...]`, a spread such as `...expected`
+  # that may carry a guard this rule cannot see), so the planted form is then not confirmed.
+  # findSites also requires a surviving `id` to hold the read's own id, and each other surviving key to be one the
+  # read filters on, with the same value.
+  kind: object
+  not:
+    has:
+      any:
+        - kind: spread_element
+        - kind: method_definition
+        - kind: shorthand_property_identifier
+          not:
+            regex: ^(id|[A-Za-z_$][A-Za-z0-9_$]*Id|[A-Za-z0-9_$]*_id)$
+        - kind: pair
+          not:
+            has:
+              field: key
+              kind: property_identifier
+              regex: ^(id|[A-Za-z_$][A-Za-z0-9_$]*Id|[A-Za-z0-9_$]*_id)$
+  inside:
+    kind: pair
+    has:
+      field: key
+      regex: ^where$
+    inside:
+      kind: object
+      inside:
+        kind: arguments
+        inside:
+          kind: call_expression
+          all:
+            - pattern: $DB.$MODEL.$WRITE($$$)
+            - has:
+                field: function
+                has:
+                  field: property
+                  regex: ^(update|updateMany|delete|deleteMany)$
+            - inside:
+                any:
+                  - kind: function_declaration
+                  - kind: function_expression
+                  - kind: arrow_function
+                  - kind: method_definition
+                stopBy: end
+                has:
+                  stopBy:
+                    any:
+                      - kind: function_declaration
+                      - kind: function_expression
+                      - kind: arrow_function
+                      - kind: method_definition
+                  kind: call_expression
+                  all:
+                    - pattern: $RDB.$MODEL.$READ($$$)
+                    - has:
+                        field: function
+                        has:
+                          field: property
+                          regex: ^(findFirst|findFirstOrThrow|findUnique|findUniqueOrThrow|findMany|count)$
+metadata:
+  class_id: RACE.guarded-write
+  form: planted
+  keywords: [race condition, lost update, double spend, compare-and-swap, conditional update, check-then-act]
+  cwe: CWE-367 Time-of-check Time-of-use (TOCTOU) Race Condition
+  related_lint_rule: require-atomic-updates
+---
+# Class RACE.check-then-act: an `upsert` (where, update, create, and nothing else) creates or
+# updates a record in one statement. The fix splits it into a read and, depending on the result, an
+# update or a create. Two concurrent requests can both see no record and both create it, which
+# fails on a unique key or leaves a duplicate.
+id: race.upsert
+language: TypeScript
+severity: info
+message: An upsert reads and writes the record in one statement.
+note: Split into a read followed by a create, two concurrent requests can both find no record and both create one.
+utils:
+  # Every entry must be a where, update or create pair: another pair, a spread (`...base`), a
+  # shorthand key (`select`) or a method would be dropped by the rewrite.
+  only-upsert-keys:
+    not:
+      has:
+        any:
+          - kind: spread_element
+          - kind: shorthand_property_identifier
+          - kind: method_definition
+          - kind: pair
+            not:
+              has:
+                field: key
+                regex: ^(where|update|create)$
+rule:
+  kind: call_expression
+  all:
+    - pattern: $DB.$MODEL.upsert($ARG)
+    - has:
+        field: arguments
+        has:
+          kind: object
+          all:
+            - has:
+                kind: pair
+                pattern:
+                  context: "({ where: $WHERE })"
+                  selector: pair
+            - has:
+                kind: pair
+                pattern:
+                  context: "({ update: $UPDATE })"
+                  selector: pair
+            - has:
+                kind: pair
+                pattern:
+                  context: "({ create: $CREATE })"
+                  selector: pair
+            - matches: only-upsert-keys
+            # The rewrite moves the where, update and create values into a plain arrow callback that
+            # binds the read result as `found`, runs it after the read resolves, evaluates only one
+            # of update and create, and evaluates where twice. Refuse any argument whose meaning
+            # that move changes: a name `found` would read the new binding, an `await` or `yield`
+            # cannot sit in a non-async, non-generator arrow, and a call, `new`, assignment or
+            # increment would run later, not at all, or twice.
+            - not:
+                has:
+                  stopBy: end
+                  any:
+                    - kind: identifier
+                      regex: ^found$
+                    - kind: shorthand_property_identifier
+                      regex: ^found$
+                    - kind: await_expression
+                    - kind: yield_expression
+                    - kind: call_expression
+                    - kind: new_expression
+                    - kind: assignment_expression
+                    - kind: augmented_assignment_expression
+                    - kind: update_expression
+    # The rewrite reads the where, update and create values only after the lookup resolves. Only an
+    # upsert that is the direct operand of `await` in its own statement (`await db.m.upsert(...);` or
+    # `const row = await db.m.upsert(...);`) leaves no code a chance to change those values in
+    # between. A returned upsert (`return db.m.upsert(...)`, `return await ...`, or the body of an
+    # arrow) is not matched: its caller may keep the promise and change an input object before
+    # awaiting it. A promise kept for later, passed on or chained is not matched either.
+    - inside:
+        kind: await_expression
+        any:
+          - inside:
+              kind: expression_statement
+          - inside:
+              kind: variable_declarator
+              field: value
+    # Any upsert inside an argument of `$transaction(...)`, whether a batch array or an interactive
+    # callback, is left out.
+    - not:
+        inside:
+          stopBy: end
+          kind: arguments
+          inside:
+            kind: call_expression
+            has:
+              field: function
+              regex: (^|\.)\$transaction$
+    # The rewrite names the client three times, so a client computed by a call would run three times.
+    - has:
+        field: function
+        kind: member_expression
+        not:
+          has:
+            stopBy: end
+            any:
+              - kind: call_expression
+              - kind: new_expression
+              - kind: await_expression
+fix: "$DB.$MODEL.findUnique({ where: $WHERE }).then((found) => (found ? $DB.$MODEL.update({ where: $WHERE, data: $UPDATE }) : $DB.$MODEL.create({ data: $CREATE })))"
+metadata:
+  class_id: RACE.check-then-act
+  form: fixed
+  keywords: [race condition, check-then-act, upsert, get or create, duplicate create, unique constraint]
+  cwe: CWE-367 Time-of-check Time-of-use (TOCTOU) Race Condition
+  related_lint_rule: none
+---
+id: race.upsert.planted
+language: TypeScript
+severity: info
+message: A record is read and then created or updated in a separate statement.
+rule:
+  pattern: "$DB.$MODEL.findUnique({ where: $WHERE }).then(($FOUND) => ($FOUND ? $DB.$MODEL.update({ where: $WHERE, data: $UPDATE }) : $DB.$MODEL.create({ data: $CREATE })))"
+metadata:
+  class_id: RACE.check-then-act
+  form: planted
+  keywords: [race condition, check-then-act, upsert, get or create, duplicate create, unique constraint]
+  cwe: CWE-367 Time-of-check Time-of-use (TOCTOU) Race Condition
+  related_lint_rule: none

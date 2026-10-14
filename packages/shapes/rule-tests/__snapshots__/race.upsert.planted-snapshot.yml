@@ -1,0 +1,9 @@
+id: race.upsert.planted
+snapshots:
+  ? |
+    await db.client.preference.findUnique({ where: { profileId } }).then((found) => (found ? db.client.preference.update({ where: { profileId }, data: { theme } }) : db.client.preference.create({ data: { profileId, theme } })));
+  : labels:
+    - source: 'db.client.preference.findUnique({ where: { profileId } }).then((found) => (found ? db.client.preference.update({ where: { profileId }, data: { theme } }) : db.client.preference.create({ data: { profileId, theme } })))'
+      style: primary
+      start: 6
+      end: 223

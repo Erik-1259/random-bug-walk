@@ -1,0 +1,7 @@
+import { db } from './db';
+
+// The read of the same model comes after the write, so the rule matches but the site scores low.
+export async function releaseHold(holdId: string) {
+  await db.client.hold.updateMany({ where: { id: holdId, active: true }, data: { active: false } });
+  return db.client.hold.findUnique({ where: { id: holdId } });
+}

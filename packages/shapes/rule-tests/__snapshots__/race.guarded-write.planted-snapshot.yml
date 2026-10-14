@@ -1,0 +1,210 @@
+id: race.guarded-write.planted
+snapshots:
+  ? |
+    async function publish(id: string, ownerId: string) {
+      const row = await db.document.findFirst({ where: { id, ownerId } });
+      await db.document.update({ where: { id: row.id, ownerId }, data: { active: true } });
+    }
+  : labels:
+    - source: '{ id: row.id, ownerId }'
+      style: primary
+      start: 161
+      end: 184
+    - source: update
+      style: secondary
+      start: 145
+      end: 151
+    - source: update
+      style: secondary
+      start: 145
+      end: 151
+    - source: findFirst
+      style: secondary
+      start: 86
+      end: 95
+    - source: findFirst
+      style: secondary
+      start: 86
+      end: 95
+    - source: 'db.document.findFirst({ where: { id, ownerId } })'
+      style: secondary
+      start: 74
+      end: 123
+    - source: |-
+        async function publish(id: string, ownerId: string) {
+          const row = await db.document.findFirst({ where: { id, ownerId } });
+          await db.document.update({ where: { id: row.id, ownerId }, data: { active: true } });
+        }
+      style: secondary
+      start: 0
+      end: 214
+    - source: 'db.document.update({ where: { id: row.id, ownerId }, data: { active: true } })'
+      style: secondary
+      start: 133
+      end: 211
+    - source: '({ where: { id: row.id, ownerId }, data: { active: true } })'
+      style: secondary
+      start: 151
+      end: 211
+    - source: '{ where: { id: row.id, ownerId }, data: { active: true } }'
+      style: secondary
+      start: 152
+      end: 210
+    - source: where
+      style: secondary
+      start: 154
+      end: 159
+    - source: 'where: { id: row.id, ownerId }'
+      style: secondary
+      start: 154
+      end: 184
+  ? |
+    async function redeem(id: string) {
+      const codes = await db.client.code.findMany({ where: { ownerId: id, used: false } });
+      await db.client.code.updateMany({ where: { id: codes[0].id }, data: { used: true } });
+    }
+  : labels:
+    - source: '{ id: codes[0].id }'
+      style: primary
+      start: 167
+      end: 186
+    - source: updateMany
+      style: secondary
+      start: 147
+      end: 157
+    - source: updateMany
+      style: secondary
+      start: 147
+      end: 157
+    - source: findMany
+      style: secondary
+      start: 73
+      end: 81
+    - source: findMany
+      style: secondary
+      start: 73
+      end: 81
+    - source: 'db.client.code.findMany({ where: { ownerId: id, used: false } })'
+      style: secondary
+      start: 58
+      end: 122
+    - source: |-
+        async function redeem(id: string) {
+          const codes = await db.client.code.findMany({ where: { ownerId: id, used: false } });
+          await db.client.code.updateMany({ where: { id: codes[0].id }, data: { used: true } });
+        }
+      style: secondary
+      start: 0
+      end: 214
+    - source: 'db.client.code.updateMany({ where: { id: codes[0].id }, data: { used: true } })'
+      style: secondary
+      start: 132
+      end: 211
+    - source: '({ where: { id: codes[0].id }, data: { used: true } })'
+      style: secondary
+      start: 157
+      end: 211
+    - source: '{ where: { id: codes[0].id }, data: { used: true } }'
+      style: secondary
+      start: 158
+      end: 210
+    - source: where
+      style: secondary
+      start: 160
+      end: 165
+    - source: 'where: { id: codes[0].id }'
+      style: secondary
+      start: 160
+      end: 186
+  ? |
+    const hold = async (seatId: string) => {
+      const seat = await tx.seat.findUnique({ where: { id: seatId } });
+      await tx.seat.update({
+        where: {
+          id: seat.id,
+        },
+        data: { status: 'held' },
+      });
+    };
+  : labels:
+    - source: |-
+        {
+              id: seat.id,
+            }
+      style: primary
+      start: 145
+      end: 171
+    - source: update
+      style: secondary
+      start: 125
+      end: 131
+    - source: update
+      style: secondary
+      start: 125
+      end: 131
+    - source: findUnique
+      style: secondary
+      start: 70
+      end: 80
+    - source: findUnique
+      style: secondary
+      start: 70
+      end: 80
+    - source: 'tx.seat.findUnique({ where: { id: seatId } })'
+      style: secondary
+      start: 62
+      end: 107
+    - source: |-
+        async (seatId: string) => {
+          const seat = await tx.seat.findUnique({ where: { id: seatId } });
+          await tx.seat.update({
+            where: {
+              id: seat.id,
+            },
+            data: { status: 'held' },
+          });
+        }
+      style: secondary
+      start: 13
+      end: 210
+    - source: |-
+        tx.seat.update({
+            where: {
+              id: seat.id,
+            },
+            data: { status: 'held' },
+          })
+      style: secondary
+      start: 117
+      end: 207
+    - source: |-
+        ({
+            where: {
+              id: seat.id,
+            },
+            data: { status: 'held' },
+          })
+      style: secondary
+      start: 131
+      end: 207
+    - source: |-
+        {
+            where: {
+              id: seat.id,
+            },
+            data: { status: 'held' },
+          }
+      style: secondary
+      start: 132
+      end: 206
+    - source: where
+      style: secondary
+      start: 138
+      end: 143
+    - source: |-
+        where: {
+              id: seat.id,
+            }
+      style: secondary
+      start: 138
+      end: 171

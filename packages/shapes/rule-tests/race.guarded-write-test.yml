@@ -1,0 +1,100 @@
+id: race.guarded-write
+valid:
+  - |
+    async function close(id: string) {
+      const later = async () => db.ticket.findFirst({ where: { id } });
+      await db.ticket.update({ where: { id, open: true }, data: { open: false } });
+    }
+  - |
+    async function close(id: string) {
+      const owner = await db.owner.findUnique({ where: { id } });
+      await db.ticket.updateMany({ where: { id: owner.id, open: true }, data: { open: false } });
+    }
+  - |
+    async function move(id: string, boardId: string) {
+      const ticket = await db.ticket.findUnique({ where: { id } });
+      await db.ticket.update({ where: { id: ticket.id, boardId }, data: { boardId } });
+    }
+  - |
+    async function move(id: string, boardId: string) {
+      const ticket = await db.ticket.findUnique({ where: { id } });
+      await db.ticket.update({ where: { id: ticket.id, ownerId: ticket.ownerId }, data: { boardId } });
+    }
+  - |
+    async function close(id: string) {
+      const ticket = await db.ticket.findFirst({ where: { id } });
+      await db.ticket.updateMany({ where: { AND: [{ id: ticket.id }, { open: true }] }, data: { open: false } });
+    }
+  - |
+    async function copy(id: string) {
+      const ticket = await db.ticket.findUnique({ where: { id } });
+      await db.ticket.create({ data: { id: ticket.id, open: true } });
+    }
+  - |
+    async function close(id: string) {
+      const ticket = await db.ticket.findUnique({ where: { id } });
+      await db.ticket.update({ where: { id: ticket.id }, data: { open: false } });
+    }
+  - |
+    async function close(id: string) {
+      const ticket = await db.ticket.findUnique({ where: { id } });
+      await db.ticket.update({ where: { open: true, id: ticket.id }, data: { open: false } });
+    }
+  - |
+    async function close(id: string) {
+      await db.ticket.update({ where: { id, open: true }, data: { open: false } });
+    }
+  - |
+    async function redeem(code: string) {
+      const row = await db.voucher.findFirst({ where: { code } });
+      await db.voucher.update({ where: { id: row.id, /* CAS */ used: false }, data: { used: true } });
+    }
+  - |
+    async function redeem(code: string) {
+      const row = await db.voucher.findFirst({ where: { code } });
+      await db.voucher.update({
+        where: {
+          id: row.id,
+          // only while unused
+          used: false,
+          tenantId: row.tenantId,
+        },
+        data: { used: true },
+      });
+    }
+invalid:
+  - |
+    async function redeem(id: string) {
+      const codes = await db.client.code.findMany({ where: { ownerId: id, used: false } });
+      const index = await verify(codes);
+      const spent = await db.client.code.updateMany({ where: { id: codes[index].id, used: false }, data: { used: true } });
+      return spent.count === 1;
+    }
+  - |
+    const hold = async (seatId: string) => {
+      const seat = await tx.seat.findUnique({ where: { id: seatId } });
+      await tx.seat.update({
+        where: {
+          id: seat.id,
+          status: 'open',
+        },
+        data: { status: 'held' },
+      });
+    };
+  - |
+    class Quota {
+      async take(accountId: string, limit: number) {
+        const bucket = await this.store.bucket.findFirst({ where: { accountId } });
+        await this.store.bucket.updateMany({ where: { id: bucket.id, count: { lt: limit } }, data: { count: { increment: 1 } } });
+      }
+    }
+  - |
+    async function save(id: string) {
+      const doc = await db.doc.findUniqueOrThrow({ where: { id } });
+      await db.doc.update({ where: { id: doc.id, version: doc.version }, data: { version: doc.version + 1 } });
+    }
+  - |
+    async function release(id: string) {
+      await db.hold.deleteMany({ where: { id, active: true } });
+      return db.hold.count({ where: { id } });
+    }
