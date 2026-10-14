@@ -106,7 +106,7 @@ export async function migrate(client: SqlClient, options: MigrateOptions = {}): 
   const files = (await readdir(/* turbopackIgnore: true */ dir)).filter((file) => file.endsWith(".sql")).sort();
   const sources = await Promise.all(
     files.map(async (file) => {
-      const sql = await readFile(/* turbopackIgnore: true */ join(dir, file), "utf8");
+      const sql = await readFile(/* turbopackIgnore: true */ join(/* turbopackIgnore: true */ dir, file), "utf8");
       return { file, sql, checksum: createHash("sha256").update(sql).digest("hex") };
     }),
   );
