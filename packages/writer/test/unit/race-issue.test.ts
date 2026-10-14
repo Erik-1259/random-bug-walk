@@ -271,6 +271,16 @@ describe("the count lines the writer adds to a race issue", () => {
     expect(outcome.report?.status).toBe("ready_for_review");
   });
 
+  it("drops a count line placed in the other result field, so each field holds only its own canonical line", async () => {
+    const outcome = await writeWith(raceSymptom("lines-misplaced"), {
+      ...VALID,
+      expected_result: `${EXPECTED_PROSE}\nObserved: accepted=1, refused=1`,
+      actual_result: `${ACTUAL_PROSE}\nexpected: accepted=2, refused=0`,
+    });
+    expect(outcome.issue?.expected_result).toBe(`${EXPECTED_PROSE}\nExpected: accepted=1, refused=1`);
+    expect(outcome.issue?.actual_result).toBe(`${ACTUAL_PROSE}\nObserved: accepted=2, refused=0`);
+  });
+
   it("returns the issue the checks saw, which the real issue checks pass again on their own", async () => {
     const outcome = await writeWith(raceSymptom("consumer"), { ...VALID, expected_result: EXPECTED_PROSE, actual_result: ACTUAL_PROSE });
     expect(outcome.issue).not.toBeNull();

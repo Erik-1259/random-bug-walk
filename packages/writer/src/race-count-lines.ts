@@ -1,6 +1,6 @@
 // The race family's count lines are written by code, not by the model. The counts are facts the
 // RaceSymptom already holds, so after the model's issue is parsed and before the issue checks run,
-// every line in expected_result or actual_result that starts with the field's label is dropped and
+// every line in expected_result or actual_result that starts with either count label is dropped and
 // exactly one canonical line is appended: `Expected: accepted=<n>, refused=<n>` and
 // `Observed: accepted=<n>, refused=<n>`. The checks stay as strict as before; they read only that line.
 import type { IssueOutput } from "./issue-schema.ts";
@@ -11,8 +11,9 @@ const LABEL = { expected: "Expected", observed: "Observed" } as const;
 /** `text` without any line the issue check would read as a `label` line, ending with the canonical one. */
 function withCountLine(text: string, key: "expected" | "observed", counts: { accepted: number; refused: number }): string {
   const label = LABEL[key];
-  // The same label match as the issue check: any case, optional space before the label and the colon.
-  const labelLine = new RegExp(`^\\s*${label}\\s*:`, "i");
+  // The issue check's label match (any case, optional space before the label and the colon), for both
+  // labels: a count line placed in the other field is dropped too.
+  const labelLine = /^\s*(?:expected|observed)\s*:/i;
   const prose = text
     .split(/\r?\n/)
     .filter((line) => !labelLine.test(line))
