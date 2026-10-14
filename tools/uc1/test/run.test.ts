@@ -463,6 +463,62 @@ describe("attempts, reruns and scope", () => {
     await w.close();
   });
 
+  it("saves and grades the target of an attempt the spend guard capped after its first turn, like any other capped attempt", async () => {
+    // The fix is written on the first turn, so attempt 1 still settles 4 turns and attempt 2's second turn is refused.
+    const script: typeof defaultScript = (turn) => (turn.turn === 1 ? { calls: [{ name: "write_file", input: { path: DRY_TARGET, content: DRY_CLEAN } }] } : defaultScript({ ...turn, turn: turn.turn === 2 ? 1 : turn.turn }));
+    const w = await world({ script, view: (view) => ({ ...view, settled_microusd: view.settled_microusd + 40_000_000n - TURN_WORST - 2_227n }) });
+    const first = await runSessions(pilot(w), w.deps);
+    expect(first.stop).toMatchObject({ reason: "allowance_exceeded" });
+    const [run] = runs(first.runDir, "002-on") as { ended: string; result: { turns: number }; submission: unknown; route: { route: string } | null; grade1: { result: { state: string } }[] }[];
+    expect(run?.ended).toBe("spend_refused");
+    expect(run?.result.turns).toBe(1);
+    expect(run?.submission).not.toBeNull();
+    expect(readFileSync(join(first.runDir, "attempts", "002-on", "r0", "target.bin"), "utf8")).toBe(DRY_CLEAN);
+    expect(run?.route?.route).not.toBe("not_graded");
+    expect(run?.grade1.at(-1)?.result.state).toBe("passed");
+    await w.close();
+  });
+
+  it("removes the container a failed session open may have left before the rerun opens", async () => {
+    const w = await world({ sessionFault: (request) => (request.id.endsWith("off-001-r0") ? "error" : null) });
+    const order: string[] = [];
+    const open = w.deps.openSession.bind(w.deps);
+    w.deps.openSession = (request) => {
+      order.push(`open:${request.id}`);
+      return open(request);
+    };
+    const remove = w.deps.removeSession.bind(w.deps);
+    w.deps.removeSession = (id) => {
+      order.push(`remove:${id}`);
+      return remove(id);
+    };
+    const outcome = await runSessions(pilot(w), w.deps);
+    expect(outcome.exitCode).toBe(0);
+    const failed = runs(outcome.runDir, "001-off")[0]?.session_id as string;
+    expect(order.slice(0, 3)).toEqual([`open:${failed}`, `remove:${failed}`, `open:${failed.replace(/r0$/, "r1")}`]);
+    expect(runs(outcome.runDir, "001-off").map((run) => run.ended)).toEqual(["infrastructure_error", "submitted"]);
+    await w.close();
+  });
+
+  it("stops with close_failed when a failed session open's container cannot be removed, and a resume removes it first", async () => {
+    let fail = true;
+    const w = await world({ sessionFault: (request) => (fail && request.id.endsWith("off-001-r0") ? "error" : null) });
+    const remove = w.deps.removeSession.bind(w.deps);
+    w.deps.removeSession = () => Promise.reject(new Error("synthetic docker failure"));
+    const first = await runSessions(pilot(w), w.deps);
+    expect(first.stop).toMatchObject({ reason: "close_failed" });
+    expect(w.sessions).toHaveLength(0);
+    const failed = runs(first.runDir, "001-off");
+    expect(failed.map((run) => run.ended)).toEqual(["close_failed"]);
+    fail = false;
+    w.deps.removeSession = remove;
+    const second = await runSessions(pilot(w), w.deps);
+    expect(second.exitCode).toBe(0);
+    expect(w.removedSessions[0]).toBe(failed[0]?.session_id);
+    expect(runs(second.runDir, "001-off").map((run) => run.ended)).toEqual(["infrastructure_error", "submitted"]);
+    await w.close();
+  });
+
   it("refuses to resume after a spend refusal until the ledger shows no open or uncertain operation", async () => {
     let view: "tight" | "open" | "uncertain" | "clean" = "tight";
     const w = await world({

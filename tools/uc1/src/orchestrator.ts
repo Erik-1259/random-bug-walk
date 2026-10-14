@@ -372,6 +372,16 @@ async function runOnce(pass: Pass, item: PlannedAttempt, record: AttemptRecord, 
     } else {
       run.ended = "infrastructure_error";
       run.infrastructure = `session_open: ${message(error)}`;
+      // A failed open may leave the container it created (its own cleanup failures are swallowed), so it
+      // is removed before a rerun opens; when that fails, the run is kept like a failed close: the pass
+      // stops, and the next one removes the container before anything else.
+      try {
+        await deps.removeSession(sessionId);
+      } catch (removal) {
+        run.close_error = `after session_open failed: ${message(removal)}`;
+        run.ended = "close_failed";
+        pass.halt("close_failed", `${key}: session ${sessionId} could not be removed after its open failed: ${message(removal)}`);
+      }
     }
     finishRun(pass, run, opened.getTime());
     save();
@@ -428,7 +438,8 @@ async function runOnce(pass: Pass, item: PlannedAttempt, record: AttemptRecord, 
         const stop = pass.allowance.stop;
         pass.halt(stop?.reason ?? "ledger_refused", stop?.detail ?? `${result.refusal?.code ?? "refused"}: ${result.refusal?.detail ?? ""}`);
       }
-      if (run.ended === "submitted" || run.ended === "cap_reached") {
+      // A counted spend refusal (after at least one model turn) is a capped attempt: its current target is saved and graded.
+      if (isCountedEnd(run)) {
         try {
           const ended = await session.end(run.ended === "submitted" ? "submit" : "cap");
           run.submission = ended.submission;
@@ -528,8 +539,8 @@ async function runIndex(pass: Pass, item: PlannedAttempt): Promise<void> {
 
 /**
  * Removes the container of every run whose session was left open: a run the process ended during
- * (never closed) or one whose close failed (the session kept its container). Each such run becomes an
- * infrastructure error, rerun under the usual limit. Runs before any grade job or new session, so a
+ * (never closed), or one whose close or post-failed-open removal failed (the container stayed). Each
+ * such run becomes an infrastructure error, rerun under the usual limit. Runs before any grade job or new session, so a
  * leftover container never keeps its share of the host while other work runs; a removal that fails
  * stops the pass before anything else starts.
  */
