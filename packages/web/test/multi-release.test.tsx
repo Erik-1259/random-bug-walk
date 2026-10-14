@@ -2,7 +2,7 @@
 // fixture's time-zone case and a race-family case, are read, listed newest first, rendered on their
 // own pages and served under their own paths; / keeps showing the first released case. Judge
 // replays are counted per release from the release their published request names.
-import { mkdirSync, readFileSync } from "node:fs";
+import { cpSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -11,13 +11,21 @@ import * as casesRoute from "../app/cases/[release]/page.tsx";
 import HomePage from "../app/page.tsx";
 import * as releaseRoute from "../app/releases/[release]/[...path]/route.ts";
 import { Catalog } from "../src/components/catalog.tsx";
-import { CasePage } from "../src/components/case-page.tsx";
+import { CasePage, notValidatedReason } from "../src/components/case-page.tsx";
 import { RunIndex } from "../src/components/run-index.tsx";
 import { caseSummaries, funnel, otherRuns, verificationReplays, diagnosticArchives } from "../src/model.ts";
 import { caseView, MAX_RELEASES, readResults, ReleaseError, releaseFiles } from "../src/release.ts";
+import { rebuildRequest } from "../../admission/test/support/record-set.ts";
 import {
   addJudgeReplay,
   addRelease,
+  addRunFile,
+  admissionRequestBytes,
+  EARLY_NAMED_RELEASE_ID,
+  judgeRequestBytes,
+  replayChild,
+  runDir,
+  syntheticCase,
   cleanup,
   copyRelease,
   RACE_RELEASE_CREATED,
@@ -84,6 +92,37 @@ describe("reading two releases", () => {
     expect(race?.release?.record.release_id).toBe(RACE_RELEASE_ID);
     expect(race?.caseRun?.rootExecutionId).toBe(raceRoot);
     expect(caseView(results, "00000000-0000-4000-8000-000000000699")).toBeNull();
+  });
+
+  it("shows the release created first by default even when a newer release's directory name sorts first", async () => {
+    const { dir, raceRoot } = twoReleases(EARLY_NAMED_RELEASE_ID);
+    const results = await readResults(dir);
+    expect(results.releases.map((item) => item.release.record.release_id)).toEqual([EARLY_NAMED_RELEASE_ID, RELEASE_ID]);
+    expect(results.releases[0]?.run.rootExecutionId).toBe(raceRoot);
+    expect(results.release?.record.release_id).toBe(RELEASE_ID);
+    expect(results.caseRun?.rootExecutionId).toBe(RELEASE_ROOT);
+    vi.stubEnv("RBW_RESULTS_DIR", dir);
+    const html = renderToStaticMarkup(await HomePage());
+    expect(html).toContain(`href="/cases/${RELEASE_ID}" aria-current="page"`);
+    expect(html).not.toContain(`href="/cases/${EARLY_NAMED_RELEASE_ID}" aria-current="page"`);
+    expect(text(html)).toContain(`Frozen release ${RELEASE_ID}`);
+    expect(text(html)).not.toContain(`Frozen release ${EARLY_NAMED_RELEASE_ID}`);
+  });
+
+  it("says which runs the published releases are for when another run passed admission with a blind spot", async () => {
+    const { dir, raceRoot } = twoReleases();
+    const otherRoot = "00000000-0000-4000-8100-000000000099";
+    const other = syntheticCase((draft) => {
+      rebuildRequest(draft, { root_execution_id: otherRoot, parent_execution_id: otherRoot });
+    });
+    cpSync(runDir(other.dir, otherRoot), runDir(dir, otherRoot), { recursive: true });
+    const results = await readResults(dir);
+    const run = results.runs.find((item) => item.rootExecutionId === otherRoot);
+    if (run === undefined) throw new Error("synthetic: the unreleased run is missing");
+    const roots = [raceRoot, RELEASE_ROOT].sort();
+    const reason = notValidatedReason(results, run);
+    expect(reason).toBe(`Its admission also passed with a blind spot demonstrated, but no release names it: the 2 published releases are for runs ${roots.join(", ")}, whose issues passed the human check (ADM-07).`);
+    expect(text(renderToStaticMarkup(<CasePage results={results} />))).toContain(reason ?? "none");
   });
 
   it("counts both releases in the funnel and keeps both released runs out of the diagnostic archive", async () => {
@@ -197,6 +236,29 @@ describe("judge replays per release", () => {
     const page = text(renderToStaticMarkup(<CasePage results={race} />));
     expect(page).toContain(REPLAYS.race1);
     expect(page).not.toContain(REPLAYS.timeZone);
+  });
+
+  it("counts a published replay whose request.json is malformed or not a judge_verify request as unmatched, without refusing the results", async () => {
+    const { dir } = twoReleases();
+    const broken = {
+      truncated: "00000000-0000-4000-8200-000000000021",
+      notARequest: "00000000-0000-4000-8200-000000000022",
+      admission: "00000000-0000-4000-8200-000000000023",
+    } as const;
+    for (const root of Object.values(broken)) addJudgeReplay(dir, root, { outcome: "completed", published: true, releaseId: RACE_RELEASE_ID });
+    const replace = (root: string, bytes: Uint8Array): void => {
+      addRunFile(dir, root, `results/${replayChild(root)}/request.json`, replayChild(root), bytes);
+    };
+    const valid = judgeRequestBytes(broken.truncated, replayChild(broken.truncated), RACE_RELEASE_ID);
+    replace(broken.truncated, valid.subarray(0, valid.length - 1));
+    replace(broken.notARequest, encodeCanonical({ release_id: RACE_RELEASE_ID, synthetic: true }));
+    replace(broken.admission, admissionRequestBytes(broken.admission, replayChild(broken.admission), RACE_RELEASE_ID));
+    const results = await readResults(dir);
+    for (const root of Object.values(broken)) expect(results.runs.find((run) => run.rootExecutionId === root)?.replayReleaseId).toBeNull();
+    const race = caseView(results, RACE_RELEASE_ID);
+    if (race === null) throw new Error("synthetic: the race release is missing");
+    expect(verificationReplays(race)).toEqual([]);
+    expect(otherRuns(race)).toContainEqual({ label: "Verification replays not yet matched to a release", count: 3 });
   });
 
   it("counts every replay on the one case page when the site has one release, as before", async () => {

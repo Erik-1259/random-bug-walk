@@ -177,6 +177,23 @@ export function judgeRequestBytes(root: string, execution: string, releaseId: st
 }
 
 /**
+ * @rbw/schema's admission request that names a release, a fixture the schema refuses: only a
+ * judge_verify request names a release, so a valid JobRequest of another kind has a null release_id.
+ */
+const ADMISSION_REQUEST_SOURCE = fileURLToPath(new URL("../../../../packages/schema/fixtures/records/job-request-admission-with-release.json", import.meta.url));
+
+/** That admission request as canonical bytes for a replay's child, naming the given release. */
+export function admissionRequestBytes(root: string, execution: string, releaseId: string): Uint8Array {
+  const fields = JSON.parse(readFileSync(ADMISSION_REQUEST_SOURCE, "utf8")) as Record<string, unknown>;
+  return encodeCanonical({ ...fields, root_execution_id: root, execution_id: execution, parent_execution_id: root, expected_trials_key: `jobs/${execution}/expected-trials.json`, release_id: releaseId });
+}
+
+/** The child execution ID addJudgeReplay gives a replay root. */
+export function replayChild(root: string): string {
+  return `${root.slice(0, -4)}f001`;
+}
+
+/**
  * Adds a judge replay root (RootRun kind judge_replay) to a results directory, shaped like the ones
  * `tools/release publish-replays` publishes: one judge_verify child, a report.md and a status object.
  * With kind paired_comparison it adds a paired comparison root of the same shape instead.
@@ -186,7 +203,7 @@ export function addJudgeReplay(results: string, root: string, { outcome, publish
   const [first] = readdirSync(join(results, "repository", "runs")).sort();
   if (first === undefined) throw new Error("synthetic: the results directory holds no published run to take a policy from");
   const policy = readManifest(results, first).project_policy_sha256;
-  const child = `${root.slice(0, -4)}f001`;
+  const child = replayChild(root);
   if (published) {
     if (outcome === null) throw new Error("synthetic: a published run has an outcome");
     const report = new TextEncoder().encode(`# Run ${root}\n\nKind: ${kind}. Outcome: ${outcome}. The planted bug is synthetic.\n`);
@@ -291,6 +308,8 @@ export function addRelease(results: string, options: ReleaseOptions): Release {
 /** The second synthetic release: a race-family case, created after the time-zone release fixture. */
 export const RACE_RELEASE_ID = "00000000-0000-4000-8000-000000000602";
 export const RACE_RELEASE_CREATED = "2026-10-12T09:00:00Z";
+/** A race release ID that sorts before RELEASE_ID although its release is created after it. */
+export const EARLY_NAMED_RELEASE_ID = "00000000-0000-4000-8000-000000000600";
 
 export interface TwoReleases {
   dir: string;
@@ -301,12 +320,13 @@ export interface TwoReleases {
 /**
  * Two synthetic releases in one results directory: the release fixture's time-zone release
  * (RELEASE_ID, created 2026-10-06) and a race-family release (RACE_RELEASE_ID, created later) of a
- * race case run whose admission records come from the real importer.
+ * race case run whose admission records come from the real importer. With raceReleaseId set, the
+ * race release takes that ID instead, still created after the time-zone release.
  */
-export function twoReleases(): TwoReleases {
+export function twoReleases(raceReleaseId: string = RACE_RELEASE_ID): TwoReleases {
   const dir = copyRelease();
   const race = syntheticCase(undefined, { symptom: raceSymptomBytes(), raceFamily: true });
   cpSync(runDir(race.dir, race.root), runDir(dir, race.root), { recursive: true });
-  addRelease(dir, { releaseId: RACE_RELEASE_ID, root: race.root, createdAt: RACE_RELEASE_CREATED });
+  addRelease(dir, { releaseId: raceReleaseId, root: race.root, createdAt: RACE_RELEASE_CREATED });
   return { dir, raceRoot: race.root };
 }
