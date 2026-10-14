@@ -29,6 +29,8 @@ export const DRY_ALTERNATIVE = DRY_CLEAN.replace("range(unit, zone)", "range(uni
 export const DRY_MUTATION = [`--- a/${DRY_TARGET}`, `+++ b/${DRY_TARGET}`, "@@ -1,5 +1,5 @@", " export function stats(unit, zone) {", "   const start = 0;", "   const end = 1;", "-  return range(unit, zone);", "+  return range(unit);", " }", ""].join("\n");
 export const DRY_OTHER = "src/synthetic/other.ts";
 export const DRY_DIGEST = `sha256:${"d1".repeat(32)}`;
+/** The case's grade 2 kit image: the registry build, pinned by digest. */
+export const DRY_SANDBOX_IMAGE = `synthetic/kit@sha256:${"ab".repeat(32)}`;
 export const DRY_ISSUE = "Synthetic report: the daily chart counts visits on the wrong day for some time zones.";
 /** What one dry-run grade 2 copy reserves and settles (micro-USD); close to one real Sandbox copy. */
 export const DRY_COPY_MICROUSD = 148_682;
@@ -405,7 +407,7 @@ export async function dryRunWorld(options: DryRunOptions): Promise<DryRunWorld> 
     issue: join(inputs, "issue.txt"),
     image: "rbw-umami-kit:synthetic",
     image_digest: DRY_DIGEST,
-    sandbox_image: `synthetic/kit@sha256:${"ab".repeat(32)}`,
+    sandbox_image: DRY_SANDBOX_IMAGE,
     manifest: join(inputs, "manifest.json"),
     terms: join(inputs, "terms.txt"),
     audit_policy: null,
