@@ -442,7 +442,7 @@ export function reportMarkdown(summary: RunSummary, analysis: ResultsRecord | nu
     lines.push("");
   }
   lines.push("## Grades", "");
-  lines.push("Grade 1 is a local Docker judge_verify run on a fresh copy; grade 2 is the protected fresh-copy regrade on Vercel Sandbox and is authoritative. Both are charged to the development pool and slot.", "");
+  lines.push("Grade 1 is a local Docker judge_verify run on a fresh copy; it runs on its own in-memory ledger and spends nothing. Grade 2 is the protected fresh-copy regrade on Vercel Sandbox; it is authoritative and is charged to the development pool. Both grades run while the run holds the development slot.", "");
   lines.push(summary.grade_disagreements.length === 0 ? "No attempt's grades disagree." : `Grades disagree on attempt indexes ${summary.grade_disagreements.join(", ")}.`, "");
   lines.push("## Spend", "");
   lines.push(`- This run's model calls settled: ${usd(summary.spend.model_settled_microusd)}; grade 2 jobs settled: ${usd(summary.spend.grade2_settled_microusd)}; total ${usd(summary.spend.total_settled_microusd)}.`);
