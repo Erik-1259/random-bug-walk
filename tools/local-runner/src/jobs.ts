@@ -286,12 +286,33 @@ export function evidenceDigest(recordsDir: string): { sha256: string | null; ref
   }
 }
 
-export type BaselineCheck = { ok: true; key: string; sha256: string } | { ok: false; reason: "baseline_missing" | "baseline_mismatch"; detail: string };
+export type BaselineCheck = { ok: true; key: string; sha256: string } | { ok: false; reason: "baseline_missing" | "baseline_mismatch" | "kit_check_incomplete"; detail: string };
+
+/** A kit-check trial as the evidence and the job summaries carry it. */
+export interface KitCheckTrial {
+  trial_id: string;
+  status: string;
+  reason: string | null;
+}
+
+/**
+ * The kit-check trials that keep it from being a passing baseline: every trial must be complete
+ * with no invalid reason, and a kit check with no trials at all passes nothing. Null when the kit
+ * check passes; otherwise the detail names each such trial with its status and reason.
+ */
+export function kitCheckIncomplete(trials: readonly KitCheckTrial[]): string | null {
+  if (trials.length === 0) return "the kit check recorded no trials";
+  const bad = trials.filter((trial) => trial.status !== "complete" || trial.reason !== null);
+  if (bad.length === 0) return null;
+  const named = bad.map((trial) => `${trial.trial_id} ${trial.status}${trial.reason === null ? "" : ` (${trial.reason})`}`).join(", ");
+  return `${String(bad.length)} of ${String(trials.length)} kit-check trials did not complete: ${named}`;
+}
 
 /**
  * Before an observation starts: the request must name the kit-check baseline, the evidence file
  * at its key (under the run directory `root`) must hash to the named value, and the kit-check
- * record set beside it must still import to that same evidence.
+ * record set beside it must still import to that same evidence, and every one of its trials
+ * must be complete with no invalid reason (kitCheckIncomplete).
  */
 export function checkBaseline(root: string, request: JobRequest): BaselineCheck {
   const key = request.baseline_evidence_key;
@@ -302,7 +323,7 @@ export function checkBaseline(root: string, request: JobRequest): BaselineCheck 
   const bytes = readFileSync(path);
   const actual = sha256Hex(bytes);
   if (actual !== expected) return { ok: false, reason: "baseline_mismatch", detail: `the request names ${expected} but ${key} hashes to ${actual}` };
-  const evidence = JSON.parse(bytes.toString("utf8")) as { request?: { kind?: unknown } };
+  const evidence = JSON.parse(bytes.toString("utf8")) as { request?: { kind?: unknown }; trials?: unknown };
   if (evidence.request?.kind !== "kit_check") return { ok: false, reason: "baseline_mismatch", detail: `${key} is not a kit-check evidence file` };
   const recordsKey = posix.join(posix.dirname(key), "records");
   const recomputed = evidenceDigest(join(root, ...recordsKey.split("/")));
@@ -310,5 +331,7 @@ export function checkBaseline(root: string, request: JobRequest): BaselineCheck 
     const found = recomputed.sha256 ?? `nothing (${recomputed.refusal ?? "refused"})`;
     return { ok: false, reason: "baseline_mismatch", detail: `the kit-check records at ${recordsKey} import to ${found}, not ${expected}` };
   }
+  const incomplete = kitCheckIncomplete(Array.isArray(evidence.trials) ? (evidence.trials as KitCheckTrial[]) : []);
+  if (incomplete !== null) return { ok: false, reason: "kit_check_incomplete", detail: incomplete };
   return { ok: true, key, sha256: expected };
 }

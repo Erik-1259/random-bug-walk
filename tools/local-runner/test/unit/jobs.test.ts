@@ -6,10 +6,10 @@ import { loadProbeSet } from "@rbw/shapes";
 import { loadFixture } from "@rbw/umami-fixture";
 import { deriveCodeStates, loadAlternativeFix } from "../../src/code-states.ts";
 import { COPY_OUTER_LIMIT_MS } from "../../src/copy.ts";
-import { BASELINE_KEY, JOB_LABELS, JobRefusal, POLICY_ID, buildJob, candidateIdentity, checkBaseline, expectedVectors, newRunIds, runTag, writeJobDir } from "../../src/jobs.ts";
+import { BASELINE_KEY, JOB_LABELS, JobRefusal, POLICY_ID, buildJob, candidateIdentity, checkBaseline, expectedVectors, kitCheckIncomplete, newRunIds, runTag, writeJobDir } from "../../src/jobs.ts";
 import type { BuiltJob, JobContext, JobLabel } from "../../src/jobs.ts";
-import { importJob } from "../../src/records.ts";
 import * as shared from "../../src/shared.ts";
+import { invalidTrial, writeKitCheckBaseline } from "../support/kit-check.ts";
 import { CLEAN, MUTATION_PATCH, PARTIAL_PATCH, STUB_PATCH, sha256, tempDir, writeAlternativeDir, writeProbeDir } from "../support/synthetic.ts";
 
 let counter = 0;
@@ -242,15 +242,10 @@ describe("the optional JobContext overrides", () => {
 describe("the observation's kit-check baseline", () => {
   const ctx = context();
 
-  /** A run root holding the kit check's records and its imported evidence at the baseline key. */
-  function baselineRoot() {
+  /** A run root holding the kit check's records, every trial complete, and its imported evidence at the baseline key. */
+  function baselineRoot(mutate?: Parameters<typeof writeKitCheckBaseline>[1]) {
     const root = tempDir();
-    const kit = buildJob("kit-check", ctx);
-    const records = join(root, "jobs", "kit-check", "records");
-    writeJobDir(records, kit);
-    const imported = importJob(records, join(root, "jobs", "kit-check"));
-    if (imported.evidence_sha256 === null) throw new Error("the synthetic kit-check records did not import");
-    return { root, records, evidenceSha256: imported.evidence_sha256 };
+    return { root, ...writeKitCheckBaseline(root, mutate) };
   }
 
   it("accepts a baseline whose evidence file and records on disk both match the request", () => {
@@ -290,6 +285,31 @@ describe("the observation's kit-check baseline", () => {
     const check = checkBaseline(root, observe.request);
     expect(check).toMatchObject({ ok: false, reason: "baseline_mismatch" });
     expect(check.ok ? "" : check.detail).toMatch(/^the kit-check records at jobs\/kit-check\/records import to [0-9a-f]{64}, not [0-9a-f]{64}$/);
+  });
+
+  it("refuses a kit check with one invalid trial as the baseline, naming the trial and its reason", () => {
+    const { root, evidenceSha256 } = baselineRoot(invalidTrial("clean-02"));
+    const observe = buildJob("observe", ctx, { key: BASELINE_KEY, sha256: evidenceSha256 });
+    expect(checkBaseline(root, observe.request)).toEqual({ ok: false, reason: "kit_check_incomplete", detail: "1 of 5 kit-check trials did not complete: clean-02 invalid (seed_failed)" });
+  });
+
+  it("refuses a kit check whose every trial is invalid, naming each one", () => {
+    const { root, evidenceSha256 } = baselineRoot((draft) => {
+      for (const id of ["clean-01", "clean-02", "clean-03", "clean-04", "clean-05"]) invalidTrial(id)(draft);
+    });
+    const observe = buildJob("observe", ctx, { key: BASELINE_KEY, sha256: evidenceSha256 });
+    const check = checkBaseline(root, observe.request);
+    expect(check).toMatchObject({ ok: false, reason: "kit_check_incomplete" });
+    expect(check.ok ? "" : check.detail).toBe(`5 of 5 kit-check trials did not complete: ${["01", "02", "03", "04", "05"].map((n) => `clean-${n} invalid (seed_failed)`).join(", ")}`);
+  });
+});
+
+describe("kitCheckIncomplete", () => {
+  it("passes only a kit check whose every trial is complete with no reason", () => {
+    expect(kitCheckIncomplete([{ trial_id: "clean-01", status: "complete", reason: null }])).toBeNull();
+    expect(kitCheckIncomplete([{ trial_id: "clean-01", status: "complete", reason: "seed_failed" }])).toBe("1 of 1 kit-check trials did not complete: clean-01 complete (seed_failed)");
+    expect(kitCheckIncomplete([{ trial_id: "clean-01", status: "incomplete", reason: null }])).toBe("1 of 1 kit-check trials did not complete: clean-01 incomplete");
+    expect(kitCheckIncomplete([])).toBe("the kit check recorded no trials");
   });
 });
 
