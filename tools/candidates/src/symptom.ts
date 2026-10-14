@@ -79,14 +79,15 @@ function placeOf(site: Site): string {
 
 /**
  * The symptom for a `RACE.check-then-act` site (in the code, an upsert split into a lookup and a
- * separate insert). It says only what a user sees: two simultaneous requests leave two entries.
+ * separate insert). It says only what a user sees: two simultaneous requests either leave two entries
+ * or, where the key is unique, one of them fails at once on a conflict.
  */
 function checkThenActSymptom(site: Site): string {
   const thing = thingName(site.diff);
   const entry = thing === null ? "entry" : `${thing} entry`;
   return [
-    `When two requests arrive ${placeOf(site)} at the same moment, both appear to succeed even though only one should.`,
-    `Afterwards the user has a duplicate ${entry} instead of a single one, or a later request fails on a conflict that should never have been possible.`,
+    `When two requests arrive ${placeOf(site)} at the same moment, one of them fails with a conflict error that should never have been possible.`,
+    `Or both succeed, and the user has a duplicate ${entry} instead of a single one.`,
     `Sent one at a time, the same requests behave correctly.`,
   ].join(" ");
 }
