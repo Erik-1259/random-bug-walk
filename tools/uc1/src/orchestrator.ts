@@ -420,7 +420,11 @@ async function runOnce(pass: Pass, item: PlannedAttempt, record: AttemptRecord, 
     try {
       await session.close();
     } catch (error) {
+      // The session keeps its container when its close fails, so this run is neither counted nor
+      // rerun: the pass stops, and the next one removes the container before anything else.
       run.close_error = message(error);
+      run.ended = "close_failed";
+      pass.halt("close_failed", `${key}: session ${sessionId} could not be closed: ${run.close_error}`);
     }
     if (hold !== null) pass.allowance.release(hold);
   }
@@ -468,20 +472,6 @@ function grade1Infrastructure(record: AttemptRecord | null): boolean {
 /** Runs an index to a final status (with its reruns), unless the pass stops. */
 async function runIndex(pass: Pass, item: PlannedAttempt): Promise<void> {
   const record: AttemptRecord = readAttempt(pass.runDir, item) ?? { schema_version: 1, index: item.index, arm: item.arm, seed: item.seed, status: "pending", runs: [] };
-  for (const run of record.runs) {
-    if (run.ended === null) {
-      // The process ended during this run, so its session was never closed: remove its container
-      // before anything else starts, or it keeps its share of the host while the rerun runs.
-      try {
-        await pass.deps.removeSession(run.session_id);
-      } catch (error) {
-        pass.halt("stale_session", `${run.attempt_key}: the interrupted run's session ${run.session_id} could not be removed: ${message(error)}`);
-        return;
-      }
-      run.ended = "infrastructure_error";
-      run.infrastructure = "interrupted: the process ended during this run";
-    }
-  }
   for (;;) {
     record.status = attemptStatus(record.runs);
     if (record.runs.length > 0) writeAttempt(pass.runDir, record);
@@ -505,6 +495,39 @@ async function runIndex(pass: Pass, item: PlannedAttempt): Promise<void> {
       await runOnce(pass, item, record, hold);
     } finally {
       if (hold !== null) pass.allowance.release(hold);
+    }
+  }
+}
+
+/**
+ * Removes the container of every run whose session was left open: a run the process ended during
+ * (never closed) or one whose close failed (the session kept its container). Each such run becomes an
+ * infrastructure error, rerun under the usual limit. Runs before any grade job or new session, so a
+ * leftover container never keeps its share of the host while other work runs; a removal that fails
+ * stops the pass before anything else starts.
+ */
+async function removeLeftoverSessions(pass: Pass): Promise<void> {
+  for (const item of pass.run.plan) {
+    const record = readAttempt(pass.runDir, item);
+    if (record === null) continue;
+    let changed = false;
+    for (const run of record.runs) {
+      if (run.ended !== null && run.ended !== "close_failed") continue;
+      const closeFailed = run.ended === "close_failed";
+      try {
+        await pass.deps.removeSession(run.session_id);
+      } catch (error) {
+        if (closeFailed) pass.halt("close_failed", `${run.attempt_key}: the session ${run.session_id} whose close failed could not be removed: ${message(error)}`);
+        else pass.halt("stale_session", `${run.attempt_key}: the interrupted run's session ${run.session_id} could not be removed: ${message(error)}`);
+        return;
+      }
+      run.ended = "infrastructure_error";
+      run.infrastructure = closeFailed ? `close_failed: ${run.close_error ?? "unknown"}` : "interrupted: the process ended during this run";
+      changed = true;
+    }
+    if (changed) {
+      record.status = attemptStatus(record.runs);
+      writeAttempt(pass.runDir, record);
     }
   }
 }
@@ -634,15 +657,19 @@ export async function runSessions(options: SessionsOptions, deps: Uc1Deps): Prom
     },
   };
 
+  await removeLeftoverSessions(pass);
+
   // The slot is taken before any grade job, the pilot's seeded round trips included: a slot another
   // root holds stops the pass before any job runs, so no grade retry is spent on the contention and
   // a later resume continues where this one stopped.
   // Grade 1 jobs run the controller on --backend docker, which opens its own in-memory ledger per
   // job, so their slot acquire and release never touch this hold on the development ledger.
   const slot = { slot_key: DEVELOPMENT_SLOT, root_execution_id: run.root_execution_id, actor_role: ACTOR };
-  const status = await deps.spend.slotStatus({ slot_key: DEVELOPMENT_SLOT });
+  // A leftover session that could not be removed has already stopped the pass: no slot, no job.
+  const status = pass.stop === null ? await deps.spend.slotStatus({ slot_key: DEVELOPMENT_SLOT }) : null;
   let held = false;
-  if (!status.ok) pass.halt("slot_unavailable", status.code);
+  if (status === null) held = false;
+  else if (!status.ok) pass.halt("slot_unavailable", status.code);
   else if (status.holder === run.root_execution_id) held = true;
   else if (status.holder !== null) pass.halt("slot_held", `slot busy: the development slot is held by ${status.holder}; resume with the same command once it is free`);
   else {

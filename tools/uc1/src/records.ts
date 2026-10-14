@@ -64,7 +64,11 @@ export interface GradeTry {
 }
 
 /** How a run at an index ended; null while it runs (and after a crash, until the next pass marks it interrupted). */
-export type RunEnd = AttemptOutcome | "refused" | null;
+/**
+ * `close_failed`: the session could not be closed (its logs kept and its container removed), so the
+ * container may still run; the run is neither counted nor rerun until a resume removes it.
+ */
+export type RunEnd = AttemptOutcome | "refused" | "close_failed" | null;
 
 export interface AttemptRun {
   rerun: number;
@@ -90,7 +94,7 @@ export interface AttemptRun {
 
 /**
  * `counted`: the final run reached submit or a cap. `infrastructure_error`: every allowed rerun
- * failed on infrastructure. `stopped`: the run stopped (spend or a refusal) during this index; the
+ * failed on infrastructure. `stopped`: the run stopped (spend, a refusal or a failed close) during this index; the
  * next pass runs it again. `pending`: not run yet, or an infrastructure rerun is due.
  */
 export type AttemptStatus = "counted" | "infrastructure_error" | "stopped" | "pending";
@@ -203,7 +207,7 @@ export function attemptStatus(runs: readonly AttemptRun[]): AttemptStatus {
   const last = runs.at(-1);
   if (last === undefined) return "pending";
   if (last.ended === "submitted" || last.ended === "cap_reached") return "counted";
-  if (last.ended === "spend_refused" || last.ended === "refused") return "stopped";
+  if (last.ended === "spend_refused" || last.ended === "refused" || last.ended === "close_failed") return "stopped";
   return runs.filter(isInfrastructure).length > MAX_INFRASTRUCTURE_RERUNS ? "infrastructure_error" : "pending";
 }
 

@@ -616,6 +616,72 @@ describe("resumes, reruns and exit codes", () => {
     await w.close();
   });
 
+  it("stops with close_failed when a session cannot be closed, and a resume removes that session before anything else", async () => {
+    const w = await world();
+    const open = w.deps.openSession.bind(w.deps);
+    let failClose = true;
+    w.deps.openSession = async (request) => {
+      const session = await open(request);
+      if (!failClose) return session;
+      failClose = false;
+      return { ...session, solver: session.solver, end: session.end.bind(session), close: () => Promise.reject(new Error("synthetic log copy failure")) };
+    };
+    const first = await runSessions(pilot(w), w.deps);
+    expect(first.exitCode).toBe(1);
+    expect(first.stop).toMatchObject({ reason: "close_failed" });
+    expect(w.sessions).toHaveLength(1);
+    const stopped = runs(first.runDir, "001-off");
+    expect(stopped.map((run) => run.ended)).toEqual(["close_failed"]);
+    expect(stopped[0]?.close_error).toBe("synthetic log copy failure");
+    expect(json(join(first.runDir, "attempts", "001-off", "attempt.json")).status).toBe("stopped");
+    const saved = stopped[0]?.session_id as string;
+
+    const order: string[] = [];
+    const remove = w.deps.removeSession.bind(w.deps);
+    w.deps.removeSession = (id) => {
+      order.push(`remove:${id}`);
+      return remove(id);
+    };
+    const runController = w.deps.runController.bind(w.deps);
+    w.deps.runController = (args) => {
+      order.push("controller");
+      return runController(args);
+    };
+    w.deps.openSession = (request) => {
+      order.push(`open:${request.id}`);
+      return open(request);
+    };
+    const second = await runSessions(pilot(w), w.deps);
+    expect(second.exitCode).toBe(0);
+    expect(w.removedSessions).toEqual([saved]);
+    expect(order[0]).toBe(`remove:${saved}`);
+    expect(order).toContain(`open:${saved.replace(/r0$/, "r1")}`);
+    const resumed = runs(second.runDir, "001-off");
+    expect(resumed.map((run) => run.ended)).toEqual(["infrastructure_error", "submitted"]);
+    expect(resumed[0]?.infrastructure).toBe("close_failed: synthetic log copy failure");
+    await w.close();
+  });
+
+  it("stops again with close_failed when the retained session still cannot be removed on resume", async () => {
+    const w = await world();
+    const open = w.deps.openSession.bind(w.deps);
+    let failClose = true;
+    w.deps.openSession = async (request) => {
+      const session = await open(request);
+      if (!failClose) return session;
+      failClose = false;
+      return { ...session, solver: session.solver, end: session.end.bind(session), close: () => Promise.reject(new Error("synthetic log copy failure")) };
+    };
+    await runSessions(pilot(w), w.deps);
+    w.deps.removeSession = () => Promise.reject(new Error("synthetic docker failure"));
+    const sessions = w.sessions.length;
+    const outcome = await runSessions(pilot(w), w.deps);
+    expect(outcome.stop).toMatchObject({ reason: "close_failed" });
+    expect(w.sessions.length).toBe(sessions);
+    expect(runs(outcome.runDir, "001-off").map((run) => run.ended)).toEqual(["close_failed"]);
+    await w.close();
+  });
+
   /** Stops the process after the controller wrote grade 1's summary for off-001 but before its grade was saved. */
   async function stopAfterGrade1(w: DryRunWorld): Promise<string> {
     const report = w.deps.report.bind(w.deps);
