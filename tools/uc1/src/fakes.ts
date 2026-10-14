@@ -289,7 +289,13 @@ export function fakeController(spend: Spend, calls: ControllerCall[], outcome: (
     const statePath = join(dir, "fake-state.json");
     if (existsSync(statePath)) {
       if (readFileSync(statePath, "utf8") !== inputs) return 2;
-      const held = JSON.parse(readFileSync(join(dir, "summary.json"), "utf8")) as { status: string };
+      // A summary cut short by an interrupted write cannot be read back: the controller exits 1 with no verdict.
+      let held: { status: string };
+      try {
+        held = JSON.parse(readFileSync(join(dir, "summary.json"), "utf8")) as { status: string };
+      } catch {
+        return 1;
+      }
       return held.status === "complete" ? 0 : 1;
     }
     mkdirSync(dir, { recursive: true });

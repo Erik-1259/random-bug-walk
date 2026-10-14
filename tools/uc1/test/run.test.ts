@@ -382,6 +382,22 @@ describe("attempts, reruns and scope", () => {
     await w.close();
   });
 
+  it("retries a grade 2 job whose summary was cut short by an interrupted write, instead of failing the grade", async () => {
+    const w = await world();
+    const outcome = await runSessions(pilot(w), w.deps);
+    expect((await runGrade2({ runDir: outcome.runDir }, w.deps)).exitCode).toBe(0);
+    // The process stopped while the seed-clean job's summary was being written, before the try was saved.
+    const path = join(outcome.runDir, "seeded", "seed-clean", "seeded.json");
+    writeFileSync(path, `${JSON.stringify({ ...json(path), grade2: [] }, null, 2)}\n`);
+    const summaries = readdirSync(outcome.runDir, { recursive: true, encoding: "utf8" }).filter((entry) => entry.endsWith(join("grade-2-sandbox-seed-clean-r0", "summary.json")));
+    expect(summaries).toHaveLength(1);
+    for (const entry of summaries) writeFileSync(join(outcome.runDir, entry), "{\"status\":");
+    const resumed = await runGrade2({ runDir: outcome.runDir }, w.deps);
+    expect(resumed.exitCode).toBe(0);
+    expect((json(path).grade2 as { result: { state: string } }[]).map((item) => item.result.state)).toEqual(["infrastructure", "passed"]);
+    await w.close();
+  });
+
   it("refuses to finalize while a counted attempt still waits for grade 2", async () => {
     const w = await world();
     const outcome = await runSessions(pilot(w), w.deps);

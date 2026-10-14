@@ -207,6 +207,17 @@ const CONTROLLER_REFUSED = 2;
  * One grade of a prepared route: its own ids file (a fresh execution under the root, written once and
  * kept on resume), the controller job, its summary.
  */
+/** True when the controller's summary exists and is whole JSON (not cut short by an interrupted write). */
+function summaryParses(path: string): boolean {
+  if (!existsSync(path)) return false;
+  try {
+    readJson(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function gradeTry(ctx: RunContext, route: Exclude<GradeRoute, { route: "not_graded" }>, grade: GradeNumber, work: string, label: string, retry: number): Promise<GradeTry> {
   const ids = writeGradeIds(ctx.ids, join(work, "ids", `grade-${String(grade)}`), label, () => ctx.deps.uuid(), retry, work);
   const command: GradeCommand = {
@@ -237,6 +248,9 @@ async function gradeTry(ctx: RunContext, route: Exclude<GradeRoute, { route: "no
     // The controller refused the job's inputs (for example a job its work directory holds under other inputs):
     // any summary there is not this grade's, so it is an infrastructure grade, retried as its own job.
     result = { grade, job: result.job, state: "infrastructure", detail: `controller: refused the job's inputs (exit ${String(CONTROLLER_REFUSED)}); see its error output`, summary_sha256: null, trial: null };
+  } else if (result.state === "invalid" && !summaryParses(join(work, "jobs", result.job, "summary.json"))) {
+    // A summary cut short by an interrupted write is no verdict on the attempt: an infrastructure grade, retried.
+    result = { grade, job: result.job, state: "infrastructure", detail: "controller: the job's summary is incomplete (an interrupted write)", summary_sha256: null, trial: null };
   } else if (result.state === "missing") {
     // The job ended without a summary (for example a job interrupted before it wrote one, whose next
     // invocation exits without a verdict): no verdict on the attempt, so an infrastructure grade, retried.
@@ -799,7 +813,7 @@ export async function runGrade2(options: { runDir: string }, deps: Uc1Deps): Pro
       const grade = () => gradeTry(ctx, item.route, 2, item.work, item.label, retry);
       // A job that already wrote its summary (the process stopped before its try was saved) has
       // settled: the controller replays it with no new spend, so it takes no allowance hold.
-      const settled = existsSync(join(item.work, "jobs", jobName(2, item.label, retry), "summary.json"));
+      const settled = summaryParses(join(item.work, "jobs", jobName(2, item.label, retry), "summary.json"));
       const held = settled ? { ok: true as const, value: await grade() } : await allowance.withHold(`${item.label}-r${String(retry)}`, deps.grade2WorstCaseMicrousd, grade);
       if (!held.ok) {
         stop = { reason: held.reason, detail: held.detail, at: deps.now().toISOString() };
