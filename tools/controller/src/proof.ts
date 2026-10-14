@@ -8,10 +8,10 @@
 //     altered never imports as a pass.
 // Two judge_verify jobs run three copies in all: planted-01 (empty fix) and fixed-01 (valid fix),
 // then fixed-01 (forgery). The regrade re-imports copies of the first job's record set.
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { importJob, summaryBytes, trialSummaries } from "@rbw/local-runner";
+import { copyTree, importJob, summaryBytes, trialSummaries } from "@rbw/local-runner";
 import type { TrialSummary } from "@rbw/local-runner";
 import { sha256Hex } from "@rbw/schema";
 import { runJob } from "./controller.ts";
@@ -152,7 +152,7 @@ function regrade(records: string, dir: string, tamper: Regrade["tamper"]): Regra
   const copy = join(dir, "records");
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
-  cpSync(records, copy, { recursive: true, verbatimSymlinks: true });
+  copyTree(records, copy);
   const result = join(copy, "results", "fixed-01", "trial-result.json");
   if (tamper === "records_missing") {
     rmSync(result, { force: true });

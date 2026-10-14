@@ -276,9 +276,11 @@ export function checkHistory(copy: string, files: ReadonlyMap<string, AuditedFil
   // git itself would block on a FIFO or fail on an unreadable directory, so no git command runs.
   if (everything.some((file) => file.kind === "other")) return { findings, summary: null };
 
+  // Every call names the copy's .git, so git never looks for a repository around the caller's
+  // working directory, which may hold a .git file git cannot follow.
   const options = { gitDir };
   const config = existsSync(join(gitDir, "config"))
-    ? gitOutput(["config", "--file", join(gitDir, "config"), "--no-includes", "--null", "--name-only", "--list"])
+    ? gitOutput(["config", "--file", join(gitDir, "config"), "--no-includes", "--null", "--name-only", "--list"], options)
     : Buffer.alloc(0);
   const format = gitOutput(["rev-parse", "--show-object-format"], options)?.toString("utf8").trim();
   if (config === null || format === undefined) {

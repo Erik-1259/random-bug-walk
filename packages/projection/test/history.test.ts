@@ -194,6 +194,20 @@ describe("history checks", () => {
     expect(reasons(result)).toEqual(["git_missing"]);
   });
 
+  it("ADM-01 passes a neutral copy when the audit runs inside a checkout whose .git file points nowhere", async () => {
+    const fixture = new Fixture();
+    await fixture.ready();
+    // A linked worktree copied without its git directory, as a repository copied into a container is.
+    const checkout = join(tempRoot(), "checkout");
+    mkdirSync(join(checkout, "tools"), { recursive: true });
+    writeFileSync(join(checkout, ".git"), "gitdir: /nonexistent/path\n");
+    const result = spawnCli(fixture.auditArgs(), process.env, join(checkout, "tools"));
+    expect((JSON.parse(readFileSync(fixture.reportPath, "utf8")) as { findings: unknown }).findings).toEqual([]);
+    expect(result.stderr).toBe("");
+    expect(result.code).toBe(0);
+    expect(result.stdout).toBe("verdict=pass\n");
+  });
+
   it("ADM-01 refuses a full-history clone with git_history", async () => {
     const fixture = new Fixture();
     await fixture.prepareInputs();
