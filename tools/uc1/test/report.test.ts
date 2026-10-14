@@ -314,10 +314,11 @@ describe("the infrastructure list", () => {
 });
 
 describe("the grades section", () => {
-  it("says grade 1 spends nothing and only grade 2 is charged to the development pool", () => {
+  it("says grade 1 spends nothing, only grade 2 is charged to the development pool, and both hold the development slot", () => {
     const pilot = reportMarkdown(summary("pilot"), analyze([...arm("off", 2, 0), ...arm("on", 2, 1)]));
     expect(pilot).toContain("Grade 1 is a local Docker judge_verify run on a fresh copy; it runs on its own in-memory ledger and spends nothing.");
-    expect(pilot).toContain("Grade 2 is the protected fresh-copy regrade on Vercel Sandbox; it is authoritative and is charged to the development pool and slot.");
+    expect(pilot).toContain("Grade 2 is the protected fresh-copy regrade on Vercel Sandbox; it is authoritative and is charged to the development pool.");
+    expect(pilot).toContain("Both grades run while the run holds the development slot.");
     expect(pilot).not.toContain("Both are charged");
   });
 });
