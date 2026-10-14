@@ -273,15 +273,47 @@ describe("replay fingerprint", () => {
 
   it("does not return an observation's old baseline refusal once the kit-check baseline exists", async () => {
     const w = await world();
-    const observe = jobInputs(w, { kind: "observe", name: "observe" });
+    // On Docker: the simulated kit writes real records there, so the kit check completes and is a baseline.
+    const observe = jobInputs(w, { kind: "observe", name: "observe", backend: "docker", sandboxImage: null });
     const early = await runJob(observe, w.deps);
     expect(early.summary).toMatchObject({ status: "refused", reason: "cannot_build" });
     expect(early.summary.detail).toMatch(/baseline_missing/);
-    await runJob({ ...observe, kind: "kit_check", name: "kit-check", trials: ["clean-01"] }, w.deps);
+    await runJob({ ...observe, kind: "kit_check", name: "kit-check", trials: null }, w.deps);
     await expect(runJob(observe, w.deps)).rejects.toThrow(/holds another job/);
     const fresh = await runJob({ ...observe, name: "observe-2" }, w.deps);
     expect(fresh.replay).toBe(false);
     expect(fresh.summary.job.baseline?.key).toBe("jobs/kit-check/evidence.json");
+  });
+});
+
+describe("an observation's kit-check baseline", () => {
+  const docker = { backend: "docker" as const, sandboxImage: null };
+
+  it("refuses to build an observation on a kit check with an invalid trial: no slot, no reservation and no copy", async () => {
+    const w = await world({ kit: { stack: { "clean-02": { resetFailsAt: 1 } } } });
+    const kit = await runJob(jobInputs(w, { kind: "kit_check", name: "kit-check", trials: null, ...docker }), w.deps);
+    expect(kit.summary.import.trials.find((trial) => trial.trial_id === "clean-02")).toMatchObject({ status: "invalid", reason: "seed_failed" });
+    const before = w.ledgerCalls.length;
+    const observe = await runJob(jobInputs(w, { kind: "observe", name: "observe", ...docker }), w.deps);
+    expect(observe.summary).toMatchObject({ status: "refused", reason: "cannot_build", detail: "kit_check_incomplete: 1 of 5 kit-check trials did not complete: clean-02 invalid (seed_failed)" });
+    expect(observe.summary.copies).toEqual([]);
+    expect(w.ledgerCalls.slice(before)).toEqual([]);
+    expect(w.kit.created.some((name) => name.includes("-observe-"))).toBe(false);
+  });
+
+  it("refuses an observation on a kit check that ran only some of its trials", async () => {
+    const w = await world();
+    await runJob(jobInputs(w, { kind: "kit_check", name: "kit-check", trials: ["clean-01"], ...docker }), w.deps);
+    const observe = await runJob(jobInputs(w, { kind: "observe", name: "observe", ...docker }), w.deps);
+    expect(observe.summary).toMatchObject({ status: "refused", reason: "cannot_build" });
+    expect(observe.summary.detail).toMatch(/^kit_check_incomplete: 4 of 5 kit-check trials did not complete: clean-02 incomplete/);
+  });
+
+  it("builds and runs the observation on a kit check whose every trial completed", async () => {
+    const w = await world();
+    await runJob(jobInputs(w, { kind: "kit_check", name: "kit-check", trials: null, ...docker }), w.deps);
+    const observe = await runJob(jobInputs(w, { kind: "observe", name: "observe", ...docker }), w.deps);
+    expect(observe.summary).toMatchObject({ status: "complete", job: { baseline: { key: "jobs/kit-check/evidence.json" } } });
   });
 });
 

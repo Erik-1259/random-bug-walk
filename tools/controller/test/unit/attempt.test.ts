@@ -417,6 +417,36 @@ describe("the attempt's stops", () => {
   });
 });
 
+describe("a kit check with an invalid trial", () => {
+  let run: Run;
+
+  beforeAll(async () => {
+    const w = await world({ clock: new FakeClock({ manual: true }), kit: { stack: { "clean-02": { resetFailsAt: 1 } } } });
+    const files = attemptFiles(w.dir);
+    const inputs = attemptInputs(w, files);
+    const aw = attemptDeps(w, inputs.work);
+    const outcome = await runAttempt(prepareAttempt(inputs, aw.env), aw.deps);
+    run = { w, files, aw, work: inputs.work, outcome };
+  });
+
+  it("stops the root after the kit check, incomplete, naming the trial and its reason", () => {
+    expect(run.outcome).toMatchObject({ exitCode: 1, rootRun: { status: "terminal", outcome: "incomplete" } });
+    expect(run.aw.lines).toContain("stage=kit_check status=incomplete reason=kit_check_incomplete detail=1 of 5 kit-check trials did not complete: clean-02 invalid (seed_failed)");
+    expect(run.aw.lines.some((line) => line.includes("reason=kit_check_incomplete root_run="))).toBe(true);
+    expect(run.outcome.rootRun.child_execution_ids).toHaveLength(1);
+  });
+
+  it("reserves no observe or admission copy and runs no search or writer call", () => {
+    expect(existsSync(join(run.work, "jobs", "observe"))).toBe(false);
+    expect(existsSync(join(run.work, "jobs", "admission"))).toBe(false);
+    expect(existsSync(join(run.work, "candidate"))).toBe(false);
+    // The kit check's five copies are the only reservations.
+    expect(reserves(run.w.ledgerCalls).map((call) => call.kind)).toEqual(Array(5).fill("sandbox.copy"));
+    expect(run.aw.search.queries).toEqual([]);
+    expect(run.w.kit.created.some((name) => name.includes("-observe-") || name.includes("-admission-"))).toBe(false);
+  });
+});
+
 describe("a failed source search or docs extract", () => {
   it("records a failed source search and a failed extract as incomplete and continues: the issue is grounded in the input's excerpts and the root is admitted", async () => {
     const run = await attempt({ sources: ["error", "results"], docs: "error" });

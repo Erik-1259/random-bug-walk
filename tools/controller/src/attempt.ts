@@ -16,7 +16,7 @@
 // under jobs/ and never to a report line: the release tool publishes the issue later.
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { DEFAULT_FAMILY, InputsError, loadCopyInputs, newRunIds } from "@rbw/local-runner";
+import { DEFAULT_FAMILY, InputsError, kitCheckIncomplete, loadCopyInputs, newRunIds } from "@rbw/local-runner";
 import type { FamilyId, RunIds } from "@rbw/local-runner";
 import { CanonicalError, RecordError, assertRecord, encodeCanonical, parseRecord, sha256Hex, validateRecord } from "@rbw/schema";
 import type { DocExcerpt, ProjectPolicy, RootRun } from "@rbw/schema";
@@ -612,6 +612,13 @@ async function stages(a: Attempt, projectPolicy: { sha256: string; policy_id: st
   const kit = await job("kit_check", "kit-check", inputs.originalSuite);
   const kitEnd = jobEnd(a, "kit_check", kit);
   if (kitEnd !== null) return kitEnd;
+  // Every copy may return and the records import while a trial is invalid (a seed that failed, say):
+  // such a kit check is no baseline, so nothing more is reserved and the root stops here.
+  const kitIncomplete = kitCheckIncomplete(kit.summary.import.trials);
+  if (kitIncomplete !== null) {
+    a.deps.report(`stage=kit_check status=incomplete reason=kit_check_incomplete detail=${kitIncomplete}`);
+    return incomplete("kit_check_incomplete");
+  }
   const suite = inputs.originalSuite ?? join(kit.jobDir, "freeze", "collected", "original-suite.json");
   const observe = await job("observe", "observe", suite);
   const observeEnd = jobEnd(a, "observe", observe);
