@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import type { FixtureDatabase } from "../../src/database.ts";
 import type { ProcView } from "../../src/environment.ts";
-import { KIT, KIT_LOG_FILES, KIT_SCRIPTS, ExternalStack, KitStack, OWNER_DATABASE_URL, heartbeat, launcherExit, verifierPaths } from "../../src/kit.ts";
+import { KIT, KIT_LOG_FILES, KIT_SCRIPTS, ExternalStack, KitStack, OWNER_DATABASE_URL, RBW_PROXY, heartbeat, launcherExit, verifierPaths } from "../../src/kit.ts";
 import { DEFAULT_STOP } from "../../src/process.ts";
 import type { CommandResult, CommandSpec, GroupControl, LongProcess, ProcessRunner } from "../../src/process.ts";
 import { FakeTimers, commandResult } from "../helpers.ts";
@@ -85,7 +85,7 @@ function database(events: string[], overrides: Partial<FixtureDatabase> = {}): F
 
 function stack(
   runner: KitRunner,
-  options: { db?: FixtureDatabase | null; control?: GroupControl; view?: ProcView; heartbeat?: () => Promise<boolean> } = {},
+  options: { db?: FixtureDatabase | null; control?: GroupControl; view?: ProcView; heartbeat?: () => Promise<boolean>; proxy?: boolean } = {},
 ) {
   const timers = new FakeTimers();
   const events: string[] = [];
@@ -96,6 +96,7 @@ function stack(
     groups: options.control ?? groups(),
     database: options.db === undefined ? database(events) : options.db,
     heartbeat: options.heartbeat ?? (() => Promise.resolve(true)),
+    ...(options.proxy === undefined ? {} : { proxy: options.proxy }),
   });
   return { kit, timers, events };
 }
@@ -328,6 +329,94 @@ describe("kit stack", () => {
   });
 });
 
+/** A runner that answers rbw-proxy as the race kit does, with this latency line and these exit statuses. */
+function proxyRunner(line: string, codes: { latency?: number; set?: number } = {}): KitRunner {
+  return new KitRunner((spec) => {
+    if (spec.args[0] === "latency") return commandResult({ code: codes.latency ?? 0, stdout: { bytes: Buffer.from(`${line}\n`), total_bytes: line.length + 1, truncated: false } });
+    if (spec.args[0] === "set-latency") return commandResult({ code: codes.set ?? 0 });
+    return commandResult();
+  });
+}
+
+describe("database latency by test stage (race kit)", () => {
+  const signal = () => new AbortController().signal;
+
+  it("names the race kit's own proxy control, which reports the latency in the line the driver reads", () => {
+    expect(RBW_PROXY).toBe("/opt/rbw/bin/rbw-proxy");
+    const script = readFileSync(new URL("../../../../kit/umami-race/bin/rbw-proxy", import.meta.url), "utf8");
+    expect(script).toContain('echo "proxy_latency latency_ms=$latency source=$source"');
+    expect(script).toContain("set-latency) [ $# -eq 2 ]");
+  });
+
+  it("runs nothing on a kit without the proxy, so the time-zone kit is unchanged", async () => {
+    const runner = new KitRunner();
+    const { kit } = stack(runner);
+    expect(await kit.enterStage("original_suite", signal())).toEqual({ reason: null, detail: "", logs: [] });
+    expect(await kit.enterStage("added_checks", signal())).toEqual({ reason: null, detail: "", logs: [] });
+    expect(runner.ran).toEqual([]);
+  });
+
+  it("runs the original suite at 0 ms and puts back the copy's latency before the rounds", async () => {
+    const runner = proxyRunner("proxy_latency latency_ms=50 source=override");
+    const { kit } = stack(runner, { proxy: true });
+    const suite = await kit.enterStage("original_suite", signal());
+    expect(suite.reason).toBeNull();
+    expect(suite.logs.map((log) => log.name)).toEqual(["proxy-latency", "proxy-original-suite"]);
+    const rounds = await kit.enterStage("added_checks", signal());
+    expect(rounds.reason).toBeNull();
+    expect(rounds.logs.map((log) => log.name)).toEqual(["proxy-added-checks"]);
+    expect(runner.ran.map((spec) => [spec.command, ...spec.args])).toEqual([
+      [RBW_PROXY, "latency"],
+      [RBW_PROXY, "set-latency", "0"],
+      [RBW_PROXY, "set-latency", "50"],
+    ]);
+    expect(runner.ran.every((spec) => spec.cwd === "/" && Object.keys(spec.env).join() === "PATH")).toBe(true);
+  });
+
+  it("puts back the image default as the default, not as a copy setting", async () => {
+    const runner = proxyRunner("proxy_latency latency_ms=50 source=default");
+    const { kit } = stack(runner, { proxy: true });
+    await kit.enterStage("original_suite", signal());
+    await kit.enterStage("added_checks", signal());
+    expect(runner.ran.map((spec) => spec.args.join(" "))).toEqual(["latency", "set-latency 0", "set-latency default"]);
+  });
+
+  it("changes nothing before the rounds when the suite stage did not lower the latency", async () => {
+    const runner = proxyRunner("proxy_latency latency_ms=50 source=override");
+    const { kit } = stack(runner, { proxy: true });
+    expect((await kit.enterStage("added_checks", signal())).reason).toBeNull();
+    expect(runner.ran).toEqual([]);
+  });
+
+  it.each([
+    ["an unreadable latency line", "proxy_latency latency_ms=fifty source=override", {}],
+    ["a failed latency command", "proxy_latency latency_ms=50 source=override", { latency: 1 }],
+  ] as const)("gives startup_failed and changes no latency on %s", async (_name, line, codes) => {
+    const runner = proxyRunner(line, codes);
+    const { kit } = stack(runner, { proxy: true });
+    const result = await kit.enterStage("original_suite", signal());
+    expect(result.reason).toBe("startup_failed");
+    expect(runner.ran.map((spec) => spec.args[0])).toEqual(["latency"]);
+  });
+
+  it("gives startup_failed when rbw-proxy refuses to set a latency, or its check fails", async () => {
+    const runner = proxyRunner("proxy_latency latency_ms=50 source=override", { set: 1 });
+    const { kit } = stack(runner, { proxy: true });
+    expect((await kit.enterStage("original_suite", signal())).reason).toBe("startup_failed");
+    let sets = 0;
+    const restoring = new KitRunner((spec) => {
+      if (spec.args[0] === "latency") return commandResult({ stdout: { bytes: Buffer.from("proxy_latency latency_ms=50 source=override\n"), total_bytes: 45, truncated: false } });
+      sets += 1;
+      return commandResult({ code: sets === 1 ? 0 : 1 });
+    });
+    const restore = stack(restoring, { proxy: true }).kit;
+    expect((await restore.enterStage("original_suite", signal())).reason).toBeNull();
+    const rounds = await restore.enterStage("added_checks", signal());
+    expect(rounds.reason).toBe("startup_failed");
+    expect(rounds.detail).toContain("set-latency 50");
+  });
+});
+
 describe("heartbeat", () => {
   it("answers false, instead of throwing, once a phase deadline has aborted its signal", async () => {
     const controller = new AbortController();
@@ -343,5 +432,6 @@ describe("external stack (development)", () => {
     expect((await external.resetFixture()).reason).toBe("seed_failed");
     expect(await external.stop()).toEqual({ ok: true, records: [], logs: [] });
     expect(external.logFiles()).toEqual([]);
+    expect(await external.enterStage()).toEqual({ reason: null, detail: "", logs: [] });
   });
 });

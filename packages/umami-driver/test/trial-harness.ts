@@ -15,7 +15,7 @@ import { parsePlaywrightReport } from "../src/playwright-report.ts";
 import type { CommandSpec } from "../src/process.ts";
 import type { SampleSources } from "../src/samples.ts";
 import { runTrial } from "../src/trial.ts";
-import type { AppStack, StepResult, StopReport, TrialOptions } from "../src/trial.ts";
+import type { AppStack, StepResult, StopReport, TestStage, TrialOptions } from "../src/trial.ts";
 import { CANNED_TESTS, CHECKS, FakeRunner, FakeTimers, commandResult, hex, jobInput, playwrightReport } from "./helpers.ts";
 import type { CannedTest, JobOptions } from "./helpers.ts";
 import { writeRound } from "./fixture-round/index.ts";
@@ -72,6 +72,10 @@ export interface StackPlan {
   /** The reset before this round throws an unexpected error. */
   resetThrowsAt?: number;
   stopThrows?: boolean;
+  /** A race kit: each test stage is an event and leaves a log; without it the stages do nothing, as on the time-zone kit. */
+  proxy?: boolean;
+  /** The race kit's latency change for this stage fails with startup_failed. */
+  stageFailsAt?: TestStage;
 }
 
 /** An unexpected error whose message carries a synthetic connection string, which must never reach the records. */
@@ -120,6 +124,14 @@ export class FakeStack implements AppStack {
     if (this.plan.resetThrowsAt === repeatIndex) return Promise.reject(unexpectedError());
     if (this.plan.resetFailsAt === repeatIndex) return Promise.resolve({ reason: "seed_failed", detail: "", logs: [] });
     return Promise.resolve({ reason: null, detail: "", logs: [] });
+  }
+
+  enterStage(stage: TestStage): Promise<StepResult> {
+    if (this.plan.proxy !== true) return Promise.resolve({ reason: null, detail: "", logs: [] });
+    this.events.push(`stage ${stage}`);
+    const logs = [{ name: `proxy-${stage}`, result: commandResult({ stdout: { bytes: Buffer.from("proxy_latency latency_ms=50 source=override\n"), total_bytes: 45, truncated: false } }) }];
+    if (this.plan.stageFailsAt === stage) return Promise.resolve({ reason: "startup_failed", detail: "synthetic proxy failure", logs });
+    return Promise.resolve({ reason: null, detail: "", logs });
   }
 
   /** The signal the trial passed to the last stop. */

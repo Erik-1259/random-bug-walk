@@ -10,7 +10,7 @@
 // Exit codes: 0 records written (whatever the trial's status) or the command succeeded;
 // 2 refused input, a usage error, or an internal error before the trial started, with nothing
 // written; 3 an internal error after the trial started, with the records written as incomplete.
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { copyFile, mkdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -22,7 +22,7 @@ import { ClosureFetchError, fetchClosure } from "./fetch-closure.ts";
 import { addedSuiteSha256, loadFixtureModule } from "./fixture.ts";
 import { FreezeError, freezeSuite } from "./freeze.ts";
 import { RefusedInput, loadJob } from "./job.ts";
-import { APP_ENVIRONMENT_FILE, ExternalStack, KIT, KIT_ADMIN, KIT_BASE_URL, KitStack, OWNER_DATABASE_URL, verifierPaths } from "./kit.ts";
+import { APP_ENVIRONMENT_FILE, ExternalStack, KIT, KIT_ADMIN, KIT_BASE_URL, KitStack, OWNER_DATABASE_URL, RBW_PROXY, verifierPaths } from "./kit.ts";
 import { realTimers } from "./limits.ts";
 import type { LimitsMode } from "./limits.ts";
 import { parseClosureList } from "./pinned.ts";
@@ -70,7 +70,8 @@ async function run(args: string[]): Promise<number> {
       ownerUrl: OWNER_DATABASE_URL,
       appUrl: appDatabaseUrl(await readFile(APP_ENVIRONMENT_FILE, "utf8")),
     });
-    stack = new KitStack({ runner, timers: realTimers, proc: procView(realProcFiles, KIT.runDir), groups: realGroups, database });
+    // Only the race kit image has the database proxy; on the time-zone kit the test stages run nothing.
+    stack = new KitStack({ runner, timers: realTimers, proc: procView(realProcFiles, KIT.runDir), groups: realGroups, database, proxy: existsSync(RBW_PROXY) });
     fixture = { dir: verifier.fixture, configPath: join(verifier.fixture, "playwright.config.ts"), admin: KIT_ADMIN };
     addedSha = await addedSuiteSha256(verifier.fixture);
   } else {

@@ -63,6 +63,9 @@ export interface StopReport {
   logs: StepResult["logs"];
 }
 
+/** The tests phase's two stages: the original suite, then the added checks' resets and rounds. */
+export type TestStage = "original_suite" | "added_checks";
+
 /** The app copy's processes. The kit stack runs the kit's own scripts; tests use a fake. */
 export interface AppStack {
   readonly kind: "kit" | "external";
@@ -71,6 +74,11 @@ export interface AppStack {
   /** Starts Postgres and Umami, waits for /api/heartbeat, and prepares the fixture's reset. */
   start(signal: AbortSignal): Promise<StepResult>;
   verifyIdentity(): Promise<VerifiedIdentity | null>;
+  /**
+   * Prepares the app copy for a stage of the tests phase, before the stage starts; a reason stops
+   * the stage and every later one. Only the race kit does anything: see KitStack.enterStage.
+   */
+  enterStage(stage: TestStage, signal: AbortSignal): Promise<StepResult>;
   /** Resets the fixture to a clean migrated baseline before a round. */
   resetFixture(repeatIndex: number, signal: AbortSignal): Promise<StepResult>;
   /** Stops every process the stack started and confirms each has ended, within `signal`'s deadline. */
@@ -424,17 +432,30 @@ export async function runTrial(options: TrialOptions, deps: TrialDeps): Promise<
       const tests = begin("tests", limits.tests_ms);
       const phaseProblems: Problem[] = [];
       pending = phaseProblems;
+      /** Prepares a stage and stores its logs; false when its reason, now a problem, stops the stage and every later one. */
+      const enter = async (stage: TestStage): Promise<boolean> => {
+        const step = await stack.enterStage(stage, tests.signal);
+        await storeLogs(store, "tests", step.logs);
+        if (step.reason !== null) phaseProblems.push({ phase: "tests", reason: step.reason, detail: step.detail });
+        return step.reason === null;
+      };
+      let entered = true;
       if (trial.original_suite_sha256 !== null) {
-        const suite = begin("original_suite", null);
-        const suiteProblems = await runOriginalSuite(options, deps, { manifest, marker, workDir }, store, tests.signal, diagnostics);
-        timings.push(ended(suite).end(suiteProblems.length === 0 ? "ok" : "failed"));
-        phase = "tests";
-        phaseProblems.push(...suiteProblems);
+        entered = await enter("original_suite");
+        if (entered) {
+          const suite = begin("original_suite", null);
+          const suiteProblems = await runOriginalSuite(options, deps, { manifest, marker, workDir }, store, tests.signal, diagnostics);
+          timings.push(ended(suite).end(suiteProblems.length === 0 ? "ok" : "failed"));
+          phase = "tests";
+          phaseProblems.push(...suiteProblems);
+        }
       }
       const fixture = options.fixture;
       if (fixture === null) {
         observations = withNotRun(options, []);
         phaseProblems.push({ phase: "tests", reason: "artifact_missing", detail: "the added checks were not run (development run without a fixture)" });
+      } else if (!entered || !(await enter("added_checks"))) {
+        observations = withNotRun(options, []);
       } else {
         partialRounds = { observations: [], problems: [], rounds: [] };
         const rounds = await runAddedRounds({

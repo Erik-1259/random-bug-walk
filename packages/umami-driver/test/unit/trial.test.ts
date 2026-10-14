@@ -332,6 +332,35 @@ describe("one trial", () => {
     expect(run.artifacts.entries.some((entry) => entry.kind === "original_suite_outcomes" || entry.kind === "test_report")).toBe(false);
   });
 
+  it("on the race kit, enters the original-suite stage before the suite and the added-checks stage before the first reset", async () => {
+    const run = await trial(tempDir(), { stack: { proxy: true } });
+    expect(run.events).toEqual(["build", "start", "stage original_suite", "identity", "suite", "stage added_checks", "reset 1", "round 1", "stop"]);
+    expect(run.result).toMatchObject({ status: "complete", invalid_reason: null });
+    const keys = run.artifacts.entries.map((entry) => entry.key);
+    expect(keys).toContain("results/clean-02/artifacts/tests/proxy-original_suite.stdout.txt");
+    expect(keys).toContain("results/clean-02/artifacts/tests/proxy-added_checks.stdout.txt");
+  });
+
+  it("runs neither the suite nor a round when the latency for the original suite cannot be set", async () => {
+    const run = await trial(tempDir(), { stack: { proxy: true, stageFailsAt: "original_suite" } });
+    expect(run.result).toMatchObject({ status: "invalid", invalid_reason: "startup_failed" });
+    expect(run.events).toEqual(["build", "start", "stage original_suite", "stop"]);
+    expect(run.observations.every((o) => o.observed === "not_run" && o.failure_code === "artifact_missing")).toBe(true);
+  });
+
+  it("runs no round when the race latency cannot be put back after the suite", async () => {
+    const run = await trial(tempDir(), { stack: { proxy: true, stageFailsAt: "added_checks" } });
+    expect(run.result).toMatchObject({ status: "invalid", invalid_reason: "startup_failed" });
+    expect(run.events).toEqual(["build", "start", "stage original_suite", "identity", "suite", "stage added_checks", "stop"]);
+    expect(run.observations.every((o) => o.observed === "not_run")).toBe(true);
+    expect(run.artifacts.entries.some((entry) => entry.kind === "original_suite_outcomes")).toBe(true);
+  });
+
+  it("enters only the added-checks stage for an observation trial on the race kit", async () => {
+    const run = await trial(tempDir(), { job: { kind: "observe", originalSuiteSha256: null, originalTestIds: [] }, stack: { proxy: true } });
+    expect(run.events).toEqual(["build", "start", "stage added_checks", "reset 1", "round 1", "stop"]);
+  });
+
   it("gives limit_exceeded when the trial's artifacts exceed the size limit", async () => {
     const run = await trial(tempDir(), { artifactLimitBytes: 4000 });
     expect(run.result).toMatchObject({ status: "incomplete", invalid_reason: "limit_exceeded" });
