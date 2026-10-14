@@ -254,9 +254,10 @@ function awaitedInOwnStatement(call: SgNode): boolean {
 }
 
 /**
- * Whether the statement holding a read sits directly in a block that also encloses `call` (the
- * write's own block or a block around it). A read in a sibling branch, such as the `if` side of an
- * `if`/`else` whose `else` side holds the write, never runs before the write in the same execution.
+ * Whether the statement holding a read (or an await) sits directly in a block that also encloses
+ * `call` (the write's own block or a block around it). A node in a sibling branch, such as the `if`
+ * side of an `if`/`else` whose `else` side holds the write, never runs before the write in the same
+ * execution.
  */
 function blockEncloses(read: SgNode, call: SgNode): boolean {
   const statement = read.ancestors().find((node) => {
@@ -437,9 +438,11 @@ function guardedWriteSignals(guard: SgNode): Signals {
           ? identityNames.includes(child.text())
           : identityNames.some((name) => child.findAll({ rule: { kind: "identifier", regex: `^${name.replace(/\$/g, "\\$")}$` } }).length > 0),
       ) ?? false;
+  // As for the read, an await counts only when its statement sits directly in a block that encloses
+  // the write: an await in a sibling branch never runs on the way to the write.
   const awaitBetween =
     read !== undefined &&
-    fn.findAll({ rule: { kind: "await_expression" } }).some((node) => before(read, node) && before(node, call) && inFlowOf(node, call));
+    fn.findAll({ rule: { kind: "await_expression" } }).some((node) => before(read, node) && before(node, call) && inFlowOf(node, call) && blockEncloses(node, call));
   return {
     read_before_write: read !== undefined,
     read_checks_guard: readFilters || testedInCode,

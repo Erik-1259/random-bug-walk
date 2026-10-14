@@ -799,6 +799,34 @@ describe("find sites in one file", () => {
     ]);
   });
 
+  it("counts an await between the read and the write only when its statement's block encloses the write", () => {
+    const code = [
+      "export async function close(db, audit, id, fresh) {",
+      "  const room = await db.client.room.findFirst({ where: { id, active: true } });",
+      "  if (fresh) {",
+      "    await audit.log(room.id);",
+      "  } else {",
+      "    const result = await db.client.room.updateMany({ where: { id: room.id, active: true }, data: { active: false } });",
+      "    if (result.count === 0) throw new Error('closed');",
+      "  }",
+      "}",
+      "export async function closeAfterAudit(db, audit, id, fresh) {",
+      "  const room = await db.client.room.findFirst({ where: { id, active: true } });",
+      "  await audit.log(room.id);",
+      "  if (fresh) {",
+      "    const result = await db.client.room.updateMany({ where: { id: room.id, active: true }, data: { active: false } });",
+      "    if (result.count === 0) throw new Error('closed');",
+      "  }",
+      "}",
+      "",
+    ].join("\n");
+    const sites = findSitesInSource(CLASSES, "lib/rooms.ts", code);
+    expect(sites.map((site) => [site.line, site.confidence.signals.read_before_write, site.confidence.signals.await_between])).toEqual([
+      [6, true, false],
+      [14, true, true],
+    ]);
+  });
+
   it("gives each site a diff of that site alone", () => {
     for (const site of sitesIn("lib/documents.ts")) {
       const changed = site.diff.split("\n").filter((line) => /^[-+](?![-+])/.test(line));
