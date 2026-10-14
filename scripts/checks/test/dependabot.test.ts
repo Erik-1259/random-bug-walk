@@ -12,7 +12,7 @@ interface Update {
   "open-pull-requests-limit": number;
   cooldown?: { "default-days": number };
   groups?: Record<string, { "dependency-type"?: string; "update-types"?: string[]; patterns?: string[] }>;
-  ignore?: { "dependency-name": string; versions?: string[] }[];
+  ignore?: { "dependency-name": string; versions?: string[]; "update-types"?: string[] }[];
   "commit-message"?: { prefix?: string; "prefix-development"?: string; include?: string };
 }
 
@@ -72,11 +72,17 @@ describe("dependabot.yml", () => {
   });
 
   it("ignores TypeScript from the first version outside the typescript-eslint peer range", () => {
-    expect(update("npm").ignore).toEqual([
-      { "dependency-name": "typescript", versions: [`>=${typescriptPeerUpperBound()}`] },
-    ]);
+    expect(update("npm").ignore?.[0]).toEqual({ "dependency-name": "typescript", versions: [`>=${typescriptPeerUpperBound()}`] });
     expect(configText).toMatch(/# .*outside that peer range[\s\S]*installs with a peer dependency warning[\s\S]*pnpm lint fails/);
     expect(configText).not.toMatch(/installs without error/);
+  });
+
+  it("ignores undici majors and @types/node from 25, which do not match the Node 24 runtime, and uv-build, kept equal to the uv tool", () => {
+    expect(update("npm").ignore?.slice(1)).toEqual([
+      { "dependency-name": "undici", "update-types": ["version-update:semver-major"] },
+      { "dependency-name": "@types/node", versions: [">=25.0.0"] },
+    ]);
+    expect(update("uv").ignore).toEqual([{ "dependency-name": "uv-build" }]);
   });
 
   it("uses conventional commit prefixes", () => {
