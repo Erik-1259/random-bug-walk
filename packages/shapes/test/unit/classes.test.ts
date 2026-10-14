@@ -208,7 +208,7 @@ describe("find sites in one file", () => {
     ]);
   });
 
-  it("confirms only the read's own id, no other surviving key, when the write sits in a function nested inside the read's", () => {
+  it("never confirms a write that sits in a function nested inside the read's, not even through the read's own id", () => {
     const text = [
       "export async function activate(docId: string, tenantId: string, items: string[]) {",
       "  const row = await db.client.document.findFirst({ where: { id: docId, tenantId } });",
@@ -221,9 +221,21 @@ describe("find sites in one file", () => {
     const sites = findSitesInSource(CLASSES, "lib/activate.ts", text);
     expect(sites.map((site) => [site.line, site.planted_form_confirmed])).toEqual([
       [3, false],
-      [4, true],
+      [4, false],
       [5, true],
     ]);
+  });
+
+  it("does not confirm a nested write whose id names a callback parameter that shadows the read filter's id", () => {
+    const text = [
+      "export async function activate(id: string, ids: string[]) {",
+      "  await db.client.document.findFirst({ where: { id } });",
+      "  await Promise.all(ids.map(async (id) => db.client.document.updateMany({ where: { id, active: true }, data: { active: false } })));",
+      "}",
+      "",
+    ].join("\n");
+    const sites = findSitesInSource(CLASSES, "lib/activate.ts", text);
+    expect(sites.map((site) => [site.line, site.planted_form_confirmed, site.confidence.level])).toEqual([[3, false, "low"]]);
   });
 
   it("confirms a surviving id only when it holds the read's own id", () => {
@@ -590,6 +602,36 @@ describe("find sites in one file", () => {
       "",
     ].join("\n");
     expect(findSitesInSource(CLASSES, "lib/rooms.ts", code)).toEqual([]);
+  });
+
+  it("counts a read before the write only when the read is awaited directly in its own statement or initializer", () => {
+    const code = [
+      "export async function claim(db, id) {",
+      "  const check = db.client.seat.findFirst({ where: { id, open: true } });",
+      "  const result = await db.client.seat.updateMany({ where: { id, open: true }, data: { open: false } });",
+      "  await check;",
+      "  if (result.count === 0) throw new Error('taken');",
+      "}",
+      "export async function claimLater(db, id) {",
+      "  const [seat] = await Promise.all([db.client.seat.findFirst({ where: { id, open: true } })]);",
+      "  const result = await db.client.seat.updateMany({ where: { id, open: true }, data: { open: false } });",
+      "  if (result.count === 0) throw new Error('taken');",
+      "}",
+      "export async function claimAwaited(db, id) {",
+      "  await db.client.seat.findFirst({ where: { id, open: true } });",
+      "  const result = await db.client.seat.updateMany({ where: { id, open: true }, data: { open: false } });",
+      "  if (result.count === 0) throw new Error('taken');",
+      "}",
+      "",
+    ].join("\n");
+    const sites = findSitesInSource(CLASSES, "lib/seats.ts", code);
+    expect(
+      sites.map((site) => [site.line, site.confidence.signals.read_before_write, site.confidence.signals.read_checks_guard, site.planted_form_confirmed, site.confidence.level]),
+    ).toEqual([
+      [3, false, false, false, "low"],
+      [9, false, false, false, "low"],
+      [14, true, true, true, "high"],
+    ]);
   });
 
   it("scores a write in a callback against the read of the function around it", () => {

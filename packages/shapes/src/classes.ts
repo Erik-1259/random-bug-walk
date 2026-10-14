@@ -239,8 +239,23 @@ function inFlowOf(node: SgNode, call: SgNode): boolean {
 }
 
 /**
+ * Whether a call is the direct operand of `await` in its own statement (`await db.m.find(...);`) or
+ * initializer (`const row = await db.m.find(...);`). A read promise created earlier and awaited
+ * later, or one passed to another call, may not have finished when a later write runs.
+ */
+function awaitedInOwnStatement(call: SgNode): boolean {
+  const awaited = call.parent();
+  const holder = awaited?.parent() ?? null;
+  return (
+    kindOf(awaited) === "await_expression" &&
+    (kindOf(holder) === "expression_statement" || (kindOf(holder) === "variable_declarator" && fieldOf(holder, "value")?.id() === awaited?.id()))
+  );
+}
+
+/**
  * The write around a guard, the outermost function enclosing it, and the read it is scored
- * against: the last read of the same model that ends before the write, in the write's flow.
+ * against: the last read of the same model that ends before the write, in the write's flow, and is
+ * awaited directly in its own statement or initializer (see `awaitedInOwnStatement`).
  */
 function writeContext(guard: SgNode): { call: SgNode; fn: SgNode; read: SgNode | undefined } | undefined {
   const call = guard.ancestors().find((node) => kindOf(node) === "call_expression");
@@ -255,7 +270,7 @@ function writeContext(guard: SgNode): { call: SgNode; fn: SgNode; read: SgNode |
     .findAll({ rule: { kind: "call_expression" } })
     .filter((node) => {
       const found = modelCall(node);
-      return found?.model === write.model && READ_METHODS.has(found.method) && before(node, call) && inFlowOf(node, call);
+      return found?.model === write.model && READ_METHODS.has(found.method) && before(node, call) && inFlowOf(node, call) && awaitedInOwnStatement(node);
     })
     .at(-1);
   return { call, fn, read };
@@ -273,13 +288,16 @@ function readWhereOf(read: SgNode | undefined): SgNode | undefined {
  * elsewhere or a read key with a different value, may write another record or keep the write
  * conditional, so the planted form is then not confirmed. When the write sits in a function nested
  * inside the read's, the same text may name a different binding there (a callback parameter can
- * shadow the read's value), so only the read's own id confirms the form.
+ * shadow the read's value or its id), so the form is never confirmed.
  */
 function survivorsPinRecord(guard: SgNode): boolean {
   const context = writeContext(guard);
   const read = context?.read;
   const nearestFunction = (node: SgNode): SgNode | undefined => node.ancestors().find((ancestor) => FUNCTION_KINDS.has(kindOf(ancestor) ?? ""));
   const nested = read !== undefined && context !== undefined && nearestFunction(read)?.id() !== nearestFunction(context.call)?.id();
+  if (nested) {
+    return false;
+  }
   const readEntries = objectEntries(fieldOf(readWhereOf(read), "value"));
   const holdsReadId = readIdTest(read);
   const norm = (text: string | undefined): string | undefined => text?.replace(/\s+/g, " ");
@@ -291,7 +309,7 @@ function survivorsPinRecord(guard: SgNode): boolean {
       if (key === "id") {
         return value !== undefined && holdsReadId(value);
       }
-      return !nested && key !== undefined && readEntries.has(key) && norm(readEntries.get(key)) === norm(value);
+      return key !== undefined && readEntries.has(key) && norm(readEntries.get(key)) === norm(value);
     });
 }
 
