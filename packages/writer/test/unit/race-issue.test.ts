@@ -3,13 +3,14 @@
 import type { PGlite } from "@electric-sql/pglite";
 import { assertRecord, validateRecord } from "@rbw/schema";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import type { FetchFunction } from "../../src/http.ts";
 import { checkIssue } from "../../src/issue-checks.ts";
 import { buildIssuePrompt } from "../../src/issue-prompt.ts";
 import type { IssueOutput } from "../../src/issue-schema.ts";
 import { parseObservedSymptom } from "../../src/observed-symptom.ts";
 import { parseWriterSymptom } from "../../src/race-symptom.ts";
 import type { WriterSymptom } from "../../src/race-symptom.ts";
-import { CANDIDATE, EXCLUDED_IDENTIFIERS, ISSUE_OUTPUTS, RACE_ISSUE_OUTPUTS, raceSymptom, symptom } from "../fixtures/cases.ts";
+import { CANDIDATE, EXCLUDED_IDENTIFIERS, ISSUE_OUTPUTS, RACE_ISSUE_OUTPUTS, SYNTHETIC_USAGE, completion, raceSymptom, symptom } from "../fixtures/cases.ts";
 import { openDb, operationCount, rig } from "../support.ts";
 
 let db: PGlite;
@@ -225,10 +226,65 @@ describe("the issue writer on recorded race responses", () => {
     expect(outcome.issue).toEqual(RACE_ISSUE_OUTPUTS["race-valid"]);
   });
 
-  it("rejects an issue whose actual result misstates the acceptances", async () => {
+  it("replaces a count line that misstates the acceptances with the observation's counts", async () => {
     const outcome = await run("race-numeric-mismatch");
     expect(outcome.call.status).toBe("completed");
-    expect(outcome.report?.codes).toEqual(["numeric_mismatch"]);
-    expect(outcome.report?.numeric?.violations).toEqual([{ field: "actual_result", reason: "missing_observed_vector", number: null }]);
+    expect(outcome.call.response_body).toContain("Observed: accepted=1, refused=1");
+    expect(outcome.report?.status).toBe("ready_for_review");
+    expect(outcome.issue?.actual_result).toBe("Both tabs were signed in.\nObserved: accepted=2, refused=0");
+  });
+});
+
+describe("the count lines the writer adds to a race issue", () => {
+  const EXPECTED_PROSE = "Of the two requests sent at the same time, one should be accepted and the other refused.";
+  const ACTUAL_PROSE = "Both requests returned HTTP 200 and each tab was signed in.";
+
+  /** Runs writeIssue once with the model answering `content`. */
+  const writeWith = async (symptomValue: Record<string, unknown>, content: unknown) => {
+    const fetch: FetchFunction = () =>
+      Promise.resolve(new Response(completion(JSON.stringify(content), SYNTHETIC_USAGE), { status: 200, headers: { "content-type": "application/json" } }));
+    const r = await rig(db, { fetch });
+    const outcome = await r.writer.writeIssue({ candidate: CANDIDATE, symptom: symptomValue, excludedIdentifiers: EXCLUDED_IDENTIFIERS });
+    if (!outcome.ok) {
+      throw new Error(outcome.code);
+    }
+    expect(r.fetchSpy.calls).toHaveLength(1);
+    return outcome;
+  };
+
+  it("writes both lines from the observation when the model leaves them out, and the issue passes the numeric check", async () => {
+    const outcome = await writeWith(raceSymptom("lines-missing"), { ...VALID, expected_result: EXPECTED_PROSE, actual_result: ACTUAL_PROSE });
+    expect(outcome.issue?.expected_result).toBe(`${EXPECTED_PROSE}\nExpected: accepted=1, refused=1`);
+    expect(outcome.issue?.actual_result).toBe(`${ACTUAL_PROSE}\nObserved: accepted=2, refused=0`);
+    expect(outcome.report?.numeric).toEqual({ ok: true, violations: [] });
+    expect(outcome.report?.status).toBe("ready_for_review");
+  });
+
+  it("drops wrong, duplicated and malformed count lines in any case and ends each field with exactly the canonical line", async () => {
+    const outcome = await writeWith(raceSymptom("lines-wrong"), {
+      ...VALID,
+      expected_result: `Expected: accepted=2, refused=0\n${EXPECTED_PROSE}\n  expected: one accepted, one refused\nEXPECTED : accepted=1, refused=1`,
+      actual_result: `Observed: accepted=2, refused=0\r\n${ACTUAL_PROSE}\nObserved: accepted=1, refused=1\n`,
+    });
+    expect(outcome.issue?.expected_result).toBe(`${EXPECTED_PROSE}\nExpected: accepted=1, refused=1`);
+    expect(outcome.issue?.actual_result).toBe(`${ACTUAL_PROSE}\nObserved: accepted=2, refused=0`);
+    expect(outcome.report?.status).toBe("ready_for_review");
+  });
+
+  it("returns the issue the checks saw, which the real issue checks pass again on their own", async () => {
+    const outcome = await writeWith(raceSymptom("consumer"), { ...VALID, expected_result: EXPECTED_PROSE, actual_result: ACTUAL_PROSE });
+    expect(outcome.issue).not.toBeNull();
+    const again = checkIssue(outcome.issue, parsed(raceSymptom("consumer")), EXCLUDED_IDENTIFIERS);
+    expect(again).toEqual(outcome.report);
+    expect(again.status).toBe("ready_for_review");
+  });
+
+  it("leaves a time-zone issue exactly as the model wrote it, even with lines that look like count lines", async () => {
+    const timeZone = ISSUE_OUTPUTS.valid as IssueOutput;
+    const content = { ...timeZone, expected_result: `${timeZone.expected_result}\nExpected: accepted=1, refused=1`, actual_result: `Observed: synthetic\n${timeZone.actual_result}` };
+    const outcome = await writeWith(symptom("valid"), content);
+    expect(outcome.issue).toEqual(content);
+    expect(JSON.stringify(outcome.issue)).toBe(JSON.stringify(content));
+    expect(outcome.report).toEqual(checkIssue(content, parsed(symptom("valid")), EXCLUDED_IDENTIFIERS));
   });
 });
