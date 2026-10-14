@@ -9,14 +9,14 @@ import { LocalPrivateStore } from "@rbw/publisher/private-store";
 import type { PrivateStore } from "@rbw/publisher/private-store";
 import { encodeCanonical, parseRecord, sha256Hex } from "@rbw/schema";
 import type { ReserveRequest, Spend } from "@rbw/spend";
-import { loadJudgeConfig } from "../../src/config.ts";
+import { allowedReleases, judgeEnabled, loadJudgeConfig, MAX_ALLOWED_RELEASES, parseReleaseList } from "../../src/config.ts";
 import { REPLAY_UNAVAILABLE_TEXT } from "../../src/model.ts";
 import { getSession, getStatus, postJudge, postSession, SESSION_COOKIE } from "../../src/judge/handlers.ts";
-import type { JudgeServer } from "../../src/judge/handlers.ts";
+import type { FrozenJudge, JudgeServer } from "../../src/judge/handlers.ts";
 import { pgliteLedger } from "../../../../tools/controller/test/support/harness.ts";
 import { FakeClock } from "../../../../tools/local-runner/test/support/fakes.ts";
 import { cleanupRecordSets, recordSet, testOutcome, TEST_IDS } from "../../../../packages/admission/test/support/record-set.ts";
-import { cleanup, RELEASE, RELEASE_ID, releaseDir, tempDir } from "../support/results.ts";
+import { cleanup, RACE_RELEASE_ID, RELEASE, RELEASE_ID, releaseDir, releaseTemplate, tempDir } from "../support/results.ts";
 
 const PASSCODE = "synthetic-passcode-7f3a";
 const RELEASE_TEXT = readFileSync(join(releaseDir(RELEASE), "release.json"), "utf8");
@@ -81,7 +81,7 @@ afterEach(async () => {
   cleanupRecordSets();
 });
 
-async function world(env: Record<string, string> = {}): Promise<World> {
+async function world(env: Record<string, string> = {}, frozen: FrozenJudge = { release: RELEASE_TEXT, rateSheet: RATE_SHEET }): Promise<World> {
   const clock = new FakeClock({ start: START });
   const ledger = await pgliteLedger(clock);
   closers.push(ledger.close);
@@ -113,7 +113,7 @@ async function world(env: Record<string, string> = {}): Promise<World> {
   const sdk = new FakeSdk(events);
   const server: JudgeServer = {
     config: loadJudgeConfig({ RBW_JUDGE_PASSCODE: PASSCODE, RBW_JUDGE_RELEASE_ID: RELEASE_ID, RBW_JUDGE_RELEASE_SHA256: RELEASE_SHA, ...SECRETS, ...env }),
-    frozen: { release: RELEASE_TEXT, rateSheet: RATE_SHEET },
+    frozen,
     judge: () => {
       touched.push("judge");
       return Promise.resolve(judge);
@@ -749,5 +749,129 @@ describe("the hold, through the POST", () => {
     const cleared = await world({ RBW_JUDGE_HOLD_CLEARED_AT: "2026-12-02T12:00:00Z" });
     cleared.server.store = w.server.store;
     expect((await json(await postJudge(post("/api/judge", { request_id: REQUEST }, await login(cleared)), cleared.server))).state).toBe("starting");
+  });
+});
+
+// A second synthetic release, frozen beside the release fixture's: another ID, judge job and controller image.
+const SECOND = (() => {
+  const template = releaseTemplate();
+  const record = {
+    ...template,
+    release_id: RACE_RELEASE_ID,
+    created_at: "2026-10-12T09:00:00Z",
+    judge_job: { index_key: `judge-jobs/${RACE_RELEASE_ID}/judge-job.json`, index_sha256: template.judge_job.index_sha256 },
+    images: { ...template.images, controller_image: template.images.controller_image.replace(/@sha256:.*$/, `@sha256:${"02".repeat(32)}`) },
+  };
+  const text = Buffer.from(encodeCanonical(record)).toString("utf8");
+  parseRecord("Release", Buffer.from(text));
+  return { record, text, sha256: sha256Hex(Buffer.from(text)) };
+})();
+const BOTH_FROZEN: FrozenJudge = { releases: [RELEASE_TEXT, SECOND.text], rateSheet: RATE_SHEET };
+const BOTH_ALLOWED = { RBW_JUDGE_RELEASES: `${RELEASE_ID}=${RELEASE_SHA}, ${RACE_RELEASE_ID}=${SECOND.sha256}` };
+
+function statusOf(w: World, requestId: string, releaseId: string, cookie: string) {
+  return getStatus(new Request(`https://example.invalid/api/judge/status?request_id=${requestId}&release_id=${releaseId}`, { headers: { cookie } }), w.server);
+}
+
+describe("the judge allowlist", () => {
+  it("parses <release_id>=<sha256> pairs and refuses an empty, oversized, duplicated or malformed list", () => {
+    expect(parseReleaseList(`${RELEASE_ID}=${RELEASE_SHA}\n${RACE_RELEASE_ID}=${SECOND.sha256}`)).toEqual({
+      ok: true,
+      releases: [
+        { releaseId: RELEASE_ID, sha256: RELEASE_SHA },
+        { releaseId: RACE_RELEASE_ID, sha256: SECOND.sha256 },
+      ],
+    });
+    const many = (count: number) => Array.from({ length: count }, (_, index) => `00000000-0000-4000-8000-${String(index).padStart(12, "0")}=${"a".repeat(64)}`).join(",");
+    expect(parseReleaseList(many(MAX_ALLOWED_RELEASES)).ok).toBe(true);
+    expect(parseReleaseList(many(MAX_ALLOWED_RELEASES + 1))).toEqual({ ok: false, error: "RBW_JUDGE_RELEASES names 100 releases; at most 99 are supported" });
+    expect(parseReleaseList(" , ")).toEqual({ ok: false, error: "RBW_JUDGE_RELEASES names no release" });
+    expect(parseReleaseList(`${RELEASE_ID}=${RELEASE_SHA},${RELEASE_ID}=${SECOND.sha256}`).ok).toBe(false);
+    for (const bad of [RELEASE_ID, `${RELEASE_ID}=${RELEASE_SHA}=x`, `${RELEASE_ID}=${RELEASE_SHA.toUpperCase()}`, `${RELEASE_ID}=${"0".repeat(63)}`]) expect(parseReleaseList(bad).ok).toBe(false);
+  });
+
+  it("takes RBW_JUDGE_RELEASES over the single pair, falls back to the pair without it, and accepts nothing from a refused list", () => {
+    const pair = { RBW_JUDGE_PASSCODE: PASSCODE, RBW_JUDGE_RELEASE_ID: RELEASE_ID, RBW_JUDGE_RELEASE_SHA256: RELEASE_SHA };
+    expect(allowedReleases(loadJudgeConfig(pair))).toEqual([{ releaseId: RELEASE_ID, sha256: RELEASE_SHA }]);
+    expect(allowedReleases(loadJudgeConfig({ ...pair, RBW_JUDGE_RELEASES: "" }))).toEqual([{ releaseId: RELEASE_ID, sha256: RELEASE_SHA }]);
+    const listed = loadJudgeConfig({ ...pair, RBW_JUDGE_RELEASES: `${RACE_RELEASE_ID}=${SECOND.sha256}` });
+    expect(allowedReleases(listed)).toEqual([{ releaseId: RACE_RELEASE_ID, sha256: SECOND.sha256 }]);
+    expect(judgeEnabled(listed, RACE_RELEASE_ID)).toBe(true);
+    expect(judgeEnabled(listed, RELEASE_ID)).toBe(false);
+    expect(allowedReleases(loadJudgeConfig({ ...pair, RBW_JUDGE_RELEASES: "," }))).toEqual([]);
+  });
+});
+
+describe("the judge POST with several frozen releases", () => {
+  it("replays the release the judge picked, with that release's frozen judge job and controller image", async () => {
+    const w = await world(BOTH_ALLOWED, BOTH_FROZEN);
+    const cookie = await login(w);
+    const response = await postJudge(post("/api/judge", { request_id: REQUEST, release_id: RACE_RELEASE_ID }, cookie), w.server);
+    expect(response.status).toBe(202);
+    expect(w.sdk.creates[0]?.image).toBe(SECOND.record.images.controller_image);
+    expect(JSON.stringify(w.sdk.commands[0])).toContain(SECOND.record.judge_job.index_key);
+    const operation = judge.judgeOperation(REQUEST, judge.judgeRelease(SECOND.record), judge.controllerEnvelope(judge.parseRateSheet(RATE_SHEET)) as never);
+    expect(w.reserves[0]?.operation_id).toBe(operation.operation_id);
+    expect(await json(await statusOf(w, REQUEST, RACE_RELEASE_ID, cookie))).toMatchObject({ state: "starting", release_id: RACE_RELEASE_ID });
+  });
+
+  it("is unavailable for a release that is frozen but not allowlisted, allowlisted but not frozen, or allowlisted with another hash, and writes nothing", async () => {
+    const cases: [Record<string, string>, FrozenJudge, string][] = [
+      [{ RBW_JUDGE_RELEASES: `${RELEASE_ID}=${RELEASE_SHA}` }, BOTH_FROZEN, RACE_RELEASE_ID],
+      [BOTH_ALLOWED, { releases: [RELEASE_TEXT], rateSheet: RATE_SHEET }, RACE_RELEASE_ID],
+      [{ RBW_JUDGE_RELEASES: `${RELEASE_ID}=${RELEASE_SHA},${RACE_RELEASE_ID}=${"0".repeat(64)}` }, BOTH_FROZEN, RACE_RELEASE_ID],
+      [BOTH_ALLOWED, BOTH_FROZEN, "00000000-0000-4000-8000-000000000699"],
+    ];
+    for (const [env, frozen, releaseId] of cases) {
+      const w = await world(env, frozen);
+      const body = await json(await postJudge(post("/api/judge", { request_id: REQUEST, release_id: releaseId }, await login(w)), w.server));
+      expect(body).toMatchObject({ state: "unavailable", reason: "release" });
+      expect(w.touched.filter((item) => item !== "judge")).toEqual([]);
+    }
+  });
+
+  it("needs the judge's pick when more than one release is accepted, and takes { request_id } alone when exactly one is", async () => {
+    const two = await world(BOTH_ALLOWED, BOTH_FROZEN);
+    expect(await json(await postJudge(post("/api/judge", { request_id: REQUEST }, await login(two)), two.server))).toMatchObject({ state: "unavailable", reason: "release" });
+    const one = await world({ RBW_JUDGE_RELEASES: `${RACE_RELEASE_ID}=${SECOND.sha256}` }, BOTH_FROZEN);
+    expect((await postJudge(post("/api/judge", { request_id: REQUEST }, await login(one)), one.server)).status).toBe(202);
+    expect(one.sdk.creates[0]?.image).toBe(SECOND.record.images.controller_image);
+  });
+
+  it("refuses a malformed release_id or other fields as a bad request before any call", async () => {
+    const w = await world(BOTH_ALLOWED, BOTH_FROZEN);
+    const cookie = await login(w);
+    for (const body of [{ request_id: REQUEST, release_id: "synthetic" }, { request_id: REQUEST, release_id: RELEASE_ID, extra: 1 }, { release_id: RELEASE_ID }]) {
+      expect((await postJudge(post("/api/judge", body, cookie), w.server)).status).toBe(400);
+    }
+    expect((await statusOf(w, REQUEST, "synthetic", cookie)).status).toBe(400);
+    expect(w.touched).toEqual([]);
+  });
+
+  it("keeps one shared slot: a replay of one release makes a start of the other busy", async () => {
+    const w = await world(BOTH_ALLOWED, BOTH_FROZEN);
+    const cookie = await login(w);
+    expect((await postJudge(post("/api/judge", { request_id: REQUEST, release_id: RELEASE_ID }, cookie), w.server)).status).toBe(202);
+    expect(await json(await postJudge(post("/api/judge", { request_id: OTHER, release_id: RACE_RELEASE_ID }, cookie), w.server))).toMatchObject({ state: "unavailable", reason: "busy" });
+    expect(w.sdk.creates).toHaveLength(1);
+  });
+
+  it("keeps one shared hold: two not_reproduced replays hold every release", async () => {
+    const w = await world(BOTH_ALLOWED, BOTH_FROZEN);
+    for (const [index, created] of ["2026-12-01T10:00:00Z", "2026-12-02T10:00:00Z"].entries()) {
+      const root = `00000000-0000-4000-8000-00000000f00${String(index)}`;
+      await put(w, `judge/${root}/progress.json`, judge.progressBytes({ ...judge.newProgress(root, Date.parse(created), Date.parse(created) + 1_980_000), state: "not_reproduced", known_condition: false }));
+    }
+    const cookie = await login(w);
+    for (const releaseId of [RELEASE_ID, RACE_RELEASE_ID]) {
+      expect(await json(await postJudge(post("/api/judge", { request_id: REQUEST, release_id: releaseId }, cookie), w.server))).toMatchObject({ state: "unavailable", reason: "held" });
+    }
+  });
+
+  it("takes a release_id with the single pair when the build froze several releases, and only the configured one", async () => {
+    const w = await world({}, BOTH_FROZEN);
+    const cookie = await login(w);
+    expect(await json(await postJudge(post("/api/judge", { request_id: REQUEST, release_id: RACE_RELEASE_ID }, cookie), w.server))).toMatchObject({ state: "unavailable", reason: "release" });
+    expect((await postJudge(post("/api/judge", { request_id: REQUEST, release_id: RELEASE_ID }, cookie), w.server)).status).toBe(202);
   });
 });

@@ -6,15 +6,20 @@
 // and the admission (runJob). Then it writes the RootRun that the release tool stages, publishes
 // and builds from. Nothing is retried; a retry is a new root in a new directory.
 //
+// The attempt's family (the time-zone family unless --family names another) goes to every job with
+// its latency, and picks the symptom the issue writer gets: an ObservedSymptom for the time-zone
+// family, a RaceSymptom for the race family, whose admission runs 11 copies with ADM-06 not
+// applicable. A time-zone attempt is exactly what it was before the family was an attempt input.
+//
 // The writer and searcher run here against the controller's own ledger and development slot. The
 // issue, its phrases and the search records are written under <work>/candidate/ only, never
 // under jobs/ and never to a report line: the release tool publishes the issue later.
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { InputsError, loadCopyInputs, newRunIds } from "@rbw/local-runner";
-import type { RunIds } from "@rbw/local-runner";
+import { DEFAULT_FAMILY, InputsError, loadCopyInputs, newRunIds } from "@rbw/local-runner";
+import type { FamilyId, RunIds } from "@rbw/local-runner";
 import { CanonicalError, RecordError, assertRecord, encodeCanonical, parseRecord, sha256Hex, validateRecord } from "@rbw/schema";
-import type { DocExcerpt, ObservedSymptom, ProjectPolicy, RootRun } from "@rbw/schema";
+import type { DocExcerpt, ProjectPolicy, RootRun } from "@rbw/schema";
 import {
   DOCS_NAMES,
   PHRASE_NAMES,
@@ -39,8 +44,8 @@ import type { CardOutcome, FetchFunction, IssueOutcome, IssueOutput, WriterProvi
 import { runJob } from "./controller.ts";
 import type { Backend, ControllerDeps, JobOutcome } from "./controller.ts";
 import { DEVELOPMENT } from "./limits.ts";
-import { SymptomUnavailable, buildSymptom } from "./symptom.ts";
-import type { SymptomProse } from "./symptom.ts";
+import { RACE_FAMILY, SymptomUnavailable, TIME_ZONE_FAMILY, buildSymptom } from "./symptom.ts";
+import type { CandidateSymptom, SymptomFamily, SymptomProse } from "./symptom.ts";
 
 /** The admission policy a release is graded under; the release check requires it, and ProjectPolicy has no such field. */
 export const GRADING_POLICY_ID = "umami-uc3-v1";
@@ -75,6 +80,10 @@ export interface AttemptInputs {
   kitStage: string;
   /** The frozen original suite; when null, the kit check's freeze copy makes it. */
   originalSuite: string | null;
+  /** The bug family; the time-zone family when absent. */
+  family?: FamilyId;
+  /** Race family only: the database latency each copy's Toxiproxy applies. */
+  raceLatencyMs?: number;
   probesDir?: string;
   alternativeDir?: string;
   backend: Backend;
@@ -229,14 +238,29 @@ export function prepareAttempt(inputs: AttemptInputs, env: Record<string, string
     throw error;
   }
   if (priceOf(searchRates, "tavily", "credit") === null) throw new InputsError("unknown_price: the search rate file has no tavily credit price");
+  // The family's copy inputs (manifest, terms, probes and fix), checked as each job will load them.
   loadCopyInputs({
     manifest: inputs.manifest,
     terms: inputs.terms,
     policy: inputs.auditPolicy,
+    ...familyInputs(inputs),
     ...(inputs.probesDir === undefined ? {} : { probesDir: inputs.probesDir }),
     ...(inputs.alternativeDir === undefined ? {} : { alternativeDir: inputs.alternativeDir }),
   });
   return { inputs, policy, policySha256: sha256Hex(policyBytes), input, writerRates, searchRates, keys: { writer: writerKey, search: searchKey } };
+}
+
+/** The fixture ID the symptom builder knows each runner family by; every runner family needs one. */
+const SYMPTOM_FAMILIES: Readonly<Record<FamilyId, SymptomFamily>> = { "time-zone": TIME_ZONE_FAMILY, race: RACE_FAMILY };
+
+/** The symptom family of the attempt's runner family: the time-zone family when none is given. */
+export function symptomFamilyOf(family: FamilyId | undefined): SymptomFamily {
+  return SYMPTOM_FAMILIES[family ?? DEFAULT_FAMILY];
+}
+
+/** The attempt's family inputs, passed on to every job and copy; none for the default family. */
+function familyInputs(inputs: AttemptInputs): { family?: FamilyId; raceLatencyMs?: number } {
+  return { ...(inputs.family === undefined ? {} : { family: inputs.family }), ...(inputs.raceLatencyMs === undefined ? {} : { raceLatencyMs: inputs.raceLatencyMs }) };
 }
 
 function clean(text: string): string {
@@ -252,15 +276,75 @@ function words(text: string): string {
   return text.split(" ").slice(0, PHRASE_WORDS).join(" ");
 }
 
-/** The first sentence, or the start of the field when that sentence is too short to be distinctive. */
-function resultPhrase(text: string): string {
-  const sentence = firstSentence(text);
-  return words(sentence.split(" ").length >= PHRASE_MIN_WORDS ? sentence : clean(text));
+// A race issue ends each result field with a fixed count line (`Expected: accepted=<n>, refused=<n>`
+// or `Observed: ...`) that the issue check reads. It is not user prose, so no phrase is taken from it.
+const RACE_COUNT_LINE = /^(?:Expected|Observed): accepted=[0-9]+, refused=[0-9]+$/;
+
+function withoutCountLines(text: string): string {
+  return text
+    .split(/\r?\n/)
+    .filter((line) => !RACE_COUNT_LINE.test(line))
+    .join("\n");
 }
 
-/** The three exact phrases, picked by code from the frozen issue: the title and the first sentences of the expected and actual results (or their first 12 words when that sentence has fewer than 6). */
-export function pickPhrases(issue: IssueOutput): [string, string, string] {
-  return [words(clean(issue.title)), resultPhrase(issue.expected_result), resultPhrase(issue.actual_result)];
+function wordCount(text: string): number {
+  return text === "" ? 0 : text.split(" ").length;
+}
+
+/** The text when it has 6 or more words, else null. */
+function sixPlusWords(text: string): string | null {
+  return wordCount(text) >= PHRASE_MIN_WORDS ? text : null;
+}
+
+/** The first sentence, or the start of the text when that sentence is too short to be distinctive; null when even that is too short. */
+function distinctPhrase(text: string): string | null {
+  const sentence = firstSentence(text);
+  const phrase = words(wordCount(sentence) >= PHRASE_MIN_WORDS ? sentence : clean(text));
+  return wordCount(phrase) >= PHRASE_MIN_WORDS ? phrase : null;
+}
+
+/**
+ * The field's own phrase when it has one; else a phrase from adjacent
+ * reproduction steps joined in order, the first such run of 6 or more words not already taken (preferring
+ * the shortest run from each start, then a run extended past a taken phrase); else
+ * null, and novelty is incomplete. A phrase under 6 words is never returned.
+ */
+function phraseFrom(own: string | null, steps: readonly string[], taken: readonly string[]): string | null {
+  if (own !== null) return own;
+  // First the shortest untaken run from each start; only then a run extended past a taken phrase.
+  for (const extendPastTaken of [false, true]) {
+    for (let start = 0; start < steps.length; start += 1) {
+      for (let end = start + 1; end <= steps.length; end += 1) {
+        const run = steps.slice(start, end).join(" ");
+        // An extended run takes its own first 12 words, so a taken first sentence cannot repeat.
+        const phrase = extendPastTaken ? sixPlusWords(words(clean(run))) : distinctPhrase(run);
+        if (phrase === null) continue;
+        if (!taken.includes(phrase)) return phrase;
+        if (!extendPastTaken) break;
+      }
+    }
+  }
+  return null;
+}
+
+/** The three phrase slots, in PHRASE_NAMES order; null marks a slot with no phrase of 6 words, which leaves novelty incomplete. */
+export type PickedPhrases = [string | null, string | null, string | null];
+
+/**
+ * The exact phrases, picked by code from the frozen issue: the title's first 12 words and the expected
+ * and actual results' first sentences (or their first 12 words when that sentence has fewer than 6),
+ * never a race issue's fixed count lines. A field with fewer than 6 words falls back to adjacent
+ * reproduction steps joined in order (6 to 12 words, not already used); with none, its slot is null.
+ */
+export function pickPhrases(issue: IssueOutput): PickedPhrases {
+  const taken: string[] = [];
+  const pick = (own: string | null): string | null => {
+    const phrase = phraseFrom(own, issue.reproduction_steps, taken);
+    if (phrase !== null) taken.push(phrase);
+    return phrase;
+  };
+  const title = words(clean(issue.title));
+  return [pick(wordCount(title) >= PHRASE_MIN_WORDS ? title : null), pick(distinctPhrase(withoutCountLines(issue.expected_result))), pick(distinctPhrase(withoutCountLines(issue.actual_result)))];
 }
 
 function writeOnce(path: string, bytes: string | Uint8Array): void {
@@ -321,7 +405,7 @@ function grounded(a: Attempt, name: string, result: CallResult, operations: Oper
 
 /**
  * The extract's passages as doc excerpts, leaving out any that names an excluded identifier: the
- * symptom holds no function name, source path or check ID (ObservedSymptom), and the writer must
+ * symptom holds no function name, source path or check ID (ObservedSymptom, RaceSymptom), and the writer must
  * not be handed one to repeat.
  */
 function passagesOf(record: SearchRecord | null, excluded: readonly string[]): DocExcerpt[] {
@@ -336,7 +420,7 @@ function passagesOf(record: SearchRecord | null, excluded: readonly string[]): D
  * the extract while the issue is written). The extract's passages replace the input's doc excerpts;
  * when it yields none, the input's excerpts stay. Returns the symptom the issue writer gets, or a stop.
  */
-async function ground(a: Attempt, searcher: Searcher, symptom: ObservedSymptom, operations: Operation[]): Promise<{ end: End } | { symptom: ObservedSymptom }> {
+async function ground(a: Attempt, searcher: Searcher, symptom: CandidateSymptom, operations: Operation[]): Promise<{ end: End } | { symptom: CandidateSymptom }> {
   const { input } = a.prepared;
   for (const name of SOURCE_NAMES) {
     const { end } = grounded(a, name, await searcher.searchSource(name, input.search), operations, (record) => `results=${String(record.results.length)}`);
@@ -349,11 +433,12 @@ async function ground(a: Attempt, searcher: Searcher, symptom: ObservedSymptom, 
   });
   if (docs.end !== null) return { end: docs.end };
   const excerpts = passagesOf(docs.record, input.excluded_identifiers);
-  return { symptom: assertRecord("ObservedSymptom", { ...symptom, doc_excerpts: excerpts.length > 0 ? excerpts : symptom.doc_excerpts }) };
+  const docExcerpts = excerpts.length > 0 ? excerpts : symptom.doc_excerpts;
+  return { symptom: "symptom_kind" in symptom ? assertRecord("RaceSymptom", { ...symptom, doc_excerpts: docExcerpts }) : assertRecord("ObservedSymptom", { ...symptom, doc_excerpts: docExcerpts }) };
 }
 
 /** The source searches, the extract, the card, the issue and the phrase checks; null when novelty is clear. */
-async function writeAndSearch(a: Attempt, spend: Spend, context: Record<string, string>, observed: ObservedSymptom, operations: Operation[]): Promise<End | null> {
+async function writeAndSearch(a: Attempt, spend: Spend, context: Record<string, string>, observed: CandidateSymptom, operations: Operation[]): Promise<End | null> {
   const { input } = a.prepared;
   const say = a.deps.report;
   const searcher = createSearcher({
@@ -398,7 +483,16 @@ async function writeAndSearch(a: Attempt, spend: Spend, context: Record<string, 
   if (issueEnd !== null) return issueEnd;
   if (frozen === null || check !== "ready_for_review") return failed("issue_not_ready");
 
-  const phrases = pickPhrases(frozen.issue);
+  const picked = pickPhrases(frozen.issue);
+  const omitted = PHRASE_NAMES.filter((_name, index) => picked[index] === null);
+  if (omitted.length > 0) {
+    // ADM-07 needs all three exact-phrase checks, so a slot with no phrase of 6 words leaves novelty incomplete and nothing is searched.
+    say(`stage=novelty omitted=${omitted.join(",")} reason=no_phrase_of_6_words`);
+    writeOnce(join(a.dir, "novelty.json"), encodeCanonical({ status: "incomplete", matching_urls: [], incomplete_calls: omitted, omitted_calls: omitted, issue_sha256: frozen.sha256 }));
+    say("stage=novelty status=incomplete");
+    return incomplete("novelty_no_phrase");
+  }
+  const phrases = picked.filter((phrase): phrase is string => phrase !== null);
   const records: SearchRecord[] = [];
   for (const name of PHRASE_NAMES) {
     const result = await searcher.checkPhrase(name, { ...input.search, phrases });
@@ -437,7 +531,7 @@ async function ledgerEntries(spend: Spend, operations: readonly Operation[]) {
 }
 
 /** The candidate text, in this process, under the root's development slot; null when the admission may run. */
-async function candidateText(a: Attempt, taskRevision: string, symptom: ObservedSymptom): Promise<End | null> {
+async function candidateText(a: Attempt, taskRevision: string, symptom: CandidateSymptom): Promise<End | null> {
   const { ids } = a;
   const spend = guarded(a.deps.spend);
   const root = ids.root_execution_id;
@@ -502,6 +596,7 @@ async function stages(a: Attempt, projectPolicy: { sha256: string; policy_id: st
         policy: inputs.auditPolicy,
         kitStage: inputs.kitStage,
         originalSuite,
+        ...familyInputs(inputs),
         ...(inputs.probesDir === undefined ? {} : { probesDir: inputs.probesDir }),
         ...(inputs.alternativeDir === undefined ? {} : { alternativeDir: inputs.alternativeDir }),
         backend: inputs.backend,
@@ -522,9 +617,9 @@ async function stages(a: Attempt, projectPolicy: { sha256: string; policy_id: st
   const observeEnd = jobEnd(a, "observe", observe);
   if (observeEnd !== null) return observeEnd;
 
-  let symptom: ObservedSymptom;
+  let symptom: CandidateSymptom;
   try {
-    symptom = buildSymptom(observe.jobDir, a.prepared.input);
+    symptom = buildSymptom(observe.jobDir, a.prepared.input, symptomFamilyOf(inputs.family));
   } catch (error) {
     if (!(error instanceof SymptomUnavailable)) throw error;
     a.deps.report(`stage=write status=failed reason=${error.code}`);

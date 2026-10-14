@@ -1,5 +1,5 @@
 import { canonicalDigest } from "./canonical.ts";
-import { TRIAL_PROFILES, jobOperationIdentity, jobPayloadDigest, utcInstantKey, utcSeconds } from "./derive.ts";
+import { TRIAL_PROFILES, allowedTrialProfiles, jobOperationIdentity, jobPayloadDigest, utcInstantKey, utcSeconds } from "./derive.ts";
 import type {
   ArtifactManifest,
   DefName,
@@ -10,6 +10,8 @@ import type {
   ObservedSymptom,
   ProjectPolicy,
   PublicationRecord,
+  RaceAttempt,
+  RaceSymptom,
   RootRun,
   RunManifest,
   StagingOmissions,
@@ -34,6 +36,27 @@ function strictlySorted(values: readonly string[]): boolean {
 
 function hasDuplicates(values: readonly string[]): boolean {
   return new Set(values).size !== values.length;
+}
+
+/**
+ * A race symptom's observed counts, request times and overlap follow from its attempts; it records
+ * a double acceptance against one expected acceptance, beside a genuine sequential reuse.
+ */
+function raceSymptomRules(symptom: RaceSymptom): string[] {
+  const errors: string[] = [];
+  const attempts = symptom.concurrent_attempts;
+  const count = (outcome: RaceAttempt["outcome"]): number => attempts.filter((attempt) => attempt.outcome === outcome).length;
+  if (symptom.observed.accepted !== count("accepted") || symptom.observed.refused !== count("refused")) errors.push("race_symptom:observed_counts");
+  if ([...attempts, ...symptom.sequential_attempts].some((attempt) => attempt.settled_ms < attempt.sent_ms)) errors.push("race_symptom:attempt_times");
+  const overlap = Math.min(...attempts.map((attempt) => attempt.settled_ms)) - Math.max(...attempts.map((attempt) => attempt.sent_ms));
+  if (symptom.overlap_ms !== overlap) errors.push("race_symptom:overlap");
+  // The family's symptom: one acceptance is expected, and both concurrent uses were accepted.
+  if (symptom.expected.accepted !== 1 || symptom.expected.refused !== 1) errors.push("race_symptom:expected");
+  if (symptom.observed.accepted !== 2 || symptom.observed.refused !== 0) errors.push("race_symptom:observed");
+  // The control: a first use that was accepted, then a reuse sent after it settled that was refused.
+  const [first, reuse] = symptom.sequential_attempts;
+  if (first?.outcome !== "accepted" || reuse?.outcome !== "refused" || reuse.sent_ms < first.settled_ms) errors.push("race_symptom:sequential");
+  return errors;
 }
 
 function registryRules(registry: FamilyRegistry): string[] {
@@ -96,7 +119,10 @@ function expectedTrialsRules(manifest: ExpectedTrials, request: JobRequest | und
   if (trials.some((trial) => hasDuplicates(trial.expected_checks.map((check) => check.check_id)))) errors.push("trials:duplicate_check");
   if (request === undefined) return errors;
   if (canonicalDigest(manifest).sha256 !== request.expected_trials_sha256) errors.push("request:expected_trials_sha256");
-  const profile = TRIAL_PROFILES[request.kind];
+  // An admission manifest follows the full profile or, for a family without ADM-06 probes, the
+  // profile without them; the trial IDs pick the one it is checked against.
+  const ids = trials.map((trial) => trial.trial_id).join("\n");
+  const profile = allowedTrialProfiles(request.kind).find((item) => item.trials.map((trial) => trial.trial_id).join("\n") === ids) ?? TRIAL_PROFILES[request.kind];
   if (profile.originalSuite) {
     if (trials.some((trial) => trial.original_suite_sha256 === null)) errors.push("trials:original_suite_missing");
   } else if (trials.some((trial) => trial.original_suite_sha256 !== null)) {
@@ -200,6 +226,9 @@ export function checkRules(type: DefName, value: unknown, context: Context): str
     }
     case "ObservedSymptom":
       if ((value as ObservedSymptom).events.some((event) => utcSeconds(event.utc_instant) !== event.timestamp_seconds)) errors.push("symptom:event_instant");
+      break;
+    case "RaceSymptom":
+      errors.push(...raceSymptomRules(value as RaceSymptom));
       break;
     case "MutationIdentity":
       errors.push(...mutationRules(value as MutationIdentity));

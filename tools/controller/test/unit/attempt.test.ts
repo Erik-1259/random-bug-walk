@@ -11,7 +11,7 @@ import { pickPhrases, prepareAttempt, runAttempt } from "../../src/attempt.ts";
 import type { AttemptOutcome } from "../../src/attempt.ts";
 import { runJob } from "../../src/controller.ts";
 import { PLACEHOLDER_PROJECT_ID } from "../../../local-runner/src/jobs.ts";
-import { SymptomUnavailable, buildSymptom } from "../../src/symptom.ts";
+import { SymptomUnavailable, TIME_ZONE_FAMILY, buildSymptom } from "../../src/symptom.ts";
 import { ATTEMPT_PROJECT_ID, DOC_PASSAGES, DOCS_QUERY, DOCS_URL, EXCLUDED_PASSAGE, MATCH_URL, SEARCH_KEY, SOURCE_URL, WRITER_KEY, attemptDeps, attemptFiles, attemptInputs, privateInput, syntheticIssue } from "../support/attempt.ts";
 import type { AttemptFiles, AttemptOptions, AttemptWorld } from "../support/attempt.ts";
 import { stage } from "../../../release/src/stage.ts";
@@ -84,7 +84,7 @@ function searchSecrets(run: Run): string[] {
 
 function issueOf(run: Run): string[] {
   const issue = parseCanonical(readFileSync(join(run.work, "candidate", "issue.json"))) as unknown as { title: string; expected_result: string; actual_result: string };
-  return [issue.title, issue.expected_result, issue.actual_result, ...pickPhrases(issue as never)];
+  return [issue.title, issue.expected_result, issue.actual_result, ...pickPhrases(issue as never).filter((phrase) => phrase !== null)];
 }
 
 async function slotHolder(w: World): Promise<string | null> {
@@ -144,7 +144,7 @@ describe("the observed symptom", () => {
 
   it("is a valid ObservedSymptom: the fixture's request, events and expected counts, and the observed counts of the recorded responses", () => {
     const fixture = loadFixture();
-    const symptom = buildSymptom(observeDir, prose);
+    const symptom = buildSymptom(observeDir, prose, TIME_ZONE_FAMILY);
     expect(assertRecord("ObservedSymptom", symptom)).toBe(symptom);
     const [, la, auckland, kolkata] = fixture.checks;
     const labels = fixture.bucket_labels.map((label) => label.slice(0, 10));
@@ -168,7 +168,7 @@ describe("the observed symptom", () => {
     const bytes = readFileSync(path);
     rmSync(path);
     try {
-      expect(() => buildSymptom(observeDir, prose)).toThrow(SymptomUnavailable);
+      expect(() => buildSymptom(observeDir, prose, TIME_ZONE_FAMILY)).toThrow(SymptomUnavailable);
     } finally {
       writeFileSync(path, bytes);
     }
@@ -187,7 +187,7 @@ describe("the phrase picker", () => {
     const phrases = pickPhrases(issue);
     expect(phrases).toEqual(["A quoted title that runs well past the twelve word limit of", "Each visit is counted on its local day.", "Some visits move to the neighboring day!"]);
     expect(pickPhrases(issue)).toEqual(phrases);
-    for (const phrase of phrases) {
+    for (const phrase of phrases.map(String)) {
       expect(phrase.split(" ").length).toBeLessThanOrEqual(12);
       expect(phrase).not.toContain('"');
     }
@@ -206,7 +206,7 @@ describe("the phrase picker, short opening sentences", () => {
     const [, expected, actual] = pickPhrases(issue);
     expect(expected).toBe("Counts are right. Each of the three days shows the visits stored");
     expect(actual).toBe("Counts are wrong. Two of the three days show visits that belong");
-    for (const phrase of [expected, actual]) expect(phrase.split(" ").length).toBeGreaterThanOrEqual(6);
+    for (const phrase of [expected, actual].map(String)) expect(phrase.split(" ").length).toBeGreaterThanOrEqual(6);
   });
 });
 
@@ -544,5 +544,38 @@ describe("the attempt command", () => {
     } finally {
       rmSync(work, { recursive: true, force: true });
     }
+  });
+});
+
+describe("the time-zone attempt, with the family an attempt input", () => {
+  it("writes the bytes it wrote before: each job's fingerprint and request, the symptom and the issue, with or without --family time-zone", async () => {
+    const pinned = async (overrides: AttemptOptions & { family?: "time-zone" }): Promise<Record<string, string>> => {
+      const w = await world({ clock: new FakeClock({ manual: true }) });
+      const files = attemptFiles(w.dir);
+      const inputs = attemptInputs(w, files, overrides.family === undefined ? {} : { family: overrides.family });
+      const aw = attemptDeps(w, inputs.work);
+      const outcome = await runAttempt(prepareAttempt(inputs, aw.env), aw.deps);
+      expect(outcome.exitCode).toBe(0);
+      const hashes: Record<string, string> = {};
+      for (const name of ["kit-check", "observe", "admission"]) {
+        hashes[`${name}.fingerprint`] = (JSON.parse(readFileSync(join(inputs.work, "jobs", name, "controller.json"), "utf8")) as { fingerprint: string }).fingerprint;
+        hashes[`${name}.request`] = sha256Hex(readFileSync(join(inputs.work, "jobs", name, "job", "request.json")));
+      }
+      for (const name of ["symptom.json", "issue.json"]) hashes[name] = sha256Hex(readFileSync(join(inputs.work, "candidate", name)));
+      return hashes;
+    };
+    // Recorded from the attempt before the family was an attempt input.
+    const before = {
+      "kit-check.fingerprint": "17c70f9b3a3f631a1d7329392c31a3c2438bb8fdf9654277c47f9d023b97cf84",
+      "kit-check.request": "d33411f6682ef3664707b888daf06af4ff95974b782aca3c82a2bbca5b94e015",
+      "observe.fingerprint": "04f2af771ee57dccb811943c904decff4496628c9de74f3e3bcbef2cfe513387",
+      "observe.request": "18943779a670e3c42438bb717137bfbbbd8aacedffd0b16a2ce07ed20230cc9c",
+      "admission.fingerprint": "ee32263a59351c25bef106fc7ade0f48af2fe21e5dccecf46b756cf0a355dbcc",
+      "admission.request": "5f388939da30af88f02517994740a960837c2cafbd653dece5dd0458a6b3e15a",
+      "symptom.json": "f5b85c6c859aadc8c71a9426bfc55de0851eb6208c0642b48ddba299490ead0f",
+      "issue.json": "f80be59539e3a0f13590363116a1478dea5fb8bf1766b3abb6ca077d94cfaff4",
+    };
+    expect(await pinned({})).toEqual(before);
+    expect(await pinned({ family: "time-zone" })).toEqual(before);
   });
 });

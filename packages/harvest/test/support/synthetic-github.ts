@@ -11,28 +11,28 @@ export const SYNTHETIC_QUERIES: readonly Query[] = [
   { kind: "pulls", api: "syntheticFormat", q: "is:pr is:merged syntheticFormat timezone" },
 ];
 
-const ORG = "synthetic-org";
-const PERSON = { name: "Synthetic Person", email: "synthetic-person@example.invalid", login: "synthetic-person" };
+export const ORG = "synthetic-org";
+export const PERSON = { name: "Synthetic Person", email: "synthetic-person@example.invalid", login: "synthetic-person" };
 
-type Json = Record<string, unknown>;
+export type Json = Record<string, unknown>;
 
-interface Route {
+export interface Route {
   status: number;
   body: unknown;
   headers?: Record<string, string>;
 }
 
-function gitBlob(text: string): string {
+export function gitBlob(text: string): string {
   const bytes = Buffer.from(text, "utf8");
   return createHash("sha1").update(`blob ${String(bytes.length)}\0`).update(bytes).digest("hex");
 }
 
-function sha(label: string): string {
+export function sha(label: string): string {
   return createHash("sha1").update(`synthetic-commit:${label}`).digest("hex");
 }
 
 /** A unified-diff hunk that replaces the lines of `before` with `after`, as GitHub's `patch` field. */
-function patchOf(before: string, after: string): string {
+export function patchOf(before: string, after: string): string {
   const old = before.split("\n");
   const neu = after.split("\n");
   let start = 0;
@@ -244,7 +244,7 @@ function repoBody(name: string, license: Scenario["license"], fork = false): Jso
   return { id: 1, full_name: `${ORG}/${name}`, private: false, fork, owner, license: licenseBody(license), language: "TypeScript", stargazers_count: 3 };
 }
 
-function contentBody(path: string, text: string, encoding = "base64", blob?: string): Json {
+export function contentBody(path: string, text: string, encoding = "base64", blob?: string): Json {
   return {
     type: "file",
     path,
@@ -255,7 +255,7 @@ function contentBody(path: string, text: string, encoding = "base64", blob?: str
   };
 }
 
-function encodePath(path: string): string {
+export function encodePath(path: string): string {
   return path.split("/").map(encodeURIComponent).join("/");
 }
 
@@ -355,7 +355,11 @@ export interface SyntheticGitHub {
 }
 
 export function syntheticGitHub(): SyntheticGitHub {
-  const routes = buildRoutes();
+  return serveRoutes(buildRoutes());
+}
+
+/** A fetch that serves fixed routes by path and query, with 404 for any other, and records each request. */
+export function serveRoutes(routes: ReadonlyMap<string, Route>): SyntheticGitHub {
   const requests: SyntheticGitHub["requests"] = [];
   const fake = (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
     const url = new URL(input instanceof Request ? input.url : input.toString());

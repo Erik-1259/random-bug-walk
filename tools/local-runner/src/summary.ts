@@ -3,7 +3,7 @@
 import { encodeCanonical } from "@rbw/schema";
 import type { CodeState } from "@rbw/schema";
 import type { StateKey } from "./code-states.ts";
-import type { AuditResult, CopyStatus } from "./copy.ts";
+import type { AuditResult, CopyStatus, ProxyReport } from "./copy.ts";
 import type { PhaseSummary } from "./records.ts";
 import type { SandboxReport } from "./sandbox.ts";
 
@@ -44,6 +44,8 @@ export interface CopySummary {
   driver_phases: PhaseSummary[];
   tests_phase: { duration_ms: number; limit_ms: number; within_limit: boolean } | null;
   artifact_bytes: { total: number; limit: number; within_limit: boolean } | null;
+  /** Only for a race-family copy that set a latency: rbw-proxy's exit status and the latency it reported applying. */
+  proxy?: ProxyReport;
   /** Only for a copy on Vercel Sandbox: its name, the stop confirmation and the SDK call counts. */
   sandbox?: SandboxReport;
 }
@@ -91,7 +93,9 @@ export type CandidateTextSummary =
       novelty: string;
       ledger: unknown;
     }
-  | { status: "failed"; code: string; detail: string };
+  | { status: "failed"; code: string; detail: string }
+  /** A family whose recorded inputs do not exist yet: no card, issue or search runs. */
+  | { status: "not_run"; code: "symptom_unavailable"; detail: string };
 
 export interface Summary {
   schema_version: 1;
@@ -111,6 +115,8 @@ export interface Summary {
     kill_grace_ms: number;
   };
   image: { reference: string; digest: string | null; kit_sha256: string | null };
+  /** Only for a family other than the default: the family, its ADM-06 record (with the reason when not applicable) and the admission job's copy count. */
+  family?: { id: string; adm06: { status: string; reason: string | null }; admission_copies: number };
   inputs: Record<string, string | Record<string, string> | null>;
   original_suite: { sha256: string; test_count: number } | null;
   code_states: { state: StateKey; code_state: CodeState; sha256: string; patch_sha256: string | null }[];
@@ -137,6 +143,7 @@ export function summaryText(summary: Summary): string {
     `date ${summary.run.run_date_utc} revenue_known_limit ${summary.run.revenue_tests_known_limit.applies ? "applies" : "does_not_apply"}`,
     `image ${cell(summary.image.digest)}`,
   ];
+  if (summary.family !== undefined) lines.push(`family ${summary.family.id} admission_copies ${String(summary.family.admission_copies)} adm06 ${summary.family.adm06.status}`);
   if (summary.failure !== null) lines.push(`stopped at ${summary.failure.step}: ${summary.failure.detail}`);
   for (const job of summary.jobs) {
     lines.push(`job ${job.label} ${job.kind} evidence ${cell(job.import.evidence_sha256)} decision ${cell(job.import.decision_sha256)}${job.refusal === null ? "" : ` refused ${job.refusal.reason}`}`);
@@ -165,7 +172,8 @@ export function summaryText(summary: Summary): string {
   }
   if (summary.alternative_fix !== null) lines.push(`alternative fix ${summary.alternative_fix.status} passes_every_check=${summary.alternative_fix.passes_every_check ? "yes" : "no"}`);
   if (summary.candidate_text !== null) {
-    lines.push(summary.candidate_text.status === "complete" ? `candidate text complete novelty ${summary.candidate_text.novelty}` : `candidate text failed ${summary.candidate_text.code}`);
+    const text = summary.candidate_text;
+    lines.push(text.status === "complete" ? `candidate text complete novelty ${text.novelty}` : `candidate text ${text.status} ${text.code}`);
   }
   return `${lines.join("\n")}\n`;
 }

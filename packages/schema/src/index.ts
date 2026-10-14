@@ -17,7 +17,9 @@ export {
 } from "./registry.ts";
 export type { Identity, RefusalCode } from "./registry.ts";
 export {
+  ADMISSION_WITHOUT_PROBES_PROFILE,
   TRIAL_PROFILES,
+  allowedTrialProfiles,
   buildExpectedTrials,
   buildJobRequest,
   callName,
@@ -27,5 +29,6 @@ export {
   operationId,
   providerCallIdentity,
   taskRevision,
+  trialProfile,
 } from "./jobs.ts";
-export type { BuiltExpectedTrials, BuiltJobRequest, ExpectedTrialsInput, JobRequestFields, MutationInput, ProfileTrial, ProviderCallFields, TrialProfile } from "./jobs.ts";
+export type { Adm06Applicability, BuiltExpectedTrials, BuiltJobRequest, ExpectedTrialsInput, JobRequestFields, MutationInput, ProfileTrial, ProviderCallFields, TrialProfile } from "./jobs.ts";

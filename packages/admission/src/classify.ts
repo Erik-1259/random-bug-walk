@@ -1,4 +1,5 @@
-import type { CheckObservation, ExpectedCheck, TrialReason } from "@rbw/schema";
+import { ASSERTION_FAILURE_CODE_VALUES } from "@rbw/schema";
+import type { AssertionFailureCode, CheckObservation, ExpectedCheck, TrialReason } from "@rbw/schema";
 import type { AddedVerdict, ImportCode, ObservationClass } from "./output.ts";
 
 export interface Classified {
@@ -7,9 +8,11 @@ export interface Classified {
   code: ImportCode | null;
 }
 
+const isAssertionCode = (code: CheckObservation["failure_code"]): code is AssertionFailureCode => (ASSERTION_FAILURE_CODE_VALUES as readonly (string | null)[]).includes(code);
+
 function trialReason(code: CheckObservation["failure_code"], fallback: TrialReason): TrialReason {
   // The schema gives setup_fail, skipped and not_run a TrialReason, so the fallback only narrows the type.
-  return code === null || code === "local_day_counts_mismatch" || code === "bucket_labels_mismatch" ? fallback : code;
+  return code === null || isAssertionCode(code) ? fallback : code;
 }
 
 /** Classifies one added-check observation against its expected check. */

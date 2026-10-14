@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { applyPatch, parsePatch, reversePatch, structuredPatch } from "diff";
 import type { StructuredPatch, StructuredPatchHunk } from "diff";
-import { canonicalJson } from "@rbw/projection";
+import { InputError, applyPatch as auditApply, canonicalJson, parseDiff } from "@rbw/projection";
 import { sha256Hex } from "@rbw/schema";
 import type { CodeState } from "@rbw/schema";
 import { DT1_TARGET } from "@rbw/shapes";
@@ -43,7 +43,8 @@ export type CodeStateRefusalReason =
   | "patch_does_not_apply"
   | "fixed_not_clean"
   | "not_utf8"
-  | "alternative_fix_invalid";
+  | "alternative_fix_invalid"
+  | "declared_mutation_malformed";
 
 export class CodeStateRefusal extends Error {
   override name = "CodeStateRefusal";
@@ -136,9 +137,27 @@ function lineHunks(before: Buffer, after: Buffer): StructuredPatchHunk[] {
   return structuredPatch("a", "b", before.toString("utf8"), after.toString("utf8"), undefined, undefined, { context: 3 }).hunks;
 }
 
+/**
+ * Requires a declared diff to be the standard unified diff the projection audit reads (every
+ * context line, empty ones included, keeps its one-space prefix) and to turn the clean file into
+ * the result there. The diff library applies looser patches, so a probe patch whose empty
+ * context lines were trimmed would otherwise pass here and be refused by the audit before a
+ * copy runs.
+ */
+function checkedDiff(path: string, clean: Buffer, result: Buffer, diff: string): string {
+  try {
+    const patches = parseDiff(diff);
+    const [patch] = patches;
+    if (patches.length === 1 && patch?.path === path && auditApply(clean, patch, "forward")?.equals(result) === true) return diff;
+  } catch (error) {
+    if (!(error instanceof InputError)) throw error;
+  }
+  throw new CodeStateRefusal("declared_mutation_malformed", `the declared change to ${path} is not a standard unified diff that the projection audit applies to the clean file`);
+}
+
 function declaredMutation(path: string, hostCommit: string, clean: Buffer, result: Buffer, diff: string | null): string {
   return canonicalJson({
-    diff: diff ?? gitDiff(path, lineHunks(clean, result)),
+    diff: checkedDiff(path, clean, result, diff ?? gitDiff(path, lineHunks(clean, result))),
     files: [{ mode: DT1_TARGET.mode, original_sha256: sha256Hex(clean), path, result_sha256: sha256Hex(result) }],
     host_commit: hostCommit,
   });
@@ -149,8 +168,12 @@ function declaredMutation(path: string, hostCommit: string, clean: Buffer, resul
  * planted by the mutation patch; fixed by reversing it on the planted file, which must give the
  * clean bytes; partial and stub by their probe patches on their recorded bases; the alternative
  * fix by this package's patch on the planted file.
+ *
+ * A probe set that records ADM-06 as not applicable (and so holds the mutation alone) gives no
+ * partial or stub state; any other probe set must hold both, as before. A family without an
+ * alternative fix passes null and gets no alternative_fix state.
  */
-export function deriveCodeStates(clean: Buffer, probes: ProbeSet, alternative: AlternativeFix): Map<StateKey, StateFile> {
+export function deriveCodeStates(clean: Buffer, probes: ProbeSet, alternative: AlternativeFix | null): Map<StateKey, StateFile> {
   const { data } = probes;
   const target = data.target_path;
   const cleanSha = sha256Hex(clean);
@@ -208,13 +231,15 @@ export function deriveCodeStates(clean: Buffer, probes: ProbeSet, alternative: A
     [cleanSha, clean],
     [sha256Hex(planted), planted],
   ]);
-  for (const id of ["partial", "stub"] as const) {
+  const probeIds = data.adm_06 === undefined ? (["partial", "stub"] as const) : ([] as const);
+  for (const id of probeIds) {
     const { entry, text } = probe(id);
     const base = bases.get(entry.base_sha256);
     if (base === undefined) throw new CodeStateRefusal("base_hash_mismatch", `probe ${id} names a base that is neither the clean nor the planted file`);
     add(id, id, applyPatchChecked(base, text, { target, base_sha256: entry.base_sha256, result_sha256: entry.result_sha256 }), text);
   }
 
+  if (alternative === null) return states;
   if (alternative.target_path !== target) throw new CodeStateRefusal("patch_scope", `the alternative fix must change only ${target}`);
   const alternativeBytes = applyPatchChecked(planted, alternative.patch, {
     target,

@@ -4,8 +4,10 @@ import { createServer } from "node:net";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
-import { DEVELOPMENT, DEVELOPMENT_ROOT, NO_RELEASE, RELEASE, RELEASE_ID, releaseDir, runDir } from "./support/results.ts";
+import { afterEach, describe, expect, it } from "vitest";
+import { cleanup, DEVELOPMENT, DEVELOPMENT_ROOT, NO_RELEASE, RACE_RELEASE_ID, RELEASE, RELEASE_ID, releaseDir, runDir, twoReleases } from "./support/results.ts";
+
+afterEach(cleanup);
 
 const APP = fileURLToPath(new URL("..", import.meta.url));
 const SERVER_APP = join(APP, ".next", "server", "app");
@@ -58,11 +60,11 @@ async function withServer(env: Record<string, string>, check: (url: string) => P
   }
 }
 
-async function judgePost(url: string, passcode: string): Promise<Record<string, unknown>> {
+async function judgePost(url: string, passcode: string, releaseId?: string): Promise<Record<string, unknown>> {
   const session = await fetch(`${url}/api/judge/session`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ passcode }) });
   expect(session.status).toBe(200);
   const cookie = (session.headers.get("set-cookie") ?? "").split(";")[0] ?? "";
-  const response = await fetch(`${url}/api/judge`, { method: "POST", headers: { "content-type": "application/json", cookie }, body: JSON.stringify({ request_id: "00000000-0000-4000-8000-00000000d001" }) });
+  const response = await fetch(`${url}/api/judge`, { method: "POST", headers: { "content-type": "application/json", cookie }, body: JSON.stringify(releaseId === undefined ? { request_id: "00000000-0000-4000-8000-00000000d001" } : { request_id: "00000000-0000-4000-8000-00000000d001", release_id: releaseId }) });
   return (await response.json()) as Record<string, unknown>;
 }
 
@@ -128,6 +130,34 @@ describe("next build", () => {
     });
     await withServer({ ...judge, RBW_JUDGE_RELEASE_SHA256: "0".repeat(64) }, async (url) => {
       expect(await judgePost(url, passcode)).toMatchObject({ state: "unavailable", reason: "release" });
+    });
+  }, 600_000);
+
+  it("prerenders a page for each of two releases and lists both on /, and the judge route replays only an allowlisted frozen release", async () => {
+    const { dir } = twoReleases();
+    build(dir);
+    const routes = prerendered();
+    for (const id of [RACE_RELEASE_ID, RELEASE_ID]) {
+      expect(routes).toContain(`/cases/${id}`);
+      expect(routes).toContain(`/releases/${id}/release.json`);
+    }
+    const home = readFileSync(join(SERVER_APP, "index.html"), "utf8");
+    expect(home).toContain("Released cases");
+    expect(home).toContain(`href="/cases/${RACE_RELEASE_ID}"`);
+    expect(home).toContain(`href="/cases/${RELEASE_ID}"`);
+    expect(readFileSync(join(SERVER_APP, "cases", `${RACE_RELEASE_ID}.html`), "utf8")).toContain("Concurrent requests and expected and observed acceptances");
+    expect(readFileSync(join(SERVER_APP, "cases", `${RELEASE_ID}.html`), "utf8")).toContain("Expected and observed local-day counts");
+
+    const passcode = "synthetic-build-passcode";
+    const hash = (id: string) => createHash("sha256").update(readFileSync(join(releaseDir(dir, id), "release.json"))).digest("hex");
+    // With both releases allowlisted, the race release passes route step 2 and stops at the OIDC
+    // token; with only the time-zone release allowlisted, the race release stops at step 2.
+    await withServer({ RBW_JUDGE_PASSCODE: passcode, RBW_JUDGE_RELEASES: `${RELEASE_ID}=${hash(RELEASE_ID)},${RACE_RELEASE_ID}=${hash(RACE_RELEASE_ID)}` }, async (url) => {
+      expect(await judgePost(url, passcode, RACE_RELEASE_ID)).toMatchObject({ state: "unavailable", reason: "token" });
+    });
+    await withServer({ RBW_JUDGE_PASSCODE: passcode, RBW_JUDGE_RELEASES: `${RELEASE_ID}=${hash(RELEASE_ID)}` }, async (url) => {
+      expect(await judgePost(url, passcode, RACE_RELEASE_ID)).toMatchObject({ state: "unavailable", reason: "release" });
+      expect(await judgePost(url, passcode, RELEASE_ID)).toMatchObject({ state: "unavailable", reason: "token" });
     });
   }, 600_000);
 });

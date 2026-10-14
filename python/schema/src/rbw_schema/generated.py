@@ -90,6 +90,10 @@ DEF_NAMES: Final = (
     "FollowUpExample",
     "DocExcerpt",
     "ObservedSymptom",
+    "RaceAttemptOutcome",
+    "RaceAttempt",
+    "AcceptanceCounts",
+    "RaceSymptom",
     "OperationIdentity",
     "MutationChange",
     "MutationIdentity",
@@ -552,10 +556,14 @@ TRIAL_REASON_VALUES: Final = (
 type AssertionFailureCode = Literal[
     "local_day_counts_mismatch",
     "bucket_labels_mismatch",
+    "double_spend",
+    "backup_code_reused",
 ]
 ASSERTION_FAILURE_CODE_VALUES: Final = (
     "local_day_counts_mismatch",
     "bucket_labels_mismatch",
+    "double_spend",
+    "backup_code_reused",
 )
 
 type CheckId = str
@@ -721,6 +729,38 @@ class ObservedSymptom(TypedDict):
     expected: list[BucketCount]
     observed: list[BucketCount]
     follow_up_examples: list[FollowUpExample]
+    doc_excerpts: list[DocExcerpt]
+
+
+type RaceAttemptOutcome = Literal["accepted", "refused"]
+
+
+class RaceAttempt(TypedDict):
+    label: str
+    sent_ms: NonNegativeInteger
+    settled_ms: NonNegativeInteger
+    http_status: int
+    outcome: RaceAttemptOutcome
+    error_code: str | None
+
+
+class AcceptanceCounts(TypedDict):
+    accepted: NonNegativeInteger
+    refused: NonNegativeInteger
+
+
+class RaceSymptom(TypedDict):
+    schema_version: SchemaVersion
+    symptom_kind: Literal["concurrent_double_acceptance"]
+    user_action: str
+    request: SymptomRequest
+    locale: LocaleTag | None
+    fixture_description: str
+    concurrent_attempts: list[RaceAttempt]
+    overlap_ms: PositiveInteger
+    expected: AcceptanceCounts
+    observed: AcceptanceCounts
+    sequential_attempts: list[RaceAttempt]
     doc_excerpts: list[DocExcerpt]
 
 

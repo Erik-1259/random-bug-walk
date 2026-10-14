@@ -105,6 +105,49 @@ describe("buildExpectedTrials", () => {
     ]);
   });
 
+  it("builds the 11-trial admission manifest, without partial-01 and stub-01, when ADM-06 is not applicable", () => {
+    const committed = record("expected-trials-admission-without-probes") as ExpectedTrials;
+    const [first] = committed.trials;
+    const checks = Object.fromEntries(committed.trials.map((trial) => [trial.code_state, trial.expected_checks]));
+    const built = buildExpectedTrials({
+      kind: "admission",
+      executionId: committed.execution_id,
+      taskRevision: committed.task_revision,
+      patchSha256: { fixed: "c".repeat(64), planted: "d".repeat(64) },
+      originalSuiteSha256: first?.original_suite_sha256 ?? null,
+      originalTestIds: first?.original_test_ids ?? [],
+      addedSuiteSha256: first?.added_suite_sha256 ?? "",
+      checks,
+      adm06: "not_applicable",
+    });
+    expect(built.manifest.trials.map((trial) => trial.trial_id)).toEqual([
+      "clean-01",
+      "fixed-01",
+      "fixed-02",
+      "fixed-03",
+      "fixed-04",
+      "fixed-05",
+      "planted-01",
+      "planted-02",
+      "planted-03",
+      "planted-04",
+      "planted-05",
+    ]);
+    expect(built.sha256).toBe(committedSha("expected-trials-admission-without-probes"));
+  });
+
+  it("keeps the 13-trial admission manifest when ADM-06 is required, said or not", () => {
+    const required = buildExpectedTrials({ ...trialsInput("admission", "admission"), adm06: "required" });
+    expect(required.manifest.trials).toHaveLength(13);
+    expect(required.sha256).toBe(committedSha("expected-trials-admission"));
+  });
+
+  it("refuses an ADM-06 choice outside admission, or an unknown one", () => {
+    expect(refusal(() => buildExpectedTrials({ ...trialsInput("judge_verify", "judge-verify"), adm06: "not_applicable" }))).toEqual(["build:adm06"]);
+    const unknown = { ...trialsInput("admission", "admission"), adm06: "optional" } as unknown as ExpectedTrialsInput;
+    expect(refusal(() => buildExpectedTrials(unknown))).toEqual(["build:adm06"]);
+  });
+
   it("ignores the original-suite inputs for observe", () => {
     const built = buildExpectedTrials(trialsInput("observe", "observe"));
     expect(built.manifest.trials[0]?.original_suite_sha256).toBeNull();

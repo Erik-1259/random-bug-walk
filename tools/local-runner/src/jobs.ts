@@ -6,11 +6,12 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, posix } from "node:path";
 import { ImportRefusal, importRecordSet } from "@rbw/admission";
 import { assertRecord, buildExpectedTrials, buildJobRequest, canonicalDigest, mutationId, sha256Hex, taskRevision } from "@rbw/schema";
-import type { CodeState, ExpectedCheck, ExpectedTrials, JobKind, JobRequest, TaskRevisionIdentity } from "@rbw/schema";
+import type { Adm06Applicability, CodeState, ExpectedCheck, ExpectedTrials, JobKind, JobRequest, TaskRevisionIdentity } from "@rbw/schema";
 import type { ProbeSet } from "@rbw/shapes";
 import { UMAMI_COMMIT } from "@rbw/umami-driver";
-import type { Fixture } from "@rbw/umami-fixture";
 import type { CodeStates, StateFile, StateKey } from "./code-states.ts";
+import { adm06For } from "./family.ts";
+import type { FamilyFixture } from "./family.ts";
 import { runTag } from "./shared.ts";
 
 export { runTag };
@@ -76,7 +77,13 @@ export interface JobContext {
   addedSuiteSha256: string;
   originalSuite: { sha256: string; testIds: readonly string[] };
   states: CodeStates;
-  vectors: Readonly<Record<CodeState, readonly ExpectedCheck[]>>;
+  /** One vector per code state the family uses: no partial or stub vector when ADM-06 is not applicable. */
+  vectors: Readonly<Partial<Record<CodeState, readonly ExpectedCheck[]>>>;
+  /**
+   * "not_applicable" when the family's probe set records ADM-06 as not applicable: the admission
+   * job then runs the 11-copy profile. Absent: "required", the 13-copy profile.
+   */
+  adm06?: Adm06Applicability;
   /** SHA-256 of the copy profile (resources, network, limits), as the runtime profile and the environment. */
   profileSha256: string;
   deadlineAt: string;
@@ -111,18 +118,33 @@ function patchHash(states: CodeStates, key: StateKey): string {
   return hash;
 }
 
-/** The expected-check vectors from the fixture, refused when a probe's recorded vector disagrees. */
-export function expectedVectors(fixture: Fixture, probes: ProbeSet): Record<CodeState, ExpectedCheck[]> {
-  const vector = (codeState: CodeState): ExpectedCheck[] =>
-    fixture.outcome_vectors[codeState].map((row) => assertRecord("ExpectedCheck", { check_id: row.check_id, expected: row.observed, failure_code: row.failure_code }));
-  const vectors = { clean: vector("clean"), fixed: vector("fixed"), planted: vector("planted"), partial: vector("partial"), stub: vector("stub") };
-  for (const [probeId, codeState] of [
-    ["mutation", "planted"],
-    ["partial", "partial"],
-    ["stub", "stub"],
-  ] as const) {
+/**
+ * The expected-check vectors from the fixture, refused when a probe's recorded vector disagrees.
+ * A probe set that records ADM-06 as not applicable has only the mutation probe, so only the
+ * clean, fixed and planted vectors are read and checked; any other needs all five.
+ */
+export function expectedVectors(fixture: FamilyFixture, probes: ProbeSet): Partial<Record<CodeState, ExpectedCheck[]>> {
+  const vector = (codeState: CodeState): ExpectedCheck[] => {
+    const rows = fixture.outcome_vectors[codeState];
+    if (rows === undefined) throw new JobRefusal(`the fixture declares no ${codeState} vector`);
+    return rows.map((row) => assertRecord("ExpectedCheck", { check_id: row.check_id, expected: row.observed, failure_code: row.failure_code }));
+  };
+  const withProbes = adm06For(probes) === "required";
+  const vectors: Partial<Record<CodeState, ExpectedCheck[]>> = { clean: vector("clean"), fixed: vector("fixed"), planted: vector("planted") };
+  if (withProbes) {
+    vectors.partial = vector("partial");
+    vectors.stub = vector("stub");
+  }
+  const pairs = withProbes
+    ? ([
+        ["mutation", "planted"],
+        ["partial", "partial"],
+        ["stub", "stub"],
+      ] as const)
+    : ([["mutation", "planted"]] as const);
+  for (const [probeId, codeState] of pairs) {
     const recorded = probes.data.probes.find((probe) => probe.id === probeId)?.expected;
-    const fixtureVector = vectors[codeState];
+    const fixtureVector = vectors[codeState] ?? [];
     const agrees =
       recorded !== undefined &&
       Object.keys(recorded).length === fixtureVector.length &&
@@ -195,6 +217,8 @@ export function buildJob(label: JobLabel, ctx: JobContext, baseline: { key: stri
   if (kind === "observe" && baseline === null) throw new JobRefusal("an observation needs the kit-check baseline");
   const executionId = ctx.ids.executions[label];
   const revision = label === "kit-check" ? kitRevision(ctx) : candidateRevision(ctx);
+  // ADM-06 not applicable: no partial or stub state exists, and only the admission job's profile changes.
+  const withProbes = (ctx.adm06 ?? "required") === "required";
   const expected = buildExpectedTrials({
     kind,
     executionId,
@@ -202,13 +226,13 @@ export function buildJob(label: JobLabel, ctx: JobContext, baseline: { key: stri
     patchSha256: {
       planted: patchHash(ctx.states, "planted"),
       fixed: patchHash(ctx.states, label === "alternative-fix" ? (ctx.judgeFixed ?? "alternative_fix") : "fixed"),
-      partial: patchHash(ctx.states, "partial"),
-      stub: patchHash(ctx.states, "stub"),
+      ...(withProbes ? { partial: patchHash(ctx.states, "partial"), stub: patchHash(ctx.states, "stub") } : {}),
     },
     originalSuiteSha256: ctx.originalSuite.sha256,
     originalTestIds: ctx.originalSuite.testIds,
     addedSuiteSha256: ctx.addedSuiteSha256,
     checks: ctx.vectors,
+    ...(kind === "admission" && !withProbes ? { adm06: "not_applicable" as const } : {}),
   });
   const built = buildJobRequest({
     schema_version: 1,

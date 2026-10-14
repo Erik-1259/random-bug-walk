@@ -1341,6 +1341,18 @@
       "rule": "assertion failure code"
     },
     {
+      "name": "assertion-failure-code-double-spend",
+      "type": "AssertionFailureCode",
+      "expect": "valid",
+      "rule": "assertion failure code"
+    },
+    {
+      "name": "assertion-failure-code-backup-code-reused",
+      "type": "AssertionFailureCode",
+      "expect": "valid",
+      "rule": "assertion failure code"
+    },
+    {
       "name": "assertion-failure-code-unknown",
       "type": "AssertionFailureCode",
       "expect": "invalid",
@@ -1939,6 +1951,37 @@
         "request": "job-request-for-expected-trials-admission-missing-trial"
       },
       "error": "trials:trial_list"
+    },
+    {
+      "name": "job-request-for-expected-trials-admission-without-probes",
+      "type": "JobRequest",
+      "expect": "valid",
+      "rule": "request for expected-trials-admission-without-probes"
+    },
+    {
+      "name": "expected-trials-admission-without-probes",
+      "type": "ExpectedTrials",
+      "expect": "valid",
+      "rule": "admission without the ADM-06 probes, for a family that records them as not applicable",
+      "context": {
+        "request": "job-request-for-expected-trials-admission-without-probes"
+      }
+    },
+    {
+      "name": "job-request-for-expected-trials-admission-without-probes-wrong-repeat",
+      "type": "JobRequest",
+      "expect": "valid",
+      "rule": "request for expected-trials-admission-without-probes-wrong-repeat"
+    },
+    {
+      "name": "expected-trials-admission-without-probes-wrong-repeat",
+      "type": "ExpectedTrials",
+      "expect": "invalid",
+      "rule": "repeat count follows the admission profile without probes",
+      "context": {
+        "request": "job-request-for-expected-trials-admission-without-probes-wrong-repeat"
+      },
+      "error": "trials:repeat_count"
     },
     {
       "name": "job-request-for-expected-trials-admission-reordered",
@@ -2541,6 +2584,146 @@
       "type": "ObservedSymptom",
       "expect": "invalid",
       "rule": "time zone shape"
+    },
+    {
+      "name": "race-symptom-valid",
+      "type": "RaceSymptom",
+      "expect": "valid",
+      "rule": "race-family writer input (synthetic times)"
+    },
+    {
+      "name": "race-symptom-no-locale",
+      "type": "RaceSymptom",
+      "expect": "valid",
+      "rule": "locale may be null"
+    },
+    {
+      "name": "race-symptom-extra-field",
+      "type": "RaceSymptom",
+      "expect": "invalid",
+      "rule": "no other field"
+    },
+    {
+      "name": "race-symptom-attempt-extra-field",
+      "type": "RaceSymptom",
+      "expect": "invalid",
+      "rule": "no other field in an attempt"
+    },
+    {
+      "name": "race-symptom-counts-extra-field",
+      "type": "RaceSymptom",
+      "expect": "invalid",
+      "rule": "no other field in the counts"
+    },
+    {
+      "name": "race-symptom-wrong-kind",
+      "type": "RaceSymptom",
+      "expect": "invalid",
+      "rule": "symptom_kind is concurrent_double_acceptance"
+    },
+    {
+      "name": "race-symptom-three-attempts",
+      "type": "RaceSymptom",
+      "expect": "invalid",
+      "rule": "exactly two concurrent attempts"
+    },
+    {
+      "name": "race-symptom-one-attempt",
+      "type": "RaceSymptom",
+      "expect": "invalid",
+      "rule": "exactly two concurrent attempts"
+    },
+    {
+      "name": "race-symptom-accepted-error-code",
+      "type": "RaceSymptom",
+      "expect": "invalid",
+      "rule": "an accepted attempt has no error code"
+    },
+    {
+      "name": "race-symptom-accepted-status-201",
+      "type": "RaceSymptom",
+      "expect": "invalid",
+      "rule": "an accepted attempt has HTTP 200"
+    },
+    {
+      "name": "race-symptom-refused-no-error-code",
+      "type": "RaceSymptom",
+      "expect": "invalid",
+      "rule": "a refused attempt has an error code"
+    },
+    {
+      "name": "race-symptom-zero-overlap",
+      "type": "RaceSymptom",
+      "expect": "invalid",
+      "rule": "the requests overlap by at least 1 ms"
+    },
+    {
+      "name": "race-symptom-counts-mismatch",
+      "type": "RaceSymptom",
+      "expect": "invalid",
+      "rule": "observed counts the concurrent outcomes",
+      "error": "race_symptom:observed_counts"
+    },
+    {
+      "name": "race-symptom-settled-before-sent",
+      "type": "RaceSymptom",
+      "expect": "invalid",
+      "rule": "no attempt settles before it is sent",
+      "error": "race_symptom:attempt_times"
+    },
+    {
+      "name": "race-symptom-overlap-mismatch",
+      "type": "RaceSymptom",
+      "expect": "invalid",
+      "rule": "overlap_ms is the earlier settle minus the later send",
+      "error": "race_symptom:overlap"
+    },
+    {
+      "name": "race-symptom-pass-outcome",
+      "type": "RaceSymptom",
+      "expect": "invalid",
+      "rule": "the concurrent attempts show a double acceptance: observed is 2 accepted and 0 refused",
+      "error": "race_symptom:observed"
+    },
+    {
+      "name": "race-symptom-expected-not-one-each",
+      "type": "RaceSymptom",
+      "expect": "invalid",
+      "rule": "expected is 1 accepted and 1 refused",
+      "error": "race_symptom:expected"
+    },
+    {
+      "name": "race-symptom-no-sequential",
+      "type": "RaceSymptom",
+      "expect": "invalid",
+      "rule": "exactly two sequential attempts"
+    },
+    {
+      "name": "race-symptom-three-sequential",
+      "type": "RaceSymptom",
+      "expect": "invalid",
+      "rule": "exactly two sequential attempts"
+    },
+    {
+      "name": "race-symptom-sequential-overlap",
+      "type": "RaceSymptom",
+      "expect": "invalid",
+      "rule": "the sequential reuse is sent after the first use settled",
+      "error": "race_symptom:sequential"
+    },
+    {
+      "name": "race-symptom-sequential-reuse-accepted",
+      "type": "RaceSymptom",
+      "expect": "invalid",
+      "rule": "the sequential reuse is refused",
+      "error": "race_symptom:sequential"
+    },
+    {
+      "name": "race-symptom-sequential-first-refused",
+      "type": "RaceSymptom",
+      "expect": "invalid",
+      "rule": "the sequential first use is accepted",
+      "error": "race_symptom:sequential"
     },
     {
       "name": "release-valid",

@@ -12,15 +12,23 @@ import type { Rates } from "@rbw/envelope";
 import {
   BASELINE_KEY,
   CodeStateRefusal,
+  DEFAULT_FAMILY,
   ExportError,
+  FamilyError,
   InputsError,
   JobRefusal,
   PlanError,
+  adm06For,
   buildJob,
+  checkFamilyImage,
+  checkFamilyProbes,
+  checkKitStage,
   containerName,
   deriveCodeStates,
   expectedVectors,
+  familyRecord,
   exportImage,
+  frozenJobFamily,
   importJob,
   inspectImage,
   loadCopyInputs,
@@ -35,12 +43,11 @@ import {
   utcSeconds,
   writeJobDir,
 } from "@rbw/local-runner";
-import type { BuiltJob, Clock, CopyResult, CopySummary, Docker, JobContext, JobLabel, RunCopyOutcome, RunIds, SandboxSdk, TrialSummary } from "@rbw/local-runner";
+import type { BuiltJob, Clock, CopyResult, CopySummary, Docker, FamilyId, JobContext, JobLabel, RunCopyOutcome, RunIds, SandboxSdk, TrialSummary } from "@rbw/local-runner";
 import { buildJobRequest, callName, canonicalDigest, operationId, parseCanonical, providerCallIdentity, sha256Hex } from "@rbw/schema";
 import type { ExpectedTrial, JobKind } from "@rbw/schema";
 import type { OperationState, Refusal, Result, Spend } from "@rbw/spend";
 import { addedSuiteSha256, parseSuiteManifest } from "@rbw/umami-driver";
-import { FIXTURE_FILE, loadFixture } from "@rbw/umami-fixture";
 import { copyEnvelope, copySettlement } from "./envelope.ts";
 import type { CopyEnvelope } from "./envelope.ts";
 import { LaunchWatch, watchedDocker, watchedSandbox } from "./launch.ts";
@@ -65,8 +72,12 @@ export interface JobInputs {
   kitStage: string;
   /** The driver's frozen original-suite manifest; when null, a local Docker freeze copy makes it. */
   originalSuite: string | null;
+  /** The bug family: its fixture, probe set, kit image and alternative fix. The time-zone family when absent. */
+  family?: FamilyId;
+  /** Race family only: the database latency each copy's Toxiproxy applies, 0 to 10000 ms; absent keeps the image default. */
+  raceLatencyMs?: number | null;
   probesDir?: string;
-  /** The fix a judge replay grades as fixed-01 (the alternative-fix layout); the local runner's alternative fix by default. */
+  /** The fix a judge replay grades as fixed-01 (the alternative-fix layout); the family's alternative fix by default. */
   alternativeDir?: string;
   /**
    * The code state judge_verify's fixed-01 grades: `fixed` is the reference fix (the clean file's
@@ -142,6 +153,14 @@ export interface CopyRecord {
   copy: CopySummary | null;
 }
 
+export type FamilySummary = ReturnType<typeof familyRecord> & { race_latency_ms: number | null };
+
+/** The summary's family record: none for the default family, so a time-zone summary is what it always was. */
+function familySummary(copyInputs: ReturnType<typeof loadCopyInputs>): FamilySummary | null {
+  if (copyInputs.family.id === DEFAULT_FAMILY) return null;
+  return { ...familyRecord(copyInputs.family, copyInputs.probes), race_latency_ms: copyInputs.raceLatencyMs };
+}
+
 export interface ControllerSummary {
   schema_version: 1;
   label: "development_evidence";
@@ -183,6 +202,12 @@ export interface ControllerSummary {
   import: { refusal: string | null; evidence_sha256: string | null; decision_sha256: string | null; trials: TrialSummary[] };
   spend: { reserved_microusd: number; settled_microusd: number; open_microusd: number };
   slot: { key: string; acquired: boolean; released: boolean; blockers: { child_resources: string[]; operation_ids: string[] } | null };
+  /**
+   * Off the default family only: the family, its ADM-06 record with the reason, the admission job's
+   * copy count and the database latency every copy set (null: the image's default). The job request
+   * does not name the latency, so this is where the published run files say which one was used.
+   */
+  family?: FamilySummary;
 }
 
 export interface JobOutcome {
@@ -418,6 +443,13 @@ interface Built {
 /** Inspects and exports the image, freezes the original suite when none is given, and builds the job with the local runner's builders. */
 async function build(inputs: JobInputs, deps: ControllerDeps, state: ControllerState, p: Paths, summary: ControllerSummary, deadlineMs: number): Promise<Built> {
   const copyInputs = loadCopyInputs(inputs);
+  // The kit stage and the probe set must be the family's own; checked before the export or any copy.
+  try {
+    checkKitStage(copyInputs.family, inputs.kitStage);
+    checkFamilyProbes(copyInputs.family, copyInputs.probes);
+  } catch (error) {
+    throw error instanceof FamilyError ? new InputsError(error.message) : error;
+  }
   const envelope = copyEnvelope(deps.rates);
   if (!envelope.ok) throw new JobRefusal(`the copy envelope was refused (${envelope.code})`);
   const tag = runTag(state.ids.root_execution_id);
@@ -426,6 +458,11 @@ async function build(inputs: JobInputs, deps: ControllerDeps, state: ControllerS
   const exported = await exportImage(deps.docker, { image: digest, container: containerName(tag, inputs.name, "export"), dest: join(p.base, "source") });
   const kitSha256 = sha256Hex(exported.image_manifest);
   summary.image.kit_sha256 = kitSha256;
+  try {
+    checkFamilyImage(copyInputs.family, exported.image_manifest);
+  } catch (error) {
+    throw error instanceof FamilyError ? new PlanError(error.message) : error;
+  }
   const states = deriveCodeStates(readFileSync(join(exported.source_dir, copyInputs.probes.data.target_path)), copyInputs.probes, copyInputs.alternative);
 
   let suiteBytes: Buffer;
@@ -442,6 +479,7 @@ async function build(inputs: JobInputs, deps: ControllerDeps, state: ControllerS
         job_dir: null,
         placement: null,
         audit: () => Promise.resolve(NOT_APPLICABLE),
+        ...(copyInputs.raceLatencyMs === null ? {} : { proxy_latency_ms: copyInputs.raceLatencyMs }),
       },
       { docker: deps.docker, clock: deps.clock },
     );
@@ -459,12 +497,17 @@ async function build(inputs: JobInputs, deps: ControllerDeps, state: ControllerS
     ids: state.ids,
     imageDigest: digest,
     kitSha256,
-    fixtureSha256: sha256Hex(readFileSync(FIXTURE_FILE)),
+    fixtureSha256: sha256Hex(readFileSync(copyInputs.family.fixtureFile)),
     addedSuiteSha256: await addedSuiteSha256(fixtureDir),
     originalSuite: { sha256: sha256Hex(suiteBytes), testIds: suite.tests.map((test) => test.id) },
     states,
-    vectors: expectedVectors(loadFixture(), copyInputs.probes),
-    profileSha256: profileSha256(),
+    vectors: expectedVectors(copyInputs.family.loadFixture(), copyInputs.probes),
+    adm06: adm06For(copyInputs.probes),
+    // A family without an alternative fix: a judge replay built here (`run --job-kind judge_verify
+    // --family race`) grades the reference fix as fixed-01. A prebuilt judge replay does not reach
+    // this build: its family and latency come from its frozen job (withFrozenFamily).
+    ...(copyInputs.alternative === null ? { judgeFixed: "fixed" as const } : {}),
+    profileSha256: profileSha256(copyInputs.raceLatencyMs),
     deadlineAt: utcSeconds(deadlineMs),
     ...(inputs.projectPolicy === undefined ? {} : { projectPolicy: inputs.projectPolicy }),
     ...(inputs.judgeFixed === undefined ? {} : { judgeFixed: inputs.judgeFixed }),
@@ -664,6 +707,8 @@ async function runOneCopy(run: Run, trial: ExpectedTrial): Promise<{ go: boolean
         manifest: inputs.manifest,
         terms: inputs.terms,
         policy: inputs.policy,
+        ...(inputs.family === undefined ? {} : { family: inputs.family }),
+        ...(inputs.raceLatencyMs === undefined ? {} : { raceLatencyMs: inputs.raceLatencyMs }),
         ...(inputs.probesDir === undefined ? {} : { probesDir: inputs.probesDir }),
         ...(inputs.alternativeDir === undefined ? {} : { alternativeDir: inputs.alternativeDir }),
         work: join(run.p.copies, trial.trial_id),
@@ -721,8 +766,9 @@ function writeSummary(p: Paths, summary: ControllerSummary): ControllerSummary {
 }
 
 /** A job directory with a controller record but no summary: an earlier run stopped part-way, or is still running. Nothing is launched. */
-async function interrupted(inputs: JobInputs, deps: ControllerDeps, state: ControllerState): Promise<ControllerSummary> {
+async function interrupted(inputs: JobInputs, deps: ControllerDeps, state: ControllerState, family: FamilySummary | null): Promise<ControllerSummary> {
   const summary = emptySummary(inputs, deps, state, utcSeconds(deps.clock.now()));
+  if (family !== null) summary.family = family;
   summary.status = "needs_reconciliation";
   summary.reason = "interrupted";
   summary.detail = "an earlier run of this job has no summary: it stopped part-way or is still running; nothing was launched";
@@ -734,8 +780,24 @@ async function interrupted(inputs: JobInputs, deps: ControllerDeps, state: Contr
   return summary;
 }
 
+/**
+ * A judge replay's family and race latency, read from its frozen job (frozenJobFamily), so the
+ * replay applies them the way a `run --family race --race-latency-ms` job does: the family's
+ * fixture and probe set, and the latency in every copy. Off the default family only, so a
+ * time-zone replay's inputs, and its fingerprint, are what they always were. A frozen job whose
+ * family cannot be read is refused before any copy.
+ */
+function withFrozenFamily(inputs: JobInputs): { inputs: JobInputs; refusal: string | null } {
+  if (inputs.prebuilt === undefined || inputs.family !== undefined || inputs.raceLatencyMs !== undefined) return { inputs, refusal: null };
+  const frozen = frozenJobFamily(inputs.prebuilt.job);
+  if (!frozen.ok) return { inputs, refusal: frozen.detail };
+  if (frozen.family === DEFAULT_FAMILY) return { inputs, refusal: null };
+  return { inputs: { ...inputs, family: frozen.family, ...(frozen.raceLatencyMs === null ? {} : { raceLatencyMs: frozen.raceLatencyMs }) }, refusal: null };
+}
+
 /** Runs one job end to end, or returns the job its work directory already holds. */
-export async function runJob(inputs: JobInputs, deps: ControllerDeps): Promise<JobOutcome> {
+export async function runJob(given: JobInputs, deps: ControllerDeps): Promise<JobOutcome> {
+  const { inputs, refusal: familyRefusal } = withFrozenFamily(given);
   if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(inputs.name)) throw new InputsError("the job name must be lowercase letters, digits and single hyphens");
   if (inputs.backend === "sandbox" && (deps.sandbox === undefined || inputs.sandboxImage === null)) throw new InputsError("the sandbox backend needs the SDK and --sandbox-image");
   const p = paths(inputs.work, inputs.name);
@@ -747,7 +809,7 @@ export async function runJob(inputs: JobInputs, deps: ControllerDeps): Promise<J
     name: inputs.name,
     image: inputs.image,
     image_digest: inputs.prebuilt === undefined ? await imageDigest(deps.docker, inputs.image) : null,
-    fixture_sha256: sha256Hex(readFileSync(FIXTURE_FILE)),
+    fixture_sha256: sha256Hex(readFileSync(copyInputs.family.fixtureFile)),
     added_suite_sha256: existsSync(fixtureDir) ? await addedSuiteSha256(fixtureDir) : null,
     baseline_sha256: inputs.kind === "observe" && existsSync(baselinePath) ? fileSha(baselinePath) : null,
     backend: inputs.backend,
@@ -759,8 +821,10 @@ export async function runJob(inputs: JobInputs, deps: ControllerDeps): Promise<J
     policy_sha256: copyInputs.policySha256,
     probes_json_sha256: copyInputs.probesJsonSha256,
     probe_patches_sha256: copyInputs.probePatchesSha256,
-    alternative_record_sha256: copyInputs.alternative.record_sha256,
-    alternative_patch_sha256: copyInputs.alternative.patch_sha256,
+    alternative_record_sha256: copyInputs.alternative?.record_sha256 ?? null,
+    alternative_patch_sha256: copyInputs.alternative?.patch_sha256 ?? null,
+    // Off the default family only, so a time-zone job's fingerprint is what it always was.
+    ...(copyInputs.family.id === DEFAULT_FAMILY ? {} : { family: copyInputs.family.id, race_latency_ms: copyInputs.raceLatencyMs }),
     original_suite_sha256: fileSha(inputs.originalSuite),
     ...(inputs.ids === undefined ? {} : { ids: inputs.ids }),
     ...(inputs.prebuilt === undefined ? {} : { prebuilt: inputs.prebuilt.fingerprint }),
@@ -775,7 +839,7 @@ export async function runJob(inputs: JobInputs, deps: ControllerDeps): Promise<J
       const summary = parseCanonical(readFileSync(p.summary)) as unknown as ControllerSummary;
       return { exitCode: exitCode(summary.status), replay: true, status: summary.status, summary, work: inputs.work, jobDir: p.base };
     }
-    const summary = await interrupted(inputs, deps, state);
+    const summary = await interrupted(inputs, deps, state, familySummary(copyInputs));
     return { exitCode: 1, replay: true, status: summary.status, summary, work: inputs.work, jobDir: p.base };
   }
   if (existsSync(p.base) && readdirSync(p.base).length > 0) throw new InputsError(`jobs/${inputs.name} is not empty and holds no controller record`);
@@ -786,6 +850,8 @@ export async function runJob(inputs: JobInputs, deps: ControllerDeps): Promise<J
   mkdirSync(p.base, { recursive: true });
   writeFileSync(p.state, `${JSON.stringify(state, null, 2)}\n`);
   const summary = emptySummary(inputs, deps, state, utcSeconds(startedMs));
+  const family = familySummary(copyInputs);
+  if (family !== null) summary.family = family;
   const finish = (): JobOutcome => {
     summary.controller.ended_at = utcSeconds(deps.clock.now());
     const written = writeSummary(p, summary);
@@ -794,6 +860,7 @@ export async function runJob(inputs: JobInputs, deps: ControllerDeps): Promise<J
 
   let built: Built;
   try {
+    if (familyRefusal !== null) throw new JobRefusal(`family_unreadable: ${familyRefusal}`);
     built = inputs.prebuilt === undefined ? await build(inputs, deps, state, p, summary, deadline) : prebuiltBuild(inputs, inputs.prebuilt, deps, p, summary);
   } catch (error) {
     if (!(error instanceof PlanError || error instanceof ExportError || error instanceof CodeStateRefusal || error instanceof JobRefusal || error instanceof InputsError)) throw error;

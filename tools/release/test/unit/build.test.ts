@@ -4,13 +4,14 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { loadRateSheet } from "@rbw/envelope";
 import type { Rates } from "@rbw/envelope";
 import { RATE_SHEET_PATH, judgeReservation } from "@rbw/controller";
-import { candidateIdentity, utcSeconds } from "@rbw/local-runner";
+import { FAMILIES, candidateIdentity, profileSha256, utcSeconds } from "@rbw/local-runner";
 import { buildJobRequest, buildPolicy, canonicalDigest, encodeCanonical, parseCanonical, parseRecord, sha256Hex, taskRevision } from "@rbw/schema";
 import type { ExpectedTrials, FamilyRegistry, HeldOutIdentityList, JobRequest, PublicationRecord } from "@rbw/schema";
+import { PROBE_DIR, loadProbeSet } from "@rbw/shapes";
 import { buildRelease } from "../../src/build.ts";
 import type { BuildDeps, BuildOptions } from "../../src/build.ts";
 import { checkRelease } from "../../src/check.ts";
-import { JUDGE_PLACEHOLDERS } from "../../src/judge-job.ts";
+import { JUDGE_PLACEHOLDERS, TIME_ZONE_FAMILY } from "../../src/judge-job.ts";
 import { LocalPrivateStore } from "@rbw/publisher/private-store";
 import type { PrivateStore } from "@rbw/publisher/private-store";
 import { stage } from "../../src/stage.ts";
@@ -437,6 +438,65 @@ describe("build: a failing check stores and writes nothing", () => {
     const approval = write(join(tempDir(), "approval.json"), JSON.stringify({ decision: "approved", issue_sha256: "e".repeat(64), reviewed_at: "2026-10-14T10:00:00Z" }));
     const outcome = await buildRelease(options({ approval, registry: registry([]) }), deps({ docker: kitDocker(w.kit, []) }));
     expect(outcome).toMatchObject({ ok: false, codes: ["approval_issue_mismatch", "kit_image_missing", "unregistered"] });
+  });
+});
+
+describe("build: the family the admitted run's records name", () => {
+  const RACE = { id: "race", adm06: { status: "not_applicable", reason: "Synthetic: a partial or stub fix of this race has no natural form." }, admission_copies: 11 };
+
+  /** The eligible published run with a family record added to its admission summary, and its admission request under `profile` when given. */
+  function runWithFamily(family: Record<string, unknown>, profile?: string): string {
+    const runDir = join(tempDir(), "run");
+    cpSync(eligible.runDir, runDir, { recursive: true });
+    const results = join(runDir, "results", factory.ids.executions.admission);
+    editJson(join(results, "summary.json"), (summary) => ({ ...summary, family }));
+    if (profile !== undefined) {
+      const request = parseRecord("JobRequest", readFileSync(join(results, "request.json")));
+      writeFileSync(join(results, "request.json"), buildJobRequest({ ...request, runtime_profile_sha256: profile }).bytes);
+    }
+    return runDir;
+  }
+
+  it("refuses a race run recorded with no latency before anything is built (race_latency_missing)", async () => {
+    const opts = options({ run: runWithFamily({ ...RACE, race_latency_ms: null }), sources: { ...w.sources, family: TIME_ZONE_FAMILY } });
+    const d = deps({ docker: kitDocker(w.kit) });
+    await expect(buildRelease(opts, d)).rejects.toMatchObject({ code: "race_latency_missing" });
+    expect((d.docker as ReturnType<typeof kitDocker>).calls).toEqual([]);
+    expect(existsSync(opts.out)).toBe(false);
+    expect(existsSync(opts.localStore ?? "")).toBe(false);
+  });
+
+  it("refuses a recorded race latency that the admission's profile hash does not hold, before anything is built (run_family_mismatch)", async () => {
+    const opts = options({ run: runWithFamily({ ...RACE, race_latency_ms: 75 }) });
+    await expect(buildRelease(opts, deps())).rejects.toMatchObject({ code: "run_family_mismatch" });
+    expect(existsSync(opts.out)).toBe(false);
+    expect(existsSync(opts.localStore ?? "")).toBe(false);
+  });
+
+  it("refuses time-zone family inputs for a run whose records name the race family (family_conflict)", async () => {
+    const opts = options({ run: runWithFamily({ ...RACE, race_latency_ms: null }) });
+    await expect(buildRelease(opts, deps())).rejects.toMatchObject({ code: "family_conflict" });
+    expect(existsSync(opts.out)).toBe(false);
+  });
+
+  it("builds the judge job from the recorded race family's inputs, never the given sources' time-zone family", async () => {
+    // No family flag: as given, these sources build a time-zone job from the time-zone probes. The
+    // recorded race family must replace them, so the job is built from the race probes (whose clean
+    // file the synthetic manifest does not hold, which is what refuses it here).
+    const flagless: BuildOptions["sources"] = { ...w.sources };
+    delete flagless.family;
+    const opts = options({ run: runWithFamily({ ...RACE, race_latency_ms: 75 }, profileSha256(75)), sources: flagless });
+    const d = deps();
+    const outcome = await buildRelease(opts, d);
+    expect(outcome).toMatchObject({ ok: false, codes: ["judge_job_unbuildable"] });
+    const raceTarget = loadProbeSet(FAMILIES.race.probesDir).data.target_path;
+    const timeZoneTarget = loadProbeSet(PROBE_DIR).data.target_path;
+    expect(raceTarget).not.toBe(timeZoneTarget);
+    const refusal = d.logs.find((line) => line.startsWith("build judge_job_unbuildable"));
+    expect(refusal).toContain(raceTarget);
+    expect(refusal).not.toContain(timeZoneTarget);
+    expect(existsSync(opts.out)).toBe(false);
+    expect(existsSync(opts.localStore ?? "")).toBe(false);
   });
 });
 

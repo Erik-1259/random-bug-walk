@@ -2,7 +2,7 @@ import { cpSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } fr
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { canonicalDigest, encodeCanonical, parseCanonical, parseRecord, sha256Hex, type JsonValue, type Release } from "@rbw/schema";
-import { readPublishedFile, readReleaseFile, readResults, ReleaseError, type ReleaseErrorCode } from "../src/release.ts";
+import { isRaceSymptom, readPublishedFile, readReleaseFile, readResults, ReleaseError, type ReleaseErrorCode } from "../src/release.ts";
 import {
   addRunFile,
   cleanup,
@@ -46,9 +46,11 @@ describe("development fixture (local run of 2026-10-06)", () => {
     expect(run?.manifest?.entries).toHaveLength(6);
     expect(run?.admission).toBeNull();
     expect(results.caseRun).toBe(run);
-    expect(run?.symptom?.timezone).toBe("America/Los_Angeles");
-    expect(run?.symptom?.expected.map((bucket) => bucket.count)).toEqual([3, 8, 1]);
-    expect(run?.symptom?.observed.map((bucket) => bucket.count)).toEqual([2, 8, 2]);
+    const symptom = run?.symptom;
+    if (symptom == null || isRaceSymptom(symptom)) throw new Error("expected the time-zone family's symptom");
+    expect(symptom.timezone).toBe("America/Los_Angeles");
+    expect(symptom.expected.map((bucket) => bucket.count)).toEqual([3, 8, 1]);
+    expect(symptom.observed.map((bucket) => bucket.count)).toEqual([2, 8, 2]);
   });
 
   it("holds the symptom of the committed writer input, byte for byte in canonical form", () => {
@@ -158,10 +160,11 @@ describe("malformed release directories are refused", () => {
     expect(await refusal(dir)).toBe("release_invalid");
   });
 
-  it("an empty releases directory is no release", async () => {
+  it("an empty releases directory (no releases/ at all is no release)", async () => {
     const dir = copyFixture(DEVELOPMENT);
-    mkdirSync(join(dir, "repository", "releases"));
     expect((await readResults(dir)).release).toBeNull();
+    mkdirSync(join(dir, "repository", "releases"));
+    expect(await refusal(dir)).toBe("release_invalid");
   });
 });
 

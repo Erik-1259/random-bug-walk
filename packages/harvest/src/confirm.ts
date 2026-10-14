@@ -17,32 +17,26 @@
 //   (`timezone_is_constant`), and the name it is read from is bound in the call's own function,
 //   an enclosing one, or the module (`timezone_unbound`, also for a value with no name): the
 //   caller had the time zone.
-import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { Lang, parse, type SgNode } from "@ast-grep/napi";
-import { loadRules, type LoadedRule } from "@rbw/shapes";
+import type { LoadedRule } from "@rbw/shapes";
+import { loadCandidateRules } from "./rule-file.ts";
+
+export { SOURCE_FILE } from "./rule-file.ts";
 
 export const CANDIDATE_RULE_FILE = fileURLToPath(new URL("../rules/tz-arg.candidate.yml", import.meta.url));
 export const CANDIDATE_RULE_IDS = { TypeScript: "tz-arg.candidate.ts", Tsx: "tz-arg.candidate.tsx" } as const;
 
-const RULE_BYTES = readFileSync(CANDIDATE_RULE_FILE);
-const RULES = loadRules(RULE_BYTES);
+/** The time-zone candidate rules, for shape DT-1.tz-arg. */
+export const TZ_CANDIDATE_RULES = loadCandidateRules(CANDIDATE_RULE_FILE, CANDIDATE_RULE_IDS);
 
 export function candidateRuleBytes(): Uint8Array {
-  return RULE_BYTES;
+  return TZ_CANDIDATE_RULES.bytes;
 }
-
-const TYPESCRIPT = /\.(ts|mts|cts)$/;
-export const SOURCE_FILE = /\.(ts|mts|cts|tsx|js|mjs|cjs|jsx)$/;
 
 /** TypeScript files parse as TypeScript; TSX and every JavaScript form parse as TSX. */
 export function candidateRule(path: string): LoadedRule {
-  const id = TYPESCRIPT.test(path) ? CANDIDATE_RULE_IDS.TypeScript : CANDIDATE_RULE_IDS.Tsx;
-  const rule = RULES.get(id);
-  if (rule === undefined) {
-    throw new Error(`the candidate rule file does not define ${id}`);
-  }
-  return rule;
+  return TZ_CANDIDATE_RULES.rule(path);
 }
 
 /** Text with a word ending in a time-zone word, as the cheap filter before any blob is fetched. */
@@ -121,19 +115,19 @@ const BINDING_FIELDS: Readonly<Partial<Record<string, readonly string[]>>> = {
 };
 const BINDING_CONTAINERS = new Set(["array_pattern", "rest_pattern", "import_clause", "namespace_import", "formal_parameters"]);
 
-function kindOf(node: SgNode | null | undefined): string {
+export function kindOf(node: SgNode | null | undefined): string {
   return node === null || node === undefined ? "" : String(node.kind());
 }
 
 /** The first child in a field. The napi typings resolve field names only for typed grammars. */
-function fieldOf(node: SgNode | null | undefined, name: string): SgNode | null {
+export function fieldOf(node: SgNode | null | undefined, name: string): SgNode | null {
   if (node === null || node === undefined) {
     return null;
   }
   return (node as unknown as { field(name: string): SgNode | null }).field(name);
 }
 
-function argumentsOf(call: SgNode): SgNode[] {
+export function argumentsOf(call: SgNode): SgNode[] {
   return fieldOf(call, "arguments")?.namedChildren().filter((node) => kindOf(node) !== "comment") ?? [];
 }
 
@@ -162,7 +156,7 @@ export function functionPath(node: SgNode): string {
   return names.length === 0 ? "<module>" : names.join("/");
 }
 
-function calleeOf(call: SgNode): string {
+export function calleeOf(call: SgNode): string {
   return fieldOf(call, "function")?.text() ?? "";
 }
 
@@ -205,7 +199,7 @@ function readsEnvironmentZone(node: SgNode): boolean {
   return node.matches(ENVIRONMENT_ZONE) || node.find(ENVIRONMENT_ZONE) !== null;
 }
 
-function isLiteral(node: SgNode): boolean {
+export function isLiteral(node: SgNode): boolean {
   const kind = kindOf(node);
   if (kind === "template_string") {
     return !node.namedChildren().some((child) => kindOf(child) === "template_substitution");
@@ -334,7 +328,7 @@ function initializedConstant(site: SgNode): boolean {
   return kindOf(parent) === "variable_declarator" && fieldOf(parent, "name")?.id() === site.id() && value !== null && isConstant(value);
 }
 
-const squash = (text: string): string => text.replace(/\s+/g, " ").trim();
+export const squash = (text: string): string => text.replace(/\s+/g, " ").trim();
 
 /**
  * A call's arguments as text with whitespace normalized, leaving out its time-zone argument (a whole
@@ -363,7 +357,7 @@ function callsIn(root: SgNode, callee: string, path: string): SgNode[] {
   return root.findAll({ rule: { kind: "call_expression" } }).filter((call) => calleeOf(call) === callee && functionPath(call) === path);
 }
 
-function hasFunctionPath(root: SgNode, path: string): boolean {
+export function hasFunctionPath(root: SgNode, path: string): boolean {
   if (path === "<module>") {
     return true;
   }

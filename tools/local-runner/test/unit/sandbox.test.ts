@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { COPY_OUTER_LIMIT_MS, COPY_SCRIPT, KILL_GRACE_MS } from "../../src/copy.ts";
+import { COPY_OUTER_LIMIT_MS, COPY_SCRIPT, KILL_GRACE_MS, proxyReport } from "../../src/copy.ts";
 import type { AuditResult, CopyPlan } from "../../src/copy.ts";
 import { ARTIFACT_LIMIT_BYTES } from "../../src/records.ts";
 import {
@@ -15,6 +15,7 @@ import {
   STATUS_CHECKS,
   STATUS_INTERVAL_MS,
   runSandboxCopy,
+  sandboxCopyCommand,
 } from "../../src/sandbox.ts";
 import { FakeClock } from "../support/fakes.ts";
 import { FakeSandboxSdk, ShellKit } from "../support/fake-sandbox.ts";
@@ -183,6 +184,39 @@ describe("sandbox copy: placement and commands", () => {
     expect(SANDBOX_COPY_SCRIPT).toContain(`mkdir "$lock"`);
     expect(SANDBOX_COPY_SCRIPT).toContain(`lock=${COPY_LOCK}`);
     expect(SANDBOX_COPY_SCRIPT).toContain(COPY_SCRIPT);
+  });
+});
+
+describe("sandbox copy: the race family's database latency", () => {
+  const args = (latency: number | null): string[] => sandboxCopyCommand({ mode: "trial", trial_id: "planted-02", proxy_latency_ms: latency }).args.slice(5);
+
+  it("passes the latency as the copy script's third argument, and none when the image default holds", () => {
+    expect(args(50)).toEqual(["rbw-copy", "trial", "planted-02", "50"]);
+    expect(args(0)).toEqual(["rbw-copy", "trial", "planted-02", "0"]);
+    expect(args(null)).toEqual(["rbw-copy", "trial", "planted-02"]);
+  });
+
+  it("sends that command to the sandbox, and reads back rbw-proxy's exit status and the latency it applied", async () => {
+    const { sdk, result } = await run(
+      { collected: { extra: [{ name: "./proxy.exit", content: "0\n" }, { name: "./proxy.stdout", content: "proxy_latency latency_ms=50 source=override\n" }] } },
+      { proxy_latency_ms: 50 },
+    );
+    const command = sdk.calls.flatMap((call) => (call.op === "runCommand" ? [call.params] : []))[0];
+    expect(command?.args.slice(5)).toEqual(["rbw-copy", "trial", "planted-02", "50"]);
+    expect(result.status).toBe("complete");
+    expect(proxyReport(result.collected_dir)).toEqual({ exit: 0, latency_ms: 50, source: "override" });
+  });
+
+  it("fails a copy whose latency rbw-proxy could not set, as proxy_latency_failed, and imports nothing", async () => {
+    const { result } = await run({ collected: { freezeExit: null, runExit: null, result: false, extra: [{ name: "./proxy.exit", content: "1\n" }] }, copyExit: 91 }, { proxy_latency_ms: 50 });
+    expect(result).toMatchObject({ status: "failed", reason: "proxy_latency_failed", records_dir: null });
+    expect(proxyReport(result.collected_dir)).toEqual({ exit: 1, latency_ms: null, source: null });
+  });
+
+  it("has no proxy report for a copy that set no latency", async () => {
+    const { result } = await run();
+    expect(result.status).toBe("complete");
+    expect(proxyReport(result.collected_dir)).toBeNull();
   });
 });
 

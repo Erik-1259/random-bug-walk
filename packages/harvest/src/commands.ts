@@ -1,4 +1,5 @@
-// The harvest commands. `harvest` makes live public GitHub calls and writes a run directory;
+// The harvest commands. `harvest` makes live public GitHub calls for a shape (DT-1.tz-arg unless
+// `--shape` names another) and writes a run directory;
 // `funnel` rebuilds the funnel from a run directory's frozen responses with no network.
 // Exit codes: 0 done; 2 the command cannot run (bad usage, an unreadable or incomplete run
 // directory, a rate limit beyond the wait cap, a request that fails without a response).
@@ -7,9 +8,10 @@ import { parseArgs } from "node:util";
 import { canonicalJson } from "@rbw/shapes";
 import { createGitHubClient } from "./github.ts";
 import { harvest, replay, type Funnel } from "./harvest.ts";
+import { HARVEST_SHAPES, harvestShape, UnknownShape, type HarvestShape } from "./shapes.ts";
 
 const USAGE = `usage:
-  cli.ts harvest --out <new directory> [--max <n>]
+  cli.ts harvest --out <new directory> [--max <n>] [--shape <${HARVEST_SHAPES.map((shape) => shape.id).join(" | ")}>]
   cli.ts funnel --in <run directory>`;
 
 const DEFAULT_MAX = 50;
@@ -24,6 +26,17 @@ export interface CommandDeps {
 }
 
 class UsageError extends Error {}
+
+function chosenShape(value: string | undefined): HarvestShape | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  try {
+    return harvestShape(value);
+  } catch (error) {
+    throw error instanceof UnknownShape ? new UsageError(error.message, { cause: error }) : error;
+  }
+}
 
 function positiveInteger(value: string | undefined, fallback: number): number {
   if (value === undefined) {
@@ -60,11 +73,11 @@ function summary(funnel: Funnel): string {
 async function run(argv: readonly string[], deps: CommandDeps): Promise<number> {
   const args = argv[0] === "--" ? argv.slice(1) : [...argv];
   const [command, ...rest] = args;
-  let values: { out?: string | undefined; max?: string | undefined; in?: string | undefined };
+  let values: { out?: string | undefined; max?: string | undefined; in?: string | undefined; shape?: string | undefined };
   try {
     values = parseArgs({
       args: rest,
-      options: { out: { type: "string" }, max: { type: "string" }, in: { type: "string" } },
+      options: { out: { type: "string" }, max: { type: "string" }, in: { type: "string" }, shape: { type: "string" } },
       strict: true,
       allowPositionals: false,
     }).values;
@@ -73,6 +86,7 @@ async function run(argv: readonly string[], deps: CommandDeps): Promise<number> 
   }
   if (command === "harvest" && values.out !== undefined && values.in === undefined) {
     const max = positiveInteger(values.max, DEFAULT_MAX);
+    const shape = chosenShape(values.shape);
     const token = deps.env.GITHUB_TOKEN;
     const authenticated = token !== undefined && token.trim() !== "";
     const now = deps.now ?? Date.now;
@@ -82,11 +96,11 @@ async function run(argv: readonly string[], deps: CommandDeps): Promise<number> 
       now,
       ...(deps.sleep === undefined ? {} : { sleep: deps.sleep }),
     });
-    const funnel = await harvest({ client, out: values.out, max, clock: () => new Date(now()), authenticated });
-    deps.stdout(`harvest: wrote ${values.out} (${authenticated ? "authenticated" : "unauthenticated"})\n${summary(funnel)}`);
+    const funnel = await harvest({ client, out: values.out, max, clock: () => new Date(now()), authenticated, ...(shape === undefined ? {} : { shape }) });
+    deps.stdout(`harvest: wrote ${values.out} (${funnel.shape_id}, ${authenticated ? "authenticated" : "unauthenticated"})\n${summary(funnel)}`);
     return 0;
   }
-  if (command === "funnel" && values.in !== undefined && values.out === undefined && values.max === undefined) {
+  if (command === "funnel" && values.in !== undefined && values.out === undefined && values.max === undefined && values.shape === undefined) {
     deps.stdout(`${canonicalJson(await replay(values.in))}\n`);
     return 0;
   }

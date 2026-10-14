@@ -15,6 +15,7 @@ import { utcSeconds } from "./clock.ts";
 import { COPY_OUTER_LIMIT_MS, KILL_GRACE_MS, runCopies, runCopy } from "./copy.ts";
 import type { CopyPlan, CopyResult } from "./copy.ts";
 import type { Docker } from "./docker.ts";
+import { DEFAULT_FAMILY, FamilyError, adm06For, checkFamilyImage, familyRecord } from "./family.ts";
 import { InputsError, inputHashes, loadRunInputs } from "./inputs.ts";
 import type { RunInputOptions, RunInputs } from "./inputs.ts";
 import { BASELINE_KEY, JobRefusal, buildJob, checkBaseline, expectedVectors, newRunIds, writeJobDir } from "./jobs.ts";
@@ -129,6 +130,11 @@ function admissionSummary(imported: ImportOutcome): AdmissionSummary | null {
 }
 
 async function candidateText(env: Env, admission: BuiltJob): Promise<CandidateTextSummary> {
+  // The recorded inputs describe the time-zone bug; another family's card, issue and searches
+  // would describe the wrong bug, so none run until that family has its own recorded inputs.
+  if (env.inputs.family.id !== DEFAULT_FAMILY) {
+    return { status: "not_run", code: "symptom_unavailable", detail: `the ${env.inputs.family.id} family has no recorded inputs for the card, issue and searches yet` };
+  }
   const context = {
     project_id: env.ids.project_id,
     project_policy_sha256: admission.request.project_policy_sha256,
@@ -200,6 +206,8 @@ export async function runSequence(options: SequenceOptions, deps: SequenceDeps):
       kill_grace_ms: KILL_GRACE_MS,
     },
     image: { reference: options.image, digest: null, kit_sha256: null },
+    // Only another family records itself, so the default run keeps its summary keys.
+    ...(inputs.family.id === DEFAULT_FAMILY ? {} : { family: familyRecord(inputs.family, inputs.probes) }),
     inputs: inputHashes(inputs, { kitSha256: null, originalSuiteSha256: null }),
     original_suite: null,
     code_states: [],
@@ -214,7 +222,7 @@ export async function runSequence(options: SequenceOptions, deps: SequenceDeps):
     summary.run.ended_at = utcSeconds(deps.clock.now());
     const written = writeSummary(options.work, summary);
     const copiesComplete = summary.jobs.every((job) => job.refusal === null && job.import.refusal === null && job.copies.every((copy) => copy.status === "complete"));
-    const exitCode = complete && summary.failure === null && copiesComplete && summary.candidate_text?.status === "complete" ? 0 : 1;
+    const exitCode = complete && summary.failure === null && copiesComplete && (summary.candidate_text?.status === "complete" || summary.candidate_text?.status === "not_run") ? 0 : 1;
     return { summary, ...written, exitCode };
   };
   const fail = (step: string, error: unknown): SequenceResult => {
@@ -236,6 +244,11 @@ export async function runSequence(options: SequenceOptions, deps: SequenceDeps):
     sourceDir = exported.source_dir;
     kitSha256 = sha256Hex(exported.image_manifest);
     summary.image.kit_sha256 = kitSha256;
+    try {
+      checkFamilyImage(inputs.family, exported.image_manifest);
+    } catch (error) {
+      throw error instanceof FamilyError ? new PlanError(error.message) : error;
+    }
     states = deriveCodeStates(readFileSync(join(sourceDir, inputs.probes.data.target_path)), inputs.probes, inputs.alternative);
     summary.code_states = STATE_KEYS.flatMap((key) => {
       const state = states.get(key);
@@ -258,6 +271,7 @@ export async function runSequence(options: SequenceOptions, deps: SequenceDeps):
       job_dir: null,
       placement: null,
       audit: () => Promise.resolve(NOT_APPLICABLE),
+      ...(inputs.raceLatencyMs === null ? {} : { proxy_latency_ms: inputs.raceLatencyMs }),
     },
     deps,
   );
@@ -279,7 +293,8 @@ export async function runSequence(options: SequenceOptions, deps: SequenceDeps):
       originalSuite: { sha256: suiteSha, testIds: suite.tests.map((test) => test.id) },
       states,
       vectors: expectedVectors(inputs.fixture, inputs.probes),
-      profileSha256: profileSha256(),
+      adm06: adm06For(inputs.probes),
+      profileSha256: profileSha256(inputs.raceLatencyMs),
       deadlineAt: utcSeconds(started + 86_400_000),
     };
     const kit = buildJob("kit-check", ctx);
@@ -306,17 +321,18 @@ export async function runSequence(options: SequenceOptions, deps: SequenceDeps):
     }
 
     const admission = buildJob("admission", ctx);
-    const alternative = buildJob("alternative-fix", ctx);
+    // A family without an alternative fix (the race family) runs no alternative-fix copy.
+    const alternative = inputs.alternative === null ? null : buildJob("alternative-fix", ctx);
     writeJobDir(jobPaths(options.work, "admission").job, admission);
-    writeJobDir(jobPaths(options.work, "alternative-fix").job, alternative);
-    const alternativeTrials = alternative.expected.trials.filter((trial) => trial.trial_id === "fixed-01");
-    const plans = [...plansFor(env, admission, admission.expected.trials), ...plansFor(env, alternative, alternativeTrials)];
+    if (alternative !== null) writeJobDir(jobPaths(options.work, "alternative-fix").job, alternative);
+    const alternativeTrials = alternative === null ? [] : alternative.expected.trials.filter((trial) => trial.trial_id === "fixed-01");
+    const plans = [...plansFor(env, admission, admission.expected.trials), ...(alternative === null ? [] : plansFor(env, alternative, alternativeTrials))];
     const copies = await runCopies(plans, options.concurrency, deps);
     const admissionDone = finishJob(env, admission, copies.filter((copy) => copy.job === "admission"));
-    const alternativeDone = finishJob(env, alternative, copies.filter((copy) => copy.job === "alternative-fix"));
-    summary.jobs.push(admissionDone.summary, alternativeDone.summary);
+    const alternativeDone = alternative === null ? null : finishJob(env, alternative, copies.filter((copy) => copy.job === "alternative-fix"));
+    summary.jobs.push(admissionDone.summary, ...(alternativeDone === null ? [] : [alternativeDone.summary]));
     summary.admission = admissionSummary(admissionDone.imported);
-    const alternativeTrial = alternativeDone.summary.import.trials.find((trial) => trial.trial_id === "fixed-01");
+    const alternativeTrial = alternativeDone?.summary.import.trials.find((trial) => trial.trial_id === "fixed-01");
     summary.alternative_fix =
       alternativeTrial === undefined
         ? null

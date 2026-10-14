@@ -9,7 +9,7 @@ import { DEFAULT_SETTINGS } from "@rbw/search";
 import type { SearchClient } from "@rbw/search";
 import type { Spend } from "@rbw/spend";
 import { buildPolicy, parseCanonical } from "@rbw/schema";
-import type { ObservedSymptom } from "@rbw/schema";
+import type { ObservedSymptom, RaceSymptom } from "@rbw/schema";
 import type { FetchFunction, IssueOutput } from "@rbw/writer";
 import { CARD_OUTPUTS, RATE_ENTRIES, SYNTHETIC_USAGE, cardSource, completion } from "../../../../packages/writer/test/fixtures/cases.ts";
 import { FakeDocker } from "../../../local-runner/test/support/fakes.ts";
@@ -118,7 +118,44 @@ export function syntheticIssue(symptom: ObservedSymptom): IssueOutput {
   };
 }
 
-export type IssueMode = "valid" | "rejected" | "lost";
+/** The race family's private candidate input, all synthetic: the time-zone input with race prose, search words and excluded check IDs. */
+export function racePrivateInput(): Record<string, unknown> {
+  const input = privateInput();
+  const search = input.search as Record<string, unknown>;
+  return {
+    ...input,
+    excluded_identifiers: ["syntheticVerifyHelper", "rc1.backup-code-concurrent-double-spend", "rc1.backup-code-serial-reuse"],
+    search: {
+      ...search,
+      source: { shape_keywords: ["synthetic", "backup"], symptom_words: ["code", "twice"], include_domains: ["github.com"], start_date: "2020-01-01", end_date: "2026-10-01" },
+      docs: { url: DOCS_URL, query: "backup codes single use" },
+    },
+    user_action: "Signed in from two browser tabs and entered the same unused backup code in both at the same moment.",
+    fixture_description: "One synthetic account with two-step sign-in and ten unused backup codes.",
+    doc_excerpts: [{ text: "Synthetic excerpt: each backup code can be used once.", source_url: "https://docs.example.invalid/reports" }],
+  };
+}
+
+/** A user-style race issue whose every number comes from the symptom: the HTTP statuses, and the accepted and refused counts on the fixed Expected and Observed lines that end the two result fields. */
+export function syntheticRaceIssue(symptom: RaceSymptom): IssueOutput {
+  const statuses = symptom.concurrent_attempts.map((attempt) => String(attempt.http_status)).join(" and ");
+  return {
+    title: "Synthetic report: one backup code signs in twice when it is entered in two tabs at the same moment",
+    reproduction_steps: ["Sign in to the synthetic account in two browser tabs until each asks for a code.", "Enter the same unused backup code in both tabs and submit them together."],
+    expected_result: `Of the two requests sent together, one should be accepted and the other refused. A backup code works once.\nExpected: accepted=${String(symptom.expected.accepted)}, refused=${String(symptom.expected.refused)}`,
+    actual_result: `Both tabs were signed in with the same backup code. The responses were ${statuses}.\nObserved: accepted=${String(symptom.observed.accepted)}, refused=${String(symptom.observed.refused)}`,
+    environment: "Synthetic fixture data; the planted bug is synthetic.",
+  };
+}
+
+/** The issue with one reproduction step and each result field's prose cut to its last sentence's few words, keeping any count line. */
+function shortResults(issue: IssueOutput): IssueOutput {
+  const short = (field: string, prose: string): string => [prose, ...field.split("\n").slice(1)].join("\n");
+  return { ...issue, reproduction_steps: issue.reproduction_steps.slice(0, 1), expected_result: short(issue.expected_result, "One is refused."), actual_result: short(issue.actual_result, "Both tabs signed in.") };
+}
+
+/** "short": a race issue whose result prose is under 6 words and that has one reproduction step, so one phrase slot has no phrase. */
+export type IssueMode = "valid" | "rejected" | "lost" | "short";
 
 export interface FakeWriter {
   fetch: FetchFunction;
@@ -134,9 +171,9 @@ export function fakeWriter(work: string, mode: IssueMode = "valid"): FakeWriter 
     calls.push({ kind, authorization: new Headers(init?.headers).get("authorization"), body });
     if (kind === "card") return Promise.resolve(new Response(completion(JSON.stringify(CARD_OUTPUTS.valid), SYNTHETIC_USAGE), { status: 200 }));
     if (mode === "lost") return Promise.reject(new TypeError("synthetic: the connection was reset after the request was sent"));
-    const symptom = parseCanonical(readFileSync(join(work, "candidate", "symptom.json"))) as unknown as ObservedSymptom;
-    const issue = syntheticIssue(symptom);
-    const content = mode === "rejected" ? { ...issue, environment: `${issue.environment} In total 97 pageviews are listed.` } : issue;
+    const symptom = parseCanonical(readFileSync(join(work, "candidate", "symptom.json"))) as unknown as ObservedSymptom | RaceSymptom;
+    const issue = "symptom_kind" in symptom ? syntheticRaceIssue(symptom) : syntheticIssue(symptom);
+    const content = mode === "rejected" ? { ...issue, environment: `${issue.environment} In total 97 pageviews are listed.` } : mode === "short" ? shortResults(issue) : issue;
     return Promise.resolve(new Response(completion(JSON.stringify(content), SYNTHETIC_USAGE), { status: 200 }));
   };
   return { fetch, calls };

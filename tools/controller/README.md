@@ -23,7 +23,7 @@ node tools/controller/src/cli.ts run --job-kind <kit_check|observe|admission|jud
   [--original-suite <file>] [--policy <file>] [--fix <dir>] [--name <job name>] \
   [--backend sandbox|docker] [--sandbox-image <repository>@sha256:<digest>] \
   [--trials <id,...>] [--ledger development|judge] [--ids <file>] [--project-policy <file>] \
-  [--judge-fixed fixed|alternative_fix]
+  [--judge-fixed fixed|alternative_fix] [--family time-zone|race] [--race-latency-ms <0-10000>]
 node tools/controller/src/cli.ts proof --work <run dir> --image ... --manifest ... --terms ... --kit-stage ... \
   [--original-suite <file>] [--policy <file>] [--backend sandbox|docker] [--sandbox-image ...]
 node tools/controller/src/cli.ts create-slot-key --slot-key <key>
@@ -36,13 +36,14 @@ node tools/controller/src/cli.ts run --job-kind judge_verify --request-id <uuid>
 
 - `--image`, `--manifest`, `--terms`, `--policy` and `--kit-stage` are the local runner's inputs (its README, Host commands). The kit image must be local, because each copy's source export and audit run on the host.
 - `--original-suite` is the driver's frozen original-suite manifest. Without it, the controller first runs one freeze copy on local Docker. That copy is free and not on the ledger.
-- `--fix` is for `judge_verify` only: the fix to grade as `fixed-01`, in the local runner's alternative-fix layout (`alternative-fix.json` and its patch). The default is the local runner's alternative fix.
+- `--fix` is for `judge_verify` only: the fix to grade as `fixed-01`, in the local runner's alternative-fix layout (`alternative-fix.json` and its patch). The default is the family's alternative fix. The race family has none, so `run --job-kind judge_verify --family race` without `--fix` grades the reference fix. A prebuilt judge replay (`--prebuilt`) of a race release runs the race family too: the controller reads the family from the frozen job's expected vectors (the race fixture's) and the latency from its `runtime_profile_sha256` (the copy profile with that latency), then runs the replay as `--family race --race-latency-ms <ms>` would, with the race probe set and the latency in every copy. A race job whose profile hash is no latency's, or is the plain copy profile with no latency (the time-zone family's; the release tool never builds a race job without a latency), is refused before any copy (`family_unreadable`). A time-zone replay is unchanged.
 - `--trials` runs only the named trials of the kind's profile, separated by commas (for example `--trials fixed-01`). An unknown trial refuses the job. The default is every trial.
 - `--ledger` picks where the job's spend and slot are recorded. Without it, `judge_verify` uses the judge-demo pool's `judge` allocation under the `judge` slot, and every other kind the `development` pool and slot. `--ledger development` runs `judge_verify` on the development pool and slot, so a solver grade never takes the slot live judges wait on or draws on the judge allocation. `--ledger judge` is for `judge_verify` only.
 - `--ids` is a JSON file holding a root's IDs (the local runner's `RunIds`: `run_tag`, `project_id`, `batch_id`, `root_execution_id`, `executions` and `release_id`), so every job of one root shares them. Without it, the job makes its own.
 - `--project-policy` is a canonical `ProjectPolicy` record. The job records its hash under the grading policy ID. It needs `--ids`, whose `project_id` must be the policy's, and it refuses the development placeholder project.
 - `--judge-fixed` is for `judge_verify` only: the code state `fixed-01` grades. `fixed` grades the reference fix, the clean file's exact bytes. A solver fix that equals the clean file is graded this way, because the alternative-fix layout refuses a fix equal to the clean file. The default, `alternative_fix`, grades `--fix` (or the local runner's alternative fix).
-- The judge controller (`--prebuilt`) refuses `--trials`, `--ledger`, `--ids`, `--project-policy`, `--judge-fixed` and `--fix`.
+- `--family` picks the bug family, as in the local runner (its README, Bug families): the fixture the kit stage must hold, the probe set, the kit image and the alternative fix. Without it the job is the time-zone family's, with the same fingerprint and request bytes as before families existed. A race admission job has 11 copies and records ADM-06 as `not_applicable`. `--race-latency-ms` (race only, 0 to 10000) is the latency every copy sets with `rbw-proxy set-latency`; absent, the image's default holds. A set latency is part of the hashed runtime profile (`runtime_profile_sha256` and the task revision's `environment_sha256`), so two latencies give two task revisions. A race job's `summary.json` has a `family` object: the family, ADM-06's status and reason, the admission copy count and `race_latency_ms` (null for the image default). Each copy that set a latency also has a `proxy` object in its copy summary with rbw-proxy's exit status and the latency and source it reported. `proof` takes neither, because its grader cases are the time-zone family's.
+- The judge controller (`--prebuilt`) refuses `--trials`, `--ledger`, `--ids`, `--project-policy`, `--judge-fixed`, `--fix`, `--family` and `--race-latency-ms`.
 - `--backend sandbox` is the default. It reads `DATABASE_URL`, `VERCEL_TOKEN`, `VERCEL_TEAM_ID` and `VERCEL_PROJECT_ID` from the environment, never from arguments, and prints none of them. A missing one is named and the command exits 2.
 - `--backend docker` runs the copies on local Docker with an in-memory PGlite ledger. That ledger has every `@rbw/spend` migration and both slot keys, as the local runner's recorded mode uses. It needs no credentials. Its amounts are what the same copies would reserve and settle on Sandbox.
 - `--prebuilt` is prebuilt mode, the judge controller: it runs the release's frozen judge job with no Docker and writes `judge/<root>/` in the private store (`BLOB_PRIVATE_STORE_ID` and `VERCEL_OIDC_TOKEN`, or a local store directory). The judge route starts it; `src/judge-run.ts` describes its checks and its end order. The route and the controller each compute the controller operation's ID and payload hash, so the judge web deploy must be built from the commit the controller image was built from, or from a later commit that leaves `tools/controller/src/{envelope,limits,judge-web}.ts` and `packages/envelope` (with its rate sheet) unchanged.
@@ -162,7 +163,8 @@ Different inputs under the same name are refused, and the command exits 2. A new
 ```sh
 node tools/controller/src/cli.ts attempt --work <new run dir> --policy <ProjectPolicy> --candidate <private input> \
   --writer-rates <file> --search-rates <file> --image <local kit image> --manifest <file> --terms <file> \
-  --audit-policy <file> --kit-stage <dir> --sandbox-image <repository>@sha256:<digest> [--original-suite <file>]
+  --audit-policy <file> --kit-stage <dir> --sandbox-image <repository>@sha256:<digest> [--original-suite <file>] \
+  [--family time-zone|race] [--race-latency-ms <0-10000>]
 ```
 
 - `--policy` is the `ProjectPolicy` record. Its `project_id` is the root's project, and the SHA-256 of the file's bytes is the root's `project_policy_sha256`. A policy that names the development placeholder project is refused.
@@ -170,6 +172,9 @@ node tools/controller/src/cli.ts attempt --work <new run dir> --policy <ProjectP
 - `--writer-rates` and `--search-rates` are the writer's and the searcher's rate files, in the formats their `record` commands take.
 - Credentials come only from the environment: `DATABASE_URL`, `VERCEL_TOKEN`, `VERCEL_TEAM_ID` and `VERCEL_PROJECT_ID` (as `run` reads them), plus `TOKEN_FACTORY_WRITER_KEY` and `TAVILY_API_KEY`. A missing one is named, and the command exits 2 before anything runs. The two keys are read once and removed from the environment before any child process starts. No key reaches a log line, a record or an error message.
 - `--work` must be absent or empty. An attempt never resumes: a retry is a new root in a new directory.
+- `--family` and `--race-latency-ms` are `run`'s, and every job of the attempt gets both. The family also picks the symptom the issue writer gets (below): a `RaceSymptom` for `--family race`, whose admission runs 11 copies with ADM-06 not applicable. Without `--family`, or with `--family time-zone`, the attempt writes the same job, symptom and issue bytes as before the family was an attempt input.
+- The private input's fields are the same for every family; for a race attempt, its prose, search words and excluded identifiers describe the race candidate. The card writer reads only `card_source`, so it needs nothing family-specific.
+- `tools/release stage` routes `symptom.json` by `symptom_kind`, so a race attempt's `RaceSymptom` stages and releases like a time-zone symptom.
 
 Exit codes: 0 when the root ends `terminal` and `completed`; 1 when `root-run.json` was written with any other state; 2 for a usage or input error, with nothing run.
 
@@ -218,15 +223,24 @@ The attempt makes one `RunIds` with the policy's `project_id`. Every stage runs 
 1. **`kit_check` and `observe`:** `runJob` with the root's IDs and the policy, `policy_id` `umami-uc3-v1` (the release check requires it, and `ProjectPolicy` has no such field), on the development pool and slot. Without `--original-suite`, the kit check's freeze copy makes it, and every later job takes that same file.
 2. **`write`:** the symptom, the two source searches (`source-1`, `source-2`) and the docs extract (`docs-1`), then one card call and one issue call. There are no repairs.
 3. **`novelty`:** the three exact-phrase checks, then `summarizeNovelty`.
-4. **`admission`:** `runJob`, 13 copies, with the same IDs, policy and original suite.
+4. **`admission`:** `runJob`, 13 copies (11 for the race family), with the same IDs, policy and original suite.
 
 `runJob` takes two optional `JobInputs` fields for this, `ids` and `projectPolicy`. Both go into the job's fingerprint. Without them a job's bytes are what they were before.
 
-**The symptom** (`src/symptom.ts`, spec §9.6) is a schema-valid `ObservedSymptom`:
+**The symptom** (`src/symptom.ts`, spec §9.6) depends on the family, which `buildSymptom(observeJobDir, prose, family)` takes as a parameter (`TIME_ZONE_FAMILY` or `RACE_FAMILY`, named by fixture ID). The attempt passes the one its `--family` maps to: `time-zone` (the default) to `TIME_ZONE_FAMILY`, `race` to `RACE_FAMILY`.
+
+For the time-zone family (`umami-tz-arg-001`) it is a schema-valid `ObservedSymptom`:
 - from the fixture: the request (its path; `startAt`, `endAt`, `unit` and `timezone` as strings), the time zone, the events (labeled `pageview <id>`) and every expected count, labeled by the date part of each bucket label;
 - from the observation: every observed count, read from the observe copy's recorded response body for that check, parsed as `classify` parses it, and `http_status` 200;
 - the first non-UTC check in fixture order is the primary zone, the other non-UTC checks are `follow_up_examples`, and the UTC control is left out;
 - a non-UTC check with no recorded response, or one that `classify` does not grade `local_day_counts_mismatch`, refuses the symptom (`symptom_unavailable`).
+
+For the race family (`rc-1-backup-code-001`, `@rbw/umami-fixture-rc1`) it is a schema-valid `RaceSymptom`:
+- the concurrent example is the first observation, in trial and observation order, that graded the double-spend check `double_spend`. Its recorded evidence (the two verify requests with their times) must grade `double_spend` again under the fixture's `classifyDoubleSpend`. Each request becomes `{ label, sent_ms, settled_ms, http_status, outcome, error_code }`, with times rounded to whole milliseconds, and `overlap_ms` is the earlier settle minus the later send of the rounded times;
+- `expected` is one acceptance and one refusal (the fixture's pass verdict), and `observed` counts the concurrent outcomes;
+- the sequential example is the serial control of the same trial and repeat, which must have passed (first use accepted, reuse refused);
+- the request is the public verify endpoint with no query; no backup code, token or check ID is copied;
+- no such observation, a missing or ungradable recording, a missing or failed control, or an overlap under a whole millisecond refuses the symptom (`symptom_unavailable`).
 
 **The source searches and the docs extract** (spec §5: sources at the start, the extract while the issue is written) run before the card, in the search package's plan order:
 - `source-1` and `source-2` search the shape keywords and symptom words in both orders, limited to `include_domains` and the date range. Their records are evidence for the operator only. A hit has not passed the shape's rules (spec §3.7), so nothing from it reaches the card, whose source stays the confirmed fix in `card_source`.
@@ -235,7 +249,7 @@ The attempt makes one `RunIds` with the policy's `project_id`. Every stage runs 
 
 A failed source search or extract (an `incomplete` record: a provider error, a failed URL or a malformed response) is recorded, and the attempt continues. Spec §1 lists the exact-phrase check as Tavily's only admission check, and §5 counts only novelty rejections in the funnel, so missing source evidence or grounding does not block admission by itself. An uncertain call stops the root for reconciliation, and a spend refusal stops it as `incomplete`, as the search package's `record` command stops at the first spend refusal.
 
-**The phrases** are picked by code from the frozen issue: the `title`, the first sentence of `expected_result` and the first sentence of `actual_result`. Each has its double quotes removed and its whitespace collapsed, and is cut to at most 12 words. When a first sentence has fewer than 6 words, its phrase is the start of the field instead, up to 12 words: a shorter phrase matches almost any page.
+**The phrases** are picked by code from the frozen issue: the `title`, the first sentence of `expected_result` and the first sentence of `actual_result`. Each has its double quotes removed and its whitespace collapsed, and is cut to at most 12 words. When a first sentence has fewer than 6 words, its phrase is the start of the field instead, up to 12 words: a shorter phrase matches almost any page. A race issue's fixed count lines (`Expected: accepted=<n>, refused=<n>` and `Observed: accepted=<n>, refused=<n>`, which the issue check reads) are dropped before the pick, so no phrase is taken from them. No phrase under 6 words is ever searched. When a field still has fewer than 6 words (a short title, or result prose of one short sentence), its phrase comes from adjacent reproduction steps joined in order, the first run of 6 or more words (cut to 12) that no earlier phrase used. When any slot has none left, admission still requires all three checks, so nothing is searched and novelty is `incomplete`: the command prints `stage=novelty omitted=<calls> reason=no_phrase_of_6_words`, `novelty.json` names those slots in `incomplete_calls` and `omitted_calls`, and the root stops as `incomplete` (`novelty_no_phrase`) with no admission.
 
 **The candidate text** runs in the attempt's process, against the controller's own ledger. Its run context is the admission's: the policy's project and hash, the batch, the observation's candidate `task_revision`, the root, and the `candidate-text` execution with the root as parent. It acquires the development slot for the root first, and releases it at the end when nothing blocks it. The writer and the searcher use the development pool, so their own caps (12 writer calls and 6 searches per candidate) and the ledger are the controls.
 
@@ -274,7 +288,7 @@ Nothing is retried, and every stop still writes `root-run.json`. The admission d
 | Cause | Root |
 |---|---|
 | A job `refused`, `symptom_unavailable`, a refused or failed writer call, an issue check other than `ready_for_review`, novelty `blocked` | `terminal`, `failed` |
-| A job `incomplete`, novelty `incomplete`, a spend refusal of a source search or the extract | `terminal`, `incomplete` |
+| A job `incomplete`, novelty `incomplete` (a slot with no phrase of 6 words among them), a spend refusal of a source search or the extract | `terminal`, `incomplete` |
 | A job `needs_reconciliation`, an `uncertain` writer call, a search call left uncertain (a source search, the extract or a phrase check), an operation left unresolved in the ledger, a ledger call that failed, a slot release that was refused | `needs_reconciliation` (outcome `null`); the slot stays held and nothing more runs |
 
 ## Summary

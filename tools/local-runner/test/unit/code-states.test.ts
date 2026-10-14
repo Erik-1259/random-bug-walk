@@ -1,11 +1,19 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { loadProbeSet } from "@rbw/shapes";
+import { InputError, applyPatch as auditApply, parseMutation } from "@rbw/projection";
+import type { Manifest } from "@rbw/projection";
+import { RC1_PROBE_DIR, loadProbeSet } from "@rbw/shapes";
+import type { ProbeSet } from "@rbw/shapes";
 import { CodeStateRefusal, applyPatchChecked, deriveCodeStates, loadAlternativeFix, stateForPatch } from "../../src/code-states.ts";
 import {
   ALTERNATIVE,
+  BLANK_CLEAN,
+  BLANK_PATCH,
+  BLANK_PATCH_TRIMMED,
+  BLANK_PLANTED,
   CLEAN,
+  HOST_COMMIT,
   MUTATION_PATCH,
   PARTIAL,
   PLANTED,
@@ -14,6 +22,7 @@ import {
   sha256,
   writeAlternativeDir,
   writeProbeDir,
+  writeRaceProbeDir,
 } from "../support/synthetic.ts";
 
 function derive(probeDir = writeProbeDir(), alternativeDir = writeAlternativeDir()) {
@@ -127,5 +136,90 @@ describe("the committed alternative fix", () => {
     expect(patch).toContain(`-${plantedLine?.slice(1) ?? "missing"}`);
     expect(patch.match(/^@@ /gm)).toHaveLength(1);
     expect(patch.match(/^diff --git /gm)).toHaveLength(1);
+  });
+});
+
+describe("code states of a family that records ADM-06 as not applicable", () => {
+  it("derives only the clean, planted and fixed states, with no alternative fix", () => {
+    const states = deriveCodeStates(Buffer.from(CLEAN), loadProbeSet(writeRaceProbeDir()), null);
+    expect([...states.keys()]).toEqual(["clean", "planted", "fixed"]);
+    expect(states.get("planted")?.bytes.toString()).toBe(PLANTED);
+    expect(states.get("fixed")?.bytes.equals(Buffer.from(CLEAN))).toBe(true);
+    expect(stateForPatch(states, "partial", null)).toBeNull();
+  });
+
+  it("still refuses a probe set without the ADM-06 record that lacks the partial and stub probes", () => {
+    const dir = writeProbeDir();
+    const data = JSON.parse(readFileSync(join(dir, "probes.json"), "utf8")) as { probes: { id: string }[] };
+    data.probes = data.probes.filter((probe) => probe.id === "mutation");
+    writeFileSync(join(dir, "probes.json"), JSON.stringify(data));
+    const error = refusal(() => deriveCodeStates(Buffer.from(CLEAN), loadProbeSet(dir), null));
+    expect(error.reason).toBe("patch_scope");
+    expect(error.message).toContain("no partial probe");
+  });
+
+  it("keeps the time-zone family's alternative fix when one is given", () => {
+    const states = deriveCodeStates(Buffer.from(CLEAN), loadProbeSet(writeProbeDir()), loadAlternativeFix(writeAlternativeDir()));
+    expect([...states.keys()]).toEqual(["clean", "planted", "fixed", "partial", "stub", "alternative_fix"]);
+  });
+});
+
+describe("the declared mutation of a hunk with an empty context line", () => {
+  const manifest = (clean: string): Manifest => ({ host_commit: HOST_COMMIT, files: [{ path: TARGET, mode: "100644", size_bytes: Buffer.byteLength(clean), sha256: sha256(clean) }] });
+
+  it("declares a standard diff that the projection audit's mutation parser accepts", () => {
+    const states = deriveCodeStates(Buffer.from(BLANK_CLEAN), loadProbeSet(writeRaceProbeDir({ clean: BLANK_CLEAN, planted: BLANK_PLANTED, mutationPatch: BLANK_PATCH })), null);
+    const planted = states.get("planted");
+    expect(planted?.bytes.toString()).toBe(BLANK_PLANTED);
+    const declared = planted?.declared_mutation ?? "";
+    expect((JSON.parse(declared) as { diff: string }).diff).toContain("{\n \n-");
+    expect([...parseMutation(declared, manifest(BLANK_CLEAN), new Map()).keys()]).toEqual([TARGET]);
+  });
+
+  it("refuses a probe patch whose empty context line lost its space, before any copy runs", () => {
+    // The diff library applies the trimmed patch, but the projection audit refuses it as malformed_mutation.
+    expect(() => parseMutation(JSON.stringify({ diff: BLANK_PATCH_TRIMMED, files: [], host_commit: HOST_COMMIT }), manifest(BLANK_CLEAN), new Map())).toThrow(InputError);
+    const probes = loadProbeSet(writeRaceProbeDir({ clean: BLANK_CLEAN, planted: BLANK_PLANTED, mutationPatch: BLANK_PATCH_TRIMMED }));
+    expect(refusal(() => deriveCodeStates(Buffer.from(BLANK_CLEAN), probes, null)).reason).toBe("declared_mutation_malformed");
+  });
+});
+
+describe("the race family's committed mutation, through the projection audit's mutation parser", () => {
+  /**
+   * The upstream target file is not in this repository, so the clean file is rebuilt around the
+   * committed patch's hunk at its recorded line, and the committed probe set is re-hashed to it.
+   * The patch text, the derivation and the declared mutation are the ones a copy uses.
+   */
+  function rebuilt(committed: ProbeSet) {
+    const patch = committed.patches.get("mutation") ?? "";
+    const lines = patch.split("\n");
+    const at = lines.findIndex((line) => line.startsWith("@@ "));
+    const start = Number(/^@@ -(\d+),/.exec(lines[at] ?? "")?.[1]);
+    const hunk = lines.slice(at + 1, -1);
+    const side = (drop: string) => hunk.filter((line) => !line.startsWith(drop)).map((line) => line.slice(1));
+    const filler = Array.from({ length: start - 1 }, (_, index) => `// line ${String(index + 1)}`);
+    const clean = Buffer.from([...filler, ...side("+"), "}", ""].join("\n"));
+    const planted = Buffer.from([...filler, ...side("-"), "}", ""].join("\n"));
+    const [cleanSha, plantedSha] = [sha256(clean), sha256(planted)];
+    const data = {
+      ...committed.data,
+      clean_sha256: cleanSha,
+      planted_sha256: plantedSha,
+      fixed_reference: { ...committed.data.fixed_reference, base_sha256: plantedSha, result_sha256: cleanSha },
+      probes: committed.data.probes.map((probe) => ({ ...probe, base_sha256: cleanSha, result_sha256: plantedSha })),
+    };
+    return { clean, planted, probes: { data, patches: committed.patches } as ProbeSet };
+  }
+
+  it("declares a mutation the audit parses and applies to the clean bytes, giving the planted bytes", () => {
+    const committed = loadProbeSet(RC1_PROBE_DIR);
+    const { clean, planted, probes } = rebuilt(committed);
+    const states = deriveCodeStates(clean, probes, null);
+    const declared = states.get("planted")?.declared_mutation ?? "";
+    const target = committed.data.target_path;
+    const manifest: Manifest = { host_commit: committed.data.host_commit, files: [{ path: target, mode: "100644", size_bytes: clean.length, sha256: sha256(clean) }] };
+    const parsed = parseMutation(declared, manifest, new Map()).get(target);
+    expect(parsed?.result_sha256).toBe(sha256(planted));
+    expect(parsed === undefined ? null : auditApply(clean, parsed.patch, "forward")?.equals(planted)).toBe(true);
   });
 });

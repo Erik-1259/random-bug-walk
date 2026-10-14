@@ -2,10 +2,13 @@
 // patches over it in the shapes package's format, an alternative fix, a source manifest, a term
 // list whose terms exist only in these tests, and the app tree the kit image would hold.
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { pack } from "tar-stream";
+import { FAMILIES } from "../../src/family.ts";
+import type { FamilyId } from "../../src/family.ts";
 
 export const TARGET = "src/queries/sql/pageviews/getPageviewStats.ts";
 export const HOST_COMMIT = "ec0ff50388c264ed8ce46f00967e92f7e71476ae";
@@ -219,10 +222,89 @@ export function appTree(extra: readonly TarEntry[] = [], files: Record<string, s
   ]);
 }
 
-/** A synthetic kit stage: the directory the driver's stage-kit.ts writes, with a one-file fixture. */
-export function writeKitStage(dir: string): string {
+/**
+ * A synthetic kit stage: the directory the driver's stage-kit.ts writes, with a one-file fixture.
+ * A race stage also holds the race fixture's data file, which a race run requires; the
+ * time-zone stage is the same bytes as before families existed.
+ */
+export function writeKitStage(dir: string, family: FamilyId = "time-zone"): string {
   const stage = join(dir, "kit-stage");
   mkdirSync(join(stage, "umami-fixture"), { recursive: true });
   writeFileSync(join(stage, "umami-fixture", "package.json"), '{"name":"synthetic-fixture"}\n');
+  if (family !== "time-zone") {
+    const data = fileURLToPath(FAMILIES[family].fixtureFile);
+    mkdirSync(join(stage, "umami-fixture", "data"));
+    copyFileSync(data, join(stage, "umami-fixture", "data", basename(data)));
+  }
   return stage;
 }
+
+/** Adds a family's fixture data file to a kit stage. */
+export function stageFixtureData(stage: string, family: FamilyId): void {
+  const data = fileURLToPath(FAMILIES[family].fixtureFile);
+  mkdirSync(join(stage, "umami-fixture", "data"), { recursive: true });
+  copyFileSync(data, join(stage, "umami-fixture", "data", basename(data)));
+}
+
+/** The race fixture's two checks (packages/umami-fixture-rc1). */
+export const SERIAL_CHECK = "rc1.backup-code-serial-reuse";
+export const RACE_CHECK = "rc1.backup-code-concurrent-double-spend";
+
+/**
+ * A race-family probe directory over the synthetic target: the mutation alone, the race
+ * fixture's two checks, and ADM-06 recorded as not applicable.
+ */
+export function writeRaceProbeDir(pair: { clean: string; planted: string; mutationPatch: string } = { clean: CLEAN, planted: PLANTED, mutationPatch: MUTATION_PATCH }): string {
+  const dir = tempDir("rbw-local-runner-race-probes-");
+  const clean = sha256(pair.clean);
+  const planted = sha256(pair.planted);
+  const data = {
+    adm_06: { reason: "Synthetic: a partial or stub fix of this race has no natural form.", status: "not_applicable" },
+    checks: [SERIAL_CHECK, RACE_CHECK],
+    clean_sha256: clean,
+    fixed_reference: { base_sha256: planted, method: "reverse_mutation_patch", note: "Synthetic: reversing the mutation gives the clean file.", result_sha256: clean },
+    host_commit: HOST_COMMIT,
+    invalid_outcomes: { note: "Synthetic.", outcomes: ["build_error", "crash", "missing_result", "setup_failure", "timeout"] },
+    planted_sha256: planted,
+    probes: [
+      {
+        base_sha256: clean,
+        description: "Synthetic mutation.",
+        expected: { [RACE_CHECK]: { outcome: "assertion_fail", reason: "double_spend" }, [SERIAL_CHECK]: { outcome: "pass" } },
+        id: "mutation",
+        patch: "mutation.patch",
+        result_sha256: planted,
+      },
+    ],
+    scope: "Synthetic.",
+    shape_id: "RC-1.atomic-backup-code",
+    target_path: TARGET,
+  };
+  writeFileSync(join(dir, "probes.json"), `${JSON.stringify(data, null, 2)}\n`);
+  writeFileSync(join(dir, "mutation.patch"), pair.mutationPatch);
+  return dir;
+}
+
+/** A clean and planted pair whose one hunk holds an empty context line, as the race family's target does. */
+export const BLANK_CLEAN = [
+  "// synthetic target with an empty line inside the hunk",
+  "export function synthetic(zone: string) {",
+  "",
+  "  return range('day', zone);",
+  "}",
+  "",
+].join("\n");
+export const BLANK_PLANTED = BLANK_CLEAN.replace("range('day', zone)", "range('day')");
+
+/** The standard diff of the pair: the empty context line carries its one-space prefix. */
+export const BLANK_PATCH = `${HEADER}@@ -1,5 +1,5 @@
+ // synthetic target with an empty line inside the hunk
+ export function synthetic(zone: string) {
+${" "}
+-  return range('day', zone);
++  return range('day');
+ }
+`;
+
+/** The same diff after an editor trimmed trailing whitespace: the empty context line is bare. */
+export const BLANK_PATCH_TRIMMED = BLANK_PATCH.replace("{\n \n", "{\n\n");
