@@ -12,7 +12,8 @@
     "lint": "eslint . --max-warnings 0",
     "test": "vitest run",
     "test:integration": "node test/integration/run.ts",
-    "migrate": "node src/cli.ts"
+    "migrate": "node src/cli.ts",
+    "operator": "node src/operator-cli.ts"
   },
   "dependencies": {
     "pg": "8.23.1"

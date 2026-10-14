@@ -35,11 +35,12 @@ Requires Postgres 17 or later. `migrate` needs a role that owns the target schem
 | Script | What it does |
 | --- | --- |
 | `pnpm --filter @rbw/spend run migrate [--schema <name>]` | Applies pending migrations to the database in `DATABASE_URL` (schema `public` by default; the schema must exist). Prints each file it applies and a final count (`applied 0 migrations` on a re-run). Exits non-zero, naming the file and the reason, if an applied file has changed or is missing, if a new file sorts before an applied one, or if a file fails. With `DATABASE_URL` unset it exits non-zero with a message naming the variable. It never prints any part of the connection string. |
+| `pnpm --filter @rbw/spend run operator <command> [options]` | Reads ledger status or previews an operator action against `DATABASE_URL`; `--apply` records the action. See [Operator command](#operator-command). |
 | `pnpm --filter @rbw/spend run test` | Unit tests (PGlite, no network). |
 | `pnpm --filter @rbw/spend run test:integration` | Integration tests (I1–I5 and the others listed under [Tests](#tests)) against the Postgres in `DATABASE_URL`. Each run uses its own randomly named schema and drops it afterwards, also when setup fails. With `DATABASE_URL` unset, prints a skip message and exits 0. |
 | `build`, `typecheck`, `lint` | The workspace's standard scripts. |
 
-`migrate` and `test:integration` run from source with Node 24; neither needs a build step.
+`migrate`, `operator` and `test:integration` run from source with Node 24; none needs a build step.
 
 Migrations are forward-only plain SQL files in `migrations/`.
 - They are applied in lexical order, each exactly once. A new file that sorts before an applied one is refused (exit non-zero, naming the file), so every database applies them in the same order.
@@ -369,6 +370,45 @@ For the three closing decisions:
    - an unconfirmed child resource, through `confirmChild` under the slot key the blocker names, with the provider's terminal-state evidence (the root still holds that slot, so this works).
 3. Call `releaseSlot` with the holder's `root_execution_id`, `actor_role` `owner` or `operator`, evidence and a reason.
 
+### Operator command
+
+Run `pnpm --filter @rbw/spend run operator <command> [options]` with `DATABASE_URL` configured. Every command accepts `--schema <name>` (default `public`, a lowercase SQL identifier). The command connects once, with a 15-second connection timeout, and never retries. It does not print connection details or operation intents.
+
+| Command | Options |
+| --- | --- |
+| `status` | `[--root <uuid>] [--json]` |
+| `reconcile` | `--operation <id> --from <state> --decision <decision> --retained <microusd> --released <microusd> --evidence <file>... --reason <text> [--resource <id>...] [--apply]` |
+| `confirm-child` | `--slot <key> --root <uuid> --provider <label> --resource <id> --status completed\|failed\|cancelled --evidence <file> [--apply]` |
+| `release-slot` | `--slot <key> --root <uuid> --evidence <file>... --reason <text> [--apply]` |
+| `resume` | `--evidence <file>... --reason <text> [--apply]` |
+
+`status` reads one repeatable-read, read-only snapshot and ends with a rollback. It shows the halt and observations since the latest resume, every pool and allocation, and every slot key with its holder, latest event time and role, holder age in seconds, children and release blockers. It lists every non-`reconciled` operation in creation order, with its root, kind, call name, provider, pool, allocation, recorded time and amounts. `--root` also includes that root's operations in every state and its slot events. Event order follows the ledger sequence, even when timestamps run backward. Text amounts are integer micro-USD and USD; JSON amounts are decimal strings.
+
+Operations of a run that is still going also appear in the non-`reconciled` list. Compare an operation's root with the slot holder and its age before closing it. The command cannot tell whether a run is still executing, and age alone does not show it: one operation can stay `running` for hours. Before `reconcile` or `release-slot`, confirm from the holder's age in `status` and from the run's own record that the run's process or container has ended. A holder between two operations has no release blockers, so `release-slot` would free the slot under a live run.
+
+Write commands default to a dry run: they read and print the current state, check the preconditions below, and print the exact request document without writing. Add `--apply` to send that request through the matching library call, print the result and re-read the affected status. All requests use `actor_role: "operator"`; the database decides which actions are allowed. A dry run does not ask the database to validate a write and does not promise that an apply will succeed.
+
+- `reconcile` requires the current state to match `--from`. Decisions and allowed states are listed under [Manual reconciliation](#manual-reconciliation). Amounts must be integers from 0 to 9007199254740991. `found_running` needs at least one resource, retained equal to open spend and released 0; `confirm_no_launch` lists no resources. Closing decisions need retained + released equal to open spend, or released 0 with retained above open spend. The latter is evidenced over-envelope usage: both dry run and apply warn that it halts new work, and a successful over-envelope apply also prints the halt status. The request uses schema version 1 and a UTC recorded time.
+- `confirm-child` requires the named root to hold the slot and the provider/resource pair to be listed among its children. It prints that child, including its confirmation and terminal status. An already confirmed child reaches the database for replay or conflict handling. It takes exactly one evidence file.
+- `release-slot` requires the named root to hold the slot and no release blockers.
+- `resume` requires new work to be halted. Investigate every observation before recording the resume.
+
+Repeat `--evidence <file>` for each evidence file. Each becomes `{ "key": "<path exactly as typed>", "sha256": "<lowercase SHA-256 of the file bytes>" }`. Missing or unreadable files fail before any database read. Under `pnpm --filter`, relative evidence paths resolve from `packages/spend`; the stored key and the dry run use the path exactly as typed. Keep the evidence at that key so the recorded hash can be checked later.
+
+Examples use synthetic identifiers and evidence paths relative to the package directory. Replace them with the operation, root and evidence from the records being investigated. Write examples preview the request; inspect it before repeating with `--apply`.
+
+```sh
+pnpm --filter @rbw/spend run operator status --root 00000000-0000-4000-8000-000000000001
+pnpm --filter @rbw/spend run operator reconcile --operation 0000000000000000000000000000000000000000000000000000000000000001 --from terminal --decision accept_complete --retained 1000 --released 0 --evidence synthetic-evidence/usage.json --reason "Synthetic completed usage"
+pnpm --filter @rbw/spend run operator confirm-child --slot synthetic-slot --root 00000000-0000-4000-8000-000000000001 --provider synthetic-provider --resource synthetic-resource --status completed --evidence synthetic-evidence/terminal.json
+pnpm --filter @rbw/spend run operator release-slot --slot synthetic-slot --root 00000000-0000-4000-8000-000000000001 --evidence synthetic-evidence/ended.json --reason "Synthetic process ended; all blockers resolved"
+pnpm --filter @rbw/spend run operator resume --evidence synthetic-evidence/investigation.json --reason "Synthetic envelope corrected"
+```
+
+For piped or JSON output use `pnpm --silent --filter @rbw/spend run operator status --json`, or run `node src/operator-cli.ts status --json` from `packages/spend`. Without `--silent`, pnpm prints a banner on stdout before the command's output, which includes the package's path.
+
+Exit codes: **0** for completion or a valid dry run; **1** for a ledger refusal or failed pre-check; **2** for usage errors, unset `DATABASE_URL`, failed connections or infrastructure errors. Refusals print the code, detail and any blocking IDs returned by the ledger. On a connection failure, the command prints only the error code and says it can be run again.
+
 ## Tables
 
 | Table | Holds |
@@ -397,6 +437,7 @@ In `reconciliations`, `recorded_at` is the time given in the record, and `logged
   - I5: forced-overlap slot acquisition;
   - forced-overlap reuse of one operation ID on two pools;
   - concurrent first runs of `migrate` on one schema;
+  - the operator command: a read-only `status` snapshot, a `reconcile` dry run that writes nothing, and `release-slot --apply`;
   - the insert guard: a direct INSERT after an entry function in the same transaction, an entry function that raises an error, and a rollback to a savepoint before it;
   - that the connection's role is not a superuser, as the hosted owner role is not, so a statement that needs superuser privileges fails here too;
   - a failed setup that drops its schema.
