@@ -1,11 +1,18 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { InputError, parseMutation } from "@rbw/projection";
+import type { Manifest } from "@rbw/projection";
 import { loadProbeSet } from "@rbw/shapes";
 import { CodeStateRefusal, applyPatchChecked, deriveCodeStates, loadAlternativeFix, stateForPatch } from "../../src/code-states.ts";
 import {
   ALTERNATIVE,
+  BLANK_CLEAN,
+  BLANK_PATCH,
+  BLANK_PATCH_TRIMMED,
+  BLANK_PLANTED,
   CLEAN,
+  HOST_COMMIT,
   MUTATION_PATCH,
   PARTIAL,
   PLANTED,
@@ -153,5 +160,25 @@ describe("code states of a family that records ADM-06 as not applicable", () => 
   it("keeps the time-zone family's alternative fix when one is given", () => {
     const states = deriveCodeStates(Buffer.from(CLEAN), loadProbeSet(writeProbeDir()), loadAlternativeFix(writeAlternativeDir()));
     expect([...states.keys()]).toEqual(["clean", "planted", "fixed", "partial", "stub", "alternative_fix"]);
+  });
+});
+
+describe("the declared mutation of a hunk with an empty context line", () => {
+  const manifest = (clean: string): Manifest => ({ host_commit: HOST_COMMIT, files: [{ path: TARGET, mode: "100644", size_bytes: Buffer.byteLength(clean), sha256: sha256(clean) }] });
+
+  it("declares a standard diff that the projection audit's mutation parser accepts", () => {
+    const states = deriveCodeStates(Buffer.from(BLANK_CLEAN), loadProbeSet(writeRaceProbeDir({ clean: BLANK_CLEAN, planted: BLANK_PLANTED, mutationPatch: BLANK_PATCH })), null);
+    const planted = states.get("planted");
+    expect(planted?.bytes.toString()).toBe(BLANK_PLANTED);
+    const declared = planted?.declared_mutation ?? "";
+    expect((JSON.parse(declared) as { diff: string }).diff).toContain("{\n \n-");
+    expect([...parseMutation(declared, manifest(BLANK_CLEAN), new Map()).keys()]).toEqual([TARGET]);
+  });
+
+  it("refuses a probe patch whose empty context line lost its space, before any copy runs", () => {
+    // The diff library applies the trimmed patch, but the projection audit refuses it as malformed_mutation.
+    expect(() => parseMutation(JSON.stringify({ diff: BLANK_PATCH_TRIMMED, files: [], host_commit: HOST_COMMIT }), manifest(BLANK_CLEAN), new Map())).toThrow(InputError);
+    const probes = loadProbeSet(writeRaceProbeDir({ clean: BLANK_CLEAN, planted: BLANK_PLANTED, mutationPatch: BLANK_PATCH_TRIMMED }));
+    expect(refusal(() => deriveCodeStates(Buffer.from(BLANK_CLEAN), probes, null)).reason).toBe("declared_mutation_malformed");
   });
 });

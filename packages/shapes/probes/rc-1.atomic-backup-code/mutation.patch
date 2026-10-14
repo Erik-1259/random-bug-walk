@@ -3,10 +3,10 @@ diff --git a/src/app/api/2fa/verify/route.ts b/src/app/api/2fa/verify/route.ts
 +++ b/src/app/api/2fa/verify/route.ts
 @@ -94,7 +94,7 @@
      }
-
+ 
      const consumed = await prisma.client.twoFactorBackupCode.updateMany({
 -      where: { id: unusedCodes[matchIndex].id, used: false },
 +      where: { id: unusedCodes[matchIndex].id },
        data: { used: true },
      });
-
+ 
