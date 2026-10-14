@@ -59,6 +59,21 @@ describe("refusals before anything starts", () => {
     await w.close();
   });
 
+  it("refuses a counted run whose screen record names another target path or hash than the case derives", async () => {
+    const w = await world();
+    completedPilot(w);
+    const screenPath = json(w.raceCase).screen_record as string;
+    const screen = json(screenPath);
+    const target = screen.target as Record<string, unknown>;
+    writeFileSync(screenPath, JSON.stringify({ ...screen, target: { ...target, path: "src/other.ts" } }));
+    await expect(runSessions(counted(w), w.deps)).rejects.toThrow(`the screen record's target path is src/other.ts, but the case's target is ${DRY_TARGET}`);
+    writeFileSync(screenPath, JSON.stringify({ ...screen, target: { ...target, sha256: "0".repeat(64) } }));
+    await expect(runSessions(counted(w), w.deps)).rejects.toThrow(`the screen record's target SHA-256 is ${"0".repeat(64)}, but the case's clean target hashes to ${target.sha256 as string}`);
+    expect(w.sessions).toHaveLength(0);
+    expect(existsSync(join(w.runsDir, "race-01"))).toBe(false);
+    await w.close();
+  });
+
   it("refuses a pilot on any case but the time-zone case", async () => {
     const w = await world();
     await expect(runSessions(pilot(w, { caseFile: w.raceCase }), w.deps)).rejects.toThrow("runs only umami-tz-arg-001");

@@ -144,6 +144,8 @@ export interface ScreenStatus {
   /** The record has every pre-registered field, well formed, and both verdicts are `pass`. */
   eligible: boolean;
   detail: string;
+  /** The screened target file (`target.path`) and its clean SHA-256 (`target.sha256`); null unless the record is well formed. */
+  target: { path: string; sha256: string } | null;
 }
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -196,17 +198,30 @@ export function screenStatus(bytes: Uint8Array): ScreenStatus {
   try {
     data = JSON.parse(Buffer.from(bytes).toString("utf8"));
   } catch {
-    return { case_id: null, eligible: false, detail: "the screen record is not JSON" };
+    return { case_id: null, eligible: false, detail: "the screen record is not JSON", target: null };
   }
-  if (!isRecord(data)) return { case_id: null, eligible: false, detail: "the screen record is not an object" };
+  if (!isRecord(data)) return { case_id: null, eligible: false, detail: "the screen record is not an object", target: null };
   const caseId = typeof data.case_id === "string" ? data.case_id : typeof data.case === "string" ? data.case : null;
-  if (typeof data.verdict === "string") return { case_id: caseId, eligible: false, detail: `the screen record's verdict is ${data.verdict}` };
+  if (typeof data.verdict === "string") return { case_id: caseId, eligible: false, detail: `the screen record's verdict is ${data.verdict}`, target: null };
   const problems = screenShapeProblems(data);
-  if (problems.length > 0) return { case_id: caseId, eligible: false, detail: `the screen record is not in the pre-registered format: missing or malformed ${problems.join(", ")}` };
+  if (problems.length > 0) return { case_id: caseId, eligible: false, detail: `the screen record is not in the pre-registered format: missing or malformed ${problems.join(", ")}`, target: null };
   const headroom = (data.static_headroom as Record<string, unknown>).verdict as string;
   const leak = (data.leak_screen as Record<string, unknown>).verdict as string;
-  if (headroom === "pass" && leak === "pass") return { case_id: caseId, eligible: true, detail: "static headroom pass, leak screen pass" };
-  return { case_id: caseId, eligible: false, detail: `static headroom ${headroom}, leak screen ${leak}` };
+  const recorded = data.target as Record<string, unknown>;
+  const target = { path: recorded.path as string, sha256: recorded.sha256 as string };
+  if (headroom === "pass" && leak === "pass") return { case_id: caseId, eligible: true, detail: "static headroom pass, leak screen pass", target };
+  return { case_id: caseId, eligible: false, detail: `static headroom ${headroom}, leak screen ${leak}`, target };
+}
+
+/**
+ * A counted run's screen must be of the target the case derives: the screened file's path and the
+ * SHA-256 of its clean bytes (upstream at the host commit, before the mutation) must equal the case's
+ * derived target path and clean state, so a run never admits a projection that was not screened.
+ */
+export function checkScreenTarget(screen: ScreenStatus, targetPath: string, cleanSha256: string): void {
+  if (screen.target === null) throw new CaseError("the screen record names no target");
+  if (screen.target.path !== targetPath) throw new CaseError(`the screen record's target path is ${screen.target.path}, but the case's target is ${targetPath}`);
+  if (screen.target.sha256 !== cleanSha256) throw new CaseError(`the screen record's target SHA-256 is ${screen.target.sha256}, but the case's clean target hashes to ${cleanSha256}`);
 }
 
 /**

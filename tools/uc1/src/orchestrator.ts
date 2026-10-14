@@ -26,7 +26,7 @@ import { jobName, prepareGrade, runGrade, writeGradeIds } from "@rbw/solver-sess
 import type { GradeCommand, GradeNumber, GradeResult, GradeRoute, GradeTarget } from "@rbw/solver-session/grade";
 import { profileSha256 } from "@rbw/writer";
 import { Allowance, guardSpend } from "./allowance.ts";
-import { CaseError, caseInputDigests, changedCaseInputs, checkCaseForMode, controllerBase, loadCase, screenStatus } from "./case.ts";
+import { CaseError, caseInputDigests, changedCaseInputs, checkCaseForMode, checkScreenTarget, controllerBase, loadCase, screenStatus } from "./case.ts";
 import type { CaseConfig } from "./case.ts";
 import { SessionRefused } from "./deps.ts";
 import type { AttemptSession, Uc1Deps } from "./deps.ts";
@@ -207,7 +207,7 @@ const CONTROLLER_REFUSED = 2;
  * kept on resume), the controller job, its summary.
  */
 async function gradeTry(ctx: RunContext, route: Exclude<GradeRoute, { route: "not_graded" }>, grade: GradeNumber, work: string, label: string, retry: number): Promise<GradeTry> {
-  const ids = writeGradeIds(ctx.ids, join(work, "ids", `grade-${String(grade)}`), label, () => ctx.deps.uuid(), retry);
+  const ids = writeGradeIds(ctx.ids, join(work, "ids", `grade-${String(grade)}`), label, () => ctx.deps.uuid(), retry, work);
   const command: GradeCommand = {
     work,
     attempt: label,
@@ -547,9 +547,11 @@ export async function runSessions(options: SessionsOptions, deps: Uc1Deps): Prom
   if (!NAME.test(options.name)) throw new RunRefusal("the run name must be lower-case letters, digits and hyphens");
   if (!(options.model in SOLVER_PROFILES)) throw new RunRefusal("--model must be super or kimi");
   let loaded;
+  let screen;
   try {
     loaded = loadCase(options.caseFile);
-    checkCaseForMode(options.mode, loaded.config, screenStatus(readFileSync(loaded.config.screen_record)));
+    screen = screenStatus(readFileSync(loaded.config.screen_record));
+    checkCaseForMode(options.mode, loaded.config, screen);
   } catch (error) {
     if (error instanceof CaseError) throw new RunRefusal(error.message);
     throw error;
@@ -590,6 +592,14 @@ export async function runSessions(options: SessionsOptions, deps: Uc1Deps): Prom
   if (existing === null) {
     const states = await deps.deriveStates(config, mkdtempSync(join(tmpdir(), "rbw-uc1-states-")));
     if (states.digest !== config.image_digest) throw new RunRefusal(`the image resolves to ${states.digest}, not the case's ${config.image_digest}`);
+    if (options.mode === "run") {
+      try {
+        checkScreenTarget(screen, states.target_path, sha256Hex(states.clean));
+      } catch (error) {
+        if (error instanceof CaseError) throw new RunRefusal(error.message);
+        throw error;
+      }
+    }
     const ids: RunIds = { ...newRunIds(() => deps.uuid()), project_id: policy.projectId };
     const plantedSha = sha256Hex(states.planted);
     const issueSha = sha256Hex(issueBytes);
