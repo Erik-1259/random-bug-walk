@@ -26,11 +26,24 @@ describe("the contamination check", () => {
     ]);
   });
 
-  it.each(["/var/lib/rbw/logs/umami.stderr.log", "../../../var/lib/rbw/logs/postgres.stderr.log", "/var/lib/rbw/logs"])("flags a file-tool path into the rbw log directory: %s", (path) => {
+  it.each([
+    "/var/lib/rbw/logs/umami.stderr.log",
+    "../../../var/lib/rbw/logs/postgres.stderr.log",
+    "../../var/lib/rbw/logs/umami.stderr.log",
+    "/var/lib/rbw/logs",
+    "/var/lib/rbw/../rbw/logs/umami.stderr.log",
+  ])("flags a file-tool path into the rbw log directory: %s", (path) => {
     expect(contaminationHits([], [path])).toEqual([{ kind: "reads_process_output", tool: "file", command_index: 0, pattern: "rbw log directory" }]);
   });
 
-  it.each(["src/lib/date.ts", "docs/var/lib/rbw/logs-notes.md"])("does not flag the file-tool path %s", (path) => {
+  // Relative paths resolve from the app's root directory (/workspace/app), so these name files in the app tree.
+  it.each([
+    "src/lib/date.ts",
+    "docs/var/lib/rbw/logs-notes.md",
+    "var/lib/rbw/logs/umami.stderr.log",
+    "../var/lib/rbw/logs/umami.stderr.log",
+    "/workspace/app/var/lib/rbw/logs/umami.stderr.log",
+  ])("does not flag the file-tool path %s", (path) => {
     expect(contaminationHits([], [path])).toEqual([]);
   });
 });

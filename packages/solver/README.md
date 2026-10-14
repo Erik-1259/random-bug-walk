@@ -52,7 +52,7 @@ The per-call limits, the timeouts and the temperature are predictions. The pilot
 | --- | --- | --- |
 | Model turns | 50 | before each turn |
 | Input tokens | 1,500,000 summed | before each turn: reported input so far (the counted bound for a call that reported none) plus this turn's counted bound |
-| Wall time | 40 minutes | before each turn; a running tool is not interrupted |
+| Wall time | 40 minutes | before each turn and each tool call; a `bash` call's timeout is the smaller of its own (2 minutes) and the remaining wall time, at least 5 seconds |
 | `rebuild_restart` calls | 8 | the 9th call is answered with an error and never reaches the session |
 | Context window (`context_window`) | one request's counted bound at most 131,072 (UTF-8 bytes of the body plus framing) | before each turn, after the history policy below; reached only when a request is still over the limit with nothing left to elide |
 
@@ -119,7 +119,7 @@ Each turn: render the exact body (a preview that sends nothing), count its bound
 | Outcome | When |
 | --- | --- |
 | `submitted` | the model called `submit` |
-| `cap_reached` | a cap was reached (`turns`, `input_tokens`, `wall`, or `context_window` when one request is still over the per-call limit after the history policy). The wall cap is checked before each turn and before each tool call: once it has passed, the turn's remaining tool calls do not run (a `submit` after the cap is not a submission), so an attempt overshoots the cap by at most one model response and one tool call |
+| `cap_reached` | a cap was reached (`turns`, `input_tokens`, `wall`, or `context_window` when one request is still over the per-call limit after the history policy). The wall cap is checked before each turn and before each tool call: once it has passed, the turn's remaining tool calls do not run (a `submit` after the cap is not a submission), and a `bash` call's timeout is bounded by the remaining wall time (at least 5 seconds), so a command cannot run on past the cap. A tool call that ends at or after the cap ends the attempt there, and its result is not sent. So an attempt overshoots the cap by at most one model response, 5 seconds of a `bash` call, or one `rebuild_restart`, which is not interrupted |
 | `spend_refused` | the slot is not held, or the ledger refused the reservation or the launch; nothing was sent |
 | `infrastructure_error` | a lost response (the operation is left `uncertain` for the operator), an HTTP error, an unreadable response, a ledger refusal after launch, a ledger call that threw from the reservation on (`ledger_exception: <message>`, with the operation's ID for the operator), or a session error |
 
@@ -129,7 +129,7 @@ The sink receives one event per step, and `transcriptLine` writes each as one JS
 
 ## Contamination check
 
-`contaminationHits(commands)` flags bash commands that start a server (`node server.js`, `next start` or `dev`, a package `start` or `dev` script, `rbw-start`, `postgres -D`, `pg_ctl start`) or read process output (`/var/lib/rbw/logs`, `/proc/<pid>/fd`, `strace`, `ltrace`, `journalctl`); `contaminationHits(commands, filePaths)` also flags every `read_file` or `write_file` path into `/var/lib/rbw/logs`, absolute or by `../`, including the ones refused before the session sees them. It is a pattern check: attempts are counted per arm, never excluded.
+`contaminationHits(commands)` flags bash commands that start a server (`node server.js`, `next start` or `dev`, a package `start` or `dev` script, `rbw-start`, `postgres -D`, `pg_ctl start`) or read process output (`/var/lib/rbw/logs`, `/proc/<pid>/fd`, `strace`, `ltrace`, `journalctl`); `contaminationHits(commands, filePaths)` also flags every `read_file` or `write_file` path into `/var/lib/rbw/logs`, resolved as the session resolves it from the app's root directory (`/workspace/app`): an absolute path into it, or a `../` traversal that reaches it (a relative path such as `var/lib/rbw/logs/x` names a file in the app tree and is not flagged), including the ones refused before the session sees them. It is a pattern check: attempts are counted per arm, never excluded.
 
 ## Analysis and the results record
 

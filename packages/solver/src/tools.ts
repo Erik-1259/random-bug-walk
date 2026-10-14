@@ -231,6 +231,9 @@ export function isAppPath(path: string): boolean {
   return path.split("/").every((segment) => segment !== "" && segment !== "." && segment !== "..");
 }
 
+/** The shortest timeout a tool call gets, however little of the attempt's wall time is left. */
+export const MIN_TOOL_TIMEOUT_MS = 5_000;
+
 /** Per-attempt tool state: the rebuild count and per-tool call counts. */
 export interface ToolState {
   rebuilds: number;
@@ -266,6 +269,8 @@ function isToolName(name: string): name is ToolName {
 /**
  * Runs one validated tool call of `arm` against the session. A call to a tool outside the arm,
  * or with invalid input, is answered with an error text and never reaches the session.
+ * `remainingMs` is the attempt's remaining wall time: a bash call's timeout is the smaller of its
+ * own and that, but at least MIN_TOOL_TIMEOUT_MS.
  */
 export async function runTool(
   arm: Arm,
@@ -274,6 +279,7 @@ export async function runTool(
   session: SolverSession,
   state: ToolState,
   caps: AttemptCaps,
+  remainingMs = Number.POSITIVE_INFINITY,
 ): Promise<ToolOutcome> {
   const reply = (output: string): ToolOutcome => ({ output, submitted: false, summary: null });
   if (!isToolName(name) || !armToolNames(arm).includes(name)) {
@@ -288,7 +294,8 @@ export async function runTool(
     case "bash": {
       const { command } = INPUT_SCHEMAS.bash.parse(input);
       state.bash_commands.push(command);
-      return reply(commandReport(await session.bash(command, { timeoutMs: TOOL_OUTPUT_CAPS.bash_timeout_ms })));
+      const timeoutMs = Math.min(TOOL_OUTPUT_CAPS.bash_timeout_ms, Math.max(MIN_TOOL_TIMEOUT_MS, Math.floor(remainingMs)));
+      return reply(commandReport(await session.bash(command, { timeoutMs })));
     }
     case "read_file": {
       const { path } = INPUT_SCHEMAS.read_file.parse(input);

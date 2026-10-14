@@ -5,6 +5,7 @@ import type { ModelMessage } from "ai";
 import { attemptKey, elideOldestToolResult, HISTORY_ELISION_NOTE, NO_TOOL_CALL_REMINDER, runAttempt, SOLVER_SYSTEM_PROMPT, transcriptLine } from "../../src/agent.ts";
 import { countSolverPromptBound } from "../../src/envelope.ts";
 import { CHAT_COMPLETIONS_URL, SUPER_SOLVER_PROFILE } from "../../src/profile.ts";
+import { MIN_TOOL_TIMEOUT_MS } from "../../src/tools.ts";
 import { attemptOptions, FakeSession, freshSpend, openDb, scriptedFetch, spySpend, steppingClock, withCaps } from "../support.ts";
 
 let db: PGlite;
@@ -275,25 +276,40 @@ describe("caps", () => {
     expect(script.bodies.length).toBeLessThan(3);
   });
 
-  it("runs no tool call once the wall-clock cap has passed, so a submit after the cap is not a submission", async () => {
+  it("bounds a tool call by the remaining wall time and ends the attempt when the cap cuts it off", async () => {
     const { spend } = await freshSpend(db);
     const script = scriptedFetch([{ calls: [{ name: "bash", input: { command: "sleep 120" } }, SUBMIT, { name: "read_file", input: { path: "src/lib/date.ts" } }] }]);
     const profile = withCaps(SUPER_SOLVER_PROFILE, { max_wall_ms: 5 * 60_000 });
     const start = Date.UTC(2026, 9, 13, 12, 0, 0);
-    // The clock stands still except while the bash command runs; the turn starts one second before the cap.
+    // The clock stands still except while the bash command runs; the turn starts 30 seconds before the cap.
     let t = start;
     const session = new FakeSession();
-    const slowBash = session.bash.bind(session);
-    session.bash = (command: string) => {
-      t += 2 * 60_000;
-      return slowBash(command);
+    const fakeBash = session.bash.bind(session);
+    session.bash = async (command: string, options: { timeoutMs: number }) => {
+      const ran = Math.min(2 * 60_000, options.timeoutMs);
+      t += ran;
+      const result = await fakeBash(command, options);
+      return ran < 2 * 60_000 ? { exit_code: null, stdout: "", stderr: "", timed_out: true } : result;
     };
-    const run = attemptOptions(spend, script.fetch, session, { profile, now: () => new Date(t), startedAt: new Date(start - 5 * 60_000 + 1_000) });
+    const run = attemptOptions(spend, script.fetch, session, { profile, now: () => new Date(t), startedAt: new Date(start - 5 * 60_000 + 30_000) });
     const result = await runAttempt(run.options);
+    expect(session.bashTimeouts).toEqual([30_000]);
     expect(result).toMatchObject({ outcome: "cap_reached", cap: "wall", turns: 1, summary: null });
+    expect(result.wall_ms).toBe(5 * 60_000);
     expect(result.tool_calls).toMatchObject({ bash: 1, submit: 0, read_file: 0 });
     expect(session.log).toEqual(["bash:sleep 120"]);
     expect(run.events.filter((e) => e.type === "tool_call")).toHaveLength(1);
+  });
+
+  it("gives a tool call started just before the cap a few seconds, not its full timeout", async () => {
+    const { spend } = await freshSpend(db);
+    const script = scriptedFetch([{ calls: [{ name: "bash", input: { command: "true" } }] }]);
+    const profile = withCaps(SUPER_SOLVER_PROFILE, { max_wall_ms: 5 * 60_000 });
+    const start = Date.UTC(2026, 9, 13, 12, 0, 0);
+    const session = new FakeSession();
+    const run = attemptOptions(spend, script.fetch, session, { profile, now: () => new Date(start), startedAt: new Date(start - 5 * 60_000 + 100) });
+    await runAttempt(run.options);
+    expect(session.bashTimeouts).toEqual([MIN_TOOL_TIMEOUT_MS]);
   });
 
   it("counts time before the loop (the session's open and initial build) against the wall-clock cap", async () => {

@@ -659,14 +659,16 @@ export async function runAttempt(options: AttemptOptions): Promise<AttemptResult
         continue;
       }
       // The wall cap holds between tool calls too: once it has passed, no further call runs (a submit
-      // after the cap is not a submission), so the overshoot is at most one model response and one tool call.
-      if (now().getTime() - startedAt.getTime() >= caps.max_wall_ms) {
+      // after the cap is not a submission). A bash call's timeout is bounded by the remaining wall
+      // time, so it cannot run on past the cap.
+      const remainingMs = caps.max_wall_ms - (now().getTime() - startedAt.getTime());
+      if (remainingMs <= 0) {
         return stopOnCap("wall");
       }
       const toolStarted = now();
       let ran: ToolOutcome;
       try {
-        ran = await runTool(spec.arm, call.toolName, call.input, session, state, caps);
+        ran = await runTool(spec.arm, call.toolName, call.input, session, state, caps, remainingMs);
       } catch (error) {
         const reason = error instanceof Error ? error.message : String(error);
         return infrastructure(`session_error: ${call.toolName}: ${reason}`, null);
@@ -681,6 +683,10 @@ export async function runAttempt(options: AttemptOptions): Promise<AttemptResult
         started_at: toolStarted.toISOString(),
         ended_at: now().toISOString(),
       });
+      // A call that ran up to the wall cap (cut off by its bounded timeout) ends the attempt there.
+      if (!ran.submitted && now().getTime() - startedAt.getTime() >= caps.max_wall_ms) {
+        return stopOnCap("wall");
+      }
       results.push({ toolCallId: call.toolCallId, toolName: call.toolName, output: ran.output });
       if (ran.submitted) {
         submitted = true;
