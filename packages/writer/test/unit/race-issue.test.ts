@@ -293,6 +293,14 @@ describe("the count lines the writer adds to a race issue", () => {
     expect(outcome.report?.numeric?.violations.filter((item) => item.field === "actual_result")).toEqual([]);
   });
 
+  it("rejects a digit count in the title or a step, and allows observed statuses written bare and digits inside a word", async () => {
+    const counted = await writeWith(raceSymptom("title-count"), { ...VALID, title: "Only 1 of 2 simultaneous requests succeeds", expected_result: EXPECTED_PROSE, actual_result: ACTUAL_PROSE });
+    expect(counted.report?.status).toBe("rejected");
+    expect(counted.report?.numeric?.violations).toContainEqual({ field: "title", reason: "unsupported_number", number: "1" });
+    const bare = await writeWith(raceSymptom("bare-status"), { ...VALID, title: "Two sessions spend one backup code at the two-factor (2FA) step", expected_result: EXPECTED_PROSE, actual_result: "The responses were 200 and 200." });
+    expect(bare.report?.numeric).toEqual({ ok: true, violations: [] });
+  });
+
   it("drops a count line placed in the other result field, so each field holds only its own canonical line", async () => {
     const outcome = await writeWith(raceSymptom("lines-misplaced"), {
       ...VALID,
