@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { parseDiff } from "@rbw/projection";
 import { loadProbeSet } from "@rbw/shapes";
 import { DEFAULT_FAMILY, FAMILIES, FamilyError, checkFamilyImage, checkFamilyProbes, checkKitStage, familyFor, familyRecord, raceLatency } from "../../src/family.ts";
 import { JobRefusal, buildJob, expectedVectors, newRunIds } from "../../src/jobs.ts";
@@ -210,5 +211,15 @@ describe("the kit image and the kit stage", () => {
     expect(() => {
       checkKitStage(timeZone, tzStage);
     }).toThrow(/differs from the time-zone fixture's data file/);
+  });
+});
+
+describe("every family's committed probe patches", () => {
+  it("are standard unified diffs that the projection audit parses, empty context lines included", () => {
+    for (const family of Object.values(FAMILIES)) {
+      for (const [id, text] of loadProbeSet(family.probesDir).patches) {
+        expect(() => parseDiff(text), `${family.id} ${id}`).not.toThrow();
+      }
+    }
   });
 });
