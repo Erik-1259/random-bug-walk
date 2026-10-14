@@ -291,6 +291,11 @@ function wordCount(text: string): number {
   return text === "" ? 0 : text.split(" ").length;
 }
 
+/** The text when it has 6 or more words, else null. */
+function sixPlusWords(text: string): string | null {
+  return wordCount(text) >= PHRASE_MIN_WORDS ? text : null;
+}
+
 /** The first sentence, or the start of the text when that sentence is too short to be distinctive; null when even that is too short. */
 function distinctPhrase(text: string): string | null {
   const sentence = firstSentence(text);
@@ -310,7 +315,9 @@ function phraseFrom(own: string | null, steps: readonly string[], taken: readonl
   for (const extendPastTaken of [false, true]) {
     for (let start = 0; start < steps.length; start += 1) {
       for (let end = start + 1; end <= steps.length; end += 1) {
-        const phrase = distinctPhrase(steps.slice(start, end).join(" "));
+        const run = steps.slice(start, end).join(" ");
+        // An extended run takes its own first 12 words, so a taken first sentence cannot repeat.
+        const phrase = extendPastTaken ? sixPlusWords(words(clean(run))) : distinctPhrase(run);
         if (phrase === null) continue;
         if (!taken.includes(phrase)) return phrase;
         if (!extendPastTaken) break;
