@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ATTEMPT_CAPS, TOOL_OUTPUT_CAPS } from "../../src/profile.ts";
-import { armToolNames, armToolSet, headBytes, isAppPath, MIN_TOOL_TIMEOUT_MS, newToolState, rebuildReport, runTool, scrubRuntimeLogs, tailBytes } from "../../src/tools.ts";
+import { armToolNames, armToolSet, headBytes, isAppPath, newToolState, rebuildReport, runTool, scrubRuntimeLogs, tailBytes } from "../../src/tools.ts";
 import { FakeSession } from "../support.ts";
 
 describe("the tools of each arm", () => {
@@ -172,13 +172,13 @@ describe("runTool", () => {
     expect(outcome).toEqual({ output: "submitted", submitted: true, summary: "done" });
   });
 
-  it("bounds the bash timeout by the attempt's remaining wall time, to at least a few seconds", async () => {
+  it("bounds the bash timeout by the attempt's remaining wall time, with no minimum past it", async () => {
     const session = new FakeSession();
     await runTool("off", "bash", { command: "a" }, session, newToolState(), ATTEMPT_CAPS);
     await runTool("off", "bash", { command: "b" }, session, newToolState(), ATTEMPT_CAPS, 45_000.7);
     await runTool("off", "bash", { command: "c" }, session, newToolState(), ATTEMPT_CAPS, 10);
     await runTool("off", "bash", { command: "d" }, session, newToolState(), ATTEMPT_CAPS, 10 * 60_000);
-    expect(session.bashTimeouts).toEqual([TOOL_OUTPUT_CAPS.bash_timeout_ms, 45_000, MIN_TOOL_TIMEOUT_MS, TOOL_OUTPUT_CAPS.bash_timeout_ms]);
+    expect(session.bashTimeouts).toEqual([TOOL_OUTPUT_CAPS.bash_timeout_ms, 45_000, 10, TOOL_OUTPUT_CAPS.bash_timeout_ms]);
   });
 
   it("records bash commands for the contamination check", async () => {

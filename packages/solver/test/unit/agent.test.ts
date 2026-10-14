@@ -301,15 +301,19 @@ describe("caps", () => {
     expect(run.events.filter((e) => e.type === "tool_call")).toHaveLength(1);
   });
 
-  it("gives a tool call started just before the cap a few seconds, not its full timeout", async () => {
+  it("does not start a bash call when less than the minimum useful call time remains, and ends the attempt at the cap", async () => {
     const { spend } = await freshSpend(db);
-    const script = scriptedFetch([{ calls: [{ name: "bash", input: { command: "true" } }] }]);
+    const script = scriptedFetch([{ calls: [{ name: "bash", input: { command: "true" } }, SUBMIT] }]);
     const profile = withCaps(SUPER_SOLVER_PROFILE, { max_wall_ms: 5 * 60_000 });
     const start = Date.UTC(2026, 9, 13, 12, 0, 0);
     const session = new FakeSession();
     const run = attemptOptions(spend, script.fetch, session, { profile, now: () => new Date(start), startedAt: new Date(start - 5 * 60_000 + 100) });
-    await runAttempt(run.options);
-    expect(session.bashTimeouts).toEqual([MIN_TOOL_TIMEOUT_MS]);
+    const result = await runAttempt(run.options);
+    expect(MIN_TOOL_TIMEOUT_MS).toBeGreaterThan(100);
+    expect(session.bashTimeouts).toEqual([]);
+    expect(session.log).toEqual([]);
+    expect(result).toMatchObject({ outcome: "cap_reached", cap: "wall", summary: null });
+    expect(result.tool_calls).toMatchObject({ bash: 0, submit: 0 });
   });
 
   it("counts time before the loop (the session's open and initial build) against the wall-clock cap", async () => {

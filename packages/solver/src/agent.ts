@@ -15,7 +15,7 @@ import type { ContaminationHit } from "./contamination.ts";
 import { countSolverPromptBound, settlementLines, solverEnvelope, unsentLines, usageState } from "./envelope.ts";
 import { CHAT_COMPLETIONS_URL, SOLVER_KIND } from "./profile.ts";
 import type { CapName, SolverProfile } from "./profile.ts";
-import { armToolNames, armToolSet, newToolState, runTool } from "./tools.ts";
+import { armToolNames, armToolSet, MIN_TOOL_TIMEOUT_MS, newToolState, runTool } from "./tools.ts";
 import type { Arm, SolverSession, ToolName, ToolOutcome } from "./tools.ts";
 
 /** The fixed system prompt, shared by both arms. It names no tool, so it is the same in each. */
@@ -660,9 +660,10 @@ export async function runAttempt(options: AttemptOptions): Promise<AttemptResult
       }
       // The wall cap holds between tool calls too: once it has passed, no further call runs (a submit
       // after the cap is not a submission). A bash call's timeout is bounded by the remaining wall
-      // time, so it cannot run on past the cap.
+      // time, so it cannot run on past the cap; with less than the minimum useful call time left, no
+      // bash call starts and the attempt ends at the cap.
       const remainingMs = caps.max_wall_ms - (now().getTime() - startedAt.getTime());
-      if (remainingMs <= 0) {
+      if (remainingMs <= 0 || (call.toolName === "bash" && remainingMs < MIN_TOOL_TIMEOUT_MS)) {
         return stopOnCap("wall");
       }
       const toolStarted = now();
