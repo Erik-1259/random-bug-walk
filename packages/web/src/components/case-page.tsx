@@ -291,7 +291,7 @@ function Matrix({ admission }: { admission: AdmissionRecords | null }) {
       )}
       <p className="rule-codes">
         Rule codes refer to the <a href={ADMISSION_RULES}>admission rules</a>: ADM-02 to ADM-06 cover {copiesPhrase(admission)}, the fixed copies passing, the planted copies failing
-        as declared, stability and the negative probes{admissionCopies(admission)?.probes === false ? " (this run has no negative-probe copies)" : ""}; ADM-07 the card, issue and leak checks with a human check; ADM-08 this original-suite comparison; ADM-09 the release.
+        as declared, stability and the negative probes{admissionCopies(admission)?.probes === false ? " (this run has no negative-probe copies)" : ""}; ADM-07 the card, issue and leak checks, the three exact-phrase novelty searches and a human check; ADM-08 this original-suite comparison; ADM-09 the release.
       </p>
     </>
   );

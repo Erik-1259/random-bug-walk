@@ -201,6 +201,10 @@ describe("synthetic case with admission records", () => {
     expect((await readResults(built.dir)).caseRun?.novelty).toEqual({ status: "blocked", matchingUrls: 2, publicUri: null });
     addRunFile(built.dir, built.root, "generated/novelty.json", built.root, encodeCanonical({ ...blocked, status: "maybe" }));
     expect((await readResults(built.dir)).caseRun?.novelty).toBeNull();
+    addRunFile(built.dir, built.root, "generated/novelty.json", built.root, encodeCanonical({ ...blocked, matching_urls: "x" }));
+    expect((await readResults(built.dir)).caseRun?.novelty).toBeNull();
+    addRunFile(built.dir, built.root, "generated/novelty.json", built.root, new TextEncoder().encode("{not json"));
+    expect((await readResults(built.dir)).caseRun?.novelty).toBeNull();
   });
 });
 
