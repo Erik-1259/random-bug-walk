@@ -11,6 +11,7 @@ import {
   countExamples,
   diagnosticArchives,
   factoryRuns,
+  fileHref,
   funnel,
   MATRIX_COLUMNS,
   MATRIX_ROWS,
@@ -33,7 +34,7 @@ import {
 } from "../model.ts";
 import { ReplayControl } from "./replay-control.tsx";
 import { RunSummary } from "./run-summary.tsx";
-import { filesOfRelease, isRaceSymptom, type AdmissionRecords, type CaseSymptom, type PublishedRelease, type Results, type Run } from "../release.ts";
+import { filesOfRelease, isRaceSymptom, NOVELTY_PATH, type AdmissionRecords, type CaseSymptom, type PublishedRelease, type Results, type Run } from "../release.ts";
 
 function Cell({ index, title, children }: { index: number; title: string; children: ReactNode }) {
   return (
@@ -318,6 +319,20 @@ export function notValidatedReason(results: Results, run: Run): string | null {
  */
 const PROVISIONAL_NOTE = "(admission was graded under this revision, which does not include the issue; the task revision above is the same revision with the release's issue added)";
 
+/** What the phrase checks are (tools/controller, packages/search) and that tools/release stage withholds their records. */
+const NOVELTY_NOTE = "The check runs three Tavily exact-phrase searches of phrases taken from the frozen issue; the search records are withheld (private material).";
+
+/** The released run's generated/novelty.json as it reads, linked to the file. */
+function Novelty({ run }: { run: Run }) {
+  const { novelty } = run;
+  if (novelty === null) return <>{NOT_IN_RECORDS}</>;
+  return (
+    <>
+      <a href={fileHref(run.rootExecutionId, NOVELTY_PATH, novelty.publicUri)}>{`${novelty.status}, ${String(novelty.matchingUrls)} matching ${novelty.matchingUrls === 1 ? "URL" : "URLs"}`}</a>. {NOVELTY_NOTE}
+    </>
+  );
+}
+
 /** The release's provenance, from its record; the hashes of judge_job and files stay in release.json. */
 function ReleaseProvenance({ release, run }: { release: PublishedRelease; run: Run }) {
   const { record } = release;
@@ -358,6 +373,10 @@ function ReleaseProvenance({ release, run }: { release: PublishedRelease; run: R
       </dd>
       <dt>Human check (ADM-07)</dt>
       <dd>Approved on {record.approval.reviewed_at.slice(0, "YYYY-MM-DD".length)}</dd>
+      <dt>Novelty check (ADM-07)</dt>
+      <dd>
+        <Novelty run={run} />
+      </dd>
       <dt>Calibration</dt>
       <dd>Not requested</dd>
     </dl>

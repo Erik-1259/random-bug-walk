@@ -6,8 +6,8 @@
 //   store/sha256/<hex>                     large published files (optional here; linked by public_uri)
 //   repository/releases/<id>/release.json  each release (1 to 99 when releases/ exists), with the files its record lists
 // Inside a run it reads generated/symptom.json (an ObservedSymptom, or a RaceSymptom when it has a
-// symptom_kind) and, for each job execution, results/<execution>/evidence.json and decision.json
-// as @rbw/admission writes them.
+// symptom_kind), generated/novelty.json when it is a novelty summary, and, for each job execution,
+// results/<execution>/evidence.json and decision.json as @rbw/admission writes them.
 import { createHash } from "node:crypto";
 import type { Dirent } from "node:fs";
 import { lstat, readdir, readFile } from "node:fs/promises";
@@ -18,6 +18,8 @@ import { recordPackages, type RecordPackages } from "./records.ts";
 
 export const MANIFEST_FILE = "manifest.json";
 export const SYMPTOM_PATH = "generated/symptom.json";
+export const NOVELTY_PATH = "generated/novelty.json";
+const NOVELTY_STATUSES = ["clear", "blocked", "incomplete"] as const;
 export const RELEASE_FILE = "release.json";
 /** The most releases one site shows; more is refused. */
 export const MAX_RELEASES = 99;
@@ -78,11 +80,21 @@ export interface Run {
   symptom: CaseSymptom | null;
   /** The admission job's records; null when the run published none. */
   admission: AdmissionRecords | null;
+  /** What generated/novelty.json says; null when the run published none, or a file that is not a novelty summary. */
+  novelty: NoveltyResult | null;
   /**
    * For a published judge replay, the release its judge_verify request names (results/<execution>/request.json);
    * null for any other run, or a replay whose request is not published or not a judge_verify request.
    */
   replayReleaseId: string | null;
+}
+
+/** A novelty summary's status and the number of matching URLs it lists, as @rbw/search writes them. */
+export interface NoveltyResult {
+  status: (typeof NOVELTY_STATUSES)[number];
+  matchingUrls: number;
+  /** The entry's store URI for a large file; null for a repository file. */
+  publicUri: string | null;
 }
 
 /** A case's bug family, from its symptom: the race family's RaceSymptom or the time-zone family's ObservedSymptom. */
@@ -306,6 +318,23 @@ class Reader {
     }
   }
 
+  /** The run's novelty summary; a file that does not parse as one gives null, so the page shows none. */
+  async readNovelty(manifest: RunManifest): Promise<NoveltyResult | null> {
+    const entry = manifest.entries.find((item) => item.path === NOVELTY_PATH && item.outcome === "published");
+    if (entry === undefined) return null;
+    let value: unknown;
+    try {
+      value = this.packages.schema.parseCanonical(await this.entryBytes(manifest.root_execution_id, entry));
+    } catch (error) {
+      if (error instanceof this.packages.schema.CanonicalError) return null;
+      throw error;
+    }
+    const { status, matching_urls: urls } = (typeof value === "object" && value !== null ? value : {}) as { status?: unknown; matching_urls?: unknown };
+    const known = NOVELTY_STATUSES.find((item) => item === status);
+    if (known === undefined || !Array.isArray(urls)) return null;
+    return { status: known, matchingUrls: urls.length, publicUri: entry.public_uri };
+  }
+
   parseCanonical(bytes: Uint8Array, location: string): unknown {
     try {
       const value = this.packages.schema.parseCanonical(bytes);
@@ -456,6 +485,7 @@ export async function readResults(dir: string): Promise<Results> {
       manifest,
       symptom: await reader.readSymptom(manifest),
       admission: await reader.readAdmission(manifest),
+      novelty: await reader.readNovelty(manifest),
       replayReleaseId: await reader.readReplayRelease(manifest),
     });
   }
@@ -472,6 +502,7 @@ export async function readResults(dir: string): Promise<Results> {
       manifest: null,
       symptom: null,
       admission: null,
+      novelty: null,
       replayReleaseId: null,
     });
   }
