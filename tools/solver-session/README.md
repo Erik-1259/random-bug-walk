@@ -84,4 +84,4 @@ node tools/solver-session/src/cli.ts smoke --id smoke-01 --image rbw-umami-kit:l
 
 `<manifest>` and `<terms>` are as in `tools/local-runner`'s README (a synthetic term list works for a development run). It prints one JSON line per step. Exit codes: 0 every step ran and every build started; 1 a step failed; 2 a usage error or a refusal before any container.
 
-Each session holds a 4 vCPU, 8 GB container and runs a cold Next build per rebuild. The paired run's plan is at most 3 sessions at a time, with `host-health.sh` between batches; the caller enforces that.
+Each session holds a 4 vCPU, 8 GB container and runs a cold Next build per rebuild. The paired run (`tools/uc1`) runs at most 3 sessions at a time (`--concurrency` 1 to 3); a host health check between batches of sessions is not run by the orchestrator.

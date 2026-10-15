@@ -78,7 +78,7 @@ So `overlap_ms > 0` is the grading condition, and the repeatability of the race 
 - (a) add database-side ordering evidence that the driver collects: a Postgres statement log with process IDs and timestamps, or a per-request read and write timestamp; or
 - (b) accept the weaker, client-side evidence and say so in the family's public claims.
 
-The race wiring step (driver, admission and runners) has to settle this question.
+The race wiring (driver, admission and runners) was merged without settling it, and the race family did not reach admission and is parked; the question is still open.
 
 ## Interface for the protected driver
 
@@ -110,7 +110,7 @@ The kit's app environment sets `TWO_FACTOR_ENCRYPTION_KEY` to a valid placeholde
 | clean | 25 | 25 pass | 25 pass |
 | planted | 30 | 30 pass | 17 `double_spend`, 13 pass |
 
-The checks grade as declared, but with no database delay the planted race is not repeatable enough for ADM-05, which needs 20 of 20. The delay study picks a database delay that gives 20 of 20 on a planted copy, ahead of the ADM-05 run itself.
+The checks grade as declared, but with no database delay the planted race is not repeatable enough for ADM-05, which needs 20 of 20. The [delay study](#delay-study) below measured which database delays give 20 of 20 on a planted arm64 copy; the race family did not reach admission and is parked.
 
 With no guard in the planted route, a refusal can only come from the branch where no unused code matched, so in the 13 lost planted rounds the second request read after the first wrote. The delay study sizes a database delay to cover that lag.
 
@@ -132,12 +132,12 @@ This result is from a native arm64 build. The released image is amd64, and bcryp
 
 ## Admission status
 
-This fixture is **not ready to be wired or admitted**, and no paid run should use it yet:
+The race family **did not reach admission and is parked**. The fixture is wired into the runners and the controller (`--family race`; see [Not in this package](#not-in-this-package)). Notes recorded before it was parked:
 
 - At zero delay a planted copy shows `double_spend` in about half the rounds (9 of 20 in the [delay study](#delay-study), 17 of 30 in the earlier no-delay proof), so ADM-05's 20 of 20 on `planted-01` is far out of reach without a delay.
 - A single race round that passes is not evidence of a fix. A "fix" that changes nothing passes the race check in about half the no-delay rounds, because a lost race on a planted copy grades `pass` (a unit test shows this with an app that writes before the second read). A fixed verdict needs many race rounds, as ADM-05's 20 repetitions give; a trial that grades a solver's fix from fewer rounds must not rely on one race round.
 - The [delay study](#delay-study) shows 20 of 20 planted `double_spend` and 0 of 20 clean false positives at a 25 ms downstream latency toxic (and at 50, 100 and 200 ms), with the serial control passing throughout, on a native **arm64** race image. Before admission this must be re-measured on the released **amd64** image on native amd64 hardware, since the chosen delay depends on bcrypt and database timing and 25 ms has little margin over the flaky 0 ms cell.
-- The driver accepts `double_spend` and `backup_code_reused`. One round must still run through the staged kit and the driver (`stage-kit --fixture-package`, then the driver), not through `host/live-proof.sh`, which calls the fixture and Playwright directly.
+- The driver accepts `double_spend` and `backup_code_reused`. With `--family race`, the runners take a kit stage made with `stage-kit --fixture-package` and run this fixture through the driver (`tools/local-runner`, Bug families); `host/live-proof.sh` instead calls the fixture and Playwright directly.
 - The overlap-evidence question above is still open.
 
 ## Tests
@@ -150,4 +150,4 @@ This fixture is **not ready to be wired or admitted**, and no paid run should us
 
 - The race kit image itself (`kit/umami-race`), and the choice of delay for the released amd64 image. The arm64 [delay study](#delay-study) is in this package; its re-measurement on native amd64 is not.
 - The ast-grep rules and probe records for the RC-1 shape.
-- Wiring the family into the runners, the controller and admission, with the 11-copy profile without the two ADM-06 probes: `--family race` in `tools/local-runner` and `tools/controller` (see the local runner's README, Bug families). The candidate attempt still refuses the race family, because the issue writer's `ObservedSymptom` holds time-zone fields only.
+- Wiring the family into the runners, the controller and admission, with the 11-copy profile without the two ADM-06 probes: `--family race` in `tools/local-runner` and `tools/controller` (see the local runner's README, Bug families). For the race family the candidate attempt builds a `RaceSymptom`, which the issue writer accepts (`packages/writer`, Race family: RaceSymptom).

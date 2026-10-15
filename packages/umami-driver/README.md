@@ -7,7 +7,7 @@ For one trial it does the following:
 1. builds the app with the kit's `rbw-build-app`, which runs `pnpm build:docker` as `rbw-app` through the kit launcher;
 2. starts Postgres and Umami with the kit's `rbw-start`, which waits for `/api/heartbeat`, and then copies the migrated database to the fixture's template;
 3. runs Umami's unchanged API suite (24 spec files at the pinned commit) against a frozen test manifest;
-4. resets the fixture and runs the four added checks, for 1 or 20 rounds;
+4. resets the fixture and runs the fixture's added checks (four in the time-zone fixture, two in the race fixture), for 1 or 20 rounds;
 5. stops everything with the kit's `rbw-stop`, and confirms that the process group it started has ended;
 6. writes the trial's records as a record set that `@rbw/admission` imports, with phase timings and resource samples.
 

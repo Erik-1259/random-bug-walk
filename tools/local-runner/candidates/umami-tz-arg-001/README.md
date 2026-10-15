@@ -1,6 +1,6 @@
-# Inputs for the first live recordings of `umami-tz-arg-001`
+# Inputs written for live recordings of `umami-tz-arg-001`
 
-These files are the inputs for the first live writer recording (one card call and one issue call) and the first live search recording (six Tavily calls) of fixture `umami-tz-arg-001`. They are development evidence for the client path. The planted bug is synthetic, nothing here is an admitted issue, and no live call has been made with these files. The owner reviews them before any paid call is made from the private workflow.
+These files were written as the inputs for a live writer recording (one card call and one issue call) and a live search recording (six Tavily calls) of fixture `umami-tz-arg-001`. They are development evidence for the client path. The planted bug is synthetic and nothing here is an admitted issue. The live card and issue calls behind release `319f3100-9ecf-441d-b7af-a643af9ae4e5` were made by the controller's candidate attempt (`tools/controller`, `attempt`). Its private input reuses this directory's card source and symptom prose: in the results repository, the released run's `runs/0495237f-9310-4472-885e-4728fddc1257/generated/card.json` has the same source links, and its `generated/symptom.json` has the same `user_action`, `fixture_description` and `doc_excerpts`. The recordings of those two calls are published in the results repository under `releases/319f3100-9ecf-441d-b7af-a643af9ae4e5/recordings/`.
 
 Each value below is marked as one of:
 
@@ -108,7 +108,7 @@ Not excluded, **chosen**: `timezone` and `unit`, which are the public query para
 | `input.source.start_date`, `end_date` | `2020-01-01`, `2026-10-06` | **chosen**: from the start of 2020, the year the Umami repository was created, to the date these inputs were written |
 | `input.docs.url` | `https://docs.umami.is/docs/api-reference/get-website-pageviews` | **chosen**: the Umami documentation page for the endpoint the user called. Checked with `curl`: it returned HTTP 200 and its text describes the endpoint and its `timezone` parameter. `https://umami.is/docs` redirects to `docs.umami.is`, and the page is listed in `https://docs.umami.is/sitemap.xml`. |
 | `input.docs.query` | `pageviews grouped by day in the selected time zone` | **chosen**: the symptom in the documentation's own terms |
-| `input.phrases` | `daily pageview counts for one website`, `just before or just after local midnight`, `each local day's count depends on the selected time zone` | **copied** from the symptom's `user_action` and `fixture_description`. The issue text is not written yet, so the phrases come from the symptom wording that the issue is written from. A test checks that each one is in the symptom. |
+| `input.phrases` | `daily pageview counts for one website`, `just before or just after local midnight`, `each local day's count depends on the selected time zone` | **copied** from the symptom's `user_action` and `fixture_description`. The issue text was not written yet, so the phrases come from the symptom wording that the issue is written from. A test checks that each one is in the symptom. The candidate attempt (`tools/controller`) does not use these phrases: it picks its three phrases from the frozen issue. |
 | `input.docs_policy.allowed_domains` | `docs.umami.is` | **chosen**: the host of Umami's documentation |
 | `input.docs_policy.excluded_domains` | `date-fns.org` | **chosen**: the documentation of `date-fns`, the date library in Umami's `package.json` at the pinned commit, which the search README says to exclude |
 | `settings` | `timeout_seconds` 30, `max_results` 5, `excerpt_max_chars` 300, `passage_max_chars` 2000, `max_passages` 6, `project_docs_domains` empty | **copied** from the package's `DEFAULT_SETTINGS` |
@@ -169,7 +169,7 @@ The single line `2`: **chosen**, one card call and one issue call, the writer's 
 
 `test/unit/candidates.test.ts` renders both request paths with no network:
 
-- The writer's `previewCard` and `previewIssue` give input-token bounds of 7,124 and 6,735 at this commit, below the 32,768 limit.
+- The writer's `previewCard` and `previewIssue` give input-token bounds at or below the 32,768 limit (the test checks the limit, not exact values).
 - The search client's six requests are answered in process. Every call passes the local checks (call plan, excluded identifiers, docs domain, source domains) and reserves 16,000 micro-USD.
 
 ## Running the recordings

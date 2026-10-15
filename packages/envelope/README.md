@@ -2,7 +2,7 @@
 
 Versioned provider rates and conservative priced envelopes for `@rbw/spend`. This package makes no provider calls, holds no credentials and reads no environment variables. Only the integration test runner reads `DATABASE_URL`.
 
-`rate-sheets/v1.json` contains the six dispatched prices for Vercel Sandbox in `iad1`, Nemotron 3.5 Lightning on Nebius Token Factory and Tavily. The source pages were checked on 2026-10-05 and matched all six prices. `account_confirmed` remains false: the rates must be confirmed against the actual account before any paid use. The package refuses a true value.
+`rate-sheets/v1.json` contains the six dispatched prices for Vercel Sandbox in `iad1`, Nemotron 3.5 Lightning on Nebius Token Factory and Tavily. The source pages were checked on 2026-10-05 and matched all six prices. `account_confirmed` is false, and the package refuses a true value: these are the public list prices from those source pages, and the sheet does not record them as confirmed against the account. The controller prices and reserves its Sandbox jobs from this sheet.
 
 `loadRateSheet(path)` and `parseRateSheet(bytes)` return `{ sheet, rate_sheet_sha256 }`. Their strict schema refuses unknown fields, duplicate service/subject/unit triples, invalid units and invalid prices. Canonical JSON uses `canonicalize` with ASCII keys and safe integer tokens only; fractions and exponent notation are refused before parsing. Sorted keys, UTF-8 and no whitespace or trailing newline determine the SHA-256. `test/vector.json` pins both the canonical bytes and hash. Entry order and string contents remain significant. `priceFor(sheet, service, subject, unit)` returns a price or null.
 
