@@ -2,7 +2,7 @@
 
 The trusted publisher. It publishes a terminal root run's experimental record to the public results repository and the public artifact store exactly once. In every other case it publishes nothing beyond a scanned `PublicRunStatus`.
 
-It runs only on the host or in private CI. Nothing in it passes credentials to sandboxes, agents, app copies or models. It runs under Node 24 directly after `pnpm install`:
+Its commands run only on the host or in private CI; its private-store client (below) also runs in the results site's judge routes and in the judge replay's controller. Nothing in it passes credentials to sandboxes, agents, app copies or models. It runs under Node 24 directly after `pnpm install`:
 
 ```
 node packages/publisher/src/cli.ts policy  --project-id <uuid> --output-repository <url> --artifact-base-uri <url> --policy-version <n> --out <file>

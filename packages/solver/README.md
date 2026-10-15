@@ -4,7 +4,7 @@ The fixed solver of the paired comparison (spec §2.3 UC1, §2.4): a small tool-
 
 - One attempt is one run of the loop on one bug in one arm. The arms differ only in the `server_logs` tool: the `off` arm does not have it, the `on` arm does. The system prompt, the first message, the other tools, the caps, the temperature and the seed (the attempt index) are the same in both.
 - Every model turn is one metered call: bounded, priced, reserved, recorded as launching, sent once and settled, in the writer's order. Nothing retries.
-- The package makes no live call in its tests. A scripted `fetch` stands in for the model and a fake session for the container. No live run has been made; the model limits and sampling settings below are predictions for the harness pilot to measure.
+- The package makes no live call in its tests. A scripted `fetch` stands in for the model and a fake session for the container. The model limits and sampling settings below are predictions, not measurements.
 
 ## Contents
 

@@ -152,7 +152,7 @@ The held-out list is supplied at run time; it is private in real use and synthet
 
 An admission manifest may instead follow `ADMISSION_WITHOUT_PROBES_PROFILE`: the admission trials without `partial-01` and `stub-01`, 11 copies instead of 13, for a family whose probe set records ADM-06 (the partial and stub probes) as not applicable. `allowedTrialProfiles(kind)` lists both for `admission` and the kind's one profile otherwise, and the `ExpectedTrials` rules check a manifest against the profile its trial IDs follow. `buildExpectedTrials` builds it only when given `adm06: "not_applicable"` with `kind: "admission"` (`build:adm06` otherwise); without `adm06` it builds the full profile, so the time-zone family's 13 copies are unchanged. Which profile a family uses is the trusted runner's choice, from the family's probe set.
 
-A `complete` `TrialResult` is evidence that everything ran; it is not a verdict and not an admission. `ObservedSymptom` is the only input the issue writer accepts; it allows no field beyond those listed, at any level.
+A `complete` `TrialResult` is evidence that everything ran; it is not a verdict and not an admission. `ObservedSymptom` (the time-zone family) and `RaceSymptom` (the race family) are the only inputs the issue writer accepts; each allows no field beyond those listed, at any level.
 
 `TestId` is `^[!-~]+$`. A Playwright 1.63.0 `--list --reporter=json` report gives each spec an `id` such as `d22e25be00584dc0df90-e7379098e8511d6e039f` (one per project), which matches; spec titles with spaces or non-ASCII characters do not.
 

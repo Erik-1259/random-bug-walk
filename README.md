@@ -13,27 +13,33 @@ The planted bug is synthetic, labeled as such everywhere, and never filed upstre
 |---|---|
 | [`packages/admission`](packages/admission/README.md) | Trial-result importer and the admission decisions (ADM-02 to ADM-06, the ADM-08 comparison) |
 | [`packages/envelope`](packages/envelope/README.md) | Versioned provider rates and priced envelopes for the spend ledger |
-| [`packages/harvest`](packages/harvest/README.md) | Finds public source fixes on GitHub that match the bug shape and reports a funnel |
+| [`packages/harvest`](packages/harvest/README.md) | Finds public source fixes on GitHub that match a bug shape (`DT-1.tz-arg` or the race class `RC-1.guarded-write`) and reports a funnel |
 | [`packages/harvest-review`](packages/harvest-review/README.md) | Two-model review of the harvest's matches |
 | [`packages/projection`](packages/projection/README.md) | Audits a solver-visible copy: pinned source, one declared change, no history or answer-bearing files (part of ADM-01, ADM-07's scan) |
 | [`packages/publisher`](packages/publisher/README.md) | Trusted publisher of runs and releases to the results repository and the public store |
 | [`packages/schema`](packages/schema/README.md) | Shared record schema, canonical JSON and job contracts (TypeScript, with the Python package in `python/schema`) |
 | [`packages/screen`](packages/screen/README.md) | Automated static-headroom screen: bounded model probes that try to locate a planted bug from the source alone |
 | [`packages/search`](packages/search/README.md) | Tavily searches, including the exact-phrase checks on issue text |
-| [`packages/shapes`](packages/shapes/README.md) | The bug shape as ast-grep rules, with the planted mutation and probe patches |
+| [`packages/shapes`](packages/shapes/README.md) | The bug shapes (`DT-1.tz-arg`, `RC-1.atomic-backup-code`) as ast-grep rules with their planted mutations and probe patches, plus class-level race rules and a site finder |
+| [`packages/solver`](packages/solver/README.md) | The fixed solver for the UC1 paired comparison: a metered tool-calling loop on Token Factory, and the analysis of graded attempts |
 | [`packages/spend`](packages/spend/README.md) | Postgres spend pools and the serial execution slot |
 | [`packages/umami-driver`](packages/umami-driver/README.md) | Protected command that runs one trial inside an app copy and writes its records |
 | [`packages/umami-fixture`](packages/umami-fixture/README.md) | The fixture `umami-tz-arg-001`: data and the four added checks |
+| [`packages/umami-fixture-rc1`](packages/umami-fixture-rc1/README.md) | The race-family fixture `rc-1-backup-code-001`: data and two added checks (serial and concurrent backup-code use); the family did not reach admission and is parked |
 | [`packages/web`](packages/web/README.md) | The results site (Next.js) and its judge routes |
 | [`packages/writer`](packages/writer/README.md) | Model-written pattern cards and bug reports, with code checks on every issue |
+| [`tools/candidates`](tools/candidates/README.md) | Candidate pipeline: lists the sites a class rule matches in the host, plants each in its own temporary copy, runs the static-headroom screen on each and ranks the survivors |
 | [`tools/controller`](tools/controller/README.md) | Runs jobs and the candidate attempt against the spend ledger on Vercel Sandbox; also the judge replay's controller |
 | [`tools/local-runner`](tools/local-runner/README.md) | Runs the kit check, observation and admission on local Docker; its job builders and copy path are reused by the controller |
 | [`tools/release`](tools/release/README.md) | Stages runs for the publisher, builds a checked release with its frozen judge job, and publishes judge replays |
 | [`tools/uc1`](tools/uc1/README.md) | Runs the UC1 paired comparison's attempts (server logs off and on) in the pre-registered order, with the spend guard and both grades |
+| [`tools/solver-session`](tools/solver-session/README.md) | One UC1 solver attempt's session in a local Docker kit container (planted copy, tools, log scrub, submitted diff), and grading a submitted fix through the controller |
 | [`tools/publication`](tools/publication/README.md) | Publication boundary for agent work: scanner, host helper, wrapper and pre-push hook |
 | `tools/neon-ci` | Creates and deletes the throwaway Neon database branches that the integration workflows use |
 | [`kit/umami`](kit/umami/README.md) | The kit image: pinned Umami, PostgreSQL and the protected verifier area |
+| [`kit/umami-race`](kit/umami-race/README.md) | The race family's kit image: the `kit/umami` image with Toxiproxy between Umami and Postgres for a fixed database delay |
 | [`docs/admission-rules.md`](docs/admission-rules.md) | Admission rules ADM-01 to ADM-10 and their status |
+| [`docs/bug-generation-pipeline.md`](docs/bug-generation-pipeline.md) | What each pipeline step does today, which package does it, and what is still manual |
 | `container/` | The development container for coding agents (`Dockerfile`, `run-agent.sh`, `check-isolation.sh`) |
 | `scripts/checks/` | Repository checks: prose, admission rule IDs, test-count floors, dependency audit, docs-only classification |
 | `.github/workflows/` | CI, the Postgres integration tests and Neon branch cleanup |
@@ -80,7 +86,7 @@ The judge routes stay disabled unless their variables are set. See [`packages/we
 
 ## How a candidate, a release and a judge replay fit together
 
-1. **Candidate attempt.** The controller's `attempt` command runs one factory root on Vercel Sandbox: a kit check, an observation, the writer's card and issue, the searcher's exact-phrase checks, and the 13-copy admission, each reserved on the spend ledger. See [The candidate attempt](tools/controller/README.md#the-candidate-attempt).
+1. **Candidate attempt.** The controller's `attempt` command runs one factory root on Vercel Sandbox: a kit check, an observation, two Tavily source searches and a Tavily docs extract (whose passages, when it returns usable ones, become the symptom's documentation excerpts), the writer's card and issue, the searcher's three exact-phrase checks, and the 13-copy admission, each reserved on the spend ledger. The source searches and the docs extract were added after the released run (PR #59). The released case's Tavily calls were the three exact-phrase checks. The one published run with source searches and an extract (`8bdc650f-6dce-4278-b9b8-d50431225b04`) was not released. See [The candidate attempt](tools/controller/README.md#the-candidate-attempt).
 2. **Publication.** `tools/release stage` turns the terminal root into a staging directory, and the publisher publishes it to the results repository and the public store. See [`tools/release`](tools/release/README.md) and [`packages/publisher`](packages/publisher/README.md).
 3. **Release.** After the owner approves the frozen issue, `tools/release build` checks the published run and writes a release with a frozen judge job in the private store; the publisher's `release` command publishes the release directory. The results site, rebuilt with it, shows the validated example.
 4. **Judge replay.** On the site, a judge with the passcode starts a replay. The judge route reserves the budget and starts the controller in its own sandbox, which runs the frozen judge job on three fresh copies (clean, planted, fixed) and compares the six cells with the release. `tools/release publish-replays` later publishes finished replays. See [Judge routes](packages/web/README.md#judge-routes) and `--prebuilt` in [`tools/controller`](tools/controller/README.md#commands).
@@ -91,7 +97,7 @@ The site is deployed on Vercel from a tree of this repository plus a results dir
 
 ## What it does not do
 
-- It is a hackathon prototype: one app (Umami at a pinned commit), one bug shape and one fixture.
+- It is a hackathon prototype: one app (Umami at a pinned commit) and one released case, from one bug shape and its fixture. A second family, the race family, has its shape, fixture and kit image on main but did not reach admission and is parked.
 - Its planted bugs are synthetic; it finds no real Umami bug and files nothing upstream.
 - It makes no calibrated claim: calibration is recorded as `not_requested`, and ADM-10 (regrade for reported solves) is planned.
 - Anonymous visitors cannot start a replay; only judges with the passcode can, one replay at a time. Factory runs start from a command on the conductor's host, not from the site.

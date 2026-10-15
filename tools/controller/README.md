@@ -9,9 +9,9 @@ It reuses the existing packages and does not re-implement them:
 - **Each copy:** the local runner's `run-copy` path (`runCopyCommand`), the same code the `run-copy` command runs.
 - **The import:** `@rbw/admission`, through the local runner's `importJob`.
 - **The money:** `@rbw/spend` for the ledger, and `@rbw/envelope`'s rate sheet, fixed limits and `toReserveRequest`.
-- **The candidate text:** `@rbw/writer` for the card and the issue, and `@rbw/search` for the phrase checks and the novelty summary.
+- **The candidate text:** `@rbw/writer` for the card and the issue, and `@rbw/search` for the source searches, the docs extract, the phrase checks and the novelty summary.
 
-The new code is the orchestration between them (the ledger flow, the deadlines, replay and the grader proof), which no existing package does. That is why it is more than 200 lines. The candidate attempt (`src/attempt.ts` and `src/symptom.ts`) adds about 650 lines for the same reason: nothing else runs the jobs, the writer and the searcher as one root, builds the symptom from an observation and the docs extract, or picks the phrases from the issue.
+The new code is the orchestration between them (the ledger flow, the deadlines, replay and the grader proof), which no existing package does. That is why it is more than 200 lines. The candidate attempt (`src/attempt.ts` and `src/symptom.ts`) adds about 900 lines for the same reason: nothing else runs the jobs, the writer and the searcher as one root, builds the symptom from an observation and the docs extract, or picks the phrases from the issue.
 
 ## Commands
 

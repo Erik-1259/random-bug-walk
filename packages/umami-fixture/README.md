@@ -134,7 +134,7 @@ The choice comes from a measured study, committed as `evidence/reset-study.json`
 
 - (c) needs about 420 seconds for 20 rounds, beyond the 240-second test phase that also holds the original suite (54 to 74 seconds measured).
 - (a) and (b) both gave the same bytes as a fresh database, including the first round after the original suite, so no state held in Umami's memory showed up in these requests. (b) is chosen because it restores the whole database at the Postgres level, every table and sequence included, from a copy taken right after migration, while (a) depends on a snapshot schema inside the application database and on the table list it read. (b) costs about 0.1 s more per reset.
-- In both suite runs of the study, two of Umami's own revenue tests failed (269 passed); they failed the same way when run alone right after a template reset, so they do not come from the fixture data. This is reported through the inbox.
+- In both suite runs of the study, two of Umami's own revenue tests failed (269 passed); they failed the same way when run alone right after a template reset, so they do not come from the fixture data. They are the same two tests as the driver's known date-dependent limit (`packages/umami-driver` README, Known limits).
 
 The study's own scripts are `study/reset-study.ts` (candidates (a) and (b), and a per-round summary with byte comparisons) with `study/in-place.ts`, and `host/reset-study-fresh.sh` (candidate (c)). The committed evidence file combines that summary with the host-reported figures for (c), the budget and the choice.
 

@@ -6,7 +6,7 @@ Asks one model to write (a) a pattern card from public source-fix information an
 - Code checks every issue before any person sees it: its structure, every number in it, and a scan for internal identifiers.
 - Nothing in this package marks an issue approved. The best outcome is `ready_for_review`.
 
-The package makes no live call in its tests or in public CI. A replay `fetch` answers from committed recordings. Live calls run only outside public CI: through the `record` command, and through the controller's candidate attempt (`tools/controller`). A release publishes its root's card and issue recordings to the results repository (`tools/release`). Every recording committed in this repository is labeled `synthetic`.
+The package makes no live call in its tests or in public CI. A replay `fetch` answers from committed recordings. Live calls run only outside public CI: through the `record` command, through the controller's candidate attempt (`tools/controller`), and through packages that make this package's metered call under their own profiles (`@rbw/harvest-review`, `@rbw/screen`; see [Model profiles and a second caller](#model-profiles-and-a-second-caller)). A release publishes its root's card and issue recordings to the results repository (`tools/release`). Every recording committed in this repository is labeled `synthetic`.
 
 ## Contents
 
@@ -231,7 +231,7 @@ At those prices one call reserves `ceil(32768 × 0.06) + ceil(8192 × 0.24)` = 1
 
 ## Issue input: ObservedSymptom
 
-The issue writer accepts only an `ObservedSymptom`. A narrow local Zod type in `src/observed-symptom.ts` defines it. The controller's candidate attempt builds the symptom as `@rbw/schema`'s `ObservedSymptom` record (`tools/controller`) and passes it to the writer, which parses it with this type. Every object in it is strict and every field is required:
+The issue writer accepts an `ObservedSymptom` (time-zone family) or a `RaceSymptom` (race family, [below](#race-family-racesymptom)). The controller's candidate attempt builds the symptom as `@rbw/schema`'s `ObservedSymptom` record, or its `RaceSymptom` record for the race family (`tools/controller`), and passes it to the writer, which parses it with `parseWriterSymptom`. A narrow local Zod type in `src/observed-symptom.ts` defines the `ObservedSymptom`. Every object in it is strict and every field is required:
 
 | Field | Type |
 | --- | --- |
@@ -332,7 +332,7 @@ A recording file (`format_version` 1):
 - `usage` is what the response reported, with `null` for a missing count.
 - The replay `fetch` answers only `https://api.tokenfactory.nebius.com/v1/chat/completions`. It matches a request by the SHA-256 of its canonical body and returns the recorded status and body. Any other URL throws `unexpected_url`, and an unmatched body throws `no_recording`. Neither is forwarded to the network.
 
-`test/fixtures/recordings/` holds nine synthetic recordings shaped like OpenAI-compatible chat completions: a valid card, a card with an out-of-list bug class, a valid issue, a schema-invalid issue, an issue without usage, an issue with an unsupported number, an issue with an excluded identifier, an issue with hint words, and an HTTP 500. `node test/fixtures/synthesize-recordings.ts` regenerates them from `test/fixtures/cases.ts` with the writer's own request renderer, so a prompt or schema change needs a regeneration. A unit test fails when a committed recording no longer matches the request the writer builds.
+`test/fixtures/recordings/` holds eleven synthetic recordings shaped like OpenAI-compatible chat completions: a valid card, a card with an out-of-list bug class, a valid issue, a schema-invalid issue, an issue without usage, an issue with an unsupported number, an issue with an excluded identifier, an issue with hint words, an HTTP 500, a valid race issue, and a race issue whose count line differs from the observation. `node test/fixtures/synthesize-recordings.ts` regenerates them from `test/fixtures/cases.ts` with the writer's own request renderer, so a prompt or schema change needs a regeneration. A unit test fails when a committed recording no longer matches the request the writer builds.
 
 ## The record command
 
@@ -405,6 +405,6 @@ The root `pnpm test` runs only the unit tests.
 
 - The shared `ObservedSymptom`, run context, operation-ID and payload-hash definitions: `@rbw/schema`.
 - The shared rate sheet and envelope, with real prices: `@rbw/envelope`.
-- Documentation search and extraction: `@rbw/search`. The candidate attempt runs no docs extract.
+- Documentation search and extraction: `@rbw/search`. The candidate attempt (`tools/controller`) runs the docs extract and passes its passages, minus any that name an excluded identifier, to the writer as the symptom's `doc_excerpts`; when none remain, the input's excerpts stay.
 - Running `record` with live credentials, and its live recordings, which are not committed here.
 - Human review of an issue: the owner's approval of its SHA-256, which `tools/release build` checks (ADM-07). Publication: `@rbw/publisher`.
