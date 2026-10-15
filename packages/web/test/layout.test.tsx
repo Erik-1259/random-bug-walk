@@ -95,7 +95,7 @@ describe("the run file index page", () => {
     const diagnostic = await readResults(NO_RELEASE);
     const failed = diagnostic.runs.find((item) => item.rootExecutionId === "00000000-0000-4000-8000-000000002003");
     if (failed === undefined) throw new Error("synthetic: the incomplete run is missing");
-    expect(text(renderToStaticMarkup(<RunIndex results={diagnostic} run={failed} />))).toContain("Not produced (stage_failed)");
+    expect(text(renderToStaticMarkup(<RunIndex results={diagnostic} run={failed} />))).toContain("Not produced (stage failed)");
   });
 });
 
@@ -106,6 +106,8 @@ describe("orientation and clarity", () => {
     const page = text(html);
     expect(page.indexOf("A blind-spot example is a bug planted on purpose in a pinned copy of Umami")).toBeLessThan(page.indexOf("1. Symptom"));
     expect(page).toContain("that Umami's own original API test suite does not catch, while added checks do");
+    expect(page).toContain("the original suite passes on the clean, planted and fixed copies, and the added checks fail on the planted copy and pass on the clean and fixed copies.");
+    expect(page).not.toContain("fail only on the planted copy");
     expect(page).toContain("Vercel Sandbox");
     expect(page).toContain("Nebius Token Factory");
   });
@@ -140,11 +142,11 @@ describe("orientation and clarity", () => {
   it("says the funnel counts only the factory runs published here", async () => {
     const release = await readResults(RELEASE);
     expect(funnelScope(release)).toBe(
-      "It counts only the factory runs in this site's results repository and its public store; judge replays, paired comparisons and kit checks are counted apart below. Failed and incomplete factory attempts are not published here, so it is not a record of every attempt.",
+      "It counts only the factory runs in this site's results repository and its public store; any judge replays, paired comparisons and kit checks are counted apart below. Failed and incomplete factory attempts are not published here, so it is not a record of every attempt.",
     );
     expect(text(renderToStaticMarkup(<CasePage results={release} />))).toContain(`Validated releases (ADM-09) 1 ${funnelScope(release)}`);
     expect(funnelScope(await readResults(NO_RELEASE))).toBe(
-      "It counts only the factory runs in this site's results repository and its public store; judge replays, paired comparisons and kit checks are counted apart below. Attempts that were not published here are not counted, so it is not a record of every attempt.",
+      "It counts only the factory runs in this site's results repository and its public store; any judge replays, paired comparisons and kit checks are counted apart below. Attempts that were not published here are not counted, so it is not a record of every attempt.",
     );
   });
 });

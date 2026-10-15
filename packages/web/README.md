@@ -107,7 +107,7 @@ The pages and the file route call `loadResults`, which runs `readResults` once p
 
 ## Judge routes
 
-A judge replay plants and verifies the released case again: three fresh copies (clean, planted, fixed) on Vercel Sandbox, started by a controller in its own sandbox, with the conductor's machine off. Only judges with the shared passcode can start one, and only one runs at a time.
+A judge replay plants and verifies the released case again: three fresh copies (clean, planted, fixed) on Vercel Sandbox, started by a controller in its own sandbox, so no step runs on the conductor's machine. Only judges with the shared passcode can start one, and only one runs at a time.
 
 | Route | Request | Answer |
 |---|---|---|

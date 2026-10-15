@@ -1,7 +1,7 @@
 // What the pages show, derived from the published records only. Every count here is a count of
 // records in the results directory.
 import type { Cell, Comparison, RuleOutcome } from "@rbw/admission";
-import type { BucketCount, CodeState, ObservedSymptom, RaceAttempt, RaceSymptom, Release, RootRunKind } from "@rbw/schema";
+import type { BucketCount, CodeState, ObservedSymptom, OmissionReason, RaceAttempt, RaceSymptom, Release, RootRunKind, RunManifestEntry } from "@rbw/schema";
 import type { AdmissionRecords, CaseFamily, Results, Run } from "./release.ts";
 
 export const NO_VALIDATED_RESULT = "No validated blind-spot example yet";
@@ -201,7 +201,7 @@ export function funnel(results: Results): FunnelStep[] {
   const runs = factoryRuns(results);
   const decided = runs.flatMap((run) => (run.admission === null ? [] : [run.admission.decision]));
   return [
-    { label: "Factory runs recorded", count: runs.length },
+    { label: "Factory runs in this site's records", count: runs.length },
     { label: "Factory runs finished", count: runs.filter((run) => run.status === "terminal").length },
     { label: "Factory runs published", count: runs.filter((run) => run.manifest !== null).length },
     { label: "Factory runs with an observed symptom", count: runs.filter((run) => run.symptom !== null).length },
@@ -406,7 +406,24 @@ export function runStatusText(run: Run): { status: string; outcome: string; publ
   };
 }
 
-export const ENTRY_OUTCOME_TEXT = { published: "Published", truncated: "Truncated", not_produced: "Not produced", withheld_private: "Withheld (private)" } as const;
+const ENTRY_OUTCOME_TEXT = { published: "Published", truncated: "Truncated", not_produced: "Not produced", withheld_private: "Withheld" } as const;
+
+/** Why a manifest entry was not published in full, in words; manifest.json keeps the code. */
+const OMISSION_REASON_TEXT: Record<OmissionReason, string> = {
+  size_limit: "size limit",
+  time_limit: "time limit",
+  stage_failed: "stage failed",
+  stage_skipped: "stage skipped",
+  run_cancelled: "run canceled",
+  private_material: "private material",
+  report_missing: "report missing",
+};
+
+/** A manifest entry's outcome with its reason said once, such as "Withheld (private material)". */
+export function entryOutcomeText(entry: Pick<RunManifestEntry, "outcome" | "reason">): string {
+  const outcome = ENTRY_OUTCOME_TEXT[entry.outcome];
+  return entry.reason === null ? outcome : `${outcome} (${OMISSION_REASON_TEXT[entry.reason]})`;
+}
 
 /** A link to a file of the published release. */
 export function releaseHref(releaseId: string, path: string): string {
