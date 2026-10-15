@@ -452,7 +452,7 @@ The root `pnpm test` runs only the unit tests.
 
 ## Not in this package
 
-- Operation IDs and payload hashes: callers compute them, through `@rbw/schema`'s identity computations. Rate-sheet hashes and provider prices are in `@rbw/envelope`.
+- Operation IDs and payload hashes: callers compute them, through `@rbw/schema`'s identity computations. Rate sheets, their hashes and provider prices are the callers' too: `@rbw/envelope` holds the rate sheet the controller prices its Sandbox jobs from (the judge routes use it too), and the writer, search, screen, solver and harvest-review packages each read a rate file of their own, separate from it, and hash its bytes.
 - Expected-trial manifests: `@rbw/schema` records, built by the local runner (`tools/local-runner`). There are no callbacks to authenticate or deduplicate; results are read from record sets (`@rbw/admission`).
 - Judge-request precedence for a slot, and a watchdog, are not implemented. Judge replays run under their own `judge` slot key.
 - HTTP routes and their authentication: the judge routes in `packages/web`. No Python code calls these operations.
