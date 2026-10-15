@@ -27,7 +27,7 @@ Once a class is wired, another site of the same class in the same host can reuse
 
 ## The static-headroom screen
 
-A planted bug used to compare debugging tools (for example, a solver with and without the app's server logs) must not be findable from the planted source alone; otherwise both arms solve it by reading and the tool cannot make a difference. The screen records are in `docs/uc1-screen/`. Both current families fail it: the time-zone mutation leaves the destructured `timezone` unused while a sibling query in the same file still passes it, and the backup-code race mutation leaves a guard that can no longer trigger and a matching filter 15 lines above it. They remain valid factory cases.
+A planted bug used to compare debugging tools (for example, a solver with and without the app's server logs) must not be findable from the planted source alone; otherwise both arms solve it by reading and the tool cannot make a difference. The screen records are in `docs/uc1-screen/`. Both current families fail it: the time-zone mutation leaves the destructured `timezone` unused while a sibling query in the same file still passes it, and the backup-code race mutation leaves a guard that can no longer trigger and a matching filter 15 lines above it. The time-zone case remains a valid factory case; the race family did not reach admission and is parked.
 
 A planted change often leaves such traces, because the surrounding code still reflects what the removed line was for: a variable that is now unused, a sibling that still does it right, or a check that can no longer fire. That is why the screen is applied to each candidate rather than assumed.
 
