@@ -192,6 +192,20 @@ describe("synthetic case with admission records", () => {
     expect(admission?.decision.comparison?.classification).toBe("blind_spot_demonstrated");
     expect(admission?.evidence.cells).toHaveLength(6);
   });
+
+  it("reads generated/novelty.json's status and matching URL count, and nothing from a file that is not a novelty summary", async () => {
+    const built = syntheticCase();
+    expect((await readResults(built.dir)).caseRun?.novelty).toBeNull();
+    const blocked = { incomplete_calls: [], issue_sha256: "a".repeat(64), matching_urls: ["https://a.example/1", "https://b.example/2"], status: "blocked" };
+    addRunFile(built.dir, built.root, "generated/novelty.json", built.root, encodeCanonical(blocked));
+    expect((await readResults(built.dir)).caseRun?.novelty).toEqual({ status: "blocked", matchingUrls: 2, publicUri: null });
+    addRunFile(built.dir, built.root, "generated/novelty.json", built.root, encodeCanonical({ ...blocked, status: "maybe" }));
+    expect((await readResults(built.dir)).caseRun?.novelty).toBeNull();
+    addRunFile(built.dir, built.root, "generated/novelty.json", built.root, encodeCanonical({ ...blocked, matching_urls: "x" }));
+    expect((await readResults(built.dir)).caseRun?.novelty).toBeNull();
+    addRunFile(built.dir, built.root, "generated/novelty.json", built.root, new TextEncoder().encode("{not json"));
+    expect((await readResults(built.dir)).caseRun?.novelty).toBeNull();
+  });
 });
 
 describe("published files", () => {
