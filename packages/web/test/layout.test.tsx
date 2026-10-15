@@ -120,6 +120,7 @@ describe("orientation and clarity", () => {
     const codes = page.indexOf("Rule codes refer to the admission rules: ADM-02 to ADM-06");
     expect(codes).toBeGreaterThan(matrix);
     expect(codes).toBeLessThan(page.indexOf("4. Verified replay"));
+    expect(page).toContain("ADM-07 the card, issue and leak checks, the three exact-phrase novelty searches and a human check;");
     expect(page.indexOf("20 times each in the first planted and the first fixed copy")).toBeGreaterThan(matrix);
     expect(page.indexOf("20 times each in the first planted and the first fixed copy")).toBeLessThan(page.indexOf("4. Verified replay"));
   });

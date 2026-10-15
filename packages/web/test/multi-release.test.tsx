@@ -173,6 +173,14 @@ describe("the case pages of two releases", () => {
     expect(html).not.toContain(`href="/releases/${RELEASE_ID}/issue.json"`);
   });
 
+  it("says the novelty check is not in the records of a released run that published no novelty.json", async () => {
+    const { dir } = twoReleases();
+    vi.stubEnv("RBW_RESULTS_DIR", dir);
+    const race = renderToStaticMarkup(await casesRoute.default({ params: Promise.resolve({ release: RACE_RELEASE_ID }) }));
+    expect(text(race)).toContain("Novelty check (ADM-07) Not in this run's published records Calibration");
+    expect(race).not.toContain("generated/novelty.json");
+  });
+
   it("lists every case on the home page, newest first, with its family and status, and keeps showing the first released case there", async () => {
     const { dir } = twoReleases();
     vi.stubEnv("RBW_RESULTS_DIR", dir);

@@ -229,6 +229,14 @@ describe("case page with a published release", () => {
     expect(page).not.toContain(record?.judge_job.index_sha256 ?? "none");
   });
 
+  it("shows the released run's novelty check as its novelty.json reads, linked to the file", async () => {
+    const html = renderToStaticMarkup(<CasePage results={await readResults(RELEASE)} />);
+    expect(html).toContain(`<a href="/runs/${RELEASE_ROOT}/generated/novelty.json">clear, 0 matching URLs</a>`);
+    expect(text(html)).toContain(
+      "Novelty check (ADM-07) clear, 0 matching URLs . The check runs three Tavily exact-phrase searches of phrases taken from the frozen issue; the search records are withheld (private material).",
+    );
+  });
+
   it("links the release's files and the released run's files, and no other archive", async () => {
     const html = renderToStaticMarkup(<CasePage results={await readResults(RELEASE)} />);
     for (const path of ["release.json", "issue.json", "issue-check.json", "recordings/card-1.recording.json", "recordings/issue-1.recording.json"]) {
