@@ -82,7 +82,7 @@ describe("case page from the development fixture", () => {
     const page = text(renderToStaticMarkup(<CasePage results={await readResults(DEVELOPMENT)} />));
     expect(page).toContain("Calibration Not requested");
     expect(page).not.toMatch(/\b0 solves\b/);
-    expect(page).toContain("Task revision Not in this run's published records");
+    expect(page).toContain("Task revision Not in this run's published records Kit SHA-256 Not in this run's published records");
     expect(page).toContain("Release None published yet.");
     expect(page).toContain("No release has been published yet, so no result here is validated.");
   });
@@ -218,9 +218,10 @@ describe("case page with a published release", () => {
     expect(page).toContain("Project policy SHA-256 7749aa26b966e375d324794cc65e7e6ee5b978f83844d30dc283d930fb160c2e Policy umami-uc3-v1");
     expect(page).toContain("Task revision 274265fba006f23e1efc2aee9ac773557894da6f34fd5f4cab29d8d659d66107");
     expect(page).toContain(
-      `Admission's provisional task revision ${results.caseRun?.admission?.evidence.request.task_revision ?? "none"} (admission was graded under this revision, which does not include the issue; the task revision above is the same revision with the release's issue added) Kit version`,
+      `Admission's provisional task revision ${results.caseRun?.admission?.evidence.request.task_revision ?? "none"} (admission was graded under this revision, which does not include the issue; the task revision above is the same revision with the release's issue added) Kit SHA-256`,
     );
-    expect(page).toContain("Kit version 1390cb9fe50f0189e52d6e35b11eac9860ccaf77b8d1ae2ca94daf85e9fde71e");
+    expect(page).toContain("Kit SHA-256 1390cb9fe50f0189e52d6e35b11eac9860ccaf77b8d1ae2ca94daf85e9fde71e");
+    expect(page).not.toContain("Kit version");
     expect(page).toContain(`Kit image ${record?.images.kit_image ?? "none"} Controller image ${record?.images.controller_image ?? "none"}`);
     expect(page).toContain("Family synthetic-family-1 (public_demo), source fix synthetic-upstream at aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
     expect(page).toContain("Human check (ADM-07) Approved on 2026-10-14");

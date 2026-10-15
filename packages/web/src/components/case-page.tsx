@@ -346,7 +346,7 @@ function ReleaseProvenance({ release, run }: { release: PublishedRelease; run: R
       <dd>{revision?.sha256 ?? NOT_IN_RECORDS}</dd>
       <dt>Admission's provisional task revision</dt>
       <dd>{run.admission === null ? NOT_IN_RECORDS : `${run.admission.evidence.request.task_revision} ${PROVISIONAL_NOTE}`}</dd>
-      <dt>Kit version</dt>
+      <dt>Kit SHA-256</dt>
       <dd>{revision?.identity.kit_sha256 ?? NOT_IN_RECORDS}</dd>
       <dt>Kit image</dt>
       <dd>{record.images.kit_image}</dd>
@@ -398,7 +398,7 @@ function Provenance({ results }: { results: Results }) {
           <dd>{run.manifest?.project_policy_sha256 ?? NOT_IN_RECORDS}</dd>
           <dt>Task revision</dt>
           <dd>{run.admission?.evidence.request.task_revision ?? NOT_IN_RECORDS}</dd>
-          <dt>Kit version</dt>
+          <dt>Kit SHA-256</dt>
           <dd>{NOT_IN_RECORDS}</dd>
           <dt>Release</dt>
           <dd>None published yet.</dd>
