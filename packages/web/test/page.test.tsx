@@ -126,7 +126,7 @@ describe("case page with admission records", () => {
     });
     const results = await readResults(built.dir);
     expect(funnel(results).map((step) => [step.label, step.count])).toEqual([
-      ["Factory runs recorded", 1],
+      ["Factory runs in this site's records", 1],
       ["Factory runs finished", 1],
       ["Factory runs published", 1],
       ["Factory runs with an observed symptom", 1],
@@ -165,7 +165,8 @@ describe("no-release state", () => {
     // The running kit check is not a factory run: it is counted apart.
     expect(funnel(results).map((step) => step.count)).toEqual([2, 2, 2, 0, 0, 0, 0, 0]);
     const page = text(renderToStaticMarkup(<CasePage results={results} />));
-    expect(page).toContain("Factory runs recorded 2");
+    expect(page).toContain("Factory runs in this site's records 2");
+    expect(page).not.toContain("Factory runs recorded");
     expect(page).toContain("Runs counted apart from the factory funnel Verification replays (judge) 0 Kit checks 1");
     expect(page).not.toContain("A replay's published records");
     expect(page).toContain("Calibration: not requested");
@@ -216,7 +217,9 @@ describe("case page with a published release", () => {
     expect(page).toContain(`Results repository commit ${record?.run.repository_commit ?? "none"}`);
     expect(page).toContain("Project policy SHA-256 7749aa26b966e375d324794cc65e7e6ee5b978f83844d30dc283d930fb160c2e Policy umami-uc3-v1");
     expect(page).toContain("Task revision 274265fba006f23e1efc2aee9ac773557894da6f34fd5f4cab29d8d659d66107");
-    expect(page).toContain(`Admission's provisional task revision ${results.caseRun?.admission?.evidence.request.task_revision ?? "none"}`);
+    expect(page).toContain(
+      `Admission's provisional task revision ${results.caseRun?.admission?.evidence.request.task_revision ?? "none"} (admission was graded under this revision, which does not include the issue; the task revision above is the same revision with the release's issue added) Kit version`,
+    );
     expect(page).toContain("Kit version 1390cb9fe50f0189e52d6e35b11eac9860ccaf77b8d1ae2ca94daf85e9fde71e");
     expect(page).toContain(`Kit image ${record?.images.kit_image ?? "none"} Controller image ${record?.images.controller_image ?? "none"}`);
     expect(page).toContain("Family synthetic-family-1 (public_demo), source fix synthetic-upstream at aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
@@ -269,7 +272,7 @@ describe("diagnostic catalog", () => {
     expect(page).toContain("00000000-0000-4000-8000-000000002001 Factory run Terminal Failed Published");
     expect(page).toContain("00000000-0000-4000-8000-000000002003 Factory run Terminal Incomplete Published");
     expect(page).toContain("00000000-0000-4000-8000-000000002005 Kit check Running None yet Not published");
-    expect(page).toContain("results/00000000-0000-4000-8000-000000002004/clean-01/trial-result.json Not produced (stage_failed)");
+    expect(page).toContain("results/00000000-0000-4000-8000-000000002004/clean-01/trial-result.json Not produced (stage failed)");
     expect(html).toContain('href="/runs/00000000-0000-4000-8000-000000002001/logs/00000000-0000-4000-8000-000000002002/run.log"');
   });
 
@@ -277,6 +280,12 @@ describe("diagnostic catalog", () => {
     const page = text(renderToStaticMarkup(<Catalog results={await readResults(RELEASE)} />));
     expect(page).toContain(`Run ${RELEASE_ROOT} is validated release ${RELEASE_ID}; the other factory runs are not validated.`);
     expect(page).toContain(`${RELEASE_ROOT} Validated release ${RELEASE_ID} Factory run Terminal Completed Published`);
+  });
+
+  it("says once, in words, why a withheld file is withheld", async () => {
+    const page = text(renderToStaticMarkup(<Catalog results={await readResults(RELEASE)} />));
+    expect(page).toContain("withheld/1 Withheld (private material)");
+    expect(page).not.toContain("(private) (private_material)");
   });
 
   it("says that no run is a validated release without one", async () => {

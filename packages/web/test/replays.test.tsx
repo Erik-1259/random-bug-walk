@@ -26,7 +26,7 @@ describe("verification replays", () => {
     const results = await readResults(releaseWithReplays());
     expect(results.runs).toHaveLength(4);
     expect(funnel(results).map((step) => [step.label, step.count])).toEqual([
-      ["Factory runs recorded", 1],
+      ["Factory runs in this site's records", 1],
       ["Factory runs finished", 1],
       ["Factory runs published", 1],
       ["Factory runs with an observed symptom", 1],
@@ -51,7 +51,7 @@ describe("verification replays", () => {
     expect(REPLAY_VERDICT_NOTE).toBe(
       "A replay's published records do not include its verdict (verified or not reproduced), so the replay lines count each replay's recorded outcome only: completed means the replay's run ended, not that it reproduced the release.",
     );
-    expect(page).toContain("Factory runs recorded 1");
+    expect(page).toContain("Factory runs in this site's records 1");
   });
 
   it("lists published replays as verification replays, not as failed or unvalidated factory runs", async () => {
@@ -94,7 +94,7 @@ describe("paired comparisons", () => {
     const results = await readResults(releaseWithPairedComparisons());
     expect(results.runs).toHaveLength(6);
     expect(funnel(results).slice(0, 3).map((step) => [step.label, step.count])).toEqual([
-      ["Factory runs recorded", 1],
+      ["Factory runs in this site's records", 1],
       ["Factory runs finished", 1],
       ["Factory runs published", 1],
     ]);
