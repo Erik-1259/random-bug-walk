@@ -1,6 +1,6 @@
 # @rbw/publisher
 
-The trusted publisher. It publishes a terminal root run's experimental record to the public results repository and the public artifact store exactly once. In every other case it publishes nothing beyond a scanned `PublicRunStatus`.
+The trusted publisher. It publishes a terminal root run's experimental record to the public results repository and the public artifact store exactly once. In every other case it publishes nothing beyond a scanned `PublicRunStatus`. Two more commands write to the results repository: `release` adds a release directory, and `readme` writes the repository's root `README.md`.
 
 Its commands run only on the host or in private CI; its private-store client (below) also runs in the results site's judge routes and in the judge replay's controller. Nothing in it passes credentials to sandboxes, agents, app copies or models. It runs under Node 24 directly after `pnpm install`:
 
@@ -8,6 +8,7 @@ Its commands run only on the host or in private CI; its private-store client (be
 node packages/publisher/src/cli.ts policy  --project-id <uuid> --output-repository <url> --artifact-base-uri <url> --policy-version <n> --out <file>
 node packages/publisher/src/cli.ts publish --policy <file> --root-run <file> --staging <dir> --state <dir> --patterns <file> [options]
 node packages/publisher/src/cli.ts release --policy <file> --release-dir <dir> --state <dir> --patterns <file> [publish's destination options and limits]
+node packages/publisher/src/cli.ts readme  --policy <file> --file <README> --state <dir> --patterns <file> [publish's destination options and limits]
 node packages/publisher/src/cli.ts status  --state <dir>
 ```
 
@@ -134,6 +135,8 @@ roots/<root>/candidates/<id>/blobs/<sha256> the frozen, sanitized bytes
 roots/<root>/candidates/<id>/record.json    the latest PublicationRecord
 releases/<release>/limits.json              a release's limits, apart from its root's
 releases/<release>/record.json              a release's latest PublicationRecord
+readme/<sha256>/limits.json                 a README version's limits
+readme/record.json                          the latest readme record
 repository.git                              the publisher's own bare repository
 ```
 
@@ -164,6 +167,25 @@ Publishes a release directory, written by `tools/release`'s `build`, as `release
 - Otherwise one fast-forward commit, `chore(releases): publish <release_id>`, with the publisher's identity. Nothing goes to the public store and no status object is written.
 
 The result is a `PublicationRecord` of the release's root in `releases/<release_id>/record.json` of the state directory, printed to stdout with `publish`'s exit codes. The record type is keyed by root, so its `publication_id` holds the release ID and its `manifest_sha256` the SHA-256 of `release.json`; `artifacts` and `omissions` are empty. A published record is final for those bytes. Limits are counted per release.
+
+## `readme`
+
+Publishes one file as `README.md` at the root of the results repository, the page GitHub shows on the repository's front page. The path is fixed in the code: no flag or argument names another path, and the input file's own name does not matter. The command never writes under `runs/` or `releases/`. It takes `publish`'s destination options, scanner options and limits, and reads the same credentials in real mode. `--file <path>` names the input.
+
+- The file must be a regular, non-empty, valid UTF-8 file of at most 64 KiB (65,536 bytes). Otherwise it exits 4 (`readme_unreadable`, `readme_empty`, `readme_not_utf8`, `readme_too_large`) before contacting anything or writing to the state directory. A larger file is refused by its size, without being read. The file is read only after the destination checks, so a file that is the deploy key or a link to it exits 4 (`deploy_key_location`) unread, and a file inside the state directory exits 4 (`state_location`).
+- The scanner runs over the bytes, as `README.md`, and over the commit message. A blocked scan prints `path:line` locations only and records `blocked` (`scan_blocked`). A scan that cannot run records `failed` (`scan_unavailable`). Either way nothing is fetched or pushed.
+- One fetch of the branch. A fetch that fails records `failed` (`repository_unavailable`). A missing branch, or a `README.md` there that is not a regular file (mode `100644`), records `failed` (`repository_conflict`), so the command never creates the branch. When `README.md` there has the same bytes, it records `published` with the latest commit that changed `README.md`, and makes no commit.
+- Otherwise one fast-forward commit on the fetched head, `chore(readme): publish`, with the publisher's identity. It starts from the head's tree and adds or replaces only `README.md`, as exact bytes with mode `100644`. A push the remote rejects, for example because the branch moved after the fetch, records `failed` (`repository_unavailable`), and the next call fetches again. Nothing goes to the public store and no status object is written.
+
+The result is a readme record, printed to stdout as canonical JSON with `publish`'s exit codes and stored as `readme/record.json` in the state directory:
+
+```json
+{"branch":"main","failure_reason":null,"path":"README.md","project_policy_sha256":"<hex>","repository":"<push URL>","repository_commit":"<commit>","schema_version":1,"sha256":"<hex>","size_bytes":<n>,"status":"published"}
+```
+
+`repository` is where the commit is pushed: the `--local-remote` path in local mode, the SSH URL in real mode. `readme/record.json` holds the latest attempt only. While it names the same bytes, policy, branch and repository, a `published` record, or one that failed with `limit_exceeded`, is printed again without contacting anything. So a local-mode rehearsal never stands in for the real push, even with the same state directory. Other bytes start a new attempt, so publishing a new README, or an earlier one again, replaces the file. Limits are counted per README version (the SHA-256 of its bytes) in `readme/<sha256>/limits.json`, with `publish`'s flags and defaults. As with `publish`, stored limits can only go down, and an attempt after the last allowed push still makes its one fetch. Unlike `publish`, only the latest record is printed without contacting anything: a version that reached its push limit, run again after another version, makes that one fetch and then records `limit_exceeded` again.
+
+In local mode the command pushes to `--local-remote`; `--local-store` must name a directory, as for the other commands, but nothing is written to it. In real mode it fetches the policy's `output_repository` without credentials and pushes over SSH with the deploy key, as `release` does.
 
 ## `status`
 

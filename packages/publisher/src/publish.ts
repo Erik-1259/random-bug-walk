@@ -116,7 +116,7 @@ function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
-/** Builds the destinations. Credentials are read here, and only in real mode. `inputDir` is the staging or release directory. */
+/** Builds the destinations. Credentials are read here, and only in real mode. `inputDir` is the staging directory, the release directory or the README file. */
 export function destinations(config: DestinationConfig, inputDir: string, policy: ProjectPolicy, deps: PublishDeps): Destinations {
   const repositoryUrl = policy.output_repository ?? "";
   const baseUri = policy.public_artifact_base_uri ?? "";
@@ -469,7 +469,7 @@ class Publisher {
   }
 }
 
-export function printRecord(deps: PublishDeps, record: PublicationRecord): number {
+export function printRecord(deps: PublishDeps, record: Readonly<{ status: PublicationStatus }>): number {
   deps.stdout(`${new TextDecoder().decode(encodeCanonical(record))}\n`);
   return record.status === "published" ? EXIT.published : record.status === "blocked" ? EXIT.blocked : EXIT.failed;
 }

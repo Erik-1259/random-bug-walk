@@ -1,11 +1,12 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { PUBLICATION_STATUS_VALUES, RecordError, buildPolicy } from "@rbw/schema";
-import { loadPolicyConfig, loadPublishConfig, loadReleaseConfig, loadStatusConfig } from "./config.ts";
+import { loadPolicyConfig, loadPublishConfig, loadReadmeConfig, loadReleaseConfig, loadStatusConfig } from "./config.ts";
 import { InvalidInput } from "./errors.ts";
 import { Logger } from "./log.ts";
 import { runProcess, type ProcessRunner } from "./process.ts";
 import { EXIT, publishCommand, type PublishDeps } from "./publish.ts";
+import { readmeCommand } from "./readme.ts";
 import { releaseCommand } from "./release.ts";
 import { StateDir } from "./state.ts";
 import type { BlobClient, FetchFunction } from "./store.ts";
@@ -23,7 +24,7 @@ export interface CliResult {
   stderr: string;
 }
 
-const USAGE = "usage: cli.ts policy|publish|release|status [options]; see packages/publisher/README.md\n";
+const USAGE = "usage: cli.ts policy|publish|release|readme|status [options]; see packages/publisher/README.md\n";
 
 /** Writes a frozen policy file. An existing file is never overwritten; identical bytes are accepted. */
 function policyCommand(argv: readonly string[], out: (text: string) => void): number {
@@ -75,7 +76,7 @@ export async function runCli(argv: readonly string[], deps: Partial<CliDeps> = {
   try {
     if (command === "policy") return { code: policyCommand(rest, out), stdout, stderr };
     if (command === "status") return { code: statusCommand(rest, out), stdout, stderr };
-    if (command !== "publish" && command !== "release") throw new InvalidInput("usage");
+    if (command !== "publish" && command !== "release" && command !== "readme") throw new InvalidInput("usage");
     const publishDeps: PublishDeps = {
       env: deps.env ?? process.env,
       runner: deps.runner ?? runProcess,
@@ -85,8 +86,9 @@ export async function runCli(argv: readonly string[], deps: Partial<CliDeps> = {
       stdout: out,
       stderr: err,
     };
-    const code = command === "publish" ? await publishCommand(loadPublishConfig(rest), publishDeps) : await releaseCommand(loadReleaseConfig(rest), publishDeps);
-    return { code, stdout, stderr };
+    if (command === "publish") return { code: await publishCommand(loadPublishConfig(rest), publishDeps), stdout, stderr };
+    if (command === "release") return { code: await releaseCommand(loadReleaseConfig(rest), publishDeps), stdout, stderr };
+    return { code: await readmeCommand(loadReadmeConfig(rest), publishDeps), stdout, stderr };
   } catch (error) {
     if (error instanceof InvalidInput) {
       return { code: EXIT.invalid, stdout: "", stderr: `${stderr}invalid input: ${error.code}\n${error.code === "usage" ? USAGE : ""}` };

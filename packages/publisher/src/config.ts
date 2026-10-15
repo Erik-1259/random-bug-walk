@@ -65,6 +65,10 @@ export interface ReleaseConfig extends DestinationConfig {
   releaseDir: string;
 }
 
+export interface ReadmeConfig extends DestinationConfig {
+  readmeFile: string;
+}
+
 export interface PolicyConfig {
   projectId: string;
   outputRepository: string;
@@ -170,6 +174,8 @@ const PUBLISH_OPTIONS = {
 
 const RELEASE_OPTIONS = { ...DESTINATION_OPTIONS, "release-dir": { type: "string" } } as const;
 
+const README_OPTIONS = { ...DESTINATION_OPTIONS, file: { type: "string" } } as const;
+
 function destinationConfig(values: Values): DestinationConfig {
   const real = values.real === true;
   const realFlags = ["repository-url", "artifact-base-uri", "deploy-key-env"];
@@ -227,6 +233,12 @@ export function loadPublishConfig(argv: readonly string[]): PublishConfig {
 export function loadReleaseConfig(argv: readonly string[]): ReleaseConfig {
   const values = parse(argv, RELEASE_OPTIONS);
   return { ...destinationConfig(values), releaseDir: path(values, "release-dir") };
+}
+
+/** The readme command's flags: publish's destination flags and limits, and the file to publish as README.md. */
+export function loadReadmeConfig(argv: readonly string[]): ReadmeConfig {
+  const values = parse(argv, README_OPTIONS);
+  return { ...destinationConfig(values), readmeFile: path(values, "file") };
 }
 
 export function loadPolicyConfig(argv: readonly string[]): PolicyConfig {
