@@ -1,14 +1,16 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, symlinkSync, truncateSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { buildPolicy, parseCanonical } from "@rbw/schema";
 import { runCli, type CliDeps, type CliResult } from "../src/cli.ts";
 import { runProcess, type ProcessResult, type ProcessRunner } from "../src/process.ts";
 import {
+  BASE_URI,
   FORBIDDEN_TERM,
   GITHUB_REPOSITORY,
   OTHER_ROOT_ID,
   PROJECT_ID,
+  REPOSITORY_URL,
   ROOT_ID,
   SSH_REMOTE,
   commitCount,
@@ -23,10 +25,12 @@ import {
   tempDir,
   write,
   writeFakeScanner,
+  type Harness,
   type World,
 } from "./support.ts";
 
 const RELEASE_ID = "00000000-0000-4000-8000-000000000601";
+const REAL_BASE_URI = "https://synthetic-store.example.invalid/test-prefix/";
 const TEXT = "# Synthetic results\n\nThis synthetic repository holds synthetic records.\n";
 const MESSAGE = "chore(readme): publish";
 
@@ -41,11 +45,12 @@ const rejected: ProcessResult = { code: 1, spawnFailed: false, timedOut: false, 
 
 const isPush = (args: readonly string[]): boolean => args.includes("push");
 
-/** One commit with the given files, pushed to the world's remote by a synthetic author. */
-function seed(world: World, files: Record<string, string>): string {
+/** One commit with the given files, pushed to the world's remote by a synthetic author. `prepare` can change the work tree first. */
+function seed(world: World, files: Record<string, string>, prepare: (work: string) => void = () => undefined): string {
   const work = tempDir("rbw-publisher-seed-");
   git(work, ["init", "-q", "-b", "main"]);
   for (const [path, content] of Object.entries(files)) write(join(work, path), content);
+  prepare(work);
   git(work, ["add", "-A"]);
   git(work, ["commit", "-q", "-m", "chore: seed"]);
   git(work, ["push", "-q", world.remote, "main"]);
@@ -58,6 +63,8 @@ function writeReadme(world: World, content: string | Uint8Array, name = "README.
 
 interface ReadmeOptions {
   state?: string;
+  policy?: string;
+  remote?: string;
   patterns?: string;
   extra?: string[];
   deps?: Partial<CliDeps>;
@@ -70,13 +77,13 @@ function readme(world: World, file: string, options: ReadmeOptions = {}): Promis
       "--file",
       file,
       "--policy",
-      world.policyFile,
+      options.policy ?? world.policyFile,
       "--state",
       options.state ?? world.state,
       "--patterns",
       options.patterns ?? world.patterns,
       "--local-remote",
-      world.remote,
+      options.remote ?? world.remote,
       "--local-store",
       world.store,
       "--gitleaks",
@@ -87,6 +94,51 @@ function readme(world: World, file: string, options: ReadmeOptions = {}): Promis
   );
 }
 
+/** Points the world's policy at the synthetic GitHub repository and writes an owner-only synthetic deploy key. */
+function realSetup(world: World, keyBytes: string | Uint8Array = `${["synthetic", "deploy", "key", "placeholder"].join("-")}\n`): { keyFile: string; policySha256: string } {
+  const built = buildPolicy({ projectId: PROJECT_ID, outputRepository: GITHUB_REPOSITORY, publicArtifactBaseUri: REAL_BASE_URI, policyVersion: 1 });
+  writeFileSync(world.policyFile, built.bytes);
+  const keyFile = write(join(world.dir, "keys", "deploy-key"), keyBytes);
+  chmodSync(keyFile, 0o600);
+  return { keyFile, policySha256: built.sha256 };
+}
+
+/** The readme command in real mode, with fake git and store clients that push to the world's remote. */
+function readmeReal(world: World, file: string, keyFile: string, fake: Harness): Promise<CliResult> {
+  return runCli(
+    [
+      "readme",
+      "--real",
+      "--file",
+      file,
+      "--policy",
+      world.policyFile,
+      "--state",
+      world.state,
+      "--patterns",
+      world.patterns,
+      "--repository-url",
+      GITHUB_REPOSITORY,
+      "--artifact-base-uri",
+      REAL_BASE_URI,
+      "--gitleaks",
+      world.gitleaks,
+    ],
+    {
+      env: {
+        PATH: process.env.PATH ?? "",
+        HOME: world.dir,
+        RBW_RESULTS_DEPLOY_KEY_FILE: keyFile,
+        BLOB_PUBLIC_STORE_ID: ["synthetic", "store", "placeholder"].join("-"),
+        VERCEL_OIDC_TOKEN: ["synthetic", "oidc", "placeholder"].join("-"),
+      },
+      runner: fake.runner,
+      blobClient: fake.blobClient,
+      fetch: fake.fetch,
+    },
+  );
+}
+
 interface ReadmeRecordView {
   schema_version: number;
   path: string;
@@ -94,6 +146,7 @@ interface ReadmeRecordView {
   size_bytes: number;
   project_policy_sha256: string;
   branch: string;
+  repository: string;
   status: string;
   repository_commit: string | null;
   failure_reason: string | null;
@@ -129,6 +182,7 @@ describe("readme", () => {
       size_bytes: Buffer.byteLength(TEXT),
       project_policy_sha256: world.policySha256,
       branch: "main",
+      repository: world.remote,
       status: "published",
       repository_commit: commit,
       failure_reason: null,
@@ -232,6 +286,26 @@ describe("readme", () => {
     expect(commitCount(world.remote)).toBe(1);
   });
 
+  it("records repository_unavailable when the fetch fails, makes no commit, and the next call fetches again", async () => {
+    const world = createWorld();
+    seed(world, RECORDS);
+    const failFetch: ProcessRunner = async (call) => (call.command === "git" && call.args.includes("fetch") ? rejected : runProcess(call));
+    const file = writeReadme(world, TEXT);
+    const result = await readme(world, file, { deps: { runner: failFetch } });
+    expect(result.code).toBe(2);
+    expect(record(result)).toMatchObject({ status: "failed", failure_reason: "repository_unavailable", repository_commit: null });
+    expect(events(result, "fetch")).toHaveLength(1);
+    expect(events(result, "commit")).toEqual([]);
+    expect(events(result, "push")).toEqual([]);
+    expect(storedRecord(world.state)).toMatchObject({ status: "failed", failure_reason: "repository_unavailable" });
+    expect(commitCount(world.remote)).toBe(1);
+
+    const retry = await readme(world, file);
+    expect(retry.code).toBe(0);
+    expect(events(retry, "fetch")).toHaveLength(1);
+    expect(record(retry)).toMatchObject({ status: "published", repository_commit: headCommit(world.remote) });
+  });
+
   it("pushes fast-forward only: a branch that moved after the fetch is refused, never overwritten, and the retry builds on it", async () => {
     const world = createWorld();
     seed(world, RECORDS);
@@ -279,6 +353,23 @@ describe("readme", () => {
     expect(record(directory)).toMatchObject({ status: "failed", failure_reason: "repository_conflict" });
     expect(events(directory, "push")).toEqual([]);
     expect(commitCount(world.remote)).toBe(1);
+
+    // A symlink (120000), and an executable file (100755) even with the same bytes.
+    const linked = createWorld();
+    seed(linked, RECORDS, (work) => symlinkSync("runs", join(work, "README.md")));
+    const executable = createWorld();
+    seed(executable, { ...RECORDS, "README.md": TEXT }, (work) => chmodSync(join(work, "README.md"), 0o755));
+    for (const [seeded, mode] of [
+      [linked, "120000"],
+      [executable, "100755"],
+    ] as const) {
+      expect(git(seeded.remote, ["ls-tree", "main", "README.md"])).toMatch(new RegExp(`^${mode} `));
+      const result = await readme(seeded, writeReadme(seeded, TEXT));
+      expect(result.code).toBe(2);
+      expect(record(result)).toMatchObject({ status: "failed", failure_reason: "repository_conflict" });
+      expect(events(result, "push")).toEqual([]);
+      expect(commitCount(seeded.remote)).toBe(1);
+    }
   });
 
   it("refuses a missing, empty, non-UTF-8 or oversized file before contacting anything", async () => {
@@ -293,6 +384,10 @@ describe("readme", () => {
       [writeReadme(world, Buffer.from([0x23, 0x20, 0xc3, 0x28, 0x0a]), "latin.md"), "readme_not_utf8"],
       [writeReadme(world, "a".repeat(64 * 1024 + 1), "large.md"), "readme_too_large"],
     ];
+    // A sparse 2 GiB file, too large for Node to read into one buffer, is refused by its size.
+    const huge = writeReadme(world, "", "huge.md");
+    truncateSync(huge, 2 ** 31);
+    cases.push([huge, "readme_too_large"]);
     for (const [file, code] of cases) {
       const result = await readme(world, file);
       expect(result.code).toBe(4);
@@ -351,7 +446,7 @@ describe("readme", () => {
     expect(limits.limits.pushAttempts).toBe(1);
     expect(limits.used).toMatchObject({ pushAttempts: 1, metadataRequests: 2 });
 
-    // A version that reached a limit contacts nothing again.
+    // While the latest record names it, a version that reached a limit contacts nothing again.
     const third = await readme(world, file, { extra: ["--limit-push-attempts", "10"] });
     expect(third.stdout).toBe(second.stdout);
     expect(events(third, "fetch")).toEqual([]);
@@ -366,47 +461,13 @@ describe("readme", () => {
 
   it("real mode: fetches without credentials, pushes through the deploy key only and touches no store", async () => {
     const world = createWorld();
-    const built = buildPolicy({ projectId: PROJECT_ID, outputRepository: GITHUB_REPOSITORY, publicArtifactBaseUri: "https://synthetic-store.example.invalid/test-prefix/", policyVersion: 1 });
-    writeFileSync(world.policyFile, built.bytes);
-    const keyFile = write(join(world.dir, "keys", "deploy-key"), `${["synthetic", "deploy", "key", "placeholder"].join("-")}\n`);
-    chmodSync(keyFile, 0o600);
+    const { keyFile, policySha256 } = realSetup(world);
     seed(world, RECORDS);
     const fake = harness(world.remote);
-    const result = await runCli(
-      [
-        "readme",
-        "--real",
-        "--file",
-        writeReadme(world, TEXT),
-        "--policy",
-        world.policyFile,
-        "--state",
-        world.state,
-        "--patterns",
-        world.patterns,
-        "--repository-url",
-        GITHUB_REPOSITORY,
-        "--artifact-base-uri",
-        "https://synthetic-store.example.invalid/test-prefix/",
-        "--gitleaks",
-        world.gitleaks,
-      ],
-      {
-        env: {
-          PATH: process.env.PATH ?? "",
-          HOME: world.dir,
-          RBW_RESULTS_DEPLOY_KEY_FILE: keyFile,
-          BLOB_PUBLIC_STORE_ID: ["synthetic", "store", "placeholder"].join("-"),
-          VERCEL_OIDC_TOKEN: ["synthetic", "oidc", "placeholder"].join("-"),
-        },
-        runner: fake.runner,
-        blobClient: fake.blobClient,
-        fetch: fake.fetch,
-      },
-    );
+    const result = await readmeReal(world, writeReadme(world, TEXT), keyFile, fake);
     expect(result.stderr).not.toContain("internal error");
     expect(result.code).toBe(0);
-    expect(record(result)).toMatchObject({ status: "published", project_policy_sha256: built.sha256 });
+    expect(record(result)).toMatchObject({ status: "published", project_policy_sha256: policySha256, repository: SSH_REMOTE });
     const pushes = fake.calls.filter((call) => call.command === "git" && isPush(call.args));
     expect(pushes).toHaveLength(1);
     expect(pushes[0]?.args).toContain(SSH_REMOTE);
@@ -417,5 +478,88 @@ describe("readme", () => {
     expect(fake.puts).toEqual([]);
     expect(fake.fetches).toEqual([]);
     expect(changedPaths(world.remote, headCommit(world.remote) ?? "")).toEqual(["README.md"]);
+  });
+
+  it("treats a stored record as final only for its repository: a local rehearsal with the same state does not stand in for the real push", async () => {
+    const world = createWorld();
+    const { keyFile } = realSetup(world);
+    seed(world, RECORDS);
+    const rehearsal = createWorld();
+    seed(rehearsal, RECORDS);
+    const file = writeReadme(world, TEXT);
+
+    // A local rehearsal with the real policy, the same bytes and the same state directory.
+    const local = await readme(world, file, { remote: rehearsal.remote });
+    expect(local.code).toBe(0);
+    expect(record(local)).toMatchObject({ status: "published", repository: rehearsal.remote, repository_commit: headCommit(rehearsal.remote) });
+    expect(commitCount(world.remote)).toBe(1);
+
+    // The real run fetches, pushes its own commit and records it.
+    const fake = harness(world.remote);
+    const real = await readmeReal(world, file, keyFile, fake);
+    expect(real.stderr).not.toContain("internal error");
+    expect(real.code).toBe(0);
+    expect(events(real, "fetch")).toHaveLength(1);
+    expect(fake.calls.filter((call) => call.command === "git" && isPush(call.args))).toHaveLength(1);
+    expect(commitCount(world.remote)).toBe(2);
+    expect(record(real)).toMatchObject({ status: "published", repository: SSH_REMOTE, repository_commit: headCommit(world.remote) });
+    expect(storedRecord(world.state)).toEqual(record(real));
+
+    // Another real run with the same state prints that record and contacts nothing.
+    const again = harness(world.remote);
+    const repeat = await readmeReal(world, file, keyFile, again);
+    expect(repeat.code).toBe(0);
+    expect(repeat.stdout).toBe(real.stdout);
+    expect(again.calls).toEqual([]);
+  });
+
+  it("treats a stored record as final only for its policy and branch", async () => {
+    const world = createWorld();
+    seed(world, RECORDS);
+    const file = writeReadme(world, TEXT);
+    expect((await readme(world, file)).code).toBe(0);
+    const commit = headCommit(world.remote);
+
+    // Another policy fetches once, finds the same bytes and pushes nothing.
+    const built = buildPolicy({ projectId: PROJECT_ID, outputRepository: REPOSITORY_URL, publicArtifactBaseUri: BASE_URI, policyVersion: 2 });
+    const policy = write(join(world.dir, "private", "policy-2.json"), built.bytes);
+    const otherPolicy = await readme(world, file, { policy });
+    expect(otherPolicy.code).toBe(0);
+    expect(record(otherPolicy)).toMatchObject({ status: "published", project_policy_sha256: built.sha256, repository_commit: commit });
+    expect(events(otherPolicy, "fetch")).toHaveLength(1);
+    expect(events(otherPolicy, "push")).toEqual([]);
+
+    // Another branch fetches once, and a branch that does not exist is refused.
+    const otherBranch = await readme(world, file, { policy, extra: ["--branch", "other"] });
+    expect(otherBranch.code).toBe(2);
+    expect(record(otherBranch)).toMatchObject({ status: "failed", branch: "other", failure_reason: "repository_conflict" });
+    expect(events(otherBranch, "fetch")).toHaveLength(1);
+    expect(commitCount(world.remote)).toBe(2);
+  });
+
+  it("refuses a file that is the deploy key or a link to it, or lies in the state directory, without reading it", async () => {
+    const world = createWorld();
+    // Key bytes that are not UTF-8: a refusal that names them would show that the key was read.
+    const { keyFile } = realSetup(world, Buffer.from([0x23, 0xff, 0x0a]));
+    seed(world, RECORDS);
+    mkdirSync(join(world.dir, "input"), { recursive: true });
+    const link = join(world.dir, "input", "README.md");
+    symlinkSync(keyFile, link);
+    for (const file of [keyFile, link]) {
+      const fake = harness(world.remote);
+      const result = await readmeReal(world, file, keyFile, fake);
+      expect(result.code).toBe(4);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain("invalid input: deploy_key_location\n");
+      expect(fake.calls).toEqual([]);
+    }
+
+    const inState = write(join(world.state, "readme", "input.md"), TEXT);
+    const state = await readme(world, inState);
+    expect(state.code).toBe(4);
+    expect(state.stderr).toContain("invalid input: state_location\n");
+    expect(events(state, "fetch")).toEqual([]);
+    expect(existsSync(join(world.state, "readme", "record.json"))).toBe(false);
+    expect(commitCount(world.remote)).toBe(1);
   });
 });
