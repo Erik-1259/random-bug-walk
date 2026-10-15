@@ -312,6 +312,12 @@ export function notValidatedReason(results: Results, run: Run): string | null {
   return `Its admission also passed with a blind spot demonstrated, but no release names it: the one published release is for run ${release.run.root_execution_id}, whose issue passed the human check (ADM-07).`;
 }
 
+/**
+ * Why the two revisions differ: the release's complete revision is the admission's provisional one
+ * with revision_kind "complete" and the frozen issue added (tools/release checks it).
+ */
+const PROVISIONAL_NOTE = "(admission was graded under this revision, which does not include the issue; the task revision above is the same revision with the release's issue added)";
+
 /** The release's provenance, from its record; the hashes of judge_job and files stay in release.json. */
 function ReleaseProvenance({ release, run }: { release: PublishedRelease; run: Run }) {
   const { record } = release;
@@ -339,7 +345,7 @@ function ReleaseProvenance({ release, run }: { release: PublishedRelease; run: R
       <dt>Task revision</dt>
       <dd>{revision?.sha256 ?? NOT_IN_RECORDS}</dd>
       <dt>Admission's provisional task revision</dt>
-      <dd>{run.admission?.evidence.request.task_revision ?? NOT_IN_RECORDS}</dd>
+      <dd>{run.admission === null ? NOT_IN_RECORDS : `${run.admission.evidence.request.task_revision} ${PROVISIONAL_NOTE}`}</dd>
       <dt>Kit version</dt>
       <dd>{revision?.identity.kit_sha256 ?? NOT_IN_RECORDS}</dd>
       <dt>Kit image</dt>
@@ -450,7 +456,7 @@ function DiagnosticArchive({ results, archives, empty }: { results: Results; arc
 /** What the funnel counts: only the factory runs in this results directory, never every attempt. */
 export function funnelScope(results: Results): string {
   const unfinished = factoryRuns(results).some((run) => run.outcome === "failed" || run.outcome === "incomplete");
-  const scope = "It counts only the factory runs in this site's results repository and its public store; judge replays, paired comparisons and kit checks are counted apart below.";
+  const scope = "It counts only the factory runs in this site's results repository and its public store; any judge replays, paired comparisons and kit checks are counted apart below.";
   return unfinished
     ? `${scope} Attempts that were not published here are not counted, so it is not a record of every attempt.`
     : `${scope} Failed and incomplete factory attempts are not published here, so it is not a record of every attempt.`;
@@ -510,7 +516,7 @@ function Intro() {
   return (
     <p className="intro">
       A blind-spot example is a bug planted on purpose in a pinned copy of <a href={UMAMI_REPOSITORY}>Umami</a>, an open-source web analytics app, that Umami&apos;s own original API
-      test suite does not catch, while added checks do: the original suite passes on the clean, planted and fixed copies, and the added checks fail only on the planted copy. Every
+      test suite does not catch, while added checks do: the original suite passes on the clean, planted and fixed copies, and the added checks fail on the planted copy and pass on the clean and fixed copies. Every
       result on this page is read from the published records in the <a href={RESULTS_REPOSITORY}>results repository</a>; the code that produced them is in the{" "}
       <a href={CODE_REPOSITORY}>code repository</a>. The copies run on Vercel Sandbox, the spend ledger is a Neon Postgres database, run status and large published files are kept on Vercel Blob,
       the issue writer&apos;s model runs on Nebius Token Factory, and the novelty search uses Tavily.

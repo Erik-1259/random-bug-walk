@@ -1,6 +1,6 @@
 // The diagnostic catalog: every run in the results directory with its recorded status, and each
 // published run's manifest entries, including those that were not produced or were withheld.
-import { ENTRY_OUTCOME_TEXT, fileHref, releaseOfRun, RUN_KIND_TEXT, runStatusText } from "../model.ts";
+import { entryOutcomeText, fileHref, releaseOfRun, RUN_KIND_TEXT, runStatusText } from "../model.ts";
 import type { Results, Run } from "../release.ts";
 
 /** A published run's manifest entries with their outcome, size and SHA-256; the catalog and the run's file index page show it. */
@@ -29,10 +29,7 @@ export function RunFiles({ run }: { run: Run }) {
         {run.manifest.entries.map((entry) => (
           <tr key={entry.path}>
             <th scope="row">{entry.sha256 === null ? entry.path : <a href={fileHref(root, entry.path, entry.public_uri)}>{entry.path}</a>}</th>
-            <td data-label="Outcome">
-              {ENTRY_OUTCOME_TEXT[entry.outcome]}
-              {entry.reason === null ? "" : ` (${entry.reason})`}
-            </td>
+            <td data-label="Outcome">{entryOutcomeText(entry)}</td>
             <td data-label="Size">{entry.size_bytes === null ? "" : `${String(entry.size_bytes)} bytes`}</td>
             <td data-label="SHA-256" className="hash">{entry.sha256 ?? ""}</td>
           </tr>
