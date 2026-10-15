@@ -116,7 +116,7 @@ function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
-/** Builds the destinations. Credentials are read here, and only in real mode. `inputDir` is the staging or release directory. */
+/** Builds the destinations. Credentials are read here, and only in real mode. `inputDir` is the staging directory, the release directory or the README file. */
 export function destinations(config: DestinationConfig, inputDir: string, policy: ProjectPolicy, deps: PublishDeps): Destinations {
   const repositoryUrl = policy.output_repository ?? "";
   const baseUri = policy.public_artifact_base_uri ?? "";

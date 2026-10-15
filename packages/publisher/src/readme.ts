@@ -1,4 +1,4 @@
-import { statSync } from "node:fs";
+import { statSync, type Stats } from "node:fs";
 import { sha256Hex, type FailureReason } from "@rbw/schema";
 import type { ReadmeConfig } from "./config.ts";
 import { InvalidInput } from "./errors.ts";
@@ -21,6 +21,8 @@ export interface ReadmeRecord {
   size_bytes: number;
   project_policy_sha256: string;
   branch: string;
+  /** Where the commit goes: the `--local-remote` path in local mode, the SSH URL in real mode. */
+  repository: string;
   status: "published" | "blocked" | "failed";
   repository_commit: string | null;
   failure_reason: FailureReason | null;
@@ -28,13 +30,15 @@ export interface ReadmeRecord {
 
 /** Reads the file to publish: a regular, non-empty UTF-8 file of at most README_MAX_BYTES. */
 function readReadme(file: string): Buffer {
-  let isFile: boolean;
+  let stats: Stats;
   try {
-    isFile = statSync(file).isFile();
+    stats = statSync(file);
   } catch {
     throw new InvalidInput("readme_unreadable");
   }
-  if (!isFile) throw new InvalidInput("readme_unreadable");
+  if (!stats.isFile()) throw new InvalidInput("readme_unreadable");
+  // A file over the cap is refused before it is read; the length is checked again after the read.
+  if (stats.size > README_MAX_BYTES) throw new InvalidInput("readme_too_large");
   const bytes = readInput(file, "readme_unreadable");
   if (bytes.length === 0) throw new InvalidInput("readme_empty");
   if (bytes.length > README_MAX_BYTES) throw new InvalidInput("readme_too_large");
@@ -53,9 +57,10 @@ function readReadme(file: string): Buffer {
  */
 export async function readmeCommand(config: ReadmeConfig, deps: PublishDeps): Promise<number> {
   const { policy, sha256: policySha256 } = loadPolicy(config);
-  const bytes = readReadme(config.readmeFile);
+  // The deploy-key and state-location checks look only at the path, so the file is read after them.
   const target = destinations(config, config.readmeFile, policy, deps);
   checkStateLocation(config, config.readmeFile);
+  const bytes = readReadme(config.readmeFile);
   const scanner = scannerFor(config, target, deps);
   const state = new StateDir(config.stateDir);
   const sha256 = sha256Hex(bytes);
@@ -68,6 +73,7 @@ export async function readmeCommand(config: ReadmeConfig, deps: PublishDeps): Pr
       size_bytes: bytes.length,
       project_policy_sha256: policySha256,
       branch: config.branch,
+      repository: target.repository.pushUrl,
       status,
       repository_commit: commit,
       failure_reason: failureReason,
@@ -78,9 +84,15 @@ export async function readmeCommand(config: ReadmeConfig, deps: PublishDeps): Pr
   };
   const failed = (failureReason: FailureReason): number => finish("failed", failureReason, null);
 
-  // While the latest record names these bytes, this policy and this branch, published and limit_exceeded are final.
+  // While the latest record names these bytes, this policy, this branch and this repository, published and limit_exceeded are final.
   const current = state.loadReadmeRecord() as Partial<ReadmeRecord> | null;
-  if (current?.sha256 === sha256 && current.project_policy_sha256 === policySha256 && current.branch === config.branch && (current.status === "published" || current.failure_reason === "limit_exceeded")) {
+  if (
+    current?.sha256 === sha256 &&
+    current.project_policy_sha256 === policySha256 &&
+    current.branch === config.branch &&
+    current.repository === target.repository.pushUrl &&
+    (current.status === "published" || current.failure_reason === "limit_exceeded")
+  ) {
     return printRecord(deps, current as ReadmeRecord);
   }
   state.ensure();
