@@ -112,6 +112,19 @@ export class Repository {
     return result.stdout;
   }
 
+  /** The mode of the entry at `path` in a commit, such as `100644` or `040000`, or null when there is none. */
+  async modeAt(commit: string, path: string): Promise<string | null> {
+    const listing = await this.output(["ls-tree", commit, "--", path], "ls-tree");
+    return listing === "" ? null : (listing.split(" ")[0] ?? null);
+  }
+
+  /** The latest commit reachable from `head` that changed `path`. */
+  async changedBy(head: string, path: string): Promise<string> {
+    const commit = await this.output(["log", "-1", "--format=%H", head, "--", path], "log");
+    if (!/^[0-9a-f]{40}$/.test(commit)) throw new RepositoryUnavailable("log");
+    return commit;
+  }
+
   /** The oldest commit reachable from `head` that added `path`. */
   async addedBy(head: string, path: string): Promise<string> {
     const log = await this.output(["log", "--format=%H", "--diff-filter=A", head, "--", path], "log");

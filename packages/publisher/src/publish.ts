@@ -469,7 +469,7 @@ class Publisher {
   }
 }
 
-export function printRecord(deps: PublishDeps, record: PublicationRecord): number {
+export function printRecord(deps: PublishDeps, record: Readonly<{ status: PublicationStatus }>): number {
   deps.stdout(`${new TextDecoder().decode(encodeCanonical(record))}\n`);
   return record.status === "published" ? EXIT.published : record.status === "blocked" ? EXIT.blocked : EXIT.failed;
 }

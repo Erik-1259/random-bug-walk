@@ -31,6 +31,8 @@ export interface StoredLimits {
  *   roots/<root>/candidates/<id>/record.json  the latest PublicationRecord
  *   releases/<release>/limits.json            a release's limits and usage
  *   releases/<release>/record.json            a release's latest PublicationRecord
+ *   readme/<sha256>/limits.json               a README version's limits and usage
+ *   readme/record.json                        the latest readme record
  *   repository.git                            the publisher's own bare repository
  */
 export class StateDir {
@@ -135,14 +137,34 @@ export class StateDir {
     return join(this.dir, "releases", releaseId);
   }
 
-  /** Limits kept per release, apart from the root's own, so a release never spends its run's attempts. */
-  get releaseLimits(): Pick<StateDir, "loadLimits" | "saveLimits"> {
+  /** Limits stored as `<dir>/<key>/limits.json`. */
+  private limitsUnder(dir: string): Pick<StateDir, "loadLimits" | "saveLimits"> {
     return {
-      loadLimits: (releaseId) => this.readLimits(join(this.releaseDir(releaseId), "limits.json")),
-      saveLimits: (releaseId, value) => {
-        this.write(join(this.releaseDir(releaseId), "limits.json"), encodeCanonical(value));
+      loadLimits: (key) => this.readLimits(join(dir, key, "limits.json")),
+      saveLimits: (key, value) => {
+        this.write(join(dir, key, "limits.json"), encodeCanonical(value));
       },
     };
+  }
+
+  /** Limits kept per release, apart from the root's own, so a release never spends its run's attempts. */
+  get releaseLimits(): Pick<StateDir, "loadLimits" | "saveLimits"> {
+    return this.limitsUnder(join(this.dir, "releases"));
+  }
+
+  /** Limits kept per README version, keyed by the SHA-256 of its bytes. */
+  get readmeLimits(): Pick<StateDir, "loadLimits" | "saveLimits"> {
+    return this.limitsUnder(join(this.dir, "readme"));
+  }
+
+  saveReadmeRecord(record: object): void {
+    this.write(join(this.dir, "readme", "record.json"), encodeCanonical(record));
+  }
+
+  /** The latest readme record as stored, or null when there is none. */
+  loadReadmeRecord(): unknown {
+    const path = join(this.dir, "readme", "record.json");
+    return existsSync(path) ? parseCanonical(readFileSync(path)) : null;
   }
 
   saveReleaseRecord(releaseId: string, record: PublicationRecord): void {
