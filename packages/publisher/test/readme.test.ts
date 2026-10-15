@@ -356,9 +356,13 @@ describe("readme", () => {
 
     // A symlink (120000), and an executable file (100755) even with the same bytes.
     const linked = createWorld();
-    seed(linked, RECORDS, (work) => symlinkSync("runs", join(work, "README.md")));
+    seed(linked, RECORDS, (work) => {
+      symlinkSync("runs", join(work, "README.md"));
+    });
     const executable = createWorld();
-    seed(executable, { ...RECORDS, "README.md": TEXT }, (work) => chmodSync(join(work, "README.md"), 0o755));
+    seed(executable, { ...RECORDS, "README.md": TEXT }, (work) => {
+      chmodSync(join(work, "README.md"), 0o755);
+    });
     for (const [seeded, mode] of [
       [linked, "120000"],
       [executable, "100755"],
