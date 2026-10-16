@@ -1,11 +1,29 @@
 # Random Bug Walk
 
-Random Bug Walk is a hackathon prototype of a "bug factory". It plants a synthetic bug in a pinned copy of the open-source analytics app [Umami](https://github.com/umami-software/umami), modeled on a public source fix that matches one bug shape (`DT-1.tz-arg`: a caller has the selected time zone but does not pass it to a date operation). It then checks, on fresh app copies on Vercel Sandbox, whether Umami's own API test suite misses the bug while four added checks catch it, has a model write a user-style bug report from the observed symptom, and publishes the evidence. Every metered call and sandbox is reserved against a spend ledger before it starts. A results site shows the case, and judges with a passcode can plant and verify the released example again on three fresh copies.
+Random Bug Walk plants and validates synthetic bugs to expose gaps in an application’s tests.
+
+This hackathon prototype demonstrates one released example: a synthetic time-zone bug deliberately planted in a pinned copy of [Umami](https://github.com/umami-software/umami). The [271 measured original API tests pass despite that defect](https://random-bug-walk.vercel.app/#cell-3). All four added checks pass on clean and fixed copies. On the planted copy, the three non-UTC checks fail as expected while the UTC control passes. Other upstream tests were not evaluated. This result demonstrates a test-suite blind spot; it does not measure debugging-agent performance. Debugging tasks and developer-tool evaluation are subsequent uses.
+
+A model wrote the bug report from recorded symptoms, and a human approved it before release. The evidence measures API responses, not independently verified chart rendering or dashboard interactions.
 
 - Results site: <https://random-bug-walk.vercel.app>
 - Results repository (published runs and releases): <https://github.com/Erik-1259/random-bug-walk-results>
 
 The planted bug is synthetic, labeled as such everywhere, and never filed upstream. Results are a demonstration, not findings.
+
+## Quick judge route
+
+No sign-in or new replay is needed:
+
+1. [See the time-zone mismatch](https://random-bug-walk.vercel.app/#cell-2).
+2. [Read the original-suite versus added-check comparison](https://random-bug-walk.vercel.app/#cell-3).
+3. [Read the generated bug report](https://random-bug-walk.vercel.app/#bug-report).
+4. [Inspect a recorded replay](https://random-bug-walk.vercel.app/#recorded-replays).
+5. [Read scope and limitations](https://random-bug-walk.vercel.app/#cell-6).
+
+The [full diagnostic catalog](https://random-bug-walk.vercel.app/catalog) remains available. Starting a new replay is optional, requires the judge passcode, and has a 35-minute hard limit.
+
+The issue writer’s model runs on Nebius Token Factory. Vercel hosts the site, runs app copies on Sandbox, and stores status and large files on Blob. Neon Postgres holds the spend ledger. Tavily supplied the released issue’s exact-phrase novelty searches.
 
 ## Repository map
 
