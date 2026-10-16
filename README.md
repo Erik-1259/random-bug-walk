@@ -2,7 +2,7 @@
 
 Random Bug Walk plants and validates synthetic bugs to expose gaps in an application’s tests.
 
-This hackathon prototype demonstrates one released example: a synthetic time-zone bug deliberately planted in a pinned copy of [Umami](https://github.com/umami-software/umami). The [271 measured original API tests pass despite that defect](https://random-bug-walk.vercel.app/#cell-3). Four added checks distinguish the clean, planted and fixed states: they pass on clean and fixed copies and fail as expected on the planted copy. Other upstream tests were not evaluated. This result demonstrates a test-suite blind spot; it does not measure debugging-agent performance. Debugging tasks and developer-tool evaluation are subsequent uses.
+This hackathon prototype demonstrates one released example: a synthetic time-zone bug deliberately planted in a pinned copy of [Umami](https://github.com/umami-software/umami). The [271 measured original API tests pass despite that defect](https://random-bug-walk.vercel.app/#cell-3). All four added checks pass on clean and fixed copies. On the planted copy, the three non-UTC checks fail as expected while the UTC control passes. Other upstream tests were not evaluated. This result demonstrates a test-suite blind spot; it does not measure debugging-agent performance. Debugging tasks and developer-tool evaluation are subsequent uses.
 
 A model wrote the bug report from recorded symptoms, and a human approved it before release. The evidence measures API responses, not independently verified chart rendering or dashboard interactions.
 

@@ -538,8 +538,8 @@ function Intro({ results }: { results: Results }) {
       <p className="intro">Random Bug Walk plants and validates synthetic bugs to expose gaps in an application’s tests.</p>
       {results.release?.record.release_id === RELEASED_TIME_ZONE_CASE ? (
         <p>One synthetic time-zone bug was deliberately planted in a pinned copy of <a href={UMAMI_REPOSITORY}>Umami</a>.
-          The 271 measured original API tests pass despite that defect. Four added checks distinguish the clean, planted and fixed states:
-          they pass on clean and fixed copies and fail as expected on the planted copy. One released example is demonstrated here.
+          The 271 measured original API tests pass despite that defect. All four added checks pass on clean and fixed copies.
+          On the planted copy, the three non-UTC checks fail as expected while the UTC control passes. One released example is demonstrated here.
           Other upstream tests were not evaluated.</p>
       ) : <p>This page shows the available evidence from a pinned copy of <a href={UMAMI_REPOSITORY}>Umami</a>, with original API tests and added checks shown separately below.</p>}
       <nav aria-label="Quick judge route">

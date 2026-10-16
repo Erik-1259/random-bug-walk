@@ -14,7 +14,7 @@ export function HistoricalReplays({ releaseId }: { releaseId: string | null }) {
       {releaseId !== RELEASED_TIME_ZONE_CASE ? <p>No historical summary is provided for this case. Published runs remain in the <a href="/catalog">diagnostic catalog</a>.</p> : (
         <>
           <p>At the linked results snapshot, three published replays of <a href={`${SNAPSHOT}/releases/${RELEASED_TIME_ZONE_CASE}/release.json`}>this frozen release</a> each recorded all six comparison cells matching expectations.
-            The planted copy’s added checks failed as expected; the original API suite passed on all three copies, and the added checks passed on clean and fixed copies.</p>
+            The planted copy’s added-check suite failed as expected; the original API suite passed on all three copies, and the added checks passed on clean and fixed copies.</p>
           <p>These historical records do not establish execution on the latest deployment. “Completed” alone does not establish reproduction.
             Their public decision fields (comparison, decisions and outcome_verdict) are null; the summary is supported by the recorded cells, not a published verdict.</p>
           <ul>
