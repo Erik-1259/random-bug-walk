@@ -32,6 +32,7 @@ import {
   VERDICT_TEXT,
   verificationReplays,
 } from "../model.ts";
+import { HistoricalReplays, RELEASED_TIME_ZONE_CASE } from "./historical-replays.tsx";
 import { ReplayControl } from "./replay-control.tsx";
 import { RunSummary } from "./run-summary.tsx";
 import { filesOfRelease, isRaceSymptom, NOVELTY_PATH, type AdmissionRecords, type CaseSymptom, type PublishedRelease, type Results, type Run } from "../release.ts";
@@ -531,15 +532,54 @@ export const UMAMI_REPOSITORY = "https://github.com/umami-software/umami";
 export const ADMISSION_RULES = `${CODE_REPOSITORY}/blob/main/docs/admission-rules.md`;
 
 /** What a blind-spot example is, for a reader who arrives cold, and where the code and records are. */
-function Intro() {
+function Intro({ results }: { results: Results }) {
   return (
-    <p className="intro">
-      A blind-spot example is a bug planted on purpose in a pinned copy of <a href={UMAMI_REPOSITORY}>Umami</a>, an open-source web analytics app, that Umami&apos;s own original API
-      test suite does not catch, while added checks do: the original suite passes on the clean, planted and fixed copies, and the added checks fail on the planted copy and pass on the clean and fixed copies. Every
-      result on this page is read from the published records in the <a href={RESULTS_REPOSITORY}>results repository</a>; the code that produced them is in the{" "}
-      <a href={CODE_REPOSITORY}>code repository</a>. The copies run on Vercel Sandbox, the spend ledger is a Neon Postgres database, run status and large published files are kept on Vercel Blob,
-      the issue writer&apos;s model runs on Nebius Token Factory, and the novelty search uses Tavily.
-    </p>
+    <>
+      <p className="intro">Random Bug Walk plants and validates synthetic bugs to expose gaps in an application’s tests.</p>
+      {results.release?.record.release_id === RELEASED_TIME_ZONE_CASE ? (
+        <p>One synthetic time-zone bug was deliberately planted in a pinned copy of <a href={UMAMI_REPOSITORY}>Umami</a>.
+          The 271 measured original API tests pass despite that defect. Four added checks distinguish the clean, planted and fixed states:
+          they pass on clean and fixed copies and fail as expected on the planted copy. One released example is demonstrated here.
+          Other upstream tests were not evaluated.</p>
+      ) : <p>This page shows the available evidence from a pinned copy of <a href={UMAMI_REPOSITORY}>Umami</a>, with original API tests and added checks shown separately below.</p>}
+      <nav aria-label="Quick judge route">
+        <h2>Quick judge route</h2>
+        <p>Read the evidence without signing in or starting a replay.</p>
+        <ol>
+          <li><a href="#cell-2">See the {results.caseRun?.symptom != null && isRaceSymptom(results.caseRun.symptom) ? "concurrent-request" : "time-zone"} mismatch.</a></li>
+          <li><a href="#cell-3">Read the original-suite versus added-check comparison.</a></li>
+          <li><a href="#bug-report">Read the generated bug report.</a></li>
+          <li><a href="#recorded-replays">Inspect a recorded replay.</a></li>
+          <li><a href="#cell-6">Read scope and limitations.</a></li>
+        </ol>
+        <p>For the full diagnostic catalog, <a href="/catalog">browse all runs</a>.</p>
+      </nav>
+      <details>
+        <summary>Code, records and infrastructure</summary>
+        <p>The <a href={CODE_REPOSITORY}>code repository</a> produces the evidence in the <a href={RESULTS_REPOSITORY}>results repository</a>.
+          The issue writer’s model runs on Nebius Token Factory; app copies run on Vercel Sandbox, and Vercel hosts the site and stores status and large files on Blob.
+          Neon Postgres holds the spend ledger. Tavily provides the released issue’s exact-phrase novelty searches.</p>
+      </details>
+    </>
+  );
+}
+
+function BugReport({ results }: { results: Results }) {
+  const release = results.release;
+  return (
+    <section aria-labelledby="bug-report">
+      <h3 id="bug-report">Generated bug report — summary</h3>
+      {release?.record.release_id === RELEASED_TIME_ZONE_CASE ? (
+        <>
+          <p>In America/Los_Angeles, daily pageview counts for March 7–9, 2026 should be 3, 8, 1; the recorded API response instead gives 2, 8, 2.</p>
+          <p>The model wrote the report from recorded symptoms; a human approved it before release.
+            The measurements are API responses. Chart rendering and dashboard interactions described in the report were not independently verified.</p>
+          <p><a href={releaseHref(release.record.release_id, "issue.json")}>Read the original frozen bug report: pageviews assigned to the wrong local day</a>.</p>
+        </>
+      ) : release === null ? <p>No frozen bug report has been released for this case.</p> : (
+        <p><a href={releaseHref(release.record.release_id, "issue.json")}>Read this release’s frozen bug report</a>; the recorded symptom and counts are shown above.</p>
+      )}
+    </section>
   );
 }
 
@@ -597,18 +637,25 @@ export function CasePage({ results, judgeEnabled = false, home = false }: { resu
     <main>
       <h1>Random Bug Walk results</h1>
       <p className="headline">{results.release === null ? NO_VALIDATED_RESULT : VALIDATED_RESULT}</p>
-      <Intro />
+      <Intro results={results} />
       <CaseList results={results} home={home} />
       <Cell index={1} title="Symptom">
         <Symptom symptom={run?.symptom ?? null} validated={results.release !== null} />
       </Cell>
       <Cell index={2} title={run?.symptom != null && isRaceSymptom(run.symptom) ? "Concurrent requests and expected and observed acceptances" : "Expected and observed local-day counts"}>
         <Counts symptom={run?.symptom ?? null} />
+        <BugReport results={results} />
       </Cell>
       <Cell index={3} title="Original API suite and added checks on clean, planted and fixed copies">
         <Matrix admission={run?.admission ?? null} />
+        <p>{run?.admission?.decision.comparison?.classification === "blind_spot_demonstrated"
+          ? "This result demonstrates a test-suite blind spot; it does not measure debugging-agent performance."
+          : "This comparison does not measure debugging-agent performance."}</p>
       </Cell>
-      <Cell index={4} title="Verified replay">
+      <Cell index={4} title="Replay the released case">
+        <HistoricalReplays releaseId={results.release?.record.release_id ?? null} />
+        <h3>Start a new replay (optional)</h3>
+        <p>A new replay requires the judge passcode and has a 35-minute hard limit. The browser status below refers only to this browser, separately from the historical records above.</p>
         <ReplayControl
           release={results.release === null ? null : { release_id: results.release.record.release_id, created_at: results.release.record.created_at }}
           initial={replayState(results, judgeEnabled)}
