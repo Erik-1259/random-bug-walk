@@ -186,6 +186,7 @@ it("checks reconciliation clears held spend without rewriting terminal delivery"
   const before = fixture("status-operational-error");
   const after = structuredClone(before);
   after.attention = null;
+  after.updated_at = "2026-10-20T19:08:00.000Z";
   const budget = object(after.budget);
   budget.spent_microusd = integer(budget.spent_microusd) + integer(budget.reserved_microusd);
   budget.reserved_microusd = 0;
@@ -195,6 +196,27 @@ it("checks reconciliation clears held spend without rewriting terminal delivery"
     : path.endsWith("/reconcile") ? { status: 204, body: null } : { status: 200, body: after });
   await expect(runReconciliation(backend, before)).resolves.toBeUndefined();
   after.outcome = "sources_exhausted"; after.stop_reason = { code: "sources_exhausted", message: "synthetic changed outcome" };
+  await expect(runReconciliation(backend, before)).rejects.toThrow("reconciliation changed terminal result");
+});
+it.each(["candidates", "funnel", "limits"])("rejects changed %s after reconciliation", async (field) => {
+  const { runReconciliation } = await import("../src/runner.ts");
+  const before = fixture("status-operational-error");
+  const after = structuredClone(before);
+  after.attention = null;
+  const budget = object(after.budget);
+  budget.spent_microusd = integer(budget.spent_microusd) + integer(budget.reserved_microusd);
+  budget.reserved_microusd = 0;
+  if (field === "candidates") {
+    const candidates = objects(after.candidates);
+    const candidate = candidates[0]; assert(candidate);
+    after.candidates = [...candidates, { ...candidate, candidate_id: "ab".repeat(32), entry_id: "synthetic-replacement" }];
+  } else if (field === "funnel") object(after.funnel).candidates_explored = 2;
+  else object(after.limits).candidates_started = 2;
+  checkStatus(after);
+  const { backend } = scripted();
+  backend.request = (_method, path) => Promise.resolve(path.endsWith("/requests")
+    ? { status: 409, body: { contract_version: "bug-request/1", error: { code: "busy", retryable: false, details: { reason: "needs_reconciliation" } } } }
+    : path.endsWith("/reconcile") ? { status: 204, body: null } : { status: 200, body: after });
   await expect(runReconciliation(backend, before)).rejects.toThrow("reconciliation changed terminal result");
 });
 it("checks separate download paths and hashes without implementing package replay", async () => {

@@ -220,9 +220,11 @@ export async function runReconciliation(backend: IsolatedBackend, before: Record
   checkScenarioStatus(after);
   assert.equal(after.attention, null);
   assert.equal(object(after.budget).reserved_microusd, 0);
-  for (const field of ["request_id", "outcome", "stop_reason", "delivery", "items", "cases"]) {
-    assert.deepEqual(after[field], before[field], "reconciliation changed terminal result");
-  }
+  // Section 8.5 changes accounting and attention, with update events and their
+  // timestamp. Reconciliation cannot change completed work or start candidates.
+  const snapshot = (value: Record<string, unknown>) => Object.fromEntries(Object.entries(value)
+    .filter(([field]) => !["budget", "attention", "updated_at", "events", "next_after", "poll_after_ms"].includes(field)));
+  assert.deepEqual(snapshot(after), snapshot(before), "reconciliation changed terminal result");
 }
 
 export async function runUnsupported(backend: IsolatedBackend): Promise<void> {
