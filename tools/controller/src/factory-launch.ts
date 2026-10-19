@@ -21,6 +21,8 @@ import {
   busyReason,
   finishRequest,
   finishValidation,
+  finishedEvent,
+  stopQuietly,
   usd,
   validationOperation,
   workerOperation,
@@ -83,15 +85,6 @@ function httpStatus(error: unknown): number | null {
 const NOT_DEFINITE = new Set([408, 409, 425, 429]);
 
 type Launched = { kind: "launched"; sandbox: string } | { kind: "definite_failure"; detail: string } | { kind: "uncertain"; detail: string };
-
-async function stopQuietly(sandbox: WorkerSandboxSdk, name: string, log: (line: string) => void): Promise<void> {
-  try {
-    const found = await sandbox.get(name);
-    await found?.stop();
-  } catch (error) {
-    log(`factory: the best-effort stop of ${name} failed (${error instanceof Error ? error.name : "non-error"})`);
-  }
-}
 
 /**
  * prepared → launching → create → running → the detached command. The operation must be prepared.
@@ -166,22 +159,28 @@ async function releaseSlot(deps: FactoryLaunchDeps, root: string): Promise<boole
 
 /**
  * Reserves the worker and launches it once per request. A duplicate or concurrent start finds the
- * operation already reserved (replay) and launches nothing. The request must be recorded first.
+ * operation already reserved (replay) and launches nothing; only one caller can move a prepared
+ * operation to launching, so a start retried after an earlier one stopped between its reservation
+ * and its launch launches it. The request must be recorded first.
  */
 export async function startFactoryWorker(deps: FactoryLaunchDeps, requestId: string): Promise<WorkerStart> {
   checkImage(deps.launch.image);
   const profile = deps.profile ?? FACTORY_PROFILE;
   const record = await deps.records.request(requestId);
   if (record === null) throw new LaunchConfigError("the request is not recorded");
-  const op = workerOperation({ identity: deps.identity, rates: deps.rates, profile }, record, deps.launch.image);
+  // A finished request never gets a worker, whatever its operation's state.
+  if (finishedEvent(await deps.records.events(requestId)) !== null) return { kind: "replay" };
+  const op = workerOperation({ identity: deps.identity, rates: deps.rates, profile }, record);
   const reserved = await deps.ledger.budgets.reserve(record.budget_key, "request", op.request);
   if (!reserved.ok) {
+    // An operation with this identity exists: an earlier start of this request reserved it. Never finish the request over it.
+    if (reserved.code === "operation_conflict") return { kind: "replay" };
     await finishRequest(deps, record, "operational_error", { attention: null });
     await releaseSlot(deps, record.root);
     deps.log(`factory ${requestId} worker reservation refused ${reserved.code}; finished and released`);
     return { kind: "refused", code: reserved.code };
   }
-  if (reserved.replay) return { kind: "replay" };
+  if (reserved.replay && reserved.state !== "prepared") return { kind: "replay" };
   await appendBudgetUpdate(deps, record, "worker:reserved", `Reserved ${usd(reserved.reserved_microusd)} for the worker's worst case.`);
   const deadline = new Date(deps.now().getTime() + profile.worker.timeout_s * 1000);
   const launched = await launchSandbox(deps, op, profile.worker, workerCommandArgs({ request_id: requestId, deadline_at: deadline }));
@@ -277,7 +276,7 @@ export async function startFactoryValidation(deps: FactoryLaunchDeps, args: Vali
     accepted_at: deps.now().toISOString(),
     package_sha256: args.package_sha256,
   };
-  const op = validationOperation({ identity: deps.identity, rates: deps.rates, profile }, record, deps.launch.image);
+  const op = validationOperation({ identity: deps.identity, rates: deps.rates, profile }, record);
   let reserved: Awaited<ReturnType<typeof budgets.reserve>>;
   try {
     reserved = await budgets.reserve(request.budget_key, "validation", op.request);

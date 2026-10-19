@@ -11,7 +11,7 @@ import { callName, canonicalDigest, operationId, providerCallIdentity } from "@r
 import type { OperationState, ReserveRequest, Spend, UsageSettlement } from "@rbw/spend";
 import { FACTORY_PROFILE, factoryEnvelope } from "./factory-profile.ts";
 import type { FactoryEnvelope, FactoryProfile } from "./factory-profile.ts";
-import type { FactoryIdentity, FactoryLedger, FactoryRecords, FactoryRequestRecord, FactoryValidationRecord, StoredFactoryEvent } from "./factory-ports.ts";
+import type { FactoryIdentity, FactoryLedger, FactoryRecords, FactoryRequestRecord, FactoryValidationRecord, StoredFactoryEvent, WorkerSandboxSdk } from "./factory-ports.ts";
 
 export const FACTORY_KIND = { worker: "factory.worker", copy: "factory.copy", validation: "factory.validation" } as const;
 export const SANDBOX_PROVIDER = "vercel-sandbox";
@@ -121,8 +121,11 @@ export interface OperationContext {
   profile?: FactoryProfile;
 }
 
-/** The request worker's operation: its execution is the request root; its payload names the worker image. */
-export function workerOperation(ctx: OperationContext, request: Pick<FactoryRequestRecord, "root" | "interpretation_sha256">, image: string): FactoryOperation {
+/**
+ * The request worker's operation: its execution is the request root. The payload does not name the
+ * worker image, so a start retried after a redeploy with another image replays instead of conflicting.
+ */
+export function workerOperation(ctx: OperationContext, request: Pick<FactoryRequestRecord, "root" | "interpretation_sha256">): FactoryOperation {
   const profile = ctx.profile ?? FACTORY_PROFILE;
   return operation({
     identity: ctx.identity,
@@ -136,12 +139,12 @@ export function workerOperation(ctx: OperationContext, request: Pick<FactoryRequ
     provider: SANDBOX_PROVIDER,
     sandbox_name: workerSandboxName(request.root),
     envelope: factoryEnvelope(ctx.rates, { kind: "worker" }, profile),
-    payload: { image },
+    payload: {},
   });
 }
 
 /** A validation run's operation: its worker and its copies, reserved together on the request budget. */
-export function validationOperation(ctx: OperationContext, validation: Pick<FactoryValidationRecord, "root" | "case_id" | "host_id">, image: string): FactoryOperation {
+export function validationOperation(ctx: OperationContext, validation: Pick<FactoryValidationRecord, "root" | "case_id" | "host_id">): FactoryOperation {
   const profile = ctx.profile ?? FACTORY_PROFILE;
   return operation({
     identity: ctx.identity,
@@ -155,7 +158,7 @@ export function validationOperation(ctx: OperationContext, validation: Pick<Fact
     provider: SANDBOX_PROVIDER,
     sandbox_name: validationSandboxName(validation.root),
     envelope: factoryEnvelope(ctx.rates, { kind: "validation", host: validation.host_id }, profile),
-    payload: { image, host_id: validation.host_id },
+    payload: { host_id: validation.host_id },
   });
 }
 
@@ -403,6 +406,19 @@ export async function finishValidation(
     deps.now(),
   );
   await appendBudgetUpdate(deps, request, `validation:${id}:settled`, result.uncertain ? "A validation run's reservation stays held until reconciliation." : `A validation run settled at ${usd(result.cost_microusd ?? 0)}.`);
+}
+
+/** Sandbox statuses that mean it no longer runs. */
+export const STOPPED_STATUSES: ReadonlySet<string> = new Set(["stopped", "failed", "aborted"]);
+
+/** Stops a sandbox by name on a best-effort basis: a failure is logged, never thrown. */
+export async function stopQuietly(sandbox: WorkerSandboxSdk, name: string, log: (line: string) => void): Promise<void> {
+  try {
+    const found = await sandbox.get(name);
+    if (found !== null && !STOPPED_STATUSES.has(found.status)) await found.stop();
+  } catch (error) {
+    log(`factory: the best-effort stop of ${name} failed (${error instanceof Error ? error.name : "non-error"})`);
+  }
 }
 
 /** Why the factory slot is busy: needs_reconciliation when the holder's root has an uncertain operation. */

@@ -30,7 +30,7 @@ function lostDeps(): LostDeps {
 }
 
 function workerId(record: FactoryRequestRecord): string {
-  return workerOperation({ identity: w.identity, rates: w.rates }, record, WORKER_IMAGE).operation_id;
+  return workerOperation({ identity: w.identity, rates: w.rates }, record).operation_id;
 }
 
 function copyId(record: FactoryRequestRecord): string {
@@ -198,7 +198,7 @@ describe("finalizeLostWorker for a validation run", () => {
     expect(started.kind).toBe("accepted");
     await w.records.recordHeartbeat({ validation_id: validationId }, w.clock.now());
     const root = w.identity.validationRoot(validationId);
-    const operationId = validationOperation({ identity: w.identity, rates: w.rates }, { root, case_id: CASE_ID, host_id: "task-report" }, WORKER_IMAGE).operation_id;
+    const operationId = validationOperation({ identity: w.identity, rates: w.rates }, { root, case_id: CASE_ID, host_id: "task-report" }).operation_id;
     return { record, validationId, operationId };
   }
 

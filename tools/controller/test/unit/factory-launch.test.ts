@@ -32,7 +32,7 @@ function deps(overrides: Partial<FactoryLaunchDeps> = {}): FactoryLaunchDeps {
 }
 
 function workerOp(record: { root: string; interpretation_sha256: string }) {
-  return workerOperation({ identity: w.identity, rates: w.rates }, record, WORKER_IMAGE);
+  return workerOperation({ identity: w.identity, rates: w.rates }, record);
 }
 
 describe("startFactoryWorker", () => {
@@ -82,6 +82,47 @@ describe("startFactoryWorker", () => {
     expect(results.filter((result) => result.kind === "launched")).toHaveLength(1);
     expect([...results, again].filter((result) => result.kind !== "launched").every((result) => result.kind === "replay")).toBe(true);
     expect((await w.records.events(record.request_id)).filter((event) => event.type === "budget_updated")).toHaveLength(1);
+  });
+
+  it("launches a worker whose reservation an earlier start made but never launched", async () => {
+    const record = await acceptRequest(w);
+    const reserved = await w.ledger.budgets.reserve(record.budget_key, "request", workerOp(record).request);
+    expect(reserved.ok && reserved.state).toBe("prepared");
+    expect(await startFactoryWorker(deps(), record.request_id)).toEqual({ kind: "launched", sandbox: workerSandboxName(record.root) });
+    expect(w.sandbox.count("create")).toBe(1);
+  });
+
+  it("never launches a worker for a request that already finished, even with its operation still prepared", async () => {
+    const record = await acceptRequest(w);
+    expect((await w.ledger.budgets.reserve(record.budget_key, "request", workerOp(record).request)).ok).toBe(true);
+    await w.records.appendEvent(record.request_id, { event_key: "finish", type: "request_finished", host_id: null, candidate_id: null, item_key: null, case_id: null, message: "Request finished: operational error.", data: { outcome: "operational_error", stop_code: "needs_reconciliation" } }, w.clock.now());
+    expect(await startFactoryWorker(deps(), record.request_id)).toEqual({ kind: "replay" });
+    expect(w.sandbox.count("create")).toBe(0);
+    expect(await operationState(w, workerOp(record).operation_id)).toBe("prepared");
+  });
+
+  it("never finishes a request over a conflicting or replayed worker operation, such as a start after a redeploy with another image", async () => {
+    const record = await acceptRequest(w);
+    expect((await startFactoryWorker(deps(), record.request_id)).kind).toBe("launched");
+    const other = `synthetic-team/synthetic-project/rbw-factory-worker@sha256:${"cd".repeat(32)}`;
+    expect(await startFactoryWorker(deps({ launch: { image: other, env: CREDENTIALS } }), record.request_id)).toEqual({ kind: "replay" });
+
+    expect(w.records.types(record.request_id)).not.toContain("request_finished");
+    expect(w.sandbox.count("create")).toBe(1);
+
+    const w2 = await factoryWorld();
+    try {
+      const second = await acceptRequest(w2);
+      const op = workerOperation({ identity: w2.identity, rates: w2.rates }, second);
+      expect((await w2.spend.reserve({ ...op.request, payload_hash: "9".repeat(64) })).ok).toBe(true);
+      const started = await startFactoryWorker({ ...deps(), ledger: w2.ledger, records: w2.records, identity: w2.identity, sandbox: w2.sandbox, now: w2.clock.now }, second.request_id);
+      expect(started).toEqual({ kind: "replay" });
+      expect(w2.records.types(second.request_id)).not.toContain("request_finished");
+      expect(w2.budgets.closes).toEqual([]);
+      expect(w2.sandbox.count("create")).toBe(0);
+    } finally {
+      await w2.close();
+    }
   });
 
   it("refuses a worker image that is not pinned by digest, before reserving anything", async () => {
@@ -191,7 +232,7 @@ describe("startFactoryValidation", () => {
     expect(started.run.cost_microusd).toBeNull();
     const root = w.identity.validationRoot(a.validation_id);
     expect(await slotHolder(w)).toBe(root);
-    const op = validationOperation({ identity: w.identity, rates: w.rates }, { root, case_id: CASE_ID, host_id: "task-report" }, WORKER_IMAGE);
+    const op = validationOperation({ identity: w.identity, rates: w.rates }, { root, case_id: CASE_ID, host_id: "task-report" });
     const status = await w.spend.operationStatus({ operation_id: op.operation_id });
     expect(status.ok && status.state).toBe("running");
     expect(status.ok && status.reserved_microusd).toBe(BigInt(FACTORY_PROFILE.prices.validation_worst_case_microusd["task-report"]));

@@ -3,7 +3,7 @@ import { copyOperation, copySandboxName, validationOperation } from "../../src/f
 import { CopyMeter } from "../../src/factory-meter.ts";
 import type { LaunchReport, MeterContext, MeteredCopyPlan } from "../../src/factory-meter.ts";
 import type { FactoryRequestRecord } from "../../src/factory-ports.ts";
-import { CANDIDATE_A, CANDIDATE_B, CASE_ID, SYNTHETIC_REQUEST_NAMESPACE, SYNTHETIC_VALIDATION_NAMESPACE, WORKER_IMAGE, acceptRequest, factoryWorld, operationState, syntheticUuid } from "./factory-fakes.ts";
+import { CANDIDATE_A, CANDIDATE_B, CASE_ID, SYNTHETIC_REQUEST_NAMESPACE, SYNTHETIC_VALIDATION_NAMESPACE, acceptRequest, factoryWorld, operationState, syntheticUuid } from "./factory-fakes.ts";
 import type { FactoryWorld } from "./factory-fakes.ts";
 
 let w: FactoryWorld;
@@ -178,6 +178,15 @@ describe("CopyMeter (one operation per copy)", () => {
     expect(status.ok && [status.state, status.open_microusd]).toEqual(["uncertain", 147_682n]);
   });
 
+  it("never settles a copy past its sandbox's provider timeout, so a full-length copy stays within its envelope", async () => {
+    const meter = await requestMeter();
+    // Measured from before the create call to after the status checks: longer than the 720 s + 60 s the provider allows.
+    const outcome = await meter.run(plan(CANDIDATE_A, "clean"), lives(783_000));
+    expect(outcome).toMatchObject({ kind: "ran", over_envelope: false, settled_microusd: 147_682 });
+    const halt = await w.spend.haltStatus();
+    expect(halt.ok && halt.halted).toBe(false);
+  });
+
   it("settles a copy that never created anything at zero", async () => {
     const meter = await requestMeter();
     const outcome = await meter.run(plan(CANDIDATE_A, "clean"), () => Promise.resolve({ result: "setup_failed", created: false, lifetime_ms: 0, stop_confirmed: true, status: "failed" as const }));
@@ -192,7 +201,7 @@ describe("CopyMeter (copies of a validation run)", () => {
     await w.spend.releaseSlot({ slot_key: "factory", root_execution_id: record.root, actor_role: "factory-worker", evidence: null, reason: null });
     const root = w.identity.validationRoot(syntheticUuid("7100"));
     await w.spend.acquireSlot({ slot_key: "factory", root_execution_id: root, actor_role: "factory-route" });
-    const validation = validationOperation({ identity: w.identity, rates: w.rates }, { root, case_id: CASE_ID, host_id: "task-report" }, WORKER_IMAGE);
+    const validation = validationOperation({ identity: w.identity, rates: w.rates }, { root, case_id: CASE_ID, host_id: "task-report" });
     const reserved = await w.ledger.budgets.reserve(record.budget_key, "validation", validation.request);
     expect(reserved.ok).toBe(true);
     await w.spend.transition({ operation_id: validation.operation_id, from_state: "prepared", to_state: "launching", actor_role: "factory-route", slot_key: "factory" });
@@ -227,6 +236,13 @@ describe("CopyMeter (copies of a validation run)", () => {
     expect(w.budgets.budgets.get(record.budget_key)?.operations.length).toBe(opsBefore);
     const slot = await w.spend.slotStatus({ slot_key: "factory" });
     expect(slot.ok && slot.children.filter((child) => child.kind === "factory.copy").map((child) => child.confirmed)).toEqual([true, true]);
+  });
+
+  it("starts no more copies than its host's validation reservation is priced for", async () => {
+    const { meter } = await validationMeter();
+    const umami = (state: MeteredCopyPlan["state"]): MeteredCopyPlan => ({ ...plan(CASE_ID, state), host: "umami" });
+    for (const state of ["clean", "buggy", "fixed"] as const) expect((await meter.run(umami(state), lives(1000))).kind).toBe("ran");
+    expect(await meter.run(umami("buggy"), lives(1000))).toMatchObject({ kind: "refused", reason: "limits_exceed_profile" });
   });
 
   it("starts no validation copy whose timeout would pass the window", async () => {

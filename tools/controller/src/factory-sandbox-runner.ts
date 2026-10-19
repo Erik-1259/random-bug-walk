@@ -189,8 +189,13 @@ async function stopAndConfirm(deps: SandboxRunnerDeps, sandbox: SandboxInstance)
 
 type Inside = { outcome: "ran"; exit_code: number; results_dir: string | null; results_sha256: string | null } | { outcome: "setup_failed" | "timed_out"; exit_code: number | null };
 
-/** Places the files, runs the command once and brings the results back. Every failure here is definite: the sandbox exists and is stopped afterwards. */
-async function runInside(deps: SandboxRunnerDeps, plan: CopyPlan, files: Placed[], sandbox: SandboxInstance, digest: string): Promise<Inside> {
+/**
+ * Places the files, runs the command once and brings the results back. Every failure here is
+ * definite: the sandbox exists and is stopped afterwards. The command's timeout counts from the
+ * create, as the provider's does, so setup time comes out of the timeout and the shutdown allowance
+ * stays for packing, reading back and stopping.
+ */
+async function runInside(deps: SandboxRunnerDeps, plan: CopyPlan, files: Placed[], sandbox: SandboxInstance, digest: string, createdAt: number): Promise<Inside> {
   const timer = deps.timer ?? ((ms: number) => AbortSignal.timeout(ms));
   const reported = sandbox.image === undefined ? undefined : /@(sha256:[0-9a-f]{64})$/.exec(sandbox.image)?.[1];
   if (sandbox.image !== undefined && reported !== digest) return { outcome: "setup_failed", exit_code: null };
@@ -206,7 +211,9 @@ async function runInside(deps: SandboxRunnerDeps, plan: CopyPlan, files: Placed[
   const [cmd, ...args] = plan.command;
   if (cmd === undefined) return { outcome: "setup_failed", exit_code: null };
   let exitCode: number;
-  const signal = timer(plan.limits.timeout_s * 1000);
+  const remainingMs = createdAt + plan.limits.timeout_s * 1000 - deps.now();
+  if (remainingMs <= 0) return { outcome: "timed_out", exit_code: null };
+  const signal = timer(remainingMs);
   try {
     const command = await sandbox.runCommand({ cmd, args, cwd: app, env: COPY_ENV, detached: true, signal });
     exitCode = (await command.wait({ signal })).exitCode;
@@ -245,10 +252,16 @@ async function launch(deps: SandboxRunnerDeps, plan: CopyPlan, files: Placed[], 
     timeout: (plan.limits.timeout_s + profile.shutdown_seconds) * 1000,
     tags: { attempt: deps.attempt },
   });
-  await hooks.created(sandbox.name);
+  try {
+    await hooks.created(sandbox.name);
+  } catch (error) {
+    // The ledger could not record the sandbox: stop it, and leave the outcome uncertain for reconciliation.
+    const stop = await stopAndConfirm(deps, sandbox);
+    throw new SandboxCopyUncertain(`${error instanceof Error ? error.message : "the ledger refused the copy's resource"}; ${sandbox.name} stop ${stop.confirmed ? "confirmed" : "not confirmed"}`);
+  }
   let inside: Inside;
   try {
-    inside = await runInside(deps, plan, files, sandbox, digest);
+    inside = await runInside(deps, plan, files, sandbox, digest, createdAt);
   } catch (error) {
     deps.log(`factory: copy ${plan.copy_id} failed (${errorName(error)})`);
     inside = { outcome: "setup_failed", exit_code: null };

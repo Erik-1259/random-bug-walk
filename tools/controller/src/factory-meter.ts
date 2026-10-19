@@ -94,6 +94,8 @@ export class CopyMeter {
   private uncertainSeen = false;
   /** Set when a settlement exceeded its envelope, which halts the spend ledger: no further copy starts. */
   private halted = false;
+  /** Child mode: copies created so far; a validation run's reservation is priced for its host's most copies. */
+  private childLaunches = 0;
 
   constructor(ctx: MeterContext) {
     this.ctx = ctx;
@@ -124,9 +126,21 @@ export class CopyMeter {
     if (plan.limits.timeout_s > limits.timeout_s || plan.limits.vcpus > limits.vcpus || plan.limits.memory_mb > limits.memory_mb) {
       return { reason: "limits_exceed_profile", detail: `the plan's limits exceed ${plan.host}'s copy limits (${String(limits.vcpus)} vCPU, ${String(limits.memory_mb)} MB, ${String(limits.timeout_s)} s)` };
     }
+    if (this.ctx.mode.kind === "child_of" && this.childLaunches >= this.profile.validation.max_copies[plan.host]) {
+      return { reason: "limits_exceed_profile", detail: `a validation run of a ${plan.host} case starts at most ${String(this.profile.validation.max_copies[plan.host])} copies` };
+    }
     const ends = this.ctx.now().getTime() + (plan.limits.timeout_s + this.profile.shutdown_seconds + this.ctx.margin_s) * 1000;
     if (ends > this.ctx.deadline.getTime()) return { reason: "no_time", detail: "the copy would not end before the deadline" };
     return null;
+  }
+
+  /**
+   * The lifetime a copy settles: as measured, but never past its sandbox's provider timeout (its
+   * timeout plus the shutdown allowance), which the provider enforces; the client's measurement
+   * also counts the create call and the status checks after the stop.
+   */
+  private settledLifetime(plan: MeteredCopyPlan, measuredMs: number): number {
+    return Math.min(Math.max(0, measuredMs), (plan.limits.timeout_s + this.profile.shutdown_seconds) * 1000);
   }
 
   private nextN(plan: MeteredCopyPlan): number {
@@ -210,7 +224,7 @@ export class CopyMeter {
     if (!child.ok) return this.uncertainOutcome(id, op.execution_id, `the stop confirmation was refused (${child.code})`);
     const ended = await ledger.spend.transition({ operation_id: id, from_state: "running", to_state: "terminal", actor_role: WORKER_ACTOR, terminal_status: report.status });
     if (!ended.ok) return this.uncertainOutcome(id, op.execution_id, `the end was refused (${ended.code})`);
-    const usage = { launched: true, lifetime_ms: report.lifetime_ms, ...(report.vcpus === undefined ? {} : { vcpus: report.vcpus }) };
+    const usage = { launched: true, lifetime_ms: this.settledLifetime(plan, report.lifetime_ms), ...(report.vcpus === undefined ? {} : { vcpus: report.vcpus }) };
     const settled = await ledger.spend.settle(copySettlementFor(op.envelope, id, plan.host, usage, evidence, this.profile));
     if (!settled.ok) return this.uncertainOutcome(id, op.execution_id, `the settlement was refused (${settled.code})`);
     if (settled.over_envelope) this.halted = true;
@@ -226,6 +240,7 @@ export class CopyMeter {
     try {
       report = await launch(copySandboxName(execution), {
         created: async (resource) => {
+          this.childLaunches += 1;
           const child = await spend.recordChild({ slot_key: this.profile.slot_key, root_execution_id: this.ctx.root, provider: this.ctx.provider, resource_id: resource, operation_id: parent, execution_id: execution, kind: FACTORY_KIND.copy, actor_role: WORKER_ACTOR });
           if (!child.ok) throw new Error(`the copy's resource could not be recorded (${child.code})`);
           seen.resource = resource;
@@ -243,7 +258,7 @@ export class CopyMeter {
     const evidence = this.stopEvidence(execution, resource, report.lifetime_ms, report.status);
     const confirmed = await spend.confirmChild({ slot_key: this.profile.slot_key, root_execution_id: this.ctx.root, provider: this.ctx.provider, resource_id: resource, terminal_status: report.status, evidence, actor_role: WORKER_ACTOR });
     if (!confirmed.ok) return this.uncertainOutcome(null, execution, `the stop confirmation was refused (${confirmed.code})`);
-    this.usage.push({ launched: true, lifetime_ms: report.lifetime_ms, ...(report.vcpus === undefined ? {} : { vcpus: report.vcpus }) });
+    this.usage.push({ launched: true, lifetime_ms: this.settledLifetime(plan, report.lifetime_ms), ...(report.vcpus === undefined ? {} : { vcpus: report.vcpus }) });
     return { kind: "ran", result: report.result, operation_id: null, execution_id: execution, settled_microusd: null, over_envelope: false };
   }
 }

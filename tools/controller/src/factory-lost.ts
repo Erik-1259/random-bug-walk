@@ -18,12 +18,14 @@ import {
   EVENT_KEYS,
   ROUTE_ACTOR,
   SANDBOX_PROVIDER,
+  STOPPED_STATUSES,
   appendBudgetUpdate,
   finishRequest,
   finishValidation,
   finishedEvent,
   fullSettlement,
   makeUncertain,
+  stopQuietly,
   validationOperation,
   validationSandboxName,
   workerOperation,
@@ -48,9 +50,6 @@ export type LostTarget = { request_id: string } | { validation_id: string };
 /** alive: not lost yet, nothing done; finished: the request or run already ended some other way. */
 export type LostOutcome = { kind: "not_found" } | { kind: "alive" } | { kind: "finished" } | { kind: "finalized"; slot_held: boolean };
 
-const STOPPED = new Set(["stopped", "failed", "aborted"]);
-/** The worker's operation ID depends on its identity only, so any image string finds it. */
-const ANY_IMAGE = "unused";
 
 const CANDIDATE_END: ReadonlySet<string> = new Set(["candidate_rejected", "candidate_invalid", "candidate_incomplete", "candidate_skipped", "case_delivered"]);
 
@@ -63,15 +62,6 @@ function inFlightCandidate(events: readonly StoredFactoryEvent[]): StoredFactory
 async function silentSince(deps: LostDeps, request: FactoryRequestRecord): Promise<{ since: Date; label: string }> {
   const beat = await deps.records.lastHeartbeat({ request_id: request.request_id });
   return beat === null ? { since: new Date(request.created_at), label: "none" } : { since: beat, label: beat.toISOString() };
-}
-
-async function stopQuietly(deps: LostDeps, name: string): Promise<void> {
-  try {
-    const found = await deps.sandbox.get(name);
-    if (found !== null && !STOPPED.has(found.status)) await found.stop();
-  } catch (error) {
-    deps.log(`factory: the best-effort stop of ${name} failed (${error instanceof Error ? error.name : "non-error"})`);
-  }
 }
 
 /** The root's open operations and unconfirmed child resources, when the root holds the slot. */
@@ -119,7 +109,7 @@ async function finalizeRequest(deps: LostDeps, requestId: string): Promise<LostO
   }
 
   // The ledger first: the worker's and any in-flight copy's operation become uncertain, never settled.
-  const workerId = workerOperation({ identity: deps.identity, rates: deps.rates, profile }, request, ANY_IMAGE).operation_id;
+  const workerId = workerOperation({ identity: deps.identity, rates: deps.rates, profile }, request).operation_id;
   const blockers = await rootBlockers(deps, request.root);
   for (const id of new Set([workerId, ...blockers.operation_ids])) await makeUncertain(deps.ledger.spend, id, ROUTE_ACTOR);
 
@@ -146,8 +136,8 @@ async function finalizeRequest(deps: LostDeps, requestId: string): Promise<LostO
   if (!done) return { kind: "finished" };
 
   // Best effort: stop what may still run. The slot stays held until reconciliation.
-  await stopQuietly(deps, workerSandboxName(request.root));
-  for (const child of blockers.children) await stopQuietly(deps, child);
+  await stopQuietly(deps.sandbox, workerSandboxName(request.root), deps.log);
+  for (const child of blockers.children) await stopQuietly(deps.sandbox, child, deps.log);
   deps.log(`factory ${requestId} worker lost: finished worker_lost; slot held for reconciliation`);
   const after = await rootBlockers(deps, request.root);
   return { kind: "finalized", slot_held: after.held };
@@ -156,11 +146,11 @@ async function finalizeRequest(deps: LostDeps, requestId: string): Promise<LostO
 async function confirmedStopped(deps: LostDeps, name: string): Promise<boolean> {
   try {
     let found = await deps.sandbox.get(name);
-    if (found !== null && !STOPPED.has(found.status)) {
+    if (found !== null && !STOPPED_STATUSES.has(found.status)) {
       await found.stop();
       found = await deps.sandbox.get(name);
     }
-    return found === null || STOPPED.has(found.status);
+    return found === null || STOPPED_STATUSES.has(found.status);
   } catch (error) {
     deps.log(`factory: ${name} could not be confirmed stopped (${error instanceof Error ? error.name : "non-error"})`);
     return false;
@@ -182,7 +172,7 @@ async function finalizeValidation(deps: LostDeps, validationId: string): Promise
   const overMs = now - accepted - profile.validation.max_run_s * 1000;
   if (silentMs < profile.heartbeat.lost_after_s * 1000 && overMs <= 0) return { kind: "alive" };
 
-  const op = validationOperation({ identity: deps.identity, rates: deps.rates, profile }, validation, ANY_IMAGE);
+  const op = validationOperation({ identity: deps.identity, rates: deps.rates, profile }, validation);
   const { spend } = deps.ledger;
   const blockers = await rootBlockers(deps, validation.root);
   const names = [validationSandboxName(validation.root), ...blockers.children.filter((name) => name !== validationSandboxName(validation.root))];

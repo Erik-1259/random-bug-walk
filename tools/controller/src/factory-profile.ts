@@ -55,6 +55,8 @@ export interface FactoryProfileBody {
   validation: {
     /** A validation run ends within this many seconds of its accepted POST (contract section 11). */
     max_run_s: number;
+    /** A copy starts only when its timeout, the shutdown allowance and this margin end within the window, leaving time to settle and finish. */
+    finish_margin_s: number;
     worker: SandboxSize;
     /** The most copies one validation run of a host's case may start (its protocol's total). */
     max_copies: Record<HostId, number>;
@@ -101,6 +103,7 @@ const BODY: FactoryProfileBody = {
   },
   validation: {
     max_run_s: 1800,
+    finish_margin_s: 30,
     worker: { vcpus: 2, memory_gb: 4, timeout_s: 1800 },
     max_copies: { umami: 3, "task-report": 7 },
   },

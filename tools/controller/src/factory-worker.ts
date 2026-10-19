@@ -19,6 +19,7 @@ import {
   EVENT_KEYS,
   WORKER_ACTOR,
   appendBudgetUpdate,
+  appendNeedsReconciliation,
   finishRequest,
   finishValidation,
   finishedEvent,
@@ -113,8 +114,6 @@ export type WorkerOutcome = { kind: "finished"; stop_code: StopCode; slot_releas
 
 /** Contract section 8.4: the only event types allowed after request_finished. */
 const LATE_TYPES: ReadonlySet<EventType> = new Set(["budget_updated", "attention", "attention_cleared", "validation_started", "validation_finished"]);
-/** The worker's operation ID depends on its identity only. */
-const ANY_IMAGE = "unused";
 
 function errorText(error: unknown): string {
   return error instanceof Error ? `${error.name}: ${error.message}` : "non-error";
@@ -185,6 +184,8 @@ export async function runFactoryWorker(deps: WorkerDeps, args: { request_id: str
     const finishedHere = run.finished || ownFinish;
     const stop: StopCode = meter.uncertain && !finishedHere ? "needs_reconciliation" : run.stop_code;
     if (finishedHere) {
+      // The loop finished the request itself; an uncertain copy still needs the reconciliation notice.
+      if (meter.uncertain) await appendNeedsReconciliation(deps, id, "A sandbox run's outcome is uncertain; its spend needs reconciliation.");
       const closed = await deps.ledger.budgets.close(record.budget_key, stop);
       if (!closed.ok) deps.log(`factory ${id} the budget close was refused (${closed.code})`);
     } else {
@@ -192,7 +193,7 @@ export async function runFactoryWorker(deps: WorkerDeps, args: { request_id: str
       if (!(await finishRequest(deps, record, stop, { attention }))) return { kind: "fenced" };
     }
 
-    const op = workerOperation({ identity: deps.identity, rates: deps.rates, profile }, record, ANY_IMAGE);
+    const op = workerOperation({ identity: deps.identity, rates: deps.rates, profile }, record);
     const ended = await deps.ledger.spend.transition({ operation_id: op.operation_id, from_state: "running", to_state: "terminal", actor_role: WORKER_ACTOR, terminal_status: "completed" });
     if (ended.ok) {
       const settled = await deps.ledger.spend.settle(fullSettlement(op.envelope, op.operation_id));
@@ -246,7 +247,7 @@ export async function runFactoryValidation(deps: WorkerDeps, args: { validation_
     if (await fenced()) return { kind: "fenced" };
     await deps.records.appendValidationEvent(id, { event_key: "running", type: "running", data: { started_at: deps.now().toISOString() } }, deps.now());
     const deadline = new Date(Date.parse(validation.accepted_at) + profile.validation.max_run_s * 1000);
-    const op = validationOperation({ identity: deps.identity, rates: deps.rates, profile }, validation, ANY_IMAGE);
+    const op = validationOperation({ identity: deps.identity, rates: deps.rates, profile }, validation);
     const checkpoint = async (): Promise<Checkpoint> => ((await fenced()) ? "fenced" : "continue");
     const meter = new CopyMeter({
       ledger: deps.ledger,
@@ -259,7 +260,8 @@ export async function runFactoryValidation(deps: WorkerDeps, args: { validation_
       budget_key: request.budget_key,
       provider: deps.provider,
       deadline,
-      margin_s: 0,
+      // The margin leaves the run time to confirm its last copy's stop, settle and finish inside the window.
+      margin_s: profile.validation.finish_margin_s,
       mode: { kind: "child_of", operation_id: op.operation_id },
       beforeLaunch: async () => (await checkpoint()) === "continue",
       log: deps.log,

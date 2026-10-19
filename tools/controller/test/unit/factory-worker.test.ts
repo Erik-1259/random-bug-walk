@@ -107,7 +107,7 @@ describe("runFactoryWorker", () => {
     const types = w.records.types(record.request_id);
     expect(types[2]).toBe("worker_started");
     expect(types.slice(-2)).toEqual(["request_finished", "budget_updated"]);
-    const worker = await w.spend.operationStatus({ operation_id: workerOperation({ identity: w.identity, rates: w.rates }, record, WORKER_IMAGE).operation_id });
+    const worker = await w.spend.operationStatus({ operation_id: workerOperation({ identity: w.identity, rates: w.rates }, record).operation_id });
     expect(worker.ok && [worker.state, worker.settled_microusd]).toEqual(["reconciled", BigInt(FACTORY_PROFILE.prices.worker_worst_case_microusd)]);
     expect(await operationState(w, copyId(record, "clean"))).toBe("reconciled");
     expect(await operationState(w, copyId(record, "buggy"))).toBe("reconciled");
@@ -187,7 +187,7 @@ describe("runFactoryWorker", () => {
     expect(await runFactoryWorker(workerDeps({ heartbeat_ms: 3_600_000 }), { request_id: record.request_id, deadline: deadline(), orchestrate })).toEqual({ kind: "fenced" });
     expect(w.records.types(record.request_id)).toEqual(afterLost);
     expect(w.records.refusedAppends).toEqual([]);
-    expect(await operationState(w, workerOperation({ identity: w.identity, rates: w.rates }, record, WORKER_IMAGE).operation_id)).toBe("uncertain");
+    expect(await operationState(w, workerOperation({ identity: w.identity, rates: w.rates }, record).operation_id)).toBe("uncertain");
     expect(await slotHolder(w)).toBe(record.root);
   });
 
@@ -200,6 +200,19 @@ describe("runFactoryWorker", () => {
     });
     expect(outcome).toEqual({ kind: "finished", stop_code: "operational_error", slot_released: true });
     expect(w.logs.some((line) => line.includes("synthetic: the loop failed"))).toBe(true);
+  });
+
+  it("still sets needs_reconciliation when the loop finished the request itself while a copy was uncertain", async () => {
+    const record = await launched();
+    const orchestrate: Orchestrate = async (hooks) => {
+      await hooks.meter.run(plan(CANDIDATE_A, "clean"), lives(5000, { stop_confirmed: false }));
+      await hooks.append({ event_key: "finish", type: "request_finished", host_id: null, candidate_id: null, item_key: null, case_id: null, message: "Request finished: sources exhausted.", data: { outcome: "sources_exhausted", stop_code: "sources_exhausted" } });
+      return { stop_code: "sources_exhausted", finished: true };
+    };
+    expect(await runFactoryWorker(workerDeps(), { request_id: record.request_id, deadline: deadline(), orchestrate })).toMatchObject({ slot_released: false });
+    const attention = (await w.records.events(record.request_id)).filter((event) => event.type === "attention");
+    expect(attention.map((event) => event.data)).toEqual([{ code: "needs_reconciliation" }]);
+    expect(await slotHolder(w)).toBe(record.root);
   });
 
   it("does not append request_finished again when the request loop already did", async () => {
@@ -223,7 +236,7 @@ describe("runFactoryValidation", () => {
     const started = await startFactoryValidation(launchDeps(), { request_id: record.request_id, case_id: CASE_ID, validation_id: validationId, host_id: "task-report", package_sha256: { bug_case: "d".repeat(64), validator: "e".repeat(64) }, harness: { name: "rbw-validate", version: "1" } });
     expect(started.kind).toBe("accepted");
     const root = w.identity.validationRoot(validationId);
-    return { record, validationId, operationId: validationOperation({ identity: w.identity, rates: w.rates }, { root, case_id: CASE_ID, host_id: "task-report" }, WORKER_IMAGE).operation_id };
+    return { record, validationId, operationId: validationOperation({ identity: w.identity, rates: w.rates }, { root, case_id: CASE_ID, host_id: "task-report" }).operation_id };
   }
 
   it("runs the copies inside the window, settles its worker in full and its copies as measured, finishes and releases the slot", async () => {
@@ -232,6 +245,11 @@ describe("runFactoryValidation", () => {
       validation_id: validationId,
       validate: async (hooks) => {
         expect(hooks.deadline.getTime()).toBe(Date.parse(hooks.validation.accepted_at) + 1_800_000);
+        // A copy must leave the run its finish margin: it starts only when 720 s + 60 s + 30 s fit before the window ends.
+        const now = w.clock.ms;
+        w.clock.ms = Date.parse(hooks.validation.accepted_at) + (1800 - 720 - 60 - 30) * 1000 + 1;
+        expect(await hooks.meter.run({ ...plan(CASE_ID, "clean") }, lives(1000))).toMatchObject({ kind: "refused", reason: "no_time" });
+        w.clock.ms = now;
         await hooks.meter.run({ ...plan(CASE_ID, "clean") }, lives(90_000));
         await hooks.meter.run({ ...plan(CASE_ID, "buggy") }, lives(80_000));
         return { result: "passed", matrix: MATRIX, message: "All six cells matched their expected outcomes." };

@@ -257,6 +257,32 @@ describe("the sandbox copy runner", () => {
     expect(await operationState(w, opId())).toBe("uncertain");
   });
 
+  it("stops a sandbox it created when the ledger cannot record it, and rejects as uncertain", async () => {
+    const transition = w.spend.transition.bind(w.spend);
+    w.ledger.spend = { ...w.spend, transition: (request) => (request.to_state === "running" ? Promise.resolve({ ok: false as const, code: "invalid_transition" as const }) : transition(request)) };
+    await expect(createSandboxCopyRunner(deps()).run(plan(), roots)).rejects.toThrow(SandboxCopyUncertain);
+    expect(sdk.creates).toHaveLength(1);
+    expect(sdk.stops).toEqual([sdk.creates[0]?.name]);
+    expect(await operationState(w, opId())).toBe("uncertain");
+  });
+
+  it("counts the command's timeout from the create, as the provider does", async () => {
+    const asked: number[] = [];
+    const never = new AbortController().signal;
+    await createSandboxCopyRunner(
+      deps({
+        timer: (ms) => {
+          asked.push(ms);
+          return never;
+        },
+      }),
+    ).run(plan(), roots);
+    expect(asked).toHaveLength(1);
+    // The fake clock moves 1 s per reading: the create, then the setup reading before the command.
+    expect(asked[0]).toBeLessThan(600_000);
+    expect(asked[0]).toBeGreaterThan(590_000);
+  });
+
   it("rejects as uncertain when the stop cannot be confirmed, keeping the reservation held", async () => {
     sdk.stopTakesEffect = false;
     await expect(createSandboxCopyRunner(deps()).run(plan(), roots)).rejects.toThrow(SandboxCopyUncertain);
