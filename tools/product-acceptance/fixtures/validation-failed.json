@@ -1,0 +1,68 @@
+{
+  "contract_version": "bug-request/1",
+  "validation_id": "00000000-0000-4000-8000-000000000202",
+  "case_id": "cbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcb",
+  "state": "finished",
+  "result": "failed",
+  "matrix": {
+    "original_suite": {
+      "clean": {
+        "expected": "pass",
+        "observed": "pass",
+        "runs_valid": 3,
+        "runs_total": 3,
+        "matches_expectation": true
+      },
+      "buggy": {
+        "expected": "pass",
+        "observed": "pass",
+        "runs_valid": 3,
+        "runs_total": 3,
+        "matches_expectation": true
+      },
+      "fixed": {
+        "expected": "pass",
+        "observed": "pass",
+        "runs_valid": 3,
+        "runs_total": 3,
+        "matches_expectation": true
+      }
+    },
+    "verification": {
+      "clean": {
+        "expected": "pass",
+        "observed": "pass",
+        "runs_valid": 3,
+        "runs_total": 3,
+        "matches_expectation": true
+      },
+      "buggy": {
+        "expected": "fail",
+        "observed": "pass",
+        "runs_valid": 3,
+        "runs_total": 3,
+        "matches_expectation": false
+      },
+      "fixed": {
+        "expected": "pass",
+        "observed": "pass",
+        "runs_valid": 3,
+        "runs_total": 3,
+        "matches_expectation": true
+      }
+    }
+  },
+  "package_sha256": {
+    "bug_case": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+    "validator": "f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2"
+  },
+  "harness": {
+    "name": "rbw-validate",
+    "version": "1.0.0"
+  },
+  "message": "The run completed and 1 of 6 cells did not match: the verification checks passed on the buggy copy. This is a behavioral result.",
+  "started_at": "2026-10-20T15:05:10.200Z",
+  "finished_at": "2026-10-20T15:18:57.846Z",
+  "cost_microusd": 150000,
+  "poll_after_ms": 30000
+}

@@ -1,27 +1,10 @@
 {
   "schema_version": 1,
   "suite": "request-api-acceptance",
-  "status": "unavailable",
-  "acceptance_executed": false,
-  "backend_revision": "575c1074de588449f72dcebcae4d24900d0015e4",
-  "contract_revision": null,
-  "contract_path": "docs/product/bug-request-v1.md",
+  "contract_revision": "7540362198f5940f1add45a65593ac314e8d751e",
+  "backend_revision": null,
   "isolated_target_verified": false,
-  "environment": {
-    "node": "v24.21.0",
-    "pnpm": "10.33.2",
-    "python": "3.12.14",
-    "uv": "0.12.22",
-    "frozen_install": "passed",
-    "lockfiles_changed": false
-  },
-  "existing_check": {
-    "command": "pnpm --filter @rbw/web exec vitest run test/judge/judge.test.ts -t 'makes one create for two POSTs with one request ID|answers a repeated POST with one request ID'",
-    "exit_code": 0,
-    "passed": 2,
-    "excluded_by_name_filter": 41,
-    "request_api_acceptance_evidence": false
-  },
+  "acceptance_executed": false,
   "summary": {
     "passed": 0,
     "failed": 0,
@@ -31,42 +14,72 @@
     {
       "id": "identity",
       "status": "unavailable",
-      "reason": "published_contract_and_verified_isolated_backend_required"
+      "checks": [],
+      "dependencies": [
+        "Exact evidence response shape and durable request/job identities are not defined in revision 1.",
+        "Approved isolated backend startup, verification and session adapter are unavailable."
+      ]
     },
     {
       "id": "quantities",
       "status": "unavailable",
-      "reason": "published_contract_and_verified_isolated_backend_required"
+      "checks": [],
+      "dependencies": [
+        "Approved isolated backend startup, verification and session adapter are unavailable."
+      ]
     },
     {
       "id": "shared-budget",
       "status": "unavailable",
-      "reason": "published_contract_and_verified_isolated_backend_required"
+      "checks": [],
+      "dependencies": [
+        "Exact ledger-operation/provider-call evidence shape is needed to verify reservations across hosts.",
+        "Approved isolated backend startup, verification and session adapter are unavailable."
+      ]
     },
     {
       "id": "qualification",
       "status": "unavailable",
-      "reason": "published_contract_and_verified_isolated_backend_required"
+      "checks": [],
+      "dependencies": [
+        "A deterministic setup_failed candidate control is not named in revision 1.",
+        "Approved isolated backend startup, verification and session adapter are unavailable."
+      ]
     },
     {
       "id": "unsupported",
       "status": "unavailable",
-      "reason": "published_contract_and_verified_isolated_backend_required"
+      "checks": [],
+      "dependencies": [
+        "Approved isolated backend startup, verification and session adapter are unavailable."
+      ]
     },
     {
       "id": "stops",
       "status": "unavailable",
-      "reason": "published_contract_and_verified_isolated_backend_required"
+      "checks": [],
+      "dependencies": [
+        "cancel-midway needs an observable pause or documented timing so a stop can arrive after a delivery.",
+        "Approved isolated backend startup, verification and session adapter are unavailable."
+      ]
     },
     {
       "id": "continuity",
       "status": "unavailable",
-      "reason": "published_contract_and_verified_isolated_backend_required"
+      "checks": [],
+      "dependencies": [
+        "Approved isolated backend startup, verification and session adapter are unavailable."
+      ]
     },
     {
       "id": "downloads",
       "status": "unavailable",
-      "reason": "published_contract_and_verified_isolated_backend_required"
+      "checks": [],
+      "dependencies": [
+        "Pending-package access needs a documented deterministic window and case ID; archive layout and full payload privacy validation remain pending the package contract.",
+        "Approved isolated backend startup, verification and session adapter are unavailable."
+      ]
     }
-  ]
+  ],
+  "exit_code": 2
 }
