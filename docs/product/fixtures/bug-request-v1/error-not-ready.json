@@ -1,0 +1,9 @@
+{
+  "contract_version": "bug-request/1",
+  "error": {
+    "code": "not_ready",
+    "message": "This package part is not ready for download yet.",
+    "retryable": false,
+    "details": null
+  }
+}

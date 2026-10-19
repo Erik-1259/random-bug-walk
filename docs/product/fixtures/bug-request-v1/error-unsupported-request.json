@@ -1,0 +1,252 @@
+{
+  "contract_version": "bug-request/1",
+  "error": {
+    "code": "unsupported_request",
+    "message": "The interpretation has blocking problems, so the request cannot start. See details.interpretation.",
+    "retryable": false,
+    "details": {
+      "interpretation": {
+        "contract_version": "bug-request/1",
+        "interpretation_sha256": "1616161616161616161616161616161616161616161616161616161616161616",
+        "interpreter": {
+          "interpreter_id": "criteria-match",
+          "version": "1",
+          "criteria_catalog_version": "1"
+        },
+        "qualification_route": {
+          "route_id": "behavioral-qualification",
+          "version": "1"
+        },
+        "input": {
+          "hosts": [
+            "task-report"
+          ],
+          "items": [
+            {
+              "item_key": "stale-response",
+              "bug_type_id": "concurrency",
+              "quantity": 1,
+              "description": "I want a bug where a success response reports data different from what was stored when requests overlap",
+              "difficulty": "source_inferable_allowed"
+            },
+            {
+              "item_key": "lost-change-retry",
+              "bug_type_id": "concurrency",
+              "quantity": 1,
+              "description": "An acknowledged change is lost when requests overlap after a network retry",
+              "difficulty": "source_inferable_allowed"
+            },
+            {
+              "item_key": "hard-concurrency",
+              "bug_type_id": "concurrency",
+              "quantity": 1,
+              "description": null,
+              "difficulty": "source_only_difficulty_required"
+            },
+            {
+              "item_key": "date-time-1",
+              "bug_type_id": "date_time",
+              "quantity": 1,
+              "description": null,
+              "difficulty": "source_inferable_allowed"
+            },
+            {
+              "item_key": "concurrency-any",
+              "bug_type_id": "concurrency",
+              "quantity": 2,
+              "description": null,
+              "difficulty": "source_inferable_allowed"
+            }
+          ],
+          "budget_microusd": 1000000
+        },
+        "startable": false,
+        "items": [
+          {
+            "item_key": "stale-response",
+            "bug_type_id": "concurrency",
+            "quantity": 1,
+            "description": "I want a bug where a success response reports data different from what was stored when requests overlap",
+            "difficulty": {
+              "requested": "source_inferable_allowed",
+              "status": "not_required"
+            },
+            "criteria": [
+              {
+                "criterion_id": "concurrency.stale-success-response",
+                "version": "1",
+                "label": "A success response reports data different from what was stored when requests overlap",
+                "matched_text": "a success response reports data different from what was stored when requests overlap"
+              }
+            ],
+            "unmatched_text": [],
+            "eligible_sources": [],
+            "status": "unsupported",
+            "problems": [
+              {
+                "code": "no_matching_source",
+                "severity": "blocking",
+                "message": "No catalog entry on the selected hosts targets \"A success response reports data different from what was stored when requests overlap\".",
+                "item_key": "stale-response"
+              }
+            ]
+          },
+          {
+            "item_key": "lost-change-retry",
+            "bug_type_id": "concurrency",
+            "quantity": 1,
+            "description": "An acknowledged change is lost when requests overlap after a network retry",
+            "difficulty": {
+              "requested": "source_inferable_allowed",
+              "status": "not_required"
+            },
+            "criteria": [
+              {
+                "criterion_id": "concurrency.lost-acknowledged-change",
+                "version": "1",
+                "label": "An acknowledged change is lost when requests overlap",
+                "matched_text": "An acknowledged change is lost when requests overlap"
+              }
+            ],
+            "unmatched_text": [
+              "after a network retry"
+            ],
+            "eligible_sources": [
+              {
+                "host_id": "task-report",
+                "source_id": "synthetic-task-report-concurrency",
+                "entries": 1
+              }
+            ],
+            "status": "unsupported",
+            "problems": [
+              {
+                "code": "unrecognized_description",
+                "severity": "blocking",
+                "message": "\"after a network retry\" matches no concurrency criterion. Remove it or describe the behavior with a listed criterion.",
+                "item_key": "lost-change-retry"
+              }
+            ]
+          },
+          {
+            "item_key": "hard-concurrency",
+            "bug_type_id": "concurrency",
+            "quantity": 1,
+            "description": null,
+            "difficulty": {
+              "requested": "source_only_difficulty_required",
+              "status": "unsupported"
+            },
+            "criteria": [],
+            "unmatched_text": [],
+            "eligible_sources": [
+              {
+                "host_id": "task-report",
+                "source_id": "synthetic-task-report-concurrency",
+                "entries": 1
+              }
+            ],
+            "status": "unsupported",
+            "problems": [
+              {
+                "code": "unsupported_difficulty",
+                "severity": "blocking",
+                "message": "Source-only difficulty is not available yet. This item is refused rather than run without it.",
+                "item_key": "hard-concurrency"
+              }
+            ]
+          },
+          {
+            "item_key": "date-time-1",
+            "bug_type_id": "date_time",
+            "quantity": 1,
+            "description": null,
+            "difficulty": {
+              "requested": "source_inferable_allowed",
+              "status": "not_required"
+            },
+            "criteria": [],
+            "unmatched_text": [],
+            "eligible_sources": [],
+            "status": "unsupported",
+            "problems": [
+              {
+                "code": "unsupported_combination",
+                "severity": "blocking",
+                "message": "No selected host supports date and time bugs. Umami supports them; the task-and-report service does not yet.",
+                "item_key": "date-time-1"
+              }
+            ]
+          },
+          {
+            "item_key": "concurrency-any",
+            "bug_type_id": "concurrency",
+            "quantity": 2,
+            "description": null,
+            "difficulty": {
+              "requested": "source_inferable_allowed",
+              "status": "not_required"
+            },
+            "criteria": [],
+            "unmatched_text": [],
+            "eligible_sources": [
+              {
+                "host_id": "task-report",
+                "source_id": "synthetic-task-report-concurrency",
+                "entries": 1
+              }
+            ],
+            "status": "supported",
+            "problems": [
+              {
+                "code": "quantity_exceeds_source",
+                "severity": "warning",
+                "message": "Only 1 distinct concurrency catalog entry is eligible on the selected hosts, so at most 1 of the 2 concurrency cases that supported items ask for can be delivered.",
+                "item_key": "concurrency-any"
+              }
+            ]
+          }
+        ],
+        "type_totals": [
+          {
+            "bug_type_id": "concurrency",
+            "quantity": 5
+          },
+          {
+            "bug_type_id": "date_time",
+            "quantity": 1
+          }
+        ],
+        "hosts": [
+          {
+            "host_id": "task-report",
+            "used": true,
+            "reason": null
+          }
+        ],
+        "budget": {
+          "budget_microusd": 1000000,
+          "worker_worst_case_microusd": 200000,
+          "worst_case_per_candidate_microusd": [
+            {
+              "host_id": "task-report",
+              "microusd": 300000
+            }
+          ],
+          "worst_case_per_validation_microusd": [
+            {
+              "host_id": "task-report",
+              "microusd": 200000
+            }
+          ],
+          "estimate_note": "The worker's worst case is reserved when the request starts, and each candidate's worst case before it starts; afterward the actual spend is settled and the rest is released. A validation run reserves its host's worst case the same way. These are limits, not predictions."
+        },
+        "limits": {
+          "max_wall_clock_s": 3600,
+          "max_candidates": 10
+        },
+        "problems": []
+      }
+    }
+  }
+}
