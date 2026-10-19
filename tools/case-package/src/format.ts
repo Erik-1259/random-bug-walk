@@ -117,9 +117,12 @@ export function formatOf(kind: PackageKind): PackageFormat {
   return kind === "bug_case" ? BUG_CASE_FORMAT : VALIDATOR_FORMAT;
 }
 
-/** The download file name of a part: `rbw-bug-case-<case_id>.tar.gz` or `rbw-validator-<case_id>.tar.gz`. */
-export function packageFilename(kind: PackageKind, caseId: string): string {
-  return `${kind === "bug_case" ? "rbw-bug-case" : "rbw-validator"}-${caseId}.tar.gz`;
+/**
+ * The download file name of a part, as in the contract's fixtures: `rbw-bug-case-<id>-v<package_version>.tar.gz`
+ * or `rbw-validator-<id>-v<package_version>.tar.gz`, where `<id>` is the first 12 hex digits of the case ID.
+ */
+export function packageFilename(kind: PackageKind, caseId: string, packageVersion: number): string {
+  return `${kind === "bug_case" ? "rbw-bug-case" : "rbw-validator"}-${caseId.slice(0, 12)}-v${String(packageVersion)}.tar.gz`;
 }
 
 export const PREPARED_INDEX = "index.json";

@@ -74,7 +74,7 @@ describe("runValidateCli", () => {
     const report = JSON.parse(await readFile(join(out, "validation.json"), "utf8")) as Record<string, unknown>;
     expect(report.result).toBe("error");
     expect(report.package_sha256).toEqual({ bug_case: pair.bug_case.sha256, validator: pair.validator.sha256 });
-    expect(report.harness).toEqual({ name: "rbw-validate", version: "1" });
+    expect(report.harness).toEqual({ name: "rbw-validate", version: "1.0.0" });
     expect(new Set(Object.values(EXIT_CODES)).size).toBe(4);
   });
 });

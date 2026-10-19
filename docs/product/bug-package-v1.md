@@ -6,8 +6,10 @@ A case is two separate downloads:
 
 | Part | Format | File name | Reader |
 |---|---|---|---|
-| Bug case | `rbw-bug-case/1` | `rbw-bug-case-<case_id>.tar.gz` | the debugging agent |
-| Validator package | `rbw-validator/1` | `rbw-validator-<case_id>.tar.gz` | the evaluator and the harness |
+| Bug case | `rbw-bug-case/1` | `rbw-bug-case-<id>-v<package_version>.tar.gz` | the debugging agent |
+| Validator package | `rbw-validator/1` | `rbw-validator-<id>-v<package_version>.tar.gz` | the evaluator and the harness |
+
+In a file name, `<id>` is the first 12 hex digits of the `case_id`, so each package version of a case downloads under its own name (for example `rbw-bug-case-cacacacacaca-v1.tar.gz`, as in the contract's fixtures).
 
 The bug case is everything a debugging agent may see. The validator package is evaluator material: its checks, expected values, clean reconstruction and reference repair never reach a debugging agent or a client payload.
 
@@ -126,7 +128,7 @@ The harness reads nothing outside the two archives except the host adapter code 
 2. unpacks each part into its own directory of one fresh workspace and builds the clean, buggy and fixed trees (section 5);
 3. asks the host adapter for the copy plans of each state, one per copy the protocol declares; a plan may place only files of its state's tree and of the validator's checks, unchanged;
 4. when the adapter declares availability, checks the run's planned span (from now until now plus every planned copy's time limit, or an explicit end) and runs no copy when the combination is unavailable;
-5. runs the copies one at a time in the order clean, buggy, fixed: the runner places the files at the plan's destinations, runs the command and brings the results directory back with its hash; the adapter's `collect` turns that into a copy record, and after each state the adapter's `interpret` gives the state's two cells, where a pass or fail on fewer valid runs than the protocol's `min_valid_runs` counts as `incomplete`;
+5. runs the copies one at a time in the order clean, buggy, fixed: the runner places the files at the plan's destinations, runs the command and brings the results directory back with its hash; the adapter's `collect` turns that into a copy record, and after each state the adapter's `interpret` gives the state's two cells, where a pass or fail on fewer valid runs than the protocol's `min_valid_runs` counts as `incomplete`, and the harness itself makes both cells of a state with an invalid copy record `error` and those of a state with an incomplete one at least `incomplete`, whatever the adapter interpreted;
 6. prints the matrix and the result, and with `--out` writes `validation.json` and keeps each copy's results under `<dir>/copies/`.
 
 | Result | When | Exit code |

@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { canonicalDigest } from "@rbw/schema";
 import { describe, expect, it } from "vitest";
 import { unpackArchive } from "../src/archive.ts";
-import { BUG_CASE_MANIFEST, pairSha256, VALIDATOR_MANIFEST } from "../src/format.ts";
+import { BUG_CASE_MANIFEST, packageFilename, pairSha256, VALIDATOR_MANIFEST } from "../src/format.ts";
 import { packPair, PackRefused, type PairInput } from "../src/pack.ts";
 import { buildMismatchedSyntheticPair, buildSyntheticPair, syntheticPairInput } from "../src/synthetic.ts";
 
@@ -151,6 +151,22 @@ describe("pairSha256", () => {
     const input = { bug_case_sha256: "1".repeat(64), validator_sha256: "2".repeat(64), case_id: "3".repeat(64) };
     expect(pairSha256(input)).toBe(canonicalDigest(input).sha256);
     expect(pairSha256({ ...input, validator_sha256: "4".repeat(64) })).not.toBe(pairSha256(input));
+  });
+});
+
+describe("packageFilename", () => {
+  it("names a part by its kind, the case ID's first 12 hex digits and the package version, as the contract's fixtures do", () => {
+    const caseId = `${"ca".repeat(6)}${"0".repeat(52)}`;
+    expect(packageFilename("bug_case", caseId, 1)).toBe("rbw-bug-case-cacacacacaca-v1.tar.gz");
+    expect(packageFilename("validator", caseId, 1)).toBe("rbw-validator-cacacacacaca-v1.tar.gz");
+    expect(packageFilename("bug_case", caseId, 2)).not.toBe(packageFilename("bug_case", caseId, 1));
+  });
+
+  it("gives the synthetic pair's parts those names", () => {
+    const pair = buildSyntheticPair({ seed: "01" });
+    expect(pair.bug_case.filename).toBe(`rbw-bug-case-${pair.case_id.slice(0, 12)}-v${String(pair.package_version)}.tar.gz`);
+    expect(pair.validator.filename).toBe(`rbw-validator-${pair.case_id.slice(0, 12)}-v${String(pair.package_version)}.tar.gz`);
+    expect(pair.validator_core.filename).toBe(pair.validator.filename);
   });
 });
 

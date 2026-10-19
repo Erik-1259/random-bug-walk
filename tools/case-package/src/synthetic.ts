@@ -326,8 +326,8 @@ export interface SyntheticPair {
   validator_core: SyntheticPart;
 }
 
-function syntheticPart(kind: PackageKind, caseId: string, data: Uint8Array): SyntheticPart {
-  return { kind, format: formatOf(kind), filename: packageFilename(kind, caseId), bytes: data, sha256: sha256Hex(data), size_bytes: data.length };
+function syntheticPart(kind: PackageKind, caseId: string, packageVersion: number, data: Uint8Array): SyntheticPart {
+  return { kind, format: formatOf(kind), filename: packageFilename(kind, caseId, packageVersion), bytes: data, sha256: sha256Hex(data), size_bytes: data.length };
 }
 
 /**
@@ -340,8 +340,8 @@ export function buildSyntheticPair(options: SyntheticOptions & { evidence?: unkn
   const packed = packPair(input);
   const evidence = options.evidence === undefined ? { synthetic: true, case_id: input.case_id, entry_id: input.entry.entry_id } : options.evidence;
   const finalValidator = evidence === null ? packed.validator_core.bytes : assembleFinalValidator(packed.validator_core.bytes, evidence);
-  const bugCase = syntheticPart("bug_case", input.case_id, packed.bug_case.bytes);
-  const validator = syntheticPart("validator", input.case_id, finalValidator);
+  const bugCase = syntheticPart("bug_case", input.case_id, input.package_version, packed.bug_case.bytes);
+  const validator = syntheticPart("validator", input.case_id, input.package_version, finalValidator);
   return {
     host_id: input.entry.host_id,
     entry_id: input.entry.entry_id,
@@ -352,7 +352,7 @@ export function buildSyntheticPair(options: SyntheticOptions & { evidence?: unkn
     pair_sha256: pairSha256({ bug_case_sha256: bugCase.sha256, validator_sha256: validator.sha256, case_id: input.case_id }),
     bug_case: bugCase,
     validator,
-    validator_core: syntheticPart("validator", input.case_id, packed.validator_core.bytes),
+    validator_core: syntheticPart("validator", input.case_id, input.package_version, packed.validator_core.bytes),
   };
 }
 
