@@ -1,6 +1,6 @@
 # Factory UI integration status
 
-The `/factory` UI follows **bug-request/1 draft revision 2**, pinned to code commit [`52a7dc9a50a56c07539d100c4eb2f0f95039b0cb`](https://github.com/Erik-1259/random-bug-walk/blob/52a7dc9a50a56c07539d100c4eb2f0f95039b0cb/docs/product/bug-request-v1.md). Endpoints in that revision are planned. An unavailable service produces an explicit unavailable state; the production page never substitutes fixtures.
+The `/factory` UI follows **bug-request/1 draft revision 2**, pinned to code commit [`8074fe61b8e9f9f1cddb47e42994446a85a05396`](https://github.com/Erik-1259/random-bug-walk/blob/8074fe61b8e9f9f1cddb47e42994446a85a05396/docs/product/bug-request-v1.md). Endpoints in that revision are planned. An unavailable service produces an explicit unavailable state; the production page never substitutes fixtures.
 
 ## Implemented UI behavior
 
