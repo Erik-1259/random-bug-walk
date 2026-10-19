@@ -253,6 +253,7 @@ describe("request events", () => {
     ["a malformed item_key", { item_key: "Synthetic Key" }],
     ["data that is not an object", { data: [] }],
     ["a message above 2,000 characters", { message: "m".repeat(2001) }],
+    ["a message with a terminal escape", { message: "\u001b[2JAll fulfilled" }],
     ["a missing field", { case_id: undefined }],
   ])("refuses %s as invalid_request", async (_label, overrides) => {
     await expectNothingWritten(h, async () => {
@@ -469,6 +470,21 @@ describe("validation runs", () => {
       expectRefused(await f.recordValidation(validation()), "invalid_request");
     });
     expectOk(await f.recordValidation(validation({ request_id: requestId(2) })));
+  });
+
+  it("keeps a recorded run's root out of other budgets: no other budget charges it, no budget takes it as its root", async () => {
+    await acceptRequest(h, 2);
+    expectOk(await f.recordValidation(validation()));
+    await expectNothingWritten(h, async () => {
+      expectRefused(
+        await h.spend.budgetReserve({ budget_key: budgetKey(2), role: "validation", reservation: factoryOperation(1, validationRoot(1), 10) }),
+        "invalid_request",
+      );
+      expectRefused(await h.spend.createBudget(budgetRequest(3, { root_execution_id: validationRoot(1) })), "invalid_request");
+    });
+    expectOk(
+      await h.spend.budgetReserve({ budget_key: budgetKey(1), role: "validation", reservation: factoryOperation(1, validationRoot(1), 10) }),
+    );
   });
 
   it("numbers its events consecutively, replays an event key and refuses other content", async () => {

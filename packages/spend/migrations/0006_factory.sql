@@ -50,9 +50,10 @@ RETURN coalesce(p ~ '^[a-z][a-z0-9_]{0,63}$', false);
 CREATE FUNCTION factory_is_item_key(p text) RETURNS boolean LANGUAGE sql IMMUTABLE
 RETURN coalesce(p ~ '^[a-z0-9][a-z0-9-]{0,31}$', false);
 
--- Event messages: any text of at most 2,000 characters; may be empty.
+-- Event messages: plain text of at most 2,000 characters, may be empty. Tabs and line breaks are
+-- allowed; other control characters (terminal escapes among them) are not.
 CREATE FUNCTION factory_is_message(p text) RETURNS boolean LANGUAGE sql IMMUTABLE
-RETURN coalesce(length(p) <= 2000, false);
+RETURN coalesce(translate(p, E'\t\n\r', '') !~ '[[:cntrl:]]' AND length(p) <= 2000, false);
 
 -- Times in results: UTC ISO 8601 with milliseconds and Z, as the contract writes them.
 CREATE FUNCTION factory_time(p timestamptz) RETURNS text LANGUAGE sql STABLE
@@ -286,6 +287,9 @@ BEGIN
   IF EXISTS (SELECT 1 FROM operations WHERE root_execution_id = r ->> 'root_execution_id') THEN
     RETURN spend_invalid('root_execution_id already has operations; a budget''s root starts with none');
   END IF;
+  IF EXISTS (SELECT 1 FROM factory_validations WHERE root_execution_id = r ->> 'root_execution_id') THEN
+    RETURN spend_invalid('root_execution_id is a validation run''s root');
+  END IF;
 
   IF r ->> 'pool_key' = 'judge-demo' THEN
     RETURN spend_invalid('a budget never uses the judge-demo pool');
@@ -390,6 +394,12 @@ BEGIN
     END IF;
     IF EXISTS (SELECT 1 FROM budget_operations WHERE root_execution_id = v_root AND budget_key <> v_budget.budget_key) THEN
       RETURN spend_invalid('this validation root is charged to another budget');
+    END IF;
+    IF EXISTS (
+      SELECT 1 FROM factory_validations v JOIN factory_requests q ON q.request_id = v.request_id
+      WHERE v.root_execution_id = v_root AND q.budget_key <> v_budget.budget_key
+    ) THEN
+      RETURN spend_invalid('this validation root belongs to another request''s validation run');
     END IF;
   END IF;
 
@@ -986,9 +996,10 @@ BEGIN
     RETURN spend_invalid(v_err);
   END IF;
   -- A validation ID is scoped to (request_id, case_id) and checked across every request. Its root
-  -- is locked too, so two runs claiming one root get idempotency_conflict, not a unique violation.
+  -- takes the root lock of budget creation and validation reservations, so the root checks below
+  -- see every concurrent claim on it, and two runs claiming one root get idempotency_conflict.
   PERFORM pg_advisory_xact_lock(hashtext('factory_validation'), hashtext(r ->> 'validation_id'));
-  PERFORM pg_advisory_xact_lock(hashtext('factory_validation_root'), hashtext(r ->> 'root_execution_id'));
+  PERFORM pg_advisory_xact_lock(hashtext('spend_budget_root'), hashtext(r ->> 'root_execution_id'));
   SELECT * INTO v_existing FROM factory_validations WHERE validation_id = r ->> 'validation_id';
   IF FOUND THEN
     IF (v_existing.request_id, v_existing.case_id, v_existing.root_execution_id)

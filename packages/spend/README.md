@@ -318,14 +318,14 @@ Settlement, all other transitions, reconciliation, transfers, cap raises, child 
 A request budget caps what one factory request commits, on its own pool. It is bound to the request's root execution, and every operation it admits is recorded in `budget_operations` with a role:
 
 - **`request`:** an operation of the request itself. Its root must be the budget's root.
-- **`validation`:** an operation of a validation run of one of the request's cases. Its root is the run's own root: never the budget's root, never any other budget's root, and never a root already charged to another budget. The database does not look up the validation record, because a run is recorded only after its reservation succeeds.
+- **`validation`:** an operation of a validation run of one of the request's cases. Its root is the run's own root: never the budget's root, never any other budget's root, never a root already charged to another budget, and never the root of another request's recorded validation run. A run need not be recorded before its reservation (a run is recorded only after its reservation succeeds). Budget creation, validation reservations and validation records take one lock per root, so these checks see each other's concurrent writes.
 
 **Money.** The budget's committed amount is settled plus open over all its operations, whatever their root or role; available = cap − committed. Creating a budget holds nothing in the pool: the pool counts only what the budget's operations commit, like any other reservation. A settlement above an operation's worst case still records the spend in full, so committed can exceed the cap: `budgetStatus` then reports `overrun: true` and a negative `available_microusd`, and every later budget reservation is refused.
 
 **`createBudget`** takes `budget_key`, `root_execution_id`, `pool_key`, `cap_microusd` (at least 1), `pool_required_microusd` and `actor_role`.
 - An identical request replays (`replay: true`) and writes nothing. Another request with the same key, or another key on the same root, is refused with `idempotency_conflict`.
 - `judge-demo` is refused (`invalid_request`, and a table constraint), as is any pool with allocations; an unknown pool is `unknown_pool`.
-- A root that already has operations is refused (`invalid_request`): reservations made before the budget would never count against it.
+- A root that already has operations, or is a recorded validation run's root, is refused (`invalid_request`): reservations made before the budget would never count against it.
 - When it is first created, the pool's available amount must cover `pool_required_microusd` (for a factory request, the worker's worst case), and new work must not be halted. Otherwise it is refused with `insufficient_funds` or `pool_halted`, and nothing is recorded.
 
 **`budgetReserve`** takes `{ budget_key, role, reservation }`, where `reservation` is a `ReserveRequest` on the budget's pool. In order:
@@ -354,7 +354,7 @@ The factory tables hold a request's durable progress. Every write is idempotent 
 | `acceptRequest` | `factory_accept_request` | Create the budget, record the request and append `request_accepted` (event key `request_accepted`, seq 1) in one transaction. A refusal from any step leaves nothing behind, so a refused start can be sent again with the same IDs. |
 | `recordRequest` | `factory_record_request` | Record a request: `request_id`, `request_sha256`, the frozen `interpretation` (its `interpretation_sha256` field must equal `interpretation_sha256`), `budget_key` (an existing budget no other request uses), `root_execution_id` (the budget's root) and `factory_profile_sha256`. |
 | `readRequest` | `factory_request_read` | The request, its events with `seq > after` (at most `limit`, 1 to 1000), `next_after`, `last_seq`, `last_event_at`, the request's `last_heartbeat_at`, its stop, its evidence (case, hash, time) and its validation runs. `unknown_request` if it was never recorded. |
-| `appendEvent` | `factory_append_event` | Append one contract event (`type`, `host_id`, `candidate_id`, `item_key`, `case_id`, `message` of at most 2,000 characters, `data`) with a deterministic `event_key`; returns its `seq` and `at`. |
+| `appendEvent` | `factory_append_event` | Append one contract event (`type`, `host_id`, `candidate_id`, `item_key`, `case_id`, `message`, `data`) with a deterministic `event_key`; returns its `seq` and `at`. A message is plain text of at most 2,000 characters: tabs and line breaks are allowed, other control characters are not. |
 | `recordHeartbeat` | `factory_record_heartbeat` | Record a worker heartbeat for the request (`validation_id` null) or one of its validation runs. Heartbeats are never events. |
 | `recordStop` | `factory_record_stop` | Record the request's stop request (one per request, keyed by request; `actor_role` is its content). |
 | `recordEvidence` | `factory_record_evidence` | Store a case's evidence as exact JSON text with the SHA-256 of its UTF-8 bytes, which the database checks. |
@@ -540,8 +540,8 @@ The root `pnpm test` runs only the unit tests. A unit test applies `0001`–`000
 ## Known limits
 
 - **The spend halt is global.** An over-envelope settlement or reconciliation of a factory operation halts new work in every pool, so it also pauses judge replays (`pool_halted`) until an operator resumes. Detect it with `haltStatus` (or `operator status`); act with [Resume after an over-envelope halt](#resume-after-an-over-envelope-halt).
-- **Plain reservations bypass a budget.** Only `budgetReserve` counts against a budget. A plain `reserve` on the same pool, even under a budget's root, is bound by the pool's cap alone and never appears in the budget's totals, so factory code passes `budgetSpend(...)` wherever it hands a `Spend` on. Changing `reserve` itself to refuse it would change an existing function, which this migration does not do.
-- **Validation roots.** A `validation` reservation's root is checked against every budget's root and against roots already charged to another budget. It is not checked against roots used by reservations made outside any budget.
+- **Plain reservations bypass a budget.** Only `budgetReserve` counts against a budget. A plain `reserve` on the same pool, even under a budget's or a validation run's root, is bound by the pool's cap alone and never appears in the budget's totals, so factory code passes `budgetSpend(...)` wherever it hands a `Spend` on. `createBudget` refuses a root that already has operations, but a plain `reserve` does not take the root lock, so one that runs at the same moment as the budget's creation is not caught. Changing `reserve` itself would change an existing function, which this migration does not do.
+- **Validation roots.** A `validation` reservation's root, and a recorded validation run's root, are checked against budgets, other budgets' operations and other requests' runs, not against reservations made outside any budget (see the previous item).
 
 ## Not in this package
 
