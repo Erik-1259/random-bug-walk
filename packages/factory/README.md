@@ -18,7 +18,7 @@ The factory's core logic for the bug request contract `bug-request/1` ([`docs/pr
 | `src/orchestrator.ts` | `runRequest(deps)`: the request loop described below. |
 | `src/projection.ts` | `projectStatus` (section 8) from the request record, its events, the stored case evidence, the latest validation run of each case, the heartbeat, the ledger's budget status and a clock; `workerAttentionEvent` (raise or clear `worker_unresponsive` from the heartbeat age) and `lostWorkerEvents` (the events of the lost-worker finish). |
 | `src/service.ts` | `serviceFunctions`: capabilities, the interpretation of a request body and the canonical start, bound to one registry, catalog and profile. |
-| `src/testing/` (`@rbw/factory/testing`) | Synthetic adapters and entries, a test profile with the contract's test-mode worst cases, a deterministic harness, the named scenarios of contract section 15.1, and an in-memory ledger and event store. |
+| `src/testing/` (`@rbw/factory/testing`) | Synthetic adapters and entries (with a `collect` that reads a fake copy's result file), a test profile with the contract's test-mode worst cases, a deterministic harness, a deterministic copy runner that follows the copy runner convention (each file's sha256 checked before placing, a fresh results directory brought back, a rejection only for an uncertain outcome), the named scenarios of contract section 15.1 for both, and an in-memory ledger and event store. |
 
 ## The request loop
 

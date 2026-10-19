@@ -1,6 +1,8 @@
 // Synthetic host adapters and catalog entries for tests and test mode. Every value is synthetic:
 // hashes are SHA-256 of labeled text, IDs start with "synthetic-" and images use ".invalid" hosts.
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { CHECK_SET_VALUES, COPY_STATE_VALUES } from "@rbw/factory-contract";
 import type {
   BaselineIdentity,
@@ -8,9 +10,11 @@ import type {
   BugTypeId,
   CatalogEntry,
   CellObservation,
+  CollectedCopy,
   CopyPlan,
   CopyRecord,
   CopyState,
+  FileDigest,
   HostAdapter,
   HostAvailability,
   HostId,
@@ -21,6 +25,8 @@ import type {
 } from "@rbw/factory-contract";
 import { environmentSha256 } from "../identity.ts";
 import type { FactoryProfileInput } from "../profile.ts";
+import { syntheticCopyRecord, unrunCopyRecord } from "./records.ts";
+import type { CellPlan } from "./records.ts";
 
 /** SHA-256 hex of a labeled synthetic text. */
 export function syntheticSha(label: string): string {
@@ -125,18 +131,39 @@ export function syntheticEntry(options: SyntheticEntryOptions): CatalogEntry {
   };
 }
 
-/** A copy plan for a synthetic copy; the fakes never run it. */
-export function syntheticCopyPlan(entry: CatalogEntry, state: CopyState, n: number): CopyPlan {
+/** Where a synthetic copy places its files and writes its results. */
+export const SYNTHETIC_DESTINATIONS = { app: "/work/app", evaluator: "/work/evaluator", results: "/work/results" } as const;
+
+/** The file a fake copy writes under its results directory, which the fake adapter's `collect` reads. */
+export const FAKE_RESULT_FILE = "synthetic-result.json";
+
+/** A copy plan for a synthetic copy. Its ID is `<entry_id>-<state>-<n>`, so a fake runner can find the entry. */
+export function syntheticCopyPlan(entry: CatalogEntry, state: CopyState, n: number, files: { files: FileDigest[]; evaluator_files: FileDigest[] } = { files: [], evaluator_files: [] }): CopyPlan {
   return {
     copy_id: `${entry.entry_id}-${state}-${String(n)}`,
     host_id: entry.host_id,
     state,
     image: { reference: entry.environment.kit_image, digest: entry.environment.kit_image_digest },
-    files: [],
-    evaluator_files: [],
+    files: files.files.map((file) => ({ ...file })),
+    evaluator_files: files.evaluator_files.map((file) => ({ ...file })),
+    destinations: { ...SYNTHETIC_DESTINATIONS },
     command: ["synthetic-copy"],
     limits: { timeout_s: 900, vcpus: 2, memory_mb: 4096, network: "none" },
   };
+}
+
+/** The entry ID and state a synthetic copy ID names, or null for another ID. */
+export function parseSyntheticCopyId(copyId: string): { entry_id: string; state: CopyState; n: number } | null {
+  const match = /^(.+)-(clean|buggy|fixed)-(\d+)$/.exec(copyId);
+  if (match === null) return null;
+  return { entry_id: match[1] ?? "", state: match[2] as CopyState, n: Number(match[3]) };
+}
+
+function isCellPlan(value: unknown): value is CellPlan {
+  if (typeof value !== "object" || value === null) return false;
+  const cell = value as Record<string, unknown>;
+  const outcome = (v: unknown): boolean => v === "pass" || v === "fail" || v === "error" || v === "incomplete";
+  return outcome(cell.original_suite) && outcome(cell.verification) && (cell.failure_codes === undefined || (Array.isArray(cell.failure_codes) && cell.failure_codes.every((code) => typeof code === "string")));
 }
 
 function aggregate(observations: CellObservation[]): CellObservation {
@@ -161,6 +188,8 @@ function aggregate(observations: CellObservation[]): CellObservation {
 export interface FakeAdapterOptions {
   host_id: HostId;
   entries: CatalogEntry[];
+  /** The entry an unpacked pair belongs to; the first entry by default. */
+  entryOf?: (unpacked: UnpackedPair) => CatalogEntry | undefined;
   /** Verification rounds per copy: 5 for the task-report fakes and 3 for the Umami fakes by default. */
   verification_runs?: number;
   availability?: (entry: CatalogEntry, from: string, until: string) => HostAvailability;
@@ -172,10 +201,12 @@ export class FakeHostAdapter implements HostAdapter {
   readonly entries: CatalogEntry[];
   readonly verificationRuns: number;
   readonly availability?: (entry: CatalogEntry, from: string, until: string) => HostAvailability;
+  readonly entryOf: (unpacked: UnpackedPair) => CatalogEntry | undefined;
 
   constructor(options: FakeAdapterOptions) {
     this.host_id = options.host_id;
     this.entries = options.entries;
+    this.entryOf = options.entryOf ?? (() => this.entries[0]);
     this.verificationRuns = options.verification_runs ?? (options.host_id === "task-report" ? 5 : 3);
     if (options.availability !== undefined) this.availability = options.availability;
   }
@@ -200,10 +231,35 @@ export class FakeHostAdapter implements HostAdapter {
     return Promise.reject(new Error("the synthetic adapter has no export inputs"));
   }
 
+  /** One plan per declared copy: the state's tree as the app files and the evaluator tree as evaluator files. */
   copyPlans(state: CopyState, unpacked: UnpackedPair, protocol: Protocol): CopyPlan[] {
-    const entry = this.entries[0];
+    const entry = this.entryOf(unpacked);
     if (entry === undefined) return [];
-    return Array.from({ length: protocol.per_state[state].copies }, (_, index) => ({ ...syntheticCopyPlan(entry, state, index + 1), copy_id: `${unpacked.pair_sha256.slice(0, 12)}-${state}-${String(index + 1)}` }));
+    const files = { files: unpacked.states[state].files, evaluator_files: unpacked.evaluator.files };
+    return Array.from({ length: protocol.per_state[state].copies }, (_, index) => syntheticCopyPlan(entry, state, index + 1, files));
+  }
+
+  /**
+   * Reads the fake copy's result file from the collected results directory. A copy that did not run,
+   * brought back no results or wrote no readable result becomes an invalid (setup failed or missing
+   * output) or incomplete (timed out) record, never a pass, fail or detection.
+   */
+  collect(plan: CopyPlan, collected: CollectedCopy): Promise<CopyRecord> {
+    const baseline = this.baseline();
+    const common = { copy_id: plan.copy_id, state: plan.state, baseline, image_digest: collected.image_digest, started_at: collected.started_at, finished_at: collected.finished_at };
+    if (collected.outcome !== "ran") return Promise.resolve(unrunCopyRecord({ ...common, outcome: collected.outcome, evidence_sha256: collected.results_sha256 }));
+    let cell: unknown = null;
+    if (collected.results_dir !== null) {
+      try {
+        cell = (JSON.parse(readFileSync(join(collected.results_dir, FAKE_RESULT_FILE), "utf8")) as { cell?: unknown }).cell;
+      } catch (error) {
+        if (!(error instanceof SyntaxError) && (error as NodeJS.ErrnoException).code !== "ENOENT") return Promise.reject(error instanceof Error ? error : new Error("reading the result failed"));
+      }
+    }
+    if (!isCellPlan(cell)) return Promise.resolve(unrunCopyRecord({ ...common, outcome: "setup_failed", evidence_sha256: collected.results_sha256 }));
+    return Promise.resolve(
+      syntheticCopyRecord({ ...common, cell, runs: { original_suite: 3, verification: this.verificationRuns }, evidence_sha256: collected.results_sha256 }),
+    );
   }
 
   interpret(records: CopyRecord[]): InterpretedCells {
