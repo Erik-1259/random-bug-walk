@@ -82,7 +82,7 @@ if (!result.ok) {
 ```
 
 - **Client.** The library takes a database client from its caller (`SqlClient`: `query(text, params)` and `exec(sql)`). Wrap a node-postgres `Client` or `PoolClient` with `fromPg`; a PGlite instance satisfies the interface directly. The library reads no environment variables.
-- **One statement per call.** Each call is one statement that runs one database function. It works over direct and pooled (transaction-mode) connections: no session state is used, names are schema-qualified, and only transaction-scoped locks are taken.
+- **One statement per call.** Each call is one statement that runs one database function. It works over direct and pooled (transaction-mode) connections: no session state is used, names are schema-qualified, and only transaction-scoped locks are taken. The one exception is `withFactoryLock` (see [Start locks](#start-locks)), which holds a transaction open on a connection of its own.
 - **Options.** `schema` (default `public`) and `clock` (default system time) are optional. The clock supplies every event time and can be replaced in tests.
 - **Results.** Every call returns `{ ok: true, ... }` or a typed refusal `{ ok: false, code, ... }`. Infrastructure failures (for example a dropped connection) are thrown and are never reported as success or refusal. Nothing retries.
 - **Amounts in results** are exact `bigint`s.
@@ -371,6 +371,16 @@ The factory tables hold a request's durable progress. Every write is idempotent 
 - **Event types** are the contract's list (`bug-request/1`, section 8.4), and closure causes are its stop codes; a unit test compares both lists with `@rbw/factory-contract`.
 - **Order of writes for a validation run.** Check the ID with `readValidation` first, take the slot under the run's root, reserve with role `validation`, and only then record the run, so a refused run records nothing. Each call replays, so repeating the same sequence after an interruption completes it.
 
+### Start locks
+
+`withFactoryLock(lockClient, scope, id, fn)` runs `fn` while holding a lock on one request ID (`scope` `request`) or validation ID (`validation`), so concurrent starts with one ID run one at a time (contract sections 7 and 11). Another holder of the same scope and ID waits until `fn` settles; other IDs and the other scope go ahead. It returns `fn`'s result and rethrows its error.
+
+- **A connection of its own.** The lock is a transaction-scoped advisory lock in an otherwise empty transaction on `lockClient`, so it holds over direct and pooled (transaction-mode) connections alike. `fn` makes its record and spend calls through another client, so each of them commits on its own as soon as it returns. Calls sent through `lockClient` inside `fn` would join the lock's transaction: they would commit only when `fn` settles, and one failed call would roll back the others.
+- **Keep `fn` short.** The lock connection is idle in a transaction while `fn` runs (a start's steps 2 to 7, a validation start).
+- **A lost lock connection** ends the lock at once; the call then throws after `fn` settles. Every write is idempotent, so the caller reads the request's status to learn the outcome.
+
+**Advisory-lock namespaces.** Each advisory lock's first key is `hashtext` of a namespace. The database functions take `spend_reserve` (operation ID), `spend_budget` (budget key), `spend_budget_root` (root execution), `factory_request` (request ID) and `factory_validation` (validation ID), each inside its own transaction, and `migrate` takes `spend_migrate` (schema name). The start locks use `factory_request_start` and `factory_validation_start`. A caller's own lock must use none of the other six: a record call on another connection would then wait for that lock, which ends only after the call returns, and the start would hang.
+
 ## Refusal codes
 
 | Code | Meaning |
@@ -523,6 +533,8 @@ In `reconciliations`, `recorded_at` is the time given in the record, and `logged
   - forced-overlap reuse of one operation ID on two pools;
   - request budgets: two forced-overlap budget reservations on one budget, a burst of eight, a reservation against a close in both orders, and a budget reservation against a plain reservation on the same pool;
   - concurrent event appends from eight connections, which get consecutive sequence numbers;
+  - stops, evidence and validation events: two forced-overlap stops and two forced-overlap evidence records under one key (the second replays), two forced-overlap validation events and a burst from eight connections (consecutive sequence numbers);
+  - start locks: two holders of one request ID run one at a time while a record call for that ID on another connection goes ahead, other IDs and the validation scope do not wait, and a holder whose `fn` throws frees the ID;
   - concurrent first runs of `migrate` on one schema;
   - the operator command: a read-only `status` snapshot, a `reconcile` dry run that writes nothing, and `release-slot --apply`;
   - the insert guard: a direct INSERT after an entry function in the same transaction, an entry function that raises an error, and a rollback to a savepoint before it;
@@ -533,7 +545,7 @@ In `reconciliations`, `recorded_at` is the time given in the record, and `logged
 
   To run them against a local Postgres, connect as a role created with `LOGIN` and without `SUPERUSER` that owns the test database (`CREATE DATABASE <name> OWNER <role>`). Connected as a superuser, the role test fails.
 
-  I1, I5 and the operation ID test hold the first call's transaction open until the second call is observed waiting on a lock in `pg_stat_activity`.
+  I1, I5, the operation ID test and the forced-overlap budget, stop, evidence and validation event tests hold the first call's transaction open until the second call is observed waiting on a lock in `pg_stat_activity`.
 
 The root `pnpm test` runs only the unit tests. A unit test applies `0001`–`0005`, records the judge-demo pool, its allocations and every function, trigger, column and constraint, applies `0006_factory.sql`, and checks that all of them are unchanged.
 

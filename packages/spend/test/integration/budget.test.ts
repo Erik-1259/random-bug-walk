@@ -1,7 +1,8 @@
+import { createHash } from "node:crypto";
 import type pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { fromPg } from "../../src/client.ts";
-import { createFactoryRecords } from "../../src/factory.ts";
+import { createFactoryRecords, type FactoryRecords } from "../../src/factory.ts";
 import type { Spend } from "../../src/spend.ts";
 import type { Result } from "../../src/types.ts";
 import { budgetRequest, event, exactly, recordRequest } from "../factory-helpers.ts";
@@ -42,6 +43,25 @@ async function createBudget(poolKey: string, cap: number): Promise<{ key: string
   return { key, root };
 }
 
+/** Factory records over one test connection. */
+function recordsOn(connection: { client: pg.Client }): FactoryRecords {
+  return createFactoryRecords({ client: fromPg(connection.client), schema: database.schema });
+}
+
+/** Creates a budget on `poolKey`, records a request on it and appends request_accepted; returns the request ID. */
+async function acceptNewRequest(poolKey: string): Promise<string> {
+  n += 1;
+  const requestId = uuid(71_000 + n);
+  expectOk(
+    await recordsOn({ client: observer }).acceptRequest({
+      budget: budgetRequest(n, { budget_key: hex(70_000 + n), root_execution_id: uuid(70_000 + n), pool_key: poolKey }),
+      request: recordRequest(n, { request_id: requestId, budget_key: hex(70_000 + n), root_execution_id: uuid(70_000 + n) }),
+      accepted_message: "Request accepted.",
+    }),
+  );
+  return requestId;
+}
+
 function operation(poolKey: string, root: string, microusd: number) {
   n += 1;
   return reserveRequest(n, { pool_key: poolKey, root_execution_id: root, execution_id: root, envelope: exactly(microusd) });
@@ -64,13 +84,13 @@ async function waitingOnLock(fn: string): Promise<boolean> {
 async function forcedOverlap<A, B>(
   a: { client: pg.Client; spend: Spend },
   fn: string,
-  first: (spend: Spend) => Promise<Result<A>>,
+  first: (spend: Spend, records: FactoryRecords) => Promise<Result<A>>,
   second: () => Promise<Result<B>>,
 ): Promise<{ results: [Result<A>, Result<B>]; secondWaited: boolean }> {
   await a.client.query("BEGIN");
   let firstResult: Result<A>;
   try {
-    firstResult = await first(a.spend);
+    firstResult = await first(a.spend, recordsOn(a));
   } catch (error) {
     await a.client.query("ROLLBACK");
     throw error;
@@ -214,5 +234,90 @@ describe("request events against a real Postgres", () => {
     expect(seqs).toEqual(Array.from({ length: 24 }, (_v, i) => i + 2));
     const read = expectOk(await writer.readRequest({ request_id: requestId, after: 0, limit: 1000 }));
     expect(read.events.map((e) => e.seq)).toEqual(Array.from({ length: 25 }, (_v, i) => i + 1));
+  });
+});
+
+// Each test below holds the first write open in a transaction on one connection while the second,
+// on another connection, waits on the row lock that the write function takes. Without that lock,
+// the second write would read no row, insert under the same key and fail with a unique violation.
+describe("stops, evidence and validation events against a real Postgres", () => {
+  it("two overlapping stops with the same actor: the second waits and replays the first", async () => {
+    const requestId = await acceptNewRequest(await createPool(10_000_000));
+    const a = await database.connect();
+    const b = recordsOn(await database.connect());
+    const stop = { request_id: requestId, actor_role: "web" };
+    const { results, secondWaited } = await forcedOverlap(
+      a,
+      "factory_record_stop",
+      (_spend, records) => records.recordStop(stop),
+      () => b.recordStop(stop),
+    );
+    const [first, second] = results.map((r) => expectOk(r));
+    expect([first?.replay, second?.replay]).toEqual([false, true]);
+    expect(second?.recorded_at).toBe(first?.recorded_at);
+    expect(secondWaited).toBe(true);
+  });
+
+  it("two overlapping evidence records for one case: the second waits and replays the first", async () => {
+    const requestId = await acceptNewRequest(await createPool(10_000_000));
+    const a = await database.connect();
+    const b = recordsOn(await database.connect());
+    const text = JSON.stringify({ synthetic: "evidence" });
+    const evidence = { request_id: requestId, case_id: hex(72_001), sha256: createHash("sha256").update(text, "utf8").digest("hex"), evidence_json: text };
+    const { results, secondWaited } = await forcedOverlap(
+      a,
+      "factory_record_evidence",
+      (_spend, records) => records.recordEvidence(evidence),
+      () => b.recordEvidence(evidence),
+    );
+    expect(results.map((r) => expectOk(r).replay)).toEqual([false, true]);
+    expect(secondWaited).toBe(true);
+  });
+
+  async function newValidation(): Promise<string> {
+    const requestId = await acceptNewRequest(await createPool(10_000_000));
+    n += 1;
+    const validationId = uuid(73_000 + n);
+    expectOk(
+      await recordsOn({ client: observer }).recordValidation({
+        validation_id: validationId,
+        request_id: requestId,
+        case_id: hex(72_002),
+        root_execution_id: uuid(74_000 + n),
+      }),
+    );
+    return validationId;
+  }
+
+  it("two overlapping validation events: the second waits and takes the next seq", async () => {
+    const validationId = await newValidation();
+    const a = await database.connect();
+    const b = recordsOn(await database.connect());
+    const { results, secondWaited } = await forcedOverlap(
+      a,
+      "factory_append_validation_event",
+      (_spend, records) => records.appendValidationEvent({ validation_id: validationId, event_key: "copy:1", type: "copy_finished", data: {} }),
+      () => b.appendValidationEvent({ validation_id: validationId, event_key: "copy:2", type: "copy_finished", data: {} }),
+    );
+    expect(results.map((r) => expectOk(r).seq)).toEqual([1, 2]);
+    expect(secondWaited).toBe(true);
+  });
+
+  it("concurrent validation events from separate connections get consecutive sequence numbers", async () => {
+    const validationId = await newValidation();
+    const writers = await Promise.all(Array.from({ length: 8 }, async () => recordsOn(await database.connect())));
+    const perWriter = await Promise.all(
+      writers.map(async (w, i) => {
+        const appended: number[] = [];
+        for (const j of [0, 1, 2]) {
+          const key = `copy:${String(i)}:${String(j)}`;
+          appended.push(expectOk(await w.appendValidationEvent({ validation_id: validationId, event_key: key, type: "copy_finished", data: {} })).seq);
+        }
+        return appended;
+      }),
+    );
+    expect(perWriter.flat().sort((x, y) => x - y)).toEqual(Array.from({ length: 24 }, (_v, i) => i + 1));
+    const read = expectOk(await recordsOn({ client: observer }).readValidation({ validation_id: validationId, after: 0, limit: 1000 }));
+    expect(read.events.map((e) => e.seq)).toEqual(Array.from({ length: 24 }, (_v, i) => i + 1));
   });
 });

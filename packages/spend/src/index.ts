@@ -30,6 +30,8 @@ export type {
   ValidationRecord,
   ValidationRecorded,
 } from "./factory.ts";
+export { withFactoryLock } from "./lock.ts";
+export type { FactoryLockScope } from "./lock.ts";
 export { migrate, runMigrate } from "./migrate.ts";
 export type { MigrateOptions, MigrateResult, RunMigrateOptions } from "./migrate.ts";
 export { createSpend } from "./spend.ts";

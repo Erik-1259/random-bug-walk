@@ -185,7 +185,9 @@ describe("request events", () => {
     expect(stored.last_event_at).toBe(stored.events.at(-1)?.at);
   });
 
-  it("gives concurrent appends consecutive sequence numbers", async () => {
+  // PGlite runs one query at a time, so appends sent together here never overlap in the database;
+  // the integration suite races them on separate connections.
+  it("gives appends sent together consecutive sequence numbers", async () => {
     const results = await Promise.all(
       Array.from({ length: 12 }, (_v, i) => f.appendEvent(event(REQUEST, `concurrent:${String(i)}`, { message: `synthetic ${String(i)}` }))),
     );
@@ -492,6 +494,7 @@ describe("validation runs", () => {
     const started = expectOk(await f.appendValidationEvent({ validation_id: VALIDATION, event_key: "started", type: "running", data: {} }));
     expect(started).toEqual({ ok: true, replay: false, seq: 1, at: T0 });
     h.clock.advance(20);
+    // Sent together, but PGlite runs them one at a time; the integration suite races them.
     const results = await Promise.all(
       [1, 2, 3].map((i) =>
         f.appendValidationEvent({ validation_id: VALIDATION, event_key: `copy:${String(i)}`, type: "copy_finished", data: { copy: i } }),
