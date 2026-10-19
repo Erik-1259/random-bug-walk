@@ -162,17 +162,19 @@ a new pin changes the environment hash and with it the case ID.
   run IDs `f3q-qual1-buggy`, `f3q-qual1-fixed` and `f3q-qual1-clean`, evaluated with version 1's
   `evaluate` plus the two hand-made comparisons above. Result: qualified.
 - **Version 2 qualification:** local Docker, native arm64, the pinned version 2 kit image
-  (`rbw-task-report:kit-v2-arm64`), the three states built from the adapter's inputs as the
+  (`rbw-task-report:kit-v2-arm64-r2`), the three states built from the adapter's inputs as the
   package harness builds them (clean is the clean reconstruction applied to the buggy source,
   fixed the reference repair applied to it), every copy plan run through the local Docker runner,
   each copy collected and each state interpreted by the adapter. Copy IDs
-  `f3q2-8477824b6f78795f-buggy-1`, `-fixed-1` and `-clean-1`; check set SHA-256
+  `f3q2-ffa914890d91cc15-buggy-1`, `-fixed-1` and `-clean-1`; check set SHA-256
   `f19694529ecc51967ca81a77fe24275fe14ffe920b91a945b07aa3a335c079df`. Result: qualified, every
   state met. The original suite passed 193 of 193 on all seven instances; on buggy all 60 valid
   main trials reported `acknowledged_completion_not_counted`, on fixed and clean all 60 and 20
   passed, every control trial passed, and no trial was invalid. A direct evaluation of the three
-  record sets gives the same verdict. A buggy copy handed the clean tree stopped before its first
-  instance and was collected as incomplete.
+  record sets gives the same verdict. An earlier run with the same check package on a previous
+  build of the image, whose setup files kept their comments and were readable by every user
+  (copy IDs `f3q2-8477824b6f78795f-*`), gave the same verdict and trial counts. A buggy copy
+  handed the clean tree stopped before its first instance and was collected as incomplete.
 
 The copies' record sets are evaluator material and are not committed.
 
