@@ -52,6 +52,10 @@ const start = () => contractFixture("start-request.json");
 const capabilities = () => contractFixture("capabilities.json");
 const interpretation = (file: string) => () => contractFixture(file);
 const evidence = () => contractFixture("test-evidence.json");
+const reconcile = () => ({ request_id: "00000000-0000-4000-8000-000000000105" });
+const plan = () => internalFixture("copy-plan.json");
+const collected = () => internalFixture("collected-copy.json");
+const roots = () => ({ app_root: "/work/synthetic/pair/buggy", evaluator_root: "/work/synthetic/pair/evaluator" });
 
 const SHAPE_CASES: Case[] = [
   // Unknown fields
@@ -60,10 +64,12 @@ const SHAPE_CASES: Case[] = [
   { name: "an unknown field in event data", def: "RequestStatus", base: running, edit: (c) => { at(c, ["events", 3, "data"]).extra = true; }, expected: "schema:/events/3/data:additionalProperties:extra" },
   { name: "an unknown field in a request body", def: "StartRequest", base: start, edit: (c) => { c.user = "synthetic-user"; }, expected: "schema:/:additionalProperties:user" },
   { name: "an unknown field in error details", def: "ErrorResponse", base: () => contractFixture("error-busy.json"), edit: (c) => { at(c, ["error", "details"]).holder = "x"; }, expected: ["schema:/error/details:additionalProperties:holder", "schema:/error/details:additionalProperties:reason", "schema:/error/details:required:interpretation"] },
-  { name: "an unknown field in test evidence", def: "TestEvidence", base: evidence, edit: (c) => { at(c, ["slot"]).holder_validation_id = null; }, expected: "schema:/slot:additionalProperties:holder_validation_id" },
+  { name: "an unknown field in test evidence", def: "TestEvidence", base: evidence, edit: (c) => { at(c, ["slot"]).holder_case_id = null; }, expected: "schema:/slot:additionalProperties:holder_case_id" },
   // Missing fields
   { name: "a criterion without its failure code", def: "Capabilities", base: capabilities, edit: (c) => { delete at(c, ["bug_types", 0, "criteria", 0]).failure_code; }, expected: "schema:/bug_types/0/criteria/0:required:failure_code" },
   { name: "a reset answer without its scenario", def: "TestResetResponse", base: () => ({ contract_version: "bug-request/1", scenario: "worker-lost" }), edit: (c) => { delete c.scenario; }, expected: "schema:/:required:scenario" },
+  { name: "a reconcile request without its request ID", def: "TestReconcileRequest", base: reconcile, edit: (c) => { delete c.request_id; }, expected: "schema:/:required:request_id" },
+  { name: "a slot without its validation holder", def: "TestEvidence", base: evidence, edit: (c) => { delete at(c, ["slot"]).holder_validation_id; }, expected: "schema:/slot:required:holder_validation_id" },
   { name: "a missing top-level field", def: "RequestStatus", base: fulfilled, edit: (c) => { delete c.poll_after_ms; }, expected: "schema:/:required:poll_after_ms" },
   { name: "a missing nested field", def: "StartRequest", base: start, edit: (c) => { delete at(c, ["input", "items", 0]).difficulty; }, expected: "schema:/input/items/0:required:difficulty" },
   { name: "an absent value instead of null", def: "ValidationRun", base: () => contractFixture("validation-running.json"), edit: (c) => { delete c.result; }, expected: "schema:/:required:result" },
@@ -78,6 +84,8 @@ const SHAPE_CASES: Case[] = [
   { name: "the removed not_ready error code", def: "ErrorResponse", base: () => contractFixture("error-not-found.json"), edit: (c) => { at(c, ["error"]).code = "not_ready"; }, expected: "schema:/error/code:enum" },
   { name: "an unknown test scenario", def: "TestResetRequest", base: () => ({ scenario: "worker-lost" }), edit: (c) => { c.scenario = "synthetic-scenario"; }, expected: "schema:/scenario:enum" },
   { name: "an unknown ledger operation state", def: "TestEvidence", base: evidence, edit: (c) => { at(c, ["operations", 0]).state = "settling"; }, expected: "schema:/operations/0/state:enum" },
+  { name: "the removed settled operation state", def: "TestEvidence", base: evidence, edit: (c) => { Object.assign(at(c, ["operations", 0]), { state: "settled", settled_microusd: 200000 }); }, expected: "schema:/operations/0/state:enum" },
+  { name: "an unknown scenario in a reset answer", def: "TestResetResponse", base: () => ({ contract_version: "bug-request/1", scenario: "worker-lost" }), edit: (c) => { c.scenario = "synthetic-scenario"; }, expected: "schema:/scenario:enum" },
   { name: "an unknown operation kind", def: "TestEvidence", base: evidence, edit: (c) => { at(c, ["operations", 1]).kind = "candidate"; }, expected: "schema:/operations/1/kind:enum" },
   { name: "a provider other than the sandbox", def: "TestEvidence", base: evidence, edit: (c) => { at(c, ["provider_calls", 0]).provider = "synthetic-provider"; }, expected: "schema:/provider_calls/0/provider:enum" },
   { name: "another contract version", def: "SessionStatus", base: () => contractFixture("session.json"), edit: (c) => { c.contract_version = "bug-request/2"; }, expected: "schema:/contract_version:enum" },
@@ -86,14 +94,20 @@ const SHAPE_CASES: Case[] = [
   { name: "a 63-character hash", def: "StartRequest", base: start, edit: (c) => { c.interpretation_sha256 = "1".repeat(63); }, expected: "schema:/interpretation_sha256:pattern" },
   { name: "a bad nullable hash", def: "RequestStatus", base: fulfilled, edit: (c) => { at(c, ["events", 18]).case_id = "not-a-hash"; }, expected: "schema:/events/18/case_id:pattern" },
   { name: "a bad package hash", def: "ValidationRun", base: () => contractFixture("validation-passed.json"), edit: (c) => { at(c, ["package_sha256"]).validator = "g".repeat(64); }, expected: "schema:/package_sha256/validator:pattern" },
+  { name: "an operation ID that is a UUID", def: "TestEvidence", base: evidence, edit: (c) => { at(c, ["operations", 0]).operation_id = "00000000-0000-4000-8000-000000000301"; }, expected: "schema:/operations/0/operation_id:pattern" },
+  { name: "an uppercase operation ID", def: "TestEvidence", base: evidence, edit: (c) => { at(c, ["operations", 1]).operation_id = "3B".repeat(32); }, expected: "schema:/operations/1/operation_id:pattern" },
   // Bad UUIDs
   { name: "an uppercase request ID", def: "StartRequest", base: start, edit: (c) => { c.request_id = "00000000-0000-4000-8000-00000000010A"; }, expected: "schema:/request_id:pattern" },
   { name: "a bad slot holder", def: "TestEvidence", base: evidence, edit: (c) => { at(c, ["slot"]).holder_request_id = "105"; }, expected: "schema:/slot/holder_request_id:pattern" },
+  { name: "a bad validation holder", def: "TestEvidence", base: evidence, edit: (c) => { at(c, ["slot"]).holder_validation_id = "201"; }, expected: "schema:/slot/holder_validation_id:pattern" },
+  { name: "a bad request ID in test evidence", def: "TestEvidence", base: evidence, edit: (c) => { c.request_id = "00000000-0000-4000-8000-00000000010G"; }, expected: "schema:/request_id:pattern" },
+  { name: "a bad request ID to reconcile", def: "TestReconcileRequest", base: reconcile, edit: (c) => { c.request_id = "105"; }, expected: "schema:/request_id:pattern" },
   { name: "a validation ID without hyphens", def: "ValidationStartRequest", base: () => ({ validation_id: "00000000-0000-4000-8000-000000000201" }), edit: (c) => { c.validation_id = "00000000000040008000000000000201"; }, expected: "schema:/validation_id:pattern" },
   { name: "a bad validation ID in event data", def: "RequestStatus", base: status("status-validated.json"), edit: (c) => { at(c, ["events", 36, "data"]).validation_id = "201"; }, expected: "schema:/events/36/data/validation_id:pattern" },
   // Other formats and ranges
   { name: "an item key with an underscore", def: "StartRequest", base: start, edit: (c) => { at(c, ["input", "items", 0]).item_key = "concurrency_1"; }, expected: "schema:/input/items/0/item_key:pattern" },
   { name: "a time without milliseconds", def: "RequestStatus", base: fulfilled, edit: (c) => { c.created_at = "2026-10-20T14:00:00Z"; }, expected: "schema:/created_at:pattern" },
+  { name: "a provider call time without milliseconds", def: "TestEvidence", base: evidence, edit: (c) => { at(c, ["provider_calls", 0]).at = "2026-10-20T19:00:00Z"; }, expected: "schema:/provider_calls/0/at:pattern" },
   { name: "an impossible date", def: "RequestStatus", base: fulfilled, edit: (c) => { c.updated_at = "2026-02-30T00:00:00.000Z"; }, expected: "schema:/updated_at:format" },
   { name: "a fractional amount", def: "StartRequest", base: start, edit: (c) => { at(c, ["input"]).budget_microusd = 1.5; }, expected: "schema:/input/budget_microusd:type" },
   { name: "a quantity of zero", def: "StartRequest", base: start, edit: (c) => { at(c, ["input", "items", 0]).quantity = 0; }, expected: "schema:/input/items/0/quantity:minimum" },
@@ -106,6 +120,9 @@ const SHAPE_CASES: Case[] = [
   { name: "more than 200 events", def: "RequestStatus", base: fulfilled, edit: (c) => { c.events = Array.from({ length: 201 }, () => at(c, ["events", 0])); }, expected: "schema:/events:maxItems" },
   { name: "a repeated host", def: "StartRequest", base: start, edit: (c) => { at(c, ["input"]).hosts = ["umami", "umami"]; }, expected: "schema:/input/hosts:uniqueItems" },
   { name: "no items", def: "StartRequest", base: start, edit: (c) => { at(c, ["input"]).items = []; }, expected: "schema:/input/items:minItems" },
+  { name: "a reserved amount of null", def: "TestEvidence", base: evidence, edit: (c) => { at(c, ["operations", 0]).reserved_microusd = null; }, expected: "schema:/operations/0/reserved_microusd:type" },
+  { name: "an empty failure code", def: "Capabilities", base: capabilities, edit: (c) => { at(c, ["bug_types", 0, "criteria", 0]).failure_code = ""; }, expected: "schema:/bug_types/0/criteria/0/failure_code:minLength" },
+  { name: "a failure code of null", def: "Capabilities", base: capabilities, edit: (c) => { at(c, ["bug_types", 0, "criteria", 0]).failure_code = null; }, expected: "schema:/bug_types/0/criteria/0/failure_code:type" },
   { name: "an attempt numbered 0", def: "TestEvidence", base: evidence, edit: (c) => { at(c, ["operations", 0]).attempt_ordinal = 0; }, expected: "schema:/operations/0/attempt_ordinal:minimum" },
   { name: "an event numbered 0", def: "RequestStatus", base: running, edit: (c) => { at(c, ["events", 0]).seq = 0; }, expected: "schema:/events/0/seq:minimum" },
   { name: "a string count", def: "RequestStatus", base: fulfilled, edit: (c) => { at(c, ["funnel"]).packages_ready = "2"; }, expected: "schema:/funnel/packages_ready:type" },
@@ -185,6 +202,8 @@ const RULE_CASES: Case[] = [
   { name: "a failed run with a cell in error", def: "ValidationRun", base: () => contractFixture("validation-error.json"), edit: (c) => { c.result = "failed"; }, expected: ["schema:/matrix/original_suite/clean/observed:enum", "schema:/matrix/verification/clean/observed:enum"] },
   { name: "a failed run whose cells all match", def: "ValidationRun", base: () => contractFixture("validation-passed.json"), edit: (c) => { c.result = "failed"; }, expected: ["schema:/:anyOf", ...["original_suite", "verification"].flatMap((set) => ["clean", "buggy", "fixed"].map((copy) => `schema:/matrix/${set}/${copy}/matches_expectation:const`))] },
   { name: "an error run with six valid cells", def: "ValidationRun", base: () => contractFixture("validation-failed.json"), edit: (c) => { c.result = "error"; }, expected: ["schema:/:anyOf", "schema:/matrix:type", ...["original_suite", "verification"].flatMap((set) => ["clean", "buggy", "fixed"].map((copy) => `schema:/matrix/${set}/${copy}/observed:enum`))] },
+  // Test evidence (section 15.1)
+  { name: "a validation run holding the slot without its request", def: "TestEvidence", base: evidence, edit: (c) => { Object.assign(at(c, ["slot"]), { holder_request_id: null, holder_validation_id: "00000000-0000-4000-8000-000000000201" }); }, expected: "schema:/slot/holder_request_id:type" },
   // Errors (section 12)
   { name: "busy without details", def: "ErrorResponse", base: () => contractFixture("error-busy.json"), edit: (c) => { at(c, ["error"]).details = null; }, expected: "schema:/error/details:type" },
   { name: "an active busy that is not retryable", def: "ErrorResponse", base: () => contractFixture("error-busy.json"), edit: (c) => { at(c, ["error"]).retryable = false; }, expected: "schema:/error/retryable:const" },
@@ -198,7 +217,7 @@ const RULE_CASES: Case[] = [
 const INTERNAL_CASES: Case[] = [
   { name: "a short app commit", def: "BaselineIdentity", base: () => internalFixture("baseline-identity.json"), edit: (c) => { c.app_commit = "ca4a71f"; }, expected: "schema:/app_commit:pattern" },
   { name: "an absolute plant path", def: "CatalogEntry", base: () => internalFixture("catalog-entry.json"), edit: (c) => { at(c, ["plant", "targets", 0]).path = "/etc/synthetic"; }, expected: "schema:/plant/targets/0/path:pattern" },
-  { name: "a failure code on a catalog entry", def: "CatalogEntry", base: () => internalFixture("catalog-entry.json"), edit: (c) => { c.failure_code = "lost_acknowledged_change"; }, expected: "schema:/:additionalProperties:failure_code" },
+  { name: "a failure code on a catalog entry", def: "CatalogEntry", base: () => internalFixture("catalog-entry.json"), edit: (c) => { c.failure_code = "acknowledged_completion_not_counted"; }, expected: "schema:/:additionalProperties:failure_code" },
   { name: "a plant with no target", def: "CatalogEntry", base: () => internalFixture("catalog-entry.json"), edit: (c) => { at(c, ["plant"]).targets = []; }, expected: "schema:/plant/targets:minItems" },
   { name: "an unknown repair kind", def: "CatalogEntry", base: () => internalFixture("catalog-entry.json"), edit: (c) => { at(c, ["reference_repair"]).kind = "rewrite"; }, expected: "schema:/reference_repair/kind:enum" },
   { name: "an assessed difficulty", def: "CatalogEntry", base: () => internalFixture("catalog-entry.json"), edit: (c) => { at(c, ["difficulty"]).status = "assessed"; }, expected: "schema:/difficulty/status:enum" },
@@ -218,9 +237,31 @@ const INTERNAL_CASES: Case[] = [
   { name: "a copy with network access", def: "CopyPlan", base: () => internalFixture("copy-plan.json"), edit: (c) => { at(c, ["limits"]).network = "host"; }, expected: "schema:/limits/network:const" },
   { name: "a tag in place of a digest", def: "CopyPlan", base: () => internalFixture("copy-plan.json"), edit: (c) => { at(c, ["image"]).digest = "latest"; }, expected: "schema:/image/digest:pattern" },
   { name: "an empty command", def: "CopyPlan", base: () => internalFixture("copy-plan.json"), edit: (c) => { c.command = []; }, expected: "schema:/command:minItems" },
+  { name: "a copy plan without destinations", def: "CopyPlan", base: plan, edit: (c) => { delete c.destinations; }, expected: "schema:/:required:destinations" },
+  { name: "destinations without the results path", def: "CopyPlan", base: plan, edit: (c) => { delete at(c, ["destinations"]).results; }, expected: "schema:/destinations:required:results" },
+  { name: "an unknown destination", def: "CopyPlan", base: plan, edit: (c) => { at(c, ["destinations"]).cache = "/workspace/cache"; }, expected: "schema:/destinations:additionalProperties:cache" },
+  { name: "a relative app destination", def: "CopyPlan", base: plan, edit: (c) => { at(c, ["destinations"]).app = "workspace/app"; }, expected: "schema:/destinations/app:pattern" },
+  { name: "a parent segment in the evaluator destination", def: "CopyPlan", base: plan, edit: (c) => { at(c, ["destinations"]).evaluator = "/workspace/app/../evaluator"; }, expected: "schema:/destinations/evaluator:pattern" },
+  { name: "a trailing slash in the results destination", def: "CopyPlan", base: plan, edit: (c) => { at(c, ["destinations"]).results = "/workspace/results/"; }, expected: "schema:/destinations/results:pattern" },
+  { name: "the root as a destination", def: "CopyPlan", base: plan, edit: (c) => { at(c, ["destinations"]).results = "/"; }, expected: "schema:/destinations/results:pattern" },
+  { name: "a backslash in a destination", def: "CopyPlan", base: plan, edit: (c) => { at(c, ["destinations"]).app = "/workspace\\app"; }, expected: "schema:/destinations/app:pattern" },
+  { name: "copy roots without the evaluator root", def: "CopyRoots", base: roots, edit: (c) => { delete c.evaluator_root; }, expected: "schema:/:required:evaluator_root" },
+  { name: "an empty app root", def: "CopyRoots", base: roots, edit: (c) => { c.app_root = ""; }, expected: "schema:/app_root:minLength" },
+  { name: "an unknown copy outcome", def: "CollectedCopy", base: collected, edit: (c) => { c.outcome = "crashed"; }, expected: "schema:/outcome:enum" },
+  { name: "a fractional exit code", def: "CollectedCopy", base: collected, edit: (c) => { c.exit_code = 1.5; }, expected: "schema:/exit_code:type" },
+  { name: "an uppercase results hash", def: "CollectedCopy", base: collected, edit: (c) => { c.results_sha256 = "E8".repeat(32); }, expected: "schema:/results_sha256:pattern" },
+  { name: "a collected copy without its results directory", def: "CollectedCopy", base: collected, edit: (c) => { delete c.results_dir; }, expected: "schema:/:required:results_dir" },
+  { name: "a results directory without its hash", def: "CollectedCopy", base: collected, edit: (c) => { c.results_sha256 = null; }, expected: "schema:/results_sha256:type" },
+  { name: "a results hash without its directory", def: "CollectedCopy", base: () => internalFixture("collected-copy-setup-failed.json"), edit: (c) => { c.results_sha256 = "e8".repeat(32); }, expected: "schema:/results_sha256:type" },
+  { name: "an unknown field in a collected copy", def: "CollectedCopy", base: collected, edit: (c) => { c.stdout = "synthetic output"; }, expected: "schema:/:additionalProperties:stdout" },
+  { name: "a collected time without milliseconds", def: "CollectedCopy", base: collected, edit: (c) => { c.finished_at = "2026-10-20T14:05:21Z"; }, expected: "schema:/finished_at:pattern" },
+  { name: "a tag in place of a collected image digest", def: "CollectedCopy", base: collected, edit: (c) => { c.image_digest = "latest"; }, expected: "schema:/image_digest:pattern" },
+  { name: "a collected copy on an unknown architecture", def: "CollectedCopy", base: collected, edit: (c) => { c.architecture = "riscv64"; }, expected: "schema:/architecture:enum" },
   { name: "an unknown architecture", def: "CopyRecord", base: () => internalFixture("copy-record.json"), edit: (c) => { c.architecture = "riscv64"; }, expected: "schema:/architecture:enum" },
   { name: "a suite observation without its counts", def: "CopyRecord", base: () => internalFixture("copy-record.json"), edit: (c) => { delete at(c, ["original_suite"]).executed; }, expected: "schema:/original_suite:required:executed" },
   { name: "an unknown field in a cell observation", def: "CopyRecord", base: () => internalFixture("copy-record.json"), edit: (c) => { at(c, ["verification"]).expected = "fail"; }, expected: "schema:/verification:additionalProperties:expected" },
+  { name: "a complete record without its evidence hash", def: "CopyRecord", base: () => internalFixture("copy-record.json"), edit: (c) => { c.evidence_sha256 = null; }, expected: "schema:/evidence_sha256:type" },
+  { name: "an uppercase evidence hash", def: "CopyRecord", base: () => internalFixture("copy-record-setup-failed.json"), edit: (c) => { c.evidence_sha256 = "E8".repeat(32); }, expected: "schema:/evidence_sha256:pattern" },
   { name: "an accepted record with a reason", def: "QualificationRecord", base: () => internalFixture("qualification-record-accepted.json"), edit: (c) => { c.reason_code = "wrong_failure"; }, expected: "schema:/reason_code:type" },
   { name: "an accepted record with a mismatched cell", def: "QualificationRecord", base: () => internalFixture("qualification-record-accepted.json"), edit: (c) => { Object.assign(at(c, ["cells", "verification", "buggy"]), { observed: "pass", matches_expectation: false }); }, expected: "schema:/cells/verification/buggy/matches_expectation:const" },
   { name: "a rejected record with an invalid-stage reason", def: "QualificationRecord", base: () => internalFixture("qualification-record-rejected.json"), edit: (c) => { c.reason_code = "setup_failed"; }, expected: "schema:/reason_code:enum" },
@@ -252,6 +293,8 @@ const ACCEPTED: Case[] = [
   { name: "a queued validation run", def: "ValidationRun", base: () => contractFixture("validation-running.json"), edit: (c) => { Object.assign(c, { state: "queued", started_at: null }); }, expected: [] },
   { name: "a finished error run whose spend is uncertain", def: "ValidationRun", base: () => contractFixture("validation-error.json"), edit: (c) => { c.cost_microusd = null; }, expected: [] },
   { name: "test evidence with a free slot and a reconciled operation", def: "TestEvidence", base: evidence, edit: (c) => { at(c, ["slot"]).holder_request_id = null; Object.assign(at(c, ["operations", 0]), { state: "reconciled", settled_microusd: 200000 }); }, expected: [] },
+  { name: "a validation run holding the slot for its request", def: "TestEvidence", base: evidence, edit: (c) => { at(c, ["slot"]).holder_validation_id = "00000000-0000-4000-8000-000000000201"; }, expected: [] },
+  { name: "a settled operation: terminal with a settled amount", def: "TestEvidence", base: evidence, edit: (c) => { Object.assign(at(c, ["operations", 0]), { state: "terminal", settled_microusd: 180000 }); }, expected: [] },
   { name: "a description with a line break", def: "StartRequest", base: start, edit: (c) => { at(c, ["input", "items", 0]).description = "lost update\nwhen two requests overlap"; }, expected: [] },
   { name: "a negative remaining amount on an overrun", def: "RequestStatus", base: status("status-operational-error.json"), edit: (c) => { Object.assign(at(c, ["budget"]), { spent_microusd: 1200000, committed_microusd: 1700000, remaining_microusd: -700000, overrun: true }); }, expected: [] },
   { name: "an error run without a matrix", def: "ValidationRun", base: () => contractFixture("validation-error.json"), edit: (c) => { c.matrix = null; }, expected: [] },
@@ -259,6 +302,11 @@ const ACCEPTED: Case[] = [
   { name: "a description covered only by filler phrases", def: "Interpretation", base: () => contractFixture("interpretation-supported.json"), edit: (c) => { at(c, ["items", 0]).criteria = []; }, expected: [] },
   { name: "a bracketed route segment in a plant target", def: "CatalogEntry", base: () => internalFixture("catalog-entry.json"), edit: (c) => { at(c, ["plant", "targets", 0]).path = "src/app/api/synthetic/[syntheticId]/route.ts"; }, expected: [] },
   { name: "route groups and a dotfile in a file set", def: "BugCaseInputs", base: () => internalFixture("bug-case-inputs.json"), edit: (c) => { asArray(at(c, ["source"]).files, "files").push({ path: "src/app/(main)/synthetic/[syntheticId]/(reports)/Synthetic Page.tsx", sha256: "a".repeat(64) }, { path: ".gitignore", sha256: "b".repeat(64) }, { path: ".synthetic/@scope/a+b..c.ts", sha256: "c".repeat(64) }); }, expected: [] },
+  { name: "destinations with dot-prefixed and spaced segments", def: "CopyPlan", base: plan, edit: (c) => { Object.assign(at(c, ["destinations"]), { app: "/workspace/.rbw/app", evaluator: "/opt/rbw evaluator/v1.0", results: "/workspace/..results" }); }, expected: [] },
+  { name: "a timed-out copy with an exit code and partial results", def: "CollectedCopy", base: collected, edit: (c) => { Object.assign(c, { outcome: "timed_out", exit_code: 137 }); }, expected: [] },
+  { name: "a timed-out copy with no exit code and no results", def: "CollectedCopy", base: collected, edit: (c) => { Object.assign(c, { outcome: "timed_out", exit_code: null, results_dir: null, results_sha256: null }); }, expected: [] },
+  { name: "an incomplete record of a timed-out copy that brought back no results", def: "CopyRecord", base: () => internalFixture("copy-record.json"), edit: (c) => { Object.assign(c, { status: "incomplete", evidence_sha256: null }); }, expected: [] },
+  { name: "an invalid record whose copy brought back results", def: "CopyRecord", base: () => internalFixture("copy-record-setup-failed.json"), edit: (c) => { c.evidence_sha256 = "e8".repeat(32); }, expected: [] },
   { name: "a dotfile in a copy plan", def: "CopyPlan", base: () => internalFixture("copy-plan.json"), edit: (c) => { asArray(c.files, "files").push({ path: ".eslintrc.json", sha256: "d".repeat(64) }); }, expected: [] },
 ];
 

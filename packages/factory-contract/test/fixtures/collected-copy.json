@@ -1,0 +1,11 @@
+{
+  "copy_id": "synthetic-copy-buggy-01",
+  "outcome": "ran",
+  "exit_code": 1,
+  "results_dir": "/work/synthetic/results/synthetic-copy-buggy-01",
+  "image_digest": "sha256:e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9",
+  "architecture": "amd64",
+  "started_at": "2026-10-20T14:04:02.728Z",
+  "finished_at": "2026-10-20T14:05:21.150Z",
+  "results_sha256": "e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8"
+}

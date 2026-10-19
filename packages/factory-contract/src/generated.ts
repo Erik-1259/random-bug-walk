@@ -12,6 +12,7 @@ export const DEF_NAMES = [
   "GitCommitId",
   "ImageDigest",
   "RelativePath",
+  "AbsolutePath",
   "UtcTime",
   "ItemKey",
   "Identifier",
@@ -58,6 +59,7 @@ export const DEF_NAMES = [
   "TestProvider",
   "TestProviderAction",
   "CopyRecordStatus",
+  "CopyRunOutcome",
   "Architecture",
   "RepairKind",
   "EmptyObject",
@@ -186,7 +188,10 @@ export const DEF_NAMES = [
   "DifficultyAssessment",
   "CopyPlan",
   "ImagePin",
+  "CopyDestinations",
   "CopyLimits",
+  "CopyRoots",
+  "CollectedCopy",
   "CellObservation",
   "SuiteObservation",
   "CopyRecord",
@@ -226,6 +231,9 @@ export type ImageDigest = string;
 
 /** A relative POSIX path: segments joined by '/', with no leading or trailing '/', no empty, '.' or '..' segment, and no backslash or control character. Any other character is allowed, so source paths such as 'src/app/(main)/[id]/page.tsx' and dotfiles such as '.gitignore' are valid. */
 export type RelativePath = string;
+
+/** An absolute POSIX path inside a copy: '/' and then segments joined by '/', with no trailing '/', no empty, '.' or '..' segment, and no backslash or control character. */
+export type AbsolutePath = string;
 
 /** UTC ISO 8601 time with milliseconds and Z (contract section 3). The format adds the calendar check (no 2026-02-30, no second 60). */
 export type UtcTime = string;
@@ -358,7 +366,7 @@ export type TestScenario = (typeof TEST_SCENARIO_VALUES)[number];
 export const TEST_OPERATION_KIND_VALUES = ["worker", "candidate_copy", "validation", "validation_copy"] as const;
 export type TestOperationKind = (typeof TEST_OPERATION_KIND_VALUES)[number];
 
-export const TEST_OPERATION_STATE_VALUES = ["prepared", "launching", "running", "terminal", "uncertain", "settled", "reconciled"] as const;
+export const TEST_OPERATION_STATE_VALUES = ["prepared", "launching", "running", "terminal", "uncertain", "reconciled"] as const;
 export type TestOperationState = (typeof TEST_OPERATION_STATE_VALUES)[number];
 
 export const TEST_SLOT_KEY_VALUES = ["factory"] as const;
@@ -372,6 +380,10 @@ export type TestProviderAction = (typeof TEST_PROVIDER_ACTION_VALUES)[number];
 
 export const COPY_RECORD_STATUS_VALUES = ["complete", "invalid", "incomplete"] as const;
 export type CopyRecordStatus = (typeof COPY_RECORD_STATUS_VALUES)[number];
+
+/** How a runner's copy ended: ran (the command ran), setup_failed (the copy could not be set up, for example a file whose sha256 does not match) or timed_out (the command passed its time limit). */
+export const COPY_RUN_OUTCOME_VALUES = ["ran", "setup_failed", "timed_out"] as const;
+export type CopyRunOutcome = (typeof COPY_RUN_OUTCOME_VALUES)[number];
 
 export const ARCHITECTURE_VALUES = ["amd64", "arm64"] as const;
 export type Architecture = (typeof ARCHITECTURE_VALUES)[number];
@@ -1208,9 +1220,11 @@ export interface TestEvidence {
 
 /** One spend ledger operation of the request. */
 export interface TestOperation {
-  operation_id: Identifier;
+  /** The spend ledger's operation ID: 64 lowercase hexadecimal characters. */
+  operation_id: Sha256;
   kind: TestOperationKind;
   call_name: Identifier;
+  /** A settled operation is terminal with settled_microusd set. */
   state: TestOperationState;
   /** Held until the operation is settled or reconciled. */
   reserved_microusd: MicroUsd;
@@ -1218,10 +1232,13 @@ export interface TestOperation {
   attempt_ordinal: PositiveInteger;
 }
 
-/** The factory slot and the request that holds it, if any. */
+/** The factory slot and what holds it, if anything. */
 export interface TestSlot {
   slot_key: TestSlotKey;
+  /** The request whose start or validation run holds the slot. */
   holder_request_id: Uuid | null;
+  /** Set while a validation run holds the slot. */
+  holder_validation_id: Uuid | null;
 }
 
 /** One call made to the fake provider. */
@@ -1441,10 +1458,11 @@ export interface CopyPlan {
   host_id: HostId;
   state: CopyState;
   image: ImagePin;
-  /** The app source tree placed before start. */
+  /** The app source tree, placed at destinations.app before start. */
   files: FileDigest[];
-  /** Validator material, in an evaluator-only location. */
+  /** Validator material, placed at destinations.evaluator, an evaluator-only location. */
   evaluator_files: FileDigest[];
+  destinations: CopyDestinations;
   command: string[];
   limits: CopyLimits;
 }
@@ -1455,11 +1473,45 @@ export interface ImagePin {
   digest: ImageDigest | null;
 }
 
+/** Absolute paths inside the copy. */
+export interface CopyDestinations {
+  /** Where the runner places every file of files. */
+  app: AbsolutePath;
+  /** Where the runner places every file of evaluator_files; evaluator-only. */
+  evaluator: AbsolutePath;
+  /** Where the copy writes its results; the runner copies this directory back. */
+  results: AbsolutePath;
+}
+
 export interface CopyLimits {
   timeout_s: PositiveInteger;
   vcpus: PositiveInteger;
   memory_mb: PositiveInteger;
   network: "none";
+}
+
+/** Internal: the local directories the harness built from an UnpackedPair, which a runner reads a copy's files from. */
+export interface CopyRoots {
+  /** A local directory holding the plan's files. */
+  app_root: Identifier;
+  /** A local directory holding the plan's evaluator files. */
+  evaluator_root: Identifier;
+}
+
+/** Internal: what a runner brings back from one copy, which the host adapter's collect parses into a CopyRecord. */
+export interface CollectedCopy {
+  copy_id: Identifier;
+  outcome: CopyRunOutcome;
+  /** The command's exit code, or null when there is none. */
+  exit_code: SafeInteger | null;
+  /** A fresh local directory with the copy's results, or null. */
+  results_dir: Identifier | null;
+  image_digest: ImageDigest;
+  architecture: Architecture;
+  started_at: UtcTime;
+  finished_at: UtcTime;
+  /** The sha256 of a deterministic tar of results_dir, or null. */
+  results_sha256: Sha256 | null;
 }
 
 /** Internal: never sent to a client. */
@@ -1496,7 +1548,8 @@ export interface CopyRecord {
   architecture: Architecture;
   started_at: UtcTime;
   finished_at: UtcTime;
-  evidence_sha256: Sha256;
+  /** The collected copy's results_sha256, or null when the copy brought back no results. A complete record has one. */
+  evidence_sha256: Sha256 | null;
 }
 
 /** Internal: the qualification route's record for one candidate. Whether the verdict follows from the cells and criteria is not checked by the schema. */
@@ -1561,6 +1614,7 @@ export interface DefTypes {
   GitCommitId: GitCommitId;
   ImageDigest: ImageDigest;
   RelativePath: RelativePath;
+  AbsolutePath: AbsolutePath;
   UtcTime: UtcTime;
   ItemKey: ItemKey;
   Identifier: Identifier;
@@ -1607,6 +1661,7 @@ export interface DefTypes {
   TestProvider: TestProvider;
   TestProviderAction: TestProviderAction;
   CopyRecordStatus: CopyRecordStatus;
+  CopyRunOutcome: CopyRunOutcome;
   Architecture: Architecture;
   RepairKind: RepairKind;
   EmptyObject: EmptyObject;
@@ -1735,7 +1790,10 @@ export interface DefTypes {
   DifficultyAssessment: DifficultyAssessment;
   CopyPlan: CopyPlan;
   ImagePin: ImagePin;
+  CopyDestinations: CopyDestinations;
   CopyLimits: CopyLimits;
+  CopyRoots: CopyRoots;
+  CollectedCopy: CollectedCopy;
   CellObservation: CellObservation;
   SuiteObservation: SuiteObservation;
   CopyRecord: CopyRecord;

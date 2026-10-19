@@ -3,7 +3,7 @@
   "request_id": "00000000-0000-4000-8000-000000000105",
   "operations": [
     {
-      "operation_id": "00000000-0000-4000-8000-000000000301",
+      "operation_id": "3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a",
       "kind": "worker",
       "call_name": "worker",
       "state": "uncertain",
@@ -12,7 +12,7 @@
       "attempt_ordinal": 1
     },
     {
-      "operation_id": "00000000-0000-4000-8000-000000000302",
+      "operation_id": "3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b",
       "kind": "candidate_copy",
       "call_name": "candidate-01-clean",
       "state": "uncertain",
@@ -21,7 +21,7 @@
       "attempt_ordinal": 1
     },
     {
-      "operation_id": "00000000-0000-4000-8000-000000000303",
+      "operation_id": "3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c",
       "kind": "candidate_copy",
       "call_name": "candidate-01-buggy",
       "state": "uncertain",
@@ -30,7 +30,7 @@
       "attempt_ordinal": 1
     },
     {
-      "operation_id": "00000000-0000-4000-8000-000000000304",
+      "operation_id": "3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d",
       "kind": "candidate_copy",
       "call_name": "candidate-01-fixed",
       "state": "uncertain",
@@ -41,7 +41,8 @@
   ],
   "slot": {
     "slot_key": "factory",
-    "holder_request_id": "00000000-0000-4000-8000-000000000105"
+    "holder_request_id": "00000000-0000-4000-8000-000000000105",
+    "holder_validation_id": null
   },
   "provider_calls": [
     {
