@@ -1,0 +1,11 @@
+{
+  "copy_id": "synthetic-copy-clean-01",
+  "outcome": "setup_failed",
+  "exit_code": null,
+  "results_dir": null,
+  "image_digest": "sha256:e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9",
+  "architecture": "amd64",
+  "started_at": "2026-10-20T14:02:10.004Z",
+  "finished_at": "2026-10-20T14:02:12.311Z",
+  "results_sha256": null
+}

@@ -1,0 +1,101 @@
+{
+  "contract_version": "bug-request/1",
+  "interpretation_sha256": "1717171717171717171717171717171717171717171717171717171717171717",
+  "interpreter": {
+    "interpreter_id": "criteria-match",
+    "version": "1",
+    "criteria_catalog_version": "1"
+  },
+  "qualification_route": {
+    "route_id": "behavioral-qualification",
+    "version": "1"
+  },
+  "input": {
+    "hosts": [
+      "umami"
+    ],
+    "items": [
+      {
+        "item_key": "date-time-1",
+        "bug_type_id": "date_time",
+        "quantity": 1,
+        "description": null,
+        "difficulty": "source_inferable_allowed"
+      }
+    ],
+    "budget_microusd": 700000
+  },
+  "startable": false,
+  "items": [
+    {
+      "item_key": "date-time-1",
+      "bug_type_id": "date_time",
+      "quantity": 1,
+      "description": null,
+      "difficulty": {
+        "requested": "source_inferable_allowed",
+        "status": "not_required"
+      },
+      "criteria": [],
+      "unmatched_text": [],
+      "eligible_sources": [
+        {
+          "host_id": "umami",
+          "source_id": "synthetic-umami-date-time",
+          "entries": 1
+        }
+      ],
+      "status": "supported",
+      "problems": [
+        {
+          "code": "budget_below_item_minimum",
+          "severity": "warning",
+          "message": "A budget of $0.70 leaves $0.50 after the worker's worst case of $0.20, which is below one candidate's worst case of $0.60 on Umami, the only host eligible for this item.",
+          "item_key": "date-time-1"
+        }
+      ]
+    }
+  ],
+  "type_totals": [
+    {
+      "bug_type_id": "date_time",
+      "quantity": 1
+    }
+  ],
+  "hosts": [
+    {
+      "host_id": "umami",
+      "used": true,
+      "reason": null
+    }
+  ],
+  "budget": {
+    "budget_microusd": 700000,
+    "worker_worst_case_microusd": 200000,
+    "worst_case_per_candidate_microusd": [
+      {
+        "host_id": "umami",
+        "microusd": 600000
+      }
+    ],
+    "worst_case_per_validation_microusd": [
+      {
+        "host_id": "umami",
+        "microusd": 300000
+      }
+    ],
+    "estimate_note": "The worker's worst case is reserved when the request starts, and each candidate's worst case before it starts; afterward the actual spend is settled and the rest is released. A validation run reserves its host's worst case the same way. These are limits, not predictions."
+  },
+  "limits": {
+    "max_wall_clock_s": 3600,
+    "max_candidates": 10
+  },
+  "problems": [
+    {
+      "code": "budget_below_minimum",
+      "severity": "blocking",
+      "message": "A budget of $0.70 cannot cover the worker's worst case of $0.20 plus one candidate's worst case of $0.60 on Umami. Raise the budget to at least $0.80.",
+      "item_key": null
+    }
+  ]
+}

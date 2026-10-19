@@ -1,0 +1,28 @@
+{
+  "copy_id": "synthetic-copy-clean-01",
+  "state": "clean",
+  "status": "invalid",
+  "original_suite": {
+    "observed": "error",
+    "runs_valid": 0,
+    "runs_total": 0,
+    "failure_codes": [],
+    "detail": "synthetic detail: setup failed",
+    "executed": 0,
+    "expected": 42,
+    "failing_test_ids": [],
+    "suite_sha256": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"
+  },
+  "verification": {
+    "observed": "error",
+    "runs_valid": 0,
+    "runs_total": 0,
+    "failure_codes": [],
+    "detail": "synthetic detail: setup failed"
+  },
+  "image_digest": "sha256:e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9",
+  "architecture": "amd64",
+  "started_at": "2026-10-20T14:02:10.004Z",
+  "finished_at": "2026-10-20T14:02:12.311Z",
+  "evidence_sha256": null
+}
