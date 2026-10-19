@@ -361,7 +361,7 @@ describe("collect", () => {
   it("makes a setup failure invalid and a timeout incomplete, never a pass or a detection", async () => {
     const plan = planOf("buggy");
     const setup = await adapter.collect(plan, collected(plan, null, { outcome: "setup_failed", exit_code: null }));
-    expect(setup).toMatchObject({ status: "invalid", original_suite: { observed: "error" }, verification: { observed: "error" } });
+    expect(setup).toMatchObject({ status: "invalid", original_suite: { observed: "error" }, verification: { observed: "error" }, evidence_sha256: null });
     expect(errors("CopyRecord", setup)).toEqual([]);
     const timeout = await adapter.collect(plan, collected(plan, null, { outcome: "timed_out", exit_code: null }));
     expect(timeout).toMatchObject({ status: "incomplete", original_suite: { observed: "incomplete" }, verification: { observed: "incomplete" } });
@@ -376,7 +376,7 @@ describe("collect", () => {
     expect((await adapter.collect(plan, collected(plan, bad))).status).toBe("invalid");
     const good = resultsWith(summaryFor(plan, "pass"));
     expect((await adapter.collect(plan, collected(plan, good))).status).toBe("complete");
-    expect((await adapter.collect(plan, collected(plan, good, { exit_code: 1 }))).status).toBe("invalid");
+    expect(await adapter.collect(plan, collected(plan, good, { exit_code: 1 }))).toMatchObject({ status: "invalid", evidence_sha256: "e".repeat(64) });
     expect((await adapter.collect(plan, collected(plan, good, { copy_id: "f3q2-other" }))).status).toBe("invalid");
     expect((await adapter.collect(plan, collected(plan, good, { image_digest: `sha256:${"f".repeat(64)}` }))).status).toBe("invalid");
   });

@@ -233,7 +233,7 @@ export function createTaskReportAdapter(options: TaskReportAdapterOptions = {}):
       architecture: collected.architecture,
       started_at: collected.started_at,
       finished_at: collected.finished_at,
-      evidence_sha256: collected.results_sha256 ?? canonicalDigest(collected).sha256,
+      evidence_sha256: collected.results_sha256,
     };
   };
 
