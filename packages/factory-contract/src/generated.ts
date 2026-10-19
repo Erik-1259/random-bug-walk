@@ -209,7 +209,7 @@ export type GitCommitId = string;
 /** An OCI image digest. */
 export type ImageDigest = string;
 
-/** A relative POSIX path. Segments use letters, digits, '.', '_' and '-', and never start with '.'. */
+/** A relative POSIX path: segments joined by '/', with no leading or trailing '/', no empty, '.' or '..' segment, and no backslash or control character. Any other character is allowed, so source paths such as 'src/app/(main)/[id]/page.tsx' and dotfiles such as '.gitignore' are valid. */
 export type RelativePath = string;
 
 /** UTC ISO 8601 time with milliseconds and Z (contract section 3). The format adds the calendar check (no 2026-02-30, no second 60). */
@@ -505,11 +505,12 @@ export interface InterpretedItem {
   /** Kept verbatim. */
   description: string | null;
   difficulty: ItemDifficulty;
-  /** Empty when the item has no description. */
+  /** Empty when the item has no description (contract section 6.1). */
   criteria: InterpretedCriterion[];
+  /** The description's words that no criterion or filler phrase covers; empty when the item has no description. Any entry makes the item unsupported with unrecognized_description (contract section 6.1). */
   unmatched_text: string[];
   eligible_sources: EligibleSource[];
-  /** Unsupported exactly when the item has a blocking problem. */
+  /** Unsupported exactly when the item has a blocking problem; an item that requires source-only difficulty or has unmatched text is unsupported. */
   status: SupportStatus;
   problems: Problem[];
 }
