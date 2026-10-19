@@ -532,10 +532,12 @@ For automated acceptance, the service can start in a test mode that is refused w
 ```text
 TestEvidence {
   contract_version, request_id
-  operations: { operation_id: string, kind: "worker" | "candidate_copy" | "validation" | "validation_copy", call_name: string,
-                state: "prepared" | "launching" | "running" | "terminal" | "uncertain" | "settled" | "reconciled",
+  operations: { operation_id: string,     // the spend ledger's operation ID: 64 lowercase hex characters
+                kind: "worker" | "candidate_copy" | "validation" | "validation_copy", call_name: string,
+                state: "prepared" | "launching" | "running" | "terminal" | "uncertain" | "reconciled",  // settled = terminal with settled_microusd set
                 reserved_microusd: integer, settled_microusd: integer | null, attempt_ordinal: integer }[]
-  slot: { slot_key: "factory", holder_request_id: string | null }
+  slot: { slot_key: "factory", holder_request_id: string | null,     // the request whose start or validation run holds the slot
+          holder_validation_id: string | null }                       // set while a validation run holds it
   provider_calls: { call_name: string, provider: "sandbox", action: "create" | "stop", at: string }[]
 }
 ```
