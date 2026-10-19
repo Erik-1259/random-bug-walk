@@ -400,7 +400,7 @@ export interface Capabilities {
   service: ServiceStatus;
   hosts: Host[];
   bug_types: BugType[];
-  /** Every (host, bug type) pair appears once. */
+  /** Every (host, bug type) pair of HostId and BugTypeId appears exactly once (contract section 4.2). */
   combinations: Combination[];
   difficulty_options: DifficultyOption[];
   limits: Limits;
@@ -463,6 +463,7 @@ export interface SourceSummary {
   description: string;
 }
 
+/** Source-inferable difficulty is the default and always available; source-only difficulty is unavailable, not the default, and gives a reason (contract section 4.4). */
 export interface DifficultyOption {
   option_id: DifficultyOptionId;
   label: string;
@@ -582,6 +583,7 @@ export interface InterpretedItem {
   criteria: InterpretedCriterion[];
   /** The description's words that no criterion or filler phrase covers; empty when the item has no description. Any entry makes the item unsupported with unrecognized_description (contract section 6.1). */
   unmatched_text: string[];
+  /** At least one when the item is supported: an item with no eligible source is unsupported, with unsupported_combination or no_matching_source (contract section 6.2). */
   eligible_sources: EligibleSource[];
   /** Unsupported exactly when the item has a blocking problem; an item that requires source-only difficulty or has unmatched text is unsupported. */
   status: SupportStatus;
@@ -754,6 +756,7 @@ export interface Candidate {
   reason: CandidateReasonDetail | null;
   /** Set at requested_criteria_passed, when the candidate is assigned to an item. */
   item_key: ItemKey | null;
+  /** Set exactly in stage qualified: only a qualified candidate becomes a case (contract sections 10 and 10.5). */
   case_id: Sha256 | null;
   started_at: UtcTime | null;
   finished_at: UtcTime | null;
@@ -1110,7 +1113,7 @@ export interface PackagePart {
 
 export interface Provenance {
   origin: CaseOrigin;
-  /** The live request; set for live_request. */
+  /** The live request: set for live_request, null for published_example. */
   request_id: Uuid | null;
   source_id: Identifier;
   entry_id: Identifier;
