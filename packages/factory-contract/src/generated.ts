@@ -463,6 +463,7 @@ export interface SourceSummary {
   description: string;
 }
 
+/** Source-inferable difficulty is the default and always available; source-only difficulty is unavailable, not the default, and gives a reason (contract section 4.4). */
 export interface DifficultyOption {
   option_id: DifficultyOptionId;
   label: string;
