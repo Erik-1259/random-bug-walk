@@ -530,11 +530,95 @@
           }
         },
         "combinations": {
-          "description": "Every (host, bug type) pair appears once.",
+          "description": "Every (host, bug type) pair of HostId and BugTypeId appears exactly once (contract section 4.2).",
           "type": "array",
           "items": {
             "$ref": "#/$defs/Combination"
-          }
+          },
+          "minItems": 4,
+          "maxItems": 4,
+          "allOf": [
+            {
+              "type": "array",
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "host_id": {
+                    "const": "umami"
+                  },
+                  "bug_type_id": {
+                    "const": "concurrency"
+                  }
+                },
+                "required": [
+                  "host_id",
+                  "bug_type_id"
+                ]
+              },
+              "minContains": 1,
+              "maxContains": 1
+            },
+            {
+              "type": "array",
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "host_id": {
+                    "const": "umami"
+                  },
+                  "bug_type_id": {
+                    "const": "date_time"
+                  }
+                },
+                "required": [
+                  "host_id",
+                  "bug_type_id"
+                ]
+              },
+              "minContains": 1,
+              "maxContains": 1
+            },
+            {
+              "type": "array",
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "host_id": {
+                    "const": "task-report"
+                  },
+                  "bug_type_id": {
+                    "const": "concurrency"
+                  }
+                },
+                "required": [
+                  "host_id",
+                  "bug_type_id"
+                ]
+              },
+              "minContains": 1,
+              "maxContains": 1
+            },
+            {
+              "type": "array",
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "host_id": {
+                    "const": "task-report"
+                  },
+                  "bug_type_id": {
+                    "const": "date_time"
+                  }
+                },
+                "required": [
+                  "host_id",
+                  "bug_type_id"
+                ]
+              },
+              "minContains": 1,
+              "maxContains": 1
+            }
+          ]
         },
         "difficulty_options": {
           "type": "array",
@@ -881,10 +965,6 @@
               },
               "available": {
                 "const": false
-              },
-              "reason": {
-                "type": "string",
-                "minLength": 1
               }
             }
           }
@@ -1390,6 +1470,7 @@
           }
         },
         "eligible_sources": {
+          "description": "At least one when the item is supported: an item with no eligible source is unsupported, with unsupported_combination or no_matching_source (contract section 6.2).",
           "type": "array",
           "items": {
             "$ref": "#/$defs/EligibleSource"
@@ -1434,6 +1515,10 @@
                     }
                   }
                 }
+              },
+              "eligible_sources": {
+                "type": "array",
+                "minItems": 1
               }
             }
           },
@@ -2778,6 +2863,7 @@
           ]
         },
         "case_id": {
+          "description": "Set exactly in stage qualified: only a qualified candidate becomes a case (contract sections 10 and 10.5).",
           "anyOf": [
             {
               "$ref": "#/$defs/Sha256"
@@ -3025,6 +3111,38 @@
             "properties": {
               "case_id": {
                 "type": "string"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "stage": {
+                "enum": [
+                  "selected",
+                  "preparing",
+                  "checking",
+                  "behavior_checks_passed",
+                  "requested_criteria_passed",
+                  "packaging",
+                  "rejected",
+                  "invalid",
+                  "incomplete",
+                  "skipped"
+                ]
+              }
+            },
+            "required": [
+              "stage"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "case_id": {
+                "type": "null"
               }
             }
           }
@@ -5171,7 +5289,7 @@
           "$ref": "#/$defs/CaseOrigin"
         },
         "request_id": {
-          "description": "The live request; set for live_request.",
+          "description": "The live request: set for live_request, null for published_example.",
           "anyOf": [
             {
               "$ref": "#/$defs/Uuid"
@@ -5206,6 +5324,27 @@
             "properties": {
               "request_id": {
                 "type": "string"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "origin": {
+                "const": "published_example"
+              }
+            },
+            "required": [
+              "origin"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "request_id": {
+                "type": "null"
               }
             }
           }
