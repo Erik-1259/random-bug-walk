@@ -83,9 +83,18 @@ export async function runProbe(backend: IsolatedBackend, probe: Probe): Promise<
   const start = { request_id: requestId, input: probe.input, interpretation_sha256: interpretation.interpretation_sha256 };
   const replies = await Promise.all(Array.from({ length: probe.concurrent ? 3 : 1 }, () => call("POST", "/api/factory/requests", start)));
   assert.equal(replies.filter(r => r.status === 202).length, 1, "start accepted more or less than once");
+  const deliveredIds = new Set<unknown>();
+  const retain = (value: Record<string, unknown>) => {
+    const currentIds = objects(value.cases).map(c => c.case_id);
+    for (const id of deliveredIds) assert(currentIds.includes(id), "delivered case disappeared");
+    for (const id of currentIds) deliveredIds.add(id);
+  };
   for (const reply of replies) {
     assert([200, 202].includes(reply.status));
     checkScenarioStatus(reply.body); assert.equal(object(reply.body).request_id, requestId);
+    // Concurrent snapshots may represent different instants. Preserve their
+    // union, then require each subsequent sequential response to retain it.
+    for (const c of objects(object(reply.body).cases)) deliveredIds.add(c.case_id);
   }
   const path = `/api/factory/requests/${requestId}`;
   const repeated = body(await call("POST", "/api/factory/requests", start), 200);
@@ -99,14 +108,11 @@ export async function runProbe(backend: IsolatedBackend, probe: Probe): Promise<
   let cursor = 0;
   let stopped = false;
   let state = repeated;
-  const deliveredIds = new Set<unknown>();
   const history: Record<string, unknown>[] = [];
   // Bound a stalled service; do not poll faster than its declared interval.
   for (let polls = 0; polls < 1000; polls++) {
     checkScenarioStatus(state);
-    const currentIds = objects(state.cases).map(c => c.case_id);
-    for (const id of deliveredIds) assert(currentIds.includes(id), "delivered case disappeared");
-    for (const id of currentIds) deliveredIds.add(id);
+    retain(state);
     for (const event of objects(state.events)) {
       assert.equal(integer(event.seq), ++cursor, "event gap or duplicate");
       history.push(structuredClone(event));
@@ -115,7 +121,8 @@ export async function runProbe(backend: IsolatedBackend, probe: Probe): Promise<
     assert.equal(state.request_id, requestId);
     assert.deepEqual(state.interpretation, interpretation, "frozen interpretation changed");
     if (probe.cancel && !stopped && objects(state.cases).length > 0 && state.state !== "finished") {
-      checkScenarioStatus(body(await call("POST", `${path}/stop`, {}), 200));
+      const stopping = body(await call("POST", `${path}/stop`, {}), 200);
+      checkScenarioStatus(stopping); retain(stopping);
       stopped = true;
     }
     if (state.state === "finished") break;
@@ -137,7 +144,7 @@ export async function runProbe(backend: IsolatedBackend, probe: Probe): Promise<
   await backend.reconnect();
   const reconnect = await read(backend, `${path}?after=0`);
   let page = reconnect;
-  checkScenarioStatus(page);
+  checkScenarioStatus(page); retain(page);
   let checked = 0;
   while (checked < history.length) {
     const events = objects(page.events);
@@ -149,7 +156,7 @@ export async function runProbe(backend: IsolatedBackend, probe: Probe): Promise<
     if (checked < history.length) {
       await backend.wait(integer(page.poll_after_ms));
       page = await read(backend, `${path}?after=${String(checked)}`);
-      checkScenarioStatus(page);
+      checkScenarioStatus(page); retain(page);
     }
   }
   checkScenarioStatus(reconnect);
@@ -160,7 +167,7 @@ export async function runProbe(backend: IsolatedBackend, probe: Probe): Promise<
   assert.deepEqual(snapshot(reconnect), snapshot(state), "terminal result changed on reconnect");
   if (probe.cancel) {
     const again = body(await call("POST", `${path}/stop`, {}), 200);
-    checkScenarioStatus(again);
+    checkScenarioStatus(again); retain(again);
     for (const field of ["outcome", "items", "cases"]) assert.deepEqual(again[field], state[field]);
   }
   if (probe.downloads) await runDownloads(backend, state);

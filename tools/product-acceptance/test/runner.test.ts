@@ -337,3 +337,37 @@ for (const startOrdinal of [1, 2]) it(`rejects an overrun seen only in start res
   };
   await expect(runProbe(backend, probe)).rejects.toThrow("deterministic scenario exceeded budget");
 });
+
+it.each([1, 2, 3])("retains cases observed in concurrent start response %s", async (ordinal) => {
+  const { backend, request } = scripted(); let starts = 0;
+  backend.request = async (...args) => {
+    const reply = await request(...args);
+    if (args[0] === "POST" && args[1] === "/api/factory/requests" && ++starts === ordinal) {
+      const initial = fixture("status-fulfilled");
+      const oldCase = text(objects(initial.cases)[0]?.case_id);
+      const replaced: unknown = JSON.parse(JSON.stringify(initial)
+        .replaceAll(text(initial.request_id), text(object(reply.body).request_id))
+        .replaceAll(oldCase, "ac".repeat(32)));
+      checkStatus(replaced);
+      return { ...reply, body: replaced };
+    }
+    return reply;
+  };
+  await expect(runProbe(backend, probe)).rejects.toThrow("delivered case disappeared");
+});
+it("collects concurrent snapshots without imposing response order", async () => {
+  const { backend, request } = scripted(); let starts = 0;
+  backend.request = async (...args) => {
+    const reply = await request(...args);
+    if (args[0] === "POST" && args[1] === "/api/factory/requests") {
+      const ordinal = ++starts;
+      if (ordinal === 2 || ordinal === 4) {
+        const initial = fixture("status-fulfilled");
+        const value: unknown = JSON.parse(JSON.stringify(initial).replaceAll(text(initial.request_id), text(object(reply.body).request_id)));
+        return { ...reply, body: value };
+      }
+    }
+    return reply;
+  };
+  await expect(runProbe(backend, probe)).resolves.toBeUndefined();
+});
