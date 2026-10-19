@@ -881,10 +881,6 @@
               },
               "available": {
                 "const": false
-              },
-              "reason": {
-                "type": "string",
-                "minLength": 1
               }
             }
           }
