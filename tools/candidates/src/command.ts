@@ -16,10 +16,12 @@ import { encodeCanonical } from "@rbw/schema";
 import { API_KEY_VARIABLE, budgetRefusal, isScreenModelName, MAX_ATTEMPTS, SCREEN_PROFILES, worstCasePerCall } from "@rbw/screen";
 import { implementationName } from "./not-wired.ts";
 import { formatUsd, PipelineError, runPipeline, type RunRecord } from "./pipeline.ts";
+import { BEHAVIORAL_ROUTE, DEFAULT_ROUTE, isRouteName, ROUTES, runBehavioralRoute, type BehavioralRunRecord } from "./routes.ts";
 import { SYMPTOM_SOURCE, symptomFor } from "./symptom.ts";
 import type { FindSites, Screen, ScreenBudget, ScreenModel } from "./types.ts";
 
 export const USAGE = `usage: cli.ts --rule <class rule file> --host <host tree> --out <new record file>
+  [--route behavioral-qualification/v1|static-screen/v1] (default behavioral-qualification/v1)
   [--rule-id <id>] [--host-commit <sha>] [--dry-run] [--model super|kimi]
   [--max-candidates <n>] (default 10)
   [--max-spend-usd <usd>] (total screen spend cap, default 2.00)
@@ -28,7 +30,8 @@ export const USAGE = `usage: cli.ts --rule <class rule file> --host <host tree> 
   [--slot-key <key>] [--pool <key>] (spend ledger slot and pool, default "development")
   [--rate-sheet <path>] (default packages/screen/rates.json)
   [--scratch <dir>] (default the system temporary directory) [--keep-scratch]
-A real run reads DATABASE_URL and ${API_KEY_VARIABLE} from the environment and never prints either.
+The default route lists and plants candidates for behavioral qualification: no copy, no screen, no spend.
+A real static-screen/v1 run reads DATABASE_URL and ${API_KEY_VARIABLE} from the environment and never prints either.
 `;
 
 /** The repository root; a record lists candidate sites in the host and must stay out of it. */
@@ -124,8 +127,8 @@ function isDirectory(path: string): boolean {
  * JSON; if the claimed file cannot be written, the record goes to a new file in the scratch base.
  * Either way the record of the spend is kept and the result says where.
  */
-function saveRecord(fd: number, outPath: string, record: RunRecord, scratchBase: string, runId: string): { ok: boolean; note: string } {
-  const spent = `spent ${formatUsd(record.totals.spend_microusd)}`;
+function saveRecord(fd: number, outPath: string, record: RunRecord | BehavioralRunRecord, spentMicrousd: number, scratchBase: string, runId: string): { ok: boolean; note: string } {
+  const spent = `spent ${formatUsd(spentMicrousd)}`;
   let bytes: Uint8Array | string;
   let canonical = true;
   let problem = "";
@@ -185,6 +188,7 @@ export async function runCommand(argv: readonly string[], deps: CommandDeps, io:
       allowPositionals: false,
       options: {
         rule: { type: "string" },
+        route: { type: "string", default: DEFAULT_ROUTE },
         "rule-id": { type: "string" },
         host: { type: "string" },
         "host-commit": { type: "string" },
@@ -205,6 +209,10 @@ export async function runCommand(argv: readonly string[], deps: CommandDeps, io:
     const { rule: rulePath, host, out } = values;
     if (rulePath === undefined || host === undefined || out === undefined) {
       throw new UsageError("--rule, --host and --out are required");
+    }
+    const route = values.route;
+    if (!isRouteName(route)) {
+      throw new UsageError(`--route must be ${ROUTES.join(" or ")}`);
     }
     const outPath = resolve(out);
     const realOut = realTarget(outPath);
@@ -260,6 +268,12 @@ export async function runCommand(argv: readonly string[], deps: CommandDeps, io:
       throw new UsageError("--scratch must be outside the repository: real runs keep host material there");
     }
 
+    if (route === BEHAVIORAL_ROUTE) {
+      // The default route never builds or calls a screen, so it has no screen, key, database or
+      // screen-budget prerequisite; the screen options above are still parsed and checked.
+      return await runBehavioral({ deps, io, outPath, scratchBase, ruleId, rulePath, ruleText, host, hostCommit: hostCommit ?? null, maxCandidates: caps.maxCandidates });
+    }
+
     // The screen: a fake when one is given (tests), otherwise the real one built from the options.
     // A dry run never screens, so it needs none.
     const config: ScreenConfig = {
@@ -309,7 +323,7 @@ export async function runCommand(argv: readonly string[], deps: CommandDeps, io:
       }));
     } catch (error) {
       if (error instanceof PipelineError && error.record !== null) {
-        const where = saveRecord(fd, outPath, error.record, scratchBase, runId);
+        const where = saveRecord(fd, outPath, error.record, error.record.totals.spend_microusd, scratchBase, runId);
         io.err(`candidates: ${error.message}\n${where.note}`);
         return 1;
       }
@@ -318,7 +332,7 @@ export async function runCommand(argv: readonly string[], deps: CommandDeps, io:
       unlinkSync(outPath);
       throw error;
     }
-    const where = saveRecord(fd, outPath, record, scratchBase, runId);
+    const where = saveRecord(fd, outPath, record, record.totals.spend_microusd, scratchBase, runId);
     if (!where.ok) {
       io.err(`candidates: ${where.note}`);
       return 1;
@@ -389,4 +403,60 @@ function buildRunScreen(deps: CommandDeps, dryRun: boolean, config: ScreenConfig
     throw new PipelineError("no screen is configured");
   }
   return deps.buildScreen(config);
+}
+
+/** The default route: claims --out, lists and plants in memory, and writes the version 2 record. */
+async function runBehavioral(input: {
+  deps: CommandDeps;
+  io: CommandIo;
+  outPath: string;
+  scratchBase: string;
+  ruleId: string;
+  rulePath: string;
+  ruleText: string;
+  host: string;
+  hostCommit: string | null;
+  maxCandidates: number;
+}): Promise<number> {
+  const { deps, io, outPath } = input;
+  let fd: number;
+  try {
+    fd = openSync(outPath, "wx");
+  } catch {
+    throw new UsageError("cannot write --out: it must be a new file in an existing directory");
+  }
+  const runId = (deps.runId ?? randomUUID)();
+  let record: BehavioralRunRecord;
+  try {
+    record = await runBehavioralRoute({
+      rule: { id: input.ruleId, path: input.rulePath, text: input.ruleText },
+      hostDir: resolve(input.host),
+      findSites: deps.findSites,
+      maxCandidates: input.maxCandidates,
+      hostCommit: input.hostCommit,
+      runId,
+      now: deps.now ?? (() => new Date()),
+      findSitesName: implementationName(deps.findSites),
+    });
+  } catch (error) {
+    // Nothing ran that spent: release the claimed (still empty) record file.
+    closeSync(fd);
+    unlinkSync(outPath);
+    throw error;
+  }
+  const where = saveRecord(fd, outPath, record, 0, input.scratchBase, runId);
+  if (!where.ok) {
+    io.err(`candidates: ${where.note}`);
+    return 1;
+  }
+  const { totals } = record;
+  io.out(
+    [
+      `${BEHAVIORAL_ROUTE} run ${record.run_id}: ${String(totals.sites_found)} sites, ${String(totals.duplicates)} duplicates, ${String(totals.planted)} planted`,
+      `${String(totals.planted)} candidates await behavioral qualification (difficulty not assessed); no screen ran and nothing was spent`,
+      `record: ${outPath}`,
+      "",
+    ].join("\n"),
+  );
+  return 0;
 }

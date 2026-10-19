@@ -31,6 +31,7 @@ The issue writer’s model runs on Nebius Token Factory. Vercel hosts the site, 
 |---|---|
 | [`packages/admission`](packages/admission/README.md) | Trial-result importer and the admission decisions (ADM-02 to ADM-06, the ADM-08 comparison) |
 | [`packages/envelope`](packages/envelope/README.md) | Versioned provider rates and priced envelopes for the spend ledger |
+| [`packages/factory`](packages/factory/README.md) | Factory core for bug requests: criteria catalog, capabilities, interpretation, identities, budget admission, assignment, the request loop with injected effects, and the status projection |
 | [`packages/harvest`](packages/harvest/README.md) | Finds public source fixes on GitHub that match a bug shape (`DT-1.tz-arg` or the race class `RC-1.guarded-write`) and reports a funnel |
 | [`packages/harvest-review`](packages/harvest-review/README.md) | Two-model review of the harvest's matches |
 | [`packages/projection`](packages/projection/README.md) | Audits a solver-visible copy: pinned source, one declared change, no history or answer-bearing files (part of ADM-01, ADM-07's scan) |
@@ -46,7 +47,7 @@ The issue writer’s model runs on Nebius Token Factory. Vercel hosts the site, 
 | [`packages/umami-fixture-rc1`](packages/umami-fixture-rc1/README.md) | The race-family fixture `rc-1-backup-code-001`: data and two added checks (serial and concurrent backup-code use); the family did not reach admission and is parked |
 | [`packages/web`](packages/web/README.md) | The results site (Next.js) and its judge routes |
 | [`packages/writer`](packages/writer/README.md) | Model-written pattern cards and bug reports, with code checks on every issue |
-| [`tools/candidates`](tools/candidates/README.md) | Candidate pipeline: lists the sites a class rule matches in the host, plants each in its own temporary copy, runs the static-headroom screen on each and ranks the survivors |
+| [`tools/candidates`](tools/candidates/README.md) | Candidate pipeline: lists the sites a class rule matches in the host and plants each; by default records them for behavioral qualification, or with `--route static-screen/v1` screens each planted copy and ranks the survivors |
 | [`tools/controller`](tools/controller/README.md) | Runs jobs and the candidate attempt against the spend ledger on Vercel Sandbox; also the judge replay's controller |
 | [`tools/local-runner`](tools/local-runner/README.md) | Runs the kit check, observation and admission on local Docker; its job builders and copy path are reused by the controller |
 | [`tools/release`](tools/release/README.md) | Stages runs for the publisher, builds a checked release with its frozen judge job, and publishes judge replays |

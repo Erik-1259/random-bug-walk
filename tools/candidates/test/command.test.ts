@@ -40,7 +40,7 @@ function readRecord(path: string): Record<string, unknown> {
 
 describe("command line", () => {
   it("writes a canonical dry-run record and needs no screen", async () => {
-    const result = await run(["--dry-run"], { findSites: finder(threeSites()) });
+    const result = await run(["--route", "static-screen/v1", "--dry-run"], { findSites: finder(threeSites()) });
     expect(result.err).toBe("");
     expect(result.code).toBe(0);
     const record = readRecord(result.outFile);
@@ -60,7 +60,7 @@ describe("command line", () => {
   it("runs the screens with the caps from its options and records the implementations", async () => {
     const screen = scripted([miss(2, 400_000), miss(2, 400_000)]);
     const result = await run(
-      ["--max-candidates", "2", "--max-spend-usd", "1", "--screen-budget-usd", "0.5", "--screen-attempts", "2", "--host-commit", "b".repeat(40)],
+      ["--route", "static-screen/v1", "--max-candidates", "2", "--max-spend-usd", "1", "--screen-budget-usd", "0.5", "--screen-attempts", "2", "--host-commit", "b".repeat(40)],
       { findSites: finder(threeSites()), screen },
     );
     expect(result.err).toBe("");
@@ -88,7 +88,7 @@ describe("command line", () => {
   });
 
   it("records the model a real run used", async () => {
-    const result = await run(["--model", "kimi"], { findSites: finder(threeSites().slice(0, 1)), screen: scripted([miss()]) });
+    const result = await run(["--route", "static-screen/v1", "--model", "kimi"], { findSites: finder(threeSites().slice(0, 1)), screen: scripted([miss()]) });
     expect(result.code).toBe(0);
     expect(readRecord(result.outFile)).toMatchObject({ screen_model: "kimi" });
   });
@@ -219,7 +219,7 @@ describe("command line", () => {
 
   it("prints the kept scratch directory with --keep-scratch", async () => {
     const scratch = tempDir("rbw-candidates-cli-scratch-");
-    const result = await run(["--keep-scratch"], { findSites: finder(threeSites()), screen: scripted([miss(), miss(), miss()]) }, undefined, scratch);
+    const result = await run(["--route", "static-screen/v1", "--keep-scratch"], { findSites: finder(threeSites()), screen: scripted([miss(), miss(), miss()]) }, undefined, scratch);
     expect(result.code).toBe(0);
     const match = /^scratch kept: (.+)$/m.exec(result.out);
     expect(match).not.toBeNull();
@@ -245,7 +245,7 @@ describe("command line", () => {
       },
       {},
     );
-    const result = await run([], { findSites: finder(threeSites()), screen });
+    const result = await run(["--route", "static-screen/v1"], { findSites: finder(threeSites()), screen });
     expect(result.code).toBe(1);
     expect(result.err).toMatch(/spent \$0\.30/);
     expect(readRecord(result.outFile)).toMatchObject({ stop_reason: "pipeline_error", totals: { spend_microusd: 300_000 } });
@@ -255,7 +255,7 @@ describe("command line", () => {
     // A lone surrogate in a finder-supplied diff cannot be encoded as canonical JSON.
     const odd = site("src/gamma.ts", "filter(Boolean)", "filter(\ud800)", 0.7, 1);
     const screen = scripted([miss(3, 100_000)]);
-    const result = await run([], { findSites: finder([odd]), screen });
+    const result = await run(["--route", "static-screen/v1"], { findSites: finder([odd]), screen });
     expect(screen.calls).toHaveLength(1);
     expect(result.code).toBe(1);
     expect(result.err).toMatch(/not canonical JSON/);
@@ -309,7 +309,7 @@ describe("command line with the real screen builder", () => {
     const screen = scripted([miss()]);
     const buildScreen = builder(screen);
     const scratch = tempDir("rbw-candidates-cli-scratch-");
-    const result = await run([], { findSites: finder(threeSites().slice(0, 1)), buildScreen }, undefined, scratch);
+    const result = await run(["--route", "static-screen/v1"], { findSites: finder(threeSites().slice(0, 1)), buildScreen }, undefined, scratch);
     expect(result.err).toBe("");
     expect(result.code).toBe(0);
     expect(screen.calls).toHaveLength(1);
@@ -320,7 +320,7 @@ describe("command line with the real screen builder", () => {
     const sheet = join(tempDir("rbw-candidates-cli-rates-"), "rates.json");
     writeFileSync(sheet, readFileSync(DEFAULT_RATE_SHEET));
     const other = builder(scripted([miss()]));
-    const overridden = await run(["--slot-key", "uc1", "--pool", "uc1-pool", "--rate-sheet", sheet, "--keep-scratch"], {
+    const overridden = await run(["--route", "static-screen/v1", "--slot-key", "uc1", "--pool", "uc1-pool", "--rate-sheet", sheet, "--keep-scratch"], {
       findSites: finder(threeSites().slice(0, 1)),
       buildScreen: other,
     });
@@ -338,7 +338,7 @@ describe("command line with the real screen builder", () => {
       return screen;
     };
     const missing = join(tempDir("rbw-candidates-cli-rates-"), "missing.json");
-    const result = await run(["--rate-sheet", missing], { findSites: finder(threeSites()), buildScreen });
+    const result = await run(["--route", "static-screen/v1", "--rate-sheet", missing], { findSites: finder(threeSites()), buildScreen });
     expect(result.code).toBe(2);
     expect(result.err).toMatch(/cannot read the --rate-sheet file/);
     expect(screen.calls).toHaveLength(0);
@@ -346,7 +346,7 @@ describe("command line with the real screen builder", () => {
   });
 
   it("refuses a real run with no screen configured", async () => {
-    const result = await run([], { findSites: finder(threeSites()) });
+    const result = await run(["--route", "static-screen/v1"], { findSites: finder(threeSites()) });
     expect(result.code).toBe(1);
     expect(result.err).toMatch(/no screen is configured/);
     expect(existsSync(result.outFile)).toBe(false);
@@ -361,7 +361,7 @@ describe("command line with the real screen builder", () => {
     }
     const screen = scripted([miss(), miss(), miss()]);
     const buildScreen = builder(screen);
-    const result = await run([], { findSites: finder(threeSites()), buildScreen });
+    const result = await run(["--route", "static-screen/v1"], { findSites: finder(threeSites()), buildScreen });
     expect(result.code).toBe(2);
     expect(result.err).toMatch(message);
     expect(screen.calls).toHaveLength(0);
@@ -373,7 +373,7 @@ describe("command line with the real screen builder", () => {
     vi.stubEnv("TOKEN_FACTORY_SCREEN_KEY", REAL_ENV.TOKEN_FACTORY_SCREEN_KEY);
     const screen = scripted([miss(), miss(), miss()]);
     // Kimi's worst-case call is priced above a third of the default $0.25 budget.
-    const result = await run(["--model", "kimi"], { findSites: finder(threeSites()), buildScreen: builder(screen) });
+    const result = await run(["--route", "static-screen/v1", "--model", "kimi"], { findSites: finder(threeSites()), buildScreen: builder(screen) });
     expect(result.code).toBe(2);
     expect(result.err).toMatch(/--screen-budget-usd is too small for 3 attempts on kimi: 3 attempts at a worst case of \d+ micro-USD each/);
     expect(screen.calls).toHaveLength(0);
@@ -381,7 +381,7 @@ describe("command line with the real screen builder", () => {
   });
 
   it("checks the budget on a dry run of the real screen too", async () => {
-    const result = await run(["--dry-run", "--model", "kimi"], { findSites: finder(threeSites()) });
+    const result = await run(["--route", "static-screen/v1", "--dry-run", "--model", "kimi"], { findSites: finder(threeSites()) });
     expect(result.code).toBe(2);
     expect(result.err).toMatch(/--screen-budget-usd is too small/);
   });
@@ -394,7 +394,7 @@ describe("command line with the real screen builder", () => {
 
   it("exits 1 and names the reason when a screen stopped the run, keeping the record", async () => {
     const screen = scripted([new ScreenStopError("operation op-9 is unsettled", 250_000), miss()]);
-    const result = await run([], { findSites: finder(threeSites()), screen });
+    const result = await run(["--route", "static-screen/v1"], { findSites: finder(threeSites()), screen });
     expect(result.code).toBe(1);
     expect(result.err).toMatch(/stopped screening: screen_stopped/);
     expect(result.err).toContain("op-9");

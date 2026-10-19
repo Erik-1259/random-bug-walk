@@ -1,0 +1,67 @@
+{
+  "criteria_catalog_version": "1",
+  "filler_phrases": [
+    "I want a bug where",
+    "I need a bug where",
+    "find a bug where",
+    "a bug where",
+    "please"
+  ],
+  "bug_types": [
+    {
+      "bug_type_id": "concurrency",
+      "label": "Concurrency",
+      "description": "Overlapping requests or jobs leave a wrong stored result or return a wrong response.",
+      "criteria": [
+        {
+          "criterion_id": "concurrency.lost-acknowledged-change",
+          "version": "1",
+          "label": "An acknowledged change is lost when requests overlap",
+          "description": "Two overlapping requests both receive a success response, but at least one acknowledged change is missing from what was stored.",
+          "example_phrases": [
+            "an acknowledged change is lost when requests overlap",
+            "a saved change disappears when two updates overlap",
+            "acknowledged change is lost",
+            "lost update",
+            "overlapping updates lose a change"
+          ],
+          "failure_code": "acknowledged_completion_not_counted"
+        },
+        {
+          "criterion_id": "concurrency.stale-success-response",
+          "version": "1",
+          "label": "A success response reports data different from what was stored when requests overlap",
+          "description": "Under overlapping requests, a success response returns data that differs from what was actually stored.",
+          "example_phrases": [
+            "a success response reports data different from what was stored when requests overlap",
+            "the response shows a value that was not saved",
+            "stale success response",
+            "the response does not match what was stored"
+          ],
+          "failure_code": "stale_success_response"
+        }
+      ]
+    },
+    {
+      "bug_type_id": "date_time",
+      "label": "Date and time",
+      "description": "Dates, times or time zones are computed, compared or grouped incorrectly.",
+      "criteria": [
+        {
+          "criterion_id": "date_time.time-zone-grouping",
+          "version": "1",
+          "label": "Results grouped by date or time use the wrong time zone",
+          "description": "Results grouped by date or time are placed in buckets of a different time zone from the one requested or configured.",
+          "example_phrases": [
+            "results grouped by date or time use the wrong time zone",
+            "daily totals use the wrong time zone",
+            "events are counted on the wrong day",
+            "wrong time zone",
+            "daily counts shift by time zone"
+          ],
+          "failure_code": "local_day_counts_mismatch"
+        }
+      ]
+    }
+  ]
+}

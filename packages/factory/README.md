@@ -1,0 +1,54 @@
+# @rbw/factory
+
+The factory's core logic for the bug request contract `bug-request/1` ([`docs/product/bug-request-v1.md`](../../docs/product/bug-request-v1.md), revision 2): the criteria catalog, capabilities, request interpretation, the canonical start, the factory's identities, budget admission, assignment, the qualification verdict, the request loop and the request status projection. Every side effect is injected (the event store, the spend ledger, the stop check, the export-verification harness, packaging, evidence storage and the clock), so the web service and the hosted worker share one implementation. The shared shapes come from `@rbw/factory-contract`; this package defines no copy of them. It holds no limit, envelope or worst-case number: those come from the injected factory profile.
+
+## Modules
+
+| Module | What it does |
+| --- | --- |
+| `criteria-catalog/v1.json`, `src/criteria.ts` | Criteria catalog version 1: the two bug types, three criteria (each with a version, label, description, at least four example phrases and the failure code the real checks report) and the interpreter's filler phrases. `parseCriteriaCatalog` checks a catalog (known bug types once each, unique criterion IDs and failure codes); `criteriaCatalogV1()` reads the file once. Every function takes the catalog as an argument, so tests can inject the fixtures' catalog. |
+| `src/capabilities.ts` | `buildCapabilities` (contract section 4) from the host registry, the catalog, the profile and an injected clock. A combination is supported when its source has an entry that the host's `availability` allows for the planned span (now to now plus `max_wall_clock_s`); otherwise it carries the host's reason. |
+| `src/match.ts` | Interpreter `criteria-match` version 1 (section 6.1): exact phrase matching on words (maximal runs of letters and digits, compared case-insensitively), every word covered by a criterion phrase or a filler phrase, and each maximal run of uncovered words reported as the description's text. |
+| `src/input.ts` | Request input validation against the contract schema and the profile's limits (section 4.3), normalization (descriptions trimmed, empty to `null`), and `canonicalStart`: the start body validated (unknown and missing fields refused) and the SHA-256 of its canonical body, for the idempotency check of section 7. |
+| `src/interpret.ts` | `interpret` (section 6): items, criteria, unmatched text, eligible sources, every problem code of section 6.2 (`quantity_exceeds_source` counts distinct defects, and how many units they can fill), budget worst cases from the profile, and `interpretation_sha256`. |
+| `src/identity.ts` | The only implementation of `defect_id`, `case_id`, `candidate_id`, the environment hash, the two UUIDv5 namespaces, the request and validation roots, a copy's execution ID and the factory project ID. |
+| `src/budget.ts` | Budget admission before each candidate: the request budget's room and the pool's available amount must both cover the candidate's worst case (otherwise it is skipped with `no_budget_for_candidate`); a halted ledger, a halted pool or an overrun admits nothing. |
+| `src/assignment.ts` | Assignment order (items with more criteria first, then request order), the criteria a candidate demonstrates (only those whose published failure code was observed on the buggy copy), the item a candidate fills (contract section 10.5), and candidate selection in catalog order. |
+| `src/verdict.ts` | The qualification verdict (stopped, export mismatch, invalid, rejected with the first reason of section 8.3, incomplete, or matched; invalid and incomplete evidence never become a rejection) and the qualification record. |
+| `src/orchestrator.ts` | `runRequest(deps)`: the request loop described below. |
+| `src/projection.ts` | `projectStatus` (section 8) from the request record, its events, the stored case evidence, the latest validation run of each case, the heartbeat, the ledger's budget status and a clock; `workerAttentionEvent` (raise or clear `worker_unresponsive` from the heartbeat age) and `lostWorkerEvents` (the events of the lost-worker finish). |
+| `src/service.ts` | `serviceFunctions`: capabilities, the interpretation of a request body and the canonical start, bound to one registry, catalog and profile. |
+| `src/testing/` (`@rbw/factory/testing`) | Synthetic adapters and entries, a test profile with the contract's test-mode worst cases, a deterministic harness, the named scenarios of contract section 15.1, and an in-memory ledger and event store. |
+
+## The request loop
+
+`runRequest` takes the frozen request, the host registry (adapters in catalog order), the catalog, the profile and the ports in `src/ports.ts`. It appends `host_preparing` and `host_ready` for each host it will use, then for each candidate:
+
+1. Stops when every item is filled (`fulfilled`), a stop is recorded (`cancelled_by_user`), the deadline passed (`time_limit`), or the ledger is halted or overran (`operational_error`).
+2. Selects the next entry: for the items with an unfilled unit in assignment order, the first untried entry in catalog order that declares every criterion of the item. None left: `source_exhausted` for each source that was fully tried, then `sources_exhausted`, or `budget_exhausted` when a short item's entry was skipped for budget. The candidate limit counts started candidates.
+3. Appends `candidate_selected`. An entry whose defect this request already tried is skipped (`duplicate_defect`). A worst case the budget or the pool cannot cover is skipped (`no_budget_for_candidate`), as is a reservation the ledger refuses.
+4. Reserves the candidate's worst case (the sum of its protocol's copies at the host's copy envelope) and runs export verification through the injected harness. Before every copy it checks the stop record and that the copy's timeout fits before the deadline; after every copy it reads the ledger and appends `budget_updated` when the amounts changed, and after the last copy of a state it appends that state's two `check_finished` events.
+5. Applies the verdict. A matched candidate gets `behavior_checks_passed`; it is assigned to an item (`requested_criteria_passed`) or rejected with `wrong_failure`. An assigned candidate is packaged, its evidence (the client-safe case and the qualification record) is stored, and `package_ready` and `case_delivered` follow. The stored bug case must be the archive export verification ran on.
+6. Settles the candidate and appends `budget_updated`.
+
+A rejection of the harness, of a reservation or of a candidate's settlement is an uncertain outcome: the loop appends `attention` (`needs_reconciliation`), never retries and finishes `needs_reconciliation`, leaving the reservation held. The finish settles the worker through the ledger port (a failed worker settlement keeps the outcome and sets attention) and appends `request_finished`. The result says whether the slot must stay held and lists caught failures for the operator's log. Check output, observation detail and failure codes never enter an event message, a candidate or a case.
+
+The loop appends every request event except `request_accepted`, `stop_requested`, the start reservation's `budget_updated`, `worker_started`, the validation events and the lost-worker finish. Event keys are deterministic and unique per request; `src/events.ts` lists the scheme.
+
+## Ports
+
+| Port | Behavior the loop relies on |
+| --- | --- |
+| `EventSink.append(event)` | Assigns `seq`; the same `event_key` with the same content replays, different content conflicts. |
+| `RequestLedger` | `status()` reports the budget's reserved and spent amounts, the halt state and the pool's available amount; `reserveCandidate` is the hard bound behind the pre-check; `settleCandidate` and `settleWorker` settle. An implementation that reserves per copy inside the runner may answer `reserved` and reserve per copy: the loop reads `status()` after every copy. |
+| `QualifyHarness` | Runs export verification for one entry with the `beforeCopy` and `onCopy` hooks and resolves with the harness result, its identity and whether the archives passed their integrity checks; it rejects only for an uncertain provider outcome. |
+| `PackageCase`, `writeEvidence` | Store the case's two parts (the validator archive includes the qualification record) and the per-request evidence. |
+| `FactoryProfileInput` | `profile_sha256`, `limits`, `worker_worst_case_microusd`, and per host `copy_envelope_microusd` and `validation_worst_case_microusd`. |
+
+## Tests
+
+```
+pnpm --filter @rbw/factory test
+```
+
+The tests reproduce every interpretation fixture and `capabilities.json` from synthetic adapters and the test profile, reproduce every `status-*.json` fixture from its event sequence, run every named scenario of contract section 15.1 through the loop with the deterministic harness and check the end state's outcome, stop code, delivery, attention, stages and counts against its fixture, and validate each produced shape with `@rbw/factory-contract/validate`. Counting, assignment, verdicts, stop paths and budget admission have their own tests. All data is synthetic; nothing calls a network service.

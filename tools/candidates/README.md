@@ -1,6 +1,11 @@
 # @rbw/candidates
 
-The candidate pipeline. Given a class-level shape rule, it lists every site the rule matches in the host tree, plants each site in its own scratch copy, runs the static-headroom screen on each copy, and ranks the candidates that survive. The result is one run record, so checks (the expensive step of the bug generation pipeline) are written only for candidates worth building them for.
+The candidate pipeline. Given a class-level shape rule, it lists every site the rule matches in the host tree and plants each site. What happens next depends on the route (`--route`):
+
+- `behavioral-qualification/v1` (the default) checks and plants each site in memory and records the planted candidates for behavioral qualification: checks on clean, buggy and reference-fixed copies, which run outside this tool. It makes no copy, never builds or calls a screen, reads no screen key, needs no database and spends nothing. Each candidate records `difficulty: { status: "not_assessed" }`.
+- `static-screen/v1` plants each site in its own scratch copy, runs the static-headroom screen on each copy, and ranks the candidates that survive, so checks (the expensive step of the bug generation pipeline) are written only for candidates worth building them for.
+
+Either way the result is one run record.
 
 The pipeline is wired to the real implementations:
 
@@ -15,7 +20,7 @@ The pipeline is wired to the real implementations:
 
 A screen must be told a symptom — what a user sees — without being told where the bug is. The pipeline derives one **per candidate**, from the site alone, with no model call (`src/symptom.ts`): the endpoint the file implies (a file under an `api` directory becomes a path, a `route` filename dropping to its directory) and, at most, the name of the model the diff touches. It describes only what a user would see: no method call, no field and no read-then-write mechanics from the code. For the race class it describes what concurrent requests to that endpoint would show — for example that two requests arriving at once can both succeed when only one should. The tests check, for the synthetic fixtures and for every site the real finder returns from the synthetic race tree, that a symptom repeats no identifier from the diff's changed lines (other than the model name and the endpoint's own path segments) and no method or `<model>.<method>` call the diff touches. The run record keeps each candidate's symptom by SHA-256, never its text, and names the template generation (`race-class-template-v2`).
 
-## What a run does
+## What a static-screen/v1 run does
 
 1. Calls `findSites` once. Exact duplicates (same file, line and diff) are collapsed. Sites whose planted form the finder confirmed come first (an unconfirmed rewrite, such as one that leaves a second guard so the write stays conditional, may not plant the bug at all), then by confidence, highest first, then by file and line.
 2. Checks each site and plants it in memory: the path must stay inside the host, the line must be a positive integer, the confidence must be from 0 to 1, the file must be a regular file, and the diff must name only that file, apply exactly and change it. A site that fails is recorded as `invalid_site` or `plant_failed` with a reason code, and does not count toward the candidate cap. The first `--max-candidates` sites that plant become candidates; the rest are recorded as `over_candidate_cap`. Each planted candidate gets its symptom (and the symptom's SHA-256 in the record).
@@ -26,7 +31,11 @@ A screen must be told a symptom — what a user sees — without being told wher
 
 A dry run does steps 1 and 2 only: it makes no copies, calls no screen and spends nothing, derives each candidate's symptom (recording its SHA-256) and records the most the screens could spend under the caps. A dry run needs neither `DATABASE_URL` nor the Token Factory key.
 
-## The run record
+## The default route's record
+
+A `behavioral-qualification/v1` run lists and plants as steps 1 and 2 above (the same checks, statuses and candidate cap), then writes a canonical record of kind `candidate_run`, version 2: the route (`{ route_id: "behavioral-qualification", version: "1" }`), the run ID and time, the rule's ID and SHA-256, the host commit when given, the finder's name, the candidate cap, every site with its status (`pending_qualification` for a planted candidate, or `invalid_site`, `plant_failed` or `over_candidate_cap`), reason, confidence in parts per million, planted-form confirmation and level, diff and `difficulty: { status: "not_assessed" }`, and totals. It has no screen fields. The screen options are still parsed and checked, but the route has no screen prerequisite: no key, no `DATABASE_URL`, no rate sheet and no per-screen budget check. See `BehavioralRunRecord` in `src/routes.ts`.
+
+## The static-screen/v1 run record
 
 The record is canonical JSON (`@rbw/schema`'s `encodeCanonical`: sorted keys, integers only). It holds the record kind `candidate_run` and version 1, the run ID and time, whether it was a dry run, the rule's ID and SHA-256, the host commit when given, how the symptoms were made (`symptom_source`), the screen model (`screen_model`), the finder and screen implementation names, the caps, every site with its status, reason, confidence in parts per million, whether its planted form was confirmed and its confidence level (null when the finder reports neither), diff, its symptom's SHA-256 (not the text; null for a site that did not plant), screen result, amount charged and rank, the ranking of survivor IDs, why screening stopped (if it did), and totals. A candidate's ID is the SHA-256 of its file, line and diff. See `RunRecord` in `src/pipeline.ts`.
 
@@ -36,16 +45,18 @@ The record lists candidate sites in the host, and a list of sites in a real host
 
 ```sh
 node tools/candidates/src/cli.ts --rule <class rule file> --host <host tree> --out <new record file> \
+  [--route behavioral-qualification/v1|static-screen/v1] \
   [--rule-id <id>] [--host-commit <40-hex sha>] [--dry-run] [--model super|kimi] \
   [--max-candidates <n>] [--max-spend-usd <usd>] [--screen-budget-usd <usd>] [--screen-attempts <n>] \
   [--slot-key <key>] [--pool <key>] [--rate-sheet <path>] \
   [--scratch <dir>] [--keep-scratch]
 ```
 
-A real run (no `--dry-run`) reads `DATABASE_URL` and `TOKEN_FACTORY_SCREEN_KEY` from the environment and never prints either value. The spend ledger named by `DATABASE_URL` must already have the `@rbw/spend` migrations applied. Before anything runs, the command checks what the real screen would otherwise refuse once per candidate: that both variables are set (real run only), that the rate sheet prices the model, and that `--screen-attempts` calls at the model's worst-case price fit in `--screen-budget-usd` (on a dry run too). Model calls go through `@rbw/screen`'s fetch, whose timeouts match the longest screen profile, and a dropped database connection is reported as that screen's failure instead of ending the process.
+A real `static-screen/v1` run (no `--dry-run`) reads `DATABASE_URL` and `TOKEN_FACTORY_SCREEN_KEY` from the environment and never prints either value. The spend ledger named by `DATABASE_URL` must already have the `@rbw/spend` migrations applied. Before anything runs, the command checks what the real screen would otherwise refuse once per candidate: that both variables are set (real run only), that the rate sheet prices the model, and that `--screen-attempts` calls at the model's worst-case price fit in `--screen-budget-usd` (on a dry run too). Model calls go through `@rbw/screen`'s fetch, whose timeouts match the longest screen profile, and a dropped database connection is reported as that screen's failure instead of ending the process.
 
 | Option | Default | Meaning |
 | --- | --- | --- |
+| `--route` | `behavioral-qualification/v1` | The candidate route: `behavioral-qualification/v1` or `static-screen/v1`. |
 | `--rule-id` | the rule file's name without `.yml` | The rule ID recorded and passed to the finder. |
 | `--model` | `super` | The screen model profile (`super` or `kimi`). |
 | `--max-candidates` | 10 | Most candidates planted and screened. |
@@ -68,6 +79,7 @@ With `DATABASE_URL` and `TOKEN_FACTORY_SCREEN_KEY` set, and the record written *
 ```sh
 DATABASE_URL=… TOKEN_FACTORY_SCREEN_KEY=… \
 node tools/candidates/src/cli.ts \
+  --route static-screen/v1 \
   --rule packages/shapes/rules/race.class.yml \
   --rule-id race.class \
   --host /path/to/host/checkout \
