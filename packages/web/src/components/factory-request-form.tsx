@@ -34,6 +34,7 @@ export function FactoryRequestForm({ previewOptions = [] }: { previewOptions?: r
   const [nextId, setNextId] = useState(2);
   const [budget, setBudget] = useState("");
   const errors = factoryDraftErrors(rows, budget);
+  const budgetInvalid = factoryDraftErrors([], budget).length > 0;
   const selectedHosts = host === "both" ? ["umami", "custom"] : [host];
   const options = previewOptions.filter((option) => selectedHosts.every((selected) => option.hosts.includes(selected)));
   const update = (id: number, changes: Partial<FactoryDraftRow>) => { setRows((current) => current.map((row) => row.id === id ? { ...row, ...changes } : row)); };
@@ -67,14 +68,18 @@ export function FactoryRequestForm({ previewOptions = [] }: { previewOptions?: r
         <label htmlFor={`factory-specification-${String(row.id)}`}>Optional plain-language specification for item {index + 1}</label>
         <textarea id={`factory-specification-${String(row.id)}`} value={row.specification}
           onChange={(event) => { update(row.id, { specification: event.target.value }); }} />
-        <button className="factory-button" type="button" disabled={rows.length === 1} onClick={() => { setRows((current) => current.filter((item) => item.id !== row.id)); }}>Remove item {index + 1}</button>
+        <button className="factory-button" type="button" disabled={rows.length === 1} onClick={(event) => {
+          event.currentTarget.form?.querySelector<HTMLButtonElement>("#factory-add-item")?.focus();
+          setRows((current) => current.filter((item) => item.id !== row.id));
+        }}>Remove item {index + 1}</button>
       </fieldset>)}
-      <button className="factory-button" type="button" onClick={() => {
+      <button id="factory-add-item" className="factory-button" type="button" onClick={() => {
         setRows((current) => [...current, { id: nextId, type: "", quantity: "1", specification: "" }]);
         setNextId((current) => current + 1);
       }}>Add request item</button>
       <label htmlFor="factory-budget">Desired shared budget (USD)</label>
-      <input id="factory-budget" type="number" step="any" value={budget} aria-describedby="factory-budget-help"
+      <input id="factory-budget" type="number" step="any" value={budget} aria-invalid={budgetInvalid}
+        aria-describedby={budgetInvalid ? "factory-budget-help factory-draft-errors" : "factory-budget-help"}
         onChange={(event) => { setBudget(event.target.value); }} />
       <p id="factory-budget-help">One budget covers the whole request. Permitted limits and accounting are not available yet; this draft does not authorize spending.</p>
       <p>Source-inferable bugs are allowed by default. The harder per-description option is unavailable; no difficulty assessment is claimed.</p>

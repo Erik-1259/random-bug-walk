@@ -1,6 +1,13 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { FactoryRequestForm, factoryDraftErrors } from "../src/components/factory-request-form.tsx";
+
+const fixture = vi.hoisted(() => ({ budget: "" }));
+vi.mock("react", async (importOriginal) => {
+  const react = await importOriginal<typeof import("react")>();
+  return { ...react, useState: (initial: unknown) => react.useState(initial === "" ? fixture.budget : initial) };
+});
+afterEach(() => { fixture.budget = ""; });
 
 describe("local factory request draft", () => {
   it("keeps live submission disabled and makes missing capabilities explicit", () => {
@@ -31,6 +38,16 @@ describe("local factory request draft", () => {
     const html = renderToStaticMarkup(<FactoryRequestForm />);
     for (const match of html.matchAll(/<label for="([^"]+)"/g)) expect(html).toContain(`id="${match[1] ?? ""}"`);
     expect(html).toContain("<legend>Request item 1</legend>");
+  });
+
+  it("associates an invalid budget with its error while retaining budget guidance", () => {
+    fixture.budget = "0";
+    const html = renderToStaticMarkup(<FactoryRequestForm />);
+    expect(html).toMatch(/id="factory-budget"[^>]*aria-invalid="true"[^>]*aria-describedby="factory-budget-help factory-draft-errors"/);
+    expect(html).toContain('id="factory-draft-errors"');
+    expect(html).toContain("Enter a positive shared budget");
+    fixture.budget = "12";
+    expect(renderToStaticMarkup(<FactoryRequestForm />)).toMatch(/id="factory-budget"[^>]*aria-invalid="false"[^>]*aria-describedby="factory-budget-help"/);
   });
 
   it("validates individual quantities without treating descriptions as a combined request", () => {
