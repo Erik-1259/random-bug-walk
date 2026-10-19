@@ -1,0 +1,36 @@
+diff --git a/src/completions/store.ts b/src/completions/store.ts
+--- a/src/completions/store.ts
++++ b/src/completions/store.ts
+@@ -9,24 +9,12 @@
+   taskId: string,
+   completedAt: string | null,
+ ): Promise<Completion | null> {
+-  await query(pool, 'BEGIN', []);
+-  try {
+-    const tasks = await query<{ id: string }>(pool, 'SELECT id FROM tasks WHERE id = $1 FOR SHARE', [taskId]);
+-    if (tasks.length === 0) {
+-      await query(pool, 'ROLLBACK', []);
+-      return null;
+-    }
+-    const rows = await query<CompletionRow>(
+-      pool,
+-      'INSERT INTO completions (task_id, completed_at) VALUES ($1, COALESCE($2::timestamptz, now())) RETURNING id, task_id, completed_at',
+-      [taskId, completedAt],
+-    );
+-    await query(pool, 'COMMIT', []);
+-    const row = rows[0];
+-    if (row === undefined) return null;
+-    return { id: row.id, task_id: row.task_id, completed_at: row.completed_at.toISOString() };
+-  } catch (err) {
+-    await query(pool, 'ROLLBACK', []).catch(() => undefined);
+-    throw err;
+-  }
++  const rows = await query<CompletionRow>(
++    pool,
++    'INSERT INTO completions (task_id, completed_at) SELECT t.id, COALESCE($2::timestamptz, now()) FROM tasks t WHERE t.id = $1 RETURNING id, task_id, completed_at',
++    [taskId, completedAt],
++  );
++  const row = rows[0];
++  if (row === undefined) return null;
++  return { id: row.id, task_id: row.task_id, completed_at: row.completed_at.toISOString() };
+ }
