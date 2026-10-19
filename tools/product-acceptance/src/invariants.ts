@@ -128,7 +128,7 @@ export function checkStatus(value: unknown): void {
   }
   const totals = objects(s.type_totals);
   unique(totals.map(t => t.bug_type_id));
-  assert.equal(totals.length, new Set(items.map(i => i.bug_type_id)).size);
+  assert.deepEqual(totals.map(t => text(t.bug_type_id)).sort(), [...new Set(items.map(i => text(i.bug_type_id)))].sort(), "type totals do not identify requested types");
   for (const total of totals) for (const field of ["requested", "delivered", "missing"]) {
     assert.equal(total[field], items.filter(i => i.bug_type_id === total.bug_type_id).reduce((sum, i) => sum + nonnegative(i[field]), 0));
   }

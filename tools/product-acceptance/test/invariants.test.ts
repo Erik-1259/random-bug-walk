@@ -61,3 +61,10 @@ for (const set of ["original_suite", "verification"]) for (const copy of ["clean
     expect(() => { if (kind === "case") checkStatus(value); else checkValidation(value); }).toThrow();
   });
 }
+it("rejects unrelated type totals even when their count matches requested types", () => {
+  const value = object(fixture("status-fulfilled"));
+  value.type_totals = objects(value.type_totals).map((_total, index) => ({
+    bug_type_id: `synthetic-unrequested-${String(index)}`, requested: 0, delivered: 0, missing: 0,
+  }));
+  expect(() => { checkStatus(value); }).toThrow();
+});
