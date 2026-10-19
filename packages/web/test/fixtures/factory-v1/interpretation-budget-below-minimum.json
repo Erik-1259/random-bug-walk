@@ -46,7 +46,14 @@
         }
       ],
       "status": "supported",
-      "problems": []
+      "problems": [
+        {
+          "code": "budget_below_item_minimum",
+          "severity": "warning",
+          "message": "A budget of $0.70 leaves $0.50 after the worker's worst case of $0.20, which is below one candidate's worst case of $0.60 on Umami, the only host eligible for this item.",
+          "item_key": "date-time-1"
+        }
+      ]
     }
   ],
   "type_totals": [

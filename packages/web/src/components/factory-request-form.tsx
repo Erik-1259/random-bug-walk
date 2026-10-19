@@ -6,10 +6,10 @@ import type { Capabilities, RequestInput } from "../factory/client.ts";
 type Item = RequestInput["items"][number];
 export interface FactoryDraftRow {
   item_key: string;
-  bug_type_id: Item["bug_type_id"];
+  bug_type_id: Item["bug_type_id"] | "";
   quantity: string;
   description: string;
-  difficulty: Item["difficulty"];
+  difficulty: Item["difficulty"] | "";
 }
 
 export function usdToMicrousd(value: string): number | null {

@@ -1,4 +1,4 @@
-/* global document, localStorage, innerWidth */
+/* global document, localStorage, innerWidth, navigator */
 // Synthetic transport proof only. Run against a local production build with the public results snapshot.
 // node test/factory-browser.mjs <playwright-index.mjs> <chromium> <origin> <output-dir> <results-repository>
 import fs from "node:fs";
@@ -38,7 +38,7 @@ const fixture = name => JSON.parse(fs.readFileSync(new URL(`./fixtures/factory-v
    }
    const status=()=>{const data=fixture(phase==='running'?'status-running':phase==='cancelled'?'status-cancelled':'status-fulfilled');data.request_id=requestId;data.interpretation=interpretation;return data;};
    if(url.pathname.endsWith('/stop')){phase='cancelled';return send(status());}
-   if(url.pathname.endsWith('/validations')&&method==='POST') {validateCalls++;validationId=req.postDataJSON().validation_id;if(refuseValidation)return send(fixture('error-budget-unavailable'),409);return route.abort('failed');}
+   if(url.pathname.endsWith('/validations')&&method==='POST') {validateCalls++;validationId=req.postDataJSON().validation_id;assert.equal(await page.evaluate(()=>localStorage.getItem('rbw-factory-validation-id')),validationId);if(refuseValidation)return send(fixture('error-budget-unavailable'),409);return route.abort('failed');}
    if(url.pathname.includes('/validations/')){if(refuseValidation)return send(fixture('error-not-found'),404);const data=fixture('validation-passed');data.validation_id=validationId;return send(data);}
    if(url.pathname.includes('/requests/'))return requestId===null?send(fixture('error-not-found'),404):send(status());
    return send(fixture('error-not-found'),404);
@@ -85,6 +85,7 @@ const fixture = name => JSON.parse(fs.readFileSync(new URL(`./fixtures/factory-v
   await page.getByRole('button',{name:'Validate case',exact:true}).click();
   await page.getByRole('alert').filter({hasText:'budget_unavailable:'}).waitFor();
   assert.equal(await page.evaluate(()=>localStorage.getItem('rbw-factory-validation')),null);
+  assert.equal(await page.evaluate(()=>localStorage.getItem('rbw-factory-validation-id')),null);
   assert.equal(await page.getByRole('button',{name:'Retry the same validation',exact:true}).count(),0);
   assert.equal(await page.getByRole('link',{name:'Download bug case',exact:true}).count(),1);
   await page.reload({waitUntil:'networkidle'});
@@ -95,23 +96,38 @@ const fixture = name => JSON.parse(fs.readFileSync(new URL(`./fixtures/factory-v
   console.log(`PASS synthetic ${width}px: capabilities/form/limits/errors, host preservation, removal focus, interpretation invalidation, busy refusal preserves draft, stored-id lost response/reload, duplicate clicks, stop retained case, separate downloads, validation identity recovery; no real service calls`);
   await context.close();
  }
- const tabs=await browser.newContext();let tabStarts=0,savedId=null;
+ const tabs=await browser.newContext();let tabStarts=0,savedId=null,tabsFinished=false,tabValidationId=null,tabValidationCalls=0,finishTabValidation;
+ const validationGate=new Promise(resolve=>{finishTabValidation=resolve;});
  await tabs.route('**/api/factory/**',async route=>{
   const request=route.request(),path=new URL(request.url()).pathname;
   let body;
   if(path.endsWith('/capabilities')){body=fixture('capabilities');body.service.message='Synthetic two-tab fixture — not live execution.';}
   else if(path.endsWith('/session'))body=fixture('session');
   else if(path.endsWith('/interpretations')){body=fixture('interpretation-supported');body.input=request.postDataJSON();}
-  else {if(request.method()==='POST'){tabStarts++;savedId=request.postDataJSON().request_id;}body=fixture('status-running');body.request_id=savedId;}
+  else if(path.includes('/validations')){if(request.method()==='POST'){tabValidationCalls++;tabValidationId=request.postDataJSON().validation_id;await validationGate;}body=fixture('validation-running');body.validation_id=tabValidationId;}
+  else {if(request.method()==='POST'){tabStarts++;savedId=request.postDataJSON().request_id;}body=fixture(tabsFinished?'status-fulfilled':'status-running');body.request_id=savedId;}
   await route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(body)});
  });
  const first=await tabs.newPage(),second=await tabs.newPage();
  for(const tab of [first,second]){await tab.goto(origin+'/factory',{waitUntil:'networkidle'});await tab.getByRole('button',{name:'Review requirements',exact:true}).click();await tab.getByRole('button',{name:'Start request',exact:true}).waitFor();}
- await first.getByRole('button',{name:'Start request',exact:true}).click();await first.getByRole('heading',{name:'Request running',exact:true}).waitFor();
- await second.getByRole('button',{name:'Start request',exact:true}).click();await second.getByRole('heading',{name:'Request running',exact:true}).waitFor();
+ await first.evaluate(()=>{void navigator.locks.request('rbw-factory-identity',async()=>{globalThis.factoryTestLockHeld=true;await new Promise(resolve=>{globalThis.releaseFactoryTestLock=resolve;});});});
+ await first.waitForFunction(()=>globalThis.factoryTestLockHeld===true);
+ await Promise.all([first.getByRole('button',{name:'Start request',exact:true}).click(),second.getByRole('button',{name:'Start request',exact:true}).click()]);
+ assert.equal(tabStarts,0);await first.evaluate(()=>globalThis.releaseFactoryTestLock());
+ await first.getByRole('heading',{name:'Request running',exact:true}).waitFor();await second.getByRole('heading',{name:'Request running',exact:true}).waitFor();
  assert.equal(tabStarts,1);assert.equal(await second.evaluate(()=>localStorage.getItem('rbw-factory-request-id')),savedId);
  await first.reload({waitUntil:'networkidle'});await first.getByRole('heading',{name:'Request running',exact:true}).waitFor();assert.equal(tabStarts,1);
- await tabs.close();console.log('PASS synthetic two-tab stale start resumes the persisted request without a second POST; reload preserves identity.');
+ tabsFinished=true;
+ for(const tab of [first,second]){await tab.reload({waitUntil:'networkidle'});await tab.getByRole('heading',{name:'Fulfilled',exact:true}).waitFor();}
+ await first.getByRole('button',{name:'Validate case',exact:true}).first().click();
+ await first.waitForFunction(()=>localStorage.getItem('rbw-factory-validation-id')!==null);
+ await second.getByRole('button',{name:'Prepare another request',exact:true}).click();
+ assert.equal(await second.evaluate(()=>localStorage.getItem('rbw-factory-request-id')),savedId);
+ finishTabValidation();await second.getByText('Validation: running',{exact:true}).waitFor();
+ assert.equal(await second.evaluate(()=>localStorage.getItem('rbw-factory-validation-id')),tabValidationId);
+ assert.equal(await second.getByRole('link',{name:'Download bug case',exact:true}).count(),2);
+ await second.reload({waitUntil:'networkidle'});await second.getByText('Validation: running',{exact:true}).waitFor();assert.equal(tabValidationCalls,1);
+ await tabs.close();console.log('PASS synthetic simultaneous tabs serialize Start; cleanup during another tab’s validation preserves identity, delivered cases and reload.');
  const context=await browser.newContext();const page=await context.newPage();const writes=[];
  page.on('request',request=>{if(request.method()!=='GET')writes.push(request.url());});
  await page.goto(origin+'/factory',{waitUntil:'networkidle'});await page.getByText('Live requests unavailable',{exact:true}).waitFor();

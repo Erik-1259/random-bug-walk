@@ -2,16 +2,16 @@
   "contract_version": "bug-request/1",
   "error": {
     "code": "interpretation_stale",
-    "message": "The interpretation changed since it was shown. Review the current interpretation in details and start again.",
+    "message": "The interpretation changed since it was shown: the criteria catalog is now version 2. Review the current interpretation in details and start again.",
     "retryable": false,
     "details": {
       "interpretation": {
         "contract_version": "bug-request/1",
-        "interpretation_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+        "interpretation_sha256": "1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b",
         "interpreter": {
           "interpreter_id": "criteria-match",
           "version": "1",
-          "criteria_catalog_version": "1"
+          "criteria_catalog_version": "2"
         },
         "qualification_route": {
           "route_id": "behavioral-qualification",

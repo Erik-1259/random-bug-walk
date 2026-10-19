@@ -1,66 +1,16 @@
-/** UI projection of bug-request/1 draft revision 1, pinned at 7540362198f5940f1add45a65593ac314e8d751e.
- * Replace these transport projections with the contract owner's shared exports when published.
- * This adapter does not interpret, qualify, schedule, or reserve spend. */
-export const FACTORY_CONTRACT_REVISION = "7540362198f5940f1add45a65593ac314e8d751e";
-export interface RequestInput {
-  hosts: string[];
-  items: { item_key: string; bug_type_id: string; quantity: number; description: string | null; difficulty: string }[];
-  budget_microusd: number;
-}
-export interface Capabilities {
-  contract_version: string;
-  service: { state: string; code: string | null; message: string | null };
-  hosts: { host_id: string; label: string; description: string; baseline_id: string }[];
-  bug_types: { bug_type_id: string; label: string; description: string; criteria: { criterion_id: string; version: string; label: string; description: string; example_phrases: string[] }[] }[];
-  combinations: { host_id: string; bug_type_id: string; status: string; reason: string | null; source: { entries: number; description: string } | null }[];
-  difficulty_options: { option_id: string; label: string; default: boolean; available: boolean; reason: string | null }[];
-  limits: { max_items: number; max_quantity_per_item: number; max_total_quantity: number; max_description_chars: number; budget_presets_microusd: number[]; default_budget_microusd: number; min_budget_microusd: number; max_budget_microusd: number; max_wall_clock_s: number; max_candidates: number };
-}
-export interface Problem { code: string; severity: string; message: string; item_key: string | null }
-export interface Interpretation {
-  contract_version: string; interpretation_sha256: string; input: RequestInput; startable: boolean;
-  items: { item_key: string; bug_type_id: string; quantity: number; description: string | null; status: string;
-    criteria: { criterion_id: string; version: string; label: string; matched_text: string | null }[];
-    unmatched_text: string[]; problems: Problem[] }[];
-  type_totals: { bug_type_id: string; quantity: number }[];
-  hosts: { host_id: string; used: boolean; reason: string | null }[];
-  budget: { budget_microusd: number; worker_worst_case_microusd: number; estimate_note: string; worst_case_per_validation_microusd: { host_id: string; microusd: number }[] };
-  problems: Problem[];
-}
-export interface Cell { expected: string; observed: string; runs_valid: number; runs_total: number; matches_expectation: boolean }
-export interface ValidationRun {
-  contract_version: string; validation_id: string; case_id: string; state: string; result: string | null;
-  matrix: { original_suite: { clean: Cell; buggy: Cell; fixed: Cell }; verification: { clean: Cell; buggy: Cell; fixed: Cell } } | null;
-  message: string | null; cost_microusd: number | null; poll_after_ms: number;
-}
-export interface PackagePart { kind: string; filename: string; ready: boolean; download_path: string | null; sha256: string }
-export interface FactoryCase {
-  case_id: string; title: string; host_id: string; host_label: string; baseline_id: string; bug_type_id: string; item_key: string | null;
-  summary: { observed_failure: string; how_checked: string };
-  difficulty: { status: string; note: string };
-  packages: { bug_case: PackagePart; validator: PackagePart };
-  validation: ValidationRun | null;
-}
-export interface FactoryEvent { seq: number; at: string; type: string; message: string }
-export interface RequestStatus {
-  contract_version: string; request_id: string; state: string; outcome: string | null; delivery: string;
-  stop_reason: { code: string; message: string } | null; attention: { code: string; message: string } | null;
-  interpretation: Interpretation;
-  budget: { budget_microusd: number; reserved_microusd: number; spent_microusd: number; committed_microusd: number; remaining_microusd: number; overrun: boolean };
-  funnel: { candidates_explored: number; behavior_checks_passed: number; requested_criteria_passed: number; packages_ready: number };
-  items: { item_key: string; bug_type_id: string; description: string | null; requested: number; delivered: number; missing: number; case_ids: string[] }[];
-  type_totals: { bug_type_id: string; requested: number; delivered: number; missing: number }[];
-  candidates: { candidate_id: string; host_id: string; stage: string; reason: { code: string; message: string } | null }[];
-  cases: FactoryCase[]; events: FactoryEvent[]; next_after: number; poll_after_ms: number;
-}
-export interface StartRequest { request_id: string; input: RequestInput; interpretation_sha256: string }
+/** Client integration with bug-request/1 draft revision 2 at the pinned shared-package commit.
+ * Qualification, interpretation and execution remain service responsibilities. */
+import { CONTRACT_VERSION_VALUES } from "@rbw/factory-contract";
+import type { Capabilities, RequestInput, Interpretation, RequestStatus, StartRequest, ValidationRun, SessionStatus } from "@rbw/factory-contract";
+export type { Capabilities, RequestInput, Interpretation, RequestStatus, StartRequest, ValidationRun, Cell, PackagePart, Problem, Case as FactoryCase, Event as FactoryEvent } from "@rbw/factory-contract";
+export const FACTORY_CONTRACT_REVISION = "52a7dc9a50a56c07539d100c4eb2f0f95039b0cb";
 export class FactoryError extends Error {
   code: string; status: number; details: Record<string, unknown> | null;
   constructor(code: string, message: string, status = 0, details: Record<string, unknown> | null = null) { super(message); this.code = code; this.status = status; this.details = details; }
 }
 export interface FactoryClient {
   capabilities(): Promise<Capabilities>;
-  session(): Promise<{ signed_in: boolean }>;
+  session(): Promise<SessionStatus>;
   signIn(passcode: string): Promise<void>;
   interpret(input: RequestInput): Promise<Interpretation>;
   start(input: StartRequest): Promise<RequestStatus>;
@@ -80,7 +30,7 @@ export function createFactoryClient(fetcher: typeof fetch = fetch): FactoryClien
         ...(body === undefined ? {} : { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }) });
       if (response.status === 204 && path === "session" && method === "POST") return undefined as T;
       const data: unknown = await response.json();
-      if (!record(data) || data.contract_version !== "bug-request/1") throw new FactoryError("unavailable", "The request service is unavailable or uses an unsupported contract.", response.status);
+      if (!record(data) || data.contract_version !== CONTRACT_VERSION_VALUES[0]) throw new FactoryError("unavailable", "The request service is unavailable or uses an unsupported contract.", response.status);
       if (!response.ok) {
         if (!record(data.error) || typeof data.error.code !== "string" || typeof data.error.message !== "string") throw new FactoryError("unavailable", "The request service returned an unreadable error.", response.status);
         throw new FactoryError(data.error.code, data.error.message, response.status, record(data.error.details) ? data.error.details : null);
@@ -105,8 +55,16 @@ export const factoryClient = createFactoryClient();
 
 export const REQUEST_KEY = "rbw-factory-request-id";
 const START_KEY = "rbw-factory-start";
-const VALIDATION_KEY = "rbw-factory-validation";
+const VALIDATION_KEY = "rbw-factory-validation"; // Scoped metadata also preserves revision-1 browser sessions.
+export const VALIDATION_ID_KEY = "rbw-factory-validation-id";
 interface StoredValidation { request_id: string; case_id: string; validation_id: string }
+export type FactoryIdentityLock = (operation: () => Promise<void>) => Promise<void>;
+/** One origin-wide lock covers identity writes and the response that decides whether they can clear. */
+export const browserIdentityLock: FactoryIdentityLock = async operation => {
+  const locks = typeof navigator === "undefined" ? undefined : (navigator as Partial<Navigator>).locks;
+  if (locks === undefined) throw new FactoryError("unavailable", "This browser cannot safely coordinate factory tabs. Web Locks support is required.");
+  await locks.request("rbw-factory-identity", { mode: "exclusive" }, operation);
+};
 export interface FactoryView {
   capabilities: Capabilities | null; signedIn: boolean; interpretation: Interpretation | null;
   status: RequestStatus | null; validation: ValidationRun | null; requestId: string | null;
@@ -125,11 +83,12 @@ export class FactoryController {
   private nextPollAt = 0;
   private initialized = false;
   private now: () => number;
+  private identityLock: FactoryIdentityLock;
   private failures = 0;
   private generation = 0;
   private moreEvents = false;
   private refreshAfterValidation = false;
-  constructor(client: FactoryClient, storage: Pick<Storage, "getItem" | "setItem" | "removeItem">, uuid: () => string, now: () => number = Date.now) { this.client = client; this.storage = storage; this.uuid = uuid; this.now = now; }
+  constructor(client: FactoryClient, storage: Pick<Storage, "getItem" | "setItem" | "removeItem">, uuid: () => string, now: () => number = Date.now, identityLock: FactoryIdentityLock = browserIdentityLock) { this.client = client; this.storage = storage; this.uuid = uuid; this.now = now; this.identityLock = identityLock; }
   snapshot = (): FactoryView => this.view;
   subscribe = (listener: () => void): (() => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
   private update(change: Partial<FactoryView>) { this.view = { ...this.view, ...change }; for (const listener of this.listeners) listener(); }
@@ -159,22 +118,46 @@ export class FactoryController {
     this.startBody = record(saved) && saved.request_id === id ? saved as unknown as StartRequest : null;
     const validation = this.storage.getItem(VALIDATION_KEY);
     const savedValidation: unknown = validation === null ? null : JSON.parse(validation);
-    this.validationIdentity = record(savedValidation) && savedValidation.request_id === id && typeof savedValidation.case_id === "string" && typeof savedValidation.validation_id === "string" ? savedValidation as unknown as StoredValidation : null;
+    const identity = record(savedValidation) && savedValidation.request_id === id && typeof savedValidation.case_id === "string" && typeof savedValidation.validation_id === "string" ? savedValidation as unknown as StoredValidation : null;
+    if (identity !== null) {
+      const storedId = this.storage.getItem(VALIDATION_ID_KEY);
+      if (storedId !== null && storedId !== identity.validation_id) throw new FactoryError("unavailable", "Saved validation identity is inconsistent; no replacement work was started.");
+      if (storedId === null) this.storage.setItem(VALIDATION_ID_KEY, identity.validation_id);
+    }
+    if (identity?.validation_id !== this.validationIdentity?.validation_id) this.update({ validation: null, canRetryValidation: false });
+    this.validationIdentity = identity;
     return id;
+  }
+  private async identityAction(operation: () => Promise<void>) {
+    if (this.view.busy) return;
+    this.update({ busy: true });
+    try { await this.identityLock(operation); }
+    catch (error) { this.error(error); } finally { this.update({ busy: false }); }
+  }
+  private async adoptOtherIdentity() {
+    const requestId = this.view.requestId;
+    const validationId = this.validationIdentity?.validation_id;
+    this.restoreIdentity();
+    const changed = requestId !== this.view.requestId || validationId !== this.validationIdentity?.validation_id;
+    if (changed) {
+      await this.readStatus();
+      if (this.validationIdentity !== null) await this.readValidation();
+    }
+    return changed;
   }
   async initialize() {
     if (this.view.busy) return;
     this.update({ busy: true });
     const mayResume = !this.initialized || this.now() >= this.nextPollAt;
     this.initialized = true;
-    try {
+    try { await this.identityLock(async () => {
       const id = this.restoreIdentity();
       const [capabilities, session] = await Promise.allSettled([this.client.capabilities(), this.client.session()]);
       if (capabilities.status === "fulfilled") this.update({ capabilities: capabilities.value }); else this.error(capabilities.reason);
       if (session.status === "fulfilled") this.update({ signedIn: session.value.signed_in }); else this.error(session.reason);
       if (id !== null && this.view.signedIn && mayResume) await this.readStatus();
       if (this.validationIdentity !== null && this.view.signedIn && mayResume) await this.readValidation();
-    } catch (error) { this.error(error); } finally { this.update({ busy: false }); }
+    }); } catch (error) { this.error(error); } finally { this.update({ busy: false }); }
   }
   invalidateInterpretation() { this.generation++; this.update({ interpretation: null }); }
   async interpret(input: RequestInput) {
@@ -192,8 +175,7 @@ export class FactoryController {
   }
   async start() {
     if (this.view.busy || !this.view.signedIn || this.view.capabilities?.service.state !== "available" || this.view.requestId !== null || !this.view.interpretation?.startable) return;
-    this.update({ busy: true });
-    try {
+    await this.identityAction(async () => {
       // Another tab may have started since this tab initialized. Resume its identity before writing.
       if (this.restoreIdentity() !== null) {
         await this.readStatus();
@@ -201,6 +183,7 @@ export class FactoryController {
         return;
       }
       const interpretation = this.view.interpretation;
+      if (!interpretation?.startable) return;
       const id = this.uuid();
       this.startBody = { request_id: id, input: interpretation.input, interpretation_sha256: interpretation.interpretation_sha256 };
       // Both writes precede the POST. If storage fails there is no execution.
@@ -208,7 +191,7 @@ export class FactoryController {
       this.storage.setItem(REQUEST_KEY, id);
       this.update({ requestId: id });
       await this.sendStart();
-    } catch (error) { this.error(error); } finally { this.update({ busy: false }); }
+    });
   }
   private async sendStart() {
     if (this.startBody === null) return;
@@ -227,8 +210,11 @@ export class FactoryController {
   }
   async retryStart() {
     if (this.view.busy || !this.view.canRetryStart || !this.view.signedIn || this.startBody === null) return;
-    this.update({ busy: true, canRetryStart: false });
-    try { await this.sendStart(); } finally { this.update({ busy: false }); }
+    await this.identityAction(async () => {
+      if (await this.adoptOtherIdentity()) return;
+      this.update({ canRetryStart: false });
+      await this.sendStart();
+    });
   }
   private async readStatus(busyRefusal = false) {
     const id = this.view.requestId;
@@ -243,14 +229,17 @@ export class FactoryController {
   }
   private clearIdentity() {
     if (this.storage.getItem(REQUEST_KEY) === this.view.requestId) {
-      this.storage.removeItem(REQUEST_KEY); this.storage.removeItem(START_KEY); this.storage.removeItem(VALIDATION_KEY);
+      this.storage.removeItem(REQUEST_KEY); this.storage.removeItem(START_KEY); this.storage.removeItem(VALIDATION_KEY); this.storage.removeItem(VALIDATION_ID_KEY);
     }
     this.startBody = null; this.validationIdentity = null; this.moreEvents = false; this.refreshAfterValidation = false;
     this.update({ requestId: null, status: null, validation: null, canRetryStart: false, canRetryValidation: false });
   }
-  newDraft() {
-    if (this.view.busy || this.view.status?.state !== "finished" || this.view.status.attention !== null || this.view.status.cases.some(item => item.validation !== null && item.validation.state !== "finished") || (this.validationIdentity !== null && this.view.validation?.state !== "finished")) return;
-    try { this.clearIdentity(); this.invalidateInterpretation(); } catch (error) { this.error(error); }
+  async newDraft() {
+    await this.identityAction(async () => {
+      if (await this.adoptOtherIdentity()) return;
+      if (this.view.status?.state !== "finished" || this.view.status.attention !== null || this.view.status.cases.some(item => item.validation !== null && item.validation.state !== "finished") || (this.validationIdentity !== null && this.view.validation?.state !== "finished")) return;
+      this.clearIdentity(); this.invalidateInterpretation();
+    });
   }
   async stop() {
     if (this.view.busy || !this.view.signedIn || this.view.requestId === null || this.view.status === null || this.view.status.state === "finished") return;
@@ -259,19 +248,21 @@ export class FactoryController {
     catch (error) { this.error(error); await this.readStatus(); } finally { this.update({ busy: false }); }
   }
   async validate(caseId: string) {
-    const status = this.view.status;
-    const found = status?.cases.find(item => item.case_id === caseId);
-    if (this.view.busy || !this.view.signedIn || status?.state !== "finished" || status.attention !== null || !found?.packages.bug_case.ready || !found.packages.validator.ready || (this.validationIdentity !== null && this.view.validation?.state !== "finished")) return;
-    const worstCase = status.interpretation.budget.worst_case_per_validation_microusd.find(entry => entry.host_id === found.host_id)?.microusd;
-    if (worstCase === undefined || status.budget.remaining_microusd < worstCase || status.cases.some(item => item.validation !== null && item.validation.state !== "finished")) return;
-    this.update({ busy: true });
-    try {
+    if (!this.view.signedIn) return;
+    await this.identityAction(async () => {
+      if (await this.adoptOtherIdentity()) return;
+      const status = this.view.status;
+      const found = status?.cases.find(item => item.case_id === caseId);
+      if (!this.view.signedIn || status?.state !== "finished" || status.attention !== null || !found?.packages.bug_case.ready || !found.packages.validator.ready || (this.validationIdentity !== null && this.view.validation?.state !== "finished")) return;
+      const worstCase = status.interpretation.budget.worst_case_per_validation_microusd.find(entry => entry.host_id === found.host_id)?.microusd;
+      if (worstCase === undefined || status.budget.remaining_microusd < worstCase || status.cases.some(item => item.validation !== null && item.validation.state !== "finished")) return;
       const identity = { request_id: status.request_id, case_id: caseId, validation_id: this.uuid() };
       this.storage.setItem(VALIDATION_KEY, JSON.stringify(identity));
+      this.storage.setItem(VALIDATION_ID_KEY, identity.validation_id);
       this.validationIdentity = identity;
       this.update({ validation: null, canRetryValidation: false });
       await this.sendValidation();
-    } catch (error) { this.error(error); } finally { this.update({ busy: false }); }
+    });
   }
   private async sendValidation() {
     const id = this.validationIdentity;
@@ -285,9 +276,9 @@ export class FactoryController {
     }
     catch (error) {
       const failure = this.error(error);
-      if (["budget_unavailable", "not_ready", "invalid_request", "not_found"].includes(failure.code)) {
+      if (["budget_unavailable", "invalid_request", "not_found"].includes(failure.code)) {
         // A definite refusal recorded no validation. Keep the delivered request and refusal message.
-        this.storage.removeItem(VALIDATION_KEY);
+        this.storage.removeItem(VALIDATION_KEY); this.storage.removeItem(VALIDATION_ID_KEY);
         this.validationIdentity = null;
         this.update({ validation: null, canRetryValidation: false });
       } else if (failure.code === "busy" || failure.status === 0 || failure.status >= 500) {
@@ -309,8 +300,10 @@ export class FactoryController {
   }
   async retryValidation() {
     if (this.view.busy || !this.view.signedIn || !this.view.canRetryValidation) return;
-    this.update({ busy: true });
-    try { await this.sendValidation(); } finally { this.update({ busy: false }); }
+    await this.identityAction(async () => {
+      if (await this.adoptOtherIdentity()) return;
+      await this.sendValidation();
+    });
   }
   pollAfter(): number { return Math.max(1000, this.nextPollAt - this.now()); }
   needsPoll(): boolean { return this.view.signedIn && this.view.requestId !== null && (this.moreEvents || this.refreshAfterValidation || this.view.status?.state !== "finished" || this.view.status.attention !== null || this.view.status.cases.some(item => item.validation !== null && item.validation.state !== "finished") || (this.validationIdentity !== null && this.view.validation?.state !== "finished")); }

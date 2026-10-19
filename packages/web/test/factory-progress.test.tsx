@@ -52,7 +52,7 @@ describe("factory contract progress", () => {
     expect(html).toContain("I want a bug where an acknowledged change is lost when requests overlap");
     expect(html).toContain("<dt>Candidates explored</dt><dd>1</dd>");
     expect(html).toContain("<dt>Packages ready</dt><dd>1</dd>");
-    expect(html).toContain("<dt>Remaining</dt><dd>$0.29</dd>");
+    expect(html).toContain("<dt>Remaining</dt><dd>$0.59</dd>");
     expect(html).toContain("Request finished: stopped at limit.");
     expect(html).toContain("Retries, rejected candidates and incomplete cases are not delivered bugs.");
     expect(html).toContain("skipped");
@@ -65,6 +65,22 @@ describe("factory contract progress", () => {
     expect(html).toContain("Attention required (needs_reconciliation)");
     expect(html).toContain("Download bug case");
     expect(validationButton(html)).toContain("disabled");
+  });
+  it("preserves a finished outcome when revision-2 reconciliation reports an overrun", () => {
+    const status = statusFixture("status-fulfilled");
+    status.budget = { ...status.budget, overrun: true, remaining_microusd: -1 };
+    status.attention = { code: "needs_reconciliation", message: "Synthetic post-finish overrun." };
+    const html = render(status);
+    expect(html).toContain("<h3>Fulfilled</h3>");
+    expect(html).toContain("budget overrun");
+    expect(html).toContain("Download bug case");
+    expect(validationButton(html)).toContain("disabled");
+  });
+  it("shows the revision-2 wrong-failure rejection without inventing a delivered case", () => {
+    const html = render(statusFixture("status-wrong-failure"));
+    expect(html).toContain("No qualified cases have been delivered");
+    expect(html).toContain("rejected");
+    expect(html).not.toContain("Download bug case");
   });
 
   it("keeps downloads visibly separate and gates each on readiness and a path", () => {
