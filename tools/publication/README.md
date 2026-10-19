@@ -73,7 +73,7 @@ A path that is itself a violation is never printed. Every violation in that file
 
 ### Public-source route: `scan-public`
 
-`scan-public` takes the same inputs as `scan` (`--range`, `--files` and `--text`, with the same rules) and runs checks (b) and (c) below: attribution and gitleaks. It never runs check (a) and never reads a pattern file: `--patterns`, and `--repository` and `--license`, which only check (a) uses, are usage errors. A cloud lane runs it before each publication from the repository root, on the commits its push adds and on each pull request title, body or reply it posts:
+`scan-public` takes the same inputs as `scan` (`--range`, `--files` and `--text`, with the same rules) and runs checks (b) and (c) below: attribution and gitleaks, with gitleaks also scanning each path list. It never runs check (a) and never reads a pattern file: `--patterns`, and `--repository` and `--license`, which only check (a) uses, are usage errors. A cloud lane runs it before each publication from the repository root, on the commits its push adds and on each pull request title, body or reply it posts:
 
 ```
 node tools/publication/src/cli.ts scan-public --gitleaks <gitleaks 8.30.1 binary> \
@@ -104,7 +104,7 @@ Every outcome ends with the line `private-pattern scan: not run on this route (r
 
 The bare word "per" is not flagged, and neither is any of these forms quoted mid-sentence.
 
-**(c) Secrets.** gitleaks scans file content, commit messages and text blobs. Findings map back to `<location>:<line>` and stay redacted; gitleaks' own output is never relayed.
+**(c) Secrets.** gitleaks scans file content, commit messages and text blobs, and on `scan-public` each path list as well, so a credential in an added path is reported at its path-list position. Findings map back to `<location>:<line>` and stay redacted; gitleaks' own output is never relayed.
 
 ### Exceptions
 
@@ -126,7 +126,7 @@ The command value is split on ASCII spaces, with no quoting. Every occurrence of
 
 The operator pulls the image once and checks its digest; the host form names it by that digest and with `--pull never`, so a scan never pulls an image and never runs one that a re-tag points at.
 
-Each scan creates one new temporary directory `{dir}` and removes it afterwards. Each blob is written as a new regular file at `{dir}/content/<n>/<repository path>`, so two blobs never share a file even on file systems that ignore case or Unicode normalization. Path-based gitleaks rules still see the repository path at the end of each file's path. Each blob is also written a second time, at `{dir}/content/<count + n>/blob`, so content rules still apply when the repository path matches gitleaks' built-in path allowlist. Commit messages and text blobs are written as `message.txt` and `text.txt` in their own numbered directories. gitleaks receives every path as an explicit argument under `{dir}`: the content directory, a configuration that extends the built-in rules, an empty ignore file and the report path. It also receives `--ignore-gitleaks-allow`, so a `.gitleaks.toml`, a `.gitleaksignore` or an inline allow comment inside the scanned content has no effect. The scanner first checks `gitleaks version`. It then treats exit 0 as clean and its own leaks-found status (42) as findings; any other status, including gitleaks' error status 1, gives `unavailable`.
+Each scan creates one new temporary directory `{dir}` and removes it afterwards. Each blob is written as a new regular file at `{dir}/content/<n>/<repository path>`, so two blobs never share a file even on file systems that ignore case or Unicode normalization. Path-based gitleaks rules still see the repository path at the end of each file's path. Each blob is also written a second time, at `{dir}/content/<count + n>/blob`, so content rules still apply when the repository path matches gitleaks' built-in path allowlist. Commit messages and text blobs are written as `message.txt` and `text.txt` in their own numbered directories, and on `scan-public` each path list is written as `text.txt` too. gitleaks receives every path as an explicit argument under `{dir}`: the content directory, a configuration that extends the built-in rules, an empty ignore file and the report path. It also receives `--ignore-gitleaks-allow`, so a `.gitleaks.toml`, a `.gitleaksignore` or an inline allow comment inside the scanned content has no effect. The scanner first checks `gitleaks version`. It then treats exit 0 as clean and its own leaks-found status (42) as findings; any other status, including gitleaks' error status 1, gives `unavailable`.
 
 The built-in gitleaks rules come with a global path allowlist (for example lock files, images, and paths containing `gitleaks.toml`); the second copy of each blob under the neutral name keeps those paths covered. gitleaks itself skips content whose detected type is binary, such as content starting with a PDF header, in every mode; the secrets check does not cover such content, and the pattern and attribution checks still do.
 

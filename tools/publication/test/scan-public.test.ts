@@ -86,6 +86,32 @@ describe("PUB-02 public-source route: scan-public", () => {
     expect(all).not.toContain(forms.signedOff);
   });
 
+  it("finds a credential in an added path and reports only its path-list position", async () => {
+    const root = tempDir();
+    const repo = initRepo(join(root, "repo"));
+    const base = commit(repo, { "a.txt": "base\n" }, "chore: base\n");
+    const head = commit(repo, { [`keys/${STUB_LEAK_MARKER}-value.txt`]: "nothing here\n", "z.txt": "z\n" }, "feat: add keys\n");
+    const stub = writeStubGitleaks(root);
+    const range = await runCli(["scan-public", "--gitleaks", stub.command, "--range", `${base}..HEAD`], { cwd: repo });
+    // The sorted list is keys, keys/<marker>-value.txt and z.txt.
+    expectPublic(range, "blocked", [`paths-${short(head)}:2`]);
+    writeFile(join(root, "work", `${STUB_LEAK_MARKER}.txt`), "x\n");
+    const files = await runCli(["scan-public", "--gitleaks", stub.command, "--files", `${STUB_LEAK_MARKER}.txt`], { cwd: join(root, "work") });
+    expectPublic(files, "blocked", ["paths:1"]);
+    for (const result of [range, files]) expect(result.stdout + result.stderr).not.toContain(STUB_LEAK_MARKER);
+  });
+
+  it("reports other violations in a file with a credential in its path under the path-list position", async () => {
+    const root = tempDir();
+    const repo = initRepo(join(root, "repo"));
+    const base = commit(repo, { "a.txt": "base\n" }, "chore: base\n");
+    const head = commit(repo, { [`${STUB_LEAK_MARKER}.md`]: `ok\n${forms.signedOff}: x\n` }, "docs: add\n");
+    const stub = writeStubGitleaks(root);
+    const result = await runCli(["scan-public", "--gitleaks", stub.command, "--range", `${base}..HEAD`], { cwd: repo });
+    expectPublic(result, "blocked", [`paths-${short(head)}:1`]);
+    expect(result.stdout + result.stderr).not.toContain(STUB_LEAK_MARKER);
+  });
+
   it("checks --files input and reports a clean result for the checks that ran", async () => {
     const root = tempDir();
     writeFile(join(root, "src", "a.ts"), "export const a = 1;\n");

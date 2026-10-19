@@ -110,15 +110,21 @@ function compareLocations(a: [string, number], b: [string, number]): number {
 async function scanChecked(request: ScanRequest): Promise<ScanResult> {
   const terms = await loadTerms(request.patternFile);
   if (terms === null) throw new ScanUnavailable("pattern-file");
-  return scanUnits(request, terms, request.repository ?? null);
+  return scanUnits(request, terms, request.repository ?? null, false);
 }
 
 /**
  * Collects the request's units, runs the content checks with `terms` (none on the public
  * route, which leaves only the attribution check) and gitleaks, and maps every finding to
- * a location.
+ * a location. With `scanPathLists`, gitleaks also scans each path list as text, so a
+ * credential in a path is reported at its path-list position.
  */
-async function scanUnits(request: PublicScanRequest, terms: readonly RegExp[], repository: string | null): Promise<ScanResult> {
+async function scanUnits(
+  request: PublicScanRequest,
+  terms: readonly RegExp[],
+  repository: string | null,
+  scanPathLists: boolean,
+): Promise<ScanResult> {
   const env = toolEnvironment(process.env);
   const collected: CollectedUnits = { units: [], trustedCopyright: null };
   const runner = { env, timeoutMs: request.gitTimeoutMs ?? DEFAULT_TIMEOUT_MS.git };
@@ -131,7 +137,7 @@ async function scanUnits(request: PublicScanRequest, terms: readonly RegExp[], r
   const context = { terms, trustedCopyright, repository };
 
   const lines = units.map((unit) => contentViolations(unit, context));
-  const scanned = units.flatMap((unit, index) => (unit.kind === "paths" ? [] : [{ unit, index }]));
+  const scanned = units.flatMap((unit, index) => (unit.kind === "paths" && !scanPathLists ? [] : [{ unit, index }]));
   const blobs: GitleaksBlob[] = scanned.map(({ unit }) => ({ path: gitleaksPath(unit), content: unit.content }));
   const gitleaks = { env, timeoutMs: request.gitleaksTimeoutMs ?? DEFAULT_TIMEOUT_MS.gitleaks };
   for (const finding of await runGitleaks(request.gitleaksCommand ?? "gitleaks", blobs, gitleaks)) {
@@ -176,11 +182,12 @@ export async function scanDetailed(request: unknown): Promise<DetailedScanResult
 
 /**
  * The public-source route's check: gitleaks and the attribution check over the same inputs,
- * without the private pattern list. A request that names a pattern file is a usage error.
+ * without the private pattern list, and gitleaks over the path lists as well, so a
+ * credential in an added path blocks. A request that names a pattern file is a usage error.
  * Its result says nothing about private patterns; required CI runs that check before merge.
  */
 export async function scanPublicDetailed(request: unknown): Promise<DetailedScanResult> {
-  return detailed(() => scanUnits(validatePublicRequest(request), [], null));
+  return detailed(() => scanUnits(validatePublicRequest(request), [], null, true));
 }
 
 /**
