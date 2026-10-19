@@ -15,6 +15,7 @@ export function FactoryExample({ availableLocally }: { availableLocally: boolean
         This demonstrates a test-suite blind spot, not debugging-agent performance.</p>
       <div className="factory-links">
         <a className="factory-link-primary" href={`${caseHref}#cell-2`}>Explore the completed example</a>
+        <a href={`${caseHref}#cell-3`}>Compare original tests and added checks</a>
         <a href={`${FROZEN}/issue.json`}>Read the frozen bug report</a>
         <a href={`${FROZEN}/release.json`}>Release and provenance</a>
       </div>
