@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { DefName } from "../src/generated.ts";
+import { BUG_TYPE_ID_VALUES, HOST_ID_VALUES } from "../src/generated.ts";
 import { ContractError, assertContract, isDefName, parseContract, validateContract } from "../src/validate.ts";
 import type { JsonObject } from "./support.ts";
-import { asArray, at, contractFixture, internalFixture, variant } from "./support.ts";
+import { asArray, asObject, at, contractFixture, internalFixture, variant } from "./support.ts";
 
 /** The instance path of an error code such as `schema:/events/3/data:required:reason`. */
 function pathOf(code: string): string[] {
@@ -56,6 +57,41 @@ const reconcile = () => ({ request_id: "00000000-0000-4000-8000-000000000105" })
 const plan = () => internalFixture("copy-plan.json");
 const collected = () => internalFixture("collected-copy.json");
 const roots = () => ({ app_root: "/work/synthetic/pair/buggy", evaluator_root: "/work/synthetic/pair/evaluator" });
+
+type Pair = readonly [host: string, type: string];
+
+/** Every (host, bug type) pair of the enumerations; capabilities list each exactly once (section 4.2). */
+const PAIRS: Pair[] = HOST_ID_VALUES.flatMap((host) => BUG_TYPE_ID_VALUES.map((type): Pair => [host, type]));
+const LISTED: Pair[] = asArray(capabilities().combinations, "combinations").map((item) => {
+  const { host_id: host, bug_type_id: type } = asObject(item, "combination");
+  if (typeof host !== "string" || typeof type !== "string") throw new Error("a combination without its host or bug type");
+  return [host, type];
+});
+const listedAt = ([host, type]: Pair): number => LISTED.findIndex(([h, t]) => h === host && t === type);
+
+/** The reports of the clause for `pair` when `list` fails it: the clause, and each listed pair's field that differs. */
+function pairClause(list: readonly Pair[], [host, type]: Pair): string[] {
+  return ["schema:/combinations:contains", ...list.flatMap(([listedHost, listedType], index) => [
+    ...(listedHost === host ? [] : [`schema:/combinations/${String(index)}/host_id:const`]),
+    ...(listedType === type ? [] : [`schema:/combinations/${String(index)}/bug_type_id:const`]),
+  ])];
+}
+
+/**
+ * For each pair: a list that lacks it, and a list that holds it twice in place of the next pair.
+ * The second copy goes last, so Ajv, which stops counting at the copy over the limit, checks every item.
+ */
+const PAIR_CASES: Case[] = PAIRS.flatMap((pair, n): Case[] => {
+  const index = listedAt(pair);
+  if (index < 0) throw new Error(`capabilities.json does not list ${pair.join(" x ")}`);
+  const next = PAIRS[(n + 1) % PAIRS.length] ?? pair;
+  const nextIndex = listedAt(next);
+  const twice = [...LISTED.filter((_, i) => i !== nextIndex), pair];
+  return [
+    { name: `combinations without ${pair.join(" x ")}`, def: "Capabilities", base: capabilities, edit: (c) => { asArray(c.combinations, "combinations").splice(index, 1); }, expected: ["schema:/combinations:minItems", ...pairClause(LISTED.filter((_, i) => i !== index), pair)] },
+    { name: `combinations with ${pair.join(" x ")} twice`, def: "Capabilities", base: capabilities, edit: (c) => { const list = asArray(c.combinations, "combinations"); const copy = structuredClone(list[index] ?? null); list.splice(nextIndex, 1); list.push(copy); }, expected: [...pairClause(twice, pair), ...pairClause(twice, next)] },
+  ];
+});
 
 const SHAPE_CASES: Case[] = [
   // Unknown fields
@@ -151,6 +187,8 @@ const RULE_CASES: Case[] = [
   { name: "a skipped candidate without a reason", def: "RequestStatus", base: status("status-partial-budget.json"), edit: (c) => { at(c, ["candidates", 1]).reason = null; }, expected: "schema:/candidates/1/reason:type" },
   { name: "a qualified candidate with a reason", def: "RequestStatus", base: fulfilled, edit: (c) => { at(c, ["candidates", 0]).reason = { code: "wrong_failure", message: "x" }; }, expected: "schema:/candidates/0/reason:type" },
   { name: "a qualified candidate without a case", def: "RequestStatus", base: fulfilled, edit: (c) => { at(c, ["candidates", 0]).case_id = null; }, expected: "schema:/candidates/0/case_id:type" },
+  { name: "a case on a rejected candidate", def: "RequestStatus", base: status("status-zero-result.json"), edit: (c) => { at(c, ["candidates", 0]).case_id = "ca".repeat(32); }, expected: "schema:/candidates/0/case_id:type" },
+  { name: "a case on a candidate still packaging", def: "RequestStatus", base: running, edit: (c) => { Object.assign(at(c, ["candidates", 0]), { stage: "packaging", item_key: "concurrency-1", case_id: "ca".repeat(32) }); }, expected: "schema:/candidates/0/case_id:type" },
   { name: "a packaging candidate without an item", def: "RequestStatus", base: running, edit: (c) => { at(c, ["candidates", 0]).stage = "packaging"; }, expected: "schema:/candidates/0/item_key:type" },
   { name: "an item before requested_criteria_passed", def: "RequestStatus", base: running, edit: (c) => { at(c, ["candidates", 0]).item_key = "concurrency-1"; }, expected: "schema:/candidates/0/item_key:type" },
   // Events (section 8.4)
@@ -160,6 +198,7 @@ const RULE_CASES: Case[] = [
   { name: "a supported pair without a source", def: "Capabilities", base: capabilities, edit: (c) => { at(c, ["combinations", 1]).source = null; }, expected: "schema:/combinations/1/source:type" },
   { name: "an unsupported pair without a reason", def: "Capabilities", base: capabilities, edit: (c) => { at(c, ["combinations", 0]).reason = null; }, expected: "schema:/combinations/0/reason:type" },
   { name: "a supported pair with a reason", def: "Capabilities", base: capabilities, edit: (c) => { at(c, ["combinations", 1]).reason = "x"; }, expected: "schema:/combinations/1/reason:type" },
+  ...PAIR_CASES,
   { name: "a negative remaining amount without an overrun", def: "RequestStatus", base: status("status-operational-error.json"), edit: (c) => { at(c, ["budget"]).remaining_microusd = -1; }, expected: "schema:/budget/remaining_microusd:minimum" },
   { name: "an overrun with money remaining", def: "RequestStatus", base: status("status-operational-error.json"), edit: (c) => { at(c, ["budget"]).overrun = true; }, expected: "schema:/budget/remaining_microusd:maximum" },
   { name: "a source with no entries", def: "Capabilities", base: capabilities, edit: (c) => { at(c, ["combinations", 1, "source"]).entries = 0; }, expected: "schema:/combinations/1/source/entries:minimum" },
@@ -171,7 +210,8 @@ const RULE_CASES: Case[] = [
   { name: "a request-level problem with an item", def: "Interpretation", base: () => contractFixture("interpretation-budget-below-minimum.json"), edit: (c) => { at(c, ["problems", 0]).item_key = "date-time-1"; }, expected: "schema:/problems/0/item_key:type" },
   { name: "a request-level quantity warning", def: "Interpretation", base: interpretation("interpretation-supported.json"), edit: (c) => { asArray(c.problems, "problems").push({ code: "quantity_exceeds_source", severity: "warning", message: "x", item_key: null }); }, expected: "schema:/problems/0/item_key:type" },
   { name: "an item-level warning among the request-level problems", def: "Interpretation", base: interpretation("interpretation-supported.json"), edit: (c) => { asArray(c.problems, "problems").push({ code: "budget_below_item_minimum", severity: "warning", message: "x", item_key: "date-time-1" }); }, expected: "schema:/problems/0/item_key:type" },
-  { name: "an item budget warning on an item without an eligible host", def: "Interpretation", base: interpretation("interpretation-budget-below-item.json"), edit: (c) => { at(c, ["items", 1]).eligible_sources = []; }, expected: "schema:/items/1/eligible_sources:minItems" },
+  { name: "an item budget warning on an item without an eligible host", def: "Interpretation", base: () => contractFixture("interpretation-unsupported.json"), edit: (c) => { asArray(at(c, ["items", 3]).problems, "problems").push({ code: "budget_below_item_minimum", severity: "warning", message: "x", item_key: "date-time-1" }); }, expected: "schema:/items/3/eligible_sources:minItems" },
+  { name: "a supported item without an eligible source", def: "Interpretation", base: interpretation("interpretation-supported.json"), edit: (c) => { at(c, ["items", 1]).eligible_sources = []; }, expected: "schema:/items/1/eligible_sources:minItems" },
   { name: "an item-level budget warning without an item", def: "Interpretation", base: interpretation("interpretation-budget-below-item.json"), edit: (c) => { at(c, ["items", 1, "problems", 0]).item_key = null; }, expected: "schema:/items/1/problems/0/item_key:type" },
   { name: "startable with a blocking request problem", def: "Interpretation", base: () => contractFixture("interpretation-budget-below-minimum.json"), edit: (c) => { c.startable = true; }, expected: "schema:/problems:not" },
   { name: "not startable without a blocking problem", def: "Interpretation", base: () => contractFixture("interpretation-supported.json"), edit: (c) => { c.startable = false; }, expected: ["schema:/:anyOf", "schema:/problems:contains", "schema:/items:contains", "schema:/items/0/status:const", "schema:/items/1/status:const"] },
@@ -193,7 +233,8 @@ const RULE_CASES: Case[] = [
   { name: "a live case without an item", def: "RequestStatus", base: fulfilled, edit: (c) => { at(c, ["cases", 0]).item_key = null; }, expected: "schema:/cases/0/item_key:type" },
   { name: "a live case without a request", def: "RequestStatus", base: fulfilled, edit: (c) => { at(c, ["cases", 0, "provenance"]).request_id = null; }, expected: "schema:/cases/0/provenance/request_id:type" },
   { name: "a case with another verdict", def: "RequestStatus", base: fulfilled, edit: (c) => { at(c, ["cases", 0, "qualification"]).verdict = "rejected"; }, expected: "schema:/cases/0/qualification/verdict:const" },
-  { name: "an example with live provenance", def: "ExampleResponse", base: () => contractFixture("example.json"), edit: (c) => { Object.assign(at(c, ["case", "provenance"]), { origin: "live_request", request_id: "00000000-0000-4000-8000-000000000101" }); at(c, ["case"]).item_key = "concurrency-1"; }, expected: "schema:/case/provenance/origin:const" },
+  { name: "a published example that names a request", def: "ExampleResponse", base: () => contractFixture("example.json"), edit: (c) => { at(c, ["case", "provenance"]).request_id = "00000000-0000-4000-8000-000000000101"; }, expected: "schema:/case/provenance/request_id:type" },
+  { name: "an example with live provenance", def: "ExampleResponse",base: () => contractFixture("example.json"), edit: (c) => { Object.assign(at(c, ["case", "provenance"]), { origin: "live_request", request_id: "00000000-0000-4000-8000-000000000101" }); at(c, ["case"]).item_key = "concurrency-1"; }, expected: "schema:/case/provenance/origin:const" },
   // Validation runs (section 11)
   { name: "a result before finished", def: "ValidationRun", base: () => contractFixture("validation-running.json"), edit: (c) => { c.result = "error"; }, expected: "schema:/result:type" },
   { name: "a finish time before finished", def: "ValidationRun", base: () => contractFixture("validation-running.json"), edit: (c) => { c.finished_at = "2026-10-20T14:52:41.093Z"; }, expected: "schema:/finished_at:type" },
