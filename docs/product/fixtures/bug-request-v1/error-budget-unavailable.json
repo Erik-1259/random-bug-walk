@@ -2,7 +2,7 @@
   "contract_version": "bug-request/1",
   "error": {
     "code": "budget_unavailable",
-    "message": "The factory pool cannot hold this request's budget right now.",
+    "message": "The factory pool's available amount cannot cover this request's budget right now.",
     "retryable": false,
     "details": null
   }

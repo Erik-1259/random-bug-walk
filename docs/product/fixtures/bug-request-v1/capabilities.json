@@ -34,7 +34,8 @@
             "an acknowledged change is lost when requests overlap",
             "a saved change disappears when two updates overlap",
             "lost update"
-          ]
+          ],
+          "failure_code": "lost_acknowledged_change"
         },
         {
           "criterion_id": "concurrency.stale-success-response",
@@ -44,7 +45,8 @@
           "example_phrases": [
             "a success response reports data different from what was stored when requests overlap",
             "the response shows a value that was not saved"
-          ]
+          ],
+          "failure_code": "stale_success_response"
         }
       ]
     },
@@ -62,7 +64,8 @@
             "results grouped by date or time use the wrong time zone",
             "daily totals use the wrong time zone",
             "events are counted on the wrong day"
-          ]
+          ],
+          "failure_code": "wrong_time_zone_grouping"
         }
       ]
     }

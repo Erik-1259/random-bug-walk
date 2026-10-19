@@ -1,0 +1,72 @@
+{
+  "contract_version": "bug-request/1",
+  "request_id": "00000000-0000-4000-8000-000000000105",
+  "operations": [
+    {
+      "operation_id": "00000000-0000-4000-8000-000000000301",
+      "kind": "worker",
+      "call_name": "worker",
+      "state": "uncertain",
+      "reserved_microusd": 200000,
+      "settled_microusd": null,
+      "attempt_ordinal": 1
+    },
+    {
+      "operation_id": "00000000-0000-4000-8000-000000000302",
+      "kind": "candidate_copy",
+      "call_name": "candidate-01-clean",
+      "state": "uncertain",
+      "reserved_microusd": 100000,
+      "settled_microusd": null,
+      "attempt_ordinal": 1
+    },
+    {
+      "operation_id": "00000000-0000-4000-8000-000000000303",
+      "kind": "candidate_copy",
+      "call_name": "candidate-01-buggy",
+      "state": "uncertain",
+      "reserved_microusd": 100000,
+      "settled_microusd": null,
+      "attempt_ordinal": 1
+    },
+    {
+      "operation_id": "00000000-0000-4000-8000-000000000304",
+      "kind": "candidate_copy",
+      "call_name": "candidate-01-fixed",
+      "state": "uncertain",
+      "reserved_microusd": 100000,
+      "settled_microusd": null,
+      "attempt_ordinal": 1
+    }
+  ],
+  "slot": {
+    "slot_key": "factory",
+    "holder_request_id": "00000000-0000-4000-8000-000000000105"
+  },
+  "provider_calls": [
+    {
+      "call_name": "worker",
+      "provider": "sandbox",
+      "action": "create",
+      "at": "2026-10-20T19:00:00.104Z"
+    },
+    {
+      "call_name": "candidate-01-clean",
+      "provider": "sandbox",
+      "action": "create",
+      "at": "2026-10-20T19:01:13.290Z"
+    },
+    {
+      "call_name": "candidate-01-buggy",
+      "provider": "sandbox",
+      "action": "create",
+      "at": "2026-10-20T19:01:13.302Z"
+    },
+    {
+      "call_name": "candidate-01-fixed",
+      "provider": "sandbox",
+      "action": "create",
+      "at": "2026-10-20T19:01:13.314Z"
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 # Bug request contract, version 1
 
-**Status: draft, revision 1.** This file is the binding interface between the bug-request service, the `/factory` page and the automated acceptance tests. It defines shapes and behavior; it does not claim that any endpoint exists. Every endpoint below is **planned** until the pull request that implements it is merged, and section 15 lists which parts are implemented. Later changes are numbered revisions (section 16). Implementations cite the revision they follow.
+**Status: draft, revision 2.** This file is the binding interface between the bug-request service, the `/factory` page and the automated acceptance tests. It defines shapes and behavior; it does not claim that any endpoint exists. Every endpoint below is **planned** until the pull request that implements it is merged, and section 15 lists which parts are implemented. Later changes are numbered revisions (section 16). Implementations cite the revision they follow.
 
 Representative fixtures are in [`fixtures/bug-request-v1/`](fixtures/bug-request-v1/). They use synthetic identifiers (`synthetic-` prefixes, hashes made of a repeated short pattern) and invented amounts. They show shapes and states, not measured results.
 
@@ -20,7 +20,7 @@ A case is **qualified** only when all of these hold for the same exported conten
 - The six cells are observed by running the standalone validation harness on the two exported package parts in fresh workspaces (export verification). A cell observed on the producing checkout alone does not count.
 - Valid outcomes, controls and repetition counts are declared per candidate source before any qualifying run (section 10.3).
 - Setup failures, unrelated failures, missing output and incomplete runs are never reproduction and never qualification.
-- The observed failure must match the request item's criteria independently of what the candidate source claims (section 6.3).
+- The buggy copy must report, in export verification, the published failure code of every criterion in the case's `criteria_met`, whatever the candidate source declares (section 6.3).
 
 Out of scope for version 1: source-only difficulty assessment (declared unavailable, section 4.4); hosts other than the two listed; publication of live results to the public results repository.
 
@@ -45,7 +45,7 @@ Out of scope for version 1: source-only difficulty assessment (declared unavaila
 - **Identifiers.** `request_id` and `validation_id` are lowercase UUID strings chosen by the client. `candidate_id`, `defect_id`, `case_id` and every `*_sha256` are 64 lowercase hex characters. `item_key` is chosen by the client, matches `^[a-z0-9][a-z0-9-]{0,31}$` and is unique within a request.
 - **Time.** UTC, ISO 8601 with milliseconds and `Z` (`2026-10-20T14:03:07.120Z`). Durations are whole seconds (`*_s`) or milliseconds (`*_ms`).
 - **Money.** Integer micro-US-dollars (`*_microusd`), the unit of the existing spend ledger. `1500000` is $1.50.
-- **Session.** `POST /api/factory/session` exchanges the judges' passcode for an HttpOnly, Secure, `SameSite=Strict` cookie scoped to `Path=/api/factory`. It is separate from the replay page's session. Public endpoints: `GET` and `POST /api/factory/session`, `GET /api/factory/capabilities`, `GET /api/factory/example`, `POST /api/factory/interpretations`, and the completed example's download URLs. Every other endpoint answers `401 unauthorized` without a valid session.
+- **Session.** `POST /api/factory/session` exchanges the judges' passcode for an HttpOnly, Secure, `SameSite=Strict` cookie scoped to `Path=/api/factory`. It is separate from the replay page's session. Public endpoints: `GET` and `POST /api/factory/session`, `GET /api/factory/capabilities`, `GET /api/factory/example`, `POST /api/factory/interpretations`, and the completed example's download URLs. Test endpoints (section 15.1) need no session. Every other endpoint answers `401 unauthorized` without a valid session.
 - **Errors.** A refused call answers a 4xx or 5xx status and an `ErrorResponse` (section 12). Clients branch on `error.code`, never on message text.
 - **Polling.** Status responses carry `poll_after_ms`. Clients wait at least that long between polls and back off (15 s, 30 s, then 60 s) while the service answers `unavailable`. A polling failure never starts new work.
 
@@ -69,7 +69,9 @@ Capabilities {
 }
 Host { host_id: "umami" | "task-report", label: string, description: string, baseline_id: string }
 BugType { bug_type_id: "concurrency" | "date_time", label: string, description: string, criteria: Criterion[] }
-Criterion { criterion_id: string, version: string, label: string, description: string, example_phrases: string[] }
+Criterion { criterion_id: string, version: string, label: string, description: string,
+            example_phrases: string[],           // matched exactly (section 6.1)
+            failure_code: string }               // published per criterion version (section 6.3)
 Combination {
   host_id, bug_type_id
   status: "supported" | "unsupported"
@@ -116,7 +118,7 @@ RequestItemInput {
   item_key: string
   bug_type_id: "concurrency" | "date_time"
   quantity: integer                          // 1..limits.max_quantity_per_item
-  description: string | null                 // trimmed; "" is sent as null; at most limits.max_description_chars
+  description: string | null                 // normalized by the service (section 6); at most limits.max_description_chars after trimming
   difficulty: "source_inferable_allowed" | "source_only_difficulty_required"
 }
 ```
@@ -128,12 +130,14 @@ RequestItemInput {
 
 ## 6. Interpretation: `POST /api/factory/interpretations`
 
-Public, free and side-effect free: nothing is recorded or charged. The body is a `RequestInput`. The answer shows exactly what the service will try to deliver and which parts it cannot support. The client shows it before the user starts the request; this is a confirmation of meaning, not an approval step. Fixtures: `interpretation-supported.json`, `interpretation-unsupported.json`, `interpretation-budget-below-minimum.json`; `status-exhausted.json` carries a type-level `quantity_exceeds_source` warning.
+Public, free and side-effect free: nothing is recorded or charged. The body is a `RequestInput`. The answer shows exactly what the service will try to deliver and which parts it cannot support. The client shows it before the user starts the request; this is a confirmation of meaning, not an approval step. Fixtures: `interpretation-supported.json`, `interpretation-unsupported.json`, `interpretation-budget-below-minimum.json`, `interpretation-budget-below-item.json`; `status-exhausted.json` and `status-duplicate-defect.json` carry type-level `quantity_exceeds_source` warnings.
+
+The service first normalizes the input: it trims each description and maps an empty result to `null`. Untrimmed input is accepted, not refused, and `input` echoes the normalized input.
 
 ```text
 Interpretation {
   contract_version
-  interpretation_sha256: string     // canonical hash of input + interpreter, catalog, route and source versions
+  interpretation_sha256: string     // canonical hash of the normalized input + interpreter, catalog, route and source versions
   interpreter: { interpreter_id, version, criteria_catalog_version }
   qualification_route: { route_id, version }
   input: RequestInput               // the normalized input actually interpreted
@@ -161,11 +165,11 @@ Problem { code: string, severity: "blocking" | "warning", message: string, item_
 
 ### 6.1 Interpreting descriptions (`criteria-match`)
 
-The interpreter is deterministic and versioned; the same input and versions always give the same `interpretation_sha256`.
+The interpreter is deterministic and versioned; the same normalized input and versions always give the same `interpretation_sha256`.
 
-- **No description:** the item accepts any behavior of its bug type that a selected host's source declares. `criteria` lists nothing and `unmatched_text` is empty.
-- **With a description:** the interpreter maps the text to the bug type's criteria using each criterion's declared phrases. Every word of the description must be covered by a matched criterion phrase or by a declared filler phrase (`capabilities.interpreter.filler_phrases`). Matching ignores letter case and punctuation. Words that are not covered are returned in `unmatched_text`, and the item is unsupported (`unrecognized_description`). Text is never dropped silently and never replaced by an easier requirement.
-- The description is kept verbatim in the interpretation and in the request record.
+- **No description:** the item accepts any behavior of its bug type that a selected host's source declares. `criteria` lists nothing and `unmatched_text` is empty. A description made only of filler phrases is treated as no description.
+- **With a description:** the interpreter matches exactly the `example_phrases` of each criterion of the item's bug type, plus the declared filler phrases (`capabilities.interpreter.filler_phrases`), as word sequences. Words are maximal runs of letters and digits, compared case-insensitively; punctuation and spaces only separate words. Every word of the description must be covered by a matched criterion phrase or a filler phrase. Words that are not covered are returned in `unmatched_text`, and the item is unsupported (`unrecognized_description`). Text is never dropped silently and never replaced by an easier requirement.
+- The normalized description is kept verbatim in the interpretation and in the request record.
 
 ### 6.2 Problem codes
 
@@ -176,14 +180,15 @@ The interpreter is deterministic and versioned; the same input and versions alwa
 | `no_matching_source` | blocking | Criteria were recognized, but no catalog entry on the selected hosts satisfies all of them. |
 | `unsupported_difficulty` | blocking | The item requires source-only difficulty, which is unavailable. |
 | `budget_below_minimum` | blocking | The budget cannot cover the worker's worst case plus one candidate's worst case on any eligible host. Request-level (`item_key` null). |
-| `quantity_exceeds_source` | warning | Computed per bug type: the distinct eligible catalog entries, each filling at most one unit of one item, can cover fewer cases than the type's supported items request. Every supported item of that type carries it, and the request cannot end `fulfilled`. |
+| `budget_below_item_minimum` | warning | On an item: the budget minus the worker's worst case is below the candidate worst case of every host eligible for that item, so no candidate for it can start. The request cannot end `fulfilled`. |
+| `quantity_exceeds_source` | warning | Computed per bug type: the distinct `defect_id` values among the type's eligible catalog entries (not the entries), each filling at most one unit of one item, can cover fewer cases than the type's supported items request. Every supported item of that type carries it, and the request cannot end `fulfilled`. |
 | `host_unused` | warning | A selected host serves none of the items. |
 
 Out-of-range input is not a problem code; it is `400 invalid_request` (section 4.3).
 
 ### 6.3 Matching delivered behavior to criteria
 
-Each catalog entry declares the criteria it targets and, for each, the failure code its verification checks report on the buggy copy. A candidate demonstrates a criterion only when that declared failure code is observed in export verification; the entry's own claim is not enough. A candidate passes `requested_criteria` when it demonstrates every criterion of an item that still has an open unit (an item without criteria accepts any declared failure of its bug type). It is then assigned to one such item (section 10.5). A candidate that fits no such item is `rejected` with `wrong_failure`.
+Each criterion version has a published `failure_code` (section 4). A catalog entry only declares which criteria it targets. A candidate demonstrates a criterion only when that criterion's `failure_code` is observed on the buggy copy in export verification; the entry's declaration is not enough. A candidate passes `requested_criteria` when it demonstrates every criterion of an item that has an unfilled unit (an item without criteria accepts a candidate that demonstrates any criterion of its bug type). It is then assigned to one such item (section 10.5). A candidate that fits no such item is `rejected` with `wrong_failure`.
 
 ## 7. Starting a request: `POST /api/factory/requests`
 
@@ -191,6 +196,7 @@ Session required. Fixtures: `start-request.json`, `status-queued.json`, `error-b
 
 ```text
 StartRequest { request_id: string, input: RequestInput, interpretation_sha256: string }
+               // canonical body: request_id + the normalized input (section 6) + interpretation_sha256
 ```
 
 The service, in order (steps 2 to 7 hold a lock on the `request_id`, so concurrent starts with one ID run one at a time and a duplicate of an accepted start gets its status from step 2, never `busy`):
@@ -199,9 +205,9 @@ The service, in order (steps 2 to 7 hold a lock on the `request_id`, so concurre
 2. If a request with this `request_id` exists: the same canonical body answers `200` with the current `RequestStatus`. Nothing new is recorded, reserved or launched. A different body answers `409 idempotency_conflict`.
 3. Re-interprets `input`. A different hash answers `409 interpretation_stale`, with the current interpretation in `error.details.interpretation`. An interpretation that is not startable answers `422 unsupported_request`.
 4. Checks the service: a halted spend ledger or missing configuration answers `503 unavailable`.
-5. Checks, without recording anything, that the factory pool can hold the requested budget. If it cannot, the answer is `409 budget_unavailable`.
+5. Checks, without recording anything, that the factory pool's available amount covers the full requested budget (section 8.5). If it does not, the answer is `409 budget_unavailable`.
 6. Takes the single factory slot (section 8.5). If it is held, the answer is `409 busy`. Nothing is recorded under this `request_id`, so the same ID can be sent again later. The answer never reveals another user's request.
-7. Creates the request budget on the factory pool, records the request, its frozen interpretation and the event `request_accepted`, reserves the worker's worst case from the request budget (event `budget_updated`), and launches the worker. It answers `202` with a `RequestStatus` in state `queued` or `starting`. If this step fails before the request is recorded (for example, the pool can no longer hold the budget), the slot is released and the start is refused (`409 budget_unavailable` or `503 unavailable`), with nothing recorded or reserved. Once the request is recorded, a later failure is reported through the request's own outcome (section 8.1), never as a refused start.
+7. Creates the request budget on the factory pool, records the request, its frozen interpretation and the event `request_accepted`, reserves the worker's worst case from the request budget (event `budget_updated`), and launches the worker. It answers `202` with a `RequestStatus` in state `queued` or `starting`. If this step fails before the request is recorded (for example, the pool can no longer cover the worker's worst case), the slot is released and the start is refused (`409 budget_unavailable` or `503 unavailable`), with nothing recorded or reserved. Once the request is recorded, a later failure is reported through the request's own outcome (section 8.1), never as a refused start.
 
 **Client rules.**
 
@@ -215,7 +221,7 @@ The service, in order (steps 2 to 7 hold a lock on the `request_id`, so concurre
 
 ## 8. Request status: `GET /api/factory/requests/{request_id}?after={seq}`
 
-Session required. `after` is optional (default 0). The response includes up to 200 events with `seq > after`. `next_after` is the `seq` of the last event returned, or `after` when none is returned; use it for the next poll. An unknown ID, including one refused as `busy`, answers `404 not_found`. Fixtures: `status-running.json`, `status-fulfilled.json`, `status-validated.json`, `status-partial-budget.json`, `status-exhausted.json`, `status-duplicate-defect.json`, `status-cancelled.json`, `status-operational-error.json`, `status-zero-result.json`.
+Session required. `after` is optional (default 0). The response includes up to 200 events with `seq > after`. `next_after` is the `seq` of the last event returned, or `after` when none is returned; use it for the next poll. An unknown ID, including one refused as `busy`, answers `404 not_found`. Fixtures: `status-running.json`, `status-fulfilled.json`, `status-validated.json`, `status-partial-budget.json`, `status-exhausted.json`, `status-duplicate-defect.json`, `status-cancelled.json`, `status-operational-error.json`, `status-zero-result.json`, `status-wrong-failure.json`.
 
 ```text
 RequestStatus {
@@ -270,7 +276,7 @@ Candidate {
 
 Stop codes under `operational_error`:
 
-- `worker_lost`: the worker sent no heartbeat for 180 s, or it exited before finishing. While a request is active the worker updates `last_heartbeat_at` at least every 30 s; after 60 s without a heartbeat, `attention` becomes `worker_unresponsive` until one arrives.
+- `worker_lost`: the worker sent no heartbeat for 180 s, or it exited before finishing. While a request is active the worker updates `last_heartbeat_at` at least every 30 s; after 60 s without a heartbeat, `attention` becomes `worker_unresponsive` until one arrives. A worker lost after missed heartbeats is an uncertain outcome: the worker's and any in-flight candidate's reservations stay held, `attention` becomes `needs_reconciliation` (replacing `worker_unresponsive`), and the slot stays held until reconciliation (section 8.5).
 - `needs_reconciliation`: a provider outcome became uncertain while the worker was running, so the request stopped instead of retrying.
 - `operational_error`: any other execution or accounting failure, including an overrun (section 8.5).
 
@@ -297,13 +303,13 @@ The funnel counts distinct candidates in this request, so retries never add to i
 | `checks_failed_clean` | rejected | Verification checks failed on the clean copy. |
 | `checks_failed_fixed` | rejected | Verification checks failed on the reference-fixed copy. |
 | `bug_not_detected` | rejected | Verification checks passed on the buggy copy. |
-| `wrong_failure` | rejected | The observed failure fits no item that still has an open unit: it demonstrates no item's criteria, or only those of items already filled. |
+| `wrong_failure` | rejected | No item has an unfilled unit whose criteria it demonstrates (sections 6.3 and 10.5). |
 | `export_mismatch` | rejected | The exported package parts did not reproduce the matrix or failed integrity checks. |
 | `setup_failed` | invalid | A copy could not be prepared or run. Not reproduction. |
 | `incomplete_run` | incomplete | A run ended early or too many trials were invalid. Not reproduction. |
 | `stopped` | incomplete | The request stopped while the candidate was in progress. |
 | `duplicate_defect` | skipped | The defect was already tried in this request. |
-| `no_budget_for_candidate` | skipped | The remaining budget could not cover the candidate's worst case. |
+| `no_budget_for_candidate` | skipped | The remaining budget or the factory pool's available amount could not cover the candidate's worst case (section 8.5). |
 
 ### 8.4 Events
 
@@ -336,11 +342,12 @@ Event { seq: integer, at: string, type: EventType, host_id: string | null, candi
 
 ### 8.5 Budget, slot and reconciliation
 
-- `reserved_microusd` is the open worst case of work in progress: the worker from start until the request finishes, each candidate from selection until it settles, and each validation run while it runs. `spent_microusd` is settled cost. `committed_microusd` = `reserved_microusd` + `spent_microusd`, and `remaining_microusd` = `budget_microusd` − `committed_microusd`. Every change appends a `budget_updated` event.
-- The worker settles when the request finishes, at its full worst case when its use cannot be measured. Validation runs draw on the same budget after the request finishes (section 11).
-- `overrun` is true when `committed_microusd` exceeds `budget_microusd`, which happens only when a provider reports more than the reserved worst case; `remaining_microusd` is then negative. No new candidate starts, and the request finishes `operational_error`.
-- The single factory slot is held from step 6 of a start until the request finishes, and by each validation run while it runs. A start refused at step 7 releases it at once (section 7).
-- An uncertain provider outcome keeps its reservation held and sets `attention` to `needs_reconciliation`. Until an operator reconciles it, the slot stays held even after the request finishes: starts and validation runs answer `409 busy` with `details.reason: "needs_reconciliation"` and `retryable: false`. Reconciliation settles the held amount (`budget_updated`), clears `attention` (`attention_cleared`) and releases the slot. It never changes `outcome`, `stop_reason`, `delivery` or the counts.
+- `reserved_microusd` is the open worst case of work in progress: the worker from start until it settles, each candidate from selection until it settles, and each validation run from its accepted POST until it settles. `spent_microusd` is settled cost. `committed_microusd` = `reserved_microusd` + `spent_microusd`, and `remaining_microusd` = `budget_microusd` − `committed_microusd`. Every change appends a `budget_updated` event.
+- The factory pool counts each request's committed amount (reservations plus spend), not its whole budget; a request budget only caps that request's commitments, validation runs included. A start needs the pool's available amount to cover the full requested budget (section 7, step 5). Every later reservation (worker, candidate, validation run) also needs pool availability: a candidate the pool cannot cover is `skipped` (`no_budget_for_candidate`), and the request stops `budget_exhausted` when nothing fits; a validation run it cannot cover answers `409 budget_unavailable` (section 11). Nothing is held for a finished request beyond its open reservations.
+- A worker confirmed stopped settles when the request finishes, at its full worst case when its use cannot be measured. A worker lost after missed heartbeats is an uncertain outcome and stays held until reconciliation (section 8.1). Validation runs draw on the same budget after the request finishes (section 11).
+- `overrun` is true when `committed_microusd` exceeds `budget_microusd`, which happens only when a provider reports more than the reserved worst case; `remaining_microusd` is then negative. While the request runs, no new candidate starts and the request finishes `operational_error`. After the request finished (an overrun from a validation run or a reconciliation), `outcome` and `stop_reason` stay unchanged, `overrun` becomes true, `attention` is set to `needs_reconciliation`, and later validation POSTs answer `409 budget_unavailable`.
+- The single factory slot is held from step 6 of a start until the request finishes, and by each validation run from its accepted POST (a queued run holds it) until it finishes. A start refused at step 7 releases it at once (section 7).
+- An uncertain provider outcome keeps its reservation held and sets `attention` to `needs_reconciliation`. Until an operator reconciles it, the slot stays held even after the request finishes: starts and validation runs answer `409 busy` with `details.reason: "needs_reconciliation"` and `retryable: false`. Reconciliation settles the held amount (`budget_updated`), clears `attention` (`attention_cleared`) unless the settlement overruns (above), and releases the slot. It never changes `outcome`, `stop_reason`, `delivery` or the counts.
 
 ## 9. Stopping: `POST /api/factory/requests/{request_id}/stop`
 
@@ -385,11 +392,11 @@ A case appears in `RequestStatus.cases` only once it is qualified. Its two parts
 
 ### 10.1 What a client may show
 
-Case metadata contains only what the bug case already gives a debugging agent (the title, the observed failure in plain language, the host and baseline), plus outcome summaries. It never contains verification test code, fixtures, expected values, the reference repair, the planted change, the changed file or line, or generation history. The service never sends that material in any client payload. Clients keep the two downloads visibly separate: the bug case is the debugging agent's input, and the validator package is evaluator material.
+Case metadata contains only what the bug case already gives a debugging agent (the title, the observed failure in plain language, the host and baseline), plus outcome summaries. It never contains verification test code, fixtures, expected values, the reference repair, the planted change, the changed file or line, or generation history. The service never sends that material in any client payload. `source_id`, `entry_id` and `check_set_id` are opaque identifiers that describe neither the planted change nor its location. Clients keep the two downloads visibly separate: the bug case is the debugging agent's input, and the validator package is evaluator material.
 
 ### 10.2 Downloads: `GET {download_path}`
 
-Live cases: `download_path` is `/api/factory/requests/{request_id}/cases/{case_id}/packages/{bug-case|validator}`. Session required. The response is the archive, with `Content-Disposition: attachment` and the part's `filename`. Its SHA-256 equals `PackagePart.sha256`. A part that is not ready answers `409 not_ready`. For the completed example, `download_path` is a public URL to the published archive, which needs no session.
+Live cases: `download_path` is `/api/factory/requests/{request_id}/cases/{case_id}/packages/{bug-case|validator}`. Session required. The response is the archive, with `Content-Disposition: attachment` and the part's `filename`. Its SHA-256 equals `PackagePart.sha256`. A `case_id` that is not a delivered case of this request answers `404 not_found`. For the completed example, `download_path` is a public URL to the published archive, which needs no session.
 
 ### 10.3 Package parts (summary)
 
@@ -409,16 +416,20 @@ The full archive layout is defined in `docs/product/bug-package-v1.md` (planned,
 
 ### 10.5 Assigning cases to items
 
-Assignment happens at `requested_criteria_passed`. An item's open units are its quantity minus its delivered cases and the units held by candidates already assigned to it. The candidate is assigned to an item with an open unit whose every criterion it demonstrates (section 6.3): items with more criteria first, then request order. It holds that unit until it is qualified, when it fills it, or until it ends otherwise, when the unit opens again. A case fills one unit of one item and never counts for two. A candidate that fits no item with an open unit is `rejected` with `wrong_failure`: it never becomes a case, never appears in `cases` and never counts in `packages_ready`.
+Version 1 runs one candidate at a time per request, so at most one unit is held, and only by the candidate being evaluated. Assignment happens at `requested_criteria_passed`. An item's unfilled units are its quantity minus its delivered cases. The candidate is assigned to an item with an unfilled unit whose every criterion it demonstrates (section 6.3): items with more criteria first, then request order. It holds that unit until it is qualified, when it fills it, or until it ends otherwise, when the unit opens again. A case fills one unit of one item and never counts for two. A candidate that fits no item with an unfilled unit is `rejected` with `wrong_failure`: it never becomes a case, never appears in `cases` and never counts in `packages_ready`.
 
 ## 11. Validation runs
 
-`POST /api/factory/requests/{request_id}/cases/{case_id}/validations`, body `{ "validation_id": "<uuid>" }`. Session required. It starts one run of the standalone harness on the case's two downloadable parts, in fresh workspaces. It is idempotent by `validation_id`: the same ID answers the existing run. It answers `202` with a `ValidationRun`.
+`POST /api/factory/requests/{request_id}/cases/{case_id}/validations`, body `{ "validation_id": "<uuid>" }`. Session required. It starts one run of the standalone harness on the case's two downloadable parts, in fresh workspaces, and answers `202` with a `ValidationRun`.
 
-- A run holds the single factory slot while it runs, so it answers `409 busy` while a factory request (including this case's own request) or another validation run holds the slot (section 8.5).
-- Before it starts, the worst case for the case's host (`interpretation.budget.worst_case_per_validation_microusd`) is reserved from the request budget. If `remaining_microusd` is below it, the answer is `409 budget_unavailable`.
+- `validation_id` is scoped to (`request_id`, `case_id`). The same ID on the same path answers `200` with the existing run; an ID already used on another request or case answers `409 idempotency_conflict`. Concurrent POSTs with one ID run one at a time. The ID check runs before the slot and budget checks. A refused run records nothing, so a later GET of its ID answers `404 not_found`.
+- The run takes the single factory slot when its POST is accepted (a queued run holds it) and releases it when it finishes, so a POST answers `409 busy` while a factory request (including this case's own request) or another validation run holds the slot (section 8.5).
+- When the POST is accepted, the worst case for the case's host (`interpretation.budget.worst_case_per_validation_microusd`) is reserved from the request budget. If `remaining_microusd` or the factory pool's available amount is below it, the answer is `409 budget_unavailable` (section 8.5).
+- A run sends heartbeats like the worker (at least every 30 s, section 8.1) and runs for at most 1800 s. A run with no heartbeat for 180 s, or still running after 1800 s, finishes with result `error`.
 - When it finishes, `cost_microusd` settles into the request's `spent_microusd` and the rest is released. The request's events record `validation_started`, `validation_finished` and each `budget_updated`.
-- A run whose provider outcome is uncertain finishes `error`, keeps its reservation held and sets the request's `attention` to `needs_reconciliation` (section 8.5).
+- A run whose spend is uncertain (after an uncertain provider outcome, or a timeout whose sandbox use cannot be confirmed) finishes `error`, keeps its reservation held and sets the request's `attention` to `needs_reconciliation`; the slot stays held until reconciliation (section 8.5).
+
+**Client rules.** Generate a `validation_id` once per button press and store it in `localStorage` under `rbw-factory-validation-id` **before** sending the POST. After a timeout, network error or 5xx, send the same ID again; never generate a new one for that press.
 
 `GET /api/factory/requests/{request_id}/cases/{case_id}/validations/{validation_id}` answers the current `ValidationRun`. Fixtures: `validation-running.json`, `validation-passed.json`, `validation-failed.json`, `validation-error.json`.
 
@@ -456,12 +467,11 @@ ErrorResponse { contract_version, error: { code: ErrorCode, message: string, ret
 | 400 | `invalid_request` | The body or query does not match this contract, including a value outside the limits (section 4.3). |
 | 401 | `unauthorized` | No valid factory session. |
 | 401 | `passcode_incorrect` | `POST /api/factory/session` with a wrong passcode. |
-| 404 | `not_found` | Unknown request, case or validation run (also for requests refused as `busy`). |
-| 409 | `idempotency_conflict` | The `request_id` or `validation_id` exists with a different body. |
+| 404 | `not_found` | Unknown request or validation run, a `case_id` that is not a delivered case of the request, a request refused as `busy`, or a test endpoint outside test mode (section 15.1). |
+| 409 | `idempotency_conflict` | The `request_id` exists with a different body, or the `validation_id` was already used on another request or case (section 11). |
 | 409 | `interpretation_stale` | The interpretation changed; `details.interpretation` holds the current one. |
 | 409 | `busy` | The factory slot is held (section 8.5). `details.reason` is `"active"` while a factory request or validation run is active (`retryable: true`), or `"needs_reconciliation"` while uncertain spend awaits an operator (`retryable: false`). |
-| 409 | `budget_unavailable` | The factory pool or the request budget cannot cover it. |
-| 409 | `not_ready` | A package part is not ready. |
+| 409 | `budget_unavailable` | The factory pool's available amount or the request budget cannot cover a start (section 7) or a validation run (section 11), including after an overrun (section 8.5). |
 | 422 | `unsupported_request` | The interpretation has a blocking problem; `details.interpretation` holds it. |
 | 503 | `unavailable` | The service is not configured, the ledger is halted, or a dependency did not answer. `retryable: true`. |
 
@@ -477,7 +487,7 @@ Public. Answers `{ contract_version, label, note, case: Case }`, with `case.prov
 
 | Part | Status | Owner |
 |---|---|---|
-| This document and its fixtures | draft, revision 1 | contract owner |
+| This document and its fixtures | draft, revision 2 | contract owner |
 | Shared types (`packages/factory-contract/`) | planned | contract owner |
 | `/factory` page, components, client adapter, browser tests (`packages/web/app/factory/**`, `packages/web/src/components/factory-*.tsx`, `packages/web/src/factory/client.ts`, their tests) | in progress | UI lane |
 | Service routes (`packages/web/app/api/factory/**`) and server modules (`packages/web/src/factory-server/**`) | planned | backend lane |
@@ -493,17 +503,46 @@ No lane edits another lane's files. A change to a shape in this document is made
 
 For automated acceptance, the service can start in a test mode that is refused when the deployment is production. In test mode:
 
-- The hosted worker, sandbox provider and package storage are replaced by deterministic fakes, and the spend ledger runs on a disposable database.
-- A named scenario fixes every check outcome. Version 1 names: `two-host-fulfilled`, `partial-budget`, `sources-exhausted`, `duplicate-defect` (the task-report catalog gains a second entry with the first entry's defect), `zero-result`, `cancel-midway`, `worker-lost`, `uncertain-provider`, `validation-failed`, `validation-error`.
-- Every start is held for 2 s inside its `request_id` lock (section 7), so concurrent duplicate starts overlap deterministically.
-- `GET /api/factory/test/evidence?request_id=` answers read-only evidence: the request's ledger operations (`operation_id`, `kind`, `call_name`, `state`, `reserved_microusd`, `settled_microusd`, `attempt_ordinal`), the factory slot holder, and every provider call made.
-- `POST /api/factory/test/reconcile` with `{ "request_id": string }` reconciles every held operation of that request at its worst case, as an operator would (section 8.5).
-- `POST /api/factory/test/reset` with `{ "scenario": string }` discards every test-mode record, ledger row and fake, releases the slot, and selects the scenario for the next starts.
+- The hosted worker, sandbox provider and package storage are replaced by deterministic fakes, and the spend ledger runs on a disposable database. The test factory pool is `40000000` ($40.00). Every fake operation costs exactly its worst case, and the worst cases equal the fixtures' (worker $0.20; a candidate $0.60 on Umami and $0.30 on task-report; a validation run $0.30 on Umami and $0.20 on task-report). Settled amounts can therefore differ from the end-state fixtures; outcomes, stop codes, delivery, attention, stages and counts match them.
+- A named scenario fixes every check outcome. Catalog order puts task-report first. The client sends the `interpretation.input` of the named fixture:
 
-Startup and reset instructions, the exact revision and the scenario list are published with the backend pull request.
+| Scenario | The fakes | Input from | Outcome | Stop code | Delivery | Attention | End state |
+|---|---|---|---|---|---|---|---|
+| `two-host-fulfilled` | Both entries qualify; validation runs pass. | `status-fulfilled.json` | `fulfilled` | `fulfilled` | `complete` | null | `status-fulfilled.json`, `validation-passed.json` |
+| `partial-budget` | As `two-host-fulfilled`; after the task-report candidate settles, the Umami candidate no longer fits. | `status-partial-budget.json` | `stopped_at_limit` | `budget_exhausted` | `partial` | null | `status-partial-budget.json` |
+| `sources-exhausted` | The task-report entry qualifies. | `status-exhausted.json` | `sources_exhausted` | `sources_exhausted` | `partial` | null | `status-exhausted.json` |
+| `duplicate-defect` | The task-report catalog gains a second entry with the first entry's defect. | `status-duplicate-defect.json` | `sources_exhausted` | `sources_exhausted` | `partial` | null | `status-duplicate-defect.json` |
+| `zero-result` | The original suite fails on the Umami buggy copy. | `status-zero-result.json` | `sources_exhausted` | `sources_exhausted` | `none` | null | `status-zero-result.json` |
+| `wrong-failure` | The buggy copy reports a failure code that belongs to no criterion of the item. | `status-wrong-failure.json` | `sources_exhausted` | `sources_exhausted` | `none` | null | `status-wrong-failure.json` |
+| `cancel-midway` | Pauses as described below; the test sends `POST …/stop`. | `status-cancelled.json` | `cancelled` | `cancelled_by_user` | `partial` | null | `status-cancelled.json` |
+| `worker-lost` | The worker stops sending heartbeats during the first candidate's checks. | `status-operational-error.json` | `operational_error` | `worker_lost` | `none` | `needs_reconciliation` | `status-operational-error.json`, `test-evidence.json` |
+| `uncertain-provider` | The first candidate's sandbox create returns an uncertain outcome. | `status-operational-error.json` | `operational_error` | `needs_reconciliation` | `none` | `needs_reconciliation` | none |
+| `validation-failed` | As `two-host-fulfilled`; validation runs finish `failed`. | `status-fulfilled.json` | `fulfilled` | `fulfilled` | `complete` | null | `validation-failed.json` |
+| `validation-error` | As `two-host-fulfilled`; validation runs finish `error`. | `status-fulfilled.json` | `fulfilled` | `fulfilled` | `complete` | null | `validation-error.json` |
+
+- In `cancel-midway` the fake run pauses after the second candidate's first `check_finished`, with its next check in flight, until `POST …/stop` arrives or 60 s pass; then it continues as `status-cancelled.json` shows.
+- Every start (section 7) and every validation start (section 11) is held for 2 s inside its ID lock, so concurrent duplicates overlap deterministically.
+- Test endpoints need no session and exist only in test mode; otherwise they answer `404 not_found`.
+- `GET /api/factory/test/evidence?request_id=` answers a read-only `TestEvidence` (fixture: `test-evidence.json`). Operations not yet settled or reconciled hold their `reserved_microusd`, which adds up to the request's `reserved_microusd`; `settled_microusd` values add up to its `spent_microusd`.
+- `POST /api/factory/test/reconcile` with `{ "request_id": string }` reconciles every held operation of that request at its worst case, as an operator would (section 8.5), and answers the `RequestStatus` after reconciliation.
+- `POST /api/factory/test/reset` with `{ "scenario": string }` discards every test-mode record, ledger row and fake, releases the slot, selects the scenario for the next starts, and answers `{ contract_version, scenario }`.
+
+```text
+TestEvidence {
+  contract_version, request_id
+  operations: { operation_id: string, kind: "worker" | "candidate_copy" | "validation" | "validation_copy", call_name: string,
+                state: "prepared" | "launching" | "running" | "terminal" | "uncertain" | "settled" | "reconciled",
+                reserved_microusd: integer, settled_microusd: integer | null, attempt_ordinal: integer }[]
+  slot: { slot_key: "factory", holder_request_id: string | null }
+  provider_calls: { call_name: string, provider: "sandbox", action: "create" | "stop", at: string }[]
+}
+```
+
+Startup instructions and the exact revision are published with the backend pull request.
 
 ## 16. Revisions
 
 | Revision | Change |
 |---|---|
 | 1 | First draft. |
+| 2 | Revision 2: validation runs send heartbeats, last at most 1800 s and hold the slot from the accepted POST; a worker lost after missed heartbeats needs reconciliation; the factory pool counts committed amounts; validation IDs are scoped to a case and checked first; new warning `budget_below_item_minimum`; an overrun after finish keeps the outcome; `quantity_exceeds_source` counts distinct defects; one candidate runs at a time; criteria publish failure codes; input normalization and exact phrase matching; `not_ready` removed and identifiers opaque; scenario table, `wrong-failure` scenario, `cancel-midway` pause and test-control shapes. |
