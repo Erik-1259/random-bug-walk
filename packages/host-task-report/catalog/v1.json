@@ -1,0 +1,43 @@
+{
+  "format": "rbw.task-report.catalog.v1",
+  "catalog_id": "task-report-candidates",
+  "version": 1,
+  "baseline_id": "task-report@ca4a71f",
+  "entries": [
+    {
+      "entry_id": "task-report-f3-001",
+      "bug_type": "concurrency",
+      "criterion": {
+        "id": "concurrency.lost-acknowledged-change",
+        "version": 1
+      },
+      "failure_code": "acknowledged_completion_not_counted",
+      "check": {
+        "id": "f3.acknowledged-completion-counted",
+        "version": 1,
+        "data_file": "data/f3.v1.json",
+        "protocol_file": "protocol/f3-repeatability.v1.json"
+      },
+      "target_path": "src/completions/store.ts",
+      "baseline_sha256": "5424120c0110adf3a755fe6a1aed2fcd99d87565dce1c4c84a5d62965f67f93f",
+      "buggy_sha256": "22eb94274610254f2aee10463418af669afb46a1579468cfb11726d7baa3d71c",
+      "buggy_git_tree": "5dd205932f23419ce22874a12d2cb8f4582e859c",
+      "planted_patch": {
+        "file": "f3/planted.patch",
+        "sha256": "d901b154c44fcbed9735270529c143361fcfa48ebce36bb2b29b41cae6f11c78"
+      },
+      "reference_repair": {
+        "file": "f3/repair.patch",
+        "sha256": "552b23d0ac417a6cc917ecc4806afd893236780419cc736b09369ad6fc41f82f",
+        "kind": "reverse_of_planted",
+        "result_sha256": "5424120c0110adf3a755fe6a1aed2fcd99d87565dce1c4c84a5d62965f67f93f"
+      },
+      "incident": {
+        "file": "f3/incident.md",
+        "sha256": "eeb5deddff4582da215dc9c13c0afd49e25e355a6adebdbd197879a270eb9ed7"
+      },
+      "difficulty": "not_assessed",
+      "source_inferable": true
+    }
+  ]
+}
