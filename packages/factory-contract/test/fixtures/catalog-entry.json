@@ -1,0 +1,62 @@
+{
+  "entry_id": "synthetic-task-report-concurrency-01",
+  "source_id": "synthetic-task-report-concurrency",
+  "catalog_version": "1",
+  "host_id": "task-report",
+  "bug_type_id": "concurrency",
+  "criteria": [
+    {
+      "criterion_id": "concurrency.lost-acknowledged-change",
+      "version": "1"
+    }
+  ],
+  "failure_code": "synthetic-lost-change",
+  "plant": {
+    "patch": "synthetic planted patch text\n",
+    "patch_sha256": "d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1",
+    "targets": [
+      {
+        "path": "src/synthetic/store.ts",
+        "before_sha256": "d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2",
+        "after_sha256": "d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3"
+      }
+    ]
+  },
+  "reference_repair": {
+    "patch": "synthetic repair patch text\n",
+    "patch_sha256": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+    "result_sha256": [
+      {
+        "path": "src/synthetic/store.ts",
+        "sha256": "d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2"
+      }
+    ],
+    "kind": "revert"
+  },
+  "incident": {
+    "path": "incident/synthetic-incident.md",
+    "sha256": "d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5"
+  },
+  "presentation": {
+    "title": "A saved change is lost when two updates overlap",
+    "observed_failure": "Two overlapping updates both receive a success response, but one acknowledged change is missing afterward.",
+    "how_checked": "Separate verification checks ran on fresh clean, buggy and reference-fixed copies.",
+    "repetition_summary": "Each copy ran the original suite 3 times and the verification checks 5 times."
+  },
+  "verification": {
+    "check_set_id": "synthetic-task-report-concurrency-checks",
+    "version": "1",
+    "check_set_sha256": "d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6",
+    "expected_vectors_sha256": "d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9",
+    "protocol_id": "synthetic-repetition-protocol",
+    "protocol_sha256": "d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7"
+  },
+  "environment": {
+    "kit_image": "registry.invalid/synthetic/task-report-kit:1",
+    "kit_image_digest": "sha256:e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9",
+    "environment_sha256": "eaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaea"
+  },
+  "difficulty": {
+    "status": "not_assessed"
+  }
+}

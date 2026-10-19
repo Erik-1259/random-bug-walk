@@ -478,7 +478,7 @@ Public. Answers `{ contract_version, label, note, case: Case }`, with `case.prov
 | Part | Status | Owner |
 |---|---|---|
 | This document and its fixtures | draft, revision 1 | contract owner |
-| Shared types (`packages/factory-contract/`) | planned | contract owner |
+| Shared types (`packages/factory-contract/`) | draft, revision 1 | contract owner |
 | `/factory` page, components, client adapter, browser tests (`packages/web/app/factory/**`, `packages/web/src/components/factory-*.tsx`, `packages/web/src/factory/client.ts`, their tests) | in progress | UI lane |
 | Service routes (`packages/web/app/api/factory/**`) and server modules (`packages/web/src/factory-server/**`) | planned | backend lane |
 | Request loop, interpreter, identity, budget use, events, hosted worker (`packages/factory/**`, `tools/controller/src/factory-*.ts`, spend migration and budget functions in `packages/spend/`) | planned | backend lane |
@@ -488,6 +488,8 @@ Public. Answers `{ contract_version, label, note, case: Case }`, with `case.prov
 | API acceptance tests (`tools/product-acceptance/**`) | in progress | acceptance lane |
 
 No lane edits another lane's files. A change to a shape in this document is made only by a new revision of this document and its fixtures.
+
+The machine-readable definition of every shape in this document is the JSON Schema `packages/factory-contract/schema/bug-request-v1.schema.json`. The TypeScript types in `packages/factory-contract/` are generated from it, and its tests validate every fixture against it.
 
 ### 15.1 Test controls (planned)
 

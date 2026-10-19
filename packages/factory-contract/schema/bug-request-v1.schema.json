@@ -1,0 +1,6424 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/rbw/bug-request-v1.schema.json",
+  "title": "Bug request contract bug-request/1, revision 1, and the factory's internal shapes",
+  "description": "The machine-readable definition of every shape in docs/product/bug-request-v1.md. Every object forbids unknown fields and requires every field; a nullable field holds null. Every pattern starts with ^ and ends with $.",
+  "$defs": {
+    "SafeInteger": {
+      "description": "An integer whose absolute value is at most 2^53 - 1.",
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
+    },
+    "NonNegativeInteger": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "PositiveInteger": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "MicroUsd": {
+      "description": "Money in integer micro-US-dollars (contract section 3). 1500000 is $1.50.",
+      "$ref": "#/$defs/SafeInteger"
+    },
+    "Uuid": {
+      "description": "Lowercase 8-4-4-4-12 hexadecimal, chosen by the client.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "Sha256": {
+      "description": "Exactly 64 lowercase hexadecimal characters.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "GitCommitId": {
+      "description": "A full 40-character lowercase Git commit ID.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "ImageDigest": {
+      "description": "An OCI image digest.",
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "RelativePath": {
+      "description": "A relative POSIX path. Segments use letters, digits, '.', '_' and '-', and never start with '.'.",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-][A-Za-z0-9._-]*(?:/[A-Za-z0-9_-][A-Za-z0-9._-]*)*$"
+    },
+    "UtcTime": {
+      "description": "UTC ISO 8601 time with milliseconds and Z (contract section 3). The format adds the calendar check (no 2026-02-30, no second 60).",
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$",
+      "format": "rbw-utc-time"
+    },
+    "ItemKey": {
+      "description": "Chosen by the client and unique within a request (uniqueness is not checked by the schema).",
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{0,31}$"
+    },
+    "Identifier": {
+      "description": "A non-empty identifier declared by the service, a host or a source, such as a baseline, source, entry, criterion, suite, check set, protocol or copy ID.",
+      "type": "string",
+      "minLength": 1
+    },
+    "Version": {
+      "description": "A non-empty version label, such as \"1\".",
+      "type": "string",
+      "minLength": 1
+    },
+    "ContractVersion": {
+      "description": "Carried by every response body.",
+      "type": "string",
+      "enum": [
+        "bug-request/1"
+      ]
+    },
+    "HostId": {
+      "type": "string",
+      "enum": [
+        "umami",
+        "task-report"
+      ]
+    },
+    "BugTypeId": {
+      "type": "string",
+      "enum": [
+        "concurrency",
+        "date_time"
+      ]
+    },
+    "ServiceState": {
+      "type": "string",
+      "enum": [
+        "available",
+        "unavailable"
+      ]
+    },
+    "ServiceCode": {
+      "type": "string",
+      "enum": [
+        "not_configured",
+        "halted",
+        "maintenance"
+      ]
+    },
+    "SupportStatus": {
+      "type": "string",
+      "enum": [
+        "supported",
+        "unsupported"
+      ]
+    },
+    "SourceKind": {
+      "type": "string",
+      "enum": [
+        "finite_recipe_catalog"
+      ]
+    },
+    "DifficultyOptionId": {
+      "type": "string",
+      "enum": [
+        "source_inferable_allowed",
+        "source_only_difficulty_required"
+      ]
+    },
+    "ItemDifficultyStatus": {
+      "type": "string",
+      "enum": [
+        "not_required",
+        "unsupported"
+      ]
+    },
+    "DifficultyAssessmentStatus": {
+      "type": "string",
+      "enum": [
+        "not_assessed"
+      ]
+    },
+    "InterpreterId": {
+      "type": "string",
+      "enum": [
+        "criteria-match"
+      ]
+    },
+    "QualificationRouteId": {
+      "type": "string",
+      "enum": [
+        "behavioral-qualification"
+      ]
+    },
+    "PackageKind": {
+      "type": "string",
+      "enum": [
+        "bug_case",
+        "validator"
+      ]
+    },
+    "PackageFormat": {
+      "type": "string",
+      "enum": [
+        "rbw-bug-case/1",
+        "rbw-validator/1"
+      ]
+    },
+    "ProblemCode": {
+      "description": "Contract section 6.2.",
+      "type": "string",
+      "enum": [
+        "unsupported_combination",
+        "unrecognized_description",
+        "no_matching_source",
+        "unsupported_difficulty",
+        "budget_below_minimum",
+        "quantity_exceeds_source",
+        "host_unused"
+      ]
+    },
+    "ProblemSeverity": {
+      "type": "string",
+      "enum": [
+        "blocking",
+        "warning"
+      ]
+    },
+    "RequestState": {
+      "type": "string",
+      "enum": [
+        "queued",
+        "starting",
+        "running",
+        "stopping",
+        "finished"
+      ]
+    },
+    "RequestOutcome": {
+      "description": "Contract section 8.1.",
+      "type": "string",
+      "enum": [
+        "fulfilled",
+        "stopped_at_limit",
+        "sources_exhausted",
+        "cancelled",
+        "operational_error"
+      ]
+    },
+    "StopCode": {
+      "description": "Contract section 8.1.",
+      "type": "string",
+      "enum": [
+        "fulfilled",
+        "budget_exhausted",
+        "time_limit",
+        "candidate_limit",
+        "sources_exhausted",
+        "cancelled_by_user",
+        "worker_lost",
+        "needs_reconciliation",
+        "operational_error"
+      ]
+    },
+    "Delivery": {
+      "type": "string",
+      "enum": [
+        "none",
+        "partial",
+        "complete"
+      ]
+    },
+    "AttentionCode": {
+      "type": "string",
+      "enum": [
+        "needs_reconciliation",
+        "worker_unresponsive"
+      ]
+    },
+    "CandidateStage": {
+      "type": "string",
+      "enum": [
+        "selected",
+        "preparing",
+        "checking",
+        "behavior_checks_passed",
+        "requested_criteria_passed",
+        "packaging",
+        "qualified",
+        "rejected",
+        "invalid",
+        "incomplete",
+        "skipped"
+      ]
+    },
+    "CandidateReason": {
+      "description": "Contract section 8.3.",
+      "type": "string",
+      "enum": [
+        "original_suite_failed_clean",
+        "original_suite_caught_bug",
+        "original_suite_failed_fixed",
+        "checks_failed_clean",
+        "checks_failed_fixed",
+        "bug_not_detected",
+        "wrong_failure",
+        "export_mismatch",
+        "setup_failed",
+        "incomplete_run",
+        "stopped",
+        "duplicate_defect",
+        "no_budget_for_candidate"
+      ]
+    },
+    "EventType": {
+      "description": "Contract section 8.4.",
+      "type": "string",
+      "enum": [
+        "request_accepted",
+        "worker_started",
+        "host_preparing",
+        "host_ready",
+        "candidate_selected",
+        "check_finished",
+        "behavior_checks_passed",
+        "requested_criteria_passed",
+        "candidate_rejected",
+        "candidate_invalid",
+        "candidate_incomplete",
+        "candidate_skipped",
+        "package_ready",
+        "case_delivered",
+        "source_exhausted",
+        "budget_updated",
+        "stop_requested",
+        "attention",
+        "attention_cleared",
+        "request_finished",
+        "validation_started",
+        "validation_finished"
+      ]
+    },
+    "CheckSet": {
+      "type": "string",
+      "enum": [
+        "original_suite",
+        "verification"
+      ]
+    },
+    "CopyState": {
+      "type": "string",
+      "enum": [
+        "clean",
+        "buggy",
+        "fixed"
+      ]
+    },
+    "ExpectedOutcome": {
+      "type": "string",
+      "enum": [
+        "pass",
+        "fail"
+      ]
+    },
+    "ObservedOutcome": {
+      "type": "string",
+      "enum": [
+        "pass",
+        "fail",
+        "error",
+        "incomplete"
+      ]
+    },
+    "CaseOrigin": {
+      "type": "string",
+      "enum": [
+        "live_request",
+        "published_example"
+      ]
+    },
+    "QualificationVerdict": {
+      "type": "string",
+      "enum": [
+        "accepted",
+        "rejected",
+        "invalid",
+        "incomplete"
+      ]
+    },
+    "ValidationState": {
+      "type": "string",
+      "enum": [
+        "queued",
+        "running",
+        "finished"
+      ]
+    },
+    "ValidationResult": {
+      "type": "string",
+      "enum": [
+        "passed",
+        "failed",
+        "error"
+      ]
+    },
+    "ErrorCode": {
+      "description": "Contract section 12.",
+      "type": "string",
+      "enum": [
+        "invalid_request",
+        "unauthorized",
+        "passcode_incorrect",
+        "not_found",
+        "idempotency_conflict",
+        "interpretation_stale",
+        "busy",
+        "budget_unavailable",
+        "not_ready",
+        "unsupported_request",
+        "unavailable"
+      ]
+    },
+    "BusyReason": {
+      "type": "string",
+      "enum": [
+        "active",
+        "needs_reconciliation"
+      ]
+    },
+    "CopyRecordStatus": {
+      "type": "string",
+      "enum": [
+        "complete",
+        "invalid",
+        "incomplete"
+      ]
+    },
+    "Architecture": {
+      "type": "string",
+      "enum": [
+        "amd64",
+        "arm64"
+      ]
+    },
+    "RepairKind": {
+      "type": "string",
+      "enum": [
+        "revert",
+        "independent"
+      ]
+    },
+    "EmptyObject": {
+      "description": "An object with no fields: {}.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [],
+      "properties": {}
+    },
+    "Capabilities": {
+      "description": "GET /api/factory/capabilities (contract section 4).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contract_version",
+        "service",
+        "hosts",
+        "bug_types",
+        "combinations",
+        "difficulty_options",
+        "limits",
+        "interpreter",
+        "qualification_route",
+        "package_formats"
+      ],
+      "properties": {
+        "contract_version": {
+          "$ref": "#/$defs/ContractVersion"
+        },
+        "service": {
+          "$ref": "#/$defs/ServiceStatus"
+        },
+        "hosts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Host"
+          }
+        },
+        "bug_types": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/BugType"
+          }
+        },
+        "combinations": {
+          "description": "Every (host, bug type) pair appears once.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Combination"
+          }
+        },
+        "difficulty_options": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DifficultyOption"
+          }
+        },
+        "limits": {
+          "$ref": "#/$defs/Limits"
+        },
+        "interpreter": {
+          "$ref": "#/$defs/InterpreterCapability"
+        },
+        "qualification_route": {
+          "$ref": "#/$defs/QualificationRoute"
+        },
+        "package_formats": {
+          "$ref": "#/$defs/PackageFormats"
+        }
+      }
+    },
+    "ServiceStatus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "state",
+        "code",
+        "message"
+      ],
+      "properties": {
+        "state": {
+          "$ref": "#/$defs/ServiceState"
+        },
+        "code": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ServiceCode"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "message": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "Host": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "host_id",
+        "label",
+        "description",
+        "baseline_id"
+      ],
+      "properties": {
+        "host_id": {
+          "$ref": "#/$defs/HostId"
+        },
+        "label": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "baseline_id": {
+          "description": "The pinned application revision, such as umami@ec0ff503.",
+          "$ref": "#/$defs/Identifier"
+        }
+      }
+    },
+    "BugType": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "bug_type_id",
+        "label",
+        "description",
+        "criteria"
+      ],
+      "properties": {
+        "bug_type_id": {
+          "$ref": "#/$defs/BugTypeId"
+        },
+        "label": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "criteria": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Criterion"
+          }
+        }
+      }
+    },
+    "Criterion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "criterion_id",
+        "version",
+        "label",
+        "description",
+        "example_phrases"
+      ],
+      "properties": {
+        "criterion_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "version": {
+          "$ref": "#/$defs/Version"
+        },
+        "label": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "example_phrases": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "Combination": {
+      "description": "Supported means a declared source with at least one entry exists (contract section 4.2).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "host_id",
+        "bug_type_id",
+        "status",
+        "reason",
+        "source"
+      ],
+      "properties": {
+        "host_id": {
+          "$ref": "#/$defs/HostId"
+        },
+        "bug_type_id": {
+          "$ref": "#/$defs/BugTypeId"
+        },
+        "status": {
+          "$ref": "#/$defs/SupportStatus"
+        },
+        "reason": {
+          "description": "Why the pair is unsupported; null when supported.",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "source": {
+          "description": "The declared source; null when unsupported.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SourceSummary"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "const": "supported"
+              }
+            }
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "source": {
+                "type": "object"
+              },
+              "reason": {
+                "type": "null"
+              }
+            }
+          },
+          "else": {
+            "type": "object",
+            "properties": {
+              "source": {
+                "type": "null"
+              },
+              "reason": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "SourceSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_id",
+        "kind",
+        "catalog_version",
+        "entries",
+        "criteria_ids",
+        "description"
+      ],
+      "properties": {
+        "source_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "kind": {
+          "$ref": "#/$defs/SourceKind"
+        },
+        "catalog_version": {
+          "$ref": "#/$defs/Version"
+        },
+        "entries": {
+          "description": "The size of the finite catalog.",
+          "$ref": "#/$defs/PositiveInteger"
+        },
+        "criteria_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Identifier"
+          }
+        },
+        "description": {
+          "type": "string"
+        }
+      }
+    },
+    "DifficultyOption": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "option_id",
+        "label",
+        "default",
+        "available",
+        "reason"
+      ],
+      "properties": {
+        "option_id": {
+          "$ref": "#/$defs/DifficultyOptionId"
+        },
+        "label": {
+          "type": "string"
+        },
+        "default": {
+          "type": "boolean"
+        },
+        "available": {
+          "type": "boolean"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "Limits": {
+      "description": "Service configuration; clients read limits here and never hard-code them (contract section 4.3).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "max_items",
+        "max_quantity_per_item",
+        "max_total_quantity",
+        "max_description_chars",
+        "budget_presets_microusd",
+        "default_budget_microusd",
+        "min_budget_microusd",
+        "max_budget_microusd",
+        "max_wall_clock_s",
+        "max_candidates"
+      ],
+      "properties": {
+        "max_items": {
+          "$ref": "#/$defs/NonNegativeInteger"
+        },
+        "max_quantity_per_item": {
+          "$ref": "#/$defs/NonNegativeInteger"
+        },
+        "max_total_quantity": {
+          "$ref": "#/$defs/NonNegativeInteger"
+        },
+        "max_description_chars": {
+          "$ref": "#/$defs/NonNegativeInteger"
+        },
+        "budget_presets_microusd": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MicroUsd"
+          }
+        },
+        "default_budget_microusd": {
+          "$ref": "#/$defs/MicroUsd"
+        },
+        "min_budget_microusd": {
+          "$ref": "#/$defs/MicroUsd"
+        },
+        "max_budget_microusd": {
+          "$ref": "#/$defs/MicroUsd"
+        },
+        "max_wall_clock_s": {
+          "$ref": "#/$defs/NonNegativeInteger"
+        },
+        "max_candidates": {
+          "$ref": "#/$defs/NonNegativeInteger"
+        }
+      }
+    },
+    "InterpreterCapability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "interpreter_id",
+        "version",
+        "criteria_catalog_version",
+        "filler_phrases"
+      ],
+      "properties": {
+        "interpreter_id": {
+          "$ref": "#/$defs/InterpreterId"
+        },
+        "version": {
+          "$ref": "#/$defs/Version"
+        },
+        "criteria_catalog_version": {
+          "$ref": "#/$defs/Version"
+        },
+        "filler_phrases": {
+          "description": "Versioned with criteria_catalog_version (contract section 6.1).",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "InterpreterIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "interpreter_id",
+        "version",
+        "criteria_catalog_version"
+      ],
+      "properties": {
+        "interpreter_id": {
+          "$ref": "#/$defs/InterpreterId"
+        },
+        "version": {
+          "$ref": "#/$defs/Version"
+        },
+        "criteria_catalog_version": {
+          "$ref": "#/$defs/Version"
+        }
+      }
+    },
+    "QualificationRoute": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "route_id",
+        "version"
+      ],
+      "properties": {
+        "route_id": {
+          "$ref": "#/$defs/QualificationRouteId"
+        },
+        "version": {
+          "$ref": "#/$defs/Version"
+        }
+      }
+    },
+    "PackageFormats": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "bug_case",
+        "validator"
+      ],
+      "properties": {
+        "bug_case": {
+          "const": "rbw-bug-case/1"
+        },
+        "validator": {
+          "const": "rbw-validator/1"
+        }
+      }
+    },
+    "RequestInput": {
+      "description": "The body of POST /api/factory/interpretations and the input of a start (contract section 5). Limits from Capabilities are checked by the service, not the schema.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "hosts",
+        "items",
+        "budget_microusd"
+      ],
+      "properties": {
+        "hosts": {
+          "description": "One or two hosts, no repeats.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/HostId"
+          },
+          "minItems": 1,
+          "maxItems": 2,
+          "uniqueItems": true
+        },
+        "items": {
+          "description": "At least one item; at most limits.max_items.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/RequestItemInput"
+          },
+          "minItems": 1
+        },
+        "budget_microusd": {
+          "description": "Shared by every host and item; within the limits' budget range.",
+          "$ref": "#/$defs/MicroUsd"
+        }
+      }
+    },
+    "RequestItemInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "item_key",
+        "bug_type_id",
+        "quantity",
+        "description",
+        "difficulty"
+      ],
+      "properties": {
+        "item_key": {
+          "$ref": "#/$defs/ItemKey"
+        },
+        "bug_type_id": {
+          "$ref": "#/$defs/BugTypeId"
+        },
+        "quantity": {
+          "description": "At most limits.max_quantity_per_item.",
+          "$ref": "#/$defs/PositiveInteger"
+        },
+        "description": {
+          "description": "Trimmed; an empty description is sent as null; at most limits.max_description_chars.",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "difficulty": {
+          "$ref": "#/$defs/DifficultyOptionId"
+        }
+      }
+    },
+    "Interpretation": {
+      "description": "The answer of POST /api/factory/interpretations (contract section 6).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contract_version",
+        "interpretation_sha256",
+        "interpreter",
+        "qualification_route",
+        "input",
+        "startable",
+        "items",
+        "type_totals",
+        "hosts",
+        "budget",
+        "limits",
+        "problems"
+      ],
+      "properties": {
+        "contract_version": {
+          "$ref": "#/$defs/ContractVersion"
+        },
+        "interpretation_sha256": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "interpreter": {
+          "$ref": "#/$defs/InterpreterIdentity"
+        },
+        "qualification_route": {
+          "$ref": "#/$defs/QualificationRoute"
+        },
+        "input": {
+          "description": "The normalized input actually interpreted.",
+          "$ref": "#/$defs/RequestInput"
+        },
+        "startable": {
+          "description": "True only when no problem has severity blocking.",
+          "type": "boolean"
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/InterpretedItem"
+          }
+        },
+        "type_totals": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TypeQuantity"
+          }
+        },
+        "hosts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/InterpretationHost"
+          }
+        },
+        "budget": {
+          "$ref": "#/$defs/InterpretationBudget"
+        },
+        "limits": {
+          "$ref": "#/$defs/InterpretationLimits"
+        },
+        "problems": {
+          "description": "Request-level problems.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Problem"
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "startable": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "problems": {
+                "type": "array",
+                "not": {
+                  "contains": {
+                    "type": "object",
+                    "properties": {
+                      "severity": {
+                        "const": "blocking"
+                      }
+                    }
+                  }
+                }
+              },
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "const": "supported"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "else": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "problems": {
+                    "type": "array",
+                    "contains": {
+                      "type": "object",
+                      "properties": {
+                        "severity": {
+                          "const": "blocking"
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "items": {
+                    "type": "array",
+                    "contains": {
+                      "type": "object",
+                      "properties": {
+                        "status": {
+                          "const": "unsupported"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "InterpretedItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "item_key",
+        "bug_type_id",
+        "quantity",
+        "description",
+        "difficulty",
+        "criteria",
+        "unmatched_text",
+        "eligible_sources",
+        "status",
+        "problems"
+      ],
+      "properties": {
+        "item_key": {
+          "$ref": "#/$defs/ItemKey"
+        },
+        "bug_type_id": {
+          "$ref": "#/$defs/BugTypeId"
+        },
+        "quantity": {
+          "$ref": "#/$defs/PositiveInteger"
+        },
+        "description": {
+          "description": "Kept verbatim.",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "difficulty": {
+          "$ref": "#/$defs/ItemDifficulty"
+        },
+        "criteria": {
+          "description": "Empty when the item has no description.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/InterpretedCriterion"
+          }
+        },
+        "unmatched_text": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "eligible_sources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/EligibleSource"
+          }
+        },
+        "status": {
+          "description": "Unsupported exactly when the item has a blocking problem.",
+          "$ref": "#/$defs/SupportStatus"
+        },
+        "problems": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Problem"
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "const": "supported"
+              }
+            }
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "problems": {
+                "type": "array",
+                "not": {
+                  "contains": {
+                    "type": "object",
+                    "properties": {
+                      "severity": {
+                        "const": "blocking"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "else": {
+            "type": "object",
+            "properties": {
+              "problems": {
+                "type": "array",
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "severity": {
+                      "const": "blocking"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "ItemDifficulty": {
+      "description": "An item that requires source-only difficulty is unsupported, never downgraded (contract section 4.4).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requested",
+        "status"
+      ],
+      "properties": {
+        "requested": {
+          "$ref": "#/$defs/DifficultyOptionId"
+        },
+        "status": {
+          "$ref": "#/$defs/ItemDifficultyStatus"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "requested": {
+                "const": "source_only_difficulty_required"
+              }
+            }
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "const": "unsupported"
+              }
+            }
+          },
+          "else": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "const": "not_required"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "InterpretedCriterion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "criterion_id",
+        "version",
+        "label",
+        "matched_text"
+      ],
+      "properties": {
+        "criterion_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "version": {
+          "$ref": "#/$defs/Version"
+        },
+        "label": {
+          "type": "string"
+        },
+        "matched_text": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "EligibleSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "host_id",
+        "source_id",
+        "entries"
+      ],
+      "properties": {
+        "host_id": {
+          "$ref": "#/$defs/HostId"
+        },
+        "source_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "entries": {
+          "$ref": "#/$defs/NonNegativeInteger"
+        }
+      }
+    },
+    "TypeQuantity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "bug_type_id",
+        "quantity"
+      ],
+      "properties": {
+        "bug_type_id": {
+          "$ref": "#/$defs/BugTypeId"
+        },
+        "quantity": {
+          "$ref": "#/$defs/NonNegativeInteger"
+        }
+      }
+    },
+    "InterpretationHost": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "host_id",
+        "used",
+        "reason"
+      ],
+      "properties": {
+        "host_id": {
+          "$ref": "#/$defs/HostId"
+        },
+        "used": {
+          "type": "boolean"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "InterpretationBudget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "budget_microusd",
+        "worker_worst_case_microusd",
+        "worst_case_per_candidate_microusd",
+        "worst_case_per_validation_microusd",
+        "estimate_note"
+      ],
+      "properties": {
+        "budget_microusd": {
+          "$ref": "#/$defs/MicroUsd"
+        },
+        "worker_worst_case_microusd": {
+          "$ref": "#/$defs/MicroUsd"
+        },
+        "worst_case_per_candidate_microusd": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/HostAmount"
+          }
+        },
+        "worst_case_per_validation_microusd": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/HostAmount"
+          }
+        },
+        "estimate_note": {
+          "type": "string"
+        }
+      }
+    },
+    "HostAmount": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "host_id",
+        "microusd"
+      ],
+      "properties": {
+        "host_id": {
+          "$ref": "#/$defs/HostId"
+        },
+        "microusd": {
+          "$ref": "#/$defs/MicroUsd"
+        }
+      }
+    },
+    "InterpretationLimits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "max_wall_clock_s",
+        "max_candidates"
+      ],
+      "properties": {
+        "max_wall_clock_s": {
+          "$ref": "#/$defs/NonNegativeInteger"
+        },
+        "max_candidates": {
+          "$ref": "#/$defs/NonNegativeInteger"
+        }
+      }
+    },
+    "Problem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "severity",
+        "message",
+        "item_key"
+      ],
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/ProblemCode"
+        },
+        "severity": {
+          "description": "Fixed by the code (contract section 6.2).",
+          "$ref": "#/$defs/ProblemSeverity"
+        },
+        "message": {
+          "type": "string"
+        },
+        "item_key": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ItemKey"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "enum": [
+                  "quantity_exceeds_source",
+                  "host_unused"
+                ]
+              }
+            }
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "severity": {
+                "const": "warning"
+              }
+            }
+          },
+          "else": {
+            "type": "object",
+            "properties": {
+              "severity": {
+                "const": "blocking"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "const": "budget_below_minimum"
+              }
+            }
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "item_key": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "StartRequest": {
+      "description": "The body of POST /api/factory/requests (contract section 7).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "request_id",
+        "input",
+        "interpretation_sha256"
+      ],
+      "properties": {
+        "request_id": {
+          "$ref": "#/$defs/Uuid"
+        },
+        "input": {
+          "$ref": "#/$defs/RequestInput"
+        },
+        "interpretation_sha256": {
+          "$ref": "#/$defs/Sha256"
+        }
+      }
+    },
+    "RequestStatus": {
+      "description": "GET /api/factory/requests/{request_id} (contract section 8).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contract_version",
+        "request_id",
+        "created_at",
+        "updated_at",
+        "state",
+        "outcome",
+        "stop_reason",
+        "delivery",
+        "attention",
+        "interpretation",
+        "budget",
+        "limits",
+        "funnel",
+        "items",
+        "type_totals",
+        "candidates",
+        "cases",
+        "events",
+        "next_after",
+        "last_heartbeat_at",
+        "poll_after_ms"
+      ],
+      "properties": {
+        "contract_version": {
+          "$ref": "#/$defs/ContractVersion"
+        },
+        "request_id": {
+          "$ref": "#/$defs/Uuid"
+        },
+        "created_at": {
+          "$ref": "#/$defs/UtcTime"
+        },
+        "updated_at": {
+          "$ref": "#/$defs/UtcTime"
+        },
+        "state": {
+          "$ref": "#/$defs/RequestState"
+        },
+        "outcome": {
+          "description": "Set only in state finished.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RequestOutcome"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "stop_reason": {
+          "description": "Set only in state finished; its code belongs to the outcome.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StopReason"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "delivery": {
+          "description": "Derived from the counts; a fulfilled outcome always has complete.",
+          "$ref": "#/$defs/Delivery"
+        },
+        "attention": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Attention"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "interpretation": {
+          "description": "Frozen at start.",
+          "$ref": "#/$defs/Interpretation"
+        },
+        "budget": {
+          "$ref": "#/$defs/RequestBudget"
+        },
+        "limits": {
+          "$ref": "#/$defs/RequestLimits"
+        },
+        "funnel": {
+          "$ref": "#/$defs/Funnel"
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ItemProgress"
+          }
+        },
+        "type_totals": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TypeProgress"
+          }
+        },
+        "candidates": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Candidate"
+          }
+        },
+        "cases": {
+          "description": "Qualified cases only.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Case"
+          }
+        },
+        "events": {
+          "description": "Up to 200 events with seq greater than the after parameter.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Event"
+          }
+        },
+        "next_after": {
+          "$ref": "#/$defs/NonNegativeInteger"
+        },
+        "last_heartbeat_at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UtcTime"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "poll_after_ms": {
+          "$ref": "#/$defs/NonNegativeInteger"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "state": {
+                "const": "finished"
+              }
+            }
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "outcome": {
+                "type": "string"
+              },
+              "stop_reason": {
+                "type": "object"
+              }
+            }
+          },
+          "else": {
+            "type": "object",
+            "properties": {
+              "outcome": {
+                "type": "null"
+              },
+              "stop_reason": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "outcome": {
+                "const": "fulfilled"
+              }
+            }
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "stop_reason": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "const": "fulfilled"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "outcome": {
+                "const": "stopped_at_limit"
+              }
+            }
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "stop_reason": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "enum": [
+                      "budget_exhausted",
+                      "time_limit",
+                      "candidate_limit"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "outcome": {
+                "const": "sources_exhausted"
+              }
+            }
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "stop_reason": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "const": "sources_exhausted"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "outcome": {
+                "const": "cancelled"
+              }
+            }
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "stop_reason": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "const": "cancelled_by_user"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "outcome": {
+                "const": "operational_error"
+              }
+            }
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "stop_reason": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "enum": [
+                      "worker_lost",
+                      "needs_reconciliation",
+                      "operational_error"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "outcome": {
+                "const": "fulfilled"
+              }
+            }
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "delivery": {
+                "const": "complete"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "StopReason": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "message"
+      ],
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/StopCode"
+        },
+        "message": {
+          "type": "string"
+        }
+      }
+    },
+    "Attention": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "message"
+      ],
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/AttentionCode"
+        },
+        "message": {
+          "type": "string"
+        }
+      }
+    },
+    "RequestBudget": {
+      "description": "Contract section 8.5. The arithmetic between the fields is not checked by the schema.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "budget_microusd",
+        "reserved_microusd",
+        "spent_microusd",
+        "committed_microusd",
+        "remaining_microusd",
+        "overrun"
+      ],
+      "properties": {
+        "budget_microusd": {
+          "$ref": "#/$defs/MicroUsd"
+        },
+        "reserved_microusd": {
+          "$ref": "#/$defs/MicroUsd"
+        },
+        "spent_microusd": {
+          "$ref": "#/$defs/MicroUsd"
+        },
+        "committed_microusd": {
+          "description": "reserved_microusd + spent_microusd.",
+          "$ref": "#/$defs/MicroUsd"
+        },
+        "remaining_microusd": {
+          "description": "budget_microusd - committed_microusd; negative only on an overrun.",
+          "$ref": "#/$defs/MicroUsd"
+        },
+        "overrun": {
+          "description": "True when committed_microusd exceeds budget_microusd.",
+          "type": "boolean"
+        }
+      }
+    },
+    "RequestLimits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "max_wall_clock_s",
+        "deadline_at",
+        "max_candidates",
+        "candidates_started"
+      ],
+      "properties": {
+        "max_wall_clock_s": {
+          "$ref": "#/$defs/NonNegativeInteger"
+        },
+        "deadline_at": {
+          "$ref": "#/$defs/UtcTime"
+        },
+        "max_candidates": {
+          "$ref": "#/$defs/NonNegativeInteger"
+        },
+        "candidates_started": {
+          "$ref": "#/$defs/NonNegativeInteger"
+        }
+      }
+    },
+    "Funnel": {
+      "description": "Distinct candidates in this request (contract section 8.2).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "candidates_explored",
+        "behavior_checks_passed",
+        "requested_criteria_passed",
+        "packages_ready"
+      ],
+      "properties": {
+        "candidates_explored": {
+          "$ref": "#/$defs/NonNegativeInteger"
+        },
+        "behavior_checks_passed": {
+          "$ref": "#/$defs/NonNegativeInteger"
+        },
+        "requested_criteria_passed": {
+          "$ref": "#/$defs/NonNegativeInteger"
+        },
+        "packages_ready": {
+          "$ref": "#/$defs/NonNegativeInteger"
+        }
+      }
+    },
+    "ItemProgress": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "item_key",
+        "bug_type_id",
+        "description",
+        "requested",
+        "delivered",
+        "missing",
+        "case_ids"
+      ],
+      "properties": {
+        "item_key": {
+          "$ref": "#/$defs/ItemKey"
+        },
+        "bug_type_id": {
+          "$ref": "#/$defs/BugTypeId"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "requested": {
+          "$ref": "#/$defs/NonNegativeInteger"
+        },
+        "delivered": {
+          "$ref": "#/$defs/NonNegativeInteger"
+        },
+        "missing": {
+          "$ref": "#/$defs/NonNegativeInteger"
+        },
+        "case_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Sha256"
+          }
+        }
+      }
+    },
+    "TypeProgress": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "bug_type_id",
+        "requested",
+        "delivered",
+        "missing"
+      ],
+      "properties": {
+        "bug_type_id": {
+          "$ref": "#/$defs/BugTypeId"
+        },
+        "requested": {
+          "$ref": "#/$defs/NonNegativeInteger"
+        },
+        "delivered": {
+          "$ref": "#/$defs/NonNegativeInteger"
+        },
+        "missing": {
+          "$ref": "#/$defs/NonNegativeInteger"
+        }
+      }
+    },
+    "Candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "candidate_id",
+        "defect_id",
+        "host_id",
+        "bug_type_id",
+        "source_id",
+        "entry_id",
+        "stage",
+        "reason",
+        "item_key",
+        "case_id",
+        "started_at",
+        "finished_at"
+      ],
+      "properties": {
+        "candidate_id": {
+          "description": "Canonical hash of source_id, catalog_version and entry_id; unique within a request.",
+          "$ref": "#/$defs/Sha256"
+        },
+        "defect_id": {
+          "description": "The planted change (contract section 10.4).",
+          "$ref": "#/$defs/Sha256"
+        },
+        "host_id": {
+          "$ref": "#/$defs/HostId"
+        },
+        "bug_type_id": {
+          "$ref": "#/$defs/BugTypeId"
+        },
+        "source_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "entry_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "stage": {
+          "$ref": "#/$defs/CandidateStage"
+        },
+        "reason": {
+          "description": "Set exactly for the stages rejected, invalid, incomplete and skipped, with a reason of that stage (contract section 8.3).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CandidateReasonDetail"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "item_key": {
+          "description": "Set at requested_criteria_passed, when the candidate is assigned to an item.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ItemKey"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "case_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "started_at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UtcTime"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "finished_at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UtcTime"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "stage": {
+                "const": "rejected"
+              }
+            }
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "reason": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "enum": [
+                      "original_suite_failed_clean",
+                      "original_suite_caught_bug",
+                      "original_suite_failed_fixed",
+                      "checks_failed_clean",
+                      "checks_failed_fixed",
+                      "bug_not_detected",
+                      "wrong_failure",
+                      "export_mismatch"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "stage": {
+                "const": "invalid"
+              }
+            }
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "reason": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "const": "setup_failed"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "stage": {
+                "const": "incomplete"
+              }
+            }
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "reason": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "enum": [
+                      "incomplete_run",
+                      "stopped"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "stage": {
+                "const": "skipped"
+              }
+            }
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "reason": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "enum": [
+                      "duplicate_defect",
+                      "no_budget_for_candidate"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "stage": {
+                "enum": [
+                  "selected",
+                  "preparing",
+                  "checking",
+                  "behavior_checks_passed",
+                  "requested_criteria_passed",
+                  "packaging",
+                  "qualified"
+                ]
+              }
+            }
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "reason": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "stage": {
+                "enum": [
+                  "selected",
+                  "preparing",
+                  "checking",
+                  "behavior_checks_passed"
+                ]
+              }
+            }
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "item_key": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "stage": {
+                "const": "qualified"
+              }
+            }
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "item_key": {
+                "type": "string"
+              },
+              "case_id": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "CandidateReasonDetail": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "message"
+      ],
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/CandidateReason"
+        },
+        "message": {
+          "type": "string"
+        }
+      }
+    },
+    "Event": {
+      "description": "One event of a request, discriminated by type (contract section 8.4). Events are append-only.",
+      "type": "object",
+      "discriminator": {
+        "propertyName": "type"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/EmptyDataEvent"
+        },
+        {
+          "$ref": "#/$defs/HostEvent"
+        },
+        {
+          "$ref": "#/$defs/CandidateSelectedEvent"
+        },
+        {
+          "$ref": "#/$defs/CheckFinishedEvent"
+        },
+        {
+          "$ref": "#/$defs/CriteriaPassedEvent"
+        },
+        {
+          "$ref": "#/$defs/CandidateEndedEvent"
+        },
+        {
+          "$ref": "#/$defs/PackageReadyEvent"
+        },
+        {
+          "$ref": "#/$defs/SourceExhaustedEvent"
+        },
+        {
+          "$ref": "#/$defs/BudgetUpdatedEvent"
+        },
+        {
+          "$ref": "#/$defs/AttentionEvent"
+        },
+        {
+          "$ref": "#/$defs/RequestFinishedEvent"
+        },
+        {
+          "$ref": "#/$defs/ValidationStartedEvent"
+        },
+        {
+          "$ref": "#/$defs/ValidationFinishedEvent"
+        }
+      ]
+    },
+    "EmptyDataEvent": {
+      "description": "An event whose data is {}.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "seq",
+        "at",
+        "type",
+        "host_id",
+        "candidate_id",
+        "item_key",
+        "case_id",
+        "message",
+        "data"
+      ],
+      "properties": {
+        "seq": {
+          "description": "Numbered from 1 with no gaps.",
+          "$ref": "#/$defs/PositiveInteger"
+        },
+        "at": {
+          "$ref": "#/$defs/UtcTime"
+        },
+        "type": {
+          "enum": [
+            "request_accepted",
+            "worker_started",
+            "behavior_checks_passed",
+            "case_delivered",
+            "stop_requested"
+          ]
+        },
+        "host_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HostId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "candidate_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "item_key": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ItemKey"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "case_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "message": {
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/EmptyObject"
+        }
+      }
+    },
+    "HostEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "seq",
+        "at",
+        "type",
+        "host_id",
+        "candidate_id",
+        "item_key",
+        "case_id",
+        "message",
+        "data"
+      ],
+      "properties": {
+        "seq": {
+          "description": "Numbered from 1 with no gaps.",
+          "$ref": "#/$defs/PositiveInteger"
+        },
+        "at": {
+          "$ref": "#/$defs/UtcTime"
+        },
+        "type": {
+          "enum": [
+            "host_preparing",
+            "host_ready"
+          ]
+        },
+        "host_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HostId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "candidate_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "item_key": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ItemKey"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "case_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "message": {
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/HostEventData"
+        }
+      }
+    },
+    "CandidateSelectedEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "seq",
+        "at",
+        "type",
+        "host_id",
+        "candidate_id",
+        "item_key",
+        "case_id",
+        "message",
+        "data"
+      ],
+      "properties": {
+        "seq": {
+          "description": "Numbered from 1 with no gaps.",
+          "$ref": "#/$defs/PositiveInteger"
+        },
+        "at": {
+          "$ref": "#/$defs/UtcTime"
+        },
+        "type": {
+          "const": "candidate_selected"
+        },
+        "host_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HostId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "candidate_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "item_key": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ItemKey"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "case_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "message": {
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/CandidateSelectedData"
+        }
+      }
+    },
+    "CheckFinishedEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "seq",
+        "at",
+        "type",
+        "host_id",
+        "candidate_id",
+        "item_key",
+        "case_id",
+        "message",
+        "data"
+      ],
+      "properties": {
+        "seq": {
+          "description": "Numbered from 1 with no gaps.",
+          "$ref": "#/$defs/PositiveInteger"
+        },
+        "at": {
+          "$ref": "#/$defs/UtcTime"
+        },
+        "type": {
+          "const": "check_finished"
+        },
+        "host_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HostId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "candidate_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "item_key": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ItemKey"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "case_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "message": {
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/CheckFinishedData"
+        }
+      }
+    },
+    "CriteriaPassedEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "seq",
+        "at",
+        "type",
+        "host_id",
+        "candidate_id",
+        "item_key",
+        "case_id",
+        "message",
+        "data"
+      ],
+      "properties": {
+        "seq": {
+          "description": "Numbered from 1 with no gaps.",
+          "$ref": "#/$defs/PositiveInteger"
+        },
+        "at": {
+          "$ref": "#/$defs/UtcTime"
+        },
+        "type": {
+          "const": "requested_criteria_passed"
+        },
+        "host_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HostId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "candidate_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "item_key": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ItemKey"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "case_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "message": {
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/CriteriaPassedData"
+        }
+      }
+    },
+    "CandidateEndedEvent": {
+      "description": "The reason belongs to the stage the type names (contract section 8.3).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "seq",
+        "at",
+        "type",
+        "host_id",
+        "candidate_id",
+        "item_key",
+        "case_id",
+        "message",
+        "data"
+      ],
+      "properties": {
+        "seq": {
+          "description": "Numbered from 1 with no gaps.",
+          "$ref": "#/$defs/PositiveInteger"
+        },
+        "at": {
+          "$ref": "#/$defs/UtcTime"
+        },
+        "type": {
+          "enum": [
+            "candidate_rejected",
+            "candidate_invalid",
+            "candidate_incomplete",
+            "candidate_skipped"
+          ]
+        },
+        "host_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HostId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "candidate_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "item_key": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ItemKey"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "case_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "message": {
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/CandidateEndedData"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "const": "candidate_rejected"
+              }
+            }
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "data": {
+                "type": "object",
+                "properties": {
+                  "reason": {
+                    "enum": [
+                      "original_suite_failed_clean",
+                      "original_suite_caught_bug",
+                      "original_suite_failed_fixed",
+                      "checks_failed_clean",
+                      "checks_failed_fixed",
+                      "bug_not_detected",
+                      "wrong_failure",
+                      "export_mismatch"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "const": "candidate_invalid"
+              }
+            }
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "data": {
+                "type": "object",
+                "properties": {
+                  "reason": {
+                    "const": "setup_failed"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "const": "candidate_incomplete"
+              }
+            }
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "data": {
+                "type": "object",
+                "properties": {
+                  "reason": {
+                    "enum": [
+                      "incomplete_run",
+                      "stopped"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "const": "candidate_skipped"
+              }
+            }
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "data": {
+                "type": "object",
+                "properties": {
+                  "reason": {
+                    "enum": [
+                      "duplicate_defect",
+                      "no_budget_for_candidate"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "PackageReadyEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "seq",
+        "at",
+        "type",
+        "host_id",
+        "candidate_id",
+        "item_key",
+        "case_id",
+        "message",
+        "data"
+      ],
+      "properties": {
+        "seq": {
+          "description": "Numbered from 1 with no gaps.",
+          "$ref": "#/$defs/PositiveInteger"
+        },
+        "at": {
+          "$ref": "#/$defs/UtcTime"
+        },
+        "type": {
+          "const": "package_ready"
+        },
+        "host_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HostId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "candidate_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "item_key": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ItemKey"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "case_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "message": {
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/PackageReadyData"
+        }
+      }
+    },
+    "SourceExhaustedEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "seq",
+        "at",
+        "type",
+        "host_id",
+        "candidate_id",
+        "item_key",
+        "case_id",
+        "message",
+        "data"
+      ],
+      "properties": {
+        "seq": {
+          "description": "Numbered from 1 with no gaps.",
+          "$ref": "#/$defs/PositiveInteger"
+        },
+        "at": {
+          "$ref": "#/$defs/UtcTime"
+        },
+        "type": {
+          "const": "source_exhausted"
+        },
+        "host_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HostId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "candidate_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "item_key": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ItemKey"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "case_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "message": {
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/SourceExhaustedData"
+        }
+      }
+    },
+    "BudgetUpdatedEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "seq",
+        "at",
+        "type",
+        "host_id",
+        "candidate_id",
+        "item_key",
+        "case_id",
+        "message",
+        "data"
+      ],
+      "properties": {
+        "seq": {
+          "description": "Numbered from 1 with no gaps.",
+          "$ref": "#/$defs/PositiveInteger"
+        },
+        "at": {
+          "$ref": "#/$defs/UtcTime"
+        },
+        "type": {
+          "const": "budget_updated"
+        },
+        "host_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HostId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "candidate_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "item_key": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ItemKey"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "case_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "message": {
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/BudgetUpdatedData"
+        }
+      }
+    },
+    "AttentionEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "seq",
+        "at",
+        "type",
+        "host_id",
+        "candidate_id",
+        "item_key",
+        "case_id",
+        "message",
+        "data"
+      ],
+      "properties": {
+        "seq": {
+          "description": "Numbered from 1 with no gaps.",
+          "$ref": "#/$defs/PositiveInteger"
+        },
+        "at": {
+          "$ref": "#/$defs/UtcTime"
+        },
+        "type": {
+          "enum": [
+            "attention",
+            "attention_cleared"
+          ]
+        },
+        "host_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HostId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "candidate_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "item_key": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ItemKey"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "case_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "message": {
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/AttentionEventData"
+        }
+      }
+    },
+    "RequestFinishedEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "seq",
+        "at",
+        "type",
+        "host_id",
+        "candidate_id",
+        "item_key",
+        "case_id",
+        "message",
+        "data"
+      ],
+      "properties": {
+        "seq": {
+          "description": "Numbered from 1 with no gaps.",
+          "$ref": "#/$defs/PositiveInteger"
+        },
+        "at": {
+          "$ref": "#/$defs/UtcTime"
+        },
+        "type": {
+          "const": "request_finished"
+        },
+        "host_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HostId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "candidate_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "item_key": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ItemKey"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "case_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "message": {
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/RequestFinishedData"
+        }
+      }
+    },
+    "ValidationStartedEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "seq",
+        "at",
+        "type",
+        "host_id",
+        "candidate_id",
+        "item_key",
+        "case_id",
+        "message",
+        "data"
+      ],
+      "properties": {
+        "seq": {
+          "description": "Numbered from 1 with no gaps.",
+          "$ref": "#/$defs/PositiveInteger"
+        },
+        "at": {
+          "$ref": "#/$defs/UtcTime"
+        },
+        "type": {
+          "const": "validation_started"
+        },
+        "host_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HostId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "candidate_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "item_key": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ItemKey"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "case_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "message": {
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/ValidationStartedData"
+        }
+      }
+    },
+    "ValidationFinishedEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "seq",
+        "at",
+        "type",
+        "host_id",
+        "candidate_id",
+        "item_key",
+        "case_id",
+        "message",
+        "data"
+      ],
+      "properties": {
+        "seq": {
+          "description": "Numbered from 1 with no gaps.",
+          "$ref": "#/$defs/PositiveInteger"
+        },
+        "at": {
+          "$ref": "#/$defs/UtcTime"
+        },
+        "type": {
+          "const": "validation_finished"
+        },
+        "host_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HostId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "candidate_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "item_key": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ItemKey"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "case_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "message": {
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/ValidationFinishedData"
+        }
+      }
+    },
+    "HostEventData": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "baseline_id"
+      ],
+      "properties": {
+        "baseline_id": {
+          "$ref": "#/$defs/Identifier"
+        }
+      }
+    },
+    "CandidateSelectedData": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_id",
+        "entry_id"
+      ],
+      "properties": {
+        "source_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "entry_id": {
+          "$ref": "#/$defs/Identifier"
+        }
+      }
+    },
+    "CheckFinishedData": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "check_set",
+        "copy",
+        "outcome",
+        "runs_valid",
+        "runs_total"
+      ],
+      "properties": {
+        "check_set": {
+          "$ref": "#/$defs/CheckSet"
+        },
+        "copy": {
+          "$ref": "#/$defs/CopyState"
+        },
+        "outcome": {
+          "$ref": "#/$defs/ObservedOutcome"
+        },
+        "runs_valid": {
+          "$ref": "#/$defs/NonNegativeInteger"
+        },
+        "runs_total": {
+          "$ref": "#/$defs/NonNegativeInteger"
+        }
+      }
+    },
+    "CriteriaPassedData": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "criterion_ids"
+      ],
+      "properties": {
+        "criterion_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Identifier"
+          }
+        }
+      }
+    },
+    "CandidateEndedData": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reason"
+      ],
+      "properties": {
+        "reason": {
+          "$ref": "#/$defs/CandidateReason"
+        }
+      }
+    },
+    "PackageReadyData": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "bug_case_sha256",
+        "validator_sha256"
+      ],
+      "properties": {
+        "bug_case_sha256": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "validator_sha256": {
+          "$ref": "#/$defs/Sha256"
+        }
+      }
+    },
+    "SourceExhaustedData": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "bug_type_id",
+        "source_id"
+      ],
+      "properties": {
+        "bug_type_id": {
+          "$ref": "#/$defs/BugTypeId"
+        },
+        "source_id": {
+          "$ref": "#/$defs/Identifier"
+        }
+      }
+    },
+    "BudgetUpdatedData": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reserved_microusd",
+        "spent_microusd",
+        "remaining_microusd"
+      ],
+      "properties": {
+        "reserved_microusd": {
+          "$ref": "#/$defs/MicroUsd"
+        },
+        "spent_microusd": {
+          "$ref": "#/$defs/MicroUsd"
+        },
+        "remaining_microusd": {
+          "$ref": "#/$defs/MicroUsd"
+        }
+      }
+    },
+    "AttentionEventData": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code"
+      ],
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/AttentionCode"
+        }
+      }
+    },
+    "RequestFinishedData": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "outcome",
+        "stop_code"
+      ],
+      "properties": {
+        "outcome": {
+          "$ref": "#/$defs/RequestOutcome"
+        },
+        "stop_code": {
+          "description": "Belongs to the outcome (contract section 8.1).",
+          "$ref": "#/$defs/StopCode"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "outcome": {
+                "const": "fulfilled"
+              }
+            }
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "stop_code": {
+                "const": "fulfilled"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "outcome": {
+                "const": "stopped_at_limit"
+              }
+            }
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "stop_code": {
+                "enum": [
+                  "budget_exhausted",
+                  "time_limit",
+                  "candidate_limit"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "outcome": {
+                "const": "sources_exhausted"
+              }
+            }
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "stop_code": {
+                "const": "sources_exhausted"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "outcome": {
+                "const": "cancelled"
+              }
+            }
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "stop_code": {
+                "const": "cancelled_by_user"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "outcome": {
+                "const": "operational_error"
+              }
+            }
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "stop_code": {
+                "enum": [
+                  "worker_lost",
+                  "needs_reconciliation",
+                  "operational_error"
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "ValidationStartedData": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "validation_id"
+      ],
+      "properties": {
+        "validation_id": {
+          "$ref": "#/$defs/Uuid"
+        }
+      }
+    },
+    "ValidationFinishedData": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "validation_id",
+        "result"
+      ],
+      "properties": {
+        "validation_id": {
+          "$ref": "#/$defs/Uuid"
+        },
+        "result": {
+          "$ref": "#/$defs/ValidationResult"
+        }
+      }
+    },
+    "Case": {
+      "description": "A qualified case (contract section 10). It never carries answer-bearing material (section 10.1).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "case_id",
+        "defect_id",
+        "title",
+        "host_id",
+        "host_label",
+        "baseline_id",
+        "bug_type_id",
+        "item_key",
+        "criteria_met",
+        "summary",
+        "matrix",
+        "repetition",
+        "difficulty",
+        "qualification",
+        "packages",
+        "validation",
+        "provenance"
+      ],
+      "properties": {
+        "case_id": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "defect_id": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "title": {
+          "description": "Short plain-language name of the observed failure.",
+          "type": "string"
+        },
+        "host_id": {
+          "$ref": "#/$defs/HostId"
+        },
+        "host_label": {
+          "type": "string"
+        },
+        "baseline_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "bug_type_id": {
+          "$ref": "#/$defs/BugTypeId"
+        },
+        "item_key": {
+          "description": "The request item it fills; null for the completed example.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ItemKey"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "criteria_met": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CriterionSummary"
+          }
+        },
+        "summary": {
+          "$ref": "#/$defs/CaseSummary"
+        },
+        "matrix": {
+          "$ref": "#/$defs/CaseMatrix"
+        },
+        "repetition": {
+          "$ref": "#/$defs/Repetition"
+        },
+        "difficulty": {
+          "$ref": "#/$defs/CaseDifficulty"
+        },
+        "qualification": {
+          "$ref": "#/$defs/CaseQualification"
+        },
+        "packages": {
+          "$ref": "#/$defs/Packages"
+        },
+        "validation": {
+          "description": "The latest user-started validation run, if any.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ValidationRun"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "provenance": {
+          "$ref": "#/$defs/Provenance"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "provenance": {
+                "type": "object",
+                "properties": {
+                  "origin": {
+                    "const": "live_request"
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "item_key": {
+                "type": "string"
+              }
+            }
+          },
+          "else": {
+            "type": "object",
+            "properties": {
+              "item_key": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "CriterionSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "criterion_id",
+        "version",
+        "label"
+      ],
+      "properties": {
+        "criterion_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "version": {
+          "$ref": "#/$defs/Version"
+        },
+        "label": {
+          "type": "string"
+        }
+      }
+    },
+    "CaseSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "observed_failure",
+        "how_checked"
+      ],
+      "properties": {
+        "observed_failure": {
+          "type": "string"
+        },
+        "how_checked": {
+          "type": "string"
+        }
+      }
+    },
+    "CaseMatrix": {
+      "description": "The six cells of a qualified case: every cell matched its expectation.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "original_suite",
+        "verification"
+      ],
+      "properties": {
+        "original_suite": {
+          "$ref": "#/$defs/CaseOriginalSuite"
+        },
+        "verification": {
+          "$ref": "#/$defs/CaseVerification"
+        }
+      }
+    },
+    "CaseOriginalSuite": {
+      "description": "The unchanged original suite passes on all three copies.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "suite_id",
+        "suite_sha256",
+        "test_count",
+        "clean",
+        "buggy",
+        "fixed"
+      ],
+      "properties": {
+        "suite_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "suite_sha256": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "test_count": {
+          "$ref": "#/$defs/NonNegativeInteger"
+        },
+        "clean": {
+          "$ref": "#/$defs/Cell"
+        },
+        "buggy": {
+          "$ref": "#/$defs/Cell"
+        },
+        "fixed": {
+          "$ref": "#/$defs/Cell"
+        }
+      },
+      "allOf": [
+        {
+          "type": "object",
+          "properties": {
+            "clean": {
+              "type": "object",
+              "properties": {
+                "expected": {
+                  "const": "pass"
+                },
+                "matches_expectation": {
+                  "const": true
+                }
+              }
+            },
+            "buggy": {
+              "type": "object",
+              "properties": {
+                "expected": {
+                  "const": "pass"
+                },
+                "matches_expectation": {
+                  "const": true
+                }
+              }
+            },
+            "fixed": {
+              "type": "object",
+              "properties": {
+                "expected": {
+                  "const": "pass"
+                },
+                "matches_expectation": {
+                  "const": true
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "CaseVerification": {
+      "description": "The verification checks pass on the clean and fixed copies and detect the failure on the buggy copy.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "check_set_id",
+        "clean",
+        "buggy",
+        "fixed"
+      ],
+      "properties": {
+        "check_set_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "clean": {
+          "$ref": "#/$defs/Cell"
+        },
+        "buggy": {
+          "$ref": "#/$defs/Cell"
+        },
+        "fixed": {
+          "$ref": "#/$defs/Cell"
+        }
+      },
+      "allOf": [
+        {
+          "type": "object",
+          "properties": {
+            "clean": {
+              "type": "object",
+              "properties": {
+                "expected": {
+                  "const": "pass"
+                },
+                "matches_expectation": {
+                  "const": true
+                }
+              }
+            },
+            "buggy": {
+              "type": "object",
+              "properties": {
+                "expected": {
+                  "const": "fail"
+                },
+                "matches_expectation": {
+                  "const": true
+                }
+              }
+            },
+            "fixed": {
+              "type": "object",
+              "properties": {
+                "expected": {
+                  "const": "pass"
+                },
+                "matches_expectation": {
+                  "const": true
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "Cell": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "expected",
+        "observed",
+        "runs_valid",
+        "runs_total",
+        "matches_expectation"
+      ],
+      "properties": {
+        "expected": {
+          "$ref": "#/$defs/ExpectedOutcome"
+        },
+        "observed": {
+          "description": "error when the copy could not be prepared or run; incomplete when too few runs were valid.",
+          "$ref": "#/$defs/ObservedOutcome"
+        },
+        "runs_valid": {
+          "$ref": "#/$defs/NonNegativeInteger"
+        },
+        "runs_total": {
+          "$ref": "#/$defs/NonNegativeInteger"
+        },
+        "matches_expectation": {
+          "description": "True exactly when observed equals expected.",
+          "type": "boolean"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "matches_expectation": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "expected": {
+                    "const": "pass"
+                  },
+                  "observed": {
+                    "const": "pass"
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "expected": {
+                    "const": "fail"
+                  },
+                  "observed": {
+                    "const": "fail"
+                  }
+                }
+              }
+            ]
+          },
+          "else": {
+            "not": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "expected": {
+                      "const": "pass"
+                    },
+                    "observed": {
+                      "const": "pass"
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "expected": {
+                      "const": "fail"
+                    },
+                    "observed": {
+                      "const": "fail"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "Repetition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protocol_id",
+        "version",
+        "summary"
+      ],
+      "properties": {
+        "protocol_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "version": {
+          "$ref": "#/$defs/Version"
+        },
+        "summary": {
+          "type": "string"
+        }
+      }
+    },
+    "CaseDifficulty": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "note"
+      ],
+      "properties": {
+        "status": {
+          "$ref": "#/$defs/DifficultyAssessmentStatus"
+        },
+        "note": {
+          "type": "string"
+        }
+      }
+    },
+    "CaseQualification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "route_id",
+        "version",
+        "verdict",
+        "record_sha256",
+        "qualified_at"
+      ],
+      "properties": {
+        "route_id": {
+          "$ref": "#/$defs/QualificationRouteId"
+        },
+        "version": {
+          "$ref": "#/$defs/Version"
+        },
+        "verdict": {
+          "const": "accepted"
+        },
+        "record_sha256": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "qualified_at": {
+          "$ref": "#/$defs/UtcTime"
+        }
+      }
+    },
+    "Packages": {
+      "description": "The two parts become ready together.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "package_version",
+        "pair_sha256",
+        "bug_case",
+        "validator"
+      ],
+      "properties": {
+        "package_version": {
+          "$ref": "#/$defs/PositiveInteger"
+        },
+        "pair_sha256": {
+          "description": "Canonical hash of the two parts' SHA-256 values and the case ID.",
+          "$ref": "#/$defs/Sha256"
+        },
+        "bug_case": {
+          "$ref": "#/$defs/PackagePart"
+        },
+        "validator": {
+          "$ref": "#/$defs/PackagePart"
+        }
+      },
+      "allOf": [
+        {
+          "type": "object",
+          "properties": {
+            "bug_case": {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "bug_case"
+                }
+              }
+            },
+            "validator": {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "validator"
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "bug_case": {
+                "type": "object",
+                "properties": {
+                  "ready": {
+                    "const": true
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "validator": {
+                "type": "object",
+                "properties": {
+                  "ready": {
+                    "const": true
+                  }
+                }
+              }
+            }
+          },
+          "else": {
+            "type": "object",
+            "properties": {
+              "validator": {
+                "type": "object",
+                "properties": {
+                  "ready": {
+                    "const": false
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "PackagePart": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "format",
+        "filename",
+        "media_type",
+        "size_bytes",
+        "sha256",
+        "ready",
+        "download_path"
+      ],
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/PackageKind"
+        },
+        "format": {
+          "description": "rbw-bug-case/1 for the bug case, rbw-validator/1 for the validator package.",
+          "$ref": "#/$defs/PackageFormat"
+        },
+        "filename": {
+          "type": "string"
+        },
+        "media_type": {
+          "const": "application/gzip"
+        },
+        "size_bytes": {
+          "$ref": "#/$defs/NonNegativeInteger"
+        },
+        "sha256": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "ready": {
+          "type": "boolean"
+        },
+        "download_path": {
+          "description": "Offer a download only when ready is true and this is not null.",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "const": "bug_case"
+              }
+            }
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "format": {
+                "const": "rbw-bug-case/1"
+              }
+            }
+          },
+          "else": {
+            "type": "object",
+            "properties": {
+              "format": {
+                "const": "rbw-validator/1"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "Provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "origin",
+        "request_id",
+        "source_id",
+        "entry_id"
+      ],
+      "properties": {
+        "origin": {
+          "$ref": "#/$defs/CaseOrigin"
+        },
+        "request_id": {
+          "description": "The live request; set for live_request.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "source_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "entry_id": {
+          "$ref": "#/$defs/Identifier"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "origin": {
+                "const": "live_request"
+              }
+            }
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "request_id": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "ValidationRun": {
+      "description": "POST and GET of a case's validation runs (contract section 11). How the result follows from the cells is not checked by the schema.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contract_version",
+        "validation_id",
+        "case_id",
+        "state",
+        "result",
+        "matrix",
+        "package_sha256",
+        "harness",
+        "message",
+        "started_at",
+        "finished_at",
+        "cost_microusd",
+        "poll_after_ms"
+      ],
+      "properties": {
+        "contract_version": {
+          "$ref": "#/$defs/ContractVersion"
+        },
+        "validation_id": {
+          "$ref": "#/$defs/Uuid"
+        },
+        "case_id": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "state": {
+          "$ref": "#/$defs/ValidationState"
+        },
+        "result": {
+          "description": "Set only in state finished.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ValidationResult"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "matrix": {
+          "description": "Null until the run finishes, and when the harness could run no cell.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ValidationMatrix"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "package_sha256": {
+          "$ref": "#/$defs/PackageHashes"
+        },
+        "harness": {
+          "$ref": "#/$defs/HarnessIdentity"
+        },
+        "message": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "started_at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UtcTime"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "finished_at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UtcTime"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cost_microusd": {
+          "description": "Settled cost; null until the run settles.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MicroUsd"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "poll_after_ms": {
+          "$ref": "#/$defs/NonNegativeInteger"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "state": {
+                "const": "finished"
+              }
+            }
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "result": {
+                "type": "string"
+              }
+            }
+          },
+          "else": {
+            "type": "object",
+            "properties": {
+              "result": {
+                "type": "null"
+              },
+              "matrix": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "result": {
+                "enum": [
+                  "passed",
+                  "failed"
+                ]
+              }
+            }
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "matrix": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "ValidationMatrix": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "original_suite",
+        "verification"
+      ],
+      "properties": {
+        "original_suite": {
+          "$ref": "#/$defs/CellSet"
+        },
+        "verification": {
+          "$ref": "#/$defs/CellSet"
+        }
+      },
+      "allOf": [
+        {
+          "type": "object",
+          "properties": {
+            "original_suite": {
+              "type": "object",
+              "properties": {
+                "clean": {
+                  "type": "object",
+                  "properties": {
+                    "expected": {
+                      "const": "pass"
+                    }
+                  }
+                },
+                "buggy": {
+                  "type": "object",
+                  "properties": {
+                    "expected": {
+                      "const": "pass"
+                    }
+                  }
+                },
+                "fixed": {
+                  "type": "object",
+                  "properties": {
+                    "expected": {
+                      "const": "pass"
+                    }
+                  }
+                }
+              }
+            },
+            "verification": {
+              "type": "object",
+              "properties": {
+                "clean": {
+                  "type": "object",
+                  "properties": {
+                    "expected": {
+                      "const": "pass"
+                    }
+                  }
+                },
+                "buggy": {
+                  "type": "object",
+                  "properties": {
+                    "expected": {
+                      "const": "fail"
+                    }
+                  }
+                },
+                "fixed": {
+                  "type": "object",
+                  "properties": {
+                    "expected": {
+                      "const": "pass"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "CellSet": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "clean",
+        "buggy",
+        "fixed"
+      ],
+      "properties": {
+        "clean": {
+          "$ref": "#/$defs/Cell"
+        },
+        "buggy": {
+          "$ref": "#/$defs/Cell"
+        },
+        "fixed": {
+          "$ref": "#/$defs/Cell"
+        }
+      }
+    },
+    "PackageHashes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "bug_case",
+        "validator"
+      ],
+      "properties": {
+        "bug_case": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "validator": {
+          "$ref": "#/$defs/Sha256"
+        }
+      }
+    },
+    "HarnessIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "version"
+      ],
+      "properties": {
+        "name": {
+          "const": "rbw-validate"
+        },
+        "version": {
+          "$ref": "#/$defs/Version"
+        }
+      }
+    },
+    "ValidationStartRequest": {
+      "description": "The body of POST /api/factory/requests/{request_id}/cases/{case_id}/validations.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "validation_id"
+      ],
+      "properties": {
+        "validation_id": {
+          "$ref": "#/$defs/Uuid"
+        }
+      }
+    },
+    "StopRequest": {
+      "description": "The body of POST /api/factory/requests/{request_id}/stop: {}.",
+      "$ref": "#/$defs/EmptyObject"
+    },
+    "ErrorResponse": {
+      "description": "The body of every refused call (contract section 12). Clients branch on error.code, never on the message.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contract_version",
+        "error"
+      ],
+      "properties": {
+        "contract_version": {
+          "$ref": "#/$defs/ContractVersion"
+        },
+        "error": {
+          "$ref": "#/$defs/ErrorBody"
+        }
+      }
+    },
+    "ErrorBody": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "message",
+        "retryable",
+        "details"
+      ],
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/ErrorCode"
+        },
+        "message": {
+          "type": "string"
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "details": {
+          "description": "BusyErrorDetails for busy, InterpretationErrorDetails for interpretation_stale and unsupported_request, otherwise null.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BusyErrorDetails"
+            },
+            {
+              "$ref": "#/$defs/InterpretationErrorDetails"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "const": "busy"
+              }
+            }
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "details": {
+                "$ref": "#/$defs/BusyErrorDetails"
+              }
+            }
+          },
+          "else": {
+            "if": {
+              "type": "object",
+              "properties": {
+                "code": {
+                  "enum": [
+                    "interpretation_stale",
+                    "unsupported_request"
+                  ]
+                }
+              }
+            },
+            "then": {
+              "type": "object",
+              "properties": {
+                "details": {
+                  "$ref": "#/$defs/InterpretationErrorDetails"
+                }
+              }
+            },
+            "else": {
+              "type": "object",
+              "properties": {
+                "details": {
+                  "type": "null"
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "const": "unsupported_request"
+              }
+            }
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "details": {
+                "type": "object",
+                "properties": {
+                  "interpretation": {
+                    "type": "object",
+                    "properties": {
+                      "startable": {
+                        "const": false
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "const": "busy"
+              },
+              "details": {
+                "type": "object",
+                "properties": {
+                  "reason": {
+                    "const": "active"
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "retryable": {
+                "const": true
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "const": "busy"
+              },
+              "details": {
+                "type": "object",
+                "properties": {
+                  "reason": {
+                    "const": "needs_reconciliation"
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "retryable": {
+                "const": false
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "const": "unavailable"
+              }
+            }
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "retryable": {
+                "const": true
+              }
+            }
+          }
+        }
+      ]
+    },
+    "BusyErrorDetails": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reason"
+      ],
+      "properties": {
+        "reason": {
+          "description": "active is retryable; needs_reconciliation is not.",
+          "$ref": "#/$defs/BusyReason"
+        }
+      }
+    },
+    "InterpretationErrorDetails": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "interpretation"
+      ],
+      "properties": {
+        "interpretation": {
+          "description": "The current interpretation.",
+          "$ref": "#/$defs/Interpretation"
+        }
+      }
+    },
+    "SessionRequest": {
+      "description": "The body of POST /api/factory/session.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "passcode"
+      ],
+      "properties": {
+        "passcode": {
+          "type": "string"
+        }
+      }
+    },
+    "SessionStatus": {
+      "description": "The answer of GET /api/factory/session.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contract_version",
+        "signed_in"
+      ],
+      "properties": {
+        "contract_version": {
+          "$ref": "#/$defs/ContractVersion"
+        },
+        "signed_in": {
+          "type": "boolean"
+        }
+      }
+    },
+    "ExampleResponse": {
+      "description": "GET /api/factory/example. The case carries published_example provenance.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contract_version",
+        "label",
+        "note",
+        "case"
+      ],
+      "properties": {
+        "contract_version": {
+          "$ref": "#/$defs/ContractVersion"
+        },
+        "label": {
+          "type": "string"
+        },
+        "note": {
+          "type": "string"
+        },
+        "case": {
+          "$ref": "#/$defs/Case"
+        }
+      },
+      "allOf": [
+        {
+          "type": "object",
+          "properties": {
+            "case": {
+              "type": "object",
+              "properties": {
+                "provenance": {
+                  "type": "object",
+                  "properties": {
+                    "origin": {
+                      "const": "published_example"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "BaselineIdentity": {
+      "description": "Internal: a host's pinned baseline.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "host_id",
+        "baseline_id",
+        "app_commit",
+        "original_suite"
+      ],
+      "properties": {
+        "host_id": {
+          "$ref": "#/$defs/HostId"
+        },
+        "baseline_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "app_commit": {
+          "$ref": "#/$defs/GitCommitId"
+        },
+        "original_suite": {
+          "$ref": "#/$defs/OriginalSuiteIdentity"
+        }
+      }
+    },
+    "OriginalSuiteIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "suite_id",
+        "sha256",
+        "test_count",
+        "test_ids_sha256"
+      ],
+      "properties": {
+        "suite_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "sha256": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "test_count": {
+          "$ref": "#/$defs/NonNegativeInteger"
+        },
+        "test_ids_sha256": {
+          "$ref": "#/$defs/Sha256"
+        }
+      }
+    },
+    "CatalogEntry": {
+      "description": "Internal: one recipe of a finite catalog. It holds answer-bearing material and is never sent to a client or a debugging agent; only presentation text reaches a Case.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "entry_id",
+        "source_id",
+        "catalog_version",
+        "host_id",
+        "bug_type_id",
+        "criteria",
+        "failure_code",
+        "plant",
+        "reference_repair",
+        "incident",
+        "presentation",
+        "verification",
+        "environment",
+        "difficulty"
+      ],
+      "properties": {
+        "entry_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "source_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "catalog_version": {
+          "$ref": "#/$defs/Version"
+        },
+        "host_id": {
+          "$ref": "#/$defs/HostId"
+        },
+        "bug_type_id": {
+          "$ref": "#/$defs/BugTypeId"
+        },
+        "criteria": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CriterionRef"
+          }
+        },
+        "failure_code": {
+          "description": "What the verification checks report on the buggy copy.",
+          "$ref": "#/$defs/Identifier"
+        },
+        "plant": {
+          "$ref": "#/$defs/PlantedChange"
+        },
+        "reference_repair": {
+          "$ref": "#/$defs/ReferenceRepair"
+        },
+        "incident": {
+          "description": "The permitted plain-language description, without fix hints.",
+          "$ref": "#/$defs/FileDigest"
+        },
+        "presentation": {
+          "$ref": "#/$defs/CatalogPresentation"
+        },
+        "verification": {
+          "$ref": "#/$defs/VerificationIdentity"
+        },
+        "environment": {
+          "$ref": "#/$defs/KitEnvironment"
+        },
+        "difficulty": {
+          "$ref": "#/$defs/DifficultyAssessment"
+        }
+      }
+    },
+    "CatalogPresentation": {
+      "description": "Internal: the client-safe text of a Case (contract section 10.1), scanned before use; no answer material.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "title",
+        "observed_failure",
+        "how_checked",
+        "repetition_summary"
+      ],
+      "properties": {
+        "title": {
+          "type": "string"
+        },
+        "observed_failure": {
+          "type": "string"
+        },
+        "how_checked": {
+          "type": "string"
+        },
+        "repetition_summary": {
+          "type": "string"
+        }
+      }
+    },
+    "CriterionRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "criterion_id",
+        "version"
+      ],
+      "properties": {
+        "criterion_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "version": {
+          "$ref": "#/$defs/Version"
+        }
+      }
+    },
+    "PlantedChange": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "patch",
+        "patch_sha256",
+        "targets"
+      ],
+      "properties": {
+        "patch": {
+          "type": "string"
+        },
+        "patch_sha256": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "targets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PlantTarget"
+          },
+          "minItems": 1
+        }
+      }
+    },
+    "PlantTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "before_sha256",
+        "after_sha256"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/RelativePath"
+        },
+        "before_sha256": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "after_sha256": {
+          "$ref": "#/$defs/Sha256"
+        }
+      }
+    },
+    "ReferenceRepair": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "patch",
+        "patch_sha256",
+        "result_sha256",
+        "kind"
+      ],
+      "properties": {
+        "patch": {
+          "type": "string"
+        },
+        "patch_sha256": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "result_sha256": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/FileDigest"
+          }
+        },
+        "kind": {
+          "$ref": "#/$defs/RepairKind"
+        }
+      }
+    },
+    "FileDigest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/RelativePath"
+        },
+        "sha256": {
+          "$ref": "#/$defs/Sha256"
+        }
+      }
+    },
+    "VerificationIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "check_set_id",
+        "version",
+        "check_set_sha256",
+        "expected_vectors_sha256",
+        "protocol_id",
+        "protocol_sha256"
+      ],
+      "properties": {
+        "check_set_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "version": {
+          "$ref": "#/$defs/Version"
+        },
+        "check_set_sha256": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "expected_vectors_sha256": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "protocol_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "protocol_sha256": {
+          "$ref": "#/$defs/Sha256"
+        }
+      }
+    },
+    "KitEnvironment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kit_image",
+        "kit_image_digest",
+        "environment_sha256"
+      ],
+      "properties": {
+        "kit_image": {
+          "description": "The pinned amd64 kit image reference.",
+          "$ref": "#/$defs/Identifier"
+        },
+        "kit_image_digest": {
+          "$ref": "#/$defs/ImageDigest"
+        },
+        "environment_sha256": {
+          "$ref": "#/$defs/Sha256"
+        }
+      }
+    },
+    "Protocol": {
+      "description": "Internal: a declared repetition protocol, readable from the catalog alone.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protocol_id",
+        "version",
+        "sha256",
+        "per_state",
+        "valid_trial_rules"
+      ],
+      "properties": {
+        "protocol_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "version": {
+          "$ref": "#/$defs/Version"
+        },
+        "sha256": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "per_state": {
+          "$ref": "#/$defs/ProtocolStates"
+        },
+        "valid_trial_rules": {
+          "description": "Rule IDs that the host adapter's interpret() applies.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Identifier"
+          }
+        }
+      }
+    },
+    "ProtocolStates": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "clean",
+        "buggy",
+        "fixed"
+      ],
+      "properties": {
+        "clean": {
+          "$ref": "#/$defs/ProtocolState"
+        },
+        "buggy": {
+          "$ref": "#/$defs/ProtocolState"
+        },
+        "fixed": {
+          "$ref": "#/$defs/ProtocolState"
+        }
+      }
+    },
+    "ProtocolState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "copies",
+        "rounds_per_copy",
+        "min_valid_runs"
+      ],
+      "properties": {
+        "copies": {
+          "$ref": "#/$defs/PositiveInteger"
+        },
+        "rounds_per_copy": {
+          "$ref": "#/$defs/PositiveInteger"
+        },
+        "min_valid_runs": {
+          "$ref": "#/$defs/PositiveInteger"
+        }
+      }
+    },
+    "FileSet": {
+      "description": "Internal: a local directory and its listed files.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "root",
+        "files"
+      ],
+      "properties": {
+        "root": {
+          "description": "A local directory.",
+          "$ref": "#/$defs/Identifier"
+        },
+        "files": {
+          "description": "The listed files, relative to root.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/FileDigest"
+          }
+        }
+      }
+    },
+    "BugCaseInputs": {
+      "description": "Internal: what a host adapter gives the exporter for a bug case.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "host_id",
+        "entry_id",
+        "baseline",
+        "source",
+        "incident",
+        "runtime"
+      ],
+      "properties": {
+        "host_id": {
+          "$ref": "#/$defs/HostId"
+        },
+        "entry_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "baseline": {
+          "$ref": "#/$defs/BaselineIdentity"
+        },
+        "source": {
+          "description": "The buggy application source with the unchanged original tests, without version-control history.",
+          "$ref": "#/$defs/FileSet"
+        },
+        "incident": {
+          "$ref": "#/$defs/FileSet"
+        },
+        "runtime": {
+          "$ref": "#/$defs/BugCaseRuntime"
+        }
+      }
+    },
+    "BugCaseRuntime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kit_image",
+        "kit_image_digest",
+        "setup"
+      ],
+      "properties": {
+        "kit_image": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "kit_image_digest": {
+          "$ref": "#/$defs/ImageDigest"
+        },
+        "setup": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "ValidatorInputs": {
+      "description": "Internal: what a host adapter gives the exporter for a validator package.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "host_id",
+        "entry_id",
+        "checks",
+        "expected",
+        "clean_reconstruction",
+        "reference_repair",
+        "protocol"
+      ],
+      "properties": {
+        "host_id": {
+          "$ref": "#/$defs/HostId"
+        },
+        "entry_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "checks": {
+          "description": "Verification checks, fixtures and expected vectors.",
+          "$ref": "#/$defs/FileSet"
+        },
+        "expected": {
+          "$ref": "#/$defs/ExpectedMatrix"
+        },
+        "clean_reconstruction": {
+          "description": "Turns the exported buggy source into the clean copy.",
+          "$ref": "#/$defs/PatchText"
+        },
+        "reference_repair": {
+          "$ref": "#/$defs/ReferenceRepair"
+        },
+        "protocol": {
+          "$ref": "#/$defs/Protocol"
+        }
+      }
+    },
+    "ExpectedMatrix": {
+      "description": "The expected outcome of every cell, as the qualification table of contract section 1 fixes them.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "original_suite",
+        "verification"
+      ],
+      "properties": {
+        "original_suite": {
+          "$ref": "#/$defs/ExpectedCells"
+        },
+        "verification": {
+          "$ref": "#/$defs/ExpectedCells"
+        }
+      },
+      "allOf": [
+        {
+          "type": "object",
+          "properties": {
+            "original_suite": {
+              "type": "object",
+              "properties": {
+                "clean": {
+                  "const": "pass"
+                },
+                "buggy": {
+                  "const": "pass"
+                },
+                "fixed": {
+                  "const": "pass"
+                }
+              }
+            },
+            "verification": {
+              "type": "object",
+              "properties": {
+                "clean": {
+                  "const": "pass"
+                },
+                "buggy": {
+                  "const": "fail"
+                },
+                "fixed": {
+                  "const": "pass"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "ExpectedCells": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "clean",
+        "buggy",
+        "fixed"
+      ],
+      "properties": {
+        "clean": {
+          "$ref": "#/$defs/ExpectedOutcome"
+        },
+        "buggy": {
+          "$ref": "#/$defs/ExpectedOutcome"
+        },
+        "fixed": {
+          "$ref": "#/$defs/ExpectedOutcome"
+        }
+      }
+    },
+    "PatchText": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "patch",
+        "patch_sha256"
+      ],
+      "properties": {
+        "patch": {
+          "type": "string"
+        },
+        "patch_sha256": {
+          "$ref": "#/$defs/Sha256"
+        }
+      }
+    },
+    "UnpackedPair": {
+      "description": "Internal: the two archives unpacked by the harness in fresh workspaces.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "bug_case_sha256",
+        "validator_sha256",
+        "pair_sha256",
+        "states",
+        "evaluator",
+        "protocol"
+      ],
+      "properties": {
+        "bug_case_sha256": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "validator_sha256": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "pair_sha256": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "states": {
+          "$ref": "#/$defs/CopyTrees"
+        },
+        "evaluator": {
+          "$ref": "#/$defs/FileSet"
+        },
+        "protocol": {
+          "$ref": "#/$defs/Protocol"
+        }
+      }
+    },
+    "CopyTrees": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "clean",
+        "buggy",
+        "fixed"
+      ],
+      "properties": {
+        "clean": {
+          "description": "Reconstructed from the exported buggy source.",
+          "$ref": "#/$defs/FileSet"
+        },
+        "buggy": {
+          "description": "As exported.",
+          "$ref": "#/$defs/FileSet"
+        },
+        "fixed": {
+          "description": "The reference repair applied to the exported buggy source.",
+          "$ref": "#/$defs/FileSet"
+        }
+      }
+    },
+    "DifficultyAssessment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status"
+      ],
+      "properties": {
+        "status": {
+          "$ref": "#/$defs/DifficultyAssessmentStatus"
+        }
+      }
+    },
+    "CopyPlan": {
+      "description": "Internal: what a runner executes for one copy.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "copy_id",
+        "host_id",
+        "state",
+        "image",
+        "files",
+        "evaluator_files",
+        "command",
+        "limits"
+      ],
+      "properties": {
+        "copy_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "host_id": {
+          "$ref": "#/$defs/HostId"
+        },
+        "state": {
+          "$ref": "#/$defs/CopyState"
+        },
+        "image": {
+          "$ref": "#/$defs/ImagePin"
+        },
+        "files": {
+          "description": "The app source tree placed before start.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/FileDigest"
+          }
+        },
+        "evaluator_files": {
+          "description": "Validator material, in an evaluator-only location.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/FileDigest"
+          }
+        },
+        "command": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1
+        },
+        "limits": {
+          "$ref": "#/$defs/CopyLimits"
+        }
+      }
+    },
+    "ImagePin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reference",
+        "digest"
+      ],
+      "properties": {
+        "reference": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "digest": {
+          "description": "Required for sandbox runs.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ImageDigest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "CopyLimits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "timeout_s",
+        "vcpus",
+        "memory_mb",
+        "network"
+      ],
+      "properties": {
+        "timeout_s": {
+          "$ref": "#/$defs/PositiveInteger"
+        },
+        "vcpus": {
+          "$ref": "#/$defs/PositiveInteger"
+        },
+        "memory_mb": {
+          "$ref": "#/$defs/PositiveInteger"
+        },
+        "network": {
+          "const": "none"
+        }
+      }
+    },
+    "CellObservation": {
+      "description": "Internal: never sent to a client.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "observed",
+        "runs_valid",
+        "runs_total",
+        "failure_codes",
+        "detail"
+      ],
+      "properties": {
+        "observed": {
+          "$ref": "#/$defs/ObservedOutcome"
+        },
+        "runs_valid": {
+          "$ref": "#/$defs/NonNegativeInteger"
+        },
+        "runs_total": {
+          "$ref": "#/$defs/NonNegativeInteger"
+        },
+        "failure_codes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Identifier"
+          }
+        },
+        "detail": {
+          "type": "string"
+        }
+      }
+    },
+    "SuiteObservation": {
+      "description": "Internal: a CellObservation of the original suite with its test counts.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "observed",
+        "runs_valid",
+        "runs_total",
+        "failure_codes",
+        "detail",
+        "executed",
+        "expected",
+        "failing_test_ids",
+        "suite_sha256"
+      ],
+      "properties": {
+        "observed": {
+          "$ref": "#/$defs/ObservedOutcome"
+        },
+        "runs_valid": {
+          "$ref": "#/$defs/NonNegativeInteger"
+        },
+        "runs_total": {
+          "$ref": "#/$defs/NonNegativeInteger"
+        },
+        "failure_codes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Identifier"
+          }
+        },
+        "detail": {
+          "type": "string"
+        },
+        "executed": {
+          "$ref": "#/$defs/NonNegativeInteger"
+        },
+        "expected": {
+          "description": "The number of tests the suite should execute.",
+          "$ref": "#/$defs/NonNegativeInteger"
+        },
+        "failing_test_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "suite_sha256": {
+          "$ref": "#/$defs/Sha256"
+        }
+      }
+    },
+    "CopyRecord": {
+      "description": "Internal: what one copy's run recorded.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "copy_id",
+        "state",
+        "status",
+        "original_suite",
+        "verification",
+        "image_digest",
+        "architecture",
+        "started_at",
+        "finished_at",
+        "evidence_sha256"
+      ],
+      "properties": {
+        "copy_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "state": {
+          "$ref": "#/$defs/CopyState"
+        },
+        "status": {
+          "$ref": "#/$defs/CopyRecordStatus"
+        },
+        "original_suite": {
+          "$ref": "#/$defs/SuiteObservation"
+        },
+        "verification": {
+          "$ref": "#/$defs/CellObservation"
+        },
+        "image_digest": {
+          "$ref": "#/$defs/ImageDigest"
+        },
+        "architecture": {
+          "$ref": "#/$defs/Architecture"
+        },
+        "started_at": {
+          "$ref": "#/$defs/UtcTime"
+        },
+        "finished_at": {
+          "$ref": "#/$defs/UtcTime"
+        },
+        "evidence_sha256": {
+          "$ref": "#/$defs/Sha256"
+        }
+      }
+    },
+    "QualificationRecord": {
+      "description": "Internal: the qualification route's record for one candidate. Whether the verdict follows from the cells and criteria is not checked by the schema.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "route",
+        "case_id",
+        "defect_id",
+        "entry_id",
+        "item_key",
+        "cells",
+        "criteria",
+        "export_verification",
+        "verdict",
+        "reason_code",
+        "copy_record_sha256s"
+      ],
+      "properties": {
+        "route": {
+          "$ref": "#/$defs/QualificationRoute"
+        },
+        "case_id": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "defect_id": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "entry_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "item_key": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ItemKey"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cells": {
+          "$ref": "#/$defs/QualificationCells"
+        },
+        "criteria": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CriterionMatch"
+          }
+        },
+        "export_verification": {
+          "$ref": "#/$defs/ExportVerification"
+        },
+        "verdict": {
+          "$ref": "#/$defs/QualificationVerdict"
+        },
+        "reason_code": {
+          "description": "Null for accepted; otherwise a candidate reason of the verdict's stage.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CandidateReason"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "copy_record_sha256s": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Sha256"
+          }
+        }
+      },
+      "allOf": [
+        {
+          "type": "object",
+          "properties": {
+            "route": {
+              "type": "object",
+              "properties": {
+                "version": {
+                  "const": "1"
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "cells": {
+              "type": "object",
+              "properties": {
+                "original_suite": {
+                  "type": "object",
+                  "properties": {
+                    "clean": {
+                      "type": "object",
+                      "properties": {
+                        "expected": {
+                          "const": "pass"
+                        }
+                      }
+                    },
+                    "buggy": {
+                      "type": "object",
+                      "properties": {
+                        "expected": {
+                          "const": "pass"
+                        }
+                      }
+                    },
+                    "fixed": {
+                      "type": "object",
+                      "properties": {
+                        "expected": {
+                          "const": "pass"
+                        }
+                      }
+                    }
+                  }
+                },
+                "verification": {
+                  "type": "object",
+                  "properties": {
+                    "clean": {
+                      "type": "object",
+                      "properties": {
+                        "expected": {
+                          "const": "pass"
+                        }
+                      }
+                    },
+                    "buggy": {
+                      "type": "object",
+                      "properties": {
+                        "expected": {
+                          "const": "fail"
+                        }
+                      }
+                    },
+                    "fixed": {
+                      "type": "object",
+                      "properties": {
+                        "expected": {
+                          "const": "pass"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "verdict": {
+                "const": "accepted"
+              }
+            }
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "reason_code": {
+                "type": "null"
+              },
+              "cells": {
+                "type": "object",
+                "properties": {
+                  "original_suite": {
+                    "type": "object",
+                    "properties": {
+                      "clean": {
+                        "type": "object",
+                        "properties": {
+                          "expected": {
+                            "const": "pass"
+                          },
+                          "matches_expectation": {
+                            "const": true
+                          }
+                        }
+                      },
+                      "buggy": {
+                        "type": "object",
+                        "properties": {
+                          "expected": {
+                            "const": "pass"
+                          },
+                          "matches_expectation": {
+                            "const": true
+                          }
+                        }
+                      },
+                      "fixed": {
+                        "type": "object",
+                        "properties": {
+                          "expected": {
+                            "const": "pass"
+                          },
+                          "matches_expectation": {
+                            "const": true
+                          }
+                        }
+                      }
+                    }
+                  },
+                  "verification": {
+                    "type": "object",
+                    "properties": {
+                      "clean": {
+                        "type": "object",
+                        "properties": {
+                          "expected": {
+                            "const": "pass"
+                          },
+                          "matches_expectation": {
+                            "const": true
+                          }
+                        }
+                      },
+                      "buggy": {
+                        "type": "object",
+                        "properties": {
+                          "expected": {
+                            "const": "fail"
+                          },
+                          "matches_expectation": {
+                            "const": true
+                          }
+                        }
+                      },
+                      "fixed": {
+                        "type": "object",
+                        "properties": {
+                          "expected": {
+                            "const": "pass"
+                          },
+                          "matches_expectation": {
+                            "const": true
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "verdict": {
+                "const": "rejected"
+              }
+            }
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "reason_code": {
+                "enum": [
+                  "original_suite_failed_clean",
+                  "original_suite_caught_bug",
+                  "original_suite_failed_fixed",
+                  "checks_failed_clean",
+                  "checks_failed_fixed",
+                  "bug_not_detected",
+                  "wrong_failure",
+                  "export_mismatch"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "verdict": {
+                "const": "invalid"
+              }
+            }
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "reason_code": {
+                "const": "setup_failed"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "verdict": {
+                "const": "incomplete"
+              }
+            }
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "reason_code": {
+                "enum": [
+                  "incomplete_run",
+                  "stopped"
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "QualificationCells": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "original_suite",
+        "verification"
+      ],
+      "properties": {
+        "original_suite": {
+          "$ref": "#/$defs/QualificationCellSet"
+        },
+        "verification": {
+          "$ref": "#/$defs/QualificationCellSet"
+        }
+      }
+    },
+    "QualificationCellSet": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "clean",
+        "buggy",
+        "fixed"
+      ],
+      "properties": {
+        "clean": {
+          "$ref": "#/$defs/QualificationCell"
+        },
+        "buggy": {
+          "$ref": "#/$defs/QualificationCell"
+        },
+        "fixed": {
+          "$ref": "#/$defs/QualificationCell"
+        }
+      }
+    },
+    "QualificationCell": {
+      "description": "Internal: a CellObservation with its expectation.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "observed",
+        "runs_valid",
+        "runs_total",
+        "failure_codes",
+        "detail",
+        "expected",
+        "matches_expectation"
+      ],
+      "properties": {
+        "observed": {
+          "$ref": "#/$defs/ObservedOutcome"
+        },
+        "runs_valid": {
+          "$ref": "#/$defs/NonNegativeInteger"
+        },
+        "runs_total": {
+          "$ref": "#/$defs/NonNegativeInteger"
+        },
+        "failure_codes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Identifier"
+          }
+        },
+        "detail": {
+          "type": "string"
+        },
+        "expected": {
+          "$ref": "#/$defs/ExpectedOutcome"
+        },
+        "matches_expectation": {
+          "description": "True exactly when observed equals expected.",
+          "type": "boolean"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "matches_expectation": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "expected": {
+                    "const": "pass"
+                  },
+                  "observed": {
+                    "const": "pass"
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "expected": {
+                    "const": "fail"
+                  },
+                  "observed": {
+                    "const": "fail"
+                  }
+                }
+              }
+            ]
+          },
+          "else": {
+            "not": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "expected": {
+                      "const": "pass"
+                    },
+                    "observed": {
+                      "const": "pass"
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "expected": {
+                      "const": "fail"
+                    },
+                    "observed": {
+                      "const": "fail"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "CriterionMatch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "criterion_id",
+        "matched"
+      ],
+      "properties": {
+        "criterion_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "matched": {
+          "type": "boolean"
+        }
+      }
+    },
+    "ExportVerification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "bug_case_sha256",
+        "validator_sha256",
+        "harness"
+      ],
+      "properties": {
+        "bug_case_sha256": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "validator_sha256": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "harness": {
+          "$ref": "#/$defs/HarnessIdentity"
+        }
+      }
+    }
+  }
+}

@@ -19,6 +19,7 @@
   "dependencies": {
     "@rbw/admission": "workspace:*",
     "@rbw/controller": "workspace:*",
+    "@rbw/factory-contract": "workspace:*",
     "@rbw/publisher": "workspace:*",
     "@rbw/schema": "workspace:*",
     "@rbw/spend": "workspace:*",
