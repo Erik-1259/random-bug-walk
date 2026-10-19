@@ -182,6 +182,26 @@ describe("creating a budget", () => {
     expectOk(await h.spend.createBudget(budgetRequest(1)));
   });
 
+  it("refuses a root that already has operations, which the budget would never count", async () => {
+    expectOk(await h.spend.reserve(factoryOperation(1, ROOT, 1000)));
+    await expectNothingWritten(h, async () => {
+      expectRefused(await h.spend.createBudget(budgetRequest(1)), "invalid_request");
+    });
+  });
+
+  it("checks a budget reservation's fields exactly as the reservation body does", async () => {
+    // spend_reservation_error repeats spend_reserve_body's field checks; a later change to one must change both.
+    const fieldChecks = async (fn: string): Promise<string> => {
+      const rows = await h.sql("SELECT pg_get_functiondef(to_regprocedure($1)) AS def", [fn]);
+      const match = /v_err := coalesce\(([\s\S]*?)\n\s*\);/.exec(String(rows[0]?.def));
+      return (match?.[1] ?? "").replace(/\s+/g, " ").trim();
+    };
+    const body = await fieldChecks("spend_reserve_body(jsonb, text)");
+    expect(body).toContain("spend_keys_error(r, ARRAY[ 'operation_id'");
+    expect(body).toContain("spend_field_error(r, 'call_name', 'call_name')");
+    expect(await fieldChecks("spend_reservation_error(jsonb)")).toBe(body);
+  });
+
   it.each([
     ["a missing field", { pool_required_microusd: undefined }],
     ["an unknown field", { extra: 1 }],

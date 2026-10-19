@@ -244,7 +244,9 @@ interface ReadOperations {
  * are thrown. Nothing retries.
  */
 export function createFactoryRecords(options: FactoryRecordsOptions): FactoryRecords {
-  const { write, read } = databaseCalls<WriteOperations, ReadOperations>(options);
+  // Stored documents (event data, interpretations) come back as stored; only a result's own
+  // amounts, such as a refusal's, become bigints.
+  const { write, read } = databaseCalls<WriteOperations, ReadOperations>(options, "top-level");
 
   return {
     acceptRequest: (request) => write("factory_accept_request", request),

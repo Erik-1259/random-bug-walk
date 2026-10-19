@@ -325,6 +325,7 @@ A request budget caps what one factory request commits, on its own pool. It is b
 **`createBudget`** takes `budget_key`, `root_execution_id`, `pool_key`, `cap_microusd` (at least 1), `pool_required_microusd` and `actor_role`.
 - An identical request replays (`replay: true`) and writes nothing. Another request with the same key, or another key on the same root, is refused with `idempotency_conflict`.
 - `judge-demo` is refused (`invalid_request`, and a table constraint), as is any pool with allocations; an unknown pool is `unknown_pool`.
+- A root that already has operations is refused (`invalid_request`): reservations made before the budget would never count against it.
 - When it is first created, the pool's available amount must cover `pool_required_microusd` (for a factory request, the worker's worst case), and new work must not be halted. Otherwise it is refused with `insufficient_funds` or `pool_halted`, and nothing is recorded.
 
 **`budgetReserve`** takes `{ budget_key, role, reservation }`, where `reservation` is a `ReserveRequest` on the budget's pool. In order:
@@ -353,19 +354,20 @@ The factory tables hold a request's durable progress. Every write is idempotent 
 | `acceptRequest` | `factory_accept_request` | Create the budget, record the request and append `request_accepted` (event key `request_accepted`, seq 1) in one transaction. A refusal from any step leaves nothing behind, so a refused start can be sent again with the same IDs. |
 | `recordRequest` | `factory_record_request` | Record a request: `request_id`, `request_sha256`, the frozen `interpretation` (its `interpretation_sha256` field must equal `interpretation_sha256`), `budget_key` (an existing budget no other request uses), `root_execution_id` (the budget's root) and `factory_profile_sha256`. |
 | `readRequest` | `factory_request_read` | The request, its events with `seq > after` (at most `limit`, 1 to 1000), `next_after`, `last_seq`, `last_event_at`, the request's `last_heartbeat_at`, its stop, its evidence (case, hash, time) and its validation runs. `unknown_request` if it was never recorded. |
-| `appendEvent` | `factory_append_event` | Append one contract event (`type`, `host_id`, `candidate_id`, `item_key`, `case_id`, `message`, `data`) with a deterministic `event_key`; returns its `seq` and `at`. |
+| `appendEvent` | `factory_append_event` | Append one contract event (`type`, `host_id`, `candidate_id`, `item_key`, `case_id`, `message` of at most 2,000 characters, `data`) with a deterministic `event_key`; returns its `seq` and `at`. |
 | `recordHeartbeat` | `factory_record_heartbeat` | Record a worker heartbeat for the request (`validation_id` null) or one of its validation runs. Heartbeats are never events. |
 | `recordStop` | `factory_record_stop` | Record the request's stop request (one per request, keyed by request; `actor_role` is its content). |
 | `recordEvidence` | `factory_record_evidence` | Store a case's evidence as exact JSON text with the SHA-256 of its UTF-8 bytes, which the database checks. |
 | `readEvidence` | `factory_evidence_read` | The evidence text, byte for byte. `unknown_evidence` if none is stored. |
-| `recordValidation` | `factory_record_validation` | Record a validation run: `validation_id`, `request_id`, `case_id` and its own root. The ID is scoped to the request and case: the same ID on another request or case is `idempotency_conflict`. |
+| `recordValidation` | `factory_record_validation` | Record a validation run: `validation_id`, `request_id`, `case_id` and its own root. The ID is scoped to the request and case: the same ID on another request or case is `idempotency_conflict`. The root may not be a budget's root, another run's root, or a root whose reservations are charged to another request's budget. |
 | `readValidation` | `factory_validation_read` | A run by ID alone (with its request and case), its events after `after` and its `last_heartbeat_at`. `unknown_validation` if it was never recorded. |
 | `appendValidationEvent` | `factory_append_validation_event` | Append a run's event (`type`: lowercase letters, digits and underscores; `data`: an object) with an event key. |
 | `readRoot` | `factory_root_read` | The request, or the validation run and its request, that a root execution belongs to, for example the factory slot's holder. |
 
 - **Event numbering.** A request's events are numbered from 1 with no gaps. The append function computes the next number under a lock on the request's row, so concurrent writers (the worker, the stop and status routes) get consecutive numbers; a trigger and a primary key on `(request_id, seq)` refuse any other. A validation run's events follow the same rule under its own row.
 - **Event keys** are segments of lowercase letters, digits, `.`, `_` and `-` joined by `:` (at most 256 characters), unique per request. A replay compares every field of the event.
-- **After `request_finished`,** only `budget_updated`, `attention`, `attention_cleared`, `validation_started` and `validation_finished` are appended; any other type, a second `request_finished` included, is refused with `event_not_allowed`. An existing key still replays.
+- **First and last events.** `request_accepted` is a request's first event and only its first; a request's first event is always `request_accepted`. After `request_finished`, only `budget_updated`, `attention`, `attention_cleared`, `validation_started` and `validation_finished` are appended; any other type, a second `request_finished` included, is refused with `event_not_allowed`. An existing key still replays.
+- **Stored documents come back as stored.** Event data, validation event data and the interpretation are returned exactly as written; only a result's own amounts (for example a refusal's) become bigints.
 - **Event types** are the contract's list (`bug-request/1`, section 8.4), and closure causes are its stop codes; a unit test compares both lists with `@rbw/factory-contract`.
 - **Order of writes for a validation run.** Check the ID with `readValidation` first, take the slot under the run's root, reserve with role `validation`, and only then record the run, so a refused run records nothing. Each call replays, so repeating the same sequence after an interruption completes it.
 
@@ -399,7 +401,7 @@ The factory tables hold a request's durable progress. Every write is idempotent 
 | `unknown_request` | The factory request (or the root's owner) does not exist |
 | `unknown_validation` | The validation run does not exist, or belongs to another request |
 | `unknown_evidence` | The request has no evidence for the case |
-| `event_not_allowed` | An event type that may not follow `request_finished` |
+| `event_not_allowed` | An event type that may not follow `request_finished`, or a `request_accepted` that is not the first event (or a first event that is not `request_accepted`) |
 
 ## Caller protocol
 
@@ -538,6 +540,7 @@ The root `pnpm test` runs only the unit tests. A unit test applies `0001`–`000
 ## Known limits
 
 - **The spend halt is global.** An over-envelope settlement or reconciliation of a factory operation halts new work in every pool, so it also pauses judge replays (`pool_halted`) until an operator resumes. Detect it with `haltStatus` (or `operator status`); act with [Resume after an over-envelope halt](#resume-after-an-over-envelope-halt).
+- **Plain reservations bypass a budget.** Only `budgetReserve` counts against a budget. A plain `reserve` on the same pool, even under a budget's root, is bound by the pool's cap alone and never appears in the budget's totals, so factory code passes `budgetSpend(...)` wherever it hands a `Spend` on. Changing `reserve` itself to refuse it would change an existing function, which this migration does not do.
 - **Validation roots.** A `validation` reservation's root is checked against every budget's root and against roots already charged to another budget. It is not checked against roots used by reservations made outside any budget.
 
 ## Not in this package

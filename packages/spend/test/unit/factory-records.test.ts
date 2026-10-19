@@ -8,6 +8,7 @@ import {
   budgetKey,
   budgetRequest,
   event,
+  factoryOperation,
   factorySetup,
   interpretation,
   recordRequest,
@@ -251,12 +252,48 @@ describe("request events", () => {
     ["a malformed candidate_id", { candidate_id: "synthetic" }],
     ["a malformed item_key", { item_key: "Synthetic Key" }],
     ["data that is not an object", { data: [] }],
-    ["a message with a control character", { message: "line\u0007" }],
+    ["a message above 2,000 characters", { message: "m".repeat(2001) }],
     ["a missing field", { case_id: undefined }],
   ])("refuses %s as invalid_request", async (_label, overrides) => {
     await expectNothingWritten(h, async () => {
       expectRefused(await f.appendEvent(loose({ ...event(REQUEST, "bad"), ...overrides })), "invalid_request");
     });
+  });
+
+  it("accepts any message text the contract allows, line breaks included", async () => {
+    const message = "First line.\nSecond line\twith a tab.";
+    expectOk(await f.appendEvent(event(REQUEST, "multi-line", { message })));
+    expect((await read()).events.at(-1)?.message).toBe(message);
+  });
+
+  it("returns stored data exactly as stored, also under keys that name amounts", async () => {
+    const data = { reserved_microusd: 1, spent_microusd: 2, remaining_microusd: 3 };
+    expectOk(await f.appendEvent(event(REQUEST, "budget", { type: "budget_updated", data })));
+    expect((await read()).events.at(-1)?.data).toEqual(data);
+    const validationId = uuid(9300);
+    expectOk(await f.recordValidation({ validation_id: validationId, request_id: REQUEST, case_id: hex(71), root_execution_id: validationRoot(3) }));
+    expectOk(
+      await f.appendValidationEvent({
+        validation_id: validationId,
+        event_key: "settled",
+        type: "settled",
+        data: { cost_microusd: "1200", note_microusd: "not a number", copies_quantity: "3" },
+      }),
+    );
+    const stored = expectOk(await f.readValidation({ validation_id: validationId, after: 0, limit: 10 }));
+    expect(stored.events[0]?.data).toEqual({ cost_microusd: "1200", note_microusd: "not a number", copies_quantity: "3" });
+  });
+
+  it("keeps request_accepted first and only first", async () => {
+    await expectNothingWritten(h, async () => {
+      expectRefused(await f.appendEvent(event(REQUEST, "accepted-again", { type: "request_accepted", message: "Request accepted." })), "event_not_allowed");
+    });
+    expectOk(await h.spend.createBudget(budgetRequest(2)));
+    expectOk(await f.recordRequest(recordRequest(2)));
+    await expectNothingWritten(h, async () => {
+      expectRefused(await f.appendEvent(event(requestId(2), "worker_started")), "event_not_allowed");
+    });
+    expect(expectOk(await f.appendEvent(event(requestId(2), "request_accepted", { type: "request_accepted" }))).seq).toBe(1);
   });
 
   it("refuses a malformed event key and an unknown request", async () => {
@@ -417,6 +454,21 @@ describe("validation runs", () => {
       expectRefused(await f.recordValidation(validation({ root_execution_id: requestRoot(1) })), "invalid_request");
       expectRefused(await f.recordValidation(validation({ request_id: requestId(3) })), "unknown_request");
     });
+  });
+
+  it("refuses a root whose reservations are charged to another request's budget", async () => {
+    await acceptRequest(h, 2);
+    expectOk(
+      await h.spend.budgetReserve({
+        budget_key: budgetKey(2),
+        role: "validation",
+        reservation: factoryOperation(1, validationRoot(1), 10),
+      }),
+    );
+    await expectNothingWritten(h, async () => {
+      expectRefused(await f.recordValidation(validation()), "invalid_request");
+    });
+    expectOk(await f.recordValidation(validation({ request_id: requestId(2) })));
   });
 
   it("numbers its events consecutively, replays an event key and refuses other content", async () => {

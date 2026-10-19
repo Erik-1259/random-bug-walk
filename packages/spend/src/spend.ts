@@ -127,17 +127,27 @@ function revive(key: string, value: unknown): unknown {
   return value;
 }
 
-function decode(rows: Record<string, unknown>[]): unknown {
+/**
+ * Where amounts are revived. `nested`: at every depth (the spend results). `top-level`: only the
+ * result's own fields, so stored documents inside it (event data, an interpretation) come back
+ * exactly as they were stored.
+ */
+export type AmountRevival = "nested" | "top-level";
+
+function decode(rows: Record<string, unknown>[], amounts: AmountRevival): unknown {
   const text = rows[0]?.result;
   if (typeof text !== "string") {
     throw new Error("database operation returned no result");
   }
-  const parsed: unknown = JSON.parse(text, revive);
+  const parsed: unknown = JSON.parse(text, amounts === "nested" ? revive : undefined);
   if (typeof parsed !== "object" || parsed === null || !("ok" in parsed) || typeof parsed.ok !== "boolean") {
     throw new Error("database operation returned a malformed result");
   }
   if (!parsed.ok && !("code" in parsed && typeof parsed.code === "string" && REFUSAL_CODE_SET.has(parsed.code))) {
     throw new Error("database operation returned an unknown refusal code");
+  }
+  if (amounts === "top-level") {
+    return Object.fromEntries(Object.entries(parsed).map(([key, value]) => [key, revive(key, value)]));
   }
   return parsed;
 }
@@ -153,11 +163,12 @@ export interface DatabaseCalls<W extends OperationMap<W>, R extends OperationMap
 
 /**
  * One statement per call to a database function of this package in `options.schema`. The result
- * is decoded (amounts become bigints) and its refusal code checked. Its shape is the named SQL
- * function's own, so callers type it by the function name.
+ * is decoded (amounts become bigints, as `amounts` says) and its refusal code checked. Its shape is
+ * the named SQL function's own, so callers type it by the function name.
  */
 export function databaseCalls<W extends OperationMap<W>, R extends OperationMap<R>>(
   options: SpendOptions,
+  amounts: AmountRevival = "nested",
 ): DatabaseCalls<W, R> {
   const { client } = options;
   const schema = options.schema ?? "public";
@@ -170,11 +181,11 @@ export function databaseCalls<W extends OperationMap<W>, R extends OperationMap<
         clock().toISOString(),
       ]);
       // The shape is produced by this package's own SQL function for the named operation.
-      return decode(rows) as Result<W[typeof fn][1]>;
+      return decode(rows, amounts) as Result<W[typeof fn][1]>;
     },
     read: async (fn, request) => {
       const { rows } = await client.query(`SELECT ${schema}.${fn}($1::jsonb)::text AS result`, [encode(request)]);
-      return decode(rows) as Result<R[typeof fn][1]>;
+      return decode(rows, amounts) as Result<R[typeof fn][1]>;
     },
   };
 }

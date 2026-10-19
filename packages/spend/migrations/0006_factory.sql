@@ -50,9 +50,9 @@ RETURN coalesce(p ~ '^[a-z][a-z0-9_]{0,63}$', false);
 CREATE FUNCTION factory_is_item_key(p text) RETURNS boolean LANGUAGE sql IMMUTABLE
 RETURN coalesce(p ~ '^[a-z0-9][a-z0-9-]{0,31}$', false);
 
--- Event messages: plain text without control characters, at most 2,000 characters; may be empty.
+-- Event messages: any text of at most 2,000 characters; may be empty.
 CREATE FUNCTION factory_is_message(p text) RETURNS boolean LANGUAGE sql IMMUTABLE
-RETURN coalesce(p !~ '[[:cntrl:]]' AND length(p) <= 2000, false);
+RETURN coalesce(length(p) <= 2000, false);
 
 -- Times in results: UTC ISO 8601 with milliseconds and Z, as the contract writes them.
 CREATE FUNCTION factory_time(p timestamptz) RETURNS text LANGUAGE sql STABLE
@@ -282,8 +282,9 @@ BEGIN
   IF EXISTS (SELECT 1 FROM budgets WHERE root_execution_id = r ->> 'root_execution_id') THEN
     RETURN spend_refusal('idempotency_conflict', 'another budget is bound to this root execution');
   END IF;
-  IF EXISTS (SELECT 1 FROM budget_operations WHERE root_execution_id = r ->> 'root_execution_id') THEN
-    RETURN spend_invalid('root_execution_id is a validation root already charged to a budget');
+  -- Reservations made before the budget, or outside it, would never count against it.
+  IF EXISTS (SELECT 1 FROM operations WHERE root_execution_id = r ->> 'root_execution_id') THEN
+    RETURN spend_invalid('root_execution_id already has operations; a budget''s root starts with none');
   END IF;
 
   IF r ->> 'pool_key' = 'judge-demo' THEN
@@ -381,6 +382,9 @@ BEGIN
     RETURN spend_invalid('a request reservation uses the budget''s root execution');
   END IF;
   IF v_role = 'validation' THEN
+    -- The lock spend_create_budget takes on a root, so a root is never charged to two budgets at
+    -- once, nor becomes a budget's root while it is charged to another.
+    PERFORM pg_advisory_xact_lock(hashtext('spend_budget_root'), hashtext(v_root));
     IF EXISTS (SELECT 1 FROM budgets WHERE root_execution_id = v_root) THEN
       RETURN spend_invalid('a validation reservation uses a validation root, never a budget''s root');
     END IF;
@@ -746,7 +750,7 @@ BEGIN
     factory_text_error(r, 'item_key', factory_is_item_key(spend_text(r -> 'item_key')), 'an item key', true),
     spend_field_error(r, 'case_id', 'hex64', true),
     factory_text_error(r, 'message', factory_is_message(spend_text(r -> 'message')),
-      'a string without control characters of at most 2,000 characters'),
+      'a string of at most 2,000 characters'),
     CASE WHEN jsonb_typeof(r -> 'data') IS DISTINCT FROM 'object' THEN 'data must be a JSON object' END
   );
   IF v_err IS NOT NULL THEN
@@ -774,6 +778,9 @@ BEGIN
     RETURN spend_refusal('event_not_allowed', 'after request_finished only budget, attention and validation events follow');
   END IF;
   v_seq := coalesce((SELECT max(seq) FROM factory_events WHERE request_id = r ->> 'request_id'), 0) + 1;
+  IF (r ->> 'type' = 'request_accepted') <> (v_seq = 1) THEN
+    RETURN spend_refusal('event_not_allowed', 'request_accepted is a request''s first event, and only its first');
+  END IF;
   INSERT INTO factory_events (request_id, seq, event_key, type, host_id, candidate_id, item_key, case_id, message, data, recorded_at)
   VALUES (r ->> 'request_id', v_seq, r ->> 'event_key', r ->> 'type', r ->> 'host_id', r ->> 'candidate_id',
           r ->> 'item_key', r ->> 'case_id', r ->> 'message', r -> 'data', v_now);
@@ -799,7 +806,7 @@ BEGIN
     CASE WHEN jsonb_typeof(r -> 'budget') IS DISTINCT FROM 'object' THEN 'budget must be a JSON object' END,
     CASE WHEN jsonb_typeof(r -> 'request') IS DISTINCT FROM 'object' THEN 'request must be a JSON object' END,
     factory_text_error(r, 'accepted_message', factory_is_message(spend_text(r -> 'accepted_message')),
-      'a string without control characters of at most 2,000 characters')
+      'a string of at most 2,000 characters')
   );
   IF v_err IS NULL AND ((r -> 'budget' ->> 'budget_key') IS DISTINCT FROM (r -> 'request' ->> 'budget_key')
      OR (r -> 'budget' ->> 'root_execution_id') IS DISTINCT FROM (r -> 'request' ->> 'root_execution_id')) THEN
@@ -978,8 +985,10 @@ BEGIN
   IF v_err IS NOT NULL THEN
     RETURN spend_invalid(v_err);
   END IF;
-  -- A validation ID is scoped to (request_id, case_id) and checked across every request.
+  -- A validation ID is scoped to (request_id, case_id) and checked across every request. Its root
+  -- is locked too, so two runs claiming one root get idempotency_conflict, not a unique violation.
   PERFORM pg_advisory_xact_lock(hashtext('factory_validation'), hashtext(r ->> 'validation_id'));
+  PERFORM pg_advisory_xact_lock(hashtext('factory_validation_root'), hashtext(r ->> 'root_execution_id'));
   SELECT * INTO v_existing FROM factory_validations WHERE validation_id = r ->> 'validation_id';
   IF FOUND THEN
     IF (v_existing.request_id, v_existing.case_id, v_existing.root_execution_id)
@@ -996,6 +1005,12 @@ BEGIN
   END IF;
   IF EXISTS (SELECT 1 FROM factory_validations WHERE root_execution_id = r ->> 'root_execution_id') THEN
     RETURN spend_refusal('idempotency_conflict', 'another validation run uses this root execution');
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM budget_operations b JOIN factory_requests q ON q.request_id = r ->> 'request_id'
+    WHERE b.root_execution_id = r ->> 'root_execution_id' AND b.budget_key <> q.budget_key
+  ) THEN
+    RETURN spend_invalid('operations under this root are charged to another request''s budget');
   END IF;
   INSERT INTO factory_validations (validation_id, request_id, case_id, root_execution_id, recorded_at)
   VALUES (r ->> 'validation_id', r ->> 'request_id', r ->> 'case_id', r ->> 'root_execution_id', v_now);
@@ -1049,9 +1064,14 @@ $$;
 
 -- Factory reads -------------------------------------------------------------------------------
 
+-- Two plain predicates rather than IS NOT DISTINCT FROM, so each lookup uses the index.
 CREATE FUNCTION factory_last_heartbeat(p_request text, p_validation text) RETURNS text LANGUAGE sql STABLE
-RETURN (SELECT factory_time(max(recorded_at)) FROM factory_heartbeats
-        WHERE request_id = p_request AND validation_id IS NOT DISTINCT FROM p_validation);
+RETURN CASE
+  WHEN p_validation IS NULL THEN (SELECT factory_time(max(recorded_at)) FROM factory_heartbeats
+                                  WHERE request_id = p_request AND validation_id IS NULL)
+  ELSE (SELECT factory_time(max(recorded_at)) FROM factory_heartbeats
+        WHERE request_id = p_request AND validation_id = p_validation)
+END;
 
 CREATE FUNCTION factory_validation_json(v factory_validations) RETURNS jsonb LANGUAGE sql STABLE
 RETURN jsonb_build_object(
