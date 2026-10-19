@@ -79,7 +79,7 @@ This route covers work on the owner's machine, every coding-agent container, and
 - The README's "How this was built" section says, without naming anyone, that Claude Code and Codex wrote the code under the author's direction: the author directed, specified and reviewed the work. Its wording follows these rules.
 - README, docs and results-site copy pass a CI prose check for inflated wording; the check holds the word list.
 - Publication outside the repository (results-site copy, entry pages, video, posts) needs the owner's approval, the owner's review, and a logged-out check of every link.
-- Public-demo experimental outputs go to their configured destinations through the trusted publisher and pass the same checks. Publishing them gives them no validated label and supports no new claim.
+- Public-demo experimental outputs go to their configured destinations through the trusted publisher and pass the full scan, pattern list included. Publishing them gives them no validated label and supports no new claim.
 
 ## Commits, pull requests and attribution
 
@@ -90,7 +90,7 @@ This route covers work on the owner's machine, every coding-agent container, and
 - Claude Code's commit and PR attribution is off in `.claude/settings.json`.
 - Codex has no documented local setting for commit or PR attribution in the pinned version, so the repository holds no `.codex/` configuration. The publication checks block both trailers and footers.
 - The publication checks block such lines. Records of human review name a role ("human reviewer"), not a person.
-- Exporters run the same scan before they write any public file. Author fields in exported files, such as Harbor task files, carry the project name, Random Bug Walk; author email fields stay empty.
+- Exporters run the full scan, pattern list included, before they write any public file. Author fields in exported files, such as Harbor task files, carry the project name, Random Bug Walk; author email fields stay empty.
 
 ## Specification fidelity
 
@@ -142,7 +142,7 @@ For automated pull request reviews, including Codex's:
 - Judge each finding by what can happen in this project as it actually runs: one owner, one host, pinned dependency versions, and inputs produced by this repository's own pipeline. Do not report a finding that only arises from code or test text written to fool a check (for example, a helper named like a rule ID to satisfy a rule-ID scan), from configuration values chosen to land exactly on a boundary (for example, a rate set a few micro-dollars under a ceiling), or from an operator deliberately editing or deleting records, rules or documents.
 - Always report, whatever the cause: secrets, held-out bug data or private material reaching public output; wrong admission or grading outcomes; spend that can exceed a cap or be billed twice; and data loss.
 - If unsure whether a finding is reachable in ordinary use, report it as P3 rather than P1 or P2.
-- Accepted risk, not a finding: workflows on same-repository pull requests can reach repository secrets. Only the owner's account opens pull requests here, each after the checked publication step, and pull requests from forks get no secrets.
+- Accepted risk, not a finding: workflows on same-repository pull requests can reach repository secrets. Only the owner's account and the owner's authorized cloud lanes open pull requests here, each after its route's pre-publication check (the full scan through the helper, or `scan-public` on the cloud route), and pull requests from forks get no secrets.
 
 ## Integration proof
 
