@@ -1,15 +1,19 @@
 import { describe, expect, expectTypeOf, it } from "vitest";
 import type {
   CandidateEndedData,
+  CatalogEntry,
   CheckFinishedData,
   CopyPlan,
   CopyRecord,
   CopyRunner,
+  Criterion,
   EmptyObject,
   Event,
   HostAdapter,
   RequestOutcome,
   RequestStatus,
+  TestEvidence,
+  TestOperationState,
 } from "../src/index.ts";
 import { DEF_NAMES, HOST_ID_VALUES } from "../src/index.ts";
 import { assertContract } from "../src/validate.ts";
@@ -48,6 +52,15 @@ describe("generated types", () => {
     expect(HOST_ID_VALUES).toEqual(["umami", "task-report"]);
     expectTypeOf(HOST_ID_VALUES).toEqualTypeOf<readonly ["umami", "task-report"]>();
     expect(DEF_NAMES).toContain("QualificationRecord");
+  });
+
+  it("publishes failure codes on criteria, not on catalog entries, and types the test evidence", () => {
+    expectTypeOf<Criterion["failure_code"]>().toEqualTypeOf<string>();
+    expectTypeOf<CatalogEntry>().not.toHaveProperty("failure_code");
+    const evidence = assertContract("TestEvidence", contractFixture("test-evidence.json"));
+    expectTypeOf(evidence.operations[0]?.state).toEqualTypeOf<TestOperationState | undefined>();
+    expectTypeOf(evidence).toEqualTypeOf<TestEvidence>();
+    expect(evidence.operations.map((operation) => operation.state)).toEqual(["uncertain", "uncertain", "uncertain", "uncertain"]);
   });
 
   it("types the adapter and runner interfaces over the generated shapes", async () => {

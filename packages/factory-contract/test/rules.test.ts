@@ -9,6 +9,12 @@ import {
   PROBLEM_SEVERITY_VALUES,
   REQUEST_OUTCOME_VALUES,
   STOP_CODE_VALUES,
+  TEST_OPERATION_KIND_VALUES,
+  TEST_OPERATION_STATE_VALUES,
+  TEST_PROVIDER_ACTION_VALUES,
+  TEST_PROVIDER_VALUES,
+  TEST_SCENARIO_VALUES,
+  TEST_SLOT_KEY_VALUES,
 } from "../src/index.ts";
 import { validateContract } from "../src/validate.ts";
 import type { JsonObject } from "./support.ts";
@@ -35,6 +41,18 @@ function rows(lines: string[]): string[][] {
 /** The backticked codes of a table cell, such as "`candidate_rejected` / `candidate_invalid`". */
 function codes(cell: string | undefined): string[] {
   return [...(cell ?? "").matchAll(/`([a-z_]+)`/g)].map((match) => match[1] ?? "");
+}
+
+/** The backticked scenario and file names of a table cell, such as "`two-host-fulfilled`" or "`status-fulfilled.json`". */
+function names(cell: string | undefined): string[] {
+  return [...(cell ?? "").matchAll(/`([a-z0-9.-]+)`/g)].map((match) => match[1] ?? "");
+}
+
+/** The quoted values of a field in a section's shape text, such as `kind: "worker" | "candidate_copy"`. */
+function literals(lines: string[], field: string): string[] {
+  const match = new RegExp(`\\b${field}: ((?:"[a-z_]+"(?: \\| )?)+)`).exec(lines.join("\n"));
+  if (match === null) throw new Error(`no field ${field}`);
+  return [...(match[1] ?? "").matchAll(/"([a-z_]+)"/g)].map((value) => value[1] ?? "");
 }
 
 const sorted = (values: readonly string[]) => [...values].sort();
@@ -67,18 +85,40 @@ describe("enumerations match the contract document", () => {
     const table = rows(section("## 12. Errors"));
     expect(sorted(table.flatMap((row) => codes(row[1])))).toEqual(sorted(ERROR_CODE_VALUES));
   });
+
+  it("test-mode scenarios and evidence values (section 15.1)", () => {
+    const lines = section("### 15.1 Test controls (planned)");
+    expect(sorted(rows(lines).flatMap((row) => names(row[0])))).toEqual(sorted(TEST_SCENARIO_VALUES));
+    expect(sorted(literals(lines, "kind"))).toEqual(sorted(TEST_OPERATION_KIND_VALUES));
+    expect(sorted(literals(lines, "state"))).toEqual(sorted(TEST_OPERATION_STATE_VALUES));
+    expect(sorted(literals(lines, "slot_key"))).toEqual(sorted(TEST_SLOT_KEY_VALUES));
+    expect(sorted(literals(lines, "provider"))).toEqual(sorted(TEST_PROVIDER_VALUES));
+    expect(sorted(literals(lines, "action"))).toEqual(sorted(TEST_PROVIDER_ACTION_VALUES));
+  });
 });
 
-const PROBLEM_TABLE = rows(section("### 6.2 Problem codes")).map((row) => [codes(row[0])[0] ?? "", row[1] ?? ""] as const);
+/** Code, severity and whether the meaning names it request-level (`item_key` null). */
+const PROBLEM_TABLE = rows(section("### 6.2 Problem codes")).map(
+  (row) => [codes(row[0])[0] ?? "", row[1] ?? "", (row[2] ?? "").includes("Request-level")] as const,
+);
+/** A selected host that serves no item is not tied to one item, so the schema leaves its item_key open. */
+const EITHER_LEVEL = ["host_unused"];
 const OUTCOME_TABLE = rows(section("### 8.1 States and outcomes")).map((row) => [codes(row[0])[0] ?? "", codes(row[1])] as const);
 const REASON_TABLE = rows(section("### 8.3 Candidate reasons")).map((row) => [codes(row[0])[0] ?? "", row[1] ?? ""] as const);
 const ENDED_STAGES = ["rejected", "invalid", "incomplete", "skipped"];
 
 describe("the schema applies the document's tables", () => {
-  it.each(PROBLEM_TABLE)("problem %s has severity %s and no other", (code, severity) => {
+  it.each(PROBLEM_TABLE)("problem %s has severity %s and no other", (code, severity, requestLevel) => {
     for (const other of PROBLEM_SEVERITY_VALUES) {
-      const problem = { code, severity: other, message: "synthetic", item_key: null };
+      const problem = { code, severity: other, message: "synthetic", item_key: requestLevel ? null : "synthetic-item" };
       expect(validateContract("Problem", problem).length === 0).toBe(other === severity);
+    }
+  });
+
+  it.each(PROBLEM_TABLE.filter(([code]) => !EITHER_LEVEL.includes(code)))("problem %s is request-level exactly when the table says so", (code, severity, requestLevel) => {
+    for (const itemKey of [null, "synthetic-item"]) {
+      const problem = { code, severity, message: "synthetic", item_key: itemKey };
+      expect(validateContract("Problem", problem).length === 0).toBe((itemKey === null) === requestLevel);
     }
   });
 
@@ -120,5 +160,32 @@ describe("the schema applies the document's tables", () => {
     }
     const active = variant(rejected, (copy) => { copy.stage = "checking"; });
     expect(validateContract("Candidate", active)).toContain("schema:/reason:type");
+  });
+});
+
+const SCENARIO_TABLE = rows(section("### 15.1 Test controls (planned)")).map((row) => ({
+  scenario: names(row[0])[0] ?? "",
+  input: names(row[2])[0] ?? "",
+  outcome: codes(row[3])[0] ?? "",
+  stopCode: codes(row[4])[0] ?? "",
+  delivery: codes(row[5])[0] ?? "",
+  attention: codes(row[6])[0] ?? null,
+  endStates: names(row[7]),
+}));
+
+describe("the scenario table agrees with the schema and the fixtures (section 15.1)", () => {
+  it.each(SCENARIO_TABLE.map((row) => [row.scenario, row] as const))("%s", (_scenario, row) => {
+    expect(OUTCOME_TABLE.find(([outcome]) => outcome === row.outcome)?.[1]).toContain(row.stopCode);
+    const input = at(contractFixture(row.input), ["interpretation", "input"]);
+    expect(validateContract("NormalizedRequestInput", input)).toEqual([]);
+    expect(validateContract("RequestInput", input)).toEqual([]);
+    for (const file of row.endStates.filter((name) => name.startsWith("status-"))) {
+      const status = contractFixture(file);
+      expect(validateContract("RequestStatus", status)).toEqual([]);
+      expect(status.outcome, file).toBe(row.outcome);
+      expect(at(status, ["stop_reason"]).code, file).toBe(row.stopCode);
+      expect(status.delivery, file).toBe(row.delivery);
+      expect(status.attention === null ? null : at(status, ["attention"]).code, file).toBe(row.attention);
+    }
   });
 });

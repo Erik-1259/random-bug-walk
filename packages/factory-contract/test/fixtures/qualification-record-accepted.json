@@ -52,7 +52,7 @@
         "runs_valid": 3,
         "runs_total": 3,
         "failure_codes": [
-          "synthetic-lost-change"
+          "lost_acknowledged_change"
         ],
         "detail": "synthetic detail: fail",
         "expected": "fail",

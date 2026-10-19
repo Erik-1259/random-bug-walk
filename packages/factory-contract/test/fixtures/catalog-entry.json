@@ -10,7 +10,6 @@
       "version": "1"
     }
   ],
-  "failure_code": "synthetic-lost-change",
   "plant": {
     "patch": "synthetic planted patch text\n",
     "patch_sha256": "d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1",
