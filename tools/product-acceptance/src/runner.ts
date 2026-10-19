@@ -21,6 +21,8 @@ export interface Probe {
   input: Record<string, unknown>;
   outcome: string;
   stopCode: string;
+  expectedDelivery: string;
+  expectedItems: Record<string, unknown>[];
   concurrent?: boolean;
   cancel?: boolean;
   validation?: "failed" | "error";
@@ -62,6 +64,15 @@ export async function runProbe(backend: IsolatedBackend, probe: Probe): Promise<
   assert(reset.status >= 200 && reset.status < 300, "reset failed");
   const interpretation = body(await call("POST", "/api/factory/interpretations", probe.input), 200);
   assert.equal(interpretation.startable, true);
+  const criterionKeys = (item: Record<string, unknown>) => objects(item.criteria)
+    .map(c => `${text(c.criterion_id)}@${text(c.version)}`).sort();
+  const interpretedItems = objects(interpretation.items);
+  assert.equal(interpretedItems.length, probe.expectedItems.length);
+  for (const expected of probe.expectedItems) {
+    const actual = interpretedItems.find(item => item.item_key === expected.item_key);
+    assert(actual, "missing pinned scenario item");
+    assert.deepEqual(criterionKeys(actual), criterionKeys(expected), "criteria differ from pinned scenario");
+  }
   assert.deepEqual(interpretation.input, probe.input, "input silently changed");
   const requestId = randomUUID();
   const start = { request_id: requestId, input: probe.input, interpretation_sha256: interpretation.interpretation_sha256 };
@@ -88,6 +99,7 @@ export async function runProbe(backend: IsolatedBackend, probe: Probe): Promise<
   // Bound a stalled service; do not poll faster than its declared interval.
   for (let polls = 0; polls < 1000; polls++) {
     checkStatus(state);
+    assert.equal(object(state.budget).overrun, false, "deterministic scenario exceeded budget");
     const currentIds = objects(state.cases).map(c => c.case_id);
     for (const id of deliveredIds) assert(currentIds.includes(id), "delivered case disappeared");
     for (const id of currentIds) deliveredIds.add(id);
@@ -110,6 +122,7 @@ export async function runProbe(backend: IsolatedBackend, probe: Probe): Promise<
   }
   if (probe.cancel && !stopped) throw new Unavailable("cancel-midway requires an observable pause after the first delivery");
   if (state.state !== "finished") throw new Unavailable("Request observation reached the runner poll limit.");
+  assert.equal(state.delivery, probe.expectedDelivery, "delivery differs from pinned scenario");
   assert.equal(state.outcome, probe.outcome);
   assert.equal(object(state.stop_reason).code, probe.stopCode);
   await backend.reconnect();
@@ -221,9 +234,9 @@ export async function runUnsupported(backend: IsolatedBackend): Promise<void> {
   for (const invalid of [invalidHost, invalidType]) error(await call("POST", "/api/factory/interpretations", invalid), 400, "invalid_request");
 }
 
-function fixtureInput(name: string): Record<string, unknown> {
+function fixtureStatus(name: string): Record<string, unknown> {
   const value: unknown = JSON.parse(readFileSync(new URL(`../fixtures/${name}.json`, import.meta.url), "utf8"));
-  return object(object(object(value).interpretation).input);
+  return object(value);
 }
 function probes(): { groups: ScenarioId[]; probe: Probe }[] {
   const plans: [string, string, string, string, ScenarioId[]][] = [
@@ -239,12 +252,14 @@ function probes(): { groups: ScenarioId[]; probe: Probe }[] {
     ["validation-error", "fulfilled", "fulfilled", "fulfilled", ["downloads"]],
   ];
   return plans.map(([scenario, fixture, outcome, stopCode, groups]) => {
-    const input = fixtureInput(`status-${fixture}`);
+    const expected = fixtureStatus(`status-${fixture}`);
+    const interpretation = object(expected.interpretation);
+    const input = object(interpretation.input);
     if (scenario === "sources-exhausted") {
       const first = objects(input.items)[0]; assert(first); first.quantity = 2;
     }
     return { groups, probe: {
-    scenario, input, outcome, stopCode,
+    scenario, input, outcome, stopCode, expectedDelivery: text(expected.delivery), expectedItems: objects(interpretation.items),
     concurrent: scenario === "two-host-fulfilled", cancel: scenario === "cancel-midway",
     reconcile: scenario === "worker-lost" || scenario === "uncertain-provider",
     downloads: scenario === "two-host-fulfilled",

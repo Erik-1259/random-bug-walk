@@ -7,7 +7,7 @@ const fixture = (name: string): Record<string, unknown> => {
   const value: unknown = JSON.parse(readFileSync(new URL(`../fixtures/${name}.json`, import.meta.url), "utf8"));
   return object(value);
 };
-const probe = { scenario: "two-host-fulfilled", input: object(fixture("interpretation-supported").input), outcome: "fulfilled", stopCode: "fulfilled", concurrent: true };
+const probe = { scenario: "two-host-fulfilled", input: object(fixture("interpretation-supported").input), outcome: "fulfilled", stopCode: "fulfilled", concurrent: true, expectedDelivery: "complete", expectedItems: objects(fixture("interpretation-supported").items) };
 function scripted() {
   let id = "";
   let starts = 0;
@@ -198,4 +198,43 @@ it("detects an already observed event being rewritten after reconnect", async ()
     return reply;
   };
   await expect(runProbe(backend, probe)).rejects.toThrow("previous event changed");
+});
+it("rejects a described criterion omitted consistently by interpretation and status", async () => {
+  const { backend, request } = scripted();
+  backend.request = async (...args) => {
+    const reply = await request(...args);
+    if (reply.body === null) return reply;
+    const v = object(reply.body);
+    const interpreted = args[1].endsWith("/interpretations") ? v : v.interpretation;
+    if (interpreted) for (const item of objects(object(interpreted).items)) item.criteria = [];
+    if (v.cases) for (const c of objects(v.cases)) c.criteria_met = [];
+    return reply;
+  };
+  await expect(runProbe(backend, probe)).rejects.toThrow("criteria differ from pinned scenario");
+});
+it("rejects an overrun in a deterministic within-budget scenario", async () => {
+  const { backend, request } = scripted();
+  backend.request = async (...args) => {
+    const reply = await request(...args);
+    if (args[0] === "GET") {
+      const b = object(object(reply.body).budget);
+      b.spent_microusd = integer(b.budget_microusd) + 1;
+      b.reserved_microusd = 0; b.committed_microusd = b.spent_microusd;
+      b.remaining_microusd = -1; b.overrun = true;
+    }
+    return reply;
+  };
+  await expect(runProbe(backend, probe)).rejects.toThrow("deterministic scenario exceeded budget");
+});
+it("requires the pinned scenario's partial delivery rather than trusting its outcome label", async () => {
+  const { backend, request } = scripted();
+  backend.request = async (...args) => {
+    const reply = await request(...args);
+    if (args[0] === "GET") {
+      const v = object(reply.body); v.outcome = "sources_exhausted";
+      v.stop_reason = { code: "sources_exhausted", message: "synthetic exhaustion" };
+    }
+    return reply;
+  };
+  await expect(runProbe(backend, { ...probe, outcome: "sources_exhausted", stopCode: "sources_exhausted", expectedDelivery: "partial" })).rejects.toThrow("delivery differs from pinned scenario");
 });
