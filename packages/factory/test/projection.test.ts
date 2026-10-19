@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import { lostWorkerEvents, projectStatus, ProjectionError, workerAttentionEvent } from "../src/projection.ts";
 import type { CaseEvidence, ProjectionInput } from "../src/projection.ts";
 import type { CandidateInfo } from "../src/sources.ts";
+import { MemoryEventStore } from "../src/testing/memory.ts";
 import { REPO_ROOT, statusFixture } from "./support.ts";
 
 const RECORD = JSON.parse(readFileSync(join(REPO_ROOT, "packages", "factory-contract", "test", "fixtures", "qualification-record-accepted.json"), "utf8")) as QualificationRecord;
@@ -181,5 +182,75 @@ describe("the lost-worker finish", () => {
 
   it("appends nothing for a request that already finished", () => {
     expect(lostWorkerEvents({ events: statusFixture("status-fulfilled.json").events, now: new Date() })).toEqual([]);
+  });
+
+  it("finishes on a retry after a partial append, appending only what is missing", async () => {
+    const store = await storeOf(statusFixture("status-running.json").events);
+    const first = lostWorkerEvents({ events: store.events, now: new Date("2026-10-20T14:10:00.000Z") });
+    // The first finish appends the candidate's end and the attention, then fails before request_finished.
+    for (const event of first.slice(0, 2)) await store.append(event);
+    const retry = lostWorkerEvents({ events: store.events, now: new Date("2026-10-20T14:11:00.000Z") });
+    for (const event of retry) await store.append(event);
+    expect(store.events.slice(-3).map((event) => event.type)).toEqual(["candidate_incomplete", "attention", "request_finished"]);
+    expect(store.events.at(-1)).toMatchObject({ data: { outcome: "operational_error", stop_code: "worker_lost" } });
+    expect(store.events.filter((event) => event.type === "attention")).toHaveLength(1);
+    expect(lostWorkerEvents({ events: store.events, now: new Date("2026-10-20T14:12:00.000Z") })).toEqual([]);
+  });
+
+  it("keeps a needs_reconciliation the worker raised before it was lost, without a second attention event", () => {
+    const running = statusFixture("status-running.json");
+    const raised: Event = { seq: 13, at: "2026-10-20T14:07:00.000Z", type: "attention", host_id: null, candidate_id: null, item_key: null, case_id: null, message: "x", data: { code: "needs_reconciliation" } };
+    const events = lostWorkerEvents({ events: [...running.events, raised], now: new Date("2026-10-20T14:10:00.000Z") });
+    expect(events.map((event) => event.type)).toEqual(["candidate_incomplete", "request_finished"]);
+  });
+});
+
+/** An in-memory store holding a fixture's events under keys of their own. */
+async function storeOf(events: readonly Event[]): Promise<MemoryEventStore> {
+  const store = new MemoryEventStore();
+  for (const event of events) await store.append({ ...event, event_key: `fixture:${String(event.seq)}` });
+  return store;
+}
+
+describe("worker heartbeat attention under repeated and concurrent polls", () => {
+  const running = statusFixture("status-running.json");
+  const heartbeat = Date.parse(running.last_heartbeat_at ?? "");
+  const poll = (events: readonly Event[], lastHeartbeat: string | null, now: number) => workerAttentionEvent({ events, last_heartbeat_at: lastHeartbeat, created_at: running.created_at, now: new Date(now) });
+
+  it("builds the same raise from one stale heartbeat whenever the polls run, so a second poll replays", async () => {
+    const store = await storeOf(running.events);
+    const first = poll(store.events, running.last_heartbeat_at, heartbeat + 61_000);
+    const second = poll(store.events, running.last_heartbeat_at, heartbeat + 95_000);
+    if (first === null || second === null) throw new Error("both polls see a stale heartbeat");
+    await store.append(first);
+    await store.append(second);
+    expect(store.replays).toEqual(["heartbeat:1:raise"]);
+    expect(store.events.at(-1)).toMatchObject({ type: "attention", at: new Date(heartbeat + 60_000).toISOString() });
+  });
+
+  it("builds the same clear from one resumed heartbeat, and the same clear after the finish", async () => {
+    const store = await storeOf(running.events);
+    const raise = poll(store.events, running.last_heartbeat_at, heartbeat + 61_000);
+    if (raise === null) throw new Error("the poll sees a stale heartbeat");
+    await store.append(raise);
+    const resumed = new Date(heartbeat + 120_000).toISOString();
+    const first = poll(store.events, resumed, heartbeat + 121_000);
+    const second = poll(store.events, resumed, heartbeat + 140_000);
+    if (first === null || second === null) throw new Error("both polls see the resumed heartbeat");
+    await store.append(first);
+    await store.append(second);
+    expect(store.replays).toEqual(["heartbeat:1:clear"]);
+    expect(store.events.at(-1)).toMatchObject({ type: "attention_cleared", at: resumed });
+
+    const finishedStore = await storeOf(running.events);
+    await finishedStore.append(raise);
+    const finish = lostWorkerEvents({ events: finishedStore.events, now: new Date(heartbeat + 200_000) }).filter((event) => event.type === "request_finished");
+    for (const event of finish) await finishedStore.append(event);
+    const afterA = poll(finishedStore.events, running.last_heartbeat_at, heartbeat + 300_000);
+    const afterB = poll(finishedStore.events, running.last_heartbeat_at, heartbeat + 400_000);
+    if (afterA === null || afterB === null) throw new Error("both polls clear the raised attention after the finish");
+    await finishedStore.append(afterA);
+    await finishedStore.append(afterB);
+    expect(finishedStore.replays).toEqual(["heartbeat:1:clear"]);
   });
 });

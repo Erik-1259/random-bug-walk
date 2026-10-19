@@ -1,8 +1,8 @@
 import { validateContract } from "@rbw/factory-contract/validate";
-import type { Event } from "@rbw/factory-contract";
+import type { CopyRecord, Event, InterpretedCells } from "@rbw/factory-contract";
 import { describe, expect, it } from "vitest";
 import type { RequestLedger } from "../src/ports.ts";
-import { FakeHostAdapter, TEST_PROFILE, syntheticEntry } from "../src/testing/catalog.ts";
+import { FakeHostAdapter, TEST_PROFILE, syntheticEntry, syntheticSha } from "../src/testing/catalog.ts";
 import { UncertainOutcomeError, qualifyingPlan } from "../src/testing/harness.ts";
 import { fixtureInput, world } from "./orchestrator-support.ts";
 
@@ -162,6 +162,77 @@ describe("runRequest: verdicts", () => {
     expect(w.events.keys.size).toBe(w.events.events.length);
     expect(w.events.replays).toEqual([]);
   });
+
+  it("appends check_finished from the harness's checked cells: a pass on fewer valid runs than the protocol's floor reads incomplete", async () => {
+    // The adapter reports the clean copy's original suite as a pass on 2 of 3 runs; the protocol needs 3.
+    class FewValidRuns extends FakeHostAdapter {
+      override interpret(records: CopyRecord[]): InterpretedCells {
+        const cells = super.interpret(records);
+        if (records[0]?.state !== "clean") return cells;
+        return { ...cells, original_suite: { ...cells.original_suite, runs_valid: 2 } };
+      }
+    }
+    const registry = [new FewValidRuns({ host_id: "task-report", entries: [syntheticEntry({ host_id: "task-report", bug_type_id: "concurrency", n: 1, criteria: [LOST] })] })];
+    const w = world({ input: concurrencyOnly(1), registry });
+    const result = await w.run();
+    const checks = w.events.events.flatMap((event) => (event.type === "check_finished" ? [{ set: event.data.check_set, copy: event.data.copy, outcome: event.data.outcome, message: event.message }] : []));
+    expect(checks).toHaveLength(6);
+    expect(checks[0]).toEqual({ set: "original_suite", copy: "clean", outcome: "incomplete", message: "Original suite on the clean copy: incomplete (2 of 3 runs valid)." });
+    expect(ended(w.events.events)).toEqual([{ type: "candidate_incomplete", reason: "incomplete_run" }]);
+    expect(result).toMatchObject({ stop_code: "sources_exhausted", delivered: 0 });
+  });
+});
+
+describe("runRequest: packaging and evidence", () => {
+  const twoEntries = () => taskReportRegistry([1, 2].map((n) => ({ host_id: "task-report" as const, bug_type_id: "concurrency" as const, n, criteria: [LOST] })));
+
+  it("rejects with export_mismatch and delivers nothing when the stored bug case is not the archive export verification ran on, leaving the unit for the next entry", async () => {
+    const w = world({ input: concurrencyOnly(1), registry: twoEntries() });
+    const store = w.deps.packageCase;
+    w.deps.packageCase = async (input) => {
+      const packages = await store(input);
+      return input.entry.entry_id.endsWith("-01") ? { ...packages, bug_case: { ...packages.bug_case, sha256: syntheticSha("another-bug-case") } } : packages;
+    };
+    const result = await w.run();
+    expect(result).toMatchObject({ stop_code: "fulfilled", delivered: 1 });
+    expect(ended(w.events.events)).toEqual([{ type: "candidate_rejected", reason: "export_mismatch" }]);
+    const status = w.status();
+    const [first, second] = status.candidates;
+    expect([first?.stage, second?.stage]).toEqual(["rejected", "qualified"]);
+    const delivering = w.events.events.filter((event) => (event.type === "package_ready" || event.type === "case_delivered") && event.candidate_id === first?.candidate_id);
+    expect(delivering).toEqual([]);
+    expect(status.items[0]).toMatchObject({ delivered: 1, missing: 0 });
+  });
+
+  it("ends the candidate incomplete, settles it and finishes operational_error when its parts cannot be stored", async () => {
+    const w = world({ input: concurrencyOnly(1), registry: twoEntries() });
+    w.deps.packageCase = () => Promise.reject(new Error("the object store refused the write"));
+    const result = await w.run();
+    expect(result).toMatchObject({ outcome: "operational_error", stop_code: "operational_error", needs_reconciliation: false, delivered: 0 });
+    expect(result.notes).toEqual([expect.stringContaining("the object store refused the write")]);
+    expect(ended(w.events.events)).toEqual([{ type: "candidate_incomplete", reason: "incomplete_run" }]);
+    expect(types(w.events.events)).not.toContain("package_ready");
+    expect(types(w.events.events)).not.toContain("case_delivered");
+    expect(w.qualified).toHaveLength(1);
+    expect(w.ledger.calls.map((call) => call.call)).toEqual(["reserveCandidate", "settleCandidate", "settleWorker"]);
+    expect(w.evidence.size).toBe(0);
+  });
+
+  it("ends the candidate incomplete, settles it and finishes operational_error when its evidence cannot be stored", async () => {
+    const w = world({ input: concurrencyOnly(1), registry: twoEntries() });
+    w.deps.writeEvidence = () => Promise.reject(new Error("the evidence table refused the write"));
+    const result = await w.run();
+    expect(result).toMatchObject({ outcome: "operational_error", stop_code: "operational_error", needs_reconciliation: false, delivered: 0 });
+    expect(result.notes).toEqual([expect.stringContaining("the evidence table refused the write")]);
+    expect(ended(w.events.events)).toEqual([{ type: "candidate_incomplete", reason: "incomplete_run" }]);
+    expect(types(w.events.events)).not.toContain("package_ready");
+    expect(types(w.events.events)).not.toContain("case_delivered");
+    expect(w.qualified).toHaveLength(1);
+    expect(w.ledger.calls.map((call) => call.call)).toEqual(["reserveCandidate", "settleCandidate", "settleWorker"]);
+    const status = w.status();
+    expect(status).toMatchObject({ outcome: "operational_error", delivery: "none", cases: [] });
+    expect(status.candidates.map((c) => [c.stage, c.finished_at !== null])).toEqual([["incomplete", true]]);
+  });
 });
 
 describe("runRequest: budget", () => {
@@ -206,6 +277,32 @@ describe("runRequest: budget", () => {
     const result = await w.run();
     expect(result).toMatchObject({ outcome: "operational_error", stop_code: "operational_error", delivered: 1 });
     expect(w.qualified).toHaveLength(1);
+    expect(w.status().budget.overrun).toBe(true);
+  });
+
+  it("finishes operational_error, not fulfilled, when the last candidate's settlement overruns the budget", async () => {
+    // $1.50 budget: the worker's $0.20 and a candidate that settles at $1.40 commit $1.60.
+    const w = world({ input: concurrencyOnly(1, 1_500_000), ledger: { candidateCost: () => 1_400_000 } });
+    const result = await w.run();
+    expect(result).toMatchObject({ outcome: "operational_error", stop_code: "operational_error", delivered: 1 });
+    expect(w.status()).toMatchObject({ outcome: "operational_error", delivery: "complete", budget: { overrun: true } });
+  });
+
+  it("finishes operational_error, not cancelled, when a stopped candidate's settlement overruns the budget", async () => {
+    const w = world({
+      input: concurrencyOnly(1, 1_500_000),
+      ledger: { candidateCost: () => 1_400_000 },
+      plan: () => ({ states: qualifyingPlan([LOST_CODE]), pause_at_copy: 2 }),
+      hooks: {
+        pause: () => {
+          w.stop.requested = true;
+          return Promise.resolve();
+        },
+      },
+    });
+    const result = await w.run();
+    expect(result).toMatchObject({ outcome: "operational_error", stop_code: "operational_error", delivered: 0 });
+    expect(ended(w.events.events)).toEqual([{ type: "candidate_incomplete", reason: "stopped" }]);
     expect(w.status().budget.overrun).toBe(true);
   });
 });

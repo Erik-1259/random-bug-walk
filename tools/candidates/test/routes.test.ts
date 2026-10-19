@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { parseCanonical } from "@rbw/schema";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { REPO_ROOT, runCommand, type CommandDeps, type ScreenConfig } from "../src/command.ts";
@@ -121,6 +121,35 @@ describe("the --route option", () => {
     const result = await run([], { findSites: finder(threeSites()) }, inside);
     expect(result.code).toBe(2);
     expect(existsSync(inside)).toBe(false);
+  });
+
+  it("refuses an existing --out on the default route and never overwrites it", async () => {
+    const target = join(tempDir("rbw-candidates-route-out-"), "record.json");
+    writeFileSync(target, "keep");
+    const findSites = finder(threeSites());
+    const result = await run([], { findSites }, target);
+    expect(result.code).toBe(2);
+    expect(result.err).toMatch(/cannot write --out/);
+    expect(findSites.calls).toBe(0);
+    expect(readFileSync(target, "utf8")).toBe("keep");
+  });
+
+  it("refuses an --out in a missing directory on the default route", async () => {
+    const target = join(tempDir("rbw-candidates-route-out-"), "missing", "record.json");
+    const result = await run([], { findSites: finder(threeSites()) }, target);
+    expect(result.code).toBe(2);
+    expect(result.err).toMatch(/cannot write --out/);
+    expect(existsSync(dirname(target))).toBe(false);
+  });
+
+  it("leaves no empty record behind when the site finder fails on the default route", async () => {
+    const broken = () => {
+      throw new Error("rule did not compile");
+    };
+    const result = await run([], { findSites: broken });
+    expect(result.code).toBe(1);
+    expect(result.err).toMatch(/rule did not compile/);
+    expect(existsSync(result.outFile)).toBe(false);
   });
 });
 

@@ -13,6 +13,7 @@ import type {
   HostAdapter,
   HostId,
   Interpretation,
+  InterpretedCells,
   StopCode,
 } from "@rbw/factory-contract";
 
@@ -69,6 +70,8 @@ export type CellMatrix = Record<CheckSet, Record<CopyState, CellObservation>>;
  * What the export-verification harness reports for one entry. It mirrors the result of the package
  * tool's `validatePair`, plus the harness identity and whether the archives passed their integrity
  * checks (hashes and pairing), which the qualification record and the `export_mismatch` reason need.
+ * The `validatePair` result, as its interface is specified today, carries neither field, so the wiring
+ * that adapts the real harness to this port is held until it does (see the README's "Held" section).
  */
 export interface HarnessResult {
   result: "passed" | "failed" | "error";
@@ -91,6 +94,12 @@ export interface QualifyInput {
   beforeCopy(plan: CopyPlan): Promise<"continue" | "stop">;
   /** Called with each copy's record as it is collected. */
   onCopy(record: CopyRecord): Promise<void>;
+  /**
+   * Called after a state's last copy with that state's two cells as the harness checked them (the
+   * protocol's floor applied: a pass or fail on fewer valid runs than `min_valid_runs` is incomplete).
+   * These are the cells the result's matrix holds; the loop's `check_finished` events come from them.
+   */
+  onCells(state: CopyState, cells: InterpretedCells): Promise<void>;
 }
 
 /**

@@ -10,8 +10,8 @@
 // `stop_requested`, the start reservation's `budget_updated`, `worker_started`, the validation events
 // and the lost-worker finish.
 import { canonicalDigest } from "@rbw/schema";
-import { CHECK_SET_VALUES, COPY_STATE_VALUES } from "@rbw/factory-contract";
-import type { Case, CatalogEntry, Cell, CellObservation, CheckSet, CopyRecord, CopyState, HostId, RequestOutcome, StopCode } from "@rbw/factory-contract";
+import { CHECK_SET_VALUES } from "@rbw/factory-contract";
+import type { Case, CatalogEntry, Cell, CellObservation, CheckSet, CopyState, HostId, RequestOutcome, StopCode } from "@rbw/factory-contract";
 import { assignItem, demonstratedCriteria, itemStates, nextCandidate, servesItem, unfilledUnits } from "./assignment.ts";
 import type { ItemState, PlannedCandidate } from "./assignment.ts";
 import { admitCandidate, budgetRoom, ledgerStop } from "./budget.ts";
@@ -282,7 +282,10 @@ class RequestRun {
         return this.finishUncertain();
       }
       this.current.settled = true;
-      await this.budgetChanged(`cand:${next.candidate_id}:settled`, "the finished candidate");
+      const settled = await this.budgetChanged(`cand:${next.candidate_id}:settled`, "the finished candidate");
+      // An overrun found while the request runs finishes it operational_error (contract section 8.5),
+      // ahead of a fill, a stop or the deadline.
+      if (ledgerStop(settled) === "overrun") return this.finish("operational_error");
       if (outcome.kind === "stop") return this.finish(outcome.stop_code);
       if (outcome.kind === "failed") return this.finish("operational_error");
     }
@@ -310,14 +313,8 @@ class RequestRun {
     const { deps } = this;
     const { entry, adapter } = candidate;
     const protocol = adapter.protocol(entry);
-    const byState: Record<CopyState, CopyRecord[]> = { clean: [], buggy: [], fixed: [] };
-    const emitted = new Set<CopyState>();
     const stop: { cause: "cancelled_by_user" | "time_limit" | null } = { cause: null };
     let copies = 0;
-    const emitCells = async (state: CopyState, cells: Record<CheckSet, CellObservation>): Promise<void> => {
-      emitted.add(state);
-      for (const set of CHECK_SET_VALUES) await this.append(checkFinished(candidate, set, state, cells[set], this.at()));
-    };
     const beforeCopy = async (plan: { limits: { timeout_s: number } }): Promise<"continue" | "stop"> => {
       if (this.hookError !== null) return "stop";
       try {
@@ -335,23 +332,22 @@ class RequestRun {
         return "stop";
       }
     };
-    const onCopy = async (record: CopyRecord): Promise<void> => {
+    // Per copy: the ledger read (settlement happens per copy inside the runner, or at the candidate's end).
+    const onCopy = async (): Promise<void> => {
       if (this.hookError !== null) return;
       try {
         copies += 1;
-        const records = byState[record.state];
-        records.push(record);
-        if (records.length === protocol.per_state[record.state].copies && !emitted.has(record.state)) {
-          let cells: Record<CheckSet, CellObservation> | null = null;
-          try {
-            cells = adapter.interpret(records, protocol);
-          } catch (error) {
-            // The harness's own matrix supplies these cells after it returns.
-            this.note(`reading the ${record.state} cells of candidate ${candidate.candidate_id}`, error);
-          }
-          if (cells !== null) await emitCells(record.state, cells);
-        }
         await this.budgetChanged(`cand:${candidate.candidate_id}:copy-${String(copies)}:budget`, "a finished copy");
+      } catch (error) {
+        this.hookError = { error };
+      }
+    };
+    // Per state: the two cells exactly as the harness checked them, so each check_finished event reads
+    // what the verdict reads.
+    const onCells = async (state: CopyState, cells: Record<CheckSet, CellObservation>): Promise<void> => {
+      if (this.hookError !== null) return;
+      try {
+        for (const set of CHECK_SET_VALUES) await this.append(checkFinished(candidate, set, state, cells[set], this.at()));
       } catch (error) {
         this.hookError = { error };
       }
@@ -359,7 +355,7 @@ class RequestRun {
 
     let result: HarnessResult;
     try {
-      result = await deps.qualify({ entry, adapter, beforeCopy, onCopy });
+      result = await deps.qualify({ entry, adapter, beforeCopy, onCopy, onCells });
     } catch (error) {
       // Every harness rejection is an uncertain provider outcome (a runner rejection passed through).
       this.note(`export verification of candidate ${candidate.candidate_id}`, error);
@@ -373,14 +369,6 @@ class RequestRun {
       return { kind: "failed" };
     }
     const { matrix } = result;
-    if (matrix !== null) {
-      for (const state of COPY_STATE_VALUES) {
-        if (!emitted.has(state) && result.records.some((record) => record.state === state)) {
-          await emitCells(state, { original_suite: matrix.original_suite[state], verification: matrix.verification[state] });
-        }
-      }
-    }
-
     const caseIdValue = caseId({ defect_id: candidate.defect_id, entry, criteria_catalog_version: deps.catalog.criteria_catalog_version });
     const demonstrated = demonstratedCriteria(deps.catalog, entry.bug_type_id, matrix?.verification.buggy.failure_codes ?? []);
     const demonstratedIds = demonstrated.map((criterion) => criterion.criterion_id);

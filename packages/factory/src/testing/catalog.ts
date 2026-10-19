@@ -48,9 +48,16 @@ export const SYNTHETIC_BASELINES: Readonly<Record<HostId, BaselineIdentity>> = {
   },
 };
 
-/** One copy per state; the original suite runs 3 rounds and the checks the host's verification rounds. */
+/** Rounds of the original suite on each synthetic copy. */
+export const SYNTHETIC_SUITE_RUNS = 3;
+
+/**
+ * One copy per state; the original suite runs 3 rounds and the checks the host's verification rounds.
+ * The harness applies `min_valid_runs` to both cells, so it is the smaller of the two round counts and a
+ * copy whose every round was valid passes the floor.
+ */
 export function syntheticProtocol(verificationRuns: number): Protocol {
-  const state = { copies: 1, rounds_per_copy: verificationRuns, min_valid_runs: verificationRuns };
+  const state = { copies: 1, rounds_per_copy: verificationRuns, min_valid_runs: Math.min(verificationRuns, SYNTHETIC_SUITE_RUNS) };
   return {
     protocol_id: "synthetic-repetition-protocol",
     version: "1",
@@ -268,7 +275,7 @@ export class FakeHostAdapter implements HostAdapter {
     }
     if (!isCellPlan(cell)) return Promise.resolve(unrunCopyRecord({ ...common, outcome: "setup_failed", evidence_sha256: collected.results_sha256 }));
     return Promise.resolve(
-      syntheticCopyRecord({ ...common, cell, runs: { original_suite: 3, verification: this.verificationRuns }, evidence_sha256: collected.results_sha256 }),
+      syntheticCopyRecord({ ...common, cell, runs: { original_suite: SYNTHETIC_SUITE_RUNS, verification: this.verificationRuns }, evidence_sha256: collected.results_sha256 }),
     );
   }
 

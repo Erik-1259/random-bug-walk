@@ -97,7 +97,7 @@ describe("command line", () => {
     const broken = () => {
       throw new Error("rule did not compile");
     };
-    const result = await run(["--dry-run"], { findSites: broken });
+    const result = await run(["--route", "static-screen/v1", "--dry-run"], { findSites: broken });
     expect(result.code).toBe(1);
     expect(result.err).toMatch(/the site finder failed: Error: rule did not compile/);
     expect(existsSync(result.outFile)).toBe(false);
@@ -149,7 +149,7 @@ describe("command line", () => {
     const paths = files();
     writeFileSync(paths.outFile, "keep");
     const screen = scripted([miss(), miss(), miss()]);
-    const result = await run([], { findSites: finder(threeSites()), screen }, paths.outFile);
+    const result = await run(["--route", "static-screen/v1"], { findSites: finder(threeSites()), screen }, paths.outFile);
     expect(result.code).toBe(2);
     expect(result.err).toMatch(/cannot write --out/);
     expect(screen.calls).toHaveLength(0);
@@ -159,7 +159,7 @@ describe("command line", () => {
   it("refuses an --out in a missing directory before any screen runs", async () => {
     const target = join(tempDir("rbw-candidates-cli-"), "missing", "record.json");
     const screen = scripted([miss(), miss(), miss()]);
-    const result = await run([], { findSites: finder(threeSites()), screen }, target);
+    const result = await run(["--route", "static-screen/v1"], { findSites: finder(threeSites()), screen }, target);
     expect(result.code).toBe(2);
     expect(result.err).toMatch(/cannot write --out/);
     expect(screen.calls).toHaveLength(0);
@@ -232,7 +232,7 @@ describe("command line", () => {
     const broken = () => {
       throw new Error("rule did not compile");
     };
-    const result = await run([], { findSites: broken, screen: scripted([]) });
+    const result = await run(["--route", "static-screen/v1"], { findSites: broken, screen: scripted([]) });
     expect(result.code).toBe(1);
     expect(existsSync(result.outFile)).toBe(false);
   });
@@ -266,7 +266,7 @@ describe("command line", () => {
   it("does not overwrite an existing record", async () => {
     const paths = files();
     writeFileSync(paths.outFile, "keep");
-    const result = await run(["--dry-run"], { findSites: finder(threeSites()) }, paths.outFile);
+    const result = await run(["--route", "static-screen/v1", "--dry-run"], { findSites: finder(threeSites()) }, paths.outFile);
     expect(result.code).toBe(2);
     expect(readFileSync(paths.outFile, "utf8")).toBe("keep");
   });

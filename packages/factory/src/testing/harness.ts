@@ -4,7 +4,7 @@ import { CHECK_SET_VALUES, COPY_STATE_VALUES } from "@rbw/factory-contract";
 import type { CatalogEntry, CellObservation, CheckSet, CopyRecord, CopyState, HarnessIdentity } from "@rbw/factory-contract";
 import type { CellMatrix, HarnessResult, QualifyHarness, QualifyInput } from "../ports.ts";
 import { EXPECTED } from "../verdict.ts";
-import { syntheticCopyPlan, syntheticSha } from "./catalog.ts";
+import { SYNTHETIC_SUITE_RUNS, syntheticCopyPlan, syntheticSha } from "./catalog.ts";
 import { syntheticCopyRecord } from "./records.ts";
 import type { CellPlan } from "./records.ts";
 
@@ -78,27 +78,45 @@ export function matrixOf(records: readonly CopyRecord[], interpret: (records: Co
     const stateRecords = records.filter((record) => record.state === state);
     return stateRecords.length === 0 ? { original_suite: NOT_RUN, verification: NOT_RUN } : interpret(stateRecords);
   };
-  const clean = byState("clean");
-  const buggy = byState("buggy");
-  const fixed = byState("fixed");
+  return matrixFromCells({ clean: byState("clean"), buggy: byState("buggy"), fixed: byState("fixed") });
+}
+
+function matrixFromCells(cells: Record<CopyState, Record<CheckSet, CellObservation>>): CellMatrix {
+  const { clean, buggy, fixed } = cells;
   return {
     original_suite: { clean: clean.original_suite, buggy: buggy.original_suite, fixed: fixed.original_suite },
     verification: { clean: clean.verification, buggy: buggy.verification, fixed: fixed.verification },
   };
 }
 
+/**
+ * The protocol's floor, as the harness applies it to a state's cells: a pass or fail on fewer valid runs
+ * than the state's `min_valid_runs` is incomplete, whatever the adapter reported.
+ */
+export function protocolFloor(cells: Record<CheckSet, CellObservation>, minValidRuns: number): Record<CheckSet, CellObservation> {
+  const floor = (cell: CellObservation): CellObservation =>
+    (cell.observed === "pass" || cell.observed === "fail") && cell.runs_valid < minValidRuns ? { ...cell, observed: "incomplete", detail: `fewer valid runs than the protocol's ${String(minValidRuns)}` } : cell;
+  return { original_suite: floor(cells.original_suite), verification: floor(cells.verification) };
+}
+
 export function fakeHarness(options: FakeHarnessOptions): QualifyHarness {
-  const suiteRuns = options.originalSuiteRuns ?? 3;
+  const suiteRuns = options.originalSuiteRuns ?? SYNTHETIC_SUITE_RUNS;
   return async (input: QualifyInput): Promise<HarnessResult> => {
     const { entry, adapter } = input;
     const plan = options.plan(entry);
     const protocol = adapter.protocol(entry);
     const baseline = adapter.baseline();
     const records: CopyRecord[] = [];
+    const checked: Record<CopyState, Record<CheckSet, CellObservation>> = {
+      clean: { original_suite: NOT_RUN, verification: NOT_RUN },
+      buggy: { original_suite: NOT_RUN, verification: NOT_RUN },
+      fixed: { original_suite: NOT_RUN, verification: NOT_RUN },
+    };
     let copies = 0;
     let stopped = false;
     states: for (const state of COPY_STATE_VALUES) {
       const cell = plan.states[state];
+      const stateRecords: CopyRecord[] = [];
       for (let n = 1; n <= protocol.per_state[state].copies; n += 1) {
         const copyPlan = syntheticCopyPlan(entry, state, n);
         if ((await input.beforeCopy(copyPlan)) === "stop") {
@@ -121,14 +139,18 @@ export function fakeHarness(options: FakeHarnessOptions): QualifyHarness {
           evidence_sha256: syntheticSha(`evidence:${copyPlan.copy_id}`),
         });
         records.push(record);
+        stateRecords.push(record);
         await input.onCopy(record);
         if (plan.lost_after_copies === copies) {
           await options.hooks?.workerLost?.();
           await options.hooks?.hang?.();
         }
       }
+      // After the state's last copy: the adapter's cells with the protocol's floor, as the harness checks them.
+      checked[state] = protocolFloor(adapter.interpret(stateRecords, protocol), protocol.per_state[state].min_valid_runs);
+      await input.onCells(state, checked[state]);
     }
-    const matrix = matrixOf(records, (stateRecords) => adapter.interpret(stateRecords, protocol));
+    const matrix = matrixFromCells(checked);
     const integrity = plan.integrity ?? "verified";
     return {
       result: integrity === "failed" ? "error" : harnessResultOf(matrix),

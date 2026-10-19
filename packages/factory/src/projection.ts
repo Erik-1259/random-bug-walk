@@ -68,7 +68,7 @@ interface Fold {
   delivered: { item_key: string; case_id: string }[];
   workerStarted: boolean;
   stopRequested: boolean;
-  finished: { stop_code: StopCode; outcome: RequestStatus["outcome"] } | null;
+  finished: { stop_code: StopCode; outcome: RequestStatus["outcome"]; at: string } | null;
   attention: AttentionCode | null;
   raisedUnresponsive: number;
 }
@@ -166,7 +166,7 @@ function fold(events: readonly Event[]): Fold {
         if (state.attention === event.data.code) state.attention = null;
         break;
       case "request_finished":
-        state.finished = { stop_code: event.data.stop_code, outcome: event.data.outcome };
+        state.finished = { stop_code: event.data.stop_code, outcome: event.data.outcome, at: event.at };
         break;
       default:
         break;
@@ -316,18 +316,23 @@ export function projectStatus(input: ProjectionInput): RequestStatus {
 /**
  * The attention event the status side appends when the worker's heartbeat age crosses 60 s, or the
  * clearing event once a heartbeat arrives again (contract section 8.1). Null when nothing changes.
- * Keys: heartbeat:<n>:raise and heartbeat:<n>:clear, so repeated polls append each change once.
+ * Keys: heartbeat:<n>:raise and heartbeat:<n>:clear. Each event's time comes from what it reports, not
+ * from the poll's clock: a raise is dated when the heartbeat turned 60 s old, a clear at the heartbeat
+ * that resumed (or at the request's finish). So repeated or concurrent polls over the same events and
+ * heartbeat build identical events, and every append after the first replays.
  */
 export function workerAttentionEvent(input: { events: readonly Event[]; last_heartbeat_at: string | null; created_at: string; now: Date }): NewEvent | null {
   const folded = fold(input.events);
-  const at = input.now.toISOString();
+  const heartbeat = input.last_heartbeat_at ?? input.created_at;
   if (folded.finished !== null) {
     // The worker finished, so its heartbeat question is settled: clear a raised worker_unresponsive.
-    return folded.attention === "worker_unresponsive" ? attentionCleared("worker_unresponsive", at, `heartbeat:${String(folded.raisedUnresponsive)}:clear`) : null;
+    return folded.attention === "worker_unresponsive" ? attentionCleared("worker_unresponsive", folded.finished.at, `heartbeat:${String(folded.raisedUnresponsive)}:clear`) : null;
   }
   const stale = heartbeatAge(input.last_heartbeat_at, input.created_at, input.now) > UNRESPONSIVE_AFTER_MS;
-  if (stale && folded.attention === null) return attentionEvent("worker_unresponsive", at, `heartbeat:${String(folded.raisedUnresponsive + 1)}:raise`);
-  if (!stale && folded.attention === "worker_unresponsive") return attentionCleared("worker_unresponsive", at, `heartbeat:${String(folded.raisedUnresponsive)}:clear`);
+  if (stale && folded.attention === null) {
+    return attentionEvent("worker_unresponsive", new Date(Date.parse(heartbeat) + UNRESPONSIVE_AFTER_MS).toISOString(), `heartbeat:${String(folded.raisedUnresponsive + 1)}:raise`);
+  }
+  if (!stale && folded.attention === "worker_unresponsive") return attentionCleared("worker_unresponsive", new Date(Date.parse(heartbeat)).toISOString(), `heartbeat:${String(folded.raisedUnresponsive)}:clear`);
   return null;
 }
 
@@ -335,7 +340,9 @@ export function workerAttentionEvent(input: { events: readonly Event[]; last_hea
  * The events of the lost-worker finish (contract section 8.1; the hosted worker's supervisor appends them once
  * the heartbeat is older than 180 s): the candidate in flight becomes incomplete and is never retried,
  * attention becomes needs_reconciliation, and the request finishes `operational_error` / `worker_lost`.
- * Empty for a request that already finished. The keys make a repeated finish a replay.
+ * Only the events the request's events still lack: empty for a request that already finished, no
+ * attention event when attention already is needs_reconciliation, and no candidate end once no candidate
+ * is in flight. So a finish retried after a partial append, reading the events again, appends the rest.
  */
 export function lostWorkerEvents(input: { events: readonly Event[]; now: Date }): NewEvent[] {
   const folded = fold(input.events);
@@ -354,7 +361,7 @@ export function lostWorkerEvents(input: { events: readonly Event[]; now: Date })
       ),
     );
   }
-  out.push(attentionEvent("needs_reconciliation", at, "lost:attention"));
+  if (folded.attention !== "needs_reconciliation") out.push(attentionEvent("needs_reconciliation", at, "lost:attention"));
   out.push(requestFinished("worker_lost", at, "lost:finished"));
   return out;
 }
