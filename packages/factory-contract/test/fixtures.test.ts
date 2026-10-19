@@ -48,6 +48,8 @@ const INTERNAL_FIXTURE_DEFS: Record<string, DefName> = {
   "baseline-identity.json": "BaselineIdentity",
   "bug-case-inputs.json": "BugCaseInputs",
   "catalog-entry.json": "CatalogEntry",
+  "collected-copy-setup-failed.json": "CollectedCopy",
+  "collected-copy.json": "CollectedCopy",
   "copy-plan.json": "CopyPlan",
   "copy-record.json": "CopyRecord",
   "protocol.json": "Protocol",

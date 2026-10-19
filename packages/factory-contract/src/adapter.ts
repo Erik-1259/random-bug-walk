@@ -4,8 +4,10 @@ import type {
   BugCaseInputs,
   CatalogEntry,
   CellObservation,
+  CollectedCopy,
   CopyPlan,
   CopyRecord,
+  CopyRoots,
   CopyState,
   HostId,
   Protocol,
@@ -26,7 +28,7 @@ export interface InterpretedCells {
   verification: CellObservation;
 }
 
-/** One host's baseline, catalog and copy mapping. */
+/** One host's baseline, catalog, copy mapping and parsing of copy results. */
 export interface HostAdapter {
   host_id: HostId;
   baseline(): BaselineIdentity;
@@ -39,15 +41,25 @@ export interface HostAdapter {
   validatorInputs(entry: CatalogEntry): Promise<ValidatorInputs>;
   /** Maps the harness-built trees of the exported parts to copy plans; applies no patch. */
   copyPlans(state: CopyState, unpacked: UnpackedPair, protocol: Protocol): CopyPlan[];
+  /**
+   * Host-specific parsing of one copy's results: reads only what the copy wrote under
+   * `plan.destinations.results`, as the runner brought it back. A setup_failed copy becomes a record with
+   * status invalid and a timed_out copy one with status incomplete (contract section 8.3), never a pass, fail
+   * or detection. `evidence_sha256` is the collected `results_sha256`.
+   */
+  collect(plan: CopyPlan, collected: CollectedCopy): Promise<CopyRecord>;
   interpret(records: CopyRecord[], protocol: Protocol): InterpretedCells;
 }
 
-/** Runs one copy. */
+/** Runs one copy. Runners are host-neutral: every runner implements exactly this. */
 export interface CopyRunner {
   /**
-   * Resolves with a record whose status is complete, invalid or incomplete (setup and infrastructure
-   * failures are invalid). Rejects only for an uncertain provider outcome, which the caller turns into
+   * Places every `plan.files` entry from `roots.app_root` at `plan.destinations.app` and every
+   * `plan.evaluator_files` entry from `roots.evaluator_root` at `plan.destinations.evaluator`, checking each
+   * file's sha256 before placing it (a mismatch is setup_failed); runs `plan.command` within `plan.limits`;
+   * then copies `plan.destinations.results` back into a fresh local directory. Resolves with `plan.copy_id`
+   * for every definite outcome; rejects only for an uncertain provider outcome, which the caller turns into
    * needs_reconciliation.
    */
-  run(plan: CopyPlan): Promise<CopyRecord>;
+  run(plan: CopyPlan, roots: CopyRoots): Promise<CollectedCopy>;
 }
