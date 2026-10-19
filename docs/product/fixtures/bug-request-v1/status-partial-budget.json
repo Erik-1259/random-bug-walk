@@ -7,7 +7,7 @@
   "outcome": "stopped_at_limit",
   "stop_reason": {
     "code": "budget_exhausted",
-    "message": "The remaining budget of $0.29 cannot cover another candidate's worst case. 1 of 2 requested cases was delivered."
+    "message": "The remaining budget of $0.59 cannot cover another candidate's worst case. 1 of 2 requested cases was delivered."
   },
   "delivery": "partial",
   "attention": null,
@@ -44,7 +44,7 @@
           "difficulty": "source_inferable_allowed"
         }
       ],
-      "budget_microusd": 700000
+      "budget_microusd": 1000000
     },
     "startable": true,
     "items": [
@@ -121,7 +121,7 @@
       }
     ],
     "budget": {
-      "budget_microusd": 700000,
+      "budget_microusd": 1000000,
       "worker_worst_case_microusd": 200000,
       "worst_case_per_candidate_microusd": [
         {
@@ -152,11 +152,11 @@
     "problems": []
   },
   "budget": {
-    "budget_microusd": 700000,
+    "budget_microusd": 1000000,
     "reserved_microusd": 0,
     "spent_microusd": 410000,
     "committed_microusd": 410000,
-    "remaining_microusd": 290000,
+    "remaining_microusd": 590000,
     "overrun": false
   },
   "limits": {
@@ -232,7 +232,7 @@
       "stage": "skipped",
       "reason": {
         "code": "no_budget_for_candidate",
-        "message": "Skipped: the remaining budget of $0.29 cannot cover this candidate's worst case of $0.60 on Umami."
+        "message": "Skipped: the remaining budget of $0.59 cannot cover this candidate's worst case of $0.60 on Umami."
       },
       "item_key": null,
       "case_id": null,
@@ -386,7 +386,7 @@
       "data": {
         "reserved_microusd": 200000,
         "spent_microusd": 0,
-        "remaining_microusd": 500000
+        "remaining_microusd": 800000
       }
     },
     {
@@ -478,7 +478,7 @@
       "data": {
         "reserved_microusd": 500000,
         "spent_microusd": 0,
-        "remaining_microusd": 200000
+        "remaining_microusd": 500000
       }
     },
     {
@@ -646,7 +646,7 @@
       "data": {
         "reserved_microusd": 200000,
         "spent_microusd": 210000,
-        "remaining_microusd": 290000
+        "remaining_microusd": 590000
       }
     },
     {
@@ -671,7 +671,7 @@
       "candidate_id": "e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2",
       "item_key": null,
       "case_id": null,
-      "message": "Skipped: the remaining budget of $0.29 cannot cover this candidate's worst case of $0.60 on Umami.",
+      "message": "Skipped: the remaining budget of $0.59 cannot cover this candidate's worst case of $0.60 on Umami.",
       "data": {
         "reason": "no_budget_for_candidate"
       }
@@ -688,7 +688,7 @@
       "data": {
         "reserved_microusd": 0,
         "spent_microusd": 410000,
-        "remaining_microusd": 290000
+        "remaining_microusd": 590000
       }
     },
     {
