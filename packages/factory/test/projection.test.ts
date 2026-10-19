@@ -119,6 +119,17 @@ describe("status projection", () => {
     expect(projected.state).toBe("running");
   });
 
+  it("gives a candidate a case only once it qualified: a packaging candidate has none", () => {
+    const status = statusFixture("status-fulfilled.json");
+    const events = status.events.filter((event) => event.seq <= 31);
+    const projected = projectStatus(inputsOf(status, { events, now: new Date("2026-10-20T14:24:20.700Z"), last_heartbeat_at: "2026-10-20T14:24:20.650Z" }));
+    expect(projected.candidates.map((c) => [c.stage, c.case_id === null])).toEqual([
+      ["qualified", false],
+      ["packaging", true],
+    ]);
+    expect(validateContract("RequestStatus", projected)).toEqual([]);
+  });
+
   it("refuses a delivered case without its evidence", () => {
     const status = statusFixture("status-fulfilled.json");
     expect(() => projectStatus(inputsOf(status, { evidence: [] }))).toThrow(ProjectionError);

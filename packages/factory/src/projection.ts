@@ -123,9 +123,9 @@ function fold(events: readonly Event[]): Fold {
         break;
       }
       case "package_ready": {
+        // The candidate gets its case_id with case_delivered: only a qualified candidate has a case.
         const entry = candidate(event);
         advance(entry, "packaging");
-        entry.case_id = event.case_id;
         state.packagesReady.add(entry.candidate_id);
         break;
       }
