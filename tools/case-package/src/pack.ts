@@ -14,9 +14,10 @@ import type {
   ReferenceRepair,
 } from "@rbw/factory-contract";
 import { encodeCanonical, sha256Hex } from "@rbw/schema";
-import { compareUtf8, isRelativePath, packArchive, type ArchiveMember } from "./archive.ts";
+import { compareUtf8, isRelativePath, memberPathProblem, packArchive, type ArchiveMember } from "./archive.ts";
 import {
   BUG_CASE_FORMAT,
+  canonicalEqual,
   BUG_CASE_MANIFEST,
   CHECKS_DIRECTORY,
   CLEAN_RECONSTRUCTION_PATH,
@@ -94,10 +95,6 @@ const VERSION_CONTROL = new Set([".git", ".hg", ".svn"]);
 /** Top-level source directories that name evaluator locations; the bug case never has them. */
 const EVALUATOR_ROOTS = new Set(["evaluator", "validator", ".rbw"]);
 
-function same(a: unknown, b: unknown): boolean {
-  return Buffer.from(encodeCanonical(a)).equals(Buffer.from(encodeCanonical(b)));
-}
-
 function digests(members: readonly ArchiveMember[]): FileDigest[] {
   return members.map((member) => ({ path: member.path, sha256: sha256Hex(member.bytes) })).sort((a, b) => compareUtf8(a.path, b.path));
 }
@@ -173,14 +170,16 @@ function consistencyProblems(input: PairInput): string[] {
   check(input.license.trim() !== "", "the license must be named");
   check(baseline.host_id === entry.host_id, "the baseline belongs to another host");
   check(bugCase.runtime.kit_image === entry.environment.kit_image && bugCase.runtime.kit_image_digest === entry.environment.kit_image_digest, "the runtime image differs from the entry's environment");
-  check(same(validator.expected, QUALIFICATION_EXPECTED), "the expected outcomes differ from the qualification table");
+  check(canonicalEqual(validator.expected, QUALIFICATION_EXPECTED), "the expected outcomes differ from the qualification table");
   check(sha256Hex(encoder.encode(entry.plant.patch)) === entry.plant.patch_sha256, "the planted change's patch hash does not match its text");
   check(sha256Hex(encoder.encode(validator.reference_repair.patch)) === validator.reference_repair.patch_sha256, "the reference repair's patch hash does not match its text");
   check(sha256Hex(encoder.encode(validator.clean_reconstruction.patch)) === validator.clean_reconstruction.patch_sha256, "the clean reconstruction's patch hash does not match its text");
-  check(same(validator.reference_repair, entry.reference_repair), "the reference repair differs from the entry's");
+  check(canonicalEqual(validator.reference_repair, entry.reference_repair), "the reference repair differs from the entry's");
   check(validator.protocol.protocol_id === entry.verification.protocol_id && validator.protocol.sha256 === entry.verification.protocol_sha256, "the protocol differs from the entry's verification identity");
   for (const [name, members] of [["source", bugCase.source], ["incident", bugCase.incident], ["checks", validator.checks]] as const) {
-    for (const member of members) check(isRelativePath(member.path), `a ${name} path is not a relative path`);
+    // Relative, unique, no two differing only in case, no file that is also a directory: every tree must unpack anywhere.
+    const problem = memberPathProblem(members.map((member) => member.path));
+    if (problem !== null) problems.push(`${name}: ${problem}`);
   }
   check(entry.plant.targets.length > 0, "the planted change has no targets");
   const source = new Map(bugCase.source.map((member) => [member.path, member.bytes]));

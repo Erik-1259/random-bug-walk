@@ -108,6 +108,11 @@ export function pairSha256(input: PairBindingInput): string {
   return canonicalDigest({ bug_case_sha256: input.bug_case_sha256, case_id: input.case_id, validator_sha256: input.validator_sha256 }).sha256;
 }
 
+/** True when two values have the same canonical JSON v1 bytes. */
+export function canonicalEqual(a: unknown, b: unknown): boolean {
+  return canonicalDigest(a).sha256 === canonicalDigest(b).sha256;
+}
+
 export function formatOf(kind: PackageKind): PackageFormat {
   return kind === "bug_case" ? BUG_CASE_FORMAT : VALIDATOR_FORMAT;
 }

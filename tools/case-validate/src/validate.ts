@@ -4,6 +4,7 @@
 import { validateContract } from "@rbw/factory-contract/validate";
 import type {
   CatalogEntry,
+  CellObservation,
   CollectedCopy,
   CopyPlan,
   CopyRecord,
@@ -11,6 +12,7 @@ import type {
   CopyRunner,
   CopyState,
   HostAdapter,
+  HostAvailability,
   HostId,
   InterpretedCells,
   PackageHashes,
@@ -145,27 +147,60 @@ export async function runCopies(input: CopyLoopInput): Promise<CopyLoopOutcome> 
       stateRecords.push(record);
       if (input.onCopy !== undefined) await input.onCopy(record);
     }
-    const stateCells = input.adapter.interpret(stateRecords, input.protocol);
+    let interpreted: InterpretedCells;
+    try {
+      interpreted = input.adapter.interpret(stateRecords, input.protocol);
+    } catch (error) {
+      throw new CopyLoopError("adapter_error", `interpret(${state}) threw: ${error instanceof Error ? error.message : String(error)}`, records);
+    }
+    const stateCells = checkedCells(state, interpreted, input.protocol, records);
     cells[state] = stateCells;
     if (input.onCells !== undefined) await input.onCells(state, stateCells);
   }
   return { cells, records, stopped: false };
 }
 
+/**
+ * Checks the adapter's two cells and applies the protocol's floor: a pass or fail on fewer valid runs than
+ * the state's min_valid_runs is incomplete, whatever the adapter reported.
+ */
+function checkedCells(state: CopyState, cells: InterpretedCells, protocol: Protocol, records: readonly CopyRecord[]): InterpretedCells {
+  const minimum = protocol.per_state[state].min_valid_runs;
+  const check = (name: keyof InterpretedCells): CellObservation => {
+    const cell = (cells as Partial<InterpretedCells> | null)?.[name];
+    const errors = validateContract("CellObservation", cell);
+    if (cell === undefined || errors.length > 0 || cell.runs_valid > cell.runs_total) {
+      throw new CopyLoopError("adapter_error", `interpret(${state}) gave an invalid ${name} cell: ${errors.join(", ") || "more valid runs than runs"}`, records);
+    }
+    if ((cell.observed === "pass" || cell.observed === "fail") && cell.runs_valid < minimum) {
+      return { ...cell, observed: "incomplete", detail: `fewer valid runs than the protocol's ${String(minimum)}` };
+    }
+    return cell;
+  };
+  return { original_suite: check("original_suite"), verification: check("verification") };
+}
+
 class PlanError extends Error {}
+
+/** Calls the adapter before any copy runs; a throw is an adapter error, never a rejection of the run. */
+function beforeCopies<T>(name: string, call: () => T): T {
+  try {
+    return call();
+  } catch (error) {
+    throw new PlanError(`${name} threw: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
 
 function planCopies(adapter: HostAdapter, unpacked: UnpackedPair, protocol: Protocol): Record<CopyState, CopyPlan[]> {
   const plans = {} as Record<CopyState, CopyPlan[]>;
   const copyIds = new Set<string>();
   const evaluator = new Map(unpacked.evaluator.files.map((file) => [file.path, file.sha256]));
   for (const state of COPY_STATE_VALUES) {
-    let statePlans: CopyPlan[];
-    try {
-      statePlans = adapter.copyPlans(state, unpacked, protocol);
-    } catch (error) {
-      throw new PlanError(`copyPlans(${state}) threw: ${error instanceof Error ? error.message : String(error)}`);
+    const statePlans = beforeCopies(`copyPlans(${state})`, () => adapter.copyPlans(state, unpacked, protocol));
+    const copies = protocol.per_state[state].copies;
+    if (!Array.isArray(statePlans) || statePlans.length !== copies) {
+      throw new PlanError(`copyPlans(${state}) did not return the protocol's ${String(copies)} copies`);
     }
-    if (statePlans.length === 0) throw new PlanError(`copyPlans(${state}) returned no copy`);
     const tree = new Map(unpacked.states[state].files.map((file) => [file.path, file.sha256]));
     for (const plan of statePlans) {
       const errors = validateContract("CopyPlan", plan);
@@ -182,15 +217,22 @@ function planCopies(adapter: HostAdapter, unpacked: UnpackedPair, protocol: Prot
   return plans;
 }
 
+function isAvailability(value: unknown): value is HostAvailability {
+  if (typeof value !== "object" || value === null) return false;
+  const { available, reason } = value as { available?: unknown; reason?: unknown };
+  return typeof available === "boolean" && (reason === null || typeof reason === "string");
+}
+
 function entryOf(adapter: HostAdapter, entryId: string): CatalogEntry | null {
-  return adapter.catalog().find((entry) => entry.entry_id === entryId) ?? null;
+  return beforeCopies("catalog()", () => adapter.catalog()).find((entry) => entry.entry_id === entryId) ?? null;
 }
 
 /**
  * Runs the standalone harness on one bug case and one validator package. Resolves `passed`, `failed` or
- * `error` (contract section 11); every refusal and every invalid or incomplete cell is `error`. Rejects
- * only when the runner rejects (an uncertain provider outcome): the records collected before it have been
- * passed to onCopy, no further copy runs, and the runner's error is rethrown unchanged.
+ * `error` (contract section 11); every refusal, every adapter fault and every invalid or incomplete cell is
+ * `error`. Rejects only when the runner rejects (an uncertain provider outcome) or one of the caller's own
+ * callbacks throws: the records collected before it have been passed to onCopy, no further copy runs, and
+ * the error is rethrown unchanged.
  */
 export async function validatePair(input: ValidatePairInput): Promise<ValidatePairResult> {
   const packageSha256: PackageHashes = { bug_case: sha256Hex(input.bug_case), validator: sha256Hex(input.validator) };
@@ -228,23 +270,27 @@ export async function validatePair(input: ValidatePairInput): Promise<ValidatePa
   }
   try {
     const protocol = manifest.protocol;
-    let plans;
+    let plans: Record<CopyState, CopyPlan[]>;
+    let availability: HostAvailability | null = null;
     try {
       plans = planCopies(adapter, workspace.unpacked, protocol);
+      const check = adapter.availability?.bind(adapter);
+      if (check !== undefined) {
+        const entry = entryOf(adapter, manifest.entry_id);
+        if (entry === null) return error("host_unavailable", "the host no longer lists the package's catalog entry", `entry_id ${manifest.entry_id}`, verified.pair_sha256);
+        const from = input.now();
+        const plannedSeconds = COPY_STATE_VALUES.reduce((sum, state) => sum + plans[state].reduce((total, plan) => total + plan.limits.timeout_s, 0), 0);
+        const until = input.until ?? new Date(from.getTime() + plannedSeconds * 1000);
+        const answer: unknown = beforeCopies("availability()", () => check(entry, from.toISOString(), until.toISOString()));
+        if (!isAvailability(answer)) throw new PlanError("availability() did not answer { available, reason }");
+        availability = answer;
+      }
     } catch (planError) {
       if (planError instanceof PlanError) return error("adapter_error", "the host adapter could not plan the copies", planError.message, verified.pair_sha256);
       throw planError;
     }
-    if (adapter.availability !== undefined) {
-      const entry = entryOf(adapter, manifest.entry_id);
-      if (entry === null) return error("host_unavailable", "the host no longer lists the package's catalog entry", `entry_id ${manifest.entry_id}`, verified.pair_sha256);
-      const from = input.now();
-      const plannedSeconds = COPY_STATE_VALUES.reduce((sum, state) => sum + plans[state].reduce((total, plan) => total + plan.limits.timeout_s, 0), 0);
-      const until = input.until ?? new Date(from.getTime() + plannedSeconds * 1000);
-      const availability = adapter.availability(entry, from.toISOString(), until.toISOString());
-      if (!availability.available) {
-        return error("host_unavailable", `the host is unavailable for the run's planned span: ${availability.reason ?? "no reason given"}`, null, verified.pair_sha256);
-      }
+    if (availability !== null && !availability.available) {
+      return error("host_unavailable", `the host is unavailable for the run's planned span: ${availability.reason ?? "no reason given"}`, null, verified.pair_sha256);
     }
     let loop: CopyLoopOutcome;
     try {

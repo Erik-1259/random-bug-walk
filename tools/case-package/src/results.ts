@@ -7,6 +7,14 @@ import { sha256Hex } from "@rbw/schema";
 import { compareUtf8 } from "./archive.ts";
 import { packTar, type TarEntry } from "./tar.ts";
 
+/** A results tree that holds an entry other than a file, a directory or a link (a pipe, socket or device). */
+export class ResultsTreeError extends Error {
+  constructor() {
+    super("results: a results tree holds an entry that is neither a file, a directory nor a link");
+    this.name = "ResultsTreeError";
+  }
+}
+
 async function walk(root: string, relative: string, entries: TarEntry[]): Promise<void> {
   const directory = relative === "" ? root : join(root, relative);
   for (const name of await readdir(directory)) {
@@ -16,7 +24,7 @@ async function walk(root: string, relative: string, entries: TarEntry[]): Promis
     if (stats.isDirectory()) await walk(root, path, entries);
     else if (stats.isSymbolicLink()) entries.push({ kind: "symlink", path, target: await readlink(full) });
     else if (stats.isFile()) entries.push({ kind: "file", path, bytes: new Uint8Array(await readFile(full)) });
-    else throw new Error("results: a results tree holds an entry that is neither a file, a directory nor a link");
+    else throw new ResultsTreeError();
   }
 }
 

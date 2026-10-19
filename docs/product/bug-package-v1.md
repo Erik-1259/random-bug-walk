@@ -99,7 +99,7 @@ A patch that does not apply, or whose changed paths and hashes differ from its `
 2. reads every listed file, refusing links, other non-regular files and bytes that differ from the listed hash;
 3. applies both patches to the exported buggy source and compares the results with their recorded hashes (section 5);
 4. refuses a bug case that breaks section 2's list (the separation checks);
-5. packs both parts (section 1) and passes every member of each part, manifests included, to the pre-write scan hook; a `blocked` or `unavailable` scan refuses the export.
+5. packs both parts (section 1) and passes every member of each part, manifests included, to the pre-write scan hook; any answer other than `clean` refuses the export.
 
 `case_id` and `defect_id` are computed by the factory's identity functions, which the exporter receives (`CaseIdentity`); the exporter never derives them itself.
 
@@ -124,9 +124,9 @@ The harness reads nothing outside the two archives except the host adapter code 
 
 1. verifies both archives and their binding (sections 1 to 4);
 2. unpacks each part into its own directory of one fresh workspace and builds the clean, buggy and fixed trees (section 5);
-3. asks the host adapter for the copy plans of each state; a plan may place only files of its state's tree and of the validator's checks, unchanged;
+3. asks the host adapter for the copy plans of each state, one per copy the protocol declares; a plan may place only files of its state's tree and of the validator's checks, unchanged;
 4. when the adapter declares availability, checks the run's planned span (from now until now plus every planned copy's time limit, or an explicit end) and runs no copy when the combination is unavailable;
-5. runs the copies one at a time in the order clean, buggy, fixed: the runner places the files at the plan's destinations, runs the command and brings the results directory back with its hash; the adapter's `collect` turns that into a copy record, and after each state the adapter's `interpret` gives the state's two cells;
+5. runs the copies one at a time in the order clean, buggy, fixed: the runner places the files at the plan's destinations, runs the command and brings the results directory back with its hash; the adapter's `collect` turns that into a copy record, and after each state the adapter's `interpret` gives the state's two cells, where a pass or fail on fewer valid runs than the protocol's `min_valid_runs` counts as `incomplete`;
 6. prints the matrix and the result, and with `--out` writes `validation.json` and keeps each copy's results under `<dir>/copies/`.
 
 | Result | When | Exit code |

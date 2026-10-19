@@ -1,3 +1,4 @@
+import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -65,10 +66,20 @@ interface FakeDocker {
   placed: Uint8Array | null;
 }
 
-function fakeDocker(options: { images: Record<string, string>; exit?: number; hang?: boolean; results?: boolean; createFails?: boolean }): FakeDocker {
+interface FakeOptions {
+  images: Record<string, string>;
+  exit?: number;
+  /** wait returns only when kill is called; with exitedFirst the copy had already ended and kill fails. */
+  hang?: boolean;
+  exitedFirst?: boolean;
+  results?: boolean | "fifo";
+  createFails?: boolean;
+}
+
+function fakeDocker(options: FakeOptions): FakeDocker {
   const fake: FakeDocker = { command: () => Promise.resolve({ code: 0, stdout: "", stderr: "" }), calls: [], placed: null };
   let release: ((result: CommandResult) => void) | null = null;
-  fake.command = async (args, input) => {
+  fake.command = async (args, command) => {
     fake.calls.push([...args]);
     const ok = (stdout = ""): CommandResult => ({ code: 0, stdout, stderr: "" });
     const [verb] = args;
@@ -78,7 +89,7 @@ function fakeDocker(options: { images: Record<string, string>; exit?: number; ha
     }
     if (verb === "create") return options.createFails === true ? { code: 125, stdout: "", stderr: "create failed" } : ok("container\n");
     if (verb === "cp" && args[1] === "-") {
-      fake.placed = input ?? null;
+      fake.placed = command.input ?? null;
       return ok();
     }
     if (verb === "cp") {
@@ -86,6 +97,14 @@ function fakeDocker(options: { images: Record<string, string>; exit?: number; ha
       const target = args[2] ?? "";
       await mkdir(target, { recursive: true });
       await writeFile(join(target, "copy.json"), "{}\n");
+      if (options.results === "fifo") {
+        await new Promise<void>((resolve, reject) => {
+          execFile("mkfifo", [join(target, "pipe")], (error) => {
+            if (error === null) resolve();
+            else reject(new Error(`mkfifo failed: ${error.message}`));
+          });
+        });
+      }
       return ok();
     }
     if (verb === "wait") {
@@ -93,6 +112,10 @@ function fakeDocker(options: { images: Record<string, string>; exit?: number; ha
       return ok(`${String(options.exit ?? 0)}\n`);
     }
     if (verb === "kill") {
+      if (options.exitedFirst === true) {
+        release?.({ code: 0, stdout: "0\n", stderr: "" });
+        return { code: 1, stdout: "", stderr: "container is not running" };
+      }
       release?.({ code: 0, stdout: "137\n", stderr: "" });
       return ok();
     }
@@ -156,6 +179,21 @@ describe("dockerRunner", () => {
     expect(collected.outcome).toBe("timed_out");
     expect(collected.exit_code).toBeNull();
     expect(docker.calls.some((call) => call[0] === "kill")).toBe(true);
+  });
+
+  it("reports a copy that ended on its own just as the limit passed as ran, not timed_out", async () => {
+    const docker = fakeDocker({ images: { "registry.invalid/synthetic/task-report-kit:1": `${LOCAL_ID} amd64` }, hang: true, exitedFirst: true });
+    const collected = await dockerRunner({ command: docker.command, resultsDir: join(dir, "results") }).run(plan({ limits: { timeout_s: 1, vcpus: 1, memory_mb: 512, network: "none" } }), roots);
+    expect(collected.outcome).toBe("ran");
+    expect(collected.exit_code).toBe(0);
+  });
+
+  it("answers no results, and never rejects, when the results hold a pipe", async () => {
+    const docker = fakeDocker({ images: { "registry.invalid/synthetic/task-report-kit:1": `${LOCAL_ID} amd64` }, results: "fifo" });
+    const collected = await dockerRunner({ command: docker.command, resultsDir: join(dir, "results") }).run(plan(), roots);
+    expect(collected.outcome).toBe("ran");
+    expect(collected.results_dir).toBeNull();
+    expect(collected.results_sha256).toBeNull();
   });
 
   it("reports a non-zero exit as ran, and missing results as null", async () => {

@@ -47,18 +47,33 @@ export function compareUtf8(a: string, b: string): number {
   return Buffer.compare(encoder.encode(a), encoder.encode(b));
 }
 
-/** Checks paths, duplicates and paths that collide on a case-insensitive file system. */
-function checkMembers(paths: readonly string[]): void {
+/**
+ * Checks paths, duplicates, paths that collide on a case-insensitive file system, and a path that is both
+ * a file and a directory of another path (`a` and `a/b`), so every member list can be written to disk.
+ */
+export function memberPathProblem(paths: readonly string[]): string | null {
   const exact = new Set<string>();
   const folded = new Set<string>();
+  const directories = new Set<string>();
   for (const path of paths) {
-    if (!isRelativePath(path)) throw new ArchiveError("a member path is not a relative path");
-    if (exact.has(path)) throw new ArchiveError("a member path appears twice");
+    if (!isRelativePath(path)) return "a member path is not a relative path";
+    if (exact.has(path)) return "a member path appears twice";
     const key = path.toLowerCase();
-    if (folded.has(key)) throw new ArchiveError("two member paths differ only in case");
+    if (folded.has(key)) return "two member paths differ only in case";
     exact.add(path);
     folded.add(key);
+    const segments = key.split("/");
+    for (let end = 1; end < segments.length; end += 1) directories.add(segments.slice(0, end).join("/"));
   }
+  for (const key of folded) {
+    if (directories.has(key)) return "a member path is also the directory of another member";
+  }
+  return null;
+}
+
+function checkMembers(paths: readonly string[]): void {
+  const problem = memberPathProblem(paths);
+  if (problem !== null) throw new ArchiveError(problem);
 }
 
 /** Fixed deflate options: level 6, memory level 8, mtime 0 and no file name in the gzip header. */

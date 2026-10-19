@@ -32,6 +32,14 @@ describe("verifyPair", () => {
     expect(refused(() => verifyPair(mismatched.bug_case.bytes, mismatched.validator.bytes)).code).toBe("export_mismatch");
   });
 
+  it("refuses a bug case changed consistently with its own manifest, which the validator does not name", () => {
+    // Same case, defect and version, and every member matches the bug case manifest: only the binding differs.
+    const pair = buildSyntheticPair({ evidence: null });
+    const changed = replaceMember(pair.bug_case.bytes, "bug-case.json", "source/README.md", text("# Changed\n"));
+    const error = refused(() => verifyPair(changed, pair.validator.bytes));
+    expect(error.message).toMatch(/another bug case/);
+  });
+
   it("refuses a swapped pair", () => {
     const pair = buildSyntheticPair();
     const error = refused(() => verifyPair(pair.validator.bytes, pair.bug_case.bytes));

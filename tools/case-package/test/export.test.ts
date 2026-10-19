@@ -152,6 +152,18 @@ describe("exportCase", () => {
     }));
     expect(unavailable.code).toBe("scan_unavailable");
   });
+
+  it("fails closed on any scan answer other than clean", async () => {
+    const adapter = syntheticAdapter({ seeds: ["01"], workdir });
+    // The scanner's detailed result wraps the verdict; passed through unwrapped by mistake, it must not count as clean.
+    for (const answer of [{ result: { outcome: "blocked", locations: [] } }, { outcome: "error" }, null, undefined, "clean"]) {
+      const error = await refusalOf(exportCase({
+        adapter, entry: only(adapter), identity: syntheticIdentity, license: SYNTHETIC_LICENSE,
+        scan: (() => Promise.resolve(answer)) as unknown as ScanHook,
+      }));
+      expect(error.code, JSON.stringify(answer)).toBe("scan_unavailable");
+    }
+  });
 });
 
 describe("prepared directory", () => {

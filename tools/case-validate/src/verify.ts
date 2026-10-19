@@ -4,6 +4,7 @@
 import {
   ArchiveError,
   BUG_CASE_MANIFEST,
+  canonicalEqual,
   EVIDENCE_PATH,
   ManifestError,
   pairSha256,
@@ -77,10 +78,6 @@ function checkMembers(members: Map<string, Uint8Array>, manifestPath: string, fi
   }
 }
 
-function same(a: unknown, b: unknown): boolean {
-  return Buffer.from(encodeCanonical(a)).equals(Buffer.from(encodeCanonical(b)));
-}
-
 /**
  * Verifies a bug case and a validator package as one case's pair. The validator may be a core or a final
  * archive (core plus the evidence member). Throws PairRefused for anything else, including a swapped pair.
@@ -118,11 +115,11 @@ export function verifyPair(bugCase: Uint8Array, validator: Uint8Array): Verified
     ["defect_id", validatorManifest.defect_id === bugManifest.defect_id],
     ["package_version", validatorManifest.package_version === bugManifest.package_version],
     ["host_id", validatorManifest.host_id === bugManifest.host_id],
-    ["baseline", same(validatorManifest.baseline, bugManifest.baseline)],
+    ["baseline", canonicalEqual(validatorManifest.baseline, bugManifest.baseline)],
   ];
   const differing = bindings.filter(([, ok]) => !ok).map(([name]) => name);
   if (differing.length > 0) throw new PairRefused("the validator package belongs to another case or package version", `differs: ${differing.join(", ")}`);
-  if (!same(validatorManifest.expected, QUALIFICATION_EXPECTED)) throw new PairRefused("the validator package's expected outcomes differ from the qualification table");
+  if (!canonicalEqual(validatorManifest.expected, QUALIFICATION_EXPECTED)) throw new PairRefused("the validator package's expected outcomes differ from the qualification table");
 
   const validatorSha256 = sha256Hex(validator);
   return {

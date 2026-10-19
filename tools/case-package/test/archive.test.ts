@@ -79,6 +79,16 @@ describe("packArchive", () => {
     expect(unpacked.map((member) => member.path).sort()).toEqual([split, unsplittable, unicode].sort());
   });
 
+  it("refuses a path that is both a file and the directory of another path, in any letter case", () => {
+    expect(() => packArchive([{ path: "source/lib", bytes: text("1") }, { path: "source/lib/x.js", bytes: text("2") }])).toThrow(ArchiveError);
+    expect(() => packArchive([{ path: "src/Foo", bytes: text("1") }, { path: "src/foo/bar.ts", bytes: text("2") }])).toThrow(ArchiveError);
+    const archive = gzipSync(packTar([
+      { kind: "file", path: "source/lib/x.js", bytes: text("2") },
+      { kind: "file", path: "source/lib", bytes: text("1") },
+    ]));
+    expect(() => unpackArchive(archive)).toThrow(ArchiveError);
+  });
+
   it("refuses duplicate, case-colliding and non-relative paths", () => {
     expect(() => packArchive([{ path: "a.txt", bytes: text("1") }, { path: "a.txt", bytes: text("2") }])).toThrow(ArchiveError);
     expect(() => packArchive([{ path: "src/A.ts", bytes: text("1") }, { path: "src/a.ts", bytes: text("2") }])).toThrow(ArchiveError);

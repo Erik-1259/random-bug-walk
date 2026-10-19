@@ -2,7 +2,7 @@ import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildSyntheticPair, syntheticAdapter } from "@rbw/case-package/synthetic";
-import type { CopyPlan, CopyRecord, CopyState, HostAdapter } from "@rbw/factory-contract";
+import type { CopyPlan, CopyRecord, CopyState, HostAdapter, InterpretedCells } from "@rbw/factory-contract";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { validatePair, type ValidatePairInput } from "../src/validate.ts";
 import { localProcessRunner, scriptedRunner, type ScriptedCopy } from "./support.ts";
@@ -154,6 +154,46 @@ describe("validatePair runs the copies (synthetic host)", () => {
     const evidence = await validatePair({ ...input(scriptedRunner(copies, qualifying)), adapters: { "task-report": otherEvidence } });
     expect(evidence.error_code).toBe("adapter_error");
     expect(evidence.records).toEqual([]);
+  });
+
+  it("answers adapter_error, and never rejects, when interpret throws or returns malformed cells", async () => {
+    const base = syntheticAdapter({ seeds: ["01"], workdir: parent });
+    const throwing: HostAdapter = { ...base, interpret: () => { throw new Error("synthetic interpret failure"); } };
+    const thrown = await validatePair({ ...input(scriptedRunner(copies, qualifying)), adapters: { "task-report": throwing } });
+    expect(thrown.error_code).toBe("adapter_error");
+    expect(thrown.records).toHaveLength(1);
+    const malformed: HostAdapter = { ...base, interpret: (records, protocol) => ({ original_suite: base.interpret(records, protocol).original_suite }) as InterpretedCells };
+    const partial = await validatePair({ ...input(scriptedRunner(copies, qualifying)), adapters: { "task-report": malformed } });
+    expect(partial.error_code).toBe("adapter_error");
+  });
+
+  it("holds every pass or fail to the protocol's minimum of valid runs, whatever the adapter says", async () => {
+    const base = syntheticAdapter({ seeds: ["01"], workdir: parent });
+    const generous: HostAdapter = {
+      ...base,
+      interpret: (records, protocol) => {
+        const cells = base.interpret(records, protocol);
+        const thin = (cell: InterpretedCells["verification"]) => ({ ...cell, observed: cell.observed === "incomplete" ? "fail" as const : cell.observed });
+        return { original_suite: cells.original_suite, verification: thin(cells.verification) };
+      },
+    };
+    // Buggy runs one round where the protocol requires two; the adapter would still report a detection.
+    const runner = scriptedRunner(copies, (plan) => ({ ...qualifying(plan), rounds: plan.state === "buggy" ? 1 : 2 }));
+    const outcome = await validatePair({ ...input(runner), adapters: { "task-report": generous } });
+    expect(outcome.result).toBe("error");
+    expect(outcome.matrix?.verification.buggy.observed).toBe("incomplete");
+  });
+
+  it("answers adapter_error when the plans do not match the protocol's copies or the catalog and availability calls throw", async () => {
+    const base = syntheticAdapter({ seeds: ["01"], workdir: parent });
+    const extra: HostAdapter = { ...base, copyPlans: (state, unpacked, protocol) => [...base.copyPlans(state, unpacked, protocol), ...base.copyPlans(state, unpacked, protocol).map((plan) => ({ ...plan, copy_id: `${plan.copy_id}-extra` }))] };
+    const runner = scriptedRunner(copies, qualifying);
+    expect((await validatePair({ ...input(runner), adapters: { "task-report": extra } })).error_code).toBe("adapter_error");
+    const catalogThrows: HostAdapter = { ...base, catalog: () => { throw new Error("synthetic catalog failure"); }, availability: () => ({ available: true, reason: null }) };
+    expect((await validatePair({ ...input(runner), adapters: { "task-report": catalogThrows } })).error_code).toBe("adapter_error");
+    const availabilityThrows: HostAdapter = { ...base, availability: () => { throw new Error("synthetic availability failure"); } };
+    expect((await validatePair({ ...input(runner), adapters: { "task-report": availabilityThrows } })).error_code).toBe("adapter_error");
+    expect(runner.plans).toHaveLength(0);
   });
 
   it("refuses a runner that returns another copy's result", async () => {

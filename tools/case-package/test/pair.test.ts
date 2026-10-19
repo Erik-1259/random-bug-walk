@@ -104,6 +104,15 @@ describe("packPair", () => {
     }
   });
 
+  it("refuses a source tree that could not be unpacked on every file system", () => {
+    const folded = syntheticPairInput();
+    folded.bug_case.source.push({ path: "readme.md", bytes: encoder.encode("lower case\n") });
+    expect(refusal(folded).code).toBe("inconsistent_inputs");
+    const nested = syntheticPairInput();
+    nested.bug_case.source.push({ path: "src/counter.js/extra.js", bytes: encoder.encode("nested\n") });
+    expect(refusal(nested).code).toBe("inconsistent_inputs");
+  });
+
   it("refuses inputs that disagree with the catalog entry", () => {
     const runtime = syntheticPairInput();
     runtime.bug_case.runtime = { ...runtime.bug_case.runtime, kit_image_digest: `sha256:${"0".repeat(64)}` };

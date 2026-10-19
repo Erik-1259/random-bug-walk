@@ -1,6 +1,6 @@
 // Node entry of the harness. Web routes import ./registry and ./version, which import no runner.
 export { dockerRunner, UNRESOLVED_IMAGE_DIGEST } from "./docker.ts";
-export type { CommandResult, DockerCommand, DockerRunnerOptions } from "./docker.ts";
+export type { CommandOptions, CommandResult, DockerCommand, DockerRunnerOptions } from "./docker.ts";
 export { evaluateMatrix } from "./matrix.ts";
 export type { CellMatrix } from "./matrix.ts";
 export { createHostRegistry, HOST_REGISTRY, RegistryError } from "./registry.ts";

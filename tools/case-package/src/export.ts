@@ -5,9 +5,9 @@ import { lstat, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { CatalogEntry, FileSet, HostAdapter, PackageKind } from "@rbw/factory-contract";
 import { validateContract } from "@rbw/factory-contract/validate";
-import { encodeCanonical, sha256Hex } from "@rbw/schema";
-import { isRelativePath, type ArchiveMember } from "./archive.ts";
-import type { BugCaseManifest, CaseIdentity, ValidatorManifest } from "./format.ts";
+import { sha256Hex } from "@rbw/schema";
+import { ArchiveError, isRelativePath, type ArchiveMember } from "./archive.ts";
+import { canonicalEqual, type BugCaseManifest, type CaseIdentity, type ValidatorManifest } from "./format.ts";
 import { packPair, PackRefused, type PackedPart } from "./pack.ts";
 import { applyPatchText, PatchError, sameDigests } from "./patch.ts";
 
@@ -61,10 +61,6 @@ export interface PreparedCase {
   scanned: boolean;
 }
 
-function same(a: unknown, b: unknown): boolean {
-  return Buffer.from(encodeCanonical(a)).equals(Buffer.from(encodeCanonical(b)));
-}
-
 /** Reads a file set's listed files, refusing links, other non-regular files and bytes that differ from the list. */
 export async function readFileSet(set: FileSet, name: string): Promise<ArchiveMember[]> {
   const members: ArchiveMember[] = [];
@@ -87,10 +83,17 @@ export async function readFileSet(set: FileSet, name: string): Promise<ArchiveMe
   return members;
 }
 
+/** Fails closed: only a verdict that is exactly `{ outcome: "clean" }` lets the export continue. */
 async function scanned(scan: ScanHook, part: PackageKind, members: readonly ArchiveMember[]): Promise<void> {
-  const verdict = await scan({ part, members });
-  if (verdict.outcome === "blocked") throw new ExportRefused("scan_blocked", verdict.locations.map((location) => `${part}: ${location}`));
-  if (verdict.outcome === "unavailable") throw new ExportRefused("scan_unavailable", [`${part}: the scan was unavailable`]);
+  const verdict: unknown = await scan({ part, members });
+  const outcome = typeof verdict === "object" && verdict !== null ? (verdict as { outcome?: unknown }).outcome : undefined;
+  if (outcome === "clean") return;
+  if (outcome === "blocked") {
+    const locations = (verdict as { locations?: unknown }).locations;
+    const listed = Array.isArray(locations) ? locations.map((location) => `${part}: ${String(location)}`) : [`${part}: blocked`];
+    throw new ExportRefused("scan_blocked", listed);
+  }
+  throw new ExportRefused("scan_unavailable", [`${part}: the scan did not answer clean`]);
 }
 
 /** Exports one catalog entry to its bug case and validator core. Writes nothing; see writePrepared. */
@@ -108,8 +111,8 @@ export async function exportCase(options: ExportOptions): Promise<PreparedCase> 
   const checks: [boolean, string][] = [
     [bugCase.host_id === entry.host_id && validator.host_id === entry.host_id, "the inputs belong to another host"],
     [bugCase.entry_id === entry.entry_id && validator.entry_id === entry.entry_id, "the inputs belong to another entry"],
-    [same(bugCase.baseline, baseline), "the bug case baseline differs from the adapter's"],
-    [same(validator.protocol, adapter.protocol(entry)), "the validator protocol differs from the adapter's protocol for the entry"],
+    [canonicalEqual(bugCase.baseline, baseline), "the bug case baseline differs from the adapter's"],
+    [canonicalEqual(validator.protocol, adapter.protocol(entry)), "the validator protocol differs from the adapter's protocol for the entry"],
     [bugCase.incident.files.some((file) => file.path === entry.incident.path && file.sha256 === entry.incident.sha256), "the incident files do not hold the entry's incident description"],
   ];
   const failed = checks.filter(([ok]) => !ok).map(([, problem]) => problem);
@@ -158,6 +161,8 @@ export async function exportCase(options: ExportOptions): Promise<PreparedCase> 
     });
   } catch (error) {
     if (error instanceof PackRefused) throw new ExportRefused(error.code, error.problems);
+    // For example two source paths that differ only in case, which no case-insensitive file system can hold.
+    if (error instanceof ArchiveError) throw new ExportRefused("inconsistent_inputs", [error.message]);
     throw error;
   }
   if (options.scan !== null) {
