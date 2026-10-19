@@ -14,7 +14,7 @@ The host comes from the manifests' `host_id` through the host registry, and copi
 
 | Import | Contents |
 |---|---|
-| `@rbw/case-validate` | `validatePair`, `runCopies`, `verifyPair`, `buildWorkspace`, `evaluateMatrix`, `dockerRunner`, `runValidateCli`, `resultsSha256`, and the two entries below |
+| `@rbw/case-validate` | `validatePair`, `verifyPair`, `buildWorkspace`, `evaluateMatrix`, `dockerRunner`, `runValidateCli`, `resultsSha256`, and the entries below |
 | `@rbw/case-validate/registry` | `HOST_REGISTRY`, `createHostRegistry`, `HostRegistration`; imports no runner |
 | `@rbw/case-validate/version` | `HARNESS_IDENTITY` (`{ name: "rbw-validate", version }`) and `HARNESS_VERSION`; imports nothing with behavior |
 | `@rbw/case-validate/docker` | `dockerRunner` alone |

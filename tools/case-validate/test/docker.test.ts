@@ -72,6 +72,8 @@ interface FakeOptions {
   /** wait returns only when kill is called; with exitedFirst the copy had already ended and kill fails. */
   hang?: boolean;
   exitedFirst?: boolean;
+  /** The kill fails although the copy overran its limit. */
+  killFails?: boolean;
   results?: boolean | "fifo";
   createFails?: boolean;
 }
@@ -112,12 +114,21 @@ function fakeDocker(options: FakeOptions): FakeDocker {
       return ok(`${String(options.exit ?? 0)}\n`);
     }
     if (verb === "kill") {
+      if (options.killFails === true) {
+        release?.({ code: 0, stdout: "0\n", stderr: "" });
+        return { code: 1, stdout: "", stderr: "daemon error" };
+      }
       if (options.exitedFirst === true) {
         release?.({ code: 0, stdout: "0\n", stderr: "" });
         return { code: 1, stdout: "", stderr: "container is not running" };
       }
       release?.({ code: 0, stdout: "137\n", stderr: "" });
       return ok();
+    }
+    if (verb === "inspect") {
+      // docker's record of the run: just under the one-second limit when the copy ended on its own.
+      const finished = options.exitedFirst === true ? "2026-10-19T12:00:00.950123456Z" : "2026-10-19T12:00:01.020123456Z";
+      return ok(`2026-10-19T12:00:00.000123456Z ${finished}\n`);
     }
     return ok();
   };
@@ -186,6 +197,20 @@ describe("dockerRunner", () => {
     const collected = await dockerRunner({ command: docker.command, resultsDir: join(dir, "results") }).run(plan({ limits: { timeout_s: 1, vcpus: 1, memory_mb: 512, network: "none" } }), roots);
     expect(collected.outcome).toBe("ran");
     expect(collected.exit_code).toBe(0);
+  });
+
+  it("still reports timed_out when the kill fails but docker's record shows the copy overran its limit", async () => {
+    const docker = fakeDocker({ images: { "registry.invalid/synthetic/task-report-kit:1": `${LOCAL_ID} amd64` }, hang: true, killFails: true });
+    const collected = await dockerRunner({ command: docker.command, resultsDir: join(dir, "results") }).run(plan({ limits: { timeout_s: 1, vcpus: 1, memory_mb: 512, network: "none" } }), roots);
+    expect(collected.outcome).toBe("timed_out");
+  });
+
+  it("is a setup failure, with no container, when the host cannot make the results directory", async () => {
+    const docker = fakeDocker({ images: { "registry.invalid/synthetic/task-report-kit:1": `${LOCAL_ID} amd64` } });
+    await writeFile(join(dir, "not-a-directory"), "x");
+    const collected = await dockerRunner({ command: docker.command, resultsDir: join(dir, "not-a-directory") }).run(plan(), roots);
+    expect(collected.outcome).toBe("setup_failed");
+    expect(docker.calls.some((call) => call[0] === "create")).toBe(false);
   });
 
   it("answers no results, and never rejects, when the results hold a pipe", async () => {

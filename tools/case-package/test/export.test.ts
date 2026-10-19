@@ -146,6 +146,12 @@ describe("exportCase", () => {
       scan: () => Promise.resolve({ outcome: "blocked", locations: ["source/x:1"] }),
     }));
     expect(blocked.code).toBe("scan_blocked");
+    expect(blocked.problems).toEqual(["bug_case: source/x:1"]);
+    const unnamed = await refusalOf(exportCase({
+      adapter, entry: only(adapter), identity: syntheticIdentity, license: SYNTHETIC_LICENSE,
+      scan: () => Promise.resolve({ outcome: "blocked", locations: [] }),
+    }));
+    expect(unnamed.problems).toEqual(["bug_case: blocked"]);
     const unavailable = await refusalOf(exportCase({
       adapter, entry: only(adapter), identity: syntheticIdentity, license: SYNTHETIC_LICENSE,
       scan: () => Promise.resolve({ outcome: "unavailable" }),

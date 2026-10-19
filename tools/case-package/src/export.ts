@@ -6,7 +6,7 @@ import { join } from "node:path";
 import type { CatalogEntry, FileSet, HostAdapter, PackageKind } from "@rbw/factory-contract";
 import { validateContract } from "@rbw/factory-contract/validate";
 import { sha256Hex } from "@rbw/schema";
-import { ArchiveError, isRelativePath, type ArchiveMember } from "./archive.ts";
+import { isRelativePath, type ArchiveMember } from "./archive.ts";
 import { canonicalEqual, type BugCaseManifest, type CaseIdentity, type ValidatorManifest } from "./format.ts";
 import { packPair, PackRefused, type PackedPart } from "./pack.ts";
 import { applyPatchText, PatchError, sameDigests } from "./patch.ts";
@@ -90,8 +90,10 @@ async function scanned(scan: ScanHook, part: PackageKind, members: readonly Arch
   if (outcome === "clean") return;
   if (outcome === "blocked") {
     const locations = (verdict as { locations?: unknown }).locations;
-    const listed = Array.isArray(locations) ? locations.map((location) => `${part}: ${String(location)}`) : [`${part}: blocked`];
-    throw new ExportRefused("scan_blocked", listed);
+    const listed = Array.isArray(locations)
+      ? (locations as unknown[]).map((location) => `${part}: ${typeof location === "string" ? location : JSON.stringify(location)}`)
+      : [];
+    throw new ExportRefused("scan_blocked", listed.length > 0 ? listed : [`${part}: blocked`]);
   }
   throw new ExportRefused("scan_unavailable", [`${part}: the scan did not answer clean`]);
 }
@@ -161,8 +163,6 @@ export async function exportCase(options: ExportOptions): Promise<PreparedCase> 
     });
   } catch (error) {
     if (error instanceof PackRefused) throw new ExportRefused(error.code, error.problems);
-    // For example two source paths that differ only in case, which no case-insensitive file system can hold.
-    if (error instanceof ArchiveError) throw new ExportRefused("inconsistent_inputs", [error.message]);
     throw error;
   }
   if (options.scan !== null) {

@@ -14,7 +14,7 @@ import type {
   RepairKind,
 } from "@rbw/factory-contract";
 import { HOST_ID_VALUES } from "@rbw/factory-contract";
-import { canonicalDigest } from "@rbw/schema";
+import { canonicalDigest, encodeCanonical } from "@rbw/schema";
 
 export const BUG_CASE_FORMAT = "rbw-bug-case/1";
 export const VALIDATOR_FORMAT = "rbw-validator/1";
@@ -110,7 +110,7 @@ export function pairSha256(input: PairBindingInput): string {
 
 /** True when two values have the same canonical JSON v1 bytes. */
 export function canonicalEqual(a: unknown, b: unknown): boolean {
-  return canonicalDigest(a).sha256 === canonicalDigest(b).sha256;
+  return Buffer.from(encodeCanonical(a)).equals(Buffer.from(encodeCanonical(b)));
 }
 
 export function formatOf(kind: PackageKind): PackageFormat {

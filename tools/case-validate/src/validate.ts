@@ -307,7 +307,7 @@ export async function validatePair(input: ValidatePairInput): Promise<ValidatePa
     } catch (loopError) {
       // Only CopyLoopError is answered here; a runner rejection propagates unchanged.
       if (!(loopError instanceof CopyLoopError)) throw loopError;
-      const message = loopError.code === "runner_error" ? "the copy runner returned an invalid result" : "the host adapter could not read a copy's results";
+      const message = loopError.code === "runner_error" ? "the copy runner returned an invalid result" : "the host adapter could not read or evaluate the copies";
       return { ...error(loopError.code, message, loopError.message, verified.pair_sha256), records: [...loopError.records] };
     }
     if (loop.stopped || loop.cells === null) {

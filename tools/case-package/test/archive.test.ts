@@ -92,6 +92,8 @@ describe("packArchive", () => {
   it("refuses duplicate, case-colliding and non-relative paths", () => {
     expect(() => packArchive([{ path: "a.txt", bytes: text("1") }, { path: "a.txt", bytes: text("2") }])).toThrow(ArchiveError);
     expect(() => packArchive([{ path: "src/A.ts", bytes: text("1") }, { path: "src/a.ts", bytes: text("2") }])).toThrow(ArchiveError);
+    expect(() => packArchive([{ path: "docs/café.md", bytes: text("1") }, { path: "docs/café.md", bytes: text("2") }])).toThrow(ArchiveError);
+    expect(() => packArchive([{ path: "straße.md", bytes: text("1") }, { path: "STRASSE.md", bytes: text("2") }])).toThrow(ArchiveError);
     for (const path of ["/abs.txt", "../up.txt", "a/../b.txt", "a//b.txt", "a/./b.txt", "a\\b.txt", "trailing/", "", "ctl\u0001.txt"]) {
       expect(() => packArchive([{ path, bytes: text("x") }]), path).toThrow(ArchiveError);
     }

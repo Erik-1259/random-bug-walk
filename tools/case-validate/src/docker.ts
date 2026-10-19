@@ -45,8 +45,9 @@ export interface DockerRunnerOptions {
 /** Reported only for a copy that failed before its image was resolved and whose plan pins no digest. */
 export const UNRESOLVED_IMAGE_DIGEST = `sha256:${"0".repeat(64)}`;
 
-/** The time limit of every docker command except `wait`, which follows the plan's own limit. */
+/** The time limit of every docker command except `wait`, which follows the plan's own limit, and `kill`. */
 const COMMAND_TIMEOUT_MS = 10 * 60 * 1000;
+const KILL_TIMEOUT_MS = 60 * 1000;
 /** How long `wait` may outlast the plan's limit before its CLI process is killed (the kill comes first). */
 const WAIT_MARGIN_MS = 60 * 1000;
 /** The most stdout or stderr kept from one command. */
@@ -55,15 +56,28 @@ const OUTPUT_LIMIT = 1024 * 1024;
 function capped(): { add(chunk: Buffer): void; text(): string } {
   const chunks: Buffer[] = [];
   let size = 0;
+  let truncated = false;
   return {
     add(chunk) {
+      if (size + chunk.length > OUTPUT_LIMIT) truncated = true;
       if (size >= OUTPUT_LIMIT) return;
       const kept = chunk.subarray(0, OUTPUT_LIMIT - size);
       chunks.push(kept);
       size += kept.length;
     },
-    text: () => Buffer.concat(chunks).toString("utf8"),
+    text: () => `${Buffer.concat(chunks).toString("utf8")}${truncated ? "\n[output truncated]" : ""}`,
   };
+}
+
+/** Milliseconds from the container's start to its end, from docker's own record; null when unknown. */
+async function runtimeMs(docker: DockerCommand, name: string): Promise<number | null> {
+  const inspected = await docker(["inspect", "--format", "{{.State.StartedAt}} {{.State.FinishedAt}}", name], { timeoutMs: COMMAND_TIMEOUT_MS });
+  if (inspected.code !== 0) return null;
+  // RFC 3339 with up to nanoseconds; milliseconds are enough to compare with a limit in seconds.
+  const times = inspected.stdout.trim().split(" ").map((value) => Date.parse(value.replace(/(\.\d{3})\d+/, "$1")));
+  const [started, finished] = times;
+  if (times.length !== 2 || started === undefined || finished === undefined || Number.isNaN(started) || Number.isNaN(finished) || finished < started) return null;
+  return finished - started;
 }
 
 function spawnDocker(docker: string): DockerCommand {
@@ -152,16 +166,26 @@ async function resolveImage(docker: DockerCommand, plan: CopyPlan, choose: Docke
   return null;
 }
 
-/** Copies the results directory back and hashes it; null when the copy left none or it cannot be read. */
-async function bringBack(docker: DockerCommand, name: string, plan: CopyPlan, parent: string): Promise<{ dir: string; sha256: string } | null> {
+/** Copies the results directory back into `resultsDir` and hashes it; null when the copy left none or it cannot be read. */
+async function bringBack(docker: DockerCommand, name: string, plan: CopyPlan, resultsDir: string): Promise<{ dir: string; sha256: string } | null> {
+  const copied = await docker(["cp", `${name}:${plan.destinations.results}`, resultsDir], { timeoutMs: COMMAND_TIMEOUT_MS });
+  if (copied.code !== 0) return null;
   try {
-    await mkdir(parent, { recursive: true });
-    const resultsDir = join(await mkdtemp(join(parent, "rbw-copy-results-")), "results");
-    const copied = await docker(["cp", `${name}:${plan.destinations.results}`, resultsDir], { timeoutMs: COMMAND_TIMEOUT_MS });
-    return copied.code === 0 ? { dir: resultsDir, sha256: await resultsSha256(resultsDir) } : null;
+    return { dir: resultsDir, sha256: await resultsSha256(resultsDir) };
   } catch (error) {
     // A results tree with a pipe, a socket or an unreadable file is no usable result, not a runner fault.
     if (error instanceof ResultsTreeError || isFileSystemError(error)) return null;
+    throw error;
+  }
+}
+
+/** A fresh local directory for the copy's results, made before the copy starts; null when the host cannot make one. */
+async function freshResultsDir(parent: string): Promise<string | null> {
+  try {
+    await mkdir(parent, { recursive: true });
+    return join(await mkdtemp(join(parent, "rbw-copy-results-")), "results");
+  } catch (error) {
+    if (isFileSystemError(error)) return null;
     throw error;
   }
 }
@@ -186,6 +210,8 @@ async function runCopy(plan: CopyPlan, roots: CopyRoots, docker: DockerCommand, 
   if (app === null || evaluator === null) return setupFailed(null);
   const image = await resolveImage(docker, plan, options.image);
   if (image === null) return setupFailed(null);
+  const resultsDir = await freshResultsDir(options.resultsDir ?? tmpdir());
+  if (resultsDir === null) return setupFailed(image);
 
   const name = `rbw-copy-${plan.copy_id.replace(/[^A-Za-z0-9_.-]/g, "-").slice(0, 40)}-${randomBytes(4).toString("hex")}`;
   const { limits } = plan;
@@ -203,15 +229,21 @@ async function runCopy(plan: CopyPlan, roots: CopyRoots, docker: DockerCommand, 
     if ((await docker(["start", name], command)).code !== 0) return setupFailed(image);
     const deadline: { kill: Promise<CommandResult> | null } = { kill: null };
     const timer = setTimeout(() => {
-      deadline.kill = docker(["kill", name], command);
+      deadline.kill = docker(["kill", name], { timeoutMs: KILL_TIMEOUT_MS });
     }, limits.timeout_s * 1000);
     const waited = await docker(["wait", name], { timeoutMs: limits.timeout_s * 1000 + WAIT_MARGIN_MS });
     clearTimeout(timer);
-    // A kill that found the copy already stopped means it ended on its own just before the limit.
-    const timedOut = deadline.kill !== null && (await deadline.kill).code === 0;
+    let timedOut = false;
+    if (deadline.kill !== null) {
+      await deadline.kill;
+      // The limit fired: only docker's own record of a run shorter than the limit (the copy ended on its own
+      // just before) makes it a normal run; anything else, including an unknown runtime, is a time-out.
+      const ran = await runtimeMs(docker, name);
+      timedOut = ran === null || ran >= limits.timeout_s * 1000;
+    }
     const exit = /^-?\d+$/.test(waited.stdout.trim()) ? Number(waited.stdout.trim()) : null;
     if (!timedOut && exit === null) return setupFailed(image);
-    const results = await bringBack(docker, name, plan, options.resultsDir ?? tmpdir());
+    const results = await bringBack(docker, name, plan, resultsDir);
     return {
       copy_id: plan.copy_id,
       outcome: timedOut ? "timed_out" : "ran",

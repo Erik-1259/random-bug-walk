@@ -58,7 +58,8 @@ export function memberPathProblem(paths: readonly string[]): string | null {
   for (const path of paths) {
     if (!isRelativePath(path)) return "a member path is not a relative path";
     if (exact.has(path)) return "a member path appears twice";
-    const key = path.toLowerCase();
+    // Composed form, then upper and lower case, so NFC/NFD twins and folds such as "ß"/"SS" collide too.
+    const key = path.normalize("NFC").toUpperCase().toLowerCase();
     if (folded.has(key)) return "two member paths differ only in case";
     exact.add(path);
     folded.add(key);
