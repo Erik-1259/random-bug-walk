@@ -28,7 +28,7 @@ function cells(value: unknown): Record<string, unknown>[] {
     const group = object(matrix[set]);
     return ["clean", "buggy", "fixed"].map(copy => {
       const cell = object(group[copy]);
-      assert(["pass", "fail"].includes(text(cell.expected)), "invalid expected result");
+      assert.equal(cell.expected, set === "verification" && copy === "buggy" ? "fail" : "pass", "matrix expectation contradicts contract");
       assert(["pass", "fail", "error", "incomplete"].includes(text(cell.observed)), "invalid observed result");
       assert(nonnegative(cell.runs_valid) <= nonnegative(cell.runs_total), "invalid trial counts");
       assert.equal(cell.matches_expectation, cell.observed === cell.expected, "incorrect cell verdict");

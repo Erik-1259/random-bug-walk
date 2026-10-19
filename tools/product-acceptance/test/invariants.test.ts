@@ -50,3 +50,14 @@ it("treats case ID lists as sets when the contract does not specify their order"
   objects(value.items).reverse();
   expect(() => { checkStatus(value); }).not.toThrow();
 });
+for (const set of ["original_suite", "verification"]) for (const copy of ["clean", "buggy", "fixed"]) {
+  for (const kind of ["case", "validation"]) it(`rejects rewritten ${kind} expectation for ${set}.${copy}`, () => {
+    const value = object(fixture(kind === "case" ? "status-fulfilled" : "validation-passed"));
+    const target = kind === "case" ? at(value.cases) : value;
+    const cell = object(object(object(target.matrix)[set])[copy]);
+    cell.expected = cell.expected === "pass" ? "fail" : "pass";
+    cell.observed = cell.expected;
+    cell.matches_expectation = true;
+    expect(() => { if (kind === "case") checkStatus(value); else checkValidation(value); }).toThrow();
+  });
+}
