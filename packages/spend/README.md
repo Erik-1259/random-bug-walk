@@ -343,7 +343,7 @@ A request budget caps what one factory request commits, on its own pool. It is b
 
 **`closeBudget`** takes `budget_key`, `cause` (one of the contract stop codes: `fulfilled`, `budget_exhausted`, `time_limit`, `candidate_limit`, `sources_exhausted`, `cancelled_by_user`, `worker_lost`, `needs_reconciliation`, `operational_error`) and `actor_role`. A repeat with the same cause replays; another cause is refused with `idempotency_conflict`. Closing leaves open operations open; they settle and reconcile as usual.
 
-**Reads.** `budgetStatus` returns the cap, settled, open, committed and available amounts, `overrun`, `closed` (`{ cause, closed_at }` or null) and the operations not yet reconciled. `budgetOperations` returns every operation the budget admitted. Each operation has its ID, role, root and execution IDs, kind, call name, attempt ordinal, state, reserved and open amounts, `settled_microusd` (null until a settlement, or a reconciliation that settles, is recorded) and `reserved_at`.
+**Reads.** `budgetStatus` returns the cap, settled, open, committed and available amounts, `overrun`, `closed` (`{ cause, closed_at }` or null) and the operations not yet reconciled. `budgetOperations` returns every operation the budget admitted. Each operation has its ID, role, root and execution IDs, kind, call name, attempt ordinal, state, reserved and open amounts, `settled_microusd` (null until a settlement, or a reconciliation that settles, is recorded) and `reserved_at`. Each read answers from one snapshot: a reservation that commits while `budgetStatus` runs shows in neither its amounts nor its operations.
 
 ## Factory records
 
@@ -531,7 +531,7 @@ In `reconciliations`, `recorded_at` is the time given in the record, and `logged
   - I4: missing usage;
   - I5: forced-overlap slot acquisition;
   - forced-overlap reuse of one operation ID on two pools;
-  - request budgets: two forced-overlap budget reservations on one budget, a burst of eight, a reservation against a close in both orders, and a budget reservation against a plain reservation on the same pool;
+  - request budgets: two forced-overlap budget reservations on one budget, a burst of eight, a reservation against a close in both orders, a budget reservation against a plain reservation on the same pool, and a `budgetStatus` read held between its totals and its operation list while a reservation commits (both parts answer from one snapshot);
   - concurrent event appends from eight connections, which get consecutive sequence numbers;
   - stops, evidence and validation events: two forced-overlap stops and two forced-overlap evidence records under one key (the second replays), two forced-overlap validation events and a burst from eight connections (consecutive sequence numbers);
   - start locks: two holders of one request ID run one at a time while a record call for that ID on another connection goes ahead, other IDs and the validation scope do not wait, and a holder whose `fn` throws frees the ID;

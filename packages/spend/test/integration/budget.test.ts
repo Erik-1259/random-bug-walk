@@ -196,6 +196,42 @@ describe("request budgets against a real Postgres", () => {
     expect(pool.committed_microusd).toBe(600_000n);
     expect(expectOk(await admin.budgetStatus({ budget_key: budget.key })).committed_microusd).toBe(0n);
   });
+
+  // spend_budget_status reads the budget's totals first and its operation list second, and only
+  // the list reads settlements. Holding that table locked stops a status call between its two
+  // reads while a reservation commits; both reads must still answer from the call's one snapshot.
+  it("a status read while a reservation commits between its totals and its operation list: one consistent snapshot", async () => {
+    const poolKey = await createPool(10_000_000);
+    const budget = await createBudget(poolKey, 1_000_000);
+    const a = await database.connect();
+    const b = await database.connect();
+    const { results, secondWaited } = await forcedOverlap(
+      a,
+      "spend_budget_status",
+      async (spend) => {
+        await a.client.query(`LOCK TABLE ${database.schema}.settlements IN ACCESS EXCLUSIVE MODE`);
+        return spend.budgetReserve({ budget_key: budget.key, role: "request", reservation: operation(poolKey, budget.root, 600_000) });
+      },
+      () => b.spend.budgetStatus({ budget_key: budget.key }),
+    );
+    expect(secondWaited).toBe(true);
+    expectOk(results[0]);
+    const during = expectOk(results[1]);
+    // The status call started before the reservation committed, so it reports none of it.
+    expect({
+      open: during.open_microusd,
+      committed: during.committed_microusd,
+      available: during.available_microusd,
+      operations_open: during.operations.map((o) => o.open_microusd),
+    }).toEqual({ open: 0n, committed: 0n, available: 1_000_000n, operations_open: [] });
+    const after = expectOk(await admin.budgetStatus({ budget_key: budget.key }));
+    expect({
+      open: after.open_microusd,
+      committed: after.committed_microusd,
+      available: after.available_microusd,
+      operations_open: after.operations.map((o) => o.open_microusd),
+    }).toEqual({ open: 600_000n, committed: 600_000n, available: 400_000n, operations_open: [600_000n] });
+  });
 });
 
 describe("request events against a real Postgres", () => {

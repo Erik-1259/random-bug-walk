@@ -202,8 +202,15 @@ CREATE TABLE budget_refusals (
   recorded_at timestamptz NOT NULL
 );
 
+-- The two budget read helpers below are STABLE and read tables directly, never through the
+-- VOLATILE helpers of 0001 (spend_operation_totals, spend_operation_state), each of which would
+-- take a fresh snapshot per call. Called from spend_budget_status, they then answer from that
+-- call's one snapshot, so a reservation committing mid-call cannot show in the operation list
+-- but not in the totals. Called from spend_budget_reserve_body, they read the snapshot of the
+-- statement that calls them, taken after the budget row lock.
+
 -- What a budget's operations commit: settled spend plus open reservations, over every root.
-CREATE FUNCTION spend_budget_totals(p_budget text, OUT settled numeric, OUT open numeric) LANGUAGE sql
+CREATE FUNCTION spend_budget_totals(p_budget text, OUT settled numeric, OUT open numeric) LANGUAGE sql STABLE
 BEGIN ATOMIC
   SELECT coalesce(sum(s.amount_microusd) FILTER (WHERE s.kind = 'settle'), 0),
          coalesce(sum(s.amount_microusd) FILTER (WHERE s.kind = 'reserve'), 0)
@@ -213,7 +220,8 @@ BEGIN ATOMIC
 END;
 
 -- A budget's operations as result documents, oldest first: all of them, or those not reconciled.
-CREATE FUNCTION spend_budget_operation_list(p_budget text, p_all boolean) RETURNS jsonb LANGUAGE sql
+-- Totals and state are read as spend_operation_totals and spend_operation_state compute them.
+CREATE FUNCTION spend_budget_operation_list(p_budget text, p_all boolean) RETURNS jsonb LANGUAGE sql STABLE
 BEGIN ATOMIC
   SELECT coalesce(jsonb_agg(x.doc ORDER BY x.seq), '[]'::jsonb)
   FROM (
@@ -236,8 +244,18 @@ BEGIN ATOMIC
     ) AS doc
     FROM budget_operations b
     JOIN operations o ON o.operation_id = b.operation_id
-    CROSS JOIN LATERAL spend_operation_totals(o.operation_id) t
-    CROSS JOIN LATERAL (SELECT spend_operation_state(o.operation_id) AS state) st
+    CROSS JOIN LATERAL (
+      SELECT coalesce(sum(s.amount_microusd) FILTER (WHERE s.kind = 'reserve'), 0) AS reserved,
+             coalesce(sum(s.amount_microusd) FILTER (WHERE s.kind = 'close'), 0) AS closed,
+             coalesce(sum(s.amount_microusd) FILTER (WHERE s.kind = 'settle'), 0) AS settled
+      FROM spend s WHERE s.operation_id = o.operation_id
+    ) t
+    CROSS JOIN LATERAL (
+      SELECT coalesce(
+        (SELECT e.to_state FROM operation_events e WHERE e.operation_id = o.operation_id ORDER BY e.seq DESC LIMIT 1),
+        'prepared'
+      ) AS state
+    ) st
     WHERE b.budget_key = p_budget AND (p_all OR st.state <> 'reconciled')
   ) x;
 END;
