@@ -230,6 +230,8 @@ export function fullSettlement(envelope: FactoryEnvelope, operationId: string): 
 export interface SandboxUsage {
   launched: boolean;
   lifetime_ms: number;
+  /** The vCPUs a copy sandbox was created with; absent, its host's whole copy size is settled. */
+  vcpus?: number;
 }
 
 function measured(size: { vcpus: number; memory_gb: number }, usage: SandboxUsage): Record<string, bigint> {
@@ -245,8 +247,14 @@ function addQuantities(a: Record<string, bigint>, b: Record<string, bigint>): Re
 
 /** A copy's settlement from its measured lifetime, at its host's copy size. */
 export function copySettlementFor(envelope: FactoryEnvelope, operationId: string, host: HostId, usage: SandboxUsage, evidence: { key: string; sha256: string } | null, profile: FactoryProfile = FACTORY_PROFILE): UsageSettlement {
+  return settlement(envelope, operationId, measured(copySize(host, usage, profile), usage), evidence);
+}
+
+/** A copy sandbox's size: the vCPUs it was created with (2 GB of memory each), or its host's whole copy size when unknown. */
+function copySize(host: HostId, usage: SandboxUsage, profile: FactoryProfile): { vcpus: number; memory_gb: number } {
   const limits = profile.copy[host];
-  return settlement(envelope, operationId, measured({ vcpus: limits.vcpus, memory_gb: limits.memory_mb / 1024 }, usage), evidence);
+  if (usage.vcpus !== undefined && Number.isSafeInteger(usage.vcpus) && usage.vcpus > 0 && usage.vcpus <= limits.vcpus) return { vcpus: usage.vcpus, memory_gb: Math.min(2 * usage.vcpus, limits.memory_mb / 1024) };
+  return { vcpus: limits.vcpus, memory_gb: limits.memory_mb / 1024 };
 }
 
 /**
@@ -255,9 +263,8 @@ export function copySettlementFor(envelope: FactoryEnvelope, operationId: string
  */
 export function validationSettlement(envelope: FactoryEnvelope, operationId: string, host: HostId, copies: readonly SandboxUsage[], profile: FactoryProfile = FACTORY_PROFILE): UsageSettlement {
   const worker = profile.validation.worker;
-  const limits = profile.copy[host];
   let quantities = measured(worker, { launched: true, lifetime_ms: (worker.timeout_s + profile.shutdown_seconds) * 1000 });
-  for (const copy of copies) quantities = addQuantities(quantities, measured({ vcpus: limits.vcpus, memory_gb: limits.memory_mb / 1024 }, copy));
+  for (const copy of copies) quantities = addQuantities(quantities, measured(copySize(host, copy, profile), copy));
   return settlement(envelope, operationId, quantities, null);
 }
 

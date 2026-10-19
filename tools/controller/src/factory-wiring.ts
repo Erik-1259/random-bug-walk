@@ -28,8 +28,7 @@ export type WiringResult = { ok: true; wiring: FactoryWiring } | { ok: false; mi
 export const MISSING_MODULES: readonly string[] = [
   "the factory core's identity module and request loop",
   "the spend ledger's request budgets and factory records",
-  "the harness (validatePair) with its host registry and docker runner",
-  "the sandbox copy runner (held for the shared runner types)",
+  "the harness (validatePair) with its host registry, docker runner and results hash",
 ];
 
 export function loadFactoryWiring(): Promise<WiringResult> {

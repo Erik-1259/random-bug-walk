@@ -68,6 +68,8 @@ export interface LaunchReport<R> {
   lifetime_ms: number;
   stop_confirmed: boolean;
   status: "completed" | "failed";
+  /** The vCPUs the copy's sandbox was created with (2 GB of memory each); absent, its host's whole copy size is settled. */
+  vcpus?: number;
 }
 
 export type RefusalReason = "limits_exceed_profile" | "no_time" | "stopped" | "budget" | "halted" | "uncertain";
@@ -208,7 +210,8 @@ export class CopyMeter {
     if (!child.ok) return this.uncertainOutcome(id, op.execution_id, `the stop confirmation was refused (${child.code})`);
     const ended = await ledger.spend.transition({ operation_id: id, from_state: "running", to_state: "terminal", actor_role: WORKER_ACTOR, terminal_status: report.status });
     if (!ended.ok) return this.uncertainOutcome(id, op.execution_id, `the end was refused (${ended.code})`);
-    const settled = await ledger.spend.settle(copySettlementFor(op.envelope, id, plan.host, { launched: true, lifetime_ms: report.lifetime_ms }, evidence, this.profile));
+    const usage = { launched: true, lifetime_ms: report.lifetime_ms, ...(report.vcpus === undefined ? {} : { vcpus: report.vcpus }) };
+    const settled = await ledger.spend.settle(copySettlementFor(op.envelope, id, plan.host, usage, evidence, this.profile));
     if (!settled.ok) return this.uncertainOutcome(id, op.execution_id, `the settlement was refused (${settled.code})`);
     if (settled.over_envelope) this.halted = true;
     await this.ctx.onBudgetChange?.(`copy:${id}:settled`, `A ${plan.host} copy settled at ${usd(settled.settled_microusd)}.`);
@@ -240,7 +243,7 @@ export class CopyMeter {
     const evidence = this.stopEvidence(execution, resource, report.lifetime_ms, report.status);
     const confirmed = await spend.confirmChild({ slot_key: this.profile.slot_key, root_execution_id: this.ctx.root, provider: this.ctx.provider, resource_id: resource, terminal_status: report.status, evidence, actor_role: WORKER_ACTOR });
     if (!confirmed.ok) return this.uncertainOutcome(null, execution, `the stop confirmation was refused (${confirmed.code})`);
-    this.usage.push({ launched: true, lifetime_ms: report.lifetime_ms });
+    this.usage.push({ launched: true, lifetime_ms: report.lifetime_ms, ...(report.vcpus === undefined ? {} : { vcpus: report.vcpus }) });
     return { kind: "ran", result: report.result, operation_id: null, execution_id: execution, settled_microusd: null, over_envelope: false };
   }
 }
