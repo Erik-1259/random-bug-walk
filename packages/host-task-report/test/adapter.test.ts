@@ -379,6 +379,7 @@ describe("collect", () => {
     expect(await adapter.collect(plan, collected(plan, good, { exit_code: 1 }))).toMatchObject({ status: "invalid", evidence_sha256: "e".repeat(64) });
     expect((await adapter.collect(plan, collected(plan, good, { copy_id: "f3q2-other" }))).status).toBe("invalid");
     expect((await adapter.collect(plan, collected(plan, good, { image_digest: `sha256:${"f".repeat(64)}` }))).status).toBe("invalid");
+    expect((await adapter.collect(plan, collected(plan, good, { architecture: kit.architecture === "arm64" ? "amd64" : "arm64" }))).status).toBe("invalid");
   });
 
   it("is invalid for a plan that is not one of its own: other check files, another image or an unknown entry", async () => {

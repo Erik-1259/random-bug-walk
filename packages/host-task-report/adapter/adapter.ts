@@ -309,7 +309,7 @@ export function createTaskReportAdapter(options: TaskReportAdapterOptions = {}):
     if (args.state !== plan.state || args.copyId !== plan.copy_id) return invalid("the plan's command names another copy");
     if (collected.copy_id !== plan.copy_id) return invalid("the runner returned another copy");
     if (plan.host_id !== HOST_ID || plan.image.reference !== kit.reference || plan.image.digest !== kit.digest) return invalid("the plan names another kit image than the adapter's");
-    if (collected.image_digest !== kit.digest) return invalid("the copy ran another image");
+    if (collected.image_digest !== kit.digest || collected.architecture !== kit.architecture) return invalid("the copy ran another image or architecture");
     if (!sameJson(plan.evaluator_files, listing)) return invalid("the plan's evaluator files are not this adapter's check package");
     if (!load().catalog.entries.some((item) => item.entry_id === args.entryId)) return invalid("the plan's command names an entry the catalog does not have");
     if (collected.outcome === "setup_failed") return invalid("the copy could not be prepared");

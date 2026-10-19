@@ -73,7 +73,8 @@ export function createLocalDockerRunner(options: LocalRunnerOptions): CopyRunner
       mkdirSync(dir, { recursive: true });
       const startedAt = new Date().toISOString();
       let imageDigest = plan.image.digest ?? UNKNOWN_DIGEST;
-      let architecture: CollectedCopy["architecture"] = "amd64";
+      // Until the image is inspected, the copy would have run on this Docker host's architecture.
+      let architecture: CollectedCopy["architecture"] = process.arch === "arm64" ? "arm64" : "amd64";
       const record: Record<string, unknown> = { format: "rbw.task-report.local-copy.v2", copy_id: plan.copy_id, state: plan.state, image: plan.image, command: plan.command, limits: plan.limits, started_at: startedAt, steps: {} };
       const steps = record.steps as Record<string, number | null>;
       const finish = (collected: CollectedCopy, detail: string | null): CollectedCopy => {

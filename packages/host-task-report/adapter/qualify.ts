@@ -151,7 +151,18 @@ async function evaluate(dir: string): Promise<number> {
     verdicts[state] = stateVerdict(v2, state, cells[state]);
     schemaErrors.push(...validateContract("CellObservation", cells[state].original_suite), ...validateContract("CellObservation", cells[state].verification));
   }
-  const summaries = collected.flatMap((copy) => (copy.results_dir !== null && existsSync(join(copy.results_dir, "copy.json")) ? [parseCopySummaryV2(readJson(join(copy.results_dir, "copy.json")))] : []));
+  const { RecordError } = await import("../v2/record.ts");
+  const unreadable: string[] = [];
+  const summaries = collected.flatMap((copy) => {
+    if (copy.results_dir === null || !existsSync(join(copy.results_dir, "copy.json"))) return [];
+    try {
+      return [parseCopySummaryV2(readJson(join(copy.results_dir, "copy.json")))];
+    } catch (error) {
+      if (!(error instanceof RecordError) && !(error instanceof SyntaxError)) throw error;
+      unreadable.push(copy.copy_id);
+      return [];
+    }
+  });
   const expectation = stateExpectation(loadBaseline(), loadCatalogPins(), entry.entry_id);
   const crossCheck = evaluateProtocolV2(v2, loadData(), expectation, summaries);
   const matrix = (["original_suite", "verification"] as const).map((set) => ({
@@ -172,6 +183,7 @@ async function evaluate(dir: string): Promise<number> {
     matrix,
     records,
     cross_check: crossCheck,
+    cross_check_unreadable: unreadable,
     cross_check_agrees: crossCheck.verdict === verdict && (["clean", "buggy", "fixed"] as const).every((state) => crossCheck.states.find((item) => item.state === state)?.verdict === verdicts[state]),
     schema_errors: schemaErrors,
   };
