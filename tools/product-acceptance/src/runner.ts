@@ -31,6 +31,10 @@ export interface Probe {
   downloads?: boolean;
 }
 class Unavailable extends Error {}
+function checkScenarioStatus(value: unknown): void {
+  checkStatus(value);
+  assert.equal(object(object(value).budget).overrun, false, "deterministic scenario exceeded budget");
+}
 function body(reply: Reply, status: number): Record<string, unknown> {
   assert.equal(reply.status, status, "unexpected HTTP status");
   const result = object(reply.body);
@@ -81,7 +85,7 @@ export async function runProbe(backend: IsolatedBackend, probe: Probe): Promise<
   assert.equal(replies.filter(r => r.status === 202).length, 1, "start accepted more or less than once");
   for (const reply of replies) {
     assert([200, 202].includes(reply.status));
-    checkStatus(reply.body); assert.equal(object(reply.body).request_id, requestId);
+    checkScenarioStatus(reply.body); assert.equal(object(reply.body).request_id, requestId);
   }
   const path = `/api/factory/requests/${requestId}`;
   const repeated = body(await call("POST", "/api/factory/requests", start), 200);
@@ -99,8 +103,7 @@ export async function runProbe(backend: IsolatedBackend, probe: Probe): Promise<
   const history: Record<string, unknown>[] = [];
   // Bound a stalled service; do not poll faster than its declared interval.
   for (let polls = 0; polls < 1000; polls++) {
-    checkStatus(state);
-    assert.equal(object(state.budget).overrun, false, "deterministic scenario exceeded budget");
+    checkScenarioStatus(state);
     const currentIds = objects(state.cases).map(c => c.case_id);
     for (const id of deliveredIds) assert(currentIds.includes(id), "delivered case disappeared");
     for (const id of currentIds) deliveredIds.add(id);
@@ -112,7 +115,7 @@ export async function runProbe(backend: IsolatedBackend, probe: Probe): Promise<
     assert.equal(state.request_id, requestId);
     assert.deepEqual(state.interpretation, interpretation, "frozen interpretation changed");
     if (probe.cancel && !stopped && objects(state.cases).length > 0 && state.state !== "finished") {
-      body(await call("POST", `${path}/stop`, {}), 200);
+      checkScenarioStatus(body(await call("POST", `${path}/stop`, {}), 200));
       stopped = true;
     }
     if (state.state === "finished") break;
@@ -134,6 +137,7 @@ export async function runProbe(backend: IsolatedBackend, probe: Probe): Promise<
   await backend.reconnect();
   const reconnect = await read(backend, `${path}?after=0`);
   let page = reconnect;
+  checkScenarioStatus(page);
   let checked = 0;
   while (checked < history.length) {
     const events = objects(page.events);
@@ -145,9 +149,10 @@ export async function runProbe(backend: IsolatedBackend, probe: Probe): Promise<
     if (checked < history.length) {
       await backend.wait(integer(page.poll_after_ms));
       page = await read(backend, `${path}?after=${String(checked)}`);
+      checkScenarioStatus(page);
     }
   }
-  checkStatus(reconnect);
+  checkScenarioStatus(reconnect);
   // No validation or reconciliation runs between these reads. Only paging and
   // polling hints may differ; accounting and the stored terminal record may not.
   const snapshot = (value: Record<string, unknown>) => Object.fromEntries(Object.entries(value)
@@ -155,6 +160,7 @@ export async function runProbe(backend: IsolatedBackend, probe: Probe): Promise<
   assert.deepEqual(snapshot(reconnect), snapshot(state), "terminal result changed on reconnect");
   if (probe.cancel) {
     const again = body(await call("POST", `${path}/stop`, {}), 200);
+    checkScenarioStatus(again);
     for (const field of ["outcome", "items", "cases"]) assert.deepEqual(again[field], state[field]);
   }
   if (probe.downloads) await runDownloads(backend, state);
@@ -183,7 +189,7 @@ export async function runProbe(backend: IsolatedBackend, probe: Probe): Promise<
 }
 export async function runDownloads(backend: IsolatedBackend, status: Record<string, unknown>): Promise<void> {
   await verify(backend);
-  checkStatus(status);
+  checkScenarioStatus(status);
   for (const c of objects(status.cases)) {
     const parts = object(c.packages);
     for (const kind of ["bug_case", "validator"]) {
@@ -211,7 +217,7 @@ export async function runReconciliation(backend: IsolatedBackend, before: Record
   const result = await backend.request("POST", "/api/factory/test/reconcile", { request_id: before.request_id });
   assert(result.status >= 200 && result.status < 300, "reconciliation control failed");
   const after = await read(backend, `/api/factory/requests/${text(before.request_id)}`);
-  checkStatus(after);
+  checkScenarioStatus(after);
   assert.equal(after.attention, null);
   assert.equal(object(after.budget).reserved_microusd, 0);
   for (const field of ["request_id", "outcome", "stop_reason", "delivery", "items", "cases"]) {

@@ -280,3 +280,16 @@ it("rejects a consistent budget rewrite on reconnect", async () => {
   };
   await expect(runProbe(backend, probe)).rejects.toThrow("terminal result changed on reconnect");
 });
+for (const startOrdinal of [1, 2]) it(`rejects an overrun seen only in start response ${String(startOrdinal)}`, async () => {
+  const { backend, request } = scripted(); let starts = 0;
+  backend.request = async (...args) => {
+    const reply = await request(...args);
+    if (args[0] === "POST" && args[1] === "/api/factory/requests" && ++starts === startOrdinal) {
+      const b = object(object(reply.body).budget);
+      b.spent_microusd = integer(b.budget_microusd) + 1; b.reserved_microusd = 0;
+      b.committed_microusd = b.spent_microusd; b.remaining_microusd = -1; b.overrun = true;
+    }
+    return reply;
+  };
+  await expect(runProbe(backend, probe)).rejects.toThrow("deterministic scenario exceeded budget");
+});

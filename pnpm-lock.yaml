@@ -582,6 +582,8 @@ importers:
         specifier: 2.9.1
         version: 2.9.1
 
+  tools/product-acceptance: {}
+
   tools/publication:
     devDependencies:
       '@types/node':
