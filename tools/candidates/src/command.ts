@@ -71,7 +71,7 @@ export interface CommandIo {
 class UsageError extends Error {}
 
 /** Options that only the static-screen route uses. */
-const SCREEN_ONLY_OPTIONS = ["model", "max-spend-usd", "screen-budget-usd", "screen-attempts", "slot-key", "pool", "rate-sheet", "keep-scratch"] as const;
+const SCREEN_ONLY_OPTIONS = ["dry-run", "model", "max-spend-usd", "screen-budget-usd", "screen-attempts", "slot-key", "pool", "rate-sheet", "keep-scratch"] as const;
 
 /** Parses a decimal USD amount with at most six decimals into integer micro-USD. */
 export function parseUsd(text: string, flag: string): number {
@@ -451,7 +451,11 @@ async function runBehavioral(input: {
   } catch (error) {
     // Nothing ran that spent: release the claimed (still empty) record file.
     closeSync(fd);
-    unlinkSync(outPath);
+    try {
+      unlinkSync(outPath);
+    } catch (unlinkError) {
+      io.err(`candidates: could not remove the empty --out file: ${unlinkError instanceof Error ? unlinkError.message : "unknown error"}\n`);
+    }
     throw error;
   }
   const where = saveRecord(fd, outPath, record, 0, input.scratchBase, runId);

@@ -57,8 +57,11 @@ export class FakeCopyRunner implements CopyRunner {
   async run(plan: CopyPlan, roots: CopyRoots): Promise<CollectedCopy> {
     const startedAt = this.options.now().toISOString();
     const base = { copy_id: plan.copy_id, image_digest: plan.image.digest ?? `sha256:${syntheticSha(`image:${plan.image.reference}`)}`, architecture: "amd64" as const, started_at: startedAt };
+    // The outcome comes first, as a sandbox is created before files are placed; a file that does not
+    // match its sha256 then turns the copy into a setup failure.
+    const planned: FakeCopyOutcome = await this.options.outcome(plan);
     const unplaced = mismatch(roots.app_root, plan.files) ?? mismatch(roots.evaluator_root, plan.evaluator_files);
-    const outcome: FakeCopyOutcome = unplaced === null ? await this.options.outcome(plan) : { kind: "setup_failed" };
+    const outcome: FakeCopyOutcome = planned.kind === "ran" && unplaced !== null ? { kind: "setup_failed" } : planned;
     if (outcome.kind === "uncertain") {
       this.runs.push({ copy_id: plan.copy_id, outcome: "uncertain" });
       throw new UncertainOutcomeError();

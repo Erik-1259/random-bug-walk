@@ -320,9 +320,12 @@ export function projectStatus(input: ProjectionInput): RequestStatus {
  */
 export function workerAttentionEvent(input: { events: readonly Event[]; last_heartbeat_at: string | null; created_at: string; now: Date }): NewEvent | null {
   const folded = fold(input.events);
-  if (folded.finished !== null) return null;
-  const stale = heartbeatAge(input.last_heartbeat_at, input.created_at, input.now) > UNRESPONSIVE_AFTER_MS;
   const at = input.now.toISOString();
+  if (folded.finished !== null) {
+    // The worker finished, so its heartbeat question is settled: clear a raised worker_unresponsive.
+    return folded.attention === "worker_unresponsive" ? attentionCleared("worker_unresponsive", at, `heartbeat:${String(folded.raisedUnresponsive)}:clear`) : null;
+  }
+  const stale = heartbeatAge(input.last_heartbeat_at, input.created_at, input.now) > UNRESPONSIVE_AFTER_MS;
   if (stale && folded.attention === null) return attentionEvent("worker_unresponsive", at, `heartbeat:${String(folded.raisedUnresponsive + 1)}:raise`);
   if (!stale && folded.attention === "worker_unresponsive") return attentionCleared("worker_unresponsive", at, `heartbeat:${String(folded.raisedUnresponsive)}:clear`);
   return null;

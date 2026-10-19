@@ -257,9 +257,13 @@ export class FakeHostAdapter implements HostAdapter {
     let cell: unknown = null;
     if (collected.results_dir !== null) {
       try {
-        cell = (JSON.parse(readFileSync(join(collected.results_dir, FAKE_RESULT_FILE), "utf8")) as { cell?: unknown }).cell;
+        const parsed: unknown = JSON.parse(readFileSync(join(collected.results_dir, FAKE_RESULT_FILE), "utf8"));
+        cell = typeof parsed === "object" && parsed !== null ? (parsed as { cell?: unknown }).cell : null;
       } catch (error) {
-        if (!(error instanceof SyntaxError) && (error as NodeJS.ErrnoException).code !== "ENOENT") return Promise.reject(error instanceof Error ? error : new Error("reading the result failed"));
+        // An unreadable or malformed result is missing output: the record below is invalid. Anything
+        // other than a file system or JSON error is a defect and propagates.
+        const fileError = error instanceof Error && typeof (error as NodeJS.ErrnoException).code === "string";
+        if (!(error instanceof SyntaxError) && !fileError) return Promise.reject(error instanceof Error ? error : new Error("reading the result failed"));
       }
     }
     if (!isCellPlan(cell)) return Promise.resolve(unrunCopyRecord({ ...common, outcome: "setup_failed", evidence_sha256: collected.results_sha256 }));

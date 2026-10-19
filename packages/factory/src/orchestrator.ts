@@ -361,12 +361,17 @@ class RequestRun {
     try {
       result = await deps.qualify({ entry, adapter, beforeCopy, onCopy });
     } catch (error) {
-      if (this.hookError !== null) throw this.hookError.error;
       // Every harness rejection is an uncertain provider outcome (a runner rejection passed through).
       this.note(`export verification of candidate ${candidate.candidate_id}`, error);
       return { kind: "uncertain" };
     }
-    if (this.hookError !== null) throw this.hookError.error;
+    if (this.hookError !== null) {
+      // A read between copies failed, so the harness stopped; every copy it ran has a definite outcome,
+      // so the candidate ends incomplete and settles, and the request finishes operational_error.
+      this.note(`a check between copies of candidate ${candidate.candidate_id}`, this.hookError.error);
+      await this.append(candidateEnded(candidate, "incomplete_run", this.at(), "Incomplete: an internal check between copies failed, so this candidate was stopped. It is not reproduction and was not retried."));
+      return { kind: "failed" };
+    }
     const { matrix } = result;
     if (matrix !== null) {
       for (const state of COPY_STATE_VALUES) {

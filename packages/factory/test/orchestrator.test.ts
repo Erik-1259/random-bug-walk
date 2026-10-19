@@ -309,7 +309,7 @@ class PricedAdapter extends FakeHostAdapter {
 }
 
 describe("runRequest: internal failures and admission edges", () => {
-  it("finishes needs_reconciliation, ending the candidate, when the stop check fails between copies", async () => {
+  it("ends the candidate incomplete, settles it and finishes operational_error when the stop check fails between copies", async () => {
     const w = world({ input: concurrencyOnly(1) });
     let calls = 0;
     w.deps.stopRequested = () => {
@@ -317,11 +317,31 @@ describe("runRequest: internal failures and admission edges", () => {
       return calls >= 3 ? Promise.reject(new Error("connection reset")) : Promise.resolve(false);
     };
     const result = await w.run();
-    expect(result).toMatchObject({ outcome: "operational_error", stop_code: "needs_reconciliation", needs_reconciliation: true });
+    expect(result).toMatchObject({ outcome: "operational_error", stop_code: "operational_error", needs_reconciliation: false });
     expect(result.notes).toEqual([expect.stringContaining("connection reset")]);
     expect(ended(w.events.events)).toEqual([{ type: "candidate_incomplete", reason: "incomplete_run" }]);
-    expect(w.ledger.calls.map((call) => call.call)).toEqual(["reserveCandidate", "settleWorker"]);
+    expect(w.ledger.calls.map((call) => call.call)).toEqual(["reserveCandidate", "settleCandidate", "settleWorker"]);
     expect(validateContract("RequestStatus", w.status())).toEqual([]);
+  });
+
+  it("finishes needs_reconciliation, ending the candidate, when an adapter fails while the candidate holds its reservation", async () => {
+    const arm = { armed: false, calls: 0 };
+    class Failing extends FakeHostAdapter {
+      override protocol(): ReturnType<FakeHostAdapter["protocol"]> {
+        if (arm.armed) arm.calls += 1;
+        // The first call of the run prices the candidate; the second, as it starts, fails.
+        if (arm.calls > 1) throw new Error("the protocol file is unreadable");
+        return super.protocol();
+      }
+    }
+    const registry = [new Failing({ host_id: "task-report", entries: [syntheticEntry({ host_id: "task-report", bug_type_id: "concurrency", n: 1, criteria: [LOST] })] })];
+    const w = world({ input: concurrencyOnly(1), registry });
+    arm.armed = true;
+    const result = await w.run();
+    expect(result).toMatchObject({ outcome: "operational_error", stop_code: "needs_reconciliation", needs_reconciliation: true });
+    expect(ended(w.events.events)).toEqual([{ type: "candidate_incomplete", reason: "incomplete_run" }]);
+    expect(w.ledger.calls.map((call) => call.call)).toEqual(["reserveCandidate", "settleWorker"]);
+    expect(w.status()).toMatchObject({ attention: { code: "needs_reconciliation" }, budget: { reserved_microusd: 300_000 } });
   });
 
   it("finishes operational_error without a candidate when the stop check fails before one starts", async () => {

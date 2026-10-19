@@ -114,6 +114,10 @@ describe("the fake copy runner and collect (synthetic)", () => {
     const empty = fresh("rbw-factory-empty-");
     const record = await adapter.collect(plan, { copy_id: plan.copy_id, outcome: "ran", exit_code: 0, results_dir: empty, image_digest: entry.environment.kit_image_digest, architecture: "amd64", started_at: now().toISOString(), finished_at: now().toISOString(), results_sha256: "ab".repeat(32) });
     expect(record.status).toBe("invalid");
+    const malformed = fresh("rbw-factory-null-");
+    writeFileSync(join(malformed, "synthetic-result.json"), "null\n");
+    const nullRecord = await adapter.collect(plan, { copy_id: plan.copy_id, outcome: "ran", exit_code: 0, results_dir: malformed, image_digest: entry.environment.kit_image_digest, architecture: "amd64", started_at: now().toISOString(), finished_at: now().toISOString(), results_sha256: "cd".repeat(32) });
+    expect(nullRecord.status).toBe("invalid");
   });
 
   it("rejects for an uncertain provider outcome and records it", async () => {

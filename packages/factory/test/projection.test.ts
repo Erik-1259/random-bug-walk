@@ -150,6 +150,19 @@ describe("worker heartbeat attention", () => {
     const finished = statusFixture("status-fulfilled.json");
     expect(workerAttentionEvent({ events: finished.events, last_heartbeat_at: finished.last_heartbeat_at, created_at: finished.created_at, now: new Date("2026-10-21T00:00:00.000Z") })).toBeNull();
   });
+
+  it("clears a raised worker_unresponsive once the request finished", () => {
+    const finished = statusFixture("status-fulfilled.json");
+    const raised: Event = { seq: 36, at: "2026-10-20T14:24:22.000Z", type: "attention", host_id: null, candidate_id: null, item_key: null, case_id: null, message: "x", data: { code: "worker_unresponsive" } };
+    const last = finished.events.at(-1);
+    if (last === undefined) throw new Error("the fixture has no events");
+    const events = [...finished.events.slice(0, -1), raised, last].map((event, index) => ({ ...event, seq: index + 1 }));
+    expect(workerAttentionEvent({ events, last_heartbeat_at: finished.last_heartbeat_at, created_at: finished.created_at, now: new Date("2026-10-21T00:00:00.000Z") })).toMatchObject({
+      type: "attention_cleared",
+      data: { code: "worker_unresponsive" },
+      event_key: "heartbeat:1:clear",
+    });
+  });
 });
 
 describe("the lost-worker finish", () => {
