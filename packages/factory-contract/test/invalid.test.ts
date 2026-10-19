@@ -15,10 +15,13 @@ function contains(ancestor: readonly string[], path: readonly string[]): boolean
   return ancestor.length <= path.length && ancestor.every((segment, index) => segment === path[index]);
 }
 
+/** Reports that Ajv adds on the way to a fault: the rule or union that failed, not a fault of its own. */
+const ENCLOSING = new Set(["if", "anyOf", "oneOf", "contains", "not"]);
+
 /**
- * The value is refused with every expected code, and every other error is reported on the path
- * above one of them (the `if` and `anyOf` reports of the same fault), so a variant never passes on
- * an unrelated fault.
+ * The value is refused with every expected code, and every other error is an enclosing report on
+ * the path above one of them, or the `type` report of a nullable field's null branch on that path,
+ * so a variant never passes on an unrelated fault.
  */
 function expectRefused(def: DefName, value: JsonObject, expected: readonly string[]): void {
   const errors = validateContract(def, value);
@@ -26,7 +29,10 @@ function expectRefused(def: DefName, value: JsonObject, expected: readonly strin
   const targets = expected.map(pathOf);
   for (const error of errors) {
     if (expected.includes(error)) continue;
-    expect(targets.some((target) => contains(pathOf(error), target)), `${error} is not above ${expected.join(", ")}`).toBe(true);
+    const path = pathOf(error);
+    const keyword = error.split(":")[2] ?? "";
+    const enclosing = (ENCLOSING.has(keyword) || keyword === "type") && targets.some((target) => contains(path, target));
+    expect(enclosing, `${error} is not an enclosing report of ${expected.join(", ")}`).toBe(true);
   }
 }
 
@@ -51,7 +57,7 @@ const SHAPE_CASES: Case[] = [
   { name: "an unknown nested field", def: "Capabilities", base: capabilities, edit: (c) => { at(c, ["hosts", 0]).owner = "x"; }, expected: "schema:/hosts/0:additionalProperties:owner" },
   { name: "an unknown field in event data", def: "RequestStatus", base: running, edit: (c) => { at(c, ["events", 3, "data"]).extra = true; }, expected: "schema:/events/3/data:additionalProperties:extra" },
   { name: "an unknown field in a request body", def: "StartRequest", base: start, edit: (c) => { c.user = "synthetic-user"; }, expected: "schema:/:additionalProperties:user" },
-  { name: "an unknown field in error details", def: "ErrorResponse", base: () => contractFixture("error-busy.json"), edit: (c) => { at(c, ["error", "details"]).holder = "x"; }, expected: "schema:/error/details:additionalProperties:holder" },
+  { name: "an unknown field in error details", def: "ErrorResponse", base: () => contractFixture("error-busy.json"), edit: (c) => { at(c, ["error", "details"]).holder = "x"; }, expected: ["schema:/error/details:additionalProperties:holder", "schema:/error/details:additionalProperties:reason", "schema:/error/details:required:interpretation"] },
   // Missing fields
   { name: "a missing top-level field", def: "RequestStatus", base: fulfilled, edit: (c) => { delete c.poll_after_ms; }, expected: "schema:/:required:poll_after_ms" },
   { name: "a missing nested field", def: "StartRequest", base: start, edit: (c) => { delete at(c, ["input", "items", 0]).difficulty; }, expected: "schema:/input/items/0:required:difficulty" },
@@ -90,7 +96,7 @@ const SHAPE_CASES: Case[] = [
   { name: "an event numbered 0", def: "RequestStatus", base: running, edit: (c) => { at(c, ["events", 0]).seq = 0; }, expected: "schema:/events/0/seq:minimum" },
   { name: "a string count", def: "RequestStatus", base: fulfilled, edit: (c) => { at(c, ["funnel"]).packages_ready = "2"; }, expected: "schema:/funnel/packages_ready:type" },
   { name: "an object where an empty event data belongs", def: "RequestStatus", base: running, edit: (c) => { at(c, ["events", 0]).data = { baseline_id: "umami@ec0ff503" }; }, expected: "schema:/events/0/data:additionalProperties:baseline_id" },
-  { name: "check data on a host event", def: "RequestStatus", base: running, edit: (c) => { at(c, ["events", 3]).data = { check_set: "verification", copy: "clean", outcome: "pass", runs_valid: 1, runs_total: 1 }; }, expected: "schema:/events/3/data:required:baseline_id" },
+  { name: "check data on a host event", def: "RequestStatus", base: running, edit: (c) => { at(c, ["events", 3]).data = { check_set: "verification", copy: "clean", outcome: "pass", runs_valid: 1, runs_total: 1 }; }, expected: ["schema:/events/3/data:required:baseline_id", ...["check_set", "copy", "outcome", "runs_valid", "runs_total"].map((field) => `schema:/events/3/data:additionalProperties:${field}`)] },
 ];
 
 const RULE_CASES: Case[] = [
@@ -118,6 +124,8 @@ const RULE_CASES: Case[] = [
   { name: "a supported pair without a source", def: "Capabilities", base: capabilities, edit: (c) => { at(c, ["combinations", 1]).source = null; }, expected: "schema:/combinations/1/source:type" },
   { name: "an unsupported pair without a reason", def: "Capabilities", base: capabilities, edit: (c) => { at(c, ["combinations", 0]).reason = null; }, expected: "schema:/combinations/0/reason:type" },
   { name: "a supported pair with a reason", def: "Capabilities", base: capabilities, edit: (c) => { at(c, ["combinations", 1]).reason = "x"; }, expected: "schema:/combinations/1/reason:type" },
+  { name: "a negative remaining amount without an overrun", def: "RequestStatus", base: status("status-operational-error.json"), edit: (c) => { at(c, ["budget"]).remaining_microusd = -1; }, expected: "schema:/budget/remaining_microusd:minimum" },
+  { name: "an overrun with money remaining", def: "RequestStatus", base: status("status-operational-error.json"), edit: (c) => { at(c, ["budget"]).overrun = true; }, expected: "schema:/budget/remaining_microusd:maximum" },
   { name: "a source with no entries", def: "Capabilities", base: capabilities, edit: (c) => { at(c, ["combinations", 1, "source"]).entries = 0; }, expected: "schema:/combinations/1/source/entries:minimum" },
   { name: "a warning code marked blocking", def: "Interpretation", base: () => contractFixture("interpretation-unsupported.json"), edit: (c) => { at(c, ["items", 4, "problems", 0]).severity = "blocking"; }, expected: "schema:/items/4/problems/0/severity:const" },
   { name: "a request-level problem with an item", def: "Interpretation", base: () => contractFixture("interpretation-budget-below-minimum.json"), edit: (c) => { at(c, ["problems", 0]).item_key = "date-time-1"; }, expected: "schema:/problems/0/item_key:type" },
@@ -150,7 +158,7 @@ const RULE_CASES: Case[] = [
   { name: "a reconciliation busy that is retryable", def: "ErrorResponse", base: () => contractFixture("error-busy-needs-reconciliation.json"), edit: (c) => { at(c, ["error"]).retryable = true; }, expected: "schema:/error/retryable:const" },
   { name: "an unavailable that is not retryable", def: "ErrorResponse", base: () => contractFixture("error-unavailable.json"), edit: (c) => { at(c, ["error"]).retryable = false; }, expected: "schema:/error/retryable:const" },
   { name: "details on another code", def: "ErrorResponse", base: () => contractFixture("error-not-found.json"), edit: (c) => { at(c, ["error"]).details = { reason: "active" }; }, expected: "schema:/error/details:type" },
-  { name: "a stale interpretation without one", def: "ErrorResponse", base: () => contractFixture("error-interpretation-stale.json"), edit: (c) => { at(c, ["error"]).details = { reason: "active" }; }, expected: "schema:/error/details:additionalProperties:reason" },
+  { name: "a stale interpretation without one", def: "ErrorResponse", base: () => contractFixture("error-interpretation-stale.json"), edit: (c) => { at(c, ["error"]).details = { reason: "active" }; }, expected: ["schema:/error/details:additionalProperties:reason", "schema:/error/details:required:interpretation"] },
   { name: "an unsupported request with a startable interpretation", def: "ErrorResponse", base: () => contractFixture("error-interpretation-stale.json"), edit: (c) => { at(c, ["error"]).code = "unsupported_request"; }, expected: "schema:/error/details/interpretation/startable:const" },
 ];
 
@@ -196,6 +204,7 @@ describe.each([
 /** Values the contract allows that a stricter schema could wrongly refuse. */
 const ACCEPTED: Case[] = [
   { name: "an unsupported pair with a declared source", def: "Capabilities", base: capabilities, edit: (c) => { at(c, ["combinations", 0]).source = structuredClone(at(c, ["combinations", 1, "source"])); }, expected: [] },
+  { name: "an unsupported pair whose declared source has no entries", def: "Capabilities", base: capabilities, edit: (c) => { at(c, ["combinations", 0]).source = { ...structuredClone(at(c, ["combinations", 1, "source"])), entries: 0 }; }, expected: [] },
   { name: "a description with a line break", def: "StartRequest", base: start, edit: (c) => { at(c, ["input", "items", 0]).description = "lost update\nwhen two requests overlap"; }, expected: [] },
   { name: "a negative remaining amount on an overrun", def: "RequestStatus", base: status("status-operational-error.json"), edit: (c) => { Object.assign(at(c, ["budget"]), { spent_microusd: 1200000, committed_microusd: 1700000, remaining_microusd: -700000, overrun: true }); }, expected: [] },
   { name: "an error run without a matrix", def: "ValidationRun", base: () => contractFixture("validation-error.json"), edit: (c) => { c.matrix = null; }, expected: [] },

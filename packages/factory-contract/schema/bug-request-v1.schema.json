@@ -664,7 +664,13 @@
             "type": "object",
             "properties": {
               "source": {
-                "type": "object"
+                "type": "object",
+                "properties": {
+                  "entries": {
+                    "type": "integer",
+                    "minimum": 1
+                  }
+                }
               },
               "reason": {
                 "type": "null"
@@ -704,8 +710,8 @@
           "$ref": "#/$defs/Version"
         },
         "entries": {
-          "description": "The size of the finite catalog.",
-          "$ref": "#/$defs/PositiveInteger"
+          "description": "The size of the finite catalog; at least 1 for a supported pair.",
+          "$ref": "#/$defs/NonNegativeInteger"
         },
         "criteria_ids": {
           "type": "array",
@@ -1975,7 +1981,7 @@
       }
     },
     "RequestBudget": {
-      "description": "Contract section 8.5. The arithmetic between the fields is not checked by the schema.",
+      "description": "Contract section 8.5. Beyond the sign of remaining_microusd, the arithmetic between the fields is not checked by the schema.",
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -2008,7 +2014,40 @@
           "description": "True when committed_microusd exceeds budget_microusd.",
           "type": "boolean"
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "overrun": {
+                "const": true
+              }
+            },
+            "required": [
+              "overrun"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "remaining_microusd": {
+                "type": "integer",
+                "maximum": -1
+              }
+            }
+          },
+          "else": {
+            "type": "object",
+            "properties": {
+              "remaining_microusd": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          }
+        }
+      ]
     },
     "RequestLimits": {
       "type": "object",

@@ -407,8 +407,8 @@ export interface SourceSummary {
   source_id: Identifier;
   kind: SourceKind;
   catalog_version: Version;
-  /** The size of the finite catalog. */
-  entries: PositiveInteger;
+  /** The size of the finite catalog; at least 1 for a supported pair. */
+  entries: NonNegativeInteger;
   criteria_ids: Identifier[];
   description: string;
 }
@@ -618,7 +618,7 @@ export interface Attention {
   message: string;
 }
 
-/** Contract section 8.5. The arithmetic between the fields is not checked by the schema. */
+/** Contract section 8.5. Beyond the sign of remaining_microusd, the arithmetic between the fields is not checked by the schema. */
 export interface RequestBudget {
   budget_microusd: MicroUsd;
   reserved_microusd: MicroUsd;
