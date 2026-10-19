@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "suite": "request-api-acceptance",
+  "status": "unavailable",
+  "acceptance_executed": false,
+  "backend_revision": "575c1074de588449f72dcebcae4d24900d0015e4",
+  "contract_revision": null,
+  "contract_path": "docs/product/bug-request-v1.md",
+  "isolated_target_verified": false,
+  "environment": {
+    "node": "v24.21.0",
+    "pnpm": "10.33.2",
+    "python": "3.12.14",
+    "uv": "0.12.22",
+    "frozen_install": "passed",
+    "lockfiles_changed": false
+  },
+  "existing_check": {
+    "command": "pnpm --filter @rbw/web exec vitest run test/judge/judge.test.ts -t 'makes one create for two POSTs with one request ID|answers a repeated POST with one request ID'",
+    "exit_code": 0,
+    "passed": 2,
+    "excluded_by_name_filter": 41,
+    "request_api_acceptance_evidence": false
+  },
+  "summary": {
+    "passed": 0,
+    "failed": 0,
+    "unavailable": 8
+  },
+  "scenarios": [
+    {
+      "id": "identity",
+      "status": "unavailable",
+      "reason": "published_contract_and_verified_isolated_backend_required"
+    },
+    {
+      "id": "quantities",
+      "status": "unavailable",
+      "reason": "published_contract_and_verified_isolated_backend_required"
+    },
+    {
+      "id": "shared-budget",
+      "status": "unavailable",
+      "reason": "published_contract_and_verified_isolated_backend_required"
+    },
+    {
+      "id": "qualification",
+      "status": "unavailable",
+      "reason": "published_contract_and_verified_isolated_backend_required"
+    },
+    {
+      "id": "unsupported",
+      "status": "unavailable",
+      "reason": "published_contract_and_verified_isolated_backend_required"
+    },
+    {
+      "id": "stops",
+      "status": "unavailable",
+      "reason": "published_contract_and_verified_isolated_backend_required"
+    },
+    {
+      "id": "continuity",
+      "status": "unavailable",
+      "reason": "published_contract_and_verified_isolated_backend_required"
+    },
+    {
+      "id": "downloads",
+      "status": "unavailable",
+      "reason": "published_contract_and_verified_isolated_backend_required"
+    }
+  ]
+}
