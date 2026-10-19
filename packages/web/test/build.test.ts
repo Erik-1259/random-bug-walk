@@ -77,6 +77,7 @@ describe("next build", () => {
       "/_global-error",
       "/_not-found",
       "/catalog",
+      "/factory",
       "/runs/00000000-0000-4000-8000-000000002001",
       "/runs/00000000-0000-4000-8000-000000002001/logs/00000000-0000-4000-8000-000000002002/run.log",
       "/runs/00000000-0000-4000-8000-000000002001/manifest.json",
@@ -87,6 +88,10 @@ describe("next build", () => {
     ]);
     const empty = readFileSync(join(SERVER_APP, "index.html"), "utf8");
     expect(empty).toContain("No validated blind-spot example yet");
+    const factory = readFileSync(join(SERVER_APP, "factory.html"), "utf8");
+    expect(factory).toContain("Live requests unavailable");
+    expect(factory).toContain("Completed example");
+    expect(factory).not.toContain("Development preview");
     expect(empty).toContain("No published run holds an observed symptom yet.");
     expect(empty).toMatch(/<button[^>]*disabled=""[^>]*>Plant and verify this example<\/button>/);
     expect(readFileSync(join(SERVER_APP, "catalog.html"), "utf8")).toContain("00000000-0000-4000-8000-000000002005");
