@@ -17,7 +17,7 @@ function item(key: string, index: number, criteria: string[], quantity = 1, deli
 function planned(host: "task-report" | "umami", n: number, criteria: string[], defectOf?: number): PlannedCandidate {
   const type = host === "umami" ? "date_time" : "concurrency";
   const entry = syntheticEntry({ host_id: host, bug_type_id: type, n, criteria, ...(defectOf === undefined ? {} : { defect_of: defectOf }) });
-  return { ...candidateInfo(SYNTHETIC_BASELINES[host], entry), entry, adapter: new FakeHostAdapter({ host_id: host, entries: [entry] }), worst_case_microusd: 300_000 };
+  return { ...candidateInfo(SYNTHETIC_BASELINES[host], entry), baseline_id: SYNTHETIC_BASELINES[host].baseline_id, entry, adapter: new FakeHostAdapter({ host_id: host, entries: [entry] }), worst_case_microusd: 300_000 };
 }
 
 describe("items and units", () => {

@@ -90,7 +90,7 @@ describe("the --route option", () => {
     // both refuse a static-screen run, and neither matters here.
     const missing = join(tempDir("rbw-candidates-route-rates-"), "missing.json");
     const result = await run(["--model", "kimi", "--rate-sheet", missing], { findSites: finder(threeSites()), buildScreen });
-    expect(result.err).toBe("");
+    expect(result.err).toBe("candidates: note: --model, --rate-sheet apply only to --route static-screen/v1; the behavioral-qualification/v1 route runs no screen\n");
     expect(result.code).toBe(0);
     expect(buildScreen.built).toBe(0);
     expect(screen.calls).toHaveLength(0);
@@ -138,6 +138,7 @@ describe("runBehavioralRoute", () => {
       runId: "33333333-3333-4333-8333-333333333333",
       now: () => new Date("2026-10-19T12:00:00.000Z"),
       findSitesName: "fakeFindSites",
+      scratchBase: tempDir("rbw-candidates-route-scratch-"),
     });
     expect(record.candidates.map((c) => c.status).sort()).toEqual(["over_candidate_cap", "pending_qualification", "pending_qualification", "plant_failed"]);
     expect(record.totals).toEqual({ sites_found: 4, duplicates: 0, planted: 2 });

@@ -291,3 +291,66 @@ describe("runRequest: uncertain outcomes", () => {
     expect(w.status()).toMatchObject({ outcome: "fulfilled", attention: { code: "needs_reconciliation" } });
   });
 });
+
+/** A task-report fake whose entries declare different numbers of copies per state. */
+class PricedAdapter extends FakeHostAdapter {
+  readonly copiesOf: (entryId: string) => number;
+
+  constructor(entries: ReturnType<typeof syntheticEntry>[], copiesOf: (entryId: string) => number) {
+    super({ host_id: "task-report", entries });
+    this.copiesOf = copiesOf;
+  }
+
+  override protocol(entry?: { entry_id: string }): ReturnType<FakeHostAdapter["protocol"]> {
+    const base = super.protocol();
+    const copies = entry === undefined ? 1 : this.copiesOf(entry.entry_id);
+    return { ...base, per_state: { clean: { ...base.per_state.clean, copies }, buggy: { ...base.per_state.buggy, copies }, fixed: { ...base.per_state.fixed, copies } } };
+  }
+}
+
+describe("runRequest: internal failures and admission edges", () => {
+  it("finishes needs_reconciliation, ending the candidate, when the stop check fails between copies", async () => {
+    const w = world({ input: concurrencyOnly(1) });
+    let calls = 0;
+    w.deps.stopRequested = () => {
+      calls += 1;
+      return calls >= 3 ? Promise.reject(new Error("connection reset")) : Promise.resolve(false);
+    };
+    const result = await w.run();
+    expect(result).toMatchObject({ outcome: "operational_error", stop_code: "needs_reconciliation", needs_reconciliation: true });
+    expect(result.notes).toEqual([expect.stringContaining("connection reset")]);
+    expect(ended(w.events.events)).toEqual([{ type: "candidate_incomplete", reason: "incomplete_run" }]);
+    expect(w.ledger.calls.map((call) => call.call)).toEqual(["reserveCandidate", "settleWorker"]);
+    expect(validateContract("RequestStatus", w.status())).toEqual([]);
+  });
+
+  it("finishes operational_error without a candidate when the stop check fails before one starts", async () => {
+    const w = world({ input: concurrencyOnly(1) });
+    w.deps.stopRequested = () => Promise.reject(new Error("connection reset"));
+    const result = await w.run();
+    expect(result).toMatchObject({ outcome: "operational_error", stop_code: "operational_error", needs_reconciliation: false });
+    expect(types(w.events.events)).not.toContain("candidate_selected");
+    expect(finished(w.events.events)).toEqual({ outcome: "operational_error", stop_code: "operational_error" });
+  });
+
+  it("stops operational_error, not budget_exhausted, when the ledger refuses a reservation because it is halted", async () => {
+    const w = world({ input: concurrencyOnly(1) });
+    const ledger = w.ledger;
+    w.deps.ledger = { status: () => ledger.status(), reserveCandidate: () => Promise.resolve({ kind: "refused", reason: "halted" }), settleCandidate: (i) => ledger.settleCandidate(i), settleWorker: (i) => ledger.settleWorker(i) };
+    const result = await w.run();
+    expect(result).toMatchObject({ outcome: "operational_error", stop_code: "operational_error" });
+    expect(ended(w.events.events)).toEqual([{ type: "candidate_skipped", reason: "no_budget_for_candidate" }]);
+  });
+
+  it("does not count a defect as tried when its first entry was skipped for budget", async () => {
+    const expensive = syntheticEntry({ host_id: "task-report", bug_type_id: "concurrency", n: 1, criteria: [LOST] });
+    const cheap = syntheticEntry({ host_id: "task-report", bug_type_id: "concurrency", n: 2, criteria: [LOST], defect_of: 1 });
+    const registry = [new PricedAdapter([expensive, cheap], (id) => (id === expensive.entry_id ? 3 : 1))];
+    // The budget after the worker is $0.80: entry 01 needs 9 copies ($0.90), entry 02 three ($0.30).
+    const w = world({ input: concurrencyOnly(1, 1_000_000), registry });
+    const result = await w.run();
+    expect(result).toMatchObject({ stop_code: "fulfilled", delivered: 1 });
+    expect(ended(w.events.events)).toEqual([{ type: "candidate_skipped", reason: "no_budget_for_candidate" }]);
+    expect(w.qualified).toEqual([cheap.entry_id]);
+  });
+});

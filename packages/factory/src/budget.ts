@@ -10,19 +10,20 @@ export type Admission = { kind: "admit" } | { kind: "skip"; shortfall: "budget" 
 /** Why the ledger allows no new candidate at all; the request then stops `operational_error`. */
 export type LedgerStop = "halted" | "pool_halted" | "overrun";
 
-function room(status: LedgerStatus): number {
+/** The request budget's room: the budget less what is reserved and spent; negative only on an overrun. */
+export function budgetRoom(status: Pick<LedgerStatus, "budget_microusd" | "reserved_microusd" | "spent_microusd">): number {
   return status.budget_microusd - status.reserved_microusd - status.spent_microusd;
 }
 
 export function ledgerStop(status: LedgerStatus): LedgerStop | null {
   if (status.halted) return "halted";
   if (status.pool_halted) return "pool_halted";
-  if (room(status) < 0) return "overrun";
+  if (budgetRoom(status) < 0) return "overrun";
   return null;
 }
 
 export function admitCandidate(status: LedgerStatus, worstCaseMicrousd: number): Admission {
-  if (room(status) < worstCaseMicrousd) return { kind: "skip", shortfall: "budget" };
+  if (budgetRoom(status) < worstCaseMicrousd) return { kind: "skip", shortfall: "budget" };
   if (status.pool_available_microusd < worstCaseMicrousd) return { kind: "skip", shortfall: "pool" };
   return { kind: "admit" };
 }

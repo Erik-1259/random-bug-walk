@@ -18,6 +18,7 @@ export interface ItemState {
 
 /** A catalog entry the run may try, in catalog order, with its worst case priced. */
 export interface PlannedCandidate extends CandidateInfo {
+  baseline_id: string;
   entry: CatalogEntry;
   adapter: HostAdapter;
   worst_case_microusd: number;

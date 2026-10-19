@@ -3,6 +3,7 @@
 // an injected clock. Counts come from events only and count distinct candidates.
 import type { Attention, AttentionCode, Candidate, CandidateReasonDetail, CandidateStage, Case, Event, HostId, QualificationRecord, RequestState, RequestStatus, StopCode, ValidationRun } from "@rbw/factory-contract";
 import { ATTENTION_TEXT, attention as attentionEvent, attentionCleared, candidateEnded, requestFinished } from "./events.ts";
+import { budgetRoom } from "./budget.ts";
 import { CONTRACT_VERSION } from "./capabilities.ts";
 import { formatUsd } from "./money.ts";
 import type { LedgerStatus, NewEvent, RequestRecordInput } from "./ports.ts";
@@ -259,7 +260,7 @@ export function projectStatus(input: ProjectionInput): RequestStatus {
   const missing = items.reduce((sum, item) => sum + item.missing, 0);
 
   const committed = input.budget.reserved_microusd + input.budget.spent_microusd;
-  const remaining = input.budget.budget_microusd - committed;
+  const remaining = budgetRoom(input.budget);
 
   let attention: Attention | null = folded.attention === null ? null : { code: folded.attention, message: ATTENTION_TEXT[folded.attention] };
   if (attention === null && state !== "finished" && heartbeatAge(input.last_heartbeat_at, request.created_at, input.now) > UNRESPONSIVE_AFTER_MS) {

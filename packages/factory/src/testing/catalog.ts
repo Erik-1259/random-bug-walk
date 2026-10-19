@@ -152,9 +152,12 @@ export function syntheticCopyPlan(entry: CatalogEntry, state: CopyState, n: numb
   };
 }
 
-/** The entry ID and state a synthetic copy ID names, or null for another ID. */
+/**
+ * The entry ID, state and copy number a synthetic copy ID names, or null for another ID. The fake
+ * adapter's IDs carry the pair's first 12 hex characters too: `<entry_id>-<pair>-<state>-<n>`.
+ */
 export function parseSyntheticCopyId(copyId: string): { entry_id: string; state: CopyState; n: number } | null {
-  const match = /^(.+)-(clean|buggy|fixed)-(\d+)$/.exec(copyId);
+  const match = /^(.+?)(?:-[0-9a-f]{12})?-(clean|buggy|fixed)-(\d+)$/.exec(copyId);
   if (match === null) return null;
   return { entry_id: match[1] ?? "", state: match[2] as CopyState, n: Number(match[3]) };
 }
@@ -188,7 +191,7 @@ function aggregate(observations: CellObservation[]): CellObservation {
 export interface FakeAdapterOptions {
   host_id: HostId;
   entries: CatalogEntry[];
-  /** The entry an unpacked pair belongs to; the first entry by default. */
+  /** The entry an unpacked pair belongs to; needed when the adapter has several entries. */
   entryOf?: (unpacked: UnpackedPair) => CatalogEntry | undefined;
   /** Verification rounds per copy: 5 for the task-report fakes and 3 for the Umami fakes by default. */
   verification_runs?: number;
@@ -206,7 +209,7 @@ export class FakeHostAdapter implements HostAdapter {
   constructor(options: FakeAdapterOptions) {
     this.host_id = options.host_id;
     this.entries = options.entries;
-    this.entryOf = options.entryOf ?? (() => this.entries[0]);
+    this.entryOf = options.entryOf ?? (() => (this.entries.length === 1 ? this.entries[0] : undefined));
     this.verificationRuns = options.verification_runs ?? (options.host_id === "task-report" ? 5 : 3);
     if (options.availability !== undefined) this.availability = options.availability;
   }
@@ -234,9 +237,12 @@ export class FakeHostAdapter implements HostAdapter {
   /** One plan per declared copy: the state's tree as the app files and the evaluator tree as evaluator files. */
   copyPlans(state: CopyState, unpacked: UnpackedPair, protocol: Protocol): CopyPlan[] {
     const entry = this.entryOf(unpacked);
-    if (entry === undefined) return [];
+    if (entry === undefined) throw new Error("the synthetic adapter cannot tell which entry this pair belongs to; pass entryOf");
     const files = { files: unpacked.states[state].files, evaluator_files: unpacked.evaluator.files };
-    return Array.from({ length: protocol.per_state[state].copies }, (_, index) => syntheticCopyPlan(entry, state, index + 1, files));
+    return Array.from({ length: protocol.per_state[state].copies }, (_, index) => ({
+      ...syntheticCopyPlan(entry, state, index + 1, files),
+      copy_id: `${entry.entry_id}-${unpacked.pair_sha256.slice(0, 12)}-${state}-${String(index + 1)}`,
+    }));
   }
 
   /**

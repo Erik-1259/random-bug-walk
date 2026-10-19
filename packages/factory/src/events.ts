@@ -11,6 +11,7 @@
 //   heartbeat:<n>:raise | heartbeat:<n>:clear  (worker_unresponsive, appended from the status side)
 //   lost:candidate-end | lost:attention | lost:finished  (the lost-worker finish)
 import type { AttentionCode, BugTypeId, CandidateReason, CheckSet, CopyState, HostId, ObservedOutcome, RequestOutcome, StopCode } from "@rbw/factory-contract";
+import { budgetRoom } from "./budget.ts";
 import { formatUsd } from "./money.ts";
 import type { LedgerStatus, NewEvent } from "./ports.ts";
 import type { CandidateInfo } from "./sources.ts";
@@ -165,10 +166,6 @@ export function sourceExhausted(host: HostId, bugTypeId: BugTypeId, sourceId: st
   };
 }
 
-export function remaining(status: Pick<LedgerStatus, "budget_microusd" | "reserved_microusd" | "spent_microusd">): number {
-  return status.budget_microusd - status.reserved_microusd - status.spent_microusd;
-}
-
 export function budgetUpdated(key: string, status: Pick<LedgerStatus, "budget_microusd" | "reserved_microusd" | "spent_microusd">, message: string, at: string): NewEvent {
   return {
     event_key: key,
@@ -176,7 +173,7 @@ export function budgetUpdated(key: string, status: Pick<LedgerStatus, "budget_mi
     type: "budget_updated",
     ...NO_LINKS,
     message,
-    data: { reserved_microusd: status.reserved_microusd, spent_microusd: status.spent_microusd, remaining_microusd: remaining(status) },
+    data: { reserved_microusd: status.reserved_microusd, spent_microusd: status.spent_microusd, remaining_microusd: budgetRoom(status) },
   };
 }
 

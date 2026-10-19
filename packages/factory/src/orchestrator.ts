@@ -14,7 +14,7 @@ import { CHECK_SET_VALUES, COPY_STATE_VALUES } from "@rbw/factory-contract";
 import type { Case, CatalogEntry, Cell, CellObservation, CheckSet, CopyRecord, CopyState, HostId, RequestOutcome, StopCode } from "@rbw/factory-contract";
 import { assignItem, demonstratedCriteria, itemStates, nextCandidate, servesItem, unfilledUnits } from "./assignment.ts";
 import type { ItemState, PlannedCandidate } from "./assignment.ts";
-import { admitCandidate, ledgerStop } from "./budget.ts";
+import { admitCandidate, budgetRoom, ledgerStop } from "./budget.ts";
 import { PACKAGE_FORMATS, QUALIFICATION_ROUTE } from "./capabilities.ts";
 import { bugTypeOf } from "./criteria.ts";
 import type { CriteriaCatalog } from "./criteria.ts";
@@ -76,6 +76,8 @@ export interface RunResult {
 
 export const DIFFICULTY_NOTE = "No difficulty assessment ran. This case may be easy or hard to diagnose from source.";
 
+const ENDS_CANDIDATE: ReadonlySet<string> = new Set(["candidate_rejected", "candidate_invalid", "candidate_incomplete", "candidate_skipped"]);
+
 type CandidateOutcome = { kind: "done" } | { kind: "stop"; stop_code: "cancelled_by_user" | "time_limit" } | { kind: "uncertain" } | { kind: "failed" };
 
 interface Amounts {
@@ -97,6 +99,9 @@ class RequestRun {
   private reconciliation = false;
   private hookError: { error: unknown } | null = null;
   private readonly notes: string[] = [];
+  /** The candidate of the current iteration: whether it ended, holds a reservation, and settled. */
+  private current: { candidate: PlannedCandidate; ended: boolean; reserved: boolean; settled: boolean } | null = null;
+  private finishing = false;
 
   constructor(deps: RunRequestDeps) {
     this.deps = deps;
@@ -114,6 +119,8 @@ class RequestRun {
 
   private async append(event: NewEvent): Promise<void> {
     await this.deps.events.append(event);
+    const current = this.current;
+    if (current !== null && event.candidate_id === current.candidate.candidate_id && (ENDS_CANDIDATE.has(event.type) || event.type === "case_delivered")) current.ended = true;
   }
 
   /** Appends `budget_updated` when the ledger's amounts changed since the last one this run saw. */
@@ -134,6 +141,7 @@ class RequestRun {
   }
 
   private async finish(stopCode: StopCode): Promise<RunResult> {
+    this.finishing = true;
     try {
       await this.deps.ledger.settleWorker({ stop_code: stopCode });
     } catch (error) {
@@ -163,35 +171,58 @@ class RequestRun {
       for (const source of sourcesOf(adapter, deps.catalog, window)) {
         for (const entry of source.available) {
           if (!this.items.some((item) => entryServes(entry, item))) continue;
-          planned.push({ ...candidateInfo(baseline, entry), entry, adapter, worst_case_microusd: candidateWorstCase(adapter, entry, deps.profile) });
+          planned.push({ ...candidateInfo(baseline, entry), baseline_id: baseline.baseline_id, entry, adapter, worst_case_microusd: candidateWorstCase(adapter, entry, deps.profile) });
         }
       }
     }
     return planned;
   }
 
+  /**
+   * Runs the loop. An unexpected failure (a port read, a hook, an adapter) ends the candidate in flight
+   * as incomplete and finishes the request: `needs_reconciliation` while that candidate's reservation is
+   * held, otherwise `operational_error`. A failure while finishing, or a store that refuses the recovery's
+   * events, propagates: the lost-worker finish then applies.
+   */
   async run(): Promise<RunResult> {
+    try {
+      return await this.loop();
+    } catch (error) {
+      if (this.finishing) throw error;
+      this.note("the request loop", error);
+      const current = this.current;
+      if (current !== null && !current.ended) {
+        await this.append(candidateEnded(current.candidate, "incomplete_run", this.at(), "Incomplete: the worker hit an internal error during this candidate. It is not reproduction and was not retried."));
+      }
+      if (current !== null && current.reserved && !current.settled) return this.finishUncertain();
+      return this.finish("operational_error");
+    }
+  }
+
+  private async loop(): Promise<RunResult> {
     const { deps } = this;
     const start = await deps.ledger.status();
     this.lastAmounts = { reserved_microusd: start.reserved_microusd, spent_microusd: start.spent_microusd };
     let planned: PlannedCandidate[];
     try {
       planned = this.plan();
-      const hosts = [...new Set(planned.map((candidate) => candidate.host_id))];
-      const baselines = new Map(planned.map((candidate) => [candidate.host_id, candidate.adapter.baseline().baseline_id]));
-      for (const host of hosts) await this.append(hostPreparing(host, baselines.get(host) ?? "", this.at()));
-      for (const host of hosts) await deps.prepareHost?.(host);
-      for (const host of hosts) await this.append(hostReady(host, baselines.get(host) ?? "", this.at()));
+      const hosts = new Map<HostId, string>();
+      for (const candidate of planned) if (!hosts.has(candidate.host_id)) hosts.set(candidate.host_id, candidate.baseline_id);
+      for (const [host, baselineId] of hosts) await this.append(hostPreparing(host, baselineId, this.at()));
+      for (const host of hosts.keys()) await deps.prepareHost?.(host);
+      for (const [host, baselineId] of hosts) await this.append(hostReady(host, baselineId, this.at()));
     } catch (error) {
       this.note("planning candidates or preparing hosts", error);
       return this.finish("operational_error");
     }
 
     const tried = new Set<string>();
+    /** Defects of candidates that started, with the entry that started them. */
     const defects = new Map<string, string>();
     const budgetSkipped = new Set<string>();
     let started = 0;
     for (;;) {
+      this.current = null;
       if (this.items.every((item) => unfilledUnits(item) === 0)) return this.finish("fulfilled");
       if (await deps.stopRequested()) return this.finish("cancelled_by_user");
       if (deps.now().getTime() >= this.deadlineMs) return this.finish("time_limit");
@@ -202,18 +233,17 @@ class RequestRun {
       const duplicateOf = defects.get(next.defect_id);
       if (duplicateOf === undefined && started >= deps.request.interpretation.limits.max_candidates) return this.finish("candidate_limit");
       tried.add(next.candidate_id);
+      this.current = { candidate: next, ended: false, reserved: false, settled: false };
       await this.append(candidateSelected(next, this.at()));
       if (duplicateOf !== undefined) {
         await this.append(candidateEnded(next, "duplicate_defect", this.at(), `Skipped: this entry plants the same defect as ${duplicateOf}, which this request already tried.`));
         continue;
       }
-      defects.set(next.defect_id, next.entry_id);
       const host = HOST_PRESENTATION[next.host_id].name;
       const skip = async (): Promise<void> => {
         budgetSkipped.add(next.candidate_id);
-        const room = status.budget_microusd - status.reserved_microusd - status.spent_microusd;
         await this.append(
-          candidateEnded(next, "no_budget_for_candidate", this.at(), `Skipped: the remaining budget of ${formatUsd(room)} or the factory pool cannot cover this candidate's worst case of ${formatUsd(next.worst_case_microusd)} on ${host}.`),
+          candidateEnded(next, "no_budget_for_candidate", this.at(), `Skipped: the remaining budget of ${formatUsd(budgetRoom(status))} or the factory pool cannot cover this candidate's worst case of ${formatUsd(next.worst_case_microusd)} on ${host}.`),
         );
       };
       if (admitCandidate(status, next.worst_case_microusd).kind === "skip") {
@@ -228,10 +258,16 @@ class RequestRun {
         await this.append(candidateEnded(next, "incomplete_run", this.at(), "Incomplete: reserving this candidate's worst case had an uncertain outcome, so it was not run or retried."));
         return this.finishUncertain();
       }
+      if (reserved.kind === "refused" && reserved.reason === "halted") {
+        await this.append(candidateEnded(next, "no_budget_for_candidate", this.at(), "Skipped: the spend ledger is halted, so this candidate's worst case could not be reserved."));
+        return this.finish("operational_error");
+      }
       if (reserved.kind === "refused") {
         await skip();
         continue;
       }
+      this.current.reserved = true;
+      defects.set(next.defect_id, next.entry_id);
       started += 1;
       await this.budgetChanged(`cand:${next.candidate_id}:reserved`, `this candidate's worst case on ${host}`);
       const outcome = await this.runCandidate(next);
@@ -245,6 +281,7 @@ class RequestRun {
         this.note(`settling candidate ${next.candidate_id}`, error);
         return this.finishUncertain();
       }
+      this.current.settled = true;
       await this.budgetChanged(`cand:${next.candidate_id}:settled`, "the finished candidate");
       if (outcome.kind === "stop") return this.finish(outcome.stop_code);
       if (outcome.kind === "failed") return this.finish("operational_error");

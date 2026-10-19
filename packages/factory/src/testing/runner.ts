@@ -83,7 +83,8 @@ export class FakeCopyRunner implements CopyRunner {
 
 /**
  * A fake runner for a named scenario: each copy runs the planned cell of its entry and state, and the
- * scenario's uncertain copy, pause and lost worker apply per entry, counting copies from 1.
+ * scenario's uncertain copy, pause and lost worker apply per run of an entry, counting its copies from 1
+ * (a run starts at the entry's first clean copy, as the harness orders them).
  */
 export function scenarioCopyRunner(setup: ScenarioSetup, options: { now: () => Date; resultsBase: string; hooks?: FakeHooks }): FakeCopyRunner {
   const entries = new Map<string, CatalogEntry>(setup.registry.flatMap((adapter) => adapter.entries.map((entry) => [entry.entry_id, entry] as const)));
@@ -96,11 +97,11 @@ export function scenarioCopyRunner(setup: ScenarioSetup, options: { now: () => D
       const entry = parsed === null ? undefined : entries.get(parsed.entry_id);
       if (parsed === null || entry === undefined) return { kind: "setup_failed" };
       const planned = setup.plan(entry);
-      const count = (copies.get(entry.entry_id) ?? 0) + 1;
+      const count = parsed.state === "clean" && parsed.n === 1 ? 1 : (copies.get(entry.entry_id) ?? 0) + 1;
       copies.set(entry.entry_id, count);
       if (planned.uncertain_at_copy === count) return { kind: "uncertain" };
       if (planned.pause_at_copy === count) await options.hooks?.pause?.();
-      if (planned.lost_after_copies !== undefined && count > planned.lost_after_copies) {
+      if (planned.lost_after_copies !== undefined && count === planned.lost_after_copies + 1) {
         await options.hooks?.workerLost?.();
         await options.hooks?.hang?.();
       }

@@ -18,7 +18,7 @@ import type { CriteriaCatalog } from "./criteria.ts";
 import { defectId } from "./identity.ts";
 import { matchDescription } from "./match.ts";
 import { formatUsd } from "./money.ts";
-import { hostCandidateWorstCase, validationWorstCase } from "./profile.ts";
+import { candidateWorstCase, hostCandidateWorstCase, validationWorstCase } from "./profile.ts";
 import type { FactoryProfileInput } from "./profile.ts";
 import { HOST_PRESENTATION, adapterFor, entryServes, plannedWindow, sourceFor } from "./sources.ts";
 import type { HostRegistry, SourceView } from "./sources.ts";
@@ -38,7 +38,7 @@ interface ItemWork {
   item: InterpretedItem;
   criterionIds: string[];
   /** Eligible entries with their defect IDs, in catalog order. */
-  eligible: { host_id: HostId; defect_id: string }[];
+  eligible: { host_id: HostId; defect_id: string; worst_case_microusd: number }[];
 }
 
 function hostName(host: HostId): string {
@@ -106,11 +106,12 @@ export function interpret(args: InterpretInput): Interpretation {
     for (const host of supportedHosts) {
       const view = sources.get(`${host}:${raw.bug_type_id}`);
       const baseline = baselines.get(host);
-      if (view === undefined || baseline === undefined) continue;
+      const adapter = adapterFor(registry, host);
+      if (view === undefined || baseline === undefined || adapter === null) continue;
       const serving = view.available.filter((entry) => entryServes(entry, { bug_type_id: raw.bug_type_id, criterion_ids: criterionIds }));
       if (serving.length === 0) continue;
       eligibleSources.push({ host_id: host, source_id: view.source_id, entries: serving.length });
-      for (const entry of serving) eligible.push({ host_id: host, defect_id: defectId(baseline, entry) });
+      for (const entry of serving) eligible.push({ host_id: host, defect_id: defectId(baseline, entry), worst_case_microusd: candidateWorstCase(adapter, entry, profile) });
     }
     const problems: Problem[] = [];
     const block = (code: Problem["code"], message: string): void => {
@@ -149,11 +150,14 @@ export function interpret(args: InterpretInput): Interpretation {
   const budget = input.budget_microusd;
   const worker = profile.worker_worst_case_microusd;
   const afterWorker = budget - worker;
-  for (const { item } of work) {
+  // The loop admits candidates entry by entry, so "no candidate can start" compares the cheapest
+  // eligible entry of each host with the room after the worker.
+  const cheapestOn = (eligible: ItemWork["eligible"], host: HostId): number => Math.min(...eligible.filter((entry) => entry.host_id === host).map((entry) => entry.worst_case_microusd));
+  for (const { item, eligible } of work) {
     const hosts = item.eligible_sources.map((source) => source.host_id);
     if (hosts.length === 0) continue;
-    if (hosts.every((host) => (candidateWorst.get(host) ?? 0) > afterWorker)) {
-      const costs = hosts.map((host) => `${formatUsd(candidateWorst.get(host) ?? 0)} on ${hostName(host)}`).join(" and ");
+    if (hosts.every((host) => cheapestOn(eligible, host) > afterWorker)) {
+      const costs = hosts.map((host) => `${formatUsd(cheapestOn(eligible, host))} on ${hostName(host)}`).join(" and ");
       const which = hosts.length === 1 ? "the only host eligible for this item" : "every host eligible for this item";
       item.problems.push({
         code: "budget_below_item_minimum",
@@ -179,16 +183,17 @@ export function interpret(args: InterpretInput): Interpretation {
   }
 
   const problems: Problem[] = [];
-  const supportedHosts = new Set(work.filter((entry) => entry.item.status === "supported").flatMap((entry) => entry.item.eligible_sources.map((source) => source.host_id)));
-  if (supportedHosts.size > 0) {
-    let cheapest: HostId | null = null;
-    for (const host of supportedHosts) if (cheapest === null || (candidateWorst.get(host) ?? 0) < (candidateWorst.get(cheapest) ?? 0)) cheapest = host;
-    const least = cheapest === null ? 0 : (candidateWorst.get(cheapest) ?? 0);
-    if (cheapest !== null && budget < worker + least) {
+  let cheapest: { host_id: HostId; worst_case_microusd: number } | null = null;
+  for (const entry of work.filter((candidate) => candidate.item.status === "supported").flatMap((candidate) => candidate.eligible)) {
+    if (cheapest === null || entry.worst_case_microusd < cheapest.worst_case_microusd) cheapest = entry;
+  }
+  if (cheapest !== null) {
+    const least = cheapest.worst_case_microusd;
+    if (budget < worker + least) {
       problems.push({
         code: "budget_below_minimum",
         severity: "blocking",
-        message: `A budget of ${formatUsd(budget)} cannot cover the worker's worst case of ${formatUsd(worker)} plus one candidate's worst case of ${formatUsd(least)} on ${hostName(cheapest)}. Raise the budget to at least ${formatUsd(worker + least)}.`,
+        message: `A budget of ${formatUsd(budget)} cannot cover the worker's worst case of ${formatUsd(worker)} plus one candidate's worst case of ${formatUsd(least)} on ${hostName(cheapest.host_id)}. Raise the budget to at least ${formatUsd(worker + least)}.`,
         item_key: null,
       });
     }

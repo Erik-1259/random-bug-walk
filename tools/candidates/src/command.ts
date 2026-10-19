@@ -16,7 +16,7 @@ import { encodeCanonical } from "@rbw/schema";
 import { API_KEY_VARIABLE, budgetRefusal, isScreenModelName, MAX_ATTEMPTS, SCREEN_PROFILES, worstCasePerCall } from "@rbw/screen";
 import { implementationName } from "./not-wired.ts";
 import { formatUsd, PipelineError, runPipeline, type RunRecord } from "./pipeline.ts";
-import { BEHAVIORAL_ROUTE, DEFAULT_ROUTE, isRouteName, ROUTES, runBehavioralRoute, type BehavioralRunRecord } from "./routes.ts";
+import { BEHAVIORAL_ROUTE, DEFAULT_ROUTE, isRouteName, ROUTES, runBehavioralRoute, STATIC_SCREEN_ROUTE, type BehavioralRunRecord } from "./routes.ts";
 import { SYMPTOM_SOURCE, symptomFor } from "./symptom.ts";
 import type { FindSites, Screen, ScreenBudget, ScreenModel } from "./types.ts";
 
@@ -69,6 +69,9 @@ export interface CommandIo {
 }
 
 class UsageError extends Error {}
+
+/** Options that only the static-screen route uses. */
+const SCREEN_ONLY_OPTIONS = ["model", "max-spend-usd", "screen-budget-usd", "screen-attempts", "slot-key", "pool", "rate-sheet", "keep-scratch"] as const;
 
 /** Parses a decimal USD amount with at most six decimals into integer micro-USD. */
 export function parseUsd(text: string, flag: string): number {
@@ -182,10 +185,11 @@ function summary(record: RunRecord, out: string, scratchDir: string | null): str
 
 export async function runCommand(argv: readonly string[], deps: CommandDeps, io: CommandIo): Promise<number> {
   try {
-    const { values } = parseArgs({
+    const { values, tokens } = parseArgs({
       args: [...argv],
       strict: true,
       allowPositionals: false,
+      tokens: true,
       options: {
         rule: { type: "string" },
         route: { type: "string", default: DEFAULT_ROUTE },
@@ -270,7 +274,12 @@ export async function runCommand(argv: readonly string[], deps: CommandDeps, io:
 
     if (route === BEHAVIORAL_ROUTE) {
       // The default route never builds or calls a screen, so it has no screen, key, database or
-      // screen-budget prerequisite; the screen options above are still parsed and checked.
+      // screen-budget prerequisite; the screen options above are still parsed and checked, and any
+      // given explicitly are named on stderr so a screening invocation without --route is not silent.
+      const ignored = SCREEN_ONLY_OPTIONS.filter((name) => tokens.some((token) => token.kind === "option" && token.name === name));
+      if (ignored.length > 0) {
+        io.err(`candidates: note: ${ignored.map((name) => `--${name}`).join(", ")} apply only to --route ${STATIC_SCREEN_ROUTE}; the ${BEHAVIORAL_ROUTE} route runs no screen\n`);
+      }
       return await runBehavioral({ deps, io, outPath, scratchBase, ruleId, rulePath, ruleText, host, hostCommit: hostCommit ?? null, maxCandidates: caps.maxCandidates });
     }
 
@@ -437,6 +446,7 @@ async function runBehavioral(input: {
       runId,
       now: deps.now ?? (() => new Date()),
       findSitesName: implementationName(deps.findSites),
+      scratchBase: input.scratchBase,
     });
   } catch (error) {
     // Nothing ran that spent: release the claimed (still empty) record file.

@@ -93,6 +93,25 @@ describe("interpretation", () => {
     expect(result.items.map((item) => item.problems.map((p) => p.code))).toEqual([["quantity_exceeds_source"], ["quantity_exceeds_source"]]);
   });
 
+  it("prices the budget problems by the item's eligible entries, not the host's dearest entry", () => {
+    const cheap = syntheticEntry({ host_id: "task-report", bug_type_id: "concurrency", n: 1, criteria: ["concurrency.lost-acknowledged-change"] });
+    const dear = syntheticEntry({ host_id: "task-report", bug_type_id: "date_time", n: 1, criteria: ["date_time.time-zone-grouping"] });
+    class Mixed extends FakeHostAdapter {
+      override protocol(entry?: { entry_id: string }): ReturnType<FakeHostAdapter["protocol"]> {
+        const base = super.protocol();
+        const copies = entry?.entry_id === dear.entry_id ? 3 : 1;
+        return { ...base, per_state: { clean: { ...base.per_state.clean, copies }, buggy: { ...base.per_state.buggy, copies }, fixed: { ...base.per_state.fixed, copies } } };
+      }
+    }
+    const registry = [new Mixed({ host_id: "task-report", entries: [cheap, dear] })];
+    const input: NormalizedRequestInput = { hosts: ["task-report"], items: [{ item_key: "c", bug_type_id: "concurrency", quantity: 1, description: null, difficulty: "source_inferable_allowed" }], budget_microusd: 500_000 };
+    const result = run(input, { registry });
+    expect(result.budget.worst_case_per_candidate_microusd).toEqual([{ host_id: "task-report", microusd: 900_000 }]);
+    expect(result.problems).toEqual([]);
+    expect(result.items[0]?.problems).toEqual([]);
+    expect(result.startable).toBe(true);
+  });
+
   it("warns host_unused for a selected host that serves no item", () => {
     const input: NormalizedRequestInput = { hosts: ["umami", "task-report"], items: [{ item_key: "c", bug_type_id: "concurrency", quantity: 1, description: null, difficulty: "source_inferable_allowed" }], budget_microusd: 1_500_000 };
     const result = run(input);

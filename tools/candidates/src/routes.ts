@@ -61,6 +61,8 @@ export interface BehavioralInput {
   now: () => Date;
   /** The name recorded for the site finder. */
   findSitesName: string;
+  /** The run's --scratch directory; the in-memory listing writes nothing there. */
+  scratchBase: string;
 }
 
 /** Never called: the pipeline's dry run lists and plants in memory only. */
@@ -94,7 +96,7 @@ export async function runBehavioralRoute(input: BehavioralInput): Promise<Behavi
     screen: NO_SCREEN,
     caps,
     dryRun: true,
-    scratchBase: input.hostDir,
+    scratchBase: input.scratchBase,
     hostCommit: input.hostCommit,
     runId: input.runId,
     now: input.now,

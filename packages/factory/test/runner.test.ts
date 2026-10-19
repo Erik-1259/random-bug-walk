@@ -10,7 +10,7 @@ import type { CatalogEntry, CollectedCopy, CopyRecord, CopyState, FileSet, Unpac
 import { afterEach, describe, expect, it } from "vitest";
 import { criteriaCatalogV1 } from "../src/criteria.ts";
 import type { CellMatrix } from "../src/ports.ts";
-import { FakeHostAdapter, fixtureRegistry, syntheticSha } from "../src/testing/catalog.ts";
+import { FakeHostAdapter, fixtureRegistry, parseSyntheticCopyId, syntheticSha } from "../src/testing/catalog.ts";
 import { UncertainOutcomeError, matrixOf, qualifyingPlan } from "../src/testing/harness.ts";
 import { FakeCopyRunner, scenarioCopyRunner } from "../src/testing/runner.ts";
 import { declaredCodes, scenarioSetup } from "../src/testing/scenarios.ts";
@@ -123,7 +123,32 @@ describe("the fake copy runner and collect (synthetic)", () => {
     if (adapter === undefined || entry === undefined) throw new Error("no task-report fake");
     const runner = scenarioCopyRunner(setup, { now, resultsBase: fresh("rbw-factory-results-") });
     await expect(drive(adapter, runner, unpacked(adapter, entry))).rejects.toBeInstanceOf(UncertainOutcomeError);
-    expect(runner.runs).toEqual([{ copy_id: `${entry.entry_id}-clean-1`, outcome: "uncertain" }]);
+    expect(runner.runs.map((run) => [parseSyntheticCopyId(run.copy_id), run.outcome])).toEqual([[{ entry_id: entry.entry_id, state: "clean", n: 1 }, "uncertain"]]);
+  });
+
+  it("needs entryOf to plan an adapter with several entries, and names the entry and the pair in each copy ID", () => {
+    const registry = fixtureRegistry({ duplicate_defect: true });
+    const several = registry[0];
+    const second = several?.entries[1];
+    if (several === undefined || second === undefined) throw new Error("no duplicate-defect fake");
+    const pair = unpacked(several, second);
+    expect(() => several.copyPlans("clean", pair, several.protocol())).toThrow(/entryOf/);
+    const mapped = new FakeHostAdapter({ host_id: "task-report", entries: several.entries, entryOf: () => second });
+    const [plan] = mapped.copyPlans("buggy", pair, mapped.protocol());
+    expect(plan?.copy_id).toBe(`${second.entry_id}-${pair.pair_sha256.slice(0, 12)}-buggy-1`);
+    expect(parseSyntheticCopyId(plan?.copy_id ?? "")).toEqual({ entry_id: second.entry_id, state: "buggy", n: 1 });
+    expect(parseSyntheticCopyId(`${second.entry_id}-fixed-2`)).toEqual({ entry_id: second.entry_id, state: "fixed", n: 2 });
+  });
+
+  it("counts a scenario's copies per run of an entry, so a second run sees the same outcome", async () => {
+    const setup = scenarioSetup("uncertain-provider", catalog);
+    const adapter = setup.registry[0];
+    const entry = adapter?.entries[0];
+    if (adapter === undefined || entry === undefined) throw new Error("no task-report fake");
+    const runner = scenarioCopyRunner(setup, { now, resultsBase: fresh("rbw-factory-results-") });
+    await expect(drive(adapter, runner, unpacked(adapter, entry))).rejects.toBeInstanceOf(UncertainOutcomeError);
+    await expect(drive(adapter, runner, unpacked(adapter, entry))).rejects.toBeInstanceOf(UncertainOutcomeError);
+    expect(runner.runs.map((run) => run.outcome)).toEqual(["uncertain", "uncertain"]);
   });
 
   it("gives the zero-result scenario's rejection through the runner path", async () => {
