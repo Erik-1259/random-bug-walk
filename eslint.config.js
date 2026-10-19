@@ -3,7 +3,8 @@ import { defineConfig, globalIgnores } from "eslint/config";
 import tseslint from "typescript-eslint";
 
 export default defineConfig(
-  globalIgnores(["**/node_modules/", "**/dist/", "**/build/", "**/coverage/", "**/.next/", "**/next-env.d.ts", "python/", ".venv/"]),
+  // hosts/task-report/app is a vendored baseline that must stay byte-identical (hosts/task-report/SOURCE.md).
+  globalIgnores(["**/node_modules/", "**/dist/", "**/build/", "**/coverage/", "**/.next/", "**/next-env.d.ts", "python/", ".venv/", "hosts/task-report/app/"]),
   eslint.configs.recommended,
   tseslint.configs.strictTypeChecked,
   tseslint.configs.stylisticTypeChecked,

@@ -3,7 +3,7 @@
 import { CONTRACT_VERSION_VALUES } from "@rbw/factory-contract";
 import type { Capabilities, RequestInput, Interpretation, RequestStatus, StartRequest, ValidationRun, SessionStatus } from "@rbw/factory-contract";
 export type { Capabilities, RequestInput, Interpretation, RequestStatus, StartRequest, ValidationRun, Cell, PackagePart, Problem, Case as FactoryCase, Event as FactoryEvent } from "@rbw/factory-contract";
-export const FACTORY_CONTRACT_REVISION = "8074fe61b8e9f9f1cddb47e42994446a85a05396";
+export const FACTORY_CONTRACT_REVISION = "9b8f1c9f5c9acac0637b75f051ef0324e5f88988";
 export class FactoryError extends Error {
   code: string; status: number; details: Record<string, unknown> | null;
   constructor(code: string, message: string, status = 0, details: Record<string, unknown> | null = null) { super(message); this.code = code; this.status = status; this.details = details; }
