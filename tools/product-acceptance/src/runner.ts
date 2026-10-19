@@ -235,9 +235,16 @@ export async function runUnsupported(backend: IsolatedBackend): Promise<void> {
   const interpretation = body(await call("POST", "/api/factory/interpretations", input), 200);
   assert.equal(interpretation.startable, false);
   assert.deepEqual(interpretation.input, input, "unsupported requirements silently changed");
-  const codes = objects(interpretation.items).flatMap(i => objects(i.problems).map(p => p.code));
-  for (const code of ["no_matching_source", "unrecognized_description", "unsupported_difficulty", "unsupported_combination"]) {
-    assert(codes.includes(code), "missing explicit unsupported outcome");
+  const actualItems = objects(interpretation.items);
+  const expectedItems = objects(object(fixture).items);
+  assert.deepEqual(actualItems.map(item => text(item.item_key)).sort(), expectedItems.map(item => text(item.item_key)).sort(), "unsupported item keys differ from pinned scenario");
+  const problemKeys = (item: Record<string, unknown>) => objects(item.problems)
+    .map(problem => [text(problem.code), text(problem.item_key), text(problem.severity)].join(":"))
+    .sort();
+  for (const expected of expectedItems) {
+    const actual = actualItems.find(item => item.item_key === expected.item_key); assert(actual);
+    assert.equal(actual.status, expected.status, "unsupported item status differs from pinned scenario");
+    assert.deepEqual(problemKeys(actual), problemKeys(expected), "unsupported item problems differ from pinned scenario");
   }
   error(await call("POST", "/api/factory/requests", {
     request_id: randomUUID(), input, interpretation_sha256: interpretation.interpretation_sha256,

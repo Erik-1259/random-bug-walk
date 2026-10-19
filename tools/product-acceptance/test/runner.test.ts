@@ -131,6 +131,28 @@ it("checks unsupported meanings and explicit invalid host/type outcomes", async 
   };
   await expect(runUnsupported(backend)).resolves.toBeUndefined();
 });
+it.each(["misassigned", "missing-warning", "wrong-status"])("rejects %s unsupported item outcomes", async (change) => {
+  const { runUnsupported } = await import("../src/runner.ts");
+  const { backend } = scripted();
+  const unsupported = fixture("interpretation-unsupported");
+  const items = objects(unsupported.items);
+  const first = items[0]; assert(first);
+  if (change === "misassigned") {
+    const problems = items.flatMap(item => objects(item.problems));
+    for (const item of items) item.problems = [];
+    first.problems = problems;
+  } else if (change === "missing-warning") {
+    const item = items.find(item => item.item_key === "concurrency-any"); assert(item);
+    item.problems = [];
+  } else first.status = "supported";
+  backend.request = (_method, path, payload) => {
+    if (path.endsWith("/test/reset")) return Promise.resolve({ status: 204, body: null });
+    if (path.endsWith("/interpretations") && JSON.stringify(payload) === JSON.stringify(unsupported.input)) return Promise.resolve({ status: 200, body: unsupported });
+    const code = path.endsWith("/requests") ? "unsupported_request" : "invalid_request";
+    return Promise.resolve({ status: code === "unsupported_request" ? 422 : 400, body: { contract_version: "bug-request/1", error: { code } } });
+  };
+  await expect(runUnsupported(backend)).rejects.toThrow("unsupported item");
+});
 it("rejects an earlier delivered case disappearing during a stop", async () => {
   const { backend, request } = scripted();
   let reads = 0;
