@@ -21,7 +21,3 @@ No published revision of `docs/product/bug-request-v1.md` was available on `main
 Presentation tests exercise local fixtures and unavailable states. They do not establish backend integration, paid-request idempotency, qualification, package readiness or replay execution. Real-service verification remains required using the published contract and an authorized non-paid test facility; no live paid request is part of these UI checks.
 
 The published Umami example is linked separately from draft requests. Existing case anchors, immutable release files and judge replay controls remain unchanged. Use a build against the public results snapshot for browser regression checks; the default development fixture contains no released case.
-
-## Publication
-
-Publication must use the repository's trusted helper and required scans. The cloud push preflight returned `rbw-publish: rbw.worktreeId is not set in this clone's git config` (exit 2); no publication request was made. Register and use the trusted route for the exact reviewed commit and PR text. No prior publication exception applies to this change.
