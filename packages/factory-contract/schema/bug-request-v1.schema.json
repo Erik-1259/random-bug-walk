@@ -802,6 +802,7 @@
       }
     },
     "DifficultyOption": {
+      "description": "Source-inferable difficulty is the default and always available; source-only difficulty is unavailable, not the default, and gives a reason (contract section 4.4).",
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -834,7 +835,61 @@
             }
           ]
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "option_id": {
+                "const": "source_inferable_allowed"
+              }
+            },
+            "required": [
+              "option_id"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "default": {
+                "const": true
+              },
+              "available": {
+                "const": true
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "option_id": {
+                "const": "source_only_difficulty_required"
+              }
+            },
+            "required": [
+              "option_id"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "default": {
+                "const": false
+              },
+              "available": {
+                "const": false
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
+      ]
     },
     "Limits": {
       "description": "Service configuration; clients read limits here and never hard-code them (contract section 4.3).",
