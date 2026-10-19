@@ -4,7 +4,7 @@ These are the engineering rules for any coding agent or person working in this r
 
 ## Working environment
 
-- Coding agents work in a development container that the host starts with `container/run-agent.sh`; `container/check-isolation.sh` verifies its isolation.
+- Local coding agents work in a development container that the host starts with `container/run-agent.sh`; `container/check-isolation.sh` verifies its isolation. Authorized public-source cloud lanes work outside it and publish by the cloud route (see "Publishing").
 - The container mounts a standalone clone of this repository read-write at `/workspace` and the shared inbox at `/inbox`, and nothing else from the host except, for Codex runs, the private sign-in copy at `/run/codex-state`. The inbox's `publication/` directory is mounted read-only, with its `requests/` directory read-write as a separate mount, so agents cannot change `responses/`.
 - It runs as an unprivileged user without sudo, with all capabilities dropped.
 - It holds no GitHub, Vercel, Neon or Blob credentials. The only credentials passed in are the owner's model subscriptions: the Claude Code token from an owner-only credentials file that the launcher is given at start, and, for Codex runs, a private copy of the owner's ChatGPT sign-in that is written back if Codex refreshes it and then deleted. No API key is passed in. Git's author and committer identity comes from the clone's own git config.
@@ -23,14 +23,20 @@ These are the engineering rules for any coding agent or person working in this r
   - the names or contents of private planning documents;
   - held-out bugs: their patches, issue texts, IDs or results;
   - private and evaluation model transcripts.
-- Public-demo prompts and responses are experimental outputs. Their model context starts from public inputs, and they pass the same scan before publication.
+- Public-demo prompts and responses are experimental outputs. Their model context starts from public inputs, and they pass the full scan before publication.
 - Exceptions, and only these: the repository's own URL, which contains the owner's account name; the exact copyright line of `LICENSE`, in files named `LICENSE`; git's author and committer fields, which stay as the owner's git config sets them. The checks read text, not those fields.
-- Every publication is checked by machine before it happens (see the next section). Required CI scans the same surfaces again, and GitHub push protection stays on. The checks are gitleaks, an attribution check and a private pattern list that is never committed, logged or copied into the container.
+- Every publication is checked by machine before it happens, with the check its route requires (see the next section). The local route runs the full scan: gitleaks, an attribution check and a private pattern list that is never committed, logged or copied into the container. The cloud route runs gitleaks and the attribution check only, because the pattern list is never given to a cloud lane. Before any pull request merges, required CI runs the full scan, pattern list included, on its commits, title and body. GitHub push protection stays on for both routes.
 - A violation reports only a repository-relative `path:line` (a synthetic name and line for PR text and comments), never the matched text or the pattern. An unavailable check blocks publication; it never counts as a pass.
 - Code reads well to a stranger: no commented-out code, debug logging, untracked TODOs or personal paths. Fixtures use synthetic data (reserved `.invalid` domains, `synthetic-` prefixes), with placeholders that cannot be mistaken for real credentials.
 - Planted bugs are labeled synthetic in every bundle and on the results site, and are never filed upstream. A real Umami bug found along the way goes to the owner and is not planted; reporting it upstream needs the owner's OK.
 
 ## Publishing: pushes, pull requests and comments
+
+There are two publication routes. The route depends on where the work runs and what it was built from.
+
+### Local route: local and private-input work
+
+This route covers work on the owner's machine, every coding-agent container, and any work whose inputs include private material.
 
 - Agents publish only through `tools/publication/bin/rbw-publish`. It pushes the current branch, creates a PR, or posts a PR comment. Its own usage output lists the exact subcommands and options.
 - The wrapper writes one request file to `/inbox/publication/requests/` and waits for the host helper's response in `/inbox/publication/responses/`. A request names only a request ID, the registered working copy, the operation, the candidate commit SHA and any proposed public text. It cannot choose a host path, command, remote or file.
@@ -45,6 +51,26 @@ These are the engineering rules for any coding agent or person working in this r
 - A pre-push hook in `tools/publication/hooks/` refuses a direct `git push` and points to the wrapper; clones enable it with `core.hooksPath`. Do not disable or bypass it. The host helper, not the hook, is the publication boundary.
 - To ask Codex for a review, post a PR comment whose whole text is `@codex review`, through the wrapper.
 
+### Cloud route: authorized public-source cloud lanes
+
+- Only cloud lanes the owner has explicitly authorized for this route use it, and only while they work from public or sanitized inputs. A cloud lane never receives the private pattern list or any private planning material or evidence; work that needs private input uses the local route.
+- A cloud lane may publish its assigned development branch, that branch's pull request title and body, and its review replies directly through GitHub. It never pushes to `main` and never publishes another lane's branch.
+- Before each publication it checks exactly what it is about to make public: every commit the push adds (file content and the whole message, trailers included) and each title, body or reply. The check is gitleaks plus the attribution check, without the pattern list:
+
+  ```
+  node tools/publication/src/cli.ts scan-public --gitleaks <gitleaks 8.30.1 binary> \
+      --range <published tip>..HEAD [--text pr-title=<file>] [--text pr-body=<file>] [--text pr-comment=<file>]
+  ```
+
+  `<published tip>` is the branch's current remote tip, or the `main` commit the branch starts from when the branch does not exist yet. A reply with no new commits is checked with `--text pr-comment=<file>` alone. Only exit 0 allows publication; exit 1 (blocked, with locations) and exit 2 (unavailable) stop it.
+- The lane reports the result as printed: the outcome of the credential and attribution checks, and the private-pattern scan as "not run on this route (required in CI before merge)", never as clean.
+
+### Both routes
+
+- Every pull request, from either route, must pass the required `public-safety` and `names-attribution` jobs before it can merge to `main`. They run the full scan, pattern list included, over the pull request's commits (`names-attribution` also over its title and body), with the scanner and check scripts from the pull request's base commit rather than from the change. Both jobs fail when the pattern list is unavailable. All other required checks and reviews still apply.
+- Final bug packages, experimental evidence, and results or release publication always pass the full pre-publication scan, wherever the development happened.
+- Accepted boundary: a cloud branch, its draft pull request and its review replies are public before any CI scan, and CI does not rescan review replies, so cloud inputs must stay public or sanitized. Literal pattern matching is an extra check, not complete detection.
+
 ## Claims and public text
 
 - These rules cover every public surface, including PR descriptions, commit messages and review replies.
@@ -53,7 +79,7 @@ These are the engineering rules for any coding agent or person working in this r
 - The README's "How this was built" section says, without naming anyone, that Claude Code and Codex wrote the code under the author's direction: the author directed, specified and reviewed the work. Its wording follows these rules.
 - README, docs and results-site copy pass a CI prose check for inflated wording; the check holds the word list.
 - Publication outside the repository (results-site copy, entry pages, video, posts) needs the owner's approval, the owner's review, and a logged-out check of every link.
-- Public-demo experimental outputs go to their configured destinations through the trusted publisher and pass the same checks. Publishing them gives them no validated label and supports no new claim.
+- Public-demo experimental outputs go to their configured destinations through the trusted publisher and pass the full scan, pattern list included. Publishing them gives them no validated label and supports no new claim.
 
 ## Commits, pull requests and attribution
 
@@ -64,7 +90,7 @@ These are the engineering rules for any coding agent or person working in this r
 - Claude Code's commit and PR attribution is off in `.claude/settings.json`.
 - Codex has no documented local setting for commit or PR attribution in the pinned version, so the repository holds no `.codex/` configuration. The publication checks block both trailers and footers.
 - The publication checks block such lines. Records of human review name a role ("human reviewer"), not a person.
-- Exporters run the same scan before they write any public file. Author fields in exported files, such as Harbor task files, carry the project name, Random Bug Walk; author email fields stay empty.
+- Exporters run the full scan, pattern list included, before they write any public file. Author fields in exported files, such as Harbor task files, carry the project name, Random Bug Walk; author email fields stay empty.
 
 ## Specification fidelity
 
@@ -74,7 +100,7 @@ These are the engineering rules for any coding agent or person working in this r
 - Planned: the admission, grading and calibration rules, published in `docs/admission-rules.md` with stable IDs that never change meaning (a retired rule keeps its ID and is marked retired). Each ID will appear in the specification, in a comment at its implementation and in its test's name, and a CI script will list IDs with no implementation or no test.
 - Publication rule IDs:
   - PUB-01: implementation agents receive only sanitized, accessible requirements and cannot read private planning or pattern files.
-  - PUB-02: public pushes and text pass the host-owned helper against the exact content published, and unavailable checks prevent publication.
+  - PUB-02: public pushes and text pass their route's check against the exact content published (the host-owned helper's full scan on the local route, the public scan on the authorized cloud route), unavailable checks prevent publication, and required CI runs the full scan before merge.
 - Scope fence: anything outside the specification or the work item is out of scope. Ideas go to the inbox as proposals.
 
 ## Code and tests
@@ -96,7 +122,7 @@ These are the engineering rules for any coding agent or person working in this r
 
 ## Git, review and merge
 
-- One branch per work item (`type/short-slug`). Open a draft PR early, through the wrapper. Squash merges only. No force pushes and no direct pushes to `main` (branch protection). Agents do not rebase shared branches.
+- One branch per work item (`type/short-slug`). Open a draft PR early, through the wrapper on the local route or after the public scan on the cloud route. Squash merges only. No force pushes and no direct pushes to `main` (branch protection). Agents do not rebase shared branches.
 - The implementer first reviews its own diff against the item's done-when list and the specification. Codex then reviews the PR. When Codex wrote the change, the conductor reviews it too, so the model that wrote a change is never its only reviewer.
 - Every finding gets one disposition: fix, defer to the inbox, or reject with a reason.
 - Review has converged when the final head has no P0, P1 or P2 finding, and a PR merges only after that. The owner may merge without Codex's review. There is no fixed count of review passes.
@@ -116,7 +142,7 @@ For automated pull request reviews, including Codex's:
 - Judge each finding by what can happen in this project as it actually runs: one owner, one host, pinned dependency versions, and inputs produced by this repository's own pipeline. Do not report a finding that only arises from code or test text written to fool a check (for example, a helper named like a rule ID to satisfy a rule-ID scan), from configuration values chosen to land exactly on a boundary (for example, a rate set a few micro-dollars under a ceiling), or from an operator deliberately editing or deleting records, rules or documents.
 - Always report, whatever the cause: secrets, held-out bug data or private material reaching public output; wrong admission or grading outcomes; spend that can exceed a cap or be billed twice; and data loss.
 - If unsure whether a finding is reachable in ordinary use, report it as P3 rather than P1 or P2.
-- Accepted risk, not a finding: workflows on same-repository pull requests can reach repository secrets. Only the owner's account opens pull requests here, each after the checked publication step, and pull requests from forks get no secrets.
+- Accepted risk, not a finding: workflows on same-repository pull requests can reach repository secrets. Only the owner's account and the owner's authorized cloud lanes open pull requests here, each after its route's pre-publication check (the full scan through the helper, or `scan-public` on the cloud route), and pull requests from forks get no secrets.
 
 ## Integration proof
 
@@ -152,7 +178,7 @@ For automated pull request reviews, including Codex's:
   - `chmod -R 777`, `chown`, `docker push` and `docker system prune`;
   - reading `.env`, `.env.*` and `*.env` files, `printenv` and a bare `env`.
 - These rules match command text as written. They do not cover, for example, `rm -rf *`, a program run by its full path (`/usr/bin/git push`), a command inside `sh -c`, a quoted subcommand, a version-pinned runner such as `npx vercel@latest deploy`, runner options such as `npx -y vercel --prod`, a git command wrapped in a package runner such as `pnpm exec git push`, or a script that runs the command itself.
-- The rules prevent mistakes; they are not the publication boundary. That boundary is the container's lack of credentials plus the host helper.
+- The rules prevent mistakes; they are not the publication boundary. On the local route, that boundary is the container's lack of credentials plus the host helper.
 
 ## Inbox
 
