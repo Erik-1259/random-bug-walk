@@ -58,6 +58,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           <nav aria-label="Site">
             <a href="/">Case</a>
             <a href="/catalog">Diagnostic catalog</a>
+            <a href="/factory">Request bug cases</a>
           </nav>
         </header>
         {children}
