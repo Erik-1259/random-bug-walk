@@ -343,6 +343,27 @@ async function prove(root: string, gitleaks: string): Promise<number> {
       !(pathOutput + pathPublic.stderr.toString("utf8")).includes(token),
   );
 
+  // Additional: the full scan finds the same token in an added path whose file also holds an attribution line and a
+  // forbidden term, in range and files mode, and prints only the path-list position.
+  await git(names, ["reset", "-q", "--hard", namesBase]);
+  const tokenFile = `keys/${token}.txt`;
+  const signedOff = ["Signed", "off", "by"].join("-");
+  const fullPath = await commitFiles(names, { [tokenFile]: `nothing here\n${signedOff}: synthetic\n${term}\n` }, "feat: synthetic key file");
+  const fullScan = (input: string[]): Promise<ProcessResult> =>
+    runProcess(process.execPath, [cliPath, "scan", "--patterns", patterns, "--gitleaks", gitleaks, ...input], { cwd: names, env: setupEnv });
+  const fullRange = await fullScan(["--range", `${namesBase}..HEAD`]);
+  const fullFiles = await fullScan(["--files", tokenFile]);
+  const fullPrinted = [fullRange, fullFiles].map((result) => result.stdout.toString("utf8") + result.stderr.toString("utf8")).join("");
+  check(
+    "gitleaks: the full scan finds a token in an added path in range and files mode and reports only its path-list position",
+    fullRange.code === 1 &&
+      fullRange.stdout.toString("utf8") === `blocked\npaths-${fullPath.slice(0, 12)}:2\n` &&
+      fullFiles.code === 1 &&
+      fullFiles.stdout.toString("utf8") === "blocked\npaths:1\n" &&
+      !fullPrinted.includes(token) &&
+      !contains(fullPrinted, term),
+  );
+
   // Additional: hostile and partial-clone working copies run nothing, with GIT_NO_LAZY_FETCH=0 given to the helper.
   const markers = join(root, "markers");
   await mkdir(markers);

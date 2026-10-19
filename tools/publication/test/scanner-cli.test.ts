@@ -571,6 +571,45 @@ describe("PUB-02 scanner CLI: gitleaks", () => {
     expect(outputLines(result)).toEqual(["blocked", `commit-${short(head)}:3`, "pr-comment:3"]);
   });
 
+  it("finds a credential in an added path and reports only its path-list position", async () => {
+    const root = tempDir();
+    const repo = initRepo(join(root, "repo"));
+    const base = commit(repo, { "a.txt": "base\n" }, "chore: base\n");
+    const head = commit(repo, { [`keys/${STUB_LEAK_MARKER}-value.txt`]: "nothing here\n", "z.txt": "z\n" }, "feat: add keys\n");
+    const patterns = writePatterns(root, TERMS);
+    const stub = writeStubGitleaks(root);
+    const range = await runCli(["scan", "--patterns", patterns, "--gitleaks", stub.command, "--range", `${base}..HEAD`], { cwd: repo });
+    // The sorted list is keys, keys/<marker>-value.txt and z.txt.
+    expect(outputLines(range)).toEqual(["blocked", `paths-${short(head)}:2`]);
+    expect(range.code).toBe(1);
+    const files = await scanFiles({ [`${STUB_LEAK_MARKER}.txt`]: "x\n" });
+    expectBlocked(files, ["paths:1"]);
+    for (const result of [range, files.result]) expect(result.stdout + result.stderr).not.toContain(STUB_LEAK_MARKER);
+  });
+
+  it("reports other violations in a file with a credential in its path under the path-list position", async () => {
+    const root = tempDir();
+    const repo = initRepo(join(root, "repo"));
+    const path = `docs/${STUB_LEAK_MARKER}-value.md`;
+    const tree = { [path]: `ok\n${forms.signedOff}: x\n${TERM}\n`, "z.txt": `${forms.generatedWith} x\n` };
+    const base = commit(repo, { "a.txt": "base\n" }, "chore: base\n");
+    const head = commit(repo, tree, "docs: add\n");
+    const patterns = writePatterns(root, TERMS);
+    const stub = writeStubGitleaks(root);
+    const range = await runCli(["scan", "--patterns", patterns, "--gitleaks", stub.command, "--range", `${base}..HEAD`], { cwd: repo });
+    // The sorted list is docs, docs/<marker>-value.md and z.txt.
+    expect(outputLines(range)).toEqual(["blocked", `paths-${short(head)}:2`, "z.txt:1"]);
+    expect(range.code).toBe(1);
+    const files = await scanFiles(tree);
+    expectBlocked(files, ["paths:1", "z.txt:1"]);
+    for (const result of [range, files.result]) {
+      const all = result.stdout + result.stderr;
+      expect(all).not.toContain(path);
+      expect(all).not.toContain(STUB_LEAK_MARKER);
+      expect(all).not.toContain(TERM);
+    }
+  });
+
   it("substitutes {dir} and passes only paths inside it", async () => {
     const outcome = await scanFiles({ "a.txt": "x\n", "b/c.txt": "y\n" });
     expectClean(outcome);
