@@ -1,0 +1,7 @@
+# Environment for the app, read by rbw-launch. The password is a synthetic test value; the app
+# role can log in only over loopback TCP. DB_POOL_MAX is not set, so the pool has its default of 10.
+# TZ is the app time zone of profile M2 of the custom host harness at baseline 2.
+TZ=Asia/Tokyo
+HOST=127.0.0.1
+PORT=3000
+DATABASE_URL=postgresql://taskapp_app:synthetic-taskapp-app-password@127.0.0.1:5432/taskapp
