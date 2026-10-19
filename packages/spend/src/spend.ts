@@ -2,7 +2,14 @@ import type { SqlClient } from "./client.ts";
 import { REFUSAL_CODES } from "./types.ts";
 import type {
   AcquireSlotRequest,
+  BudgetClosed,
+  BudgetCreated,
+  BudgetOperations,
+  BudgetReserveRequest,
+  BudgetStatus,
   ChildRecorded,
+  CloseBudgetRequest,
+  CreateBudgetRequest,
   ConfirmChildRequest,
   CreatePoolRequest,
   CreateSlotKeyRequest,
@@ -54,6 +61,14 @@ export interface Spend {
   poolStatus(request: { pool_key: string }): Promise<Result<PoolStatus>>;
   operationStatus(request: { operation_id: string }): Promise<Result<OperationStatus>>;
   slotStatus(request: { slot_key: string }): Promise<Result<SlotStatus>>;
+  /** Creates a request budget; an identical request replays, a different one is `idempotency_conflict`. */
+  createBudget(request: CreateBudgetRequest): Promise<Result<BudgetCreated>>;
+  /** Check-and-reserve against a request budget, then against its pool (`reserve`). */
+  budgetReserve(request: BudgetReserveRequest): Promise<Result<Reservation>>;
+  /** Closes a budget to `request` reservations; repeating the same cause replays. */
+  closeBudget(request: CloseBudgetRequest): Promise<Result<BudgetClosed>>;
+  budgetStatus(request: { budget_key: string }): Promise<Result<BudgetStatus>>;
+  budgetOperations(request: { budget_key: string }): Promise<Result<BudgetOperations>>;
 }
 
 /** Database function name to [request, success result]. Write operations also take the event time. */
@@ -71,6 +86,9 @@ interface WriteOperations {
   spend_slot_record_child: [RecordChildRequest, ChildRecorded];
   spend_slot_confirm_child: [ConfirmChildRequest, ChildRecorded];
   spend_slot_release: [ReleaseSlotRequest, Recorded];
+  spend_create_budget: [CreateBudgetRequest, BudgetCreated];
+  spend_budget_reserve: [BudgetReserveRequest, Reservation];
+  spend_budget_close: [CloseBudgetRequest, BudgetClosed];
 }
 
 interface ReadOperations {
@@ -78,6 +96,8 @@ interface ReadOperations {
   spend_pool_status: [{ pool_key: string }, PoolStatus];
   spend_operation_status: [{ operation_id: string }, OperationStatus];
   spend_slot_status: [{ slot_key: string }, SlotStatus];
+  spend_budget_status: [{ budget_key: string }, BudgetStatus];
+  spend_budget_operations: [{ budget_key: string }, BudgetOperations];
 }
 
 const SCHEMA_PATTERN = /^[a-z_][a-z0-9_]{0,62}$/;
@@ -122,36 +142,50 @@ function decode(rows: Record<string, unknown>[]): unknown {
   return parsed;
 }
 
+/** Database function name to [request, success result]. */
+export type OperationMap<T> = Record<keyof T, [unknown, unknown]>;
+
+export interface DatabaseCalls<W extends OperationMap<W>, R extends OperationMap<R>> {
+  /** Runs a writing function, with the clock's time as the event time. */
+  write: <K extends keyof W & string>(fn: K, request: W[K][0]) => Promise<Result<W[K][1]>>;
+  read: <K extends keyof R & string>(fn: K, request: R[K][0]) => Promise<Result<R[K][1]>>;
+}
+
+/**
+ * One statement per call to a database function of this package in `options.schema`. The result
+ * is decoded (amounts become bigints) and its refusal code checked. Its shape is the named SQL
+ * function's own, so callers type it by the function name.
+ */
+export function databaseCalls<W extends OperationMap<W>, R extends OperationMap<R>>(
+  options: SpendOptions,
+): DatabaseCalls<W, R> {
+  const { client } = options;
+  const schema = options.schema ?? "public";
+  assertSchemaName(schema);
+  const clock = options.clock ?? (() => new Date());
+  return {
+    write: async (fn, request) => {
+      const { rows } = await client.query(`SELECT ${schema}.${fn}($1::jsonb, $2::text)::text AS result`, [
+        encode(request),
+        clock().toISOString(),
+      ]);
+      // The shape is produced by this package's own SQL function for the named operation.
+      return decode(rows) as Result<W[typeof fn][1]>;
+    },
+    read: async (fn, request) => {
+      const { rows } = await client.query(`SELECT ${schema}.${fn}($1::jsonb)::text AS result`, [encode(request)]);
+      return decode(rows) as Result<R[typeof fn][1]>;
+    },
+  };
+}
+
 /**
  * Typed wrapper over the spend database operations. Every call is one statement; the
  * database does all validation and decides every outcome. Refusals are returned, never thrown;
  * infrastructure errors are thrown and never reported as success or refusal. Nothing retries.
  */
 export function createSpend(options: SpendOptions): Spend {
-  const { client } = options;
-  const schema = options.schema ?? "public";
-  assertSchemaName(schema);
-  const clock = options.clock ?? (() => new Date());
-
-  async function write<K extends keyof WriteOperations>(
-    fn: K,
-    request: WriteOperations[K][0],
-  ): Promise<Result<WriteOperations[K][1]>> {
-    const { rows } = await client.query(`SELECT ${schema}.${fn}($1::jsonb, $2::text)::text AS result`, [
-      encode(request),
-      clock().toISOString(),
-    ]);
-    // The shape is produced by this package's own SQL function for the named operation.
-    return decode(rows) as Result<WriteOperations[K][1]>;
-  }
-
-  async function read<K extends keyof ReadOperations>(
-    fn: K,
-    request: ReadOperations[K][0],
-  ): Promise<Result<ReadOperations[K][1]>> {
-    const { rows } = await client.query(`SELECT ${schema}.${fn}($1::jsonb)::text AS result`, [encode(request)]);
-    return decode(rows) as Result<ReadOperations[K][1]>;
-  }
+  const { write, read } = databaseCalls<WriteOperations, ReadOperations>(options);
 
   return {
     createPool: (request) => write("spend_create_pool", request),
@@ -171,5 +205,10 @@ export function createSpend(options: SpendOptions): Spend {
     poolStatus: (request) => read("spend_pool_status", request),
     operationStatus: (request) => read("spend_operation_status", request),
     slotStatus: (request) => read("spend_slot_status", request),
+    createBudget: (request) => write("spend_create_budget", request),
+    budgetReserve: (request) => write("spend_budget_reserve", request),
+    closeBudget: (request) => write("spend_budget_close", request),
+    budgetStatus: (request) => read("spend_budget_status", request),
+    budgetOperations: (request) => read("spend_budget_operations", request),
   };
 }

@@ -4,6 +4,7 @@ Postgres tables and atomic operations that decide whether metered work may start
 
 - Every metered call reserves its whole worst case against a do-not-exceed pool in one atomic database operation, and later records what it actually cost.
 - All execution runs under one serial slot per slot key. Only confirmed termination, or a manual reconciliation recorded with evidence, can free it.
+- A factory request is charged against one request budget on its own pool, and its progress (request, events, heartbeats, stop, evidence, validation runs) is stored in insert-only factory records with idempotent writes. See [Request budgets](#request-budgets) and [Factory records](#factory-records).
 
 Every rule is enforced in the database. PL/pgSQL functions created by the migrations perform every operation and hold the rules that need context: settlement, reconciliation, the halt and resume, and slot release. Constraints and triggers hold the invariants listed below, and a trigger on every table refuses rows that do not come through those functions (see [Invariants](#invariants) for what that guard does not cover). The TypeScript API is a typed wrapper over the functions. It never writes the tables directly, and it does no logging.
 
@@ -21,11 +22,14 @@ Every rule is enforced in the database. PL/pgSQL functions created by the migrat
 - [Settlement](#settlement)
 - [Over-envelope halt](#over-envelope-halt)
 - [Serial execution slot](#serial-execution-slot)
+- [Request budgets](#request-budgets)
+- [Factory records](#factory-records)
 - [Refusal codes](#refusal-codes)
 - [Caller protocol](#caller-protocol)
 - [Operator procedures](#operator-procedures)
 - [Tables](#tables)
 - [Tests](#tests)
+- [Known limits](#known-limits)
 - [Not in this package](#not-in-this-package)
 
 ## Setup
@@ -57,6 +61,8 @@ The migrations seed two pools and no slot key:
 | `judge-demo` | 200,000,000 ($200) | `public` 50,000,000 (anonymous use), `judge` 150,000,000 (protected for judges) |
 
 A deployment's slot key is created with `createSlotKey` when the package is first set up on a long-lived database. That setup is not done by the migrations.
+
+The same holds for factory requests: migration `0006_factory.sql` seeds no pool and no slot key. An owner creates the `factory` pool (cap 40,000,000 micro-USD, no allocations) with `createPool` and the `factory` slot key with `createSlotKey`; tests create both in their setup.
 
 ## TypeScript API
 
@@ -101,8 +107,17 @@ if (!result.ok) {
 | `poolStatus` | `spend_pool_status` | Cap, allocation limits, settled, open, committed, available. |
 | `operationStatus` | `spend_operation_status` | State, reserved, settled, open, released. |
 | `slotStatus` | `spend_slot_status` | Holder, the holder's children, release blockers. |
+| `createBudget` | `spend_create_budget` | Create a request budget (see [Request budgets](#request-budgets)). |
+| `budgetReserve` | `spend_budget_reserve` | Check-and-reserve against a request budget, then its pool. |
+| `closeBudget` | `spend_budget_close` | Close a budget to `request` reservations, with a contract stop code. |
+| `budgetStatus` | `spend_budget_status` | Cap, settled, open, committed, available, overrun, closure, and the operations not yet reconciled. |
+| `budgetOperations` | `spend_budget_operations` | Every operation the budget admitted, settled and reconciled ones included. |
 
-Request and result field names are the snake_case names in `src/types.ts`. They are the same JSON documents the database functions accept and return.
+`budgetSpend(spend, budgetKey, role)` returns a `Spend` whose `reserve` calls `budgetReserve` for that budget and role; every other method is the wrapped one's. Code that takes a `Spend`, such as a copy runner, runs unchanged under a budget.
+
+`createFactoryRecords({ client, schema, clock })` returns the factory records API (see [Factory records](#factory-records)). It takes the same options as `createSpend`, and its calls follow the same rules: one statement each, refusals returned, infrastructure errors thrown, nothing retried.
+
+Request and result field names are the snake_case names in `src/types.ts` and `src/factory.ts`. They are the same JSON documents the database functions accept and return.
 
 ## Calling the database operations from another language
 
@@ -298,6 +313,62 @@ Settlement, all other transitions, reconciliation, transfers, cap raises, child 
   - Recording for a root that does not hold the slot is refused with `slot_not_held`.
 - **Release.** The holder can release the slot, or an owner or operator can, with evidence and a reason. Release is allowed only when every child resource of that root, under any slot key, has a confirmed terminal state, and no operation of that root is `prepared`, `launching`, `running` or `uncertain`. Otherwise it is refused with `slot_release_blocked`, listing the blocking resources (each with the slot key it is confirmed under) and operation IDs. Release is the only way the slot becomes free.
 
+## Request budgets
+
+A request budget caps what one factory request commits, on its own pool. It is bound to the request's root execution, and every operation it admits is recorded in `budget_operations` with a role:
+
+- **`request`:** an operation of the request itself. Its root must be the budget's root.
+- **`validation`:** an operation of a validation run of one of the request's cases. Its root is the run's own root: never the budget's root, never any other budget's root, and never a root already charged to another budget. The database does not look up the validation record, because a run is recorded only after its reservation succeeds.
+
+**Money.** The budget's committed amount is settled plus open over all its operations, whatever their root or role; available = cap − committed. Creating a budget holds nothing in the pool: the pool counts only what the budget's operations commit, like any other reservation. A settlement above an operation's worst case still records the spend in full, so committed can exceed the cap: `budgetStatus` then reports `overrun: true` and a negative `available_microusd`, and every later budget reservation is refused.
+
+**`createBudget`** takes `budget_key`, `root_execution_id`, `pool_key`, `cap_microusd` (at least 1), `pool_required_microusd` and `actor_role`.
+- An identical request replays (`replay: true`) and writes nothing. Another request with the same key, or another key on the same root, is refused with `idempotency_conflict`.
+- `judge-demo` is refused (`invalid_request`, and a table constraint), as is any pool with allocations; an unknown pool is `unknown_pool`.
+- When it is first created, the pool's available amount must cover `pool_required_microusd` (for a factory request, the worker's worst case), and new work must not be halted. Otherwise it is refused with `insufficient_funds` or `pool_halted`, and nothing is recorded.
+
+**`budgetReserve`** takes `{ budget_key, role, reservation }`, where `reservation` is a `ReserveRequest` on the budget's pool. In order:
+
+1. **Validation:** the request and the whole reservation (`invalid_request`).
+2. **Existing `operation_id`,** under the same per-operation lock as `reserve`: the replay when it is this budget's operation with the same role and an identical reservation, otherwise `operation_conflict`. This comes before any closed or cap check, so a replay after the budget is full or closed still returns the replay and records no refusal.
+3. **Budget lock:** the budget row is locked (`FOR NO KEY UPDATE`), so concurrent budget reservations and a close run one at a time. `unknown_budget` if it does not exist.
+4. **Pool and root:** the reservation's pool must be the budget's, and its root must fit the role (`invalid_request`).
+5. **Envelope:** priced as for `reserve` (`unknown_price`, `unenforceable_limit`, `invalid_request`).
+6. **Closed:** a closed budget refuses `request` reservations with `budget_closed`. It still admits `validation` reservations within its remaining room.
+7. **Budget room:** a worst case above the budget's available amount is refused with `budget_exhausted`. Equality fits.
+8. **Pool:** otherwise the existing reservation body runs (halt, earlier attempt, pool funds, insert), and the admitted operation is recorded in `budget_operations`. Its refusals are its own (`pool_halted`, `insufficient_funds`, ...), recorded in `reservation_refusals`.
+
+`budget_closed` and `budget_exhausted` are recorded in `budget_refusals` with the role, the requested worst case and the budget's available amount, and return `requested_microusd` and `budget_available_microusd`. Lock order is operation, budget, pool. Settlement and reconciliation take pool then operation and never a budget, so the orders do not invert.
+
+**`closeBudget`** takes `budget_key`, `cause` (one of the contract stop codes: `fulfilled`, `budget_exhausted`, `time_limit`, `candidate_limit`, `sources_exhausted`, `cancelled_by_user`, `worker_lost`, `needs_reconciliation`, `operational_error`) and `actor_role`. A repeat with the same cause replays; another cause is refused with `idempotency_conflict`. Closing leaves open operations open; they settle and reconcile as usual.
+
+**Reads.** `budgetStatus` returns the cap, settled, open, committed and available amounts, `overrun`, `closed` (`{ cause, closed_at }` or null) and the operations not yet reconciled. `budgetOperations` returns every operation the budget admitted. Each operation has its ID, role, root and execution IDs, kind, call name, attempt ordinal, state, reserved and open amounts, `settled_microusd` (null until a settlement, or a reconciliation that settles, is recorded) and `reserved_at`.
+
+## Factory records
+
+The factory tables hold a request's durable progress. Every write is idempotent by key: the same key with the same content replays (`replay: true`) and writes nothing, and the same key with other content is refused with `idempotency_conflict`. Times in results are UTC ISO 8601 strings with milliseconds and `Z`, taken from the API clock.
+
+| Function | Database operation | Purpose |
+| --- | --- | --- |
+| `acceptRequest` | `factory_accept_request` | Create the budget, record the request and append `request_accepted` (event key `request_accepted`, seq 1) in one transaction. A refusal from any step leaves nothing behind, so a refused start can be sent again with the same IDs. |
+| `recordRequest` | `factory_record_request` | Record a request: `request_id`, `request_sha256`, the frozen `interpretation` (its `interpretation_sha256` field must equal `interpretation_sha256`), `budget_key` (an existing budget no other request uses), `root_execution_id` (the budget's root) and `factory_profile_sha256`. |
+| `readRequest` | `factory_request_read` | The request, its events with `seq > after` (at most `limit`, 1 to 1000), `next_after`, `last_seq`, `last_event_at`, the request's `last_heartbeat_at`, its stop, its evidence (case, hash, time) and its validation runs. `unknown_request` if it was never recorded. |
+| `appendEvent` | `factory_append_event` | Append one contract event (`type`, `host_id`, `candidate_id`, `item_key`, `case_id`, `message`, `data`) with a deterministic `event_key`; returns its `seq` and `at`. |
+| `recordHeartbeat` | `factory_record_heartbeat` | Record a worker heartbeat for the request (`validation_id` null) or one of its validation runs. Heartbeats are never events. |
+| `recordStop` | `factory_record_stop` | Record the request's stop request (one per request, keyed by request; `actor_role` is its content). |
+| `recordEvidence` | `factory_record_evidence` | Store a case's evidence as exact JSON text with the SHA-256 of its UTF-8 bytes, which the database checks. |
+| `readEvidence` | `factory_evidence_read` | The evidence text, byte for byte. `unknown_evidence` if none is stored. |
+| `recordValidation` | `factory_record_validation` | Record a validation run: `validation_id`, `request_id`, `case_id` and its own root. The ID is scoped to the request and case: the same ID on another request or case is `idempotency_conflict`. |
+| `readValidation` | `factory_validation_read` | A run by ID alone (with its request and case), its events after `after` and its `last_heartbeat_at`. `unknown_validation` if it was never recorded. |
+| `appendValidationEvent` | `factory_append_validation_event` | Append a run's event (`type`: lowercase letters, digits and underscores; `data`: an object) with an event key. |
+| `readRoot` | `factory_root_read` | The request, or the validation run and its request, that a root execution belongs to, for example the factory slot's holder. |
+
+- **Event numbering.** A request's events are numbered from 1 with no gaps. The append function computes the next number under a lock on the request's row, so concurrent writers (the worker, the stop and status routes) get consecutive numbers; a trigger and a primary key on `(request_id, seq)` refuse any other. A validation run's events follow the same rule under its own row.
+- **Event keys** are segments of lowercase letters, digits, `.`, `_` and `-` joined by `:` (at most 256 characters), unique per request. A replay compares every field of the event.
+- **After `request_finished`,** only `budget_updated`, `attention`, `attention_cleared`, `validation_started` and `validation_finished` are appended; any other type, a second `request_finished` included, is refused with `event_not_allowed`. An existing key still replays.
+- **Event types** are the contract's list (`bug-request/1`, section 8.4), and closure causes are its stop codes; a unit test compares both lists with `@rbw/factory-contract`.
+- **Order of writes for a validation run.** Check the ID with `readValidation` first, take the slot under the run's root, reserve with role `validation`, and only then record the run, so a refused run records nothing. Each call replays, so repeating the same sequence after an interruption completes it.
+
 ## Refusal codes
 
 | Code | Meaning |
@@ -321,6 +392,14 @@ Settlement, all other transitions, reconciliation, transfers, cap raises, child 
 | `unknown_slot` | The slot key does not exist |
 | `transfer_refused` | Any transfer other than `public → judge` in `judge-demo` within `public`'s available amount |
 | `cap_change_refused` | A lower or equal cap, or any cap change on a pool with allocations |
+| `budget_exhausted` | The worst case exceeds the request budget's available amount |
+| `budget_closed` | A `request` reservation on a closed budget |
+| `unknown_budget` | The budget key does not exist |
+| `idempotency_conflict` | A budget, closure, request, event key, stop, evidence or validation run exists under the same key with other content |
+| `unknown_request` | The factory request (or the root's owner) does not exist |
+| `unknown_validation` | The validation run does not exist, or belongs to another request |
+| `unknown_evidence` | The request has no evidence for the case |
+| `event_not_allowed` | An event type that may not follow `request_finished` |
 
 ## Caller protocol
 
@@ -422,6 +501,10 @@ Exit codes: **0** for completion or a valid dry run; **1** for a ledger refusal 
 | `halt_observations`, `halt_resumes` | Over-envelope observations and resumes |
 | `execution_slot`, `slot_events`, `slot_children`, `slot_child_confirmations` | Slot keys, acquire/release events, child resources and their confirmations |
 | `units`, `enforcement_methods` | The closed lists |
+| `budgets`, `budget_operations`, `budget_closures`, `budget_refusals` | Request budgets, the operations each admitted, closures and refused budget reservations |
+| `factory_requests`, `factory_events` | Factory requests with their frozen interpretation, and their numbered events |
+| `factory_heartbeats`, `factory_stops`, `factory_evidence` | Worker heartbeats, stop requests, per-case evidence text |
+| `factory_validations`, `factory_validation_events` | Validation runs and their numbered events |
 | `applied_migrations` | Applied migration files and checksums |
 
 In `reconciliations`, `recorded_at` is the time given in the record, and `logged_at` is the event time.
@@ -436,6 +519,8 @@ In `reconciliations`, `recorded_at` is the time given in the record, and `logged
   - I4: missing usage;
   - I5: forced-overlap slot acquisition;
   - forced-overlap reuse of one operation ID on two pools;
+  - request budgets: two forced-overlap budget reservations on one budget, a burst of eight, a reservation against a close in both orders, and a budget reservation against a plain reservation on the same pool;
+  - concurrent event appends from eight connections, which get consecutive sequence numbers;
   - concurrent first runs of `migrate` on one schema;
   - the operator command: a read-only `status` snapshot, a `reconcile` dry run that writes nothing, and `release-slot --apply`;
   - the insert guard: a direct INSERT after an entry function in the same transaction, an entry function that raises an error, and a rollback to a savepoint before it;
@@ -448,7 +533,12 @@ In `reconciliations`, `recorded_at` is the time given in the record, and `logged
 
   I1, I5 and the operation ID test hold the first call's transaction open until the second call is observed waiting on a lock in `pg_stat_activity`.
 
-The root `pnpm test` runs only the unit tests.
+The root `pnpm test` runs only the unit tests. A unit test applies `0001`–`0005`, records the judge-demo pool, its allocations and every function, trigger, column and constraint, applies `0006_factory.sql`, and checks that all of them are unchanged.
+
+## Known limits
+
+- **The spend halt is global.** An over-envelope settlement or reconciliation of a factory operation halts new work in every pool, so it also pauses judge replays (`pool_halted`) until an operator resumes. Detect it with `haltStatus` (or `operator status`); act with [Resume after an over-envelope halt](#resume-after-an-over-envelope-halt).
+- **Validation roots.** A `validation` reservation's root is checked against every budget's root and against roots already charged to another budget. It is not checked against roots used by reservations made outside any budget.
 
 ## Not in this package
 

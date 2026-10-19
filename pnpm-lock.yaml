@@ -288,6 +288,9 @@ importers:
 
   packages/spend:
     dependencies:
+      '@rbw/factory-contract':
+        specifier: workspace:*
+        version: link:../factory-contract
       pg:
         specifier: 8.23.1
         version: 8.23.1
