@@ -23,6 +23,7 @@ export interface Probe {
   stopCode: string;
   expectedDelivery: string;
   expectedItems: Record<string, unknown>[];
+  expectedCounts: Record<string, unknown>[];
   concurrent?: boolean;
   cancel?: boolean;
   validation?: "failed" | "error";
@@ -122,6 +123,11 @@ export async function runProbe(backend: IsolatedBackend, probe: Probe): Promise<
   }
   if (probe.cancel && !stopped) throw new Unavailable("cancel-midway requires an observable pause after the first delivery");
   if (state.state !== "finished") throw new Unavailable("Request observation reached the runner poll limit.");
+  const counts = (items: Record<string, unknown>[]) => items.map(item => ({
+    item_key: text(item.item_key), requested: integer(item.requested),
+    delivered: integer(item.delivered), missing: integer(item.missing),
+  })).sort((a, b) => a.item_key.localeCompare(b.item_key));
+  assert.deepEqual(counts(objects(state.items)), counts(probe.expectedCounts), "item counts differ from pinned scenario");
   assert.equal(state.delivery, probe.expectedDelivery, "delivery differs from pinned scenario");
   assert.equal(state.outcome, probe.outcome);
   assert.equal(object(state.stop_reason).code, probe.stopCode);
@@ -142,9 +148,11 @@ export async function runProbe(backend: IsolatedBackend, probe: Probe): Promise<
     }
   }
   checkStatus(reconnect);
-  for (const field of ["request_id", "state", "outcome", "stop_reason", "delivery", "items", "cases"]) {
-    assert.deepEqual(reconnect[field], state[field], "terminal result changed on reconnect");
-  }
+  // No validation or reconciliation runs between these reads. Only paging and
+  // polling hints may differ; accounting and the stored terminal record may not.
+  const snapshot = (value: Record<string, unknown>) => Object.fromEntries(Object.entries(value)
+    .filter(([field]) => !["events", "next_after", "poll_after_ms"].includes(field)));
+  assert.deepEqual(snapshot(reconnect), snapshot(state), "terminal result changed on reconnect");
   if (probe.cancel) {
     const again = body(await call("POST", `${path}/stop`, {}), 200);
     for (const field of ["outcome", "items", "cases"]) assert.deepEqual(again[field], state[field]);
@@ -257,9 +265,11 @@ function probes(): { groups: ScenarioId[]; probe: Probe }[] {
     const input = object(interpretation.input);
     if (scenario === "sources-exhausted") {
       const first = objects(input.items)[0]; assert(first); first.quantity = 2;
+      const count = objects(expected.items).find(item => item.item_key === first.item_key); assert(count);
+      count.requested = 2; count.missing = 2 - integer(count.delivered);
     }
     return { groups, probe: {
-    scenario, input, outcome, stopCode, expectedDelivery: text(expected.delivery), expectedItems: objects(interpretation.items),
+    scenario, input, outcome, stopCode, expectedDelivery: text(expected.delivery), expectedItems: objects(interpretation.items), expectedCounts: objects(expected.items),
     concurrent: scenario === "two-host-fulfilled", cancel: scenario === "cancel-midway",
     reconcile: scenario === "worker-lost" || scenario === "uncertain-provider",
     downloads: scenario === "two-host-fulfilled",

@@ -2,12 +2,12 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { expect, it, vi } from "vitest";
 import { contractRevision, runAcceptance, runProbe, type IsolatedBackend, type Reply } from "../src/runner.ts";
-import { checkStatus, object, objects, integer } from "../src/invariants.ts";
+import { checkStatus, object, objects, integer, text } from "../src/invariants.ts";
 const fixture = (name: string): Record<string, unknown> => {
   const value: unknown = JSON.parse(readFileSync(new URL(`../fixtures/${name}.json`, import.meta.url), "utf8"));
   return object(value);
 };
-const probe = { scenario: "two-host-fulfilled", input: object(fixture("interpretation-supported").input), outcome: "fulfilled", stopCode: "fulfilled", concurrent: true, expectedDelivery: "complete", expectedItems: objects(fixture("interpretation-supported").items) };
+const probe = { scenario: "two-host-fulfilled", input: object(fixture("interpretation-supported").input), outcome: "fulfilled", stopCode: "fulfilled", concurrent: true, expectedDelivery: "complete", expectedItems: objects(fixture("interpretation-supported").items), expectedCounts: objects(fixture("status-fulfilled").items) };
 function scripted() {
   let id = "";
   let starts = 0;
@@ -237,4 +237,46 @@ it("requires the pinned scenario's partial delivery rather than trusting its out
     return reply;
   };
   await expect(runProbe(backend, { ...probe, outcome: "sources_exhausted", stopCode: "sources_exhausted", expectedDelivery: "partial" })).rejects.toThrow("delivery differs from pinned scenario");
+});
+it("rejects assigning the exhausted scenario's case to the less specific item", async () => {
+  const expected = fixture("status-exhausted");
+  const { backend } = scripted();
+  const wrong = structuredClone(expected);
+  const items = objects(wrong.items); const any = items[0]; const described = items[1]; assert(any && described);
+  any.delivered = 1; any.missing = 0; any.case_ids = described.case_ids;
+  described.delivered = 0; described.missing = 1; described.case_ids = [];
+  for (const c of objects(wrong.cases)) c.item_key = any.item_key;
+  for (const c of objects(wrong.candidates)) if (c.case_id !== null) c.item_key = any.item_key;
+  checkStatus(wrong);
+  let starts = 0;
+  backend.request = (_method, path, payload) => {
+    if (path.endsWith("/test/reset")) return Promise.resolve({ status: 204, body: null });
+    if (path.endsWith("/interpretations")) return Promise.resolve({ status: 200, body: expected.interpretation });
+    if (path.endsWith("/requests")) {
+      const id = text(object(payload).request_id);
+      const old = text(wrong.request_id);
+      Object.assign(wrong, JSON.parse(JSON.stringify(wrong).replaceAll(old, id)) as Record<string, unknown>);
+      return Promise.resolve({ status: ++starts === 1 ? 202 : 200, body: wrong });
+    }
+    return Promise.resolve({ status: 200, body: wrong });
+  };
+  await expect(runProbe(backend, { scenario: "sources-exhausted", input: object(object(expected.interpretation).input),
+    outcome: "sources_exhausted", stopCode: "sources_exhausted", expectedDelivery: "partial",
+    expectedItems: objects(object(expected.interpretation).items), expectedCounts: objects(expected.items),
+  })).rejects.toThrow("item counts differ from pinned scenario");
+});
+it("rejects a consistent budget rewrite on reconnect", async () => {
+  const { backend, request } = scripted(); let reconnected = false;
+  backend.reconnect = () => { reconnected = true; return Promise.resolve(); };
+  backend.request = async (...args) => {
+    const reply = await request(...args);
+    if (reconnected) {
+      const b = object(object(reply.body).budget);
+      b.spent_microusd = integer(b.spent_microusd) + 1;
+      b.committed_microusd = integer(b.committed_microusd) + 1;
+      b.remaining_microusd = integer(b.remaining_microusd) - 1;
+    }
+    return reply;
+  };
+  await expect(runProbe(backend, probe)).rejects.toThrow("terminal result changed on reconnect");
 });

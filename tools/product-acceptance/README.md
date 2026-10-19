@@ -95,7 +95,7 @@ inventing a response shape. It does not call private product helpers.
 
 ## Runner verification
 
-The 62 self-tests use copied published fixtures and scripted transport replies.
+The 64 self-tests use copied published fixtures and scripted transport replies.
 They check both valid examples and deliberate corruptions; they are not an
 alternate backend and are not request-API acceptance evidence. The JSON fixtures
 in `fixtures/` are byte-for-byte copies from
