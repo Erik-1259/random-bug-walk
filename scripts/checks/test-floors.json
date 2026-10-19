@@ -1,7 +1,7 @@
 {
   "vitest": {
     ".": 21,
-    "kit/task-report": 8,
+    "kit/task-report": 13,
     "kit/umami": 57,
     "kit/umami-race": 97,
     "packages/admission": 130,
@@ -9,7 +9,7 @@
     "packages/factory-contract": 328,
     "packages/harvest": 139,
     "packages/harvest-review": 83,
-    "packages/host-task-report": 86,
+    "packages/host-task-report": 154,
     "packages/projection": 127,
     "packages/publisher": 196,
     "packages/schema": 952,

@@ -1,0 +1,8 @@
+{
+  "format": "rbw.task-report.kit-image.v2",
+  "reference": "rbw-task-report:kit-v2-arm64",
+  "digest": "sha256:5b80edd8c6c39600a61500f7a594f63493824194cea93f6011f93ccf147cb85b",
+  "architecture": "arm64",
+  "built_from": "kit/task-report/v2/Dockerfile, natively for arm64 on local Docker",
+  "note": "The local build the version 2 qualification ran on. A hosted amd64 build in a registry replaces this pin when it is pushed (planned); a new pin changes the environment hash and with it the case ID."
+}

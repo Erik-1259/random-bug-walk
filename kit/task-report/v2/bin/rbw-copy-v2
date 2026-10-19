@@ -1,0 +1,16 @@
+#!/bin/sh
+# Runs one version 2 copy as root. The runner has placed the app tree in /workspace/app and the
+# validator's check package in /opt/rbw/evaluator/pkg. Before anything runs as another user, the
+# evaluator area is made root-only again (the placement may have changed owners or modes); then the
+# version 2 copy driver starts with the image's Node 24. See
+# packages/host-task-report/v2/copy.ts for the arguments.
+set -eu
+[ "$(id -u)" = 0 ] || { echo "rbw-copy-v2: must run as root" >&2; exit 2; }
+evaluator=/opt/rbw/evaluator
+pkg="$evaluator/pkg"
+[ -f "$pkg/v2/copy.ts" ] || { echo "rbw-copy-v2: the check package is not in place" >&2; exit 2; }
+chown -R root:root "$pkg"
+chmod 0700 "$evaluator" "$pkg"
+find "$pkg" -type d -exec chmod 0700 {} +
+find "$pkg" -type f -exec chmod 0600 {} +
+exec /usr/local/bin/node "$pkg/v2/copy.ts" "$@"

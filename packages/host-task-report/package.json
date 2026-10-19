@@ -2,11 +2,12 @@
   "name": "@rbw/host-task-report",
   "version": "0.0.0",
   "private": true,
-  "description": "Evaluator-side material for the task-report host: baseline identity, original-suite runner, the F3 verification check, its repetition protocol, the candidate catalog and the local copy runner",
+  "description": "Evaluator-side material for the task-report host: baseline identity, original-suite runner, the F3 verification check, its repetition protocols, the candidate catalogs, the local copy runners and the factory host adapter",
   "license": "MIT",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./adapter": "./adapter/index.ts"
   },
   "engines": {
     "node": ">=24.21 <25"
@@ -19,6 +20,8 @@
     "runner": "node src/local/cli.ts"
   },
   "dependencies": {
+    "@rbw/factory-contract": "workspace:*",
+    "@rbw/schema": "workspace:*",
     "diff": "9.0.0",
     "pg": "8.23.1"
   },
