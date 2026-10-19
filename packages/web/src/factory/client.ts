@@ -276,7 +276,7 @@ export class FactoryController {
     }
     catch (error) {
       const failure = this.error(error);
-      if (["budget_unavailable", "invalid_request", "not_found"].includes(failure.code)) {
+      if (["budget_unavailable", "invalid_request", "not_found"].includes(failure.code) || (failure.code === "busy" && failure.details?.reason === "needs_reconciliation")) {
         // A definite refusal recorded no validation. Keep the delivered request and refusal message.
         this.storage.removeItem(VALIDATION_KEY); this.storage.removeItem(VALIDATION_ID_KEY);
         this.validationIdentity = null;
