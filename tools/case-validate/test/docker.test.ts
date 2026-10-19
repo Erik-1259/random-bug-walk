@@ -22,15 +22,20 @@ afterEach(async () => {
   await rm(dir, { recursive: true, force: true });
 });
 
+const REFERENCE = "registry.invalid/synthetic/task-report-kit:1";
 const PINNED = `sha256:${"a".repeat(64)}`;
 const LOCAL_ID = `sha256:${"b".repeat(64)}`;
+/** What `docker image inspect` prints with the runner's template: the image ID, the architecture and the repository digests as JSON. */
+const inspect = (id: string, architecture: string, repoDigests: string[] | null = []): string => `${id} ${architecture} ${JSON.stringify(repoDigests)}`;
+/** The pinned kit on a classic image store, where the image ID is the config digest, not the pinned manifest digest. */
+const KIT = { [`${REFERENCE}@${PINNED}`]: inspect(LOCAL_ID, "amd64", [`registry.invalid/synthetic/task-report-kit@${PINNED}`]) };
 
 function plan(overrides: Partial<CopyPlan> = {}): CopyPlan {
   return {
     copy_id: "synthetic-buggy-1",
     host_id: "task-report",
     state: "buggy",
-    image: { reference: "registry.invalid/synthetic/task-report-kit:1", digest: PINNED },
+    image: { reference: REFERENCE, digest: PINNED },
     files: [{ path: "src/counter.js", sha256: sha(text("app\n")) }],
     evaluator_files: [{ path: "verify.js", sha256: sha(text("check\n")) }],
     destinations: { app: "/rbw/app", evaluator: "/rbw/evaluator", results: "/rbw/results" },
@@ -67,6 +72,7 @@ interface FakeDocker {
 }
 
 interface FakeOptions {
+  /** `docker image inspect` answers per name (see `inspect`). */
   images: Record<string, string>;
   exit?: number;
   /** wait returns only when kill is called; with exitedFirst the copy had already ended and kill fails. */
@@ -137,17 +143,20 @@ function fakeDocker(options: FakeOptions): FakeDocker {
 
 describe("dockerRunner", () => {
   it("places every file at its destination, runs without network within the limits and brings the results back hashed", async () => {
-    const docker = fakeDocker({ images: { [`registry.invalid/synthetic/task-report-kit:1@${PINNED}`]: `${LOCAL_ID} amd64` } });
+    const docker = fakeDocker({ images: KIT });
     const collected = await dockerRunner({ command: docker.command, resultsDir: join(dir, "results") }).run(plan(), roots);
     expect(collected.outcome).toBe("ran");
     expect(collected.exit_code).toBe(0);
-    expect(collected.image_digest).toBe(LOCAL_ID);
+    // The daemon resolved the pinned digest itself, so the copy reports the pin, not the image ID.
+    expect(collected.image_digest).toBe(PINNED);
+    // A template every docker CLI version can execute (older ones cannot `join` RepoDigests).
+    expect(docker.calls.find((call) => call[0] === "image")).toContain("{{.Id}} {{.Architecture}} {{json .RepoDigests}}");
     expect(collected.architecture).toBe("amd64");
     expect(collected.results_dir).not.toBeNull();
     expect(collected.results_sha256).toBe(await resultsSha256(collected.results_dir ?? ""));
     const create = docker.calls.find((call) => call[0] === "create") ?? [];
     expect(create).toEqual(expect.arrayContaining(["--network", "none", "--cpus", "1", "--memory", "512m"]));
-    expect(create.slice(-3)).toEqual([`registry.invalid/synthetic/task-report-kit:1@${PINNED}`, "node", "/rbw/evaluator/run-copy.js"]);
+    expect(create.slice(-3)).toEqual([`${REFERENCE}@${PINNED}`, "node", "/rbw/evaluator/run-copy.js"]);
     const placed = headers(docker.placed ?? new Uint8Array());
     expect(placed).toEqual([
       { name: "rbw/results/", typeflag: "5", mode: 0o777, bytes: "" },
@@ -157,16 +166,47 @@ describe("dockerRunner", () => {
     expect(docker.calls.at(-1)?.slice(0, 2)).toEqual(["rm", "--force"]);
   });
 
-  it("runs a locally built kit when the pinned digest is not on the daemon, and reports the image that ran", async () => {
-    const docker = fakeDocker({ images: { "registry.invalid/synthetic/task-report-kit:1": `${LOCAL_ID} arm64` } });
-    const collected = await dockerRunner({ command: docker.command, resultsDir: join(dir, "results") }).run(plan(), roots);
-    expect(collected.outcome).toBe("ran");
-    expect(collected.image_digest).toBe(LOCAL_ID);
-    expect(collected.architecture).toBe("arm64");
+  it("runs the tagged kit when the pinned reference is not on the daemon only if that image is the pin", async () => {
+    // A locally built kit whose image ID is the pin.
+    const local = fakeDocker({ images: { [REFERENCE]: inspect(PINNED, "arm64") } });
+    const built = await dockerRunner({ command: local.command, resultsDir: join(dir, "results") }).run(plan(), roots);
+    expect(built.outcome).toBe("ran");
+    expect(built.image_digest).toBe(PINNED);
+    expect(built.architecture).toBe("arm64");
+    expect((local.calls.find((call) => call[0] === "create") ?? []).slice(-3)).toEqual([PINNED, "node", "/rbw/evaluator/run-copy.js"]);
+
+    // A tagged image whose repository digests hold the pin.
+    const pulled = fakeDocker({ images: { [REFERENCE]: inspect(LOCAL_ID, "amd64", [`registry.invalid/synthetic/other@sha256:${"c".repeat(64)}`, `registry.invalid/synthetic/task-report-kit@${PINNED}`]) } });
+    const tagged = await dockerRunner({ command: pulled.command, resultsDir: join(dir, "results") }).run(plan(), roots);
+    expect(tagged.outcome).toBe("ran");
+    expect(tagged.image_digest).toBe(PINNED);
+
+    // Any other image under the tag is never run.
+    const other = fakeDocker({ images: { [REFERENCE]: inspect(LOCAL_ID, "amd64", [`registry.invalid/synthetic/task-report-kit@sha256:${"d".repeat(64)}`]) } });
+    const refused = await dockerRunner({ command: other.command, resultsDir: join(dir, "results") }).run(plan(), roots);
+    expect(refused.outcome).toBe("setup_failed");
+    expect(other.calls.some((call) => call[0] === "create")).toBe(false);
+
+    // An answer that is not the template's shape is no image either.
+    const garbled = fakeDocker({ images: { [REFERENCE]: `${PINNED} amd64 not-json` } });
+    expect((await dockerRunner({ command: garbled.command, resultsDir: join(dir, "results") }).run(plan(), roots)).outcome).toBe("setup_failed");
+  });
+
+  it("runs the image the caller chooses, or the reference of a plan that pins no digest, and reports the image ID that ran", async () => {
+    const standIn = fakeDocker({ images: { "synthetic-stand-in:1": inspect(LOCAL_ID, "arm64") } });
+    const chosen = await dockerRunner({ command: standIn.command, resultsDir: join(dir, "results"), image: () => "synthetic-stand-in:1" }).run(plan(), roots);
+    expect(chosen.outcome).toBe("ran");
+    expect(chosen.image_digest).toBe(LOCAL_ID);
+    expect((standIn.calls.find((call) => call[0] === "create") ?? []).slice(-3)).toEqual(["synthetic-stand-in:1", "node", "/rbw/evaluator/run-copy.js"]);
+
+    const unpinned = fakeDocker({ images: { [REFERENCE]: inspect(LOCAL_ID, "amd64", null) } });
+    const free = await dockerRunner({ command: unpinned.command, resultsDir: join(dir, "results") }).run(plan({ image: { reference: REFERENCE, digest: null } }), roots);
+    expect(free.outcome).toBe("ran");
+    expect(free.image_digest).toBe(LOCAL_ID);
   });
 
   it("is a setup failure, with no container, when a file differs from its hash or the image is missing", async () => {
-    const docker = fakeDocker({ images: { "registry.invalid/synthetic/task-report-kit:1": `${LOCAL_ID} amd64` } });
+    const docker = fakeDocker({ images: KIT });
     const tampered = await dockerRunner({ command: docker.command }).run(plan({ files: [{ path: "src/counter.js", sha256: "0".repeat(64) }] }), roots);
     expect(tampered.outcome).toBe("setup_failed");
     expect(tampered.results_dir).toBeNull();
@@ -178,14 +218,14 @@ describe("dockerRunner", () => {
   });
 
   it("is a setup failure when the container cannot be created", async () => {
-    const docker = fakeDocker({ images: { "registry.invalid/synthetic/task-report-kit:1": `${LOCAL_ID} amd64` }, createFails: true });
+    const docker = fakeDocker({ images: KIT, createFails: true });
     const collected = await dockerRunner({ command: docker.command }).run(plan(), roots);
     expect(collected.outcome).toBe("setup_failed");
-    expect(collected.image_digest).toBe(LOCAL_ID);
+    expect(collected.image_digest).toBe(PINNED);
   });
 
   it("kills the copy at its time limit and reports timed_out", async () => {
-    const docker = fakeDocker({ images: { "registry.invalid/synthetic/task-report-kit:1": `${LOCAL_ID} amd64` }, hang: true });
+    const docker = fakeDocker({ images: KIT, hang: true });
     const collected = await dockerRunner({ command: docker.command, resultsDir: join(dir, "results") }).run(plan({ limits: { timeout_s: 1, vcpus: 1, memory_mb: 512, network: "none" } }), roots);
     expect(collected.outcome).toBe("timed_out");
     expect(collected.exit_code).toBeNull();
@@ -193,20 +233,20 @@ describe("dockerRunner", () => {
   });
 
   it("reports a copy that ended on its own just as the limit passed as ran, not timed_out", async () => {
-    const docker = fakeDocker({ images: { "registry.invalid/synthetic/task-report-kit:1": `${LOCAL_ID} amd64` }, hang: true, exitedFirst: true });
+    const docker = fakeDocker({ images: KIT, hang: true, exitedFirst: true });
     const collected = await dockerRunner({ command: docker.command, resultsDir: join(dir, "results") }).run(plan({ limits: { timeout_s: 1, vcpus: 1, memory_mb: 512, network: "none" } }), roots);
     expect(collected.outcome).toBe("ran");
     expect(collected.exit_code).toBe(0);
   });
 
   it("still reports timed_out when the kill fails but docker's record shows the copy overran its limit", async () => {
-    const docker = fakeDocker({ images: { "registry.invalid/synthetic/task-report-kit:1": `${LOCAL_ID} amd64` }, hang: true, killFails: true });
+    const docker = fakeDocker({ images: KIT, hang: true, killFails: true });
     const collected = await dockerRunner({ command: docker.command, resultsDir: join(dir, "results") }).run(plan({ limits: { timeout_s: 1, vcpus: 1, memory_mb: 512, network: "none" } }), roots);
     expect(collected.outcome).toBe("timed_out");
   });
 
   it("is a setup failure, with no container, when the host cannot make the results directory", async () => {
-    const docker = fakeDocker({ images: { "registry.invalid/synthetic/task-report-kit:1": `${LOCAL_ID} amd64` } });
+    const docker = fakeDocker({ images: KIT });
     await writeFile(join(dir, "not-a-directory"), "x");
     const collected = await dockerRunner({ command: docker.command, resultsDir: join(dir, "not-a-directory") }).run(plan(), roots);
     expect(collected.outcome).toBe("setup_failed");
@@ -214,7 +254,7 @@ describe("dockerRunner", () => {
   });
 
   it("answers no results, and never rejects, when the results hold a pipe", async () => {
-    const docker = fakeDocker({ images: { "registry.invalid/synthetic/task-report-kit:1": `${LOCAL_ID} amd64` }, results: "fifo" });
+    const docker = fakeDocker({ images: KIT, results: "fifo" });
     const collected = await dockerRunner({ command: docker.command, resultsDir: join(dir, "results") }).run(plan(), roots);
     expect(collected.outcome).toBe("ran");
     expect(collected.results_dir).toBeNull();
@@ -222,7 +262,7 @@ describe("dockerRunner", () => {
   });
 
   it("reports a non-zero exit as ran, and missing results as null", async () => {
-    const docker = fakeDocker({ images: { "registry.invalid/synthetic/task-report-kit:1": `${LOCAL_ID} amd64` }, exit: 3, results: false });
+    const docker = fakeDocker({ images: KIT, exit: 3, results: false });
     const collected = await dockerRunner({ command: docker.command, resultsDir: join(dir, "results") }).run(plan(), roots);
     expect(collected.outcome).toBe("ran");
     expect(collected.exit_code).toBe(3);

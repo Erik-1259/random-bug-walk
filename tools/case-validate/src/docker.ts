@@ -35,8 +35,9 @@ export interface DockerRunnerOptions {
   /** The directory each copy's fresh results directory is created in; defaults to the system temporary directory. */
   resultsDir?: string;
   /**
-   * The local image to run for a plan. By default the pinned `reference@digest` runs when the daemon has it,
-   * otherwise the reference (a locally built kit); the collected image_digest is the image ID that ran.
+   * The local image to run for a plan, in place of its kit (a stand-in image); the collected image_digest is
+   * then that image's ID. By default a pinned plan runs only its pinned digest and reports the pin: the daemon's
+   * `reference@digest`, otherwise the image under the reference when its ID or a repository digest is the pin.
    */
   image?: (plan: CopyPlan) => string;
   now?: () => Date;
@@ -150,20 +151,56 @@ interface ResolvedImage {
   architecture: Architecture;
 }
 
-async function resolveImage(docker: DockerCommand, plan: CopyPlan, choose: DockerRunnerOptions["image"]): Promise<ResolvedImage | null> {
-  const candidates = choose !== undefined
-    ? [choose(plan)]
-    : plan.image.digest !== null && !plan.image.reference.includes("@")
-      ? [`${plan.image.reference}@${plan.image.digest}`, plan.image.reference]
-      : [plan.image.reference];
-  for (const name of candidates) {
-    const inspected = await docker(["image", "inspect", "--format", "{{.Id}} {{.Architecture}}", name], { timeoutMs: COMMAND_TIMEOUT_MS });
-    if (inspected.code !== 0) continue;
-    const [id = "", architecture = ""] = inspected.stdout.trim().split(" ");
-    if (!/^sha256:[0-9a-f]{64}$/.test(id) || (architecture !== "amd64" && architecture !== "arm64")) return null;
-    return { name, digest: id, architecture };
+interface InspectedImage {
+  id: string;
+  architecture: Architecture;
+  /** The image's `<repository>@<digest>` names. */
+  repoDigests: string[];
+}
+
+/** `docker image inspect` of one name; null when the daemon has no such image or answers something else. */
+async function inspectImage(docker: DockerCommand, name: string): Promise<InspectedImage | null> {
+  // `json`, not `join`: older docker CLIs cannot join RepoDigests in an inspect template.
+  const inspected = await docker(["image", "inspect", "--format", "{{.Id}} {{.Architecture}} {{json .RepoDigests}}", name], { timeoutMs: COMMAND_TIMEOUT_MS });
+  if (inspected.code !== 0) return null;
+  const [id = "", architecture = "", ...rest] = inspected.stdout.trim().split(" ");
+  if (!/^sha256:[0-9a-f]{64}$/.test(id) || (architecture !== "amd64" && architecture !== "arm64")) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rest.join(" "));
+  } catch {
+    // An answer that is not the template's shape is no usable image.
+    return null;
   }
-  return null;
+  if (parsed !== null && !Array.isArray(parsed)) return null;
+  const repoDigests = (parsed ?? []) as unknown[];
+  if (!repoDigests.every((item): item is string => typeof item === "string")) return null;
+  return { id, architecture, repoDigests };
+}
+
+/**
+ * The image a plan runs and the digest its copy reports. A pinned plan runs only its pin: `reference@digest`
+ * when the daemon resolves it (the daemon has checked the digest, so the copy reports the pin, whatever image
+ * ID the image store gives it), otherwise the image under the bare reference when its image ID is the pin (a
+ * locally built kit) or one of its repository digests is. A plan with no pin runs its reference, and the
+ * caller's `image` choice runs as it is; both report the image ID that ran.
+ */
+async function resolveImage(docker: DockerCommand, plan: CopyPlan, choose: DockerRunnerOptions["image"]): Promise<ResolvedImage | null> {
+  const pin = plan.image.digest;
+  if (choose !== undefined || pin === null) {
+    const name = choose !== undefined ? choose(plan) : plan.image.reference;
+    const image = await inspectImage(docker, name);
+    return image === null ? null : { name, digest: image.id, architecture: image.architecture };
+  }
+  if (!plan.image.reference.includes("@")) {
+    const pinned = `${plan.image.reference}@${pin}`;
+    const exact = await inspectImage(docker, pinned);
+    if (exact !== null) return { name: pinned, digest: pin, architecture: exact.architecture };
+  }
+  const tagged = await inspectImage(docker, plan.image.reference);
+  if (tagged === null || (tagged.id !== pin && !tagged.repoDigests.some((item) => item.endsWith(`@${pin}`)))) return null;
+  // Runs the image ID that was checked, so a tag moved after the check cannot run another image.
+  return { name: tagged.id, digest: pin, architecture: tagged.architecture };
 }
 
 /** Copies the results directory back into `resultsDir` and hashes it; null when the copy left none or it cannot be read. */

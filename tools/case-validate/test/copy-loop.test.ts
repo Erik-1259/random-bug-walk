@@ -167,6 +167,36 @@ describe("validatePair runs the copies (synthetic host)", () => {
     expect(partial.error_code).toBe("adapter_error");
   });
 
+  it("answers error when a copy is invalid or incomplete, even when the adapter's interpret ignores the copies' status", async () => {
+    const base = syntheticAdapter({ seeds: ["01"], workdir: parent });
+    // Reports every cell as its expectation on full runs, whatever the records say.
+    const blind: HostAdapter = {
+      ...base,
+      interpret: (records, protocol) => {
+        const state = records[0]?.state ?? "clean";
+        const runs = protocol.per_state[state].min_valid_runs;
+        const cell = (observed: "pass" | "fail"): InterpretedCells["verification"] => ({ observed, runs_valid: runs, runs_total: runs, failure_codes: [], detail: "synthetic" });
+        return { original_suite: cell("pass"), verification: cell(state === "buggy" ? "fail" : "pass") };
+      },
+    };
+    const adapters = { "task-report": blind };
+    // The blind adapter alone passes a pair whose copies all completed.
+    expect((await validatePair({ ...input(scriptedRunner(copies, qualifying)), adapters })).result).toBe("passed");
+
+    const notSetUp = await validatePair({ ...input(scriptedRunner(copies, (plan) => (plan.state === "clean" ? { outcome: "setup_failed" } : qualifying(plan)))), adapters });
+    expect(notSetUp.records.find((record) => record.state === "clean")?.status).toBe("invalid");
+    expect(notSetUp.result).toBe("error");
+    expect(notSetUp.error_code).toBe("cells_invalid");
+    expect(notSetUp.matrix?.original_suite.clean.observed).toBe("error");
+    expect(notSetUp.matrix?.verification.clean.observed).toBe("error");
+    expect(notSetUp.matrix?.verification.clean.runs_valid).toBe(2);
+
+    const late = await validatePair({ ...input(scriptedRunner(copies, (plan) => (plan.state === "fixed" ? { outcome: "timed_out" } : qualifying(plan)))), adapters });
+    expect(late.result).toBe("error");
+    expect(late.matrix?.original_suite.fixed.observed).toBe("incomplete");
+    expect(late.matrix?.verification.fixed.observed).toBe("incomplete");
+  });
+
   it("holds every pass or fail to the protocol's minimum of valid runs, whatever the adapter says", async () => {
     const base = syntheticAdapter({ seeds: ["01"], workdir: parent });
     const generous: HostAdapter = {

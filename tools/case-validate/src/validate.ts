@@ -153,7 +153,7 @@ export async function runCopies(input: CopyLoopInput): Promise<CopyLoopOutcome> 
     } catch (error) {
       throw new CopyLoopError("adapter_error", `interpret(${state}) threw: ${error instanceof Error ? error.message : String(error)}`, records);
     }
-    const stateCells = checkedCells(state, interpreted, input.protocol, records);
+    const stateCells = withCopyStatus(checkedCells(state, interpreted, input.protocol, records), stateRecords);
     cells[state] = stateCells;
     if (input.onCells !== undefined) await input.onCells(state, stateCells);
   }
@@ -178,6 +178,24 @@ function checkedCells(state: CopyState, cells: InterpretedCells, protocol: Proto
     return cell;
   };
   return { original_suite: check("original_suite"), verification: check("verification") };
+}
+
+/**
+ * Applies the copies' statuses, whatever the adapter interpreted: a state with an invalid copy observes
+ * `error` in both cells, and one with an incomplete copy at least `incomplete`, so neither is ever a pass or
+ * a fail. The adapter's run counts are kept.
+ */
+function withCopyStatus(cells: InterpretedCells, stateRecords: readonly CopyRecord[]): InterpretedCells {
+  const invalid = stateRecords.filter((record) => record.status === "invalid").length;
+  const incomplete = stateRecords.filter((record) => record.status === "incomplete").length;
+  if (invalid === 0 && incomplete === 0) return cells;
+  const observed = invalid > 0 ? "error" : "incomplete";
+  const detail = invalid > 0
+    ? `${String(invalid)} of ${String(stateRecords.length)} copies are invalid`
+    : `${String(incomplete)} of ${String(stateRecords.length)} copies are incomplete`;
+  const apply = (cell: CellObservation): CellObservation =>
+    cell.observed === "error" || cell.observed === observed ? cell : { ...cell, observed, detail };
+  return { original_suite: apply(cells.original_suite), verification: apply(cells.verification) };
 }
 
 class PlanError extends Error {}
@@ -229,7 +247,7 @@ function entryOf(adapter: HostAdapter, entryId: string): CatalogEntry | null {
 
 /**
  * Runs the standalone harness on one bug case and one validator package. Resolves `passed`, `failed` or
- * `error` (contract section 11); every refusal, every adapter fault and every invalid or incomplete cell is
+ * `error` (contract section 11); every refusal, every adapter fault and every invalid or incomplete copy or cell is
  * `error`. Rejects only when the runner rejects (an uncertain provider outcome) or one of the caller's own
  * callbacks throws: the records collected before it have been passed to onCopy, no further copy runs, and
  * the error is rethrown unchanged.
