@@ -1,15 +1,20 @@
-import { readFileSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { COPY_COMMAND, COPY_DESTINATIONS } from "../../../packages/host-task-report/adapter/kit.ts";
 import { buildArgsV2 } from "../../../packages/host-task-report/adapter/qualify.ts";
-import { APP_DIR, EVALUATOR_DIR, EVALUATOR_SUITE_DIR, LAUNCH, RESULTS_DIR } from "../../../packages/host-task-report/src/copy/layout.ts";
+import { APP_DIR, ETC_DIR, EVALUATOR_DIR, EVALUATOR_SUITE_DIR, LAUNCH, RESULTS_DIR } from "../../../packages/host-task-report/src/copy/layout.ts";
 
 const kit = fileURLToPath(new URL("..", import.meta.url));
 const read = (path: string): string => readFileSync(`${kit}/${path}`, "utf8");
 const v1 = read("Dockerfile");
 const v2 = read("v2/Dockerfile");
 const entry = read("v2/bin/rbw-copy-v2");
+
+/** The files of `etc/` (relative paths), which version 2 copies into /opt/rbw/etc. */
+function etcFiles(dir = "etc"): string[] {
+  return readdirSync(`${kit}/${dir}`, { withFileTypes: true }).flatMap((item) => (item.isDirectory() ? etcFiles(`${dir}/${item.name}`) : [`${dir}/${item.name}`]));
+}
 
 function argDefault(text: string, name: string): string | undefined {
   return new RegExp(`^ARG ${name}=(\\S+)$`, "m").exec(text)?.[1];
@@ -32,6 +37,33 @@ describe("kit image version 2", () => {
     expect(buildArgsV2("rbw-task-report:t", "/r")).toEqual(expect.arrayContaining(["-f", "/r/kit/task-report/v2/Dockerfile", "app=/r/hosts/task-report/app", "launcher=/r/kit/umami/bin", "/r/kit/task-report"]));
     expect(v2).toContain(`install -d -o root -g root -m 0700 ${COPY_DESTINATIONS.evaluator}`);
     expect(v2).toContain(`"type": "module"`);
+  });
+
+  it("holds no check in /opt/rbw/etc either: the setup files lose their comments and are root-only", () => {
+    expect(v2).toContain(`COPY --chown=0:0 etc/ ${ETC_DIR}/`);
+    for (const step of [
+      `find ${ETC_DIR} -type f -name '*.sql' -exec sed -i '/^[[:space:]]*--/d' {} +`,
+      `find ${ETC_DIR} -type f ! -name '*.sql' -exec sed -i '/^[[:space:]]*#/d' {} +`,
+      `chown -R root:root ${ETC_DIR}`,
+      `find ${ETC_DIR} -type d -exec chmod 0700 {} +`,
+      `find ${ETC_DIR} -type f -exec chmod 0600 {} +`,
+    ]) {
+      expect(v2, step).toContain(step);
+    }
+    expect(v2).not.toMatch(/chmod 0?7?55[^\n]*\/opt\/rbw\/etc|chmod 0?644/);
+    const files = etcFiles();
+    expect(files.length).toBeGreaterThan(0);
+    const kept = files
+      .map((file) => {
+        const comment = file.endsWith(".sql") ? /^\s*--/ : /^\s*#/;
+        return read(file)
+          .split("\n")
+          .filter((line) => !comment.test(line))
+          .join("\n");
+      })
+      .join("\n")
+      .toLowerCase();
+    for (const word of ["lock", "for update", "for share", "monitor", "evaluator", "pool", "verification", "check"]) expect(kept, word).not.toContain(word);
   });
 
   it("keeps the evaluator tree and the results root-only, as version 1 does", () => {

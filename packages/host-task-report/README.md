@@ -72,7 +72,7 @@ counted trial: records made under another data file or protocol are not counted.
 | --- | --- | --- |
 | Protocol file | `protocol/f3-repeatability.v1.json`, SHA-256 `56cdd1fe...` | `v2/protocol/f3-repeatability.v2.json`, SHA-256 in its `.sha256` pin |
 | Catalog | `catalog/v1.json` | `catalog/v2.json`: the same entry and patch files, with the contract's fields (source, criteria, client-safe presentation) and the check set bound to the version 2 protocol |
-| Where the checks live | baked into the kit image | in the validator: the check package is placed into each copy; the version 2 kit image holds only the runtime |
+| Where the checks live | baked into the kit image | in the validator: the check package is placed into each copy; the version 2 kit image holds the runtime and the instance setup (settings, roles and grants, environment files) without comment lines, root-only |
 | What a copy records | state, data, protocol and baseline, the tree hash, the block statuses | also the copy ID, the catalog entry, the catalog's SHA-256, the tree the catalog fixes for its state, every file's hash and every block's trial outcomes in run order |
 | What the evaluation trusts | each record's state label and block counts | nothing it can recompute: see the next section |
 | Result | qualified, not qualified or incomplete | the contract's two cells per state; a state is met, not met, invalid or incomplete |

@@ -5,7 +5,7 @@
 # /opt/rbw/bin/rbw-copy-v2, which makes the evaluator area root-only again before anything else
 # runs. Version 1's image (kit/task-report/Dockerfile) bakes its evaluator in and stays unchanged.
 # The database runs as rbw-db (UID 2002) and the app as rbw-app (UID 2001), both through
-# rbw-launch, the Umami kit's launcher. Neither user can read /opt/rbw/evaluator or
+# rbw-launch, the Umami kit's launcher. Neither user can read /opt/rbw/evaluator, /opt/rbw/etc or
 # /var/lib/rbw/results. Built by the package's version 2 runner
 # (`node packages/host-task-report/adapter/qualify.ts build`):
 #
@@ -78,12 +78,18 @@ COPY --from=app --chown=0:0 test /opt/rbw/evaluator/suite/test
 # The evaluator directory the runner fills holds only a package.json that marks it as ES modules;
 # the check package from the validator brings every other file. Ownership and modes as in
 # version 1: the evaluator tree and the results are root-only, the app tree is root-owned and
-# read-only to rbw-app, and no file keeps a setuid or setgid bit.
+# read-only to rbw-app, and no file keeps a setuid or setgid bit. Unlike version 1, /opt/rbw/etc
+# keeps no comment lines and is root-only: only root reads it (the copy driver, and rbw-launch
+# before it drops privileges).
 RUN set -euxo pipefail; \
     install -d -o root -g root -m 0700 /opt/rbw/evaluator/pkg; \
     printf '{\n  "private": true,\n  "type": "module"\n}\n' > /opt/rbw/evaluator/pkg/package.json; \
-    chmod 0755 /opt/rbw /opt/rbw/bin /opt/rbw/etc /opt/rbw/etc/provision; \
-    find /opt/rbw/etc -type f -exec chmod 0644 {} +; \
+    chmod 0755 /opt/rbw /opt/rbw/bin; \
+    find /opt/rbw/etc -type f -name '*.sql' -exec sed -i '/^[[:space:]]*--/d' {} +; \
+    find /opt/rbw/etc -type f ! -name '*.sql' -exec sed -i '/^[[:space:]]*#/d' {} +; \
+    chown -R root:root /opt/rbw/etc; \
+    find /opt/rbw/etc -type d -exec chmod 0700 {} +; \
+    find /opt/rbw/etc -type f -exec chmod 0600 {} +; \
     chown -R root:root /opt/rbw/evaluator; \
     find /opt/rbw/evaluator -type d -exec chmod 0700 {} +; \
     find /opt/rbw/evaluator -type f -perm /111 -exec chmod 0700 {} +; \
