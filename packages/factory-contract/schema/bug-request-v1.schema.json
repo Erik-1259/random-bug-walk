@@ -7560,9 +7560,40 @@
           "$ref": "#/$defs/UtcTime"
         },
         "evidence_sha256": {
-          "$ref": "#/$defs/Sha256"
+          "description": "The collected copy's results_sha256, or null when the copy brought back no results. A complete record has one.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "const": "complete"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "evidence_sha256": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      ]
     },
     "QualificationRecord": {
       "description": "Internal: the qualification route's record for one candidate. Whether the verdict follows from the cells and criteria is not checked by the schema.",

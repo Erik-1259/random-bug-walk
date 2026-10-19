@@ -260,6 +260,8 @@ const INTERNAL_CASES: Case[] = [
   { name: "an unknown architecture", def: "CopyRecord", base: () => internalFixture("copy-record.json"), edit: (c) => { c.architecture = "riscv64"; }, expected: "schema:/architecture:enum" },
   { name: "a suite observation without its counts", def: "CopyRecord", base: () => internalFixture("copy-record.json"), edit: (c) => { delete at(c, ["original_suite"]).executed; }, expected: "schema:/original_suite:required:executed" },
   { name: "an unknown field in a cell observation", def: "CopyRecord", base: () => internalFixture("copy-record.json"), edit: (c) => { at(c, ["verification"]).expected = "fail"; }, expected: "schema:/verification:additionalProperties:expected" },
+  { name: "a complete record without its evidence hash", def: "CopyRecord", base: () => internalFixture("copy-record.json"), edit: (c) => { c.evidence_sha256 = null; }, expected: "schema:/evidence_sha256:type" },
+  { name: "an uppercase evidence hash", def: "CopyRecord", base: () => internalFixture("copy-record-setup-failed.json"), edit: (c) => { c.evidence_sha256 = "E8".repeat(32); }, expected: "schema:/evidence_sha256:pattern" },
   { name: "an accepted record with a reason", def: "QualificationRecord", base: () => internalFixture("qualification-record-accepted.json"), edit: (c) => { c.reason_code = "wrong_failure"; }, expected: "schema:/reason_code:type" },
   { name: "an accepted record with a mismatched cell", def: "QualificationRecord", base: () => internalFixture("qualification-record-accepted.json"), edit: (c) => { Object.assign(at(c, ["cells", "verification", "buggy"]), { observed: "pass", matches_expectation: false }); }, expected: "schema:/cells/verification/buggy/matches_expectation:const" },
   { name: "a rejected record with an invalid-stage reason", def: "QualificationRecord", base: () => internalFixture("qualification-record-rejected.json"), edit: (c) => { c.reason_code = "setup_failed"; }, expected: "schema:/reason_code:enum" },
@@ -303,6 +305,8 @@ const ACCEPTED: Case[] = [
   { name: "destinations with dot-prefixed and spaced segments", def: "CopyPlan", base: plan, edit: (c) => { Object.assign(at(c, ["destinations"]), { app: "/workspace/.rbw/app", evaluator: "/opt/rbw evaluator/v1.0", results: "/workspace/..results" }); }, expected: [] },
   { name: "a timed-out copy with an exit code and partial results", def: "CollectedCopy", base: collected, edit: (c) => { Object.assign(c, { outcome: "timed_out", exit_code: 137 }); }, expected: [] },
   { name: "a timed-out copy with no exit code and no results", def: "CollectedCopy", base: collected, edit: (c) => { Object.assign(c, { outcome: "timed_out", exit_code: null, results_dir: null, results_sha256: null }); }, expected: [] },
+  { name: "an incomplete record of a timed-out copy that brought back no results", def: "CopyRecord", base: () => internalFixture("copy-record.json"), edit: (c) => { Object.assign(c, { status: "incomplete", evidence_sha256: null }); }, expected: [] },
+  { name: "an invalid record whose copy brought back results", def: "CopyRecord", base: () => internalFixture("copy-record-setup-failed.json"), edit: (c) => { c.evidence_sha256 = "e8".repeat(32); }, expected: [] },
   { name: "a dotfile in a copy plan", def: "CopyPlan", base: () => internalFixture("copy-plan.json"), edit: (c) => { asArray(c.files, "files").push({ path: ".eslintrc.json", sha256: "d".repeat(64) }); }, expected: [] },
 ];
 
