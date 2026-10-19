@@ -16,7 +16,9 @@ Nothing here is given to a debugging agent except the catalog entry's incident d
 
 The check, the suite runner and the copy driver import only Node's built-ins and `pg`, so they run
 in the copy image from its own dependencies. The gate in `src/f3/gate.ts`, parts of the suite
-runner and the instance phases are copied or adapted from the custom host harness at baseline 2.
+runner and the instance phases are copied or adapted from the unpublished prototype harness the
+service comes from; `hosts/task-report/SOURCE.md` says what was taken and defines the labels the
+comments use.
 
 ## The F3 check
 
@@ -64,6 +66,18 @@ and is incomplete after more than 2 invalid trials (1 for a control block); an i
 neither reproduction nor a miss. The case qualifies when every valid buggy main trial shows the
 failure, every valid fixed and clean trial passes, and every control passes. Nothing is re-tuned
 after the first counted trial: records made under another data file or protocol are not counted.
+
+Known limit of this evaluator version: `evaluate` trusts each record's state label and block
+counts. It does not check which source tree a copy ran (`copy.json` names no catalog entry), or
+that a block's invalid trials and attempts stay within its rule. Until a later evaluator version
+checks both, every qualification also makes and records two comparisons:
+
+- each copy's `source_tree_sha256` against the expected tree: for clean and fixed the baseline,
+  `22e67f24fdc4e2edffe357d10572ed3a799b7ddbeb8b8176a29d6f7581c3eedd`; for buggy the baseline with
+  the entry's target file at its buggy SHA-256,
+  `e3bfdfff056fff3d044c67246758a72698cc5e58a9755b18cfc3f9150afffa91`;
+- each copy's `rules` against the protocol's blocks: the main rule for `main`, the control rule
+  for the four controls.
 
 ## Catalog
 

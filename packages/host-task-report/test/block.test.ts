@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { blockMatches, blockStatus } from "../src/f3/block.ts";
 import type { Outcome } from "../src/f3/data.ts";
-import { FAILURE_CODE } from "../src/f3/data.ts";
-import { loadProtocol } from "../src/protocol.ts";
+import { CONTROL_KINDS, FAILURE_CODE, KINDS } from "../src/f3/data.ts";
+import { blockRule, loadProtocol } from "../src/protocol.ts";
 
-const main = loadProtocol().blocks.main;
+const protocol = loadProtocol();
+const main = protocol.blocks.main;
+const control = protocol.blocks.control;
 
 function times(outcome: Outcome, count: number): Outcome[] {
   return Array.from({ length: count }, () => outcome);
@@ -36,6 +38,28 @@ describe("blockStatus", () => {
     const loose = { valid_target: 3, max_invalid: 10, max_top_ups: 2 };
     expect(blockStatus(loose, ["pass", "invalid", "invalid", "pass"])).toMatchObject({ state: "running", next_index: 5 });
     expect(blockStatus(loose, ["pass", "invalid", "invalid", "invalid", "pass"])).toMatchObject({ state: "incomplete", valid: 2 });
+  });
+});
+
+describe("blockRule", () => {
+  it("gives main the main rule and each of the four controls the control rule", () => {
+    expect([...CONTROL_KINDS].sort()).toEqual(KINDS.filter((kind) => kind !== "main").sort());
+    expect(blockRule(protocol, "main")).toEqual({ valid_target: 20, max_invalid: 2, max_top_ups: 10 });
+    for (const kind of CONTROL_KINDS) {
+      expect(blockRule(protocol, kind)).toEqual({ valid_target: 5, max_invalid: 1, max_top_ups: 5 });
+    }
+  });
+});
+
+describe("blockStatus under the control rule", () => {
+  it("allows one invalid trial and is incomplete at the second", () => {
+    expect(blockStatus(control, ["pass", "invalid"])).toMatchObject({ state: "running", invalid: 1, next_index: 3 });
+    expect(blockStatus(control, ["pass", "invalid", "invalid"])).toMatchObject({ state: "incomplete", valid: 1, invalid: 2, next_index: null });
+  });
+
+  it("completes at 5 valid trials with one invalid trial topped up", () => {
+    expect(blockStatus(control, times("pass", 4))).toMatchObject({ state: "running", next_index: 5 });
+    expect(blockStatus(control, [...times("pass", 4), "invalid", "pass"])).toMatchObject({ state: "complete", valid: 5, invalid: 1, top_ups: 1, outcomes: { pass: 5 } });
   });
 });
 

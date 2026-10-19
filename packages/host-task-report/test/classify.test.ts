@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { classifyTrial } from "../src/f3/classify.ts";
-import type { TrialObservation } from "../src/f3/classify.ts";
+import type { LogTiming, TrialObservation } from "../src/f3/classify.ts";
 import { FAILURE_CODE, KINDS, loadData } from "../src/f3/data.ts";
 import type { KindId } from "../src/f3/data.ts";
 import { validObservation } from "./support.ts";
@@ -115,5 +115,46 @@ describe("invalid trials are never a pass or a detection", () => {
       o.errors.push("Error");
     });
     expect(result.invalid).toEqual(["probe_error", "precount_not_zero"]);
+  });
+});
+
+describe("app-log margins", () => {
+  const sendMargin = data.app_log.send_order_margin_ms;
+  const freedMargin = data.app_log.freed_end_margin_ms;
+
+  function logLine(o: TrialObservation, id: string | null | undefined): LogTiming {
+    const found = id === null || id === undefined ? undefined : o.app_log[id];
+    if (found === undefined) throw new Error(`no log line for ${String(id)}`);
+    return found;
+  }
+
+  it("are 100 ms for the send order and for the freed PATCH's end", () => {
+    expect([sendMargin, freedMargin]).toEqual([100, 100]);
+  });
+
+  const sendPairs: [KindId, string, string][] = [
+    ["main", "req-x", "req-unknown"],
+    ["valid_partner", "req-x", "req-partner"],
+    ["dx_order", "req-unknown", "req-x"],
+  ];
+
+  it.each(sendPairs)("%s: a send may start exactly the margin after the one before it, not 1 ms less", (kind, first, second) => {
+    const at = (gap: number): ReturnType<typeof classifyTrial> =>
+      classify(kind, (o) => {
+        logLine(o, second).start_ms = logLine(o, first).start_ms + gap;
+      });
+    expect(at(sendMargin)).toMatchObject({ valid: true, outcome: "pass", invalid: [] });
+    expect(at(sendMargin - 1)).toMatchObject({ valid: false, outcome: "invalid", invalid: ["app_log_order"] });
+  });
+
+  const forced = KINDS.filter((kind) => data.kinds[kind].forced);
+
+  it.each(forced)("%s: the last send may start exactly the margin before the freed PATCH ends, not 1 ms later", (kind) => {
+    const at = (gap: number): ReturnType<typeof classifyTrial> =>
+      classify(kind, (o) => {
+        logLine(o, "req-patch-1").end_ms = logLine(o, o.completions.at(-1)?.request_id).start_ms + gap;
+      });
+    expect(at(freedMargin)).toMatchObject({ valid: true, outcome: "pass", invalid: [] });
+    expect(at(freedMargin - 1)).toMatchObject({ valid: false, outcome: "invalid", invalid: ["app_log_order"] });
   });
 });

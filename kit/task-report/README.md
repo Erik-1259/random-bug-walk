@@ -36,14 +36,16 @@ monitor), the owner and the gate role.
 3. For each declared instance, one after another: `initdb` of a new cluster, the server,
    `etc/provision/00-roles.sql` as the superuser, the app's own `migrate apply` as the owner,
    `etc/provision/10-after-migrate.sql`, the app (`node src/main.ts`), and its heartbeat. These
-   are the custom host harness's instance phases at baseline 2, with processes instead of Compose.
+   are the instance phases of the prototype harness the service comes from, with processes
+   instead of Compose (see `hosts/task-report/SOURCE.md`).
 4. On each ready instance: the unchanged original suite once (193 tests, checked against the
    baseline manifest first), then the F3 check blocks and the late re-read, then stop.
 5. The record set: `copy.json`, and per instance `lifecycle.json`, `original/`, `checks/` and
    `logs/`.
 
-The time zones are those of profile M2 of the custom host harness at baseline 2: app
-`TZ=Asia/Tokyo` and PostgreSQL `timezone = 'Asia/Tokyo'`. The pool size is the app's default of 10.
+Both time zones are Asia/Tokyo: app `TZ=Asia/Tokyo` and PostgreSQL `timezone = 'Asia/Tokyo'`
+(the comments in `etc/` call this profile M2; see `hosts/task-report/SOURCE.md`). The pool size is
+the app's default of 10.
 
 ## Host commands
 

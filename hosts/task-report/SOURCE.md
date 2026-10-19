@@ -24,6 +24,20 @@ tree equals the source commit's tree, and every file's SHA-256 is recorded in
 A unit test of `@rbw/host-task-report` recomputes the hashes of this directory and fails on any
 difference.
 
+## Origin
+
+The service and its original suite come from an unpublished prototype harness, which comments in
+`packages/host-task-report` and `kit/task-report` call "the custom host harness". The row-lock gate
+(`src/f3/gate.ts`), parts of the original-suite runner, the tree hash, the instance phases and
+their limits, and the provisioning roles are copied or adapted from it. Two of its labels appear
+in those comments:
+
+- **Baseline 2** is the service at the source commit above, `ca4a71f`: this baseline.
+- **Profile M2** sets both time zones to `Asia/Tokyo`: the app's `TZ` and PostgreSQL's `timezone`.
+
+The harness is not needed to read, build or run anything here; everything this repository uses from
+it is copied into `hosts/task-report`, `packages/host-task-report` and `kit/task-report`.
+
 ## Rules
 
 - The copy stays byte-identical. Any change, even whitespace, is a new baseline with a new ID, a
