@@ -144,6 +144,12 @@ importers:
 
   packages/host-task-report:
     dependencies:
+      '@rbw/factory-contract':
+        specifier: workspace:*
+        version: link:../factory-contract
+      '@rbw/schema':
+        specifier: workspace:*
+        version: link:../schema
       diff:
         specifier: 9.0.0
         version: 9.0.0

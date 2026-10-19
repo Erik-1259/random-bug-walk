@@ -1,0 +1,81 @@
+{
+  "format": "rbw.task-report.protocol.v2",
+  "protocol_id": "f3-repeatability",
+  "version": 2,
+  "baseline_id": "task-report@ca4a71f",
+  "check": {
+    "id": "f3.acknowledged-completion-counted",
+    "version": 1,
+    "data_file": "data/f3.v1.json",
+    "data_sha256": "02db325c908b4f71834f9554239ad4f289a7e7500b6c77f4d647a287c0dbf5b5"
+  },
+  "original_suite": {
+    "on_every_instance": true,
+    "before_checks": true,
+    "required_verdict": "passed",
+    "required_passed": 193
+  },
+  "states": {
+    "buggy": {
+      "copies": 1,
+      "instances": 3,
+      "min_valid_instances": 3
+    },
+    "fixed": {
+      "copies": 1,
+      "instances": 3,
+      "min_valid_instances": 3
+    },
+    "clean": {
+      "copies": 1,
+      "instances": 1,
+      "min_valid_instances": 1
+    }
+  },
+  "instance_order": ["original_suite", "main", "sequential", "valid_partner", "x_alone", "dx_order", "late_reread"],
+  "blocks": {
+    "main": {
+      "valid_target": 20,
+      "max_invalid": 2,
+      "max_top_ups": 10
+    },
+    "control": {
+      "valid_target": 5,
+      "max_invalid": 1,
+      "max_top_ups": 5
+    }
+  },
+  "verification_codes": {
+    "declared": "acknowledged_completion_not_counted",
+    "inconsistent": "f3_detection_inconsistent",
+    "control": "f3_control_failed",
+    "original_suite": "original_test_failed"
+  },
+  "valid_trial_rules": [
+    "task-report.f3.v2.copy-identity",
+    "task-report.f3.v2.source-tree",
+    "task-report.f3.v2.protocol-block-rules",
+    "task-report.f3.v2.block-replay",
+    "task-report.f3.v2.original-suite-complete",
+    "task-report.f3.v2.invalid-trial-not-counted",
+    "task-report.f3.v2.every-instance-valid"
+  ],
+  "rules": {
+    "task-report.f3.v2.copy-identity": "The copy's record set names this copy, its state, the catalog entry, the catalog SHA-256, the data file, this protocol and the baseline the evaluator holds; anything else is incomplete.",
+    "task-report.f3.v2.source-tree": "The evaluator recomputes the tree hash from the copy's recorded per-file hashes; it must equal the recorded tree hash, the tree the copy expected and the tree the evaluator expects for the state (clean and fixed: the baseline with the reference repair's result; buggy: the baseline with the planted target file). A copy run on any other tree is incomplete.",
+    "task-report.f3.v2.protocol-block-rules": "Block rules come from this file. A record whose rules differ from them is incomplete.",
+    "task-report.f3.v2.block-replay": "Each block's status is recomputed from its ordered trial outcomes under this file's rule. Trials after the rule stops the block, an unfinished block, or a recorded status that differs from the recomputed one make the instance's checks invalid.",
+    "task-report.f3.v2.original-suite-complete": "An original-suite run counts only when it executed all 193 baseline tests; a missing or skipped test makes the run invalid.",
+    "task-report.f3.v2.invalid-trial-not-counted": "An invalid trial is never a pass and never a detection.",
+    "task-report.f3.v2.every-instance-valid": "Every declared instance must give a valid original-suite run and a valid checks run; with fewer, the cell is incomplete."
+  },
+  "decision": {
+    "block": "A block runs trials with indices 1, 2, ... until it has valid_target valid trials; each invalid trial is topped up by a trial with the next new index. It is incomplete as soon as it has more than max_invalid invalid trials, or after valid_target + max_top_ups attempts. With these values the invalid ceiling binds first; the top-up cap stays as a hard bound on attempts.",
+    "original_suite_cell": "pass when every declared instance ran all 193 tests and all passed; fail when every run is valid and at least one test failed; error when the copy or an instance could not be prepared; otherwise incomplete.",
+    "verification_cell": "pass when every valid trial of every block passed; fail with the declared code when every valid trial equals the data file's buggy vector (every main trial shows the failure, every control passes); fail with the inconsistent or control code for any other failing pattern; error when the copy or an instance could not be prepared; otherwise incomplete.",
+    "qualified": "Every cell matches the qualification table: original suite pass, pass, pass; verification checks pass, fail with the declared code, pass. A mismatch counts only when every cell's evidence is complete; any error makes the result invalid, and anything else is incomplete."
+  },
+  "invalid_trials": "never a pass and never a detection; recorded with their codes",
+  "retuning": "none after the first counted trial; any change to the data file or to this file is a new version",
+  "natural_bursts": "not part of this protocol"
+}
