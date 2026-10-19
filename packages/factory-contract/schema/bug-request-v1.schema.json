@@ -53,6 +53,11 @@
       "type": "string",
       "pattern": "^(?:\\.?[^./\\\\\\u0000-\\u001f\\u007f]|\\.\\.[^/\\\\\\u0000-\\u001f\\u007f])[^/\\\\\\u0000-\\u001f\\u007f]*(?:/(?:\\.?[^./\\\\\\u0000-\\u001f\\u007f]|\\.\\.[^/\\\\\\u0000-\\u001f\\u007f])[^/\\\\\\u0000-\\u001f\\u007f]*)*$"
     },
+    "AbsolutePath": {
+      "description": "An absolute POSIX path inside a copy: '/' and then segments joined by '/', with no trailing '/', no empty, '.' or '..' segment, and no backslash or control character.",
+      "type": "string",
+      "pattern": "^(?:/(?:\\.?[^./\\\\\\u0000-\\u001f\\u007f]|\\.\\.[^/\\\\\\u0000-\\u001f\\u007f])[^/\\\\\\u0000-\\u001f\\u007f]*)+$"
+    },
     "UtcTime": {
       "description": "UTC ISO 8601 time with milliseconds and Z (contract section 3). The format adds the calendar check (no 2026-02-30, no second 60).",
       "type": "string",
@@ -429,7 +434,6 @@
         "running",
         "terminal",
         "uncertain",
-        "settled",
         "reconciled"
       ]
     },
@@ -458,6 +462,15 @@
         "complete",
         "invalid",
         "incomplete"
+      ]
+    },
+    "CopyRunOutcome": {
+      "description": "How a runner's copy ended: ran (the command ran), setup_failed (the copy could not be set up, for example a file whose sha256 does not match) or timed_out (the command passed its time limit).",
+      "type": "string",
+      "enum": [
+        "ran",
+        "setup_failed",
+        "timed_out"
       ]
     },
     "Architecture": {
@@ -6354,7 +6367,8 @@
       ],
       "properties": {
         "operation_id": {
-          "$ref": "#/$defs/Identifier"
+          "description": "The spend ledger's operation ID: 64 lowercase hexadecimal characters.",
+          "$ref": "#/$defs/Sha256"
         },
         "kind": {
           "$ref": "#/$defs/TestOperationKind"
@@ -6363,6 +6377,7 @@
           "$ref": "#/$defs/Identifier"
         },
         "state": {
+          "description": "A settled operation is terminal with settled_microusd set.",
           "$ref": "#/$defs/TestOperationState"
         },
         "reserved_microusd": {
@@ -6385,18 +6400,31 @@
       }
     },
     "TestSlot": {
-      "description": "The factory slot and the request that holds it, if any.",
+      "description": "The factory slot and what holds it, if anything.",
       "type": "object",
       "additionalProperties": false,
       "required": [
         "slot_key",
-        "holder_request_id"
+        "holder_request_id",
+        "holder_validation_id"
       ],
       "properties": {
         "slot_key": {
           "$ref": "#/$defs/TestSlotKey"
         },
         "holder_request_id": {
+          "description": "The request whose start or validation run holds the slot.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "holder_validation_id": {
+          "description": "Set while a validation run holds the slot.",
           "anyOf": [
             {
               "$ref": "#/$defs/Uuid"
@@ -6406,7 +6434,30 @@
             }
           ]
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "holder_validation_id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "holder_validation_id"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "holder_request_id": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      ]
     },
     "TestProviderCall": {
       "description": "One call made to the fake provider.",
@@ -7130,6 +7181,7 @@
         "image",
         "files",
         "evaluator_files",
+        "destinations",
         "command",
         "limits"
       ],
@@ -7147,18 +7199,21 @@
           "$ref": "#/$defs/ImagePin"
         },
         "files": {
-          "description": "The app source tree placed before start.",
+          "description": "The app source tree, placed at destinations.app before start.",
           "type": "array",
           "items": {
             "$ref": "#/$defs/FileDigest"
           }
         },
         "evaluator_files": {
-          "description": "Validator material, in an evaluator-only location.",
+          "description": "Validator material, placed at destinations.evaluator, an evaluator-only location.",
           "type": "array",
           "items": {
             "$ref": "#/$defs/FileDigest"
           }
+        },
+        "destinations": {
+          "$ref": "#/$defs/CopyDestinations"
         },
         "command": {
           "type": "array",
@@ -7196,6 +7251,30 @@
         }
       }
     },
+    "CopyDestinations": {
+      "description": "Absolute paths inside the copy.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "app",
+        "evaluator",
+        "results"
+      ],
+      "properties": {
+        "app": {
+          "description": "Where the runner places every file of files.",
+          "$ref": "#/$defs/AbsolutePath"
+        },
+        "evaluator": {
+          "description": "Where the runner places every file of evaluator_files; evaluator-only.",
+          "$ref": "#/$defs/AbsolutePath"
+        },
+        "results": {
+          "description": "Where the copy writes its results; the runner copies this directory back.",
+          "$ref": "#/$defs/AbsolutePath"
+        }
+      }
+    },
     "CopyLimits": {
       "type": "object",
       "additionalProperties": false,
@@ -7219,6 +7298,138 @@
           "const": "none"
         }
       }
+    },
+    "CopyRoots": {
+      "description": "Internal: the local directories the harness built from an UnpackedPair, which a runner reads a copy's files from.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "app_root",
+        "evaluator_root"
+      ],
+      "properties": {
+        "app_root": {
+          "description": "A local directory holding the plan's files.",
+          "$ref": "#/$defs/Identifier"
+        },
+        "evaluator_root": {
+          "description": "A local directory holding the plan's evaluator files.",
+          "$ref": "#/$defs/Identifier"
+        }
+      }
+    },
+    "CollectedCopy": {
+      "description": "Internal: what a runner brings back from one copy, which the host adapter's collect parses into a CopyRecord.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "copy_id",
+        "outcome",
+        "exit_code",
+        "results_dir",
+        "image_digest",
+        "architecture",
+        "started_at",
+        "finished_at",
+        "results_sha256"
+      ],
+      "properties": {
+        "copy_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "outcome": {
+          "$ref": "#/$defs/CopyRunOutcome"
+        },
+        "exit_code": {
+          "description": "The command's exit code, or null when there is none.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SafeInteger"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "results_dir": {
+          "description": "A fresh local directory with the copy's results, or null.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Identifier"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "image_digest": {
+          "$ref": "#/$defs/ImageDigest"
+        },
+        "architecture": {
+          "$ref": "#/$defs/Architecture"
+        },
+        "started_at": {
+          "$ref": "#/$defs/UtcTime"
+        },
+        "finished_at": {
+          "$ref": "#/$defs/UtcTime"
+        },
+        "results_sha256": {
+          "description": "The sha256 of a deterministic tar of results_dir, or null.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "results_dir": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "results_dir"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "results_sha256": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "results_dir": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "results_dir"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "results_sha256": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ]
     },
     "CellObservation": {
       "description": "Internal: never sent to a client.",
@@ -7349,9 +7560,40 @@
           "$ref": "#/$defs/UtcTime"
         },
         "evidence_sha256": {
-          "$ref": "#/$defs/Sha256"
+          "description": "The collected copy's results_sha256, or null when the copy brought back no results. A complete record has one.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "const": "complete"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "evidence_sha256": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      ]
     },
     "QualificationRecord": {
       "description": "Internal: the qualification route's record for one candidate. Whether the verdict follows from the cells and criteria is not checked by the schema.",

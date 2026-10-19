@@ -18,7 +18,7 @@
     "runs_valid": 3,
     "runs_total": 3,
     "failure_codes": [
-      "lost_acknowledged_change"
+      "acknowledged_completion_not_counted"
     ],
     "detail": "synthetic detail: fail"
   },
