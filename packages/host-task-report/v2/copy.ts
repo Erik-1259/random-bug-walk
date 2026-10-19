@@ -18,7 +18,7 @@ import { join } from "node:path";
 import { dependencyDifferences, loadBaseline } from "../src/baseline.ts";
 import { runInstanceChecks } from "../src/f3/check.ts";
 import type { BlockRule } from "../src/f3/block.ts";
-import { FAILURE_CODE, KINDS, loadData } from "../src/f3/data.ts";
+import { KINDS, loadData } from "../src/f3/data.ts";
 import type { KindId, Outcome } from "../src/f3/data.ts";
 import { hashTree, isRecord } from "../src/hash.ts";
 import { runOriginalSuite } from "../src/suite/run-suite.ts";
@@ -27,13 +27,11 @@ import { APP_DIR, BASE_URL, DATABASE, EVALUATOR_SUITE_DIR, EVALUATOR_WORK_DIR, L
 import { runCommand } from "../src/copy/proc.ts";
 import { UsageError, parseCopyArgsV2 } from "./args.ts";
 import type { CopyArgsV2 } from "./args.ts";
-import { entryPins, loadCatalogPins } from "./entry.ts";
-import { stateExpectation } from "./expected.ts";
+import { CatalogPinError, entryPins, loadCatalogPins } from "./entry.ts";
+import { ExpectationError, stateExpectation } from "./expected.ts";
 import { blockRuleV2, loadProtocolV2 } from "./protocol.ts";
-import { COPY_V2_FILE, COPY_V2_FORMAT } from "./record.ts";
+import { COPY_V2_FILE, COPY_V2_FORMAT, OUTCOMES } from "./record.ts";
 import type { CopySummaryV2, InstanceRecordV2, PhaseEntryV2 } from "./record.ts";
-
-const OUTCOMES: readonly string[] = ["pass", FAILURE_CODE, "invalid"];
 
 /** Each block's outcomes from trials.jsonl, in the order the trials ran; refuses a gap or repeat in the indices. */
 export function outcomesFromTrials(text: string): Partial<Record<KindId, Outcome[]>> {
@@ -51,11 +49,11 @@ export function outcomesFromTrials(text: string): Partial<Record<KindId, Outcome
     if (!isRecord(observation) || !isRecord(classification)) throw new UsageError("trials.jsonl has a line that is not a trial");
     const kind = KINDS.find((item) => item === observation.kind);
     if (kind === undefined) throw new UsageError("trials.jsonl names an unknown kind");
-    const outcome = classification.outcome;
-    if (typeof outcome !== "string" || !OUTCOMES.includes(outcome)) throw new UsageError("trials.jsonl has an unknown outcome");
+    const outcome = OUTCOMES.find((item) => item === classification.outcome);
+    if (outcome === undefined) throw new UsageError("trials.jsonl has an unknown outcome");
     const list = out[kind] ?? [];
     if (observation.index !== list.length + 1) throw new UsageError(`trials.jsonl has a gap or repeat in the ${kind} indices`);
-    list.push(outcome as Outcome);
+    list.push(outcome);
     out[kind] = list;
   }
   return out;
@@ -217,7 +215,7 @@ async function main(): Promise<number> {
   try {
     return await runCopyV2(args, log);
   } catch (error) {
-    if (error instanceof UsageError) {
+    if (error instanceof UsageError || error instanceof CatalogPinError || error instanceof ExpectationError) {
       log(`usage: ${error.message}`);
       return 2;
     }

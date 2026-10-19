@@ -291,8 +291,12 @@ export function aggregateState(perState: ProtocolState, state: CopyState, copies
     if (runsTotal !== perState.copies * perState.rounds_per_copy || runsValid < perState.min_valid_runs) {
       return observation("incomplete", runsValid, runsTotal, [], `expected ${String(perState.copies * perState.rounds_per_copy)} runs with at least ${String(perState.min_valid_runs)} valid, found ${String(runsValid)} of ${String(runsTotal)}`);
     }
-    const failing = cells.filter((item) => item.observed === "fail");
-    if (failing.length > 0) return observation("fail", runsValid, runsTotal, [...new Set(failing.flatMap((item) => item.failure_codes))].sort(), detail);
+    // A failure code holds for the state only when every copy reports it, so a copy that passed or
+    // failed differently never lends its code to the others.
+    if (cells.some((item) => item.observed === "fail")) {
+      const codes = cells.reduce<string[]>((common, item) => common.filter((code) => item.failure_codes.includes(code)), [...(cells[0]?.failure_codes ?? [])]);
+      return observation("fail", runsValid, runsTotal, [...new Set(codes)].sort(), detail);
+    }
     return observation("pass", runsValid, runsTotal, [], detail);
   };
   return { original_suite: cell((copy) => copy.original_suite), verification: cell((copy) => copy.verification) };
@@ -322,23 +326,24 @@ export function stateVerdict(protocol: ProtocolV2, state: CopyState, cells: Stat
   return suiteMatches && checksMatch ? "met" : "not_met";
 }
 
-/** The verdict over the clean, buggy and fixed copies' record sets: a mismatch counts only when every state's evidence is complete. */
+/** The verdict over the clean, buggy and fixed copies' record sets (smoke copies left out): a mismatch counts only when every state's evidence is complete. */
 export function evaluateProtocolV2(protocol: ProtocolV2, data: F3Data, expectation: StateExpectation, copies: readonly CopySummaryV2[]): ProtocolEvaluationV2 {
   if (protocol.data_sha256 !== data.sha256) throw new EvaluationError("the protocol pins another data file");
   const states = STATES.map((state): StateEvaluationV2 => {
-    const evaluations = copies.filter((copy) => copy.state === state).map((copy) => ({ state, ...evaluateCopyV2(protocol, data, expectation, copy) }));
+    // As in version 1, a smoke copy is never counted: it is left out, not held against the state.
+    const evaluations = copies.filter((copy) => copy.state === state && copy.purpose === "counted").map((copy) => ({ state, ...evaluateCopyV2(protocol, data, expectation, copy) }));
     const cells = aggregateState(perStateV2(protocol, state), state, evaluations);
     const reasons = [...new Set(evaluations.flatMap((evaluation) => evaluation.reasons))];
     if (evaluations.length !== protocol.states[state].copies) reasons.unshift(`expected ${String(protocol.states[state].copies)} counted copy, found ${String(evaluations.length)}`);
     return { state, verdict: stateVerdict(protocol, state, cells), cells, reasons };
   });
-  const verdicts = states.map((state) => state.verdict);
-  const verdict = verdicts.every((item) => item === "met")
-    ? "qualified"
-    : verdicts.every((item) => item === "met" || item === "not_met")
-      ? "not_qualified"
-      : verdicts.includes("invalid")
-        ? "invalid"
-        : "incomplete";
-  return { verdict, states };
+  return { verdict: overallVerdict(states.map((state) => state.verdict)), states };
+}
+
+/** The result over the states' verdicts: qualified when all are met, not qualified on a mismatch with every state's evidence complete, otherwise invalid or incomplete. */
+export function overallVerdict(verdicts: readonly StateVerdictV2[]): ProtocolEvaluationV2["verdict"] {
+  if (verdicts.length === 0) return "incomplete";
+  if (verdicts.every((item) => item === "met")) return "qualified";
+  if (verdicts.every((item) => item === "met" || item === "not_met")) return "not_qualified";
+  return verdicts.includes("invalid") ? "invalid" : "incomplete";
 }

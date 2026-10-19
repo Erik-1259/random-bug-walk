@@ -3,7 +3,7 @@ import { blockStatus } from "../src/f3/block.ts";
 import { FAILURE_CODE } from "../src/f3/data.ts";
 import type { Outcome } from "../src/f3/data.ts";
 import { loadCatalogPins } from "../v2/entry.ts";
-import { aggregateState, evaluateCopyV2, evaluateProtocolV2, perStateV2, replayBlock } from "../v2/evaluate.ts";
+import { aggregateState, evaluateCopyV2, evaluateProtocolV2, overallVerdict, perStateV2, replayBlock } from "../v2/evaluate.ts";
 import type { CopyCells } from "../v2/evaluate.ts";
 import { expectedTrees, stateExpectation } from "../v2/expected.ts";
 import { loadProtocolV2 } from "../v2/protocol.ts";
@@ -132,6 +132,10 @@ describe("evaluator v2 keeps version 1's decisions", () => {
     const smoke = set();
     cleanOf(smoke).purpose = "smoke";
     expect(stateOf(smoke, "clean").verdict).toBe("incomplete");
+    const beside = set();
+    const extra = copyV2("clean", [instanceV2(1, FAILURE_CODE)], protocol.sha256, catalog.sha256);
+    extra.purpose = "smoke";
+    expect(evaluateProtocolV2(protocol, data, expectation, [...beside, extra]).verdict).toBe("qualified");
   });
 
   it("refuses to evaluate against a data file the protocol does not pin", () => {
@@ -285,6 +289,22 @@ describe("aggregateState", () => {
     const short = cells("complete", "pass", "pass");
     short.verification.runs_valid = 2;
     expect(aggregateState(per, "buggy", [short]).verification.observed).toBe("incomplete");
+  });
+
+  it("keeps a failure code only when every copy of the state reports it", () => {
+    const two = { copies: 2, rounds_per_copy: 3, min_valid_runs: 6 };
+    const declared = protocol.verification_codes.declared;
+    expect(aggregateState(two, "buggy", [cells("complete", "pass", "fail", [declared]), cells("complete", "pass", "fail", [declared])]).verification).toMatchObject({ observed: "fail", failure_codes: [declared] });
+    expect(aggregateState(two, "buggy", [cells("complete", "pass", "fail", [declared]), cells("complete", "pass", "fail", [protocol.verification_codes.inconsistent])]).verification).toMatchObject({ observed: "fail", failure_codes: [] });
+    expect(aggregateState(two, "buggy", [cells("complete", "pass", "fail", [declared]), cells("complete", "pass", "pass")]).verification).toMatchObject({ observed: "fail", failure_codes: [] });
+  });
+
+  it("gives the overall verdict: a mismatch counts only on complete evidence, and invalid comes before incomplete", () => {
+    expect(overallVerdict(["met", "met", "met"])).toBe("qualified");
+    expect(overallVerdict(["met", "not_met", "met"])).toBe("not_qualified");
+    expect(overallVerdict(["not_met", "incomplete", "met"])).toBe("incomplete");
+    expect(overallVerdict(["not_met", "incomplete", "invalid"])).toBe("invalid");
+    expect(overallVerdict([])).toBe("incomplete");
   });
 
   it("keeps error and incomplete distinct, and refuses a record whose status contradicts its cells", () => {

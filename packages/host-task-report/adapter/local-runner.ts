@@ -10,7 +10,7 @@
 import { spawn } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { hashTree, sha256Hex } from "../src/hash.ts";
+import { HashError, hashTree, sha256Hex } from "../src/hash.ts";
 import type { CollectedCopy, CopyPlan, CopyRoots, CopyRunner } from "./contract.ts";
 
 export const KILL_GRACE_S = 10;
@@ -88,8 +88,9 @@ export function createLocalDockerRunner(options: LocalRunnerOptions): CopyRunner
       const [id, arch] = inspect.stdout.trim().split(/\s+/);
       if (inspect.code !== 0 || id === undefined || !/^sha256:[0-9a-f]{64}$/.test(id)) return failed(`image ${plan.image.reference} is not available`);
       imageDigest = id;
-      architecture = arch === "arm64" ? "arm64" : "amd64";
       record.image_id = id;
+      if (arch !== "arm64" && arch !== "amd64") return failed(`image ${plan.image.reference} is for ${String(arch)}, not amd64 or arm64`);
+      architecture = arch;
       if (plan.image.digest !== null && id !== plan.image.digest) return failed(`image ${plan.image.reference} is ${id}, not the pinned ${plan.image.digest}`);
       const appStage = join(dir, "stage", "app");
       const evaluatorStage = join(dir, "stage", "evaluator");
@@ -129,11 +130,19 @@ export function createLocalDockerRunner(options: LocalRunnerOptions): CopyRunner
       } finally {
         steps.remove = (await exec(["rm", "--force", container], 120_000)).code;
       }
-      const resultsSha = resultsDir === null ? null : hashTree(resultsDir).tree_sha256;
-      return finish(
-        { copy_id: plan.copy_id, outcome, exit_code: exitCode, results_dir: resultsDir, image_digest: imageDigest, architecture, started_at: startedAt, finished_at: new Date().toISOString(), results_sha256: resultsSha },
-        resultsSha === null ? null : "results_sha256 is the tree hash of the results directory",
-      );
+      let resultsSha: string | null = null;
+      let note: string | null = null;
+      if (resultsDir !== null) {
+        try {
+          resultsSha = hashTree(resultsDir).tree_sha256;
+          note = "results_sha256 is the tree hash of the results directory";
+        } catch (error) {
+          if (!(error instanceof HashError)) throw error;
+          note = `the results could not be hashed: ${error.message}`;
+          resultsDir = null;
+        }
+      }
+      return finish({ copy_id: plan.copy_id, outcome, exit_code: exitCode, results_dir: resultsDir, image_digest: imageDigest, architecture, started_at: startedAt, finished_at: new Date().toISOString(), results_sha256: resultsSha }, note);
     },
   };
 }

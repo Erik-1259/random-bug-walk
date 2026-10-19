@@ -381,6 +381,18 @@ describe("collect", () => {
     expect((await adapter.collect(plan, collected(plan, good, { image_digest: `sha256:${"f".repeat(64)}` }))).status).toBe("invalid");
   });
 
+  it("is invalid for a plan that is not one of its own: other check files, another image or an unknown entry", async () => {
+    const plan = planOf("fixed");
+    const good = resultsWith(summaryFor(plan, "pass"));
+    const files = { ...plan, evaluator_files: plan.evaluator_files.map((file, index) => (index === 0 ? { ...file, sha256: "7".repeat(64) } : file)) };
+    expect((await adapter.collect(files, collected(files, good))).status).toBe("invalid");
+    const image = { ...plan, image: { reference: plan.image.reference, digest: null } };
+    expect((await adapter.collect(image, collected(image, good))).status).toBe("invalid");
+    const unknown = { ...plan, command: plan.command.map((part) => (part === ENTRY_ID ? "task-report-f3-999" : part)) };
+    const record = await adapter.collect(unknown, collected(unknown, good));
+    expect(record).toMatchObject({ status: "invalid", verification: { observed: "error" } });
+  });
+
   it("is incomplete when the copy ran another tree than the plan's state", async () => {
     const plan = planOf("buggy");
     const summary = summaryFor(plan, FAILURE_CODE);

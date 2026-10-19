@@ -71,7 +71,8 @@ export class RecordError extends Error {
   override name = "RecordError";
 }
 
-const OUTCOMES: readonly Outcome[] = ["pass", FAILURE_CODE, "invalid"];
+/** Every outcome a trial can record. */
+export const OUTCOMES: readonly Outcome[] = ["pass", FAILURE_CODE, "invalid"];
 const SUITE_VERDICTS: readonly SuiteRunV2["verdict"][] = ["passed", "failed", "invalid", "refused"];
 const BLOCK_STATES: readonly BlockStatus["state"][] = ["running", "complete", "incomplete"];
 

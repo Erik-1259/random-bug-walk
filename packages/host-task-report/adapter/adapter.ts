@@ -20,7 +20,7 @@ import { UsageError, parseCopyArgsV2 } from "../v2/args.ts";
 import type { CopyArgsV2 } from "../v2/args.ts";
 import { parseCatalogPins } from "../v2/entry.ts";
 import type { CatalogPins } from "../v2/entry.ts";
-import { EXPECTED_CELLS, aggregateState, evaluateCopyV2 } from "../v2/evaluate.ts";
+import { EXPECTED_CELLS, aggregateState, evaluateCopyV2, perStateV2 } from "../v2/evaluate.ts";
 import { stateExpectation } from "../v2/expected.ts";
 import type { StateExpectation } from "../v2/expected.ts";
 import { PROTOCOL_V2_ID, loadProtocolV2 } from "../v2/protocol.ts";
@@ -163,8 +163,13 @@ export function createTaskReportAdapter(options: TaskReportAdapterOptions = {}):
 
   const contractProtocol = (): Protocol => {
     const { protocol } = load();
-    const per = (state: CopyState) => ({ copies: protocol.states[state].copies, rounds_per_copy: protocol.states[state].instances, min_valid_runs: protocol.min_valid_instances[state] });
-    return { protocol_id: protocol.protocol_id, version: String(protocol.version), sha256: protocol.sha256, per_state: { clean: per("clean"), buggy: per("buggy"), fixed: per("fixed") }, valid_trial_rules: [...protocol.valid_trial_rules] };
+    return {
+      protocol_id: protocol.protocol_id,
+      version: String(protocol.version),
+      sha256: protocol.sha256,
+      per_state: { clean: perStateV2(protocol, "clean"), buggy: perStateV2(protocol, "buggy"), fixed: perStateV2(protocol, "fixed") },
+      valid_trial_rules: [...protocol.valid_trial_rules],
+    };
   };
 
   const toContract = (entry: CatalogV2Entry): CatalogEntry => {
@@ -291,7 +296,7 @@ export function createTaskReportAdapter(options: TaskReportAdapterOptions = {}):
   };
 
   const collect = (plan: CopyPlan, collected: CollectedCopy): CopyRecord => {
-    const { protocol, data } = load();
+    const { protocol, data, kit, listing } = load();
     const invalid = (detail: string): CopyRecord => failedRecord(plan, collected, "invalid", detail);
     if (plan.command[0] !== COPY_COMMAND) return invalid("the plan is not a task-report version 2 copy");
     let args: CopyArgsV2;
@@ -303,7 +308,10 @@ export function createTaskReportAdapter(options: TaskReportAdapterOptions = {}):
     }
     if (args.state !== plan.state || args.copyId !== plan.copy_id) return invalid("the plan's command names another copy");
     if (collected.copy_id !== plan.copy_id) return invalid("the runner returned another copy");
-    if (plan.image.digest !== null && collected.image_digest !== plan.image.digest) return invalid("the copy ran another image");
+    if (plan.host_id !== HOST_ID || plan.image.reference !== kit.reference || plan.image.digest !== kit.digest) return invalid("the plan names another kit image than the adapter's");
+    if (collected.image_digest !== kit.digest) return invalid("the copy ran another image");
+    if (!sameJson(plan.evaluator_files, listing)) return invalid("the plan's evaluator files are not this adapter's check package");
+    if (!load().catalog.entries.some((item) => item.entry_id === args.entryId)) return invalid("the plan's command names an entry the catalog does not have");
     if (collected.outcome === "setup_failed") return invalid("the copy could not be prepared");
     if (collected.outcome === "timed_out") return failedRecord(plan, collected, "incomplete", "the copy ran past its time limit");
     if (collected.exit_code !== 0) return invalid(`the copy driver exited ${String(collected.exit_code)}`);

@@ -123,7 +123,7 @@ async function run(dir: string, smoke: string | undefined): Promise<number> {
 async function evaluate(dir: string): Promise<number> {
   const { createTaskReportAdapter } = await import("./adapter.ts");
   const { validateContract } = await import("@rbw/factory-contract/validate");
-  const { evaluateProtocolV2, stateVerdict, EXPECTED_CELLS } = await import("../v2/evaluate.ts");
+  const { evaluateProtocolV2, overallVerdict, stateVerdict, EXPECTED_CELLS } = await import("../v2/evaluate.ts");
   const { loadProtocolV2 } = await import("../v2/protocol.ts");
   const { loadData } = await import("../src/f3/data.ts");
   const { loadBaseline } = await import("../src/baseline.ts");
@@ -145,7 +145,7 @@ async function evaluate(dir: string): Promise<number> {
   const schemaErrors = records.flatMap((record) => validateContract("CopyRecord", record).map((code) => `${record.copy_id}: ${code}`));
   const v2 = loadProtocolV2();
   const cells = {} as Record<CopyState, ReturnType<typeof adapter.interpret>>;
-  const verdicts = {} as Record<CopyState, string>;
+  const verdicts = {} as Record<CopyState, ReturnType<typeof stateVerdict>>;
   for (const state of ["clean", "buggy", "fixed"] as const) {
     cells[state] = adapter.interpret(records.filter((record) => record.state === state), protocol);
     verdicts[state] = stateVerdict(v2, state, cells[state]);
@@ -158,23 +158,26 @@ async function evaluate(dir: string): Promise<number> {
     check_set: set,
     cells: (["clean", "buggy", "fixed"] as const).map((state) => ({ state, expected: EXPECTED_CELLS[set][state], observed: cells[state][set].observed, failure_codes: cells[state][set].failure_codes, runs_valid: cells[state][set].runs_valid, runs_total: cells[state][set].runs_total })),
   }));
-  const qualified = Object.values(verdicts).every((verdict) => verdict === "met");
+  // The verdict comes from the adapter's collect and interpret alone; the cross-check evaluates the
+  // copies' record sets directly and is recorded beside it, with whether the two agree.
+  const verdict = overallVerdict([verdicts.clean, verdicts.buggy, verdicts.fixed]);
   const result = {
     format: "rbw.task-report.qualification.v2",
     entry_id: entry.entry_id,
     protocol: { protocol_id: protocol.protocol_id, version: protocol.version, sha256: protocol.sha256 },
     check_set_sha256: entry.verification.check_set_sha256,
     environment: entry.environment,
-    verdict: qualified ? "qualified" : crossCheck.verdict,
+    verdict,
     verdicts,
     matrix,
     records,
     cross_check: crossCheck,
+    cross_check_agrees: crossCheck.verdict === verdict && (["clean", "buggy", "fixed"] as const).every((state) => crossCheck.states.find((item) => item.state === state)?.verdict === verdicts[state]),
     schema_errors: schemaErrors,
   };
   writeJson(join(dir, "qualification.json"), result);
-  process.stdout.write(`${JSON.stringify({ verdict: result.verdict, verdicts, matrix, cross_check: crossCheck.verdict, schema_errors: schemaErrors.length }, null, 2)}\n`);
-  return qualified && crossCheck.verdict === "qualified" && schemaErrors.length === 0 ? 0 : 1;
+  process.stdout.write(`${JSON.stringify({ verdict, verdicts, matrix, cross_check: crossCheck.verdict, cross_check_agrees: result.cross_check_agrees, schema_errors: schemaErrors.length }, null, 2)}\n`);
+  return verdict === "qualified" && result.cross_check_agrees && schemaErrors.length === 0 ? 0 : 1;
 }
 
 export async function main(argv: string[]): Promise<number> {
