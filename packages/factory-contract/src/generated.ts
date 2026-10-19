@@ -6,6 +6,7 @@ export const DEF_NAMES = [
   "NonNegativeInteger",
   "PositiveInteger",
   "MicroUsd",
+  "SignedMicroUsd",
   "Uuid",
   "Sha256",
   "GitCommitId",
@@ -14,6 +15,7 @@ export const DEF_NAMES = [
   "UtcTime",
   "ItemKey",
   "Identifier",
+  "Description",
   "Version",
   "ContractVersion",
   "HostId",
@@ -189,8 +191,11 @@ export type NonNegativeInteger = number;
 
 export type PositiveInteger = number;
 
-/** Money in integer micro-US-dollars (contract section 3). 1500000 is $1.50. */
-export type MicroUsd = SafeInteger;
+/** Money in integer micro-US-dollars (contract section 3), never negative. 1500000 is $1.50. */
+export type MicroUsd = NonNegativeInteger;
+
+/** Money in integer micro-US-dollars that is negative only on an overrun (contract section 8.5). */
+export type SignedMicroUsd = SafeInteger;
 
 /** Lowercase 8-4-4-4-12 hexadecimal, chosen by the client. */
 export type Uuid = string;
@@ -215,6 +220,9 @@ export type ItemKey = string;
 
 /** A non-empty identifier declared by the service, a host or a source, such as a baseline, source, entry, criterion, suite, check set, protocol or copy ID. */
 export type Identifier = string;
+
+/** Plain-language text with no leading or trailing white space, as String.prototype.trim leaves it (contract section 5). */
+export type Description = string;
 
 /** A non-empty version label, such as "1". */
 export type Version = string;
@@ -384,14 +392,14 @@ export interface Criterion {
   example_phrases: string[];
 }
 
-/** Supported means a declared source with at least one entry exists (contract section 4.2). */
+/** Supported means a declared source with at least one entry exists and its verification checks are implemented (contract section 4.2). */
 export interface Combination {
   host_id: HostId;
   bug_type_id: BugTypeId;
   status: SupportStatus;
   /** Why the pair is unsupported; null when supported. */
   reason: string | null;
-  /** The declared source; null when unsupported. */
+  /** The declared source; set when supported. */
   source: SourceSummary | null;
 }
 
@@ -466,8 +474,8 @@ export interface RequestItemInput {
   bug_type_id: BugTypeId;
   /** At most limits.max_quantity_per_item. */
   quantity: PositiveInteger;
-  /** Trimmed; an empty description is sent as null; at most limits.max_description_chars. */
-  description: string | null;
+  /** An empty description is sent as null; at most limits.max_description_chars. */
+  description: Description | null;
   difficulty: DifficultyOptionId;
 }
 
@@ -583,7 +591,7 @@ export interface RequestStatus {
   /** Derived from the counts; a fulfilled outcome always has complete. */
   delivery: Delivery;
   attention: Attention | null;
-  /** Frozen at start. */
+  /** Frozen at start; always startable. */
   interpretation: Interpretation;
   budget: RequestBudget;
   limits: RequestLimits;
@@ -591,7 +599,7 @@ export interface RequestStatus {
   items: ItemProgress[];
   type_totals: TypeProgress[];
   candidates: Candidate[];
-  /** Qualified cases only. */
+  /** Qualified cases of this request only; empty exactly when delivery is none. */
   cases: Case[];
   /** Up to 200 events with seq greater than the after parameter. */
   events: Event[];
@@ -618,7 +626,7 @@ export interface RequestBudget {
   /** reserved_microusd + spent_microusd. */
   committed_microusd: MicroUsd;
   /** budget_microusd - committed_microusd; negative only on an overrun. */
-  remaining_microusd: MicroUsd;
+  remaining_microusd: SignedMicroUsd;
   /** True when committed_microusd exceeds budget_microusd. */
   overrun: boolean;
 }
@@ -891,7 +899,7 @@ export interface SourceExhaustedData {
 export interface BudgetUpdatedData {
   reserved_microusd: MicroUsd;
   spent_microusd: MicroUsd;
-  remaining_microusd: MicroUsd;
+  remaining_microusd: SignedMicroUsd;
 }
 
 export interface AttentionEventData {
@@ -1031,7 +1039,7 @@ export interface Provenance {
   entry_id: Identifier;
 }
 
-/** POST and GET of a case's validation runs (contract section 11). How the result follows from the cells is not checked by the schema. */
+/** POST and GET of a case's validation runs (contract section 11). */
 export interface ValidationRun {
   contract_version: ContractVersion;
   validation_id: Uuid;
@@ -1431,6 +1439,7 @@ export interface DefTypes {
   NonNegativeInteger: NonNegativeInteger;
   PositiveInteger: PositiveInteger;
   MicroUsd: MicroUsd;
+  SignedMicroUsd: SignedMicroUsd;
   Uuid: Uuid;
   Sha256: Sha256;
   GitCommitId: GitCommitId;
@@ -1439,6 +1448,7 @@ export interface DefTypes {
   UtcTime: UtcTime;
   ItemKey: ItemKey;
   Identifier: Identifier;
+  Description: Description;
   Version: Version;
   ContractVersion: ContractVersion;
   HostId: HostId;

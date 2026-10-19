@@ -10,23 +10,23 @@ function pathOf(code: string): string[] {
   return path.split("/").filter((segment) => segment !== "");
 }
 
-/** True when one path is a prefix of the other. */
-function related(a: readonly string[], b: readonly string[]): boolean {
-  const length = Math.min(a.length, b.length);
-  return a.slice(0, length).every((segment, index) => segment === b[index]);
+/** True when `ancestor` is `path` or one of its ancestors. */
+function contains(ancestor: readonly string[], path: readonly string[]): boolean {
+  return ancestor.length <= path.length && ancestor.every((segment, index) => segment === path[index]);
 }
 
 /**
- * The value is refused with every expected code, and every other error sits on the path to one of
- * them or below it (the `if`, `anyOf` and branch reports of the same fault), so a variant never
- * passes on an unrelated fault.
+ * The value is refused with every expected code, and every other error is reported on the path
+ * above one of them (the `if` and `anyOf` reports of the same fault), so a variant never passes on
+ * an unrelated fault.
  */
 function expectRefused(def: DefName, value: JsonObject, expected: readonly string[]): void {
   const errors = validateContract(def, value);
   for (const code of expected) expect(errors).toContain(code);
   const targets = expected.map(pathOf);
   for (const error of errors) {
-    expect(targets.some((target) => related(pathOf(error), target)), `${error} is not on the path of ${expected.join(", ")}`).toBe(true);
+    if (expected.includes(error)) continue;
+    expect(targets.some((target) => contains(pathOf(error), target)), `${error} is not above ${expected.join(", ")}`).toBe(true);
   }
 }
 
@@ -80,6 +80,11 @@ const SHAPE_CASES: Case[] = [
   { name: "an impossible date", def: "RequestStatus", base: fulfilled, edit: (c) => { c.updated_at = "2026-02-30T00:00:00.000Z"; }, expected: "schema:/updated_at:format" },
   { name: "a fractional amount", def: "StartRequest", base: start, edit: (c) => { at(c, ["input"]).budget_microusd = 1.5; }, expected: "schema:/input/budget_microusd:type" },
   { name: "a quantity of zero", def: "StartRequest", base: start, edit: (c) => { at(c, ["input", "items", 0]).quantity = 0; }, expected: "schema:/input/items/0/quantity:minimum" },
+  { name: "an empty description", def: "StartRequest", base: start, edit: (c) => { at(c, ["input", "items", 0]).description = ""; }, expected: "schema:/input/items/0/description:pattern" },
+  { name: "an untrimmed description", def: "StartRequest", base: start, edit: (c) => { at(c, ["input", "items", 0]).description = "lost update "; }, expected: "schema:/input/items/0/description:pattern" },
+  { name: "a negative budget", def: "StartRequest", base: start, edit: (c) => { at(c, ["input"]).budget_microusd = -1; }, expected: "schema:/input/budget_microusd:minimum" },
+  { name: "negative spend", def: "RequestStatus", base: fulfilled, edit: (c) => { at(c, ["events", 1, "data"]).spent_microusd = -1; }, expected: "schema:/events/1/data/spent_microusd:minimum" },
+  { name: "more than 200 events", def: "RequestStatus", base: fulfilled, edit: (c) => { c.events = Array.from({ length: 201 }, () => at(c, ["events", 0])); }, expected: "schema:/events:maxItems" },
   { name: "a repeated host", def: "StartRequest", base: start, edit: (c) => { at(c, ["input"]).hosts = ["umami", "umami"]; }, expected: "schema:/input/hosts:uniqueItems" },
   { name: "no items", def: "StartRequest", base: start, edit: (c) => { at(c, ["input"]).items = []; }, expected: "schema:/input/items:minItems" },
   { name: "an event numbered 0", def: "RequestStatus", base: running, edit: (c) => { at(c, ["events", 0]).seq = 0; }, expected: "schema:/events/0/seq:minimum" },
@@ -95,11 +100,16 @@ const RULE_CASES: Case[] = [
   { name: "finished without a stop reason", def: "RequestStatus", base: fulfilled, edit: (c) => { c.stop_reason = null; }, expected: "schema:/stop_reason:type" },
   { name: "a stop code of another outcome", def: "RequestStatus", base: fulfilled, edit: (c) => { at(c, ["stop_reason"]).code = "time_limit"; }, expected: "schema:/stop_reason/code:const" },
   { name: "fulfilled with partial delivery", def: "RequestStatus", base: fulfilled, edit: (c) => { c.delivery = "partial"; }, expected: "schema:/delivery:const" },
+  { name: "cases without delivery", def: "RequestStatus", base: fulfilled, edit: (c) => { c.outcome = "cancelled"; c.delivery = "none"; at(c, ["stop_reason"]).code = "cancelled_by_user"; }, expected: "schema:/cases:maxItems" },
+  { name: "delivery without cases", def: "RequestStatus", base: status("status-zero-result.json"), edit: (c) => { c.delivery = "partial"; }, expected: "schema:/cases:minItems" },
+  { name: "a frozen interpretation that is not startable", def: "RequestStatus", base: running, edit: (c) => { at(c, ["interpretation"]).startable = false; }, expected: ["schema:/interpretation/startable:const", "schema:/interpretation:anyOf", "schema:/interpretation/problems:contains", "schema:/interpretation/items:contains", "schema:/interpretation/items/0/status:const", "schema:/interpretation/items/1/status:const"] },
+  { name: "the published example among a request's cases", def: "RequestStatus", base: fulfilled, edit: (c) => { at(c, ["cases", 0]).item_key = null; Object.assign(at(c, ["cases", 0, "provenance"]), { origin: "published_example", request_id: null }); }, expected: "schema:/cases/0/provenance/origin:const" },
   // Candidates (section 8.3)
   { name: "a rejected candidate with an invalid-stage reason", def: "RequestStatus", base: status("status-zero-result.json"), edit: (c) => { at(c, ["candidates", 0, "reason"]).code = "setup_failed"; }, expected: "schema:/candidates/0/reason/code:enum" },
   { name: "a skipped candidate without a reason", def: "RequestStatus", base: status("status-partial-budget.json"), edit: (c) => { at(c, ["candidates", 1]).reason = null; }, expected: "schema:/candidates/1/reason:type" },
   { name: "a qualified candidate with a reason", def: "RequestStatus", base: fulfilled, edit: (c) => { at(c, ["candidates", 0]).reason = { code: "wrong_failure", message: "x" }; }, expected: "schema:/candidates/0/reason:type" },
   { name: "a qualified candidate without a case", def: "RequestStatus", base: fulfilled, edit: (c) => { at(c, ["candidates", 0]).case_id = null; }, expected: "schema:/candidates/0/case_id:type" },
+  { name: "a packaging candidate without an item", def: "RequestStatus", base: running, edit: (c) => { at(c, ["candidates", 0]).stage = "packaging"; }, expected: "schema:/candidates/0/item_key:type" },
   { name: "an item before requested_criteria_passed", def: "RequestStatus", base: running, edit: (c) => { at(c, ["candidates", 0]).item_key = "concurrency-1"; }, expected: "schema:/candidates/0/item_key:type" },
   // Events (section 8.4)
   { name: "a skipped event with a reason of another stage", def: "RequestStatus", base: status("status-partial-budget.json"), edit: (c) => { at(c, ["events", 21, "data"]).reason = "stopped"; }, expected: "schema:/events/21/data/reason:enum" },
@@ -107,16 +117,17 @@ const RULE_CASES: Case[] = [
   // Capabilities and interpretation (sections 4 and 6)
   { name: "a supported pair without a source", def: "Capabilities", base: capabilities, edit: (c) => { at(c, ["combinations", 1]).source = null; }, expected: "schema:/combinations/1/source:type" },
   { name: "an unsupported pair without a reason", def: "Capabilities", base: capabilities, edit: (c) => { at(c, ["combinations", 0]).reason = null; }, expected: "schema:/combinations/0/reason:type" },
+  { name: "a supported pair with a reason", def: "Capabilities", base: capabilities, edit: (c) => { at(c, ["combinations", 1]).reason = "x"; }, expected: "schema:/combinations/1/reason:type" },
   { name: "a source with no entries", def: "Capabilities", base: capabilities, edit: (c) => { at(c, ["combinations", 1, "source"]).entries = 0; }, expected: "schema:/combinations/1/source/entries:minimum" },
   { name: "a warning code marked blocking", def: "Interpretation", base: () => contractFixture("interpretation-unsupported.json"), edit: (c) => { at(c, ["items", 4, "problems", 0]).severity = "blocking"; }, expected: "schema:/items/4/problems/0/severity:const" },
   { name: "a request-level problem with an item", def: "Interpretation", base: () => contractFixture("interpretation-budget-below-minimum.json"), edit: (c) => { at(c, ["problems", 0]).item_key = "date-time-1"; }, expected: "schema:/problems/0/item_key:type" },
   { name: "startable with a blocking request problem", def: "Interpretation", base: () => contractFixture("interpretation-budget-below-minimum.json"), edit: (c) => { c.startable = true; }, expected: "schema:/problems:not" },
-  { name: "not startable without a blocking problem", def: "Interpretation", base: () => contractFixture("interpretation-supported.json"), edit: (c) => { c.startable = false; }, expected: "schema:/:anyOf" },
+  { name: "not startable without a blocking problem", def: "Interpretation", base: () => contractFixture("interpretation-supported.json"), edit: (c) => { c.startable = false; }, expected: ["schema:/:anyOf", "schema:/problems:contains", "schema:/items:contains", "schema:/items/0/status:const", "schema:/items/1/status:const"] },
   { name: "a supported item with a blocking problem", def: "Interpretation", base: () => contractFixture("interpretation-supported.json"), edit: (c) => { asArray(at(c, ["items", 1]).problems, "problems").push({ code: "no_matching_source", severity: "blocking", message: "x", item_key: "date-time-1" }); }, expected: "schema:/items/1/problems:not" },
   { name: "source-only difficulty not refused", def: "Interpretation", base: () => contractFixture("interpretation-unsupported.json"), edit: (c) => { at(c, ["items", 2, "difficulty"]).status = "not_required"; }, expected: "schema:/items/2/difficulty/status:const" },
   // Cases (section 10)
   { name: "a qualified case with a mismatched cell", def: "RequestStatus", base: fulfilled, edit: (c) => { Object.assign(at(c, ["cases", 0, "matrix", "verification", "buggy"]), { observed: "pass", matches_expectation: false }); }, expected: "schema:/cases/0/matrix/verification/buggy/matches_expectation:const" },
-  { name: "a cell whose match disagrees with its outcomes", def: "RequestStatus", base: fulfilled, edit: (c) => { at(c, ["cases", 0, "matrix", "original_suite", "clean"]).observed = "error"; }, expected: "schema:/cases/0/matrix/original_suite/clean:anyOf" },
+  { name: "a cell whose match disagrees with its outcomes", def: "RequestStatus", base: fulfilled, edit: (c) => { at(c, ["cases", 0, "matrix", "original_suite", "clean"]).observed = "error"; }, expected: ["schema:/cases/0/matrix/original_suite/clean:anyOf", "schema:/cases/0/matrix/original_suite/clean/observed:const", "schema:/cases/0/matrix/original_suite/clean/expected:const"] },
   { name: "a buggy copy expected to pass the checks", def: "RequestStatus", base: fulfilled, edit: (c) => { Object.assign(at(c, ["cases", 1, "matrix", "verification", "buggy"]), { expected: "pass", observed: "pass" }); }, expected: "schema:/cases/1/matrix/verification/buggy/expected:const" },
   { name: "a validator part in the bug case slot", def: "RequestStatus", base: fulfilled, edit: (c) => { Object.assign(at(c, ["cases", 0, "packages", "bug_case"]), { kind: "validator", format: "rbw-validator/1" }); }, expected: "schema:/cases/0/packages/bug_case/kind:const" },
   { name: "a part with the other part's format", def: "RequestStatus", base: fulfilled, edit: (c) => { at(c, ["cases", 0, "packages", "validator"]).format = "rbw-bug-case/1"; }, expected: "schema:/cases/0/packages/validator/format:const" },
@@ -129,6 +140,10 @@ const RULE_CASES: Case[] = [
   { name: "a result before finished", def: "ValidationRun", base: () => contractFixture("validation-running.json"), edit: (c) => { c.result = "error"; }, expected: "schema:/result:type" },
   { name: "a passed run without a matrix", def: "ValidationRun", base: () => contractFixture("validation-passed.json"), edit: (c) => { c.matrix = null; }, expected: "schema:/matrix:type" },
   { name: "a run cell with a changed expectation", def: "ValidationRun", base: () => contractFixture("validation-failed.json"), edit: (c) => { at(c, ["matrix", "original_suite", "buggy"]).expected = "fail"; at(c, ["matrix", "original_suite", "buggy"]).matches_expectation = false; }, expected: "schema:/matrix/original_suite/buggy/expected:const" },
+  { name: "a passed run with a mismatched cell", def: "ValidationRun", base: () => contractFixture("validation-failed.json"), edit: (c) => { c.result = "passed"; }, expected: "schema:/matrix/verification/buggy/matches_expectation:const" },
+  { name: "a failed run with a cell in error", def: "ValidationRun", base: () => contractFixture("validation-error.json"), edit: (c) => { c.result = "failed"; }, expected: ["schema:/matrix/original_suite/clean/observed:enum", "schema:/matrix/verification/clean/observed:enum"] },
+  { name: "a failed run whose cells all match", def: "ValidationRun", base: () => contractFixture("validation-passed.json"), edit: (c) => { c.result = "failed"; }, expected: ["schema:/:anyOf", ...["original_suite", "verification"].flatMap((set) => ["clean", "buggy", "fixed"].map((copy) => `schema:/matrix/${set}/${copy}/matches_expectation:const`))] },
+  { name: "an error run with six valid cells", def: "ValidationRun", base: () => contractFixture("validation-failed.json"), edit: (c) => { c.result = "error"; }, expected: ["schema:/:anyOf", "schema:/matrix:type", ...["original_suite", "verification"].flatMap((set) => ["clean", "buggy", "fixed"].map((copy) => `schema:/matrix/${set}/${copy}/observed:enum`))] },
   // Errors (section 12)
   { name: "busy without details", def: "ErrorResponse", base: () => contractFixture("error-busy.json"), edit: (c) => { at(c, ["error"]).details = null; }, expected: "schema:/error/details:type" },
   { name: "an active busy that is not retryable", def: "ErrorResponse", base: () => contractFixture("error-busy.json"), edit: (c) => { at(c, ["error"]).retryable = false; }, expected: "schema:/error/retryable:const" },
@@ -175,6 +190,21 @@ describe.each([
     const base = item.base();
     expect(validateContract(item.def, base)).toEqual([]);
     expectRefused(item.def, variant(base, item.edit), typeof item.expected === "string" ? [item.expected] : item.expected);
+  });
+});
+
+/** Values the contract allows that a stricter schema could wrongly refuse. */
+const ACCEPTED: Case[] = [
+  { name: "an unsupported pair with a declared source", def: "Capabilities", base: capabilities, edit: (c) => { at(c, ["combinations", 0]).source = structuredClone(at(c, ["combinations", 1, "source"])); }, expected: [] },
+  { name: "a description with a line break", def: "StartRequest", base: start, edit: (c) => { at(c, ["input", "items", 0]).description = "lost update\nwhen two requests overlap"; }, expected: [] },
+  { name: "a negative remaining amount on an overrun", def: "RequestStatus", base: status("status-operational-error.json"), edit: (c) => { Object.assign(at(c, ["budget"]), { spent_microusd: 1200000, committed_microusd: 1700000, remaining_microusd: -700000, overrun: true }); }, expected: [] },
+  { name: "an error run without a matrix", def: "ValidationRun", base: () => contractFixture("validation-error.json"), edit: (c) => { c.matrix = null; }, expected: [] },
+  { name: "a rejected candidate that keeps its item", def: "RequestStatus", base: status("status-zero-result.json"), edit: (c) => { at(c, ["candidates", 0]).item_key = "date-time-1"; }, expected: [] },
+];
+
+describe("accepts what the contract allows", () => {
+  it.each(ACCEPTED.map((item) => [item.name, item] as const))("%s", (_name, item) => {
+    expect(validateContract(item.def, variant(item.base(), item.edit))).toEqual([]);
   });
 });
 

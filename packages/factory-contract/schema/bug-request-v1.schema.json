@@ -21,7 +21,11 @@
       "maximum": 9007199254740991
     },
     "MicroUsd": {
-      "description": "Money in integer micro-US-dollars (contract section 3). 1500000 is $1.50.",
+      "description": "Money in integer micro-US-dollars (contract section 3), never negative. 1500000 is $1.50.",
+      "$ref": "#/$defs/NonNegativeInteger"
+    },
+    "SignedMicroUsd": {
+      "description": "Money in integer micro-US-dollars that is negative only on an overrun (contract section 8.5).",
       "$ref": "#/$defs/SafeInteger"
     },
     "Uuid": {
@@ -64,6 +68,11 @@
       "description": "A non-empty identifier declared by the service, a host or a source, such as a baseline, source, entry, criterion, suite, check set, protocol or copy ID.",
       "type": "string",
       "minLength": 1
+    },
+    "Description": {
+      "description": "Plain-language text with no leading or trailing white space, as String.prototype.trim leaves it (contract section 5).",
+      "type": "string",
+      "pattern": "^[^\\t\\n\\u000b\\f\\r \\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff](?:(?:.|[\\n\\r\\u2028\\u2029])*[^\\t\\n\\u000b\\f\\r \\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff])?$"
     },
     "Version": {
       "description": "A non-empty version label, such as \"1\".",
@@ -595,7 +604,7 @@
       }
     },
     "Combination": {
-      "description": "Supported means a declared source with at least one entry exists (contract section 4.2).",
+      "description": "Supported means a declared source with at least one entry exists and its verification checks are implemented (contract section 4.2).",
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -627,7 +636,7 @@
           ]
         },
         "source": {
-          "description": "The declared source; null when unsupported.",
+          "description": "The declared source; set when supported.",
           "anyOf": [
             {
               "$ref": "#/$defs/SourceSummary"
@@ -646,7 +655,10 @@
               "status": {
                 "const": "supported"
               }
-            }
+            },
+            "required": [
+              "status"
+            ]
           },
           "then": {
             "type": "object",
@@ -662,9 +674,6 @@
           "else": {
             "type": "object",
             "properties": {
-              "source": {
-                "type": "null"
-              },
               "reason": {
                 "type": "string"
               }
@@ -932,10 +941,10 @@
           "$ref": "#/$defs/PositiveInteger"
         },
         "description": {
-          "description": "Trimmed; an empty description is sent as null; at most limits.max_description_chars.",
+          "description": "An empty description is sent as null; at most limits.max_description_chars.",
           "anyOf": [
             {
-              "type": "string"
+              "$ref": "#/$defs/Description"
             },
             {
               "type": "null"
@@ -1026,7 +1035,10 @@
               "startable": {
                 "const": true
               }
-            }
+            },
+            "required": [
+              "startable"
+            ]
           },
           "then": {
             "type": "object",
@@ -1173,7 +1185,10 @@
               "status": {
                 "const": "supported"
               }
-            }
+            },
+            "required": [
+              "status"
+            ]
           },
           "then": {
             "type": "object",
@@ -1236,7 +1251,10 @@
               "requested": {
                 "const": "source_only_difficulty_required"
               }
-            }
+            },
+            "required": [
+              "requested"
+            ]
           },
           "then": {
             "type": "object",
@@ -1459,7 +1477,10 @@
                   "host_unused"
                 ]
               }
-            }
+            },
+            "required": [
+              "code"
+            ]
           },
           "then": {
             "type": "object",
@@ -1485,7 +1506,10 @@
               "code": {
                 "const": "budget_below_minimum"
               }
-            }
+            },
+            "required": [
+              "code"
+            ]
           },
           "then": {
             "type": "object",
@@ -1599,7 +1623,7 @@
           ]
         },
         "interpretation": {
-          "description": "Frozen at start.",
+          "description": "Frozen at start; always startable.",
           "$ref": "#/$defs/Interpretation"
         },
         "budget": {
@@ -1630,7 +1654,7 @@
           }
         },
         "cases": {
-          "description": "Qualified cases only.",
+          "description": "Qualified cases of this request only; empty exactly when delivery is none.",
           "type": "array",
           "items": {
             "$ref": "#/$defs/Case"
@@ -1641,7 +1665,8 @@
           "type": "array",
           "items": {
             "$ref": "#/$defs/Event"
-          }
+          },
+          "maxItems": 200
         },
         "next_after": {
           "$ref": "#/$defs/NonNegativeInteger"
@@ -1668,7 +1693,10 @@
               "state": {
                 "const": "finished"
               }
-            }
+            },
+            "required": [
+              "state"
+            ]
           },
           "then": {
             "type": "object",
@@ -1700,7 +1728,10 @@
               "outcome": {
                 "const": "fulfilled"
               }
-            }
+            },
+            "required": [
+              "outcome"
+            ]
           },
           "then": {
             "type": "object",
@@ -1723,7 +1754,10 @@
               "outcome": {
                 "const": "stopped_at_limit"
               }
-            }
+            },
+            "required": [
+              "outcome"
+            ]
           },
           "then": {
             "type": "object",
@@ -1750,7 +1784,10 @@
               "outcome": {
                 "const": "sources_exhausted"
               }
-            }
+            },
+            "required": [
+              "outcome"
+            ]
           },
           "then": {
             "type": "object",
@@ -1773,7 +1810,10 @@
               "outcome": {
                 "const": "cancelled"
               }
-            }
+            },
+            "required": [
+              "outcome"
+            ]
           },
           "then": {
             "type": "object",
@@ -1796,7 +1836,10 @@
               "outcome": {
                 "const": "operational_error"
               }
-            }
+            },
+            "required": [
+              "outcome"
+            ]
           },
           "then": {
             "type": "object",
@@ -1823,13 +1866,76 @@
               "outcome": {
                 "const": "fulfilled"
               }
-            }
+            },
+            "required": [
+              "outcome"
+            ]
           },
           "then": {
             "type": "object",
             "properties": {
               "delivery": {
                 "const": "complete"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "delivery": {
+                "const": "none"
+              }
+            },
+            "required": [
+              "delivery"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "cases": {
+                "type": "array",
+                "maxItems": 0
+              }
+            }
+          },
+          "else": {
+            "type": "object",
+            "properties": {
+              "cases": {
+                "type": "array",
+                "minItems": 1
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "interpretation": {
+              "type": "object",
+              "properties": {
+                "startable": {
+                  "const": true
+                }
+              }
+            },
+            "cases": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "provenance": {
+                    "type": "object",
+                    "properties": {
+                      "origin": {
+                        "const": "live_request"
+                      }
+                    }
+                  }
+                }
               }
             }
           }
@@ -1896,7 +2002,7 @@
         },
         "remaining_microusd": {
           "description": "budget_microusd - committed_microusd; negative only on an overrun.",
-          "$ref": "#/$defs/MicroUsd"
+          "$ref": "#/$defs/SignedMicroUsd"
         },
         "overrun": {
           "description": "True when committed_microusd exceeds budget_microusd.",
@@ -2125,7 +2231,10 @@
               "stage": {
                 "const": "rejected"
               }
-            }
+            },
+            "required": [
+              "stage"
+            ]
           },
           "then": {
             "type": "object",
@@ -2157,7 +2266,10 @@
               "stage": {
                 "const": "invalid"
               }
-            }
+            },
+            "required": [
+              "stage"
+            ]
           },
           "then": {
             "type": "object",
@@ -2180,7 +2292,10 @@
               "stage": {
                 "const": "incomplete"
               }
-            }
+            },
+            "required": [
+              "stage"
+            ]
           },
           "then": {
             "type": "object",
@@ -2206,7 +2321,10 @@
               "stage": {
                 "const": "skipped"
               }
-            }
+            },
+            "required": [
+              "stage"
+            ]
           },
           "then": {
             "type": "object",
@@ -2240,7 +2358,10 @@
                   "qualified"
                 ]
               }
-            }
+            },
+            "required": [
+              "stage"
+            ]
           },
           "then": {
             "type": "object",
@@ -2263,7 +2384,10 @@
                   "behavior_checks_passed"
                 ]
               }
-            }
+            },
+            "required": [
+              "stage"
+            ]
           },
           "then": {
             "type": "object",
@@ -2279,16 +2403,41 @@
             "type": "object",
             "properties": {
               "stage": {
-                "const": "qualified"
+                "enum": [
+                  "requested_criteria_passed",
+                  "packaging",
+                  "qualified"
+                ]
               }
-            }
+            },
+            "required": [
+              "stage"
+            ]
           },
           "then": {
             "type": "object",
             "properties": {
               "item_key": {
                 "type": "string"
-              },
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "stage": {
+                "const": "qualified"
+              }
+            },
+            "required": [
+              "stage"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
               "case_id": {
                 "type": "string"
               }
@@ -2822,7 +2971,10 @@
               "type": {
                 "const": "candidate_rejected"
               }
-            }
+            },
+            "required": [
+              "type"
+            ]
           },
           "then": {
             "type": "object",
@@ -2854,7 +3006,10 @@
               "type": {
                 "const": "candidate_invalid"
               }
-            }
+            },
+            "required": [
+              "type"
+            ]
           },
           "then": {
             "type": "object",
@@ -2877,7 +3032,10 @@
               "type": {
                 "const": "candidate_incomplete"
               }
-            }
+            },
+            "required": [
+              "type"
+            ]
           },
           "then": {
             "type": "object",
@@ -2903,7 +3061,10 @@
               "type": {
                 "const": "candidate_skipped"
               }
-            }
+            },
+            "required": [
+              "type"
+            ]
           },
           "then": {
             "type": "object",
@@ -3569,7 +3730,7 @@
           "$ref": "#/$defs/MicroUsd"
         },
         "remaining_microusd": {
-          "$ref": "#/$defs/MicroUsd"
+          "$ref": "#/$defs/SignedMicroUsd"
         }
       }
     },
@@ -3609,7 +3770,10 @@
               "outcome": {
                 "const": "fulfilled"
               }
-            }
+            },
+            "required": [
+              "outcome"
+            ]
           },
           "then": {
             "type": "object",
@@ -3627,7 +3791,10 @@
               "outcome": {
                 "const": "stopped_at_limit"
               }
-            }
+            },
+            "required": [
+              "outcome"
+            ]
           },
           "then": {
             "type": "object",
@@ -3649,7 +3816,10 @@
               "outcome": {
                 "const": "sources_exhausted"
               }
-            }
+            },
+            "required": [
+              "outcome"
+            ]
           },
           "then": {
             "type": "object",
@@ -3667,7 +3837,10 @@
               "outcome": {
                 "const": "cancelled"
               }
-            }
+            },
+            "required": [
+              "outcome"
+            ]
           },
           "then": {
             "type": "object",
@@ -3685,7 +3858,10 @@
               "outcome": {
                 "const": "operational_error"
               }
-            }
+            },
+            "required": [
+              "outcome"
+            ]
           },
           "then": {
             "type": "object",
@@ -3837,9 +4013,15 @@
                   "origin": {
                     "const": "live_request"
                   }
-                }
+                },
+                "required": [
+                  "origin"
+                ]
               }
-            }
+            },
+            "required": [
+              "provenance"
+            ]
           },
           "then": {
             "type": "object",
@@ -4088,7 +4270,10 @@
               "matches_expectation": {
                 "const": true
               }
-            }
+            },
+            "required": [
+              "matches_expectation"
+            ]
           },
           "then": {
             "anyOf": [
@@ -4268,9 +4453,15 @@
                   "ready": {
                     "const": true
                   }
-                }
+                },
+                "required": [
+                  "ready"
+                ]
               }
-            }
+            },
+            "required": [
+              "bug_case"
+            ]
           },
           "then": {
             "type": "object",
@@ -4357,7 +4548,10 @@
               "kind": {
                 "const": "bug_case"
               }
-            }
+            },
+            "required": [
+              "kind"
+            ]
           },
           "then": {
             "type": "object",
@@ -4417,7 +4611,10 @@
               "origin": {
                 "const": "live_request"
               }
-            }
+            },
+            "required": [
+              "origin"
+            ]
           },
           "then": {
             "type": "object",
@@ -4431,7 +4628,7 @@
       ]
     },
     "ValidationRun": {
-      "description": "POST and GET of a case's validation runs (contract section 11). How the result follows from the cells is not checked by the schema.",
+      "description": "POST and GET of a case's validation runs (contract section 11).",
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -4543,7 +4740,10 @@
               "state": {
                 "const": "finished"
               }
-            }
+            },
+            "required": [
+              "state"
+            ]
           },
           "then": {
             "type": "object",
@@ -4575,7 +4775,10 @@
                   "failed"
                 ]
               }
-            }
+            },
+            "required": [
+              "result"
+            ]
           },
           "then": {
             "type": "object",
@@ -4584,6 +4787,513 @@
                 "type": "object"
               }
             }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "result": {
+                "const": "passed"
+              }
+            },
+            "required": [
+              "result"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "matrix": {
+                "type": "object",
+                "properties": {
+                  "original_suite": {
+                    "type": "object",
+                    "properties": {
+                      "clean": {
+                        "type": "object",
+                        "properties": {
+                          "matches_expectation": {
+                            "const": true
+                          }
+                        }
+                      },
+                      "buggy": {
+                        "type": "object",
+                        "properties": {
+                          "matches_expectation": {
+                            "const": true
+                          }
+                        }
+                      },
+                      "fixed": {
+                        "type": "object",
+                        "properties": {
+                          "matches_expectation": {
+                            "const": true
+                          }
+                        }
+                      }
+                    }
+                  },
+                  "verification": {
+                    "type": "object",
+                    "properties": {
+                      "clean": {
+                        "type": "object",
+                        "properties": {
+                          "matches_expectation": {
+                            "const": true
+                          }
+                        }
+                      },
+                      "buggy": {
+                        "type": "object",
+                        "properties": {
+                          "matches_expectation": {
+                            "const": true
+                          }
+                        }
+                      },
+                      "fixed": {
+                        "type": "object",
+                        "properties": {
+                          "matches_expectation": {
+                            "const": true
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "result": {
+                "const": "failed"
+              }
+            },
+            "required": [
+              "result"
+            ]
+          },
+          "then": {
+            "allOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "matrix": {
+                    "type": "object",
+                    "properties": {
+                      "original_suite": {
+                        "type": "object",
+                        "properties": {
+                          "clean": {
+                            "type": "object",
+                            "properties": {
+                              "observed": {
+                                "enum": [
+                                  "pass",
+                                  "fail"
+                                ]
+                              }
+                            }
+                          },
+                          "buggy": {
+                            "type": "object",
+                            "properties": {
+                              "observed": {
+                                "enum": [
+                                  "pass",
+                                  "fail"
+                                ]
+                              }
+                            }
+                          },
+                          "fixed": {
+                            "type": "object",
+                            "properties": {
+                              "observed": {
+                                "enum": [
+                                  "pass",
+                                  "fail"
+                                ]
+                              }
+                            }
+                          }
+                        }
+                      },
+                      "verification": {
+                        "type": "object",
+                        "properties": {
+                          "clean": {
+                            "type": "object",
+                            "properties": {
+                              "observed": {
+                                "enum": [
+                                  "pass",
+                                  "fail"
+                                ]
+                              }
+                            }
+                          },
+                          "buggy": {
+                            "type": "object",
+                            "properties": {
+                              "observed": {
+                                "enum": [
+                                  "pass",
+                                  "fail"
+                                ]
+                              }
+                            }
+                          },
+                          "fixed": {
+                            "type": "object",
+                            "properties": {
+                              "observed": {
+                                "enum": [
+                                  "pass",
+                                  "fail"
+                                ]
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "matrix": {
+                        "type": "object",
+                        "properties": {
+                          "original_suite": {
+                            "type": "object",
+                            "properties": {
+                              "clean": {
+                                "type": "object",
+                                "properties": {
+                                  "matches_expectation": {
+                                    "const": false
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "matrix": {
+                        "type": "object",
+                        "properties": {
+                          "original_suite": {
+                            "type": "object",
+                            "properties": {
+                              "buggy": {
+                                "type": "object",
+                                "properties": {
+                                  "matches_expectation": {
+                                    "const": false
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "matrix": {
+                        "type": "object",
+                        "properties": {
+                          "original_suite": {
+                            "type": "object",
+                            "properties": {
+                              "fixed": {
+                                "type": "object",
+                                "properties": {
+                                  "matches_expectation": {
+                                    "const": false
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "matrix": {
+                        "type": "object",
+                        "properties": {
+                          "verification": {
+                            "type": "object",
+                            "properties": {
+                              "clean": {
+                                "type": "object",
+                                "properties": {
+                                  "matches_expectation": {
+                                    "const": false
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "matrix": {
+                        "type": "object",
+                        "properties": {
+                          "verification": {
+                            "type": "object",
+                            "properties": {
+                              "buggy": {
+                                "type": "object",
+                                "properties": {
+                                  "matches_expectation": {
+                                    "const": false
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "matrix": {
+                        "type": "object",
+                        "properties": {
+                          "verification": {
+                            "type": "object",
+                            "properties": {
+                              "fixed": {
+                                "type": "object",
+                                "properties": {
+                                  "matches_expectation": {
+                                    "const": false
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "result": {
+                "const": "error"
+              }
+            },
+            "required": [
+              "result"
+            ]
+          },
+          "then": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "matrix": {
+                    "type": "null"
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "matrix": {
+                    "type": "object",
+                    "properties": {
+                      "original_suite": {
+                        "type": "object",
+                        "properties": {
+                          "clean": {
+                            "type": "object",
+                            "properties": {
+                              "observed": {
+                                "enum": [
+                                  "error",
+                                  "incomplete"
+                                ]
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "matrix": {
+                    "type": "object",
+                    "properties": {
+                      "original_suite": {
+                        "type": "object",
+                        "properties": {
+                          "buggy": {
+                            "type": "object",
+                            "properties": {
+                              "observed": {
+                                "enum": [
+                                  "error",
+                                  "incomplete"
+                                ]
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "matrix": {
+                    "type": "object",
+                    "properties": {
+                      "original_suite": {
+                        "type": "object",
+                        "properties": {
+                          "fixed": {
+                            "type": "object",
+                            "properties": {
+                              "observed": {
+                                "enum": [
+                                  "error",
+                                  "incomplete"
+                                ]
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "matrix": {
+                    "type": "object",
+                    "properties": {
+                      "verification": {
+                        "type": "object",
+                        "properties": {
+                          "clean": {
+                            "type": "object",
+                            "properties": {
+                              "observed": {
+                                "enum": [
+                                  "error",
+                                  "incomplete"
+                                ]
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "matrix": {
+                    "type": "object",
+                    "properties": {
+                      "verification": {
+                        "type": "object",
+                        "properties": {
+                          "buggy": {
+                            "type": "object",
+                            "properties": {
+                              "observed": {
+                                "enum": [
+                                  "error",
+                                  "incomplete"
+                                ]
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "matrix": {
+                    "type": "object",
+                    "properties": {
+                      "verification": {
+                        "type": "object",
+                        "properties": {
+                          "fixed": {
+                            "type": "object",
+                            "properties": {
+                              "observed": {
+                                "enum": [
+                                  "error",
+                                  "incomplete"
+                                ]
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ]
           }
         }
       ]
@@ -4797,7 +5507,10 @@
               "code": {
                 "const": "busy"
               }
-            }
+            },
+            "required": [
+              "code"
+            ]
           },
           "then": {
             "type": "object",
@@ -4817,7 +5530,10 @@
                     "unsupported_request"
                   ]
                 }
-              }
+              },
+              "required": [
+                "code"
+              ]
             },
             "then": {
               "type": "object",
@@ -4844,7 +5560,10 @@
               "code": {
                 "const": "unsupported_request"
               }
-            }
+            },
+            "required": [
+              "code"
+            ]
           },
           "then": {
             "type": "object",
@@ -4878,9 +5597,16 @@
                   "reason": {
                     "const": "active"
                   }
-                }
+                },
+                "required": [
+                  "reason"
+                ]
               }
-            }
+            },
+            "required": [
+              "code",
+              "details"
+            ]
           },
           "then": {
             "type": "object",
@@ -4904,9 +5630,16 @@
                   "reason": {
                     "const": "needs_reconciliation"
                   }
-                }
+                },
+                "required": [
+                  "reason"
+                ]
               }
-            }
+            },
+            "required": [
+              "code",
+              "details"
+            ]
           },
           "then": {
             "type": "object",
@@ -4924,7 +5657,10 @@
               "code": {
                 "const": "unavailable"
               }
-            }
+            },
+            "required": [
+              "code"
+            ]
           },
           "then": {
             "type": "object",
@@ -6081,7 +6817,10 @@
               "verdict": {
                 "const": "accepted"
               }
-            }
+            },
+            "required": [
+              "verdict"
+            ]
           },
           "then": {
             "type": "object",
@@ -6180,7 +6919,10 @@
               "verdict": {
                 "const": "rejected"
               }
-            }
+            },
+            "required": [
+              "verdict"
+            ]
           },
           "then": {
             "type": "object",
@@ -6207,7 +6949,10 @@
               "verdict": {
                 "const": "invalid"
               }
-            }
+            },
+            "required": [
+              "verdict"
+            ]
           },
           "then": {
             "type": "object",
@@ -6225,7 +6970,10 @@
               "verdict": {
                 "const": "incomplete"
               }
-            }
+            },
+            "required": [
+              "verdict"
+            ]
           },
           "then": {
             "type": "object",
@@ -6325,7 +7073,10 @@
               "matches_expectation": {
                 "const": true
               }
-            }
+            },
+            "required": [
+              "matches_expectation"
+            ]
           },
           "then": {
             "anyOf": [
