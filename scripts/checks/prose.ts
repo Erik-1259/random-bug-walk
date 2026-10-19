@@ -6,9 +6,10 @@ import { isEntryPoint, runMain } from "./main.ts";
 
 /**
  * Tracked files in scope, as git glob pathspecs. Add new public copy here.
- * Other Markdown, such as agent instruction files at the root, is deliberately out of scope.
+ * Other Markdown, such as agent instruction files at the root, is deliberately out of scope, and so
+ * is the vendored task-report baseline, whose bytes must not change.
  */
-export const PROSE_FILE_SET: readonly string[] = [":(glob)**/README.md", ":(glob)docs/**/*.md", ":(glob)docs/**/*.mdx"];
+export const PROSE_FILE_SET: readonly string[] = [":(glob)**/README.md", ":(glob)docs/**/*.md", ":(glob)docs/**/*.mdx", ":(exclude,glob)hosts/task-report/app/**"];
 
 const apostrophe = "['’]?";
 const separator = "(?:-|\\s+)";

@@ -134,6 +134,19 @@ describe("prose check", () => {
     expect(result.status).toBe(0);
   });
 
+  it("skips the vendored task-report baseline but not the rest of hosts/", () => {
+    const dir = repositoryWith({
+      "README.md": "clean text\n",
+      "hosts/task-report/app/README.md": "robust\n",
+      "hosts/task-report/README.md": "seamless\n",
+    });
+
+    const result = runScript("prose.ts", [], { cwd: dir });
+
+    expect(result.status).toBe(1);
+    expect(lines(result.stdout).filter((line) => /^\S+:\d+: /.test(line))).toEqual(["hosts/task-report/README.md:1: seamless"]);
+  });
+
   it("ignores untracked and ignored files", () => {
     const dir = repositoryWith({ "README.md": "clean text\n", ".gitignore": "docs/ignored.md\n" });
     writeFiles(dir, { "docs/untracked.md": "robust\n", "docs/ignored.md": "seamless\n" });

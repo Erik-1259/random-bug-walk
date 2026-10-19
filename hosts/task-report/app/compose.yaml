@@ -1,0 +1,40 @@
+services:
+  db:
+    image: postgres:15-alpine@sha256:f7d23353e1b15400d22ebe31189f4d314b87a4c129cc400c8c2d8d4ca127bf81
+    environment:
+      POSTGRES_PASSWORD: dev-only-superuser-password
+    volumes:
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres", "-d", "taskapp"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  migrate:
+    image: node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1
+    working_dir: /app
+    volumes:
+      - .:/app
+    environment:
+      MIGRATION_DATABASE_URL: postgres://taskapp_owner:dev-only-owner-password@db:5432/taskapp
+    command: ["sh", "-c", "npm ci --ignore-scripts && npm run migrate -- apply"]
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  app:
+    image: node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1
+    working_dir: /app
+    volumes:
+      - .:/app
+    environment:
+      DATABASE_URL: postgres://taskapp_app:dev-only-app-password@db:5432/taskapp
+      HOST: 0.0.0.0
+    ports:
+      - "127.0.0.1:3000:3000"
+    command: ["node", "src/main.ts"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully

@@ -1,12 +1,14 @@
 {
   "vitest": {
     ".": 21,
+    "kit/task-report": 8,
     "kit/umami": 57,
     "kit/umami-race": 97,
     "packages/admission": 130,
     "packages/envelope": 42,
     "packages/harvest": 139,
     "packages/harvest-review": 83,
+    "packages/host-task-report": 86,
     "packages/projection": 127,
     "packages/publisher": 196,
     "packages/schema": 952,
@@ -20,7 +22,7 @@
     "packages/umami-fixture-rc1": 122,
     "packages/web": 181,
     "packages/writer": 246,
-    "scripts/checks": 196,
+    "scripts/checks": 197,
     "tools/candidates": 119,
     "tools/controller": 186,
     "tools/local-runner": 212,

@@ -1,0 +1,6 @@
+#!/bin/sh
+# Runs one copy as root: the evaluator's copy driver with the image's Node 24. The app tree must
+# already be in /workspace/app. See packages/host-task-report/src/copy/main.ts for the arguments.
+set -eu
+[ "$(id -u)" = 0 ] || { echo "rbw-copy: must run as root" >&2; exit 2; }
+exec /usr/local/bin/node /opt/rbw/evaluator/pkg/src/copy/main.ts "$@"
