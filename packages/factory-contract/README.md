@@ -26,6 +26,7 @@ The contract's cross-field rules that JSON Schema can express are conditional su
 - `ValidationRun`: `result` and `finished_at` are set exactly in state `finished`; a run that has not finished has no matrix and no settled cost, and a `passed` or `failed` run has one (section 11). `passed` has a matrix whose six cells all match; `failed` has a matrix whose cells all observed `pass` or `fail` with at least one mismatch; `error` has no matrix or a cell that observed `error` or `incomplete` (section 11).
 - `TestSlot`: a validation run that holds the slot names its request, so `holder_validation_id` is set only with `holder_request_id`.
 - `CollectedCopy`: `results_sha256` is set exactly when `results_dir` is, since it hashes that directory.
+- `CopyRecord`: `evidence_sha256` is the collected `results_sha256`, so it is `null` for a copy that brought back no results (such as a `setup_failed` copy, which becomes an `invalid` record); a `complete` record has one.
 - `ErrorBody`: `busy` carries `BusyErrorDetails` (`active` is retryable, `needs_reconciliation` is not), `interpretation_stale` and `unsupported_request` carry the interpretation (not startable for `unsupported_request`), every other code has `null` details, and `unavailable` is retryable.
 
 ### Rules outside the schema

@@ -1548,7 +1548,8 @@ export interface CopyRecord {
   architecture: Architecture;
   started_at: UtcTime;
   finished_at: UtcTime;
-  evidence_sha256: Sha256;
+  /** The collected copy's results_sha256, or null when the copy brought back no results. A complete record has one. */
+  evidence_sha256: Sha256 | null;
 }
 
 /** Internal: the qualification route's record for one candidate. Whether the verdict follows from the cells and criteria is not checked by the schema. */

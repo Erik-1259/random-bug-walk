@@ -51,6 +51,7 @@ const INTERNAL_FIXTURE_DEFS: Record<string, DefName> = {
   "collected-copy-setup-failed.json": "CollectedCopy",
   "collected-copy.json": "CollectedCopy",
   "copy-plan.json": "CopyPlan",
+  "copy-record-setup-failed.json": "CopyRecord",
   "copy-record.json": "CopyRecord",
   "protocol.json": "Protocol",
   "qualification-record-accepted.json": "QualificationRecord",
