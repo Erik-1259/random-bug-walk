@@ -45,7 +45,8 @@ export interface HostAdapter {
    * Host-specific parsing of one copy's results: reads only what the copy wrote under
    * `plan.destinations.results`, as the runner brought it back. A setup_failed copy becomes a record with
    * status invalid and a timed_out copy one with status incomplete (contract section 8.3), never a pass, fail
-   * or detection. `evidence_sha256` is the collected `results_sha256`.
+   * or detection. `evidence_sha256` is the collected `results_sha256`, so it is null when the copy brought
+   * back no results; such a copy cannot give a complete record.
    */
   collect(plan: CopyPlan, collected: CollectedCopy): Promise<CopyRecord>;
   interpret(records: CopyRecord[], protocol: Protocol): InterpretedCells;

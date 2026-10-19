@@ -18,7 +18,7 @@ import type {
   TestOperationState,
 } from "../src/index.ts";
 import { DEF_NAMES, HOST_ID_VALUES } from "../src/index.ts";
-import { assertContract } from "../src/validate.ts";
+import { assertContract, validateContract } from "../src/validate.ts";
 import { contractFixture, internalFixture } from "./support.ts";
 
 /** Reads an event's data through the type discriminant, as a client would. */
@@ -68,11 +68,21 @@ describe("generated types", () => {
 
   it("types the adapter and runner interfaces over the generated shapes", async () => {
     const collected = assertContract("CollectedCopy", internalFixture("collected-copy.json"));
+    const setupFailed = assertContract("CollectedCopy", internalFixture("collected-copy-setup-failed.json"));
     const record = assertContract("CopyRecord", internalFixture("copy-record.json"));
+    const notRun = assertContract("CopyRecord", internalFixture("copy-record-setup-failed.json"));
     const roots = assertContract("CopyRoots", { app_root: "/work/synthetic/pair/buggy", evaluator_root: "/work/synthetic/pair/evaluator" });
     const runner: CopyRunner = { run: (plan) => Promise.resolve({ ...collected, copy_id: plan.copy_id }) };
+    // The collect convention: the evidence is the collected results hash, and a copy that did not run becomes
+    // an invalid (setup_failed) or incomplete (timed_out) record.
     const collect: HostAdapter["collect"] = (plan, copy) =>
-      Promise.resolve({ ...record, copy_id: plan.copy_id, state: plan.state, evidence_sha256: copy.results_sha256 ?? record.evidence_sha256 });
+      Promise.resolve({
+        ...(copy.outcome === "ran" ? record : notRun),
+        copy_id: plan.copy_id,
+        state: plan.state,
+        status: copy.outcome === "ran" ? "complete" : copy.outcome === "setup_failed" ? "invalid" : "incomplete",
+        evidence_sha256: copy.results_sha256,
+      });
     const plan = assertContract("CopyPlan", internalFixture("copy-plan.json"));
     expectTypeOf(plan.destinations.results).toEqualTypeOf<string>();
     expectTypeOf<Parameters<CopyRunner["run"]>>().toEqualTypeOf<[CopyPlan, CopyRoots]>();
@@ -83,7 +93,12 @@ describe("generated types", () => {
     expect(result.copy_id).toBe(plan.copy_id);
     const collectedRecord = await collect(plan, result);
     expectTypeOf(collectedRecord).toEqualTypeOf<CopyRecord>();
+    expect(validateContract("CopyRecord", collectedRecord)).toEqual([]);
     expect(collectedRecord.evidence_sha256).toBe(collected.results_sha256);
+    const failedRecord = await collect({ ...plan, copy_id: setupFailed.copy_id, state: "clean" }, setupFailed);
+    expect(validateContract("CopyRecord", failedRecord)).toEqual([]);
+    expect(failedRecord).toMatchObject({ copy_id: setupFailed.copy_id, status: "invalid", evidence_sha256: null });
+    expectTypeOf<CopyRecord["evidence_sha256"]>().toEqualTypeOf<string | null>();
     expectTypeOf<HostAdapter["availability"]>().toBeNullable();
     expectTypeOf<ReturnType<HostAdapter["interpret"]>["verification"]["observed"]>().toEqualTypeOf<
       "pass" | "fail" | "error" | "incomplete"
