@@ -1,0 +1,51 @@
+# @rbw/case-validate
+
+The standalone validation harness `rbw-validate`, its library entry point `validatePair`, the `docker` copy runner and the host registry. The harness checks a case's two package parts ([`docs/product/bug-package-v1.md`](../../docs/product/bug-package-v1.md)) on their own: it verifies both archives and their binding, rebuilds the clean, buggy and fixed copies from the exported buggy source in a fresh workspace, runs the copies through a host adapter and a copy runner, and reports the six cells. It runs under Node 24 directly, with no build step.
+
+## Command
+
+```
+node tools/case-validate/src/cli.ts <bug-case.tar.gz> <validator.tar.gz> [--out <dir>]
+```
+
+The host comes from the manifests' `host_id` through the host registry, and copies run on the local Docker daemon. The command prints the package hashes, `pair_sha256`, the matrix and the result, and exits 0 for `passed`, 1 for `failed`, 2 for `error` and 64 for a usage error. With `--out`, it writes `validation.json` and keeps each copy's results under `<dir>/copies/`.
+
+## Entry points
+
+| Import | Contents |
+|---|---|
+| `@rbw/case-validate` | `validatePair`, `runCopies`, `verifyPair`, `buildWorkspace`, `evaluateMatrix`, `dockerRunner`, `runValidateCli`, `resultsSha256`, and the two entries below |
+| `@rbw/case-validate/registry` | `HOST_REGISTRY`, `createHostRegistry`, `HostRegistration`; imports no runner |
+| `@rbw/case-validate/version` | `HARNESS_IDENTITY` (`{ name: "rbw-validate", version }`) and `HARNESS_VERSION`; imports nothing with behavior |
+| `@rbw/case-validate/docker` | `dockerRunner` alone |
+
+## validatePair
+
+```ts
+const outcome = await validatePair({
+  bug_case, validator,            // the two archives' bytes
+  adapters: HOST_REGISTRY.adapters(),
+  runner,                         // any CopyRunner of @rbw/factory-contract
+  now: () => new Date(),
+  until,                          // optional planned end for the availability check
+  beforeCopy, onCopy, onCells,    // optional: stop check, per-copy settlement, per-state cells
+});
+```
+
+It resolves `{ result, stopped, package_sha256, pair_sha256, matrix, records, message, diagnostic, error_code }`. `result` follows contract section 11: `error` whenever the pair is refused, the host has no adapter or is unavailable, or any cell is `error` or `incomplete`. `message` is safe to show a client; `diagnostic` may name validator members and is evaluator material. Copies run one at a time in the order clean, buggy, fixed. `validatePair` rejects only when the runner rejects (an uncertain provider outcome, which the caller turns into `needs_reconciliation`) or a callback throws; the records before it have reached `onCopy`, and no further copy runs.
+
+## docker runner
+
+`dockerRunner({ resultsDir, image, docker })` creates one container per copy with no network and the plan's CPU and memory limits, places the plan's files at its destinations through `docker cp` from a tar stream (each file's hash checked first; a mismatch is `setup_failed`), runs the command, kills it at the time limit (`timed_out`), and copies the results directory back into a fresh directory under `resultsDir` with its `results_sha256`. It runs the pinned `reference@digest` when the daemon has it and otherwise the reference (a locally built kit); `image` overrides the choice. It needs no bind mount, so it works from inside a container that can reach a Docker daemon.
+
+## Host registry
+
+`REGISTRATIONS` in `src/registry.ts` lists the real hosts as `{ host_id, label, description, license, adapter }`. It is empty until the host packages land; each adds one line (see [`docs/product/adding-a-host.md`](../../docs/product/adding-a-host.md)).
+
+## Tests
+
+```
+pnpm --filter @rbw/case-validate test
+```
+
+The tests use synthetic pairs and the synthetic host. The end-to-end test runs the synthetic copy driver as local Node processes; the docker runner's tests use a fake docker command. No test starts a container or uses the network.

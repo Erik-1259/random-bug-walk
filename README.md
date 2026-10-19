@@ -47,6 +47,8 @@ The issue writer’s model runs on Nebius Token Factory. Vercel hosts the site, 
 | [`packages/web`](packages/web/README.md) | The results site (Next.js) and its judge routes |
 | [`packages/writer`](packages/writer/README.md) | Model-written pattern cards and bug reports, with code checks on every issue |
 | [`tools/candidates`](tools/candidates/README.md) | Candidate pipeline: lists the sites a class rule matches in the host, plants each in its own temporary copy, runs the static-headroom screen on each and ranks the survivors |
+| [`tools/case-package`](tools/case-package/README.md) | Exporter for a case's two package parts (bug case and validator package): deterministic archives, pair binding, separation checks, final-validator assembly and a synthetic host |
+| [`tools/case-validate`](tools/case-validate/README.md) | Standalone validation harness `rbw-validate`, the `docker` copy runner and the host registry |
 | [`tools/controller`](tools/controller/README.md) | Runs jobs and the candidate attempt against the spend ledger on Vercel Sandbox; also the judge replay's controller |
 | [`tools/local-runner`](tools/local-runner/README.md) | Runs the kit check, observation and admission on local Docker; its job builders and copy path are reused by the controller |
 | [`tools/release`](tools/release/README.md) | Stages runs for the publisher, builds a checked release with its frozen judge job, and publishes judge replays |
@@ -58,6 +60,8 @@ The issue writer’s model runs on Nebius Token Factory. Vercel hosts the site, 
 | [`kit/umami-race`](kit/umami-race/README.md) | The race family's kit image: the `kit/umami` image with Toxiproxy between Umami and Postgres for a fixed database delay |
 | [`docs/admission-rules.md`](docs/admission-rules.md) | Admission rules ADM-01 to ADM-10 and their status |
 | [`docs/bug-generation-pipeline.md`](docs/bug-generation-pipeline.md) | What each pipeline step does today, which package does it, and what is still manual |
+| [`docs/product/bug-package-v1.md`](docs/product/bug-package-v1.md) | The package format of a case's two parts (`rbw-bug-case/1`, `rbw-validator/1`) |
+| [`docs/product/adding-a-host.md`](docs/product/adding-a-host.md) | How a third host application is connected to the bug factory |
 | `container/` | The development container for coding agents (`Dockerfile`, `run-agent.sh`, `check-isolation.sh`) |
 | `scripts/checks/` | Repository checks: prose, admission rule IDs, test-count floors, dependency audit, docs-only classification |
 | `.github/workflows/` | CI, the Postgres integration tests and Neon branch cleanup |
