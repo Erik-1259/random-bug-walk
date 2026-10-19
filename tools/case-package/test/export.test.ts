@@ -128,6 +128,47 @@ describe("exportCase", () => {
     expect(error.code).toBe("inconsistent_inputs");
   });
 
+  it("refuses incident files that do not hold the entry's incident description", async () => {
+    const adapter = syntheticAdapter({ seeds: ["01"], workdir });
+    const entry = only(adapter);
+    const otherBytes: HostAdapter = {
+      ...adapter,
+      bugCaseInputs: async (item) => {
+        const inputs = await adapter.bugCaseInputs(item);
+        const path = join(inputs.incident.root, entry.incident.path);
+        await writeFile(path, "a different synthetic incident\n");
+        return { ...inputs, incident: { ...inputs.incident, files: [{ path: entry.incident.path, sha256: sha(await readFile(path)) }] } };
+      },
+    };
+    const changed = await refusalOf(exportCase({ adapter: otherBytes, entry, identity: syntheticIdentity, license: SYNTHETIC_LICENSE, scan: null }));
+    expect(changed.code).toBe("inconsistent_inputs");
+
+    const otherPath: HostAdapter = {
+      ...adapter,
+      bugCaseInputs: async (item) => {
+        const inputs = await adapter.bugCaseInputs(item);
+        const bytes = await readFile(join(inputs.incident.root, entry.incident.path));
+        await writeFile(join(inputs.incident.root, "synthetic-other-incident.md"), bytes);
+        return { ...inputs, incident: { ...inputs.incident, files: [{ path: "synthetic-other-incident.md", sha256: sha(bytes) }] } };
+      },
+    };
+    const moved = await refusalOf(exportCase({ adapter: otherPath, entry, identity: syntheticIdentity, license: SYNTHETIC_LICENSE, scan: null }));
+    expect(moved.code).toBe("inconsistent_inputs");
+  });
+
+  it("refuses a validator protocol that differs from the protocol the adapter declares for the entry", async () => {
+    const adapter = syntheticAdapter({ seeds: ["01"], workdir });
+    const entry = only(adapter);
+    const declared = adapter.protocol(entry);
+    // Admission prices the run from adapter.protocol(entry); the archive must hold that same protocol.
+    const differing: HostAdapter = {
+      ...adapter,
+      protocol: () => ({ ...declared, per_state: { ...declared.per_state, buggy: { ...declared.per_state.buggy, copies: declared.per_state.buggy.copies + 1 } } }),
+    };
+    const error = await refusalOf(exportCase({ adapter: differing, entry, identity: syntheticIdentity, license: SYNTHETIC_LICENSE, scan: null }));
+    expect(error.code).toBe("inconsistent_inputs");
+  });
+
   it("hands every member of both parts to the scan hook before anything is returned, and refuses a blocked or unavailable scan", async () => {
     const adapter = syntheticAdapter({ seeds: ["01"], workdir });
     const seen: { part: string; paths: string[] }[] = [];
