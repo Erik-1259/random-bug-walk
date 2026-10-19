@@ -17,7 +17,7 @@ const fixture = name => JSON.parse(fs.readFileSync(new URL(`./fixtures/factory-v
  const browser=await chromium.launch({executablePath,headless:true,args:['--no-sandbox']});
  for(const width of [1440,390]) {
   const context=await browser.newContext({viewport:{width,height:1000}}); const page=await context.newPage();
-  let busyOnce=true,requestId=null,phase='running',interpretation=null,validationId=null,validateCalls=0; const starts=[],posts=[],errors=[];
+  let busyOnce=true,requestId=null,phase='running',interpretation=null,validationId=null,validateCalls=0,refuseValidation=false; const starts=[],posts=[],errors=[];
   page.on('pageerror',e=>errors.push(e.message));
   await page.route('**/api/factory/**',async route=>{
    const req=route.request(),url=new URL(req.url()),method=req.method();
@@ -38,8 +38,8 @@ const fixture = name => JSON.parse(fs.readFileSync(new URL(`./fixtures/factory-v
    }
    const status=()=>{const data=fixture(phase==='running'?'status-running':phase==='cancelled'?'status-cancelled':'status-fulfilled');data.request_id=requestId;data.interpretation=interpretation;return data;};
    if(url.pathname.endsWith('/stop')){phase='cancelled';return send(status());}
-   if(url.pathname.endsWith('/validations')&&method==='POST') {validateCalls++;validationId=req.postDataJSON().validation_id;return route.abort('failed');}
-   if(url.pathname.includes('/validations/')){const data=fixture('validation-passed');data.validation_id=validationId;return send(data);}
+   if(url.pathname.endsWith('/validations')&&method==='POST') {validateCalls++;validationId=req.postDataJSON().validation_id;if(refuseValidation)return send(fixture('error-budget-unavailable'),409);return route.abort('failed');}
+   if(url.pathname.includes('/validations/')){if(refuseValidation)return send(fixture('error-not-found'),404);const data=fixture('validation-passed');data.validation_id=validationId;return send(data);}
    if(url.pathname.includes('/requests/'))return requestId===null?send(fixture('error-not-found'),404):send(status());
    return send(fixture('error-not-found'),404);
   });
@@ -81,6 +81,17 @@ const fixture = name => JSON.parse(fs.readFileSync(new URL(`./fixtures/factory-v
   await page.reload({waitUntil:'networkidle'});await page.getByText('Validation: passed',{exact:true}).waitFor();assert.equal(validateCalls,1);
   assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));assert.deepEqual(errors,[]);
   await page.screenshot({path:join(outputDir, `fixture-${width}.png`),fullPage:true});
+  refuseValidation=true;
+  await page.getByRole('button',{name:'Validate case',exact:true}).click();
+  await page.getByRole('alert').filter({hasText:'budget_unavailable:'}).waitFor();
+  assert.equal(await page.evaluate(()=>localStorage.getItem('rbw-factory-validation')),null);
+  assert.equal(await page.getByRole('button',{name:'Retry the same validation',exact:true}).count(),0);
+  assert.equal(await page.getByRole('link',{name:'Download bug case',exact:true}).count(),1);
+  await page.reload({waitUntil:'networkidle'});
+  await page.getByRole('button',{name:'Prepare another request',exact:true}).click();
+  await page.getByLabel('Optional description for item 1',{exact:true}).waitFor({state:'visible'});
+  assert.equal(validateCalls,2);assert.deepEqual(errors,[]);
+  console.log(`PASS synthetic ${width}px: definite validation refusal clears rejected identity, retains cases and permits a new request after reload`);
   console.log(`PASS synthetic ${width}px: capabilities/form/limits/errors, host preservation, removal focus, interpretation invalidation, busy refusal preserves draft, stored-id lost response/reload, duplicate clicks, stop retained case, separate downloads, validation identity recovery; no real service calls`);
   await context.close();
  }

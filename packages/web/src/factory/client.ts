@@ -271,7 +271,17 @@ export class FactoryController {
       this.refreshAfterValidation = true;
       this.update({ validation, canRetryValidation: false, message: null });
     }
-    catch (error) { this.error(error); await this.readValidation(); }
+    catch (error) {
+      const failure = this.error(error);
+      if (["budget_unavailable", "not_ready", "invalid_request", "not_found"].includes(failure.code)) {
+        // A definite refusal recorded no validation. Keep the delivered request and refusal message.
+        this.storage.removeItem(VALIDATION_KEY);
+        this.validationIdentity = null;
+        this.update({ validation: null, canRetryValidation: false });
+      } else if (failure.code === "busy" || failure.status === 0 || failure.status >= 500) {
+        await this.readValidation();
+      }
+    }
   }
   private async readValidation() {
     const id = this.validationIdentity;

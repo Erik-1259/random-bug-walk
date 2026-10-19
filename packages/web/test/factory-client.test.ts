@@ -149,6 +149,37 @@ describe("browser request lifecycle with synthetic service responses", () => {
     const resumed = new FactoryController(c.api, c.storage, c.uuid); await resumed.initialize();
     expect(resumed.snapshot().validation?.validation_id).toBe(run.validation_id); expect(c.api.validate).toHaveBeenCalledTimes(1);
   });
+  it.each(["budget_unavailable", "not_ready", "invalid_request", "not_found"])("clears a definitely refused validation after %s without losing delivered cases", async (code) => {
+    const c = await prepared();
+    const status = fixture<RequestStatus>("status-fulfilled");
+    c.api.start.mockResolvedValue(status); c.api.status.mockResolvedValue(status); await c.controller.start();
+    const run = fixture<ValidationRun>("validation-running"); c.uuid.mockReturnValue(run.validation_id);
+    c.api.validate.mockRejectedValue(new FactoryError(code, "Synthetic definite refusal", 409));
+    c.api.validation.mockRejectedValue(new FactoryError("not_found", "Synthetic not recorded", 404));
+    await c.controller.validate(run.case_id);
+    expect(c.api.validation).not.toHaveBeenCalled();
+    expect(c.storage.getItem("rbw-factory-validation")).toBeNull();
+    expect(c.controller.snapshot().canRetryValidation).toBe(false);
+    expect(c.controller.snapshot().message).toBe(`${code}: Synthetic definite refusal`);
+    expect(c.controller.snapshot().status?.cases).toEqual(status.cases);
+    await c.controller.retryValidation(); expect(c.api.validate).toHaveBeenCalledTimes(1);
+    const resumed = new FactoryController(c.api, c.storage, c.uuid); await resumed.initialize();
+    expect(c.api.validation).not.toHaveBeenCalled();
+    resumed.newDraft(); expect(resumed.snapshot().requestId).toBeNull();
+    c.controller.newDraft(); expect(c.controller.snapshot().requestId).toBeNull();
+  });
+  it("retains an uncertain validation when its reconciliation read is not found", async () => {
+    const c = await prepared(); c.api.start.mockResolvedValue(fixture<RequestStatus>("status-fulfilled")); await c.controller.start();
+    const run = fixture<ValidationRun>("validation-running"); c.uuid.mockReturnValue(run.validation_id);
+    c.api.validate.mockRejectedValue(new FactoryError("unavailable", "Synthetic timeout"));
+    c.api.validation.mockRejectedValue(new FactoryError("not_found", "Synthetic not recorded", 404));
+    await c.controller.validate(run.case_id);
+    expect(c.storage.getItem("rbw-factory-validation")).toContain(run.validation_id);
+    expect(c.controller.snapshot().canRetryValidation).toBe(true);
+    await c.controller.retryValidation();
+    expect(c.api.validate).toHaveBeenCalledTimes(2);
+    expect(c.api.validate.mock.calls[1]).toEqual(c.api.validate.mock.calls[0]);
+  });
   it("does not post a validation after failed persistence, polling and retry", async () => {
     const c = setup(); c.api.start.mockResolvedValue(fixture<RequestStatus>("status-fulfilled")); c.api.status.mockResolvedValue(fixture<RequestStatus>("status-fulfilled"));
     const controller = new FactoryController(c.api, { ...c.storage, setItem: (key, value) => { if (key === "rbw-factory-validation") throw new Error("Synthetic storage failure"); c.storage.setItem(key, value); } }, c.uuid);
