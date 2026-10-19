@@ -1,7 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { FactoryExample } from "../src/components/factory-example.tsx";
-import { factoryClient } from "../src/factory/client.ts";
 
 describe("factory example and disconnected client", () => {
   it("uses the selected published case route when the build contains that release", () => {
@@ -23,13 +22,4 @@ describe("factory example and disconnected client", () => {
     expect(html).not.toContain('href="/cases/');
   });
 
-  it("reports unavailable without starting a request when consulted repeatedly or after reload", async () => {
-    for (let read = 0; read < 3; read += 1) {
-      expect(await factoryClient.availability()).toEqual({
-        state: "unavailable",
-        message: "New requests are not available yet. You can explore the completed example and prepare a local draft. No work will be started.",
-      });
-    }
-    expect(Object.keys(factoryClient)).toEqual(["availability"]);
-  });
 });

@@ -1,0 +1,369 @@
+{
+  "contract_version": "bug-request/1",
+  "request_id": "00000000-0000-4000-8000-000000000106",
+  "created_at": "2026-10-20T20:00:00.000Z",
+  "updated_at": "2026-10-20T20:07:43.318Z",
+  "state": "finished",
+  "outcome": "sources_exhausted",
+  "stop_reason": {
+    "code": "sources_exhausted",
+    "message": "Every eligible catalog entry was tried and none qualified. No case was delivered."
+  },
+  "delivery": "none",
+  "attention": null,
+  "interpretation": {
+    "contract_version": "bug-request/1",
+    "interpretation_sha256": "1515151515151515151515151515151515151515151515151515151515151515",
+    "interpreter": {
+      "interpreter_id": "criteria-match",
+      "version": "1",
+      "criteria_catalog_version": "1"
+    },
+    "qualification_route": {
+      "route_id": "behavioral-qualification",
+      "version": "1"
+    },
+    "input": {
+      "hosts": [
+        "umami"
+      ],
+      "items": [
+        {
+          "item_key": "date-time-1",
+          "bug_type_id": "date_time",
+          "quantity": 1,
+          "description": "I want a bug where daily totals use the wrong time zone",
+          "difficulty": "source_inferable_allowed"
+        }
+      ],
+      "budget_microusd": 1000000
+    },
+    "startable": true,
+    "items": [
+      {
+        "item_key": "date-time-1",
+        "bug_type_id": "date_time",
+        "quantity": 1,
+        "description": "I want a bug where daily totals use the wrong time zone",
+        "difficulty": {
+          "requested": "source_inferable_allowed",
+          "status": "not_required"
+        },
+        "criteria": [
+          {
+            "criterion_id": "date_time.time-zone-grouping",
+            "version": "1",
+            "label": "Results grouped by date or time use the wrong time zone",
+            "matched_text": "daily totals use the wrong time zone"
+          }
+        ],
+        "unmatched_text": [],
+        "eligible_sources": [
+          {
+            "host_id": "umami",
+            "source_id": "synthetic-umami-date-time",
+            "entries": 1
+          }
+        ],
+        "status": "supported",
+        "problems": []
+      }
+    ],
+    "type_totals": [
+      {
+        "bug_type_id": "date_time",
+        "quantity": 1
+      }
+    ],
+    "hosts": [
+      {
+        "host_id": "umami",
+        "used": true,
+        "reason": null
+      }
+    ],
+    "budget": {
+      "budget_microusd": 1000000,
+      "worker_worst_case_microusd": 200000,
+      "worst_case_per_candidate_microusd": [
+        {
+          "host_id": "umami",
+          "microusd": 600000
+        }
+      ],
+      "worst_case_per_validation_microusd": [
+        {
+          "host_id": "umami",
+          "microusd": 300000
+        }
+      ],
+      "estimate_note": "The worker's worst case is reserved when the request starts, and each candidate's worst case before it starts; afterward the actual spend is settled and the rest is released. A validation run reserves its host's worst case the same way. These are limits, not predictions."
+    },
+    "limits": {
+      "max_wall_clock_s": 3600,
+      "max_candidates": 10
+    },
+    "problems": []
+  },
+  "budget": {
+    "budget_microusd": 1000000,
+    "reserved_microusd": 0,
+    "spent_microusd": 340000,
+    "committed_microusd": 340000,
+    "remaining_microusd": 660000,
+    "overrun": false
+  },
+  "limits": {
+    "max_wall_clock_s": 3600,
+    "deadline_at": "2026-10-20T21:00:00.000Z",
+    "max_candidates": 10,
+    "candidates_started": 1
+  },
+  "funnel": {
+    "candidates_explored": 1,
+    "behavior_checks_passed": 0,
+    "requested_criteria_passed": 0,
+    "packages_ready": 0
+  },
+  "items": [
+    {
+      "item_key": "date-time-1",
+      "bug_type_id": "date_time",
+      "description": "I want a bug where daily totals use the wrong time zone",
+      "requested": 1,
+      "delivered": 0,
+      "missing": 1,
+      "case_ids": []
+    }
+  ],
+  "type_totals": [
+    {
+      "bug_type_id": "date_time",
+      "requested": 1,
+      "delivered": 0,
+      "missing": 1
+    }
+  ],
+  "candidates": [
+    {
+      "candidate_id": "e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2",
+      "defect_id": "dbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdb",
+      "host_id": "umami",
+      "bug_type_id": "date_time",
+      "source_id": "synthetic-umami-date-time",
+      "entry_id": "synthetic-umami-date-time-01",
+      "stage": "rejected",
+      "reason": {
+        "code": "original_suite_caught_bug",
+        "message": "Rejected: the original suite failed on the buggy copy, so it already catches this bug."
+      },
+      "item_key": null,
+      "case_id": null,
+      "started_at": "2026-10-20T20:01:36.213Z",
+      "finished_at": "2026-10-20T20:07:42.848Z"
+    }
+  ],
+  "cases": [],
+  "events": [
+    {
+      "seq": 1,
+      "at": "2026-10-20T20:00:00.000Z",
+      "type": "request_accepted",
+      "host_id": null,
+      "candidate_id": null,
+      "item_key": null,
+      "case_id": null,
+      "message": "Request accepted.",
+      "data": {}
+    },
+    {
+      "seq": 2,
+      "at": "2026-10-20T20:00:00.058Z",
+      "type": "budget_updated",
+      "host_id": null,
+      "candidate_id": null,
+      "item_key": null,
+      "case_id": null,
+      "message": "Reserved $0.20 for the worker's worst case.",
+      "data": {
+        "reserved_microusd": 200000,
+        "spent_microusd": 0,
+        "remaining_microusd": 800000
+      }
+    },
+    {
+      "seq": 3,
+      "at": "2026-10-20T20:00:06.412Z",
+      "type": "worker_started",
+      "host_id": null,
+      "candidate_id": null,
+      "item_key": null,
+      "case_id": null,
+      "message": "The worker started.",
+      "data": {}
+    },
+    {
+      "seq": 4,
+      "at": "2026-10-20T20:00:07.022Z",
+      "type": "host_preparing",
+      "host_id": "umami",
+      "candidate_id": null,
+      "item_key": null,
+      "case_id": null,
+      "message": "Preparing Umami at its pinned baseline.",
+      "data": {
+        "baseline_id": "umami@ec0ff503"
+      }
+    },
+    {
+      "seq": 5,
+      "at": "2026-10-20T20:01:35.926Z",
+      "type": "host_ready",
+      "host_id": "umami",
+      "candidate_id": null,
+      "item_key": null,
+      "case_id": null,
+      "message": "Umami is ready.",
+      "data": {
+        "baseline_id": "umami@ec0ff503"
+      }
+    },
+    {
+      "seq": 6,
+      "at": "2026-10-20T20:01:36.213Z",
+      "type": "candidate_selected",
+      "host_id": "umami",
+      "candidate_id": "e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2",
+      "item_key": null,
+      "case_id": null,
+      "message": "Selected catalog entry synthetic-umami-date-time-01.",
+      "data": {
+        "source_id": "synthetic-umami-date-time",
+        "entry_id": "synthetic-umami-date-time-01"
+      }
+    },
+    {
+      "seq": 7,
+      "at": "2026-10-20T20:01:36.271Z",
+      "type": "budget_updated",
+      "host_id": null,
+      "candidate_id": null,
+      "item_key": null,
+      "case_id": null,
+      "message": "Reserved $0.60 for this candidate's worst case on Umami.",
+      "data": {
+        "reserved_microusd": 800000,
+        "spent_microusd": 0,
+        "remaining_microusd": 200000
+      }
+    },
+    {
+      "seq": 8,
+      "at": "2026-10-20T20:04:40.323Z",
+      "type": "check_finished",
+      "host_id": "umami",
+      "candidate_id": "e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2",
+      "item_key": null,
+      "case_id": null,
+      "message": "Original suite on the clean copy: pass (3 of 3 runs valid).",
+      "data": {
+        "check_set": "original_suite",
+        "copy": "clean",
+        "outcome": "pass",
+        "runs_valid": 3,
+        "runs_total": 3
+      }
+    },
+    {
+      "seq": 9,
+      "at": "2026-10-20T20:07:42.801Z",
+      "type": "check_finished",
+      "host_id": "umami",
+      "candidate_id": "e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2",
+      "item_key": null,
+      "case_id": null,
+      "message": "Original suite on the buggy copy: fail (3 of 3 runs valid).",
+      "data": {
+        "check_set": "original_suite",
+        "copy": "buggy",
+        "outcome": "fail",
+        "runs_valid": 3,
+        "runs_total": 3
+      }
+    },
+    {
+      "seq": 10,
+      "at": "2026-10-20T20:07:42.848Z",
+      "type": "candidate_rejected",
+      "host_id": "umami",
+      "candidate_id": "e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2",
+      "item_key": null,
+      "case_id": null,
+      "message": "Rejected: the original suite failed on the buggy copy, so it already catches this bug.",
+      "data": {
+        "reason": "original_suite_caught_bug"
+      }
+    },
+    {
+      "seq": 11,
+      "at": "2026-10-20T20:07:43.158Z",
+      "type": "budget_updated",
+      "host_id": null,
+      "candidate_id": null,
+      "item_key": null,
+      "case_id": null,
+      "message": "Settled $0.14 for the finished candidate and released the rest of its reservation.",
+      "data": {
+        "reserved_microusd": 200000,
+        "spent_microusd": 140000,
+        "remaining_microusd": 660000
+      }
+    },
+    {
+      "seq": 12,
+      "at": "2026-10-20T20:07:43.198Z",
+      "type": "source_exhausted",
+      "host_id": "umami",
+      "candidate_id": null,
+      "item_key": null,
+      "case_id": null,
+      "message": "Every entry in synthetic-umami-date-time was tried.",
+      "data": {
+        "bug_type_id": "date_time",
+        "source_id": "synthetic-umami-date-time"
+      }
+    },
+    {
+      "seq": 13,
+      "at": "2026-10-20T20:07:43.258Z",
+      "type": "budget_updated",
+      "host_id": null,
+      "candidate_id": null,
+      "item_key": null,
+      "case_id": null,
+      "message": "Settled $0.20 for the worker and closed its reservation.",
+      "data": {
+        "reserved_microusd": 0,
+        "spent_microusd": 340000,
+        "remaining_microusd": 660000
+      }
+    },
+    {
+      "seq": 14,
+      "at": "2026-10-20T20:07:43.318Z",
+      "type": "request_finished",
+      "host_id": null,
+      "candidate_id": null,
+      "item_key": null,
+      "case_id": null,
+      "message": "Request finished: sources exhausted.",
+      "data": {
+        "outcome": "sources_exhausted",
+        "stop_code": "sources_exhausted"
+      }
+    }
+  ],
+  "next_after": 14,
+  "last_heartbeat_at": "2026-10-20T20:07:42.801Z",
+  "poll_after_ms": 30000
+}

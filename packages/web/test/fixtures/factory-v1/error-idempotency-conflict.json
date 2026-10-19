@@ -1,0 +1,9 @@
+{
+  "contract_version": "bug-request/1",
+  "error": {
+    "code": "idempotency_conflict",
+    "message": "A request with this ID already exists with a different body. Read its status, or start a new request with a new ID.",
+    "retryable": false,
+    "details": null
+  }
+}
