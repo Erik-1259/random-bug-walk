@@ -401,6 +401,20 @@ describe("collect", () => {
     summary.source_tree_sha256 = CLEAN_TREE;
     expect((await adapter.collect(plan, collected(plan, resultsWith(summary)))).status).toBe("incomplete");
   });
+
+  it("is incomplete, never a miss, when a stale copy's cells also mismatch", async () => {
+    const plan = planOf("fixed");
+    const stale = summaryFor(plan, FAILURE_CODE);
+    expect((await adapter.collect(plan, collected(plan, resultsWith(stale)))).verification.observed).toBe("fail");
+    stale.protocol_sha256 = "2".repeat(64);
+    const record = await adapter.collect(plan, collected(plan, resultsWith(stale)));
+    expect(record).toMatchObject({ status: "incomplete", original_suite: { observed: "incomplete" }, verification: { observed: "incomplete" } });
+    expect(adapter.interpret([record], adapter.protocol(entry)).verification.observed).toBe("incomplete");
+    const buggyPlan = planOf("buggy");
+    const other = summaryFor(buggyPlan, "pass");
+    other.copy_id = "f3q2-other";
+    expect(await adapter.collect(buggyPlan, collected(buggyPlan, resultsWith(other)))).toMatchObject({ status: "incomplete", verification: { observed: "incomplete" } });
+  });
 });
 
 describe("interpret", () => {

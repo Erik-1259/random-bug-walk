@@ -193,6 +193,54 @@ describe("evaluator v2 checks the tree each copy ran", () => {
   });
 });
 
+describe("evaluator v2 ranks an identity mismatch above a miss", () => {
+  const failing = (): CopySummaryV2 => copyV2("fixed", [instanceV2(1, FAILURE_CODE), instanceV2(2, FAILURE_CODE), instanceV2(3, FAILURE_CODE)], protocol.sha256, catalog.sha256);
+  const stale: [string, (copy: CopySummaryV2) => void][] = [
+    [
+      "another data file",
+      (copy) => {
+        copy.data_sha256 = "1".repeat(64);
+      },
+    ],
+    [
+      "another protocol",
+      (copy) => {
+        copy.protocol_sha256 = "2".repeat(64);
+      },
+    ],
+    [
+      "another baseline",
+      (copy) => {
+        copy.baseline_id = "task-report@0000000";
+      },
+    ],
+    [
+      "another source tree",
+      (copy) => {
+        copy.source_files = stateFiles("buggy");
+        copy.source_tree_sha256 = BUGGY_TREE;
+      },
+    ],
+  ];
+
+  it.each(stale)("a fixed copy that ran %s and whose main trials show the failure is incomplete, never not qualified", (_, change) => {
+    const fixed = failing();
+    expect(evaluateCopyV2(protocol, data, expectation, fixed)).toMatchObject({ status: "complete", verification: { observed: "fail" } });
+    change(fixed);
+    expect(evaluateCopyV2(protocol, data, expectation, fixed)).toMatchObject({ status: "incomplete", original_suite: { observed: "incomplete" }, verification: { observed: "incomplete", failure_codes: [] } });
+    const copies = set();
+    copies[1] = fixed;
+    expect(stateOf(copies, "fixed")).toMatchObject({ verdict: "incomplete", cells: { verification: { observed: "incomplete" } } });
+    expect(evaluateProtocolV2(protocol, data, expectation, copies).verdict).toBe("incomplete");
+  });
+
+  it("a buggy copy whose main trials all pass is incomplete when it is not the copy the plan asked for", () => {
+    const buggy = copyV2("buggy", [instanceV2(1, "pass"), instanceV2(2, "pass"), instanceV2(3, "pass")], protocol.sha256, catalog.sha256);
+    expect(evaluateCopyV2(protocol, data, expectation, buggy, { copy_id: buggy.copy_id, state: "buggy" })).toMatchObject({ status: "complete", verification: { observed: "pass" } });
+    expect(evaluateCopyV2(protocol, data, expectation, buggy, { copy_id: "f3q2-other", state: "buggy" })).toMatchObject({ status: "incomplete", verification: { observed: "incomplete" } });
+  });
+});
+
 describe("evaluator v2 takes every block rule from the protocol file", () => {
   it("is incomplete when the record's rules differ from the protocol's", () => {
     const copies = set();
