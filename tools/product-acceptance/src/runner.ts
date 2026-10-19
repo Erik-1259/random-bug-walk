@@ -61,6 +61,24 @@ async function read(backend: IsolatedBackend, path: string) {
   }
   throw new Error("unreachable polling state");
 }
+function checkInterpretedItems(actualItems: Record<string, unknown>[], expectedItems: Record<string, unknown>[], prefix = ""): void {
+  assert.deepEqual(actualItems.map(item => text(item.item_key)).sort(), expectedItems.map(item => text(item.item_key)).sort(), `${prefix}item keys differ from pinned scenario`);
+  const criteria = (item: Record<string, unknown>) => objects(item.criteria)
+    .map(c => `${text(c.criterion_id)}@${text(c.version)}`).sort();
+  const sources = (item: Record<string, unknown>) => objects(item.eligible_sources)
+    .map(source => [text(source.host_id), text(source.source_id), integer(source.entries)]).sort();
+  const meaning = (item: Record<string, unknown>) => ({
+    bug_type_id: item.bug_type_id, quantity: item.quantity, description: item.description,
+    difficulty: item.difficulty, status: item.status, unmatched_text: item.unmatched_text,
+    problems: objects(item.problems).map(problem => [text(problem.code), text(problem.item_key), text(problem.severity)]).sort(),
+  });
+  for (const expected of expectedItems) {
+    const actual = actualItems.find(item => item.item_key === expected.item_key); assert(actual);
+    assert.deepEqual(criteria(actual), criteria(expected), `${prefix}criteria differ from pinned scenario`);
+    assert.deepEqual(sources(actual), sources(expected), `${prefix}eligible sources differ from pinned scenario`);
+    assert.deepEqual(meaning(actual), meaning(expected), `${prefix}item interpretation differs from pinned scenario`);
+  }
+}
 /** Exercise ordinary public operations through an approved isolated adapter. */
 export async function runProbe(backend: IsolatedBackend, probe: Probe): Promise<void> {
   await verify(backend);
@@ -69,15 +87,7 @@ export async function runProbe(backend: IsolatedBackend, probe: Probe): Promise<
   assert(reset.status >= 200 && reset.status < 300, "reset failed");
   const interpretation = body(await call("POST", "/api/factory/interpretations", probe.input), 200);
   assert.equal(interpretation.startable, true);
-  const criterionKeys = (item: Record<string, unknown>) => objects(item.criteria)
-    .map(c => `${text(c.criterion_id)}@${text(c.version)}`).sort();
-  const interpretedItems = objects(interpretation.items);
-  assert.equal(interpretedItems.length, probe.expectedItems.length);
-  for (const expected of probe.expectedItems) {
-    const actual = interpretedItems.find(item => item.item_key === expected.item_key);
-    assert(actual, "missing pinned scenario item");
-    assert.deepEqual(criterionKeys(actual), criterionKeys(expected), "criteria differ from pinned scenario");
-  }
+  checkInterpretedItems(objects(interpretation.items), probe.expectedItems);
   assert.deepEqual(interpretation.input, probe.input, "input silently changed");
   const requestId = randomUUID();
   const start = { request_id: requestId, input: probe.input, interpretation_sha256: interpretation.interpretation_sha256 };
@@ -244,17 +254,7 @@ export async function runUnsupported(backend: IsolatedBackend): Promise<void> {
   const interpretation = body(await call("POST", "/api/factory/interpretations", input), 200);
   assert.equal(interpretation.startable, false);
   assert.deepEqual(interpretation.input, input, "unsupported requirements silently changed");
-  const actualItems = objects(interpretation.items);
-  const expectedItems = objects(object(fixture).items);
-  assert.deepEqual(actualItems.map(item => text(item.item_key)).sort(), expectedItems.map(item => text(item.item_key)).sort(), "unsupported item keys differ from pinned scenario");
-  const problemKeys = (item: Record<string, unknown>) => objects(item.problems)
-    .map(problem => [text(problem.code), text(problem.item_key), text(problem.severity)].join(":"))
-    .sort();
-  for (const expected of expectedItems) {
-    const actual = actualItems.find(item => item.item_key === expected.item_key); assert(actual);
-    assert.equal(actual.status, expected.status, "unsupported item status differs from pinned scenario");
-    assert.deepEqual(problemKeys(actual), problemKeys(expected), "unsupported item problems differ from pinned scenario");
-  }
+  checkInterpretedItems(objects(interpretation.items), objects(object(fixture).items), "unsupported item: ");
   error(await call("POST", "/api/factory/requests", {
     request_id: randomUUID(), input, interpretation_sha256: interpretation.interpretation_sha256,
   }), 422, "unsupported_request");
@@ -287,6 +287,7 @@ function probes(): { groups: ScenarioId[]; probe: Probe }[] {
     const input = object(interpretation.input);
     if (scenario === "sources-exhausted") {
       const first = objects(input.items)[0]; assert(first); first.quantity = 2;
+      const interpreted = objects(interpretation.items).find(item => item.item_key === first.item_key); assert(interpreted); interpreted.quantity = 2;
       const count = objects(expected.items).find(item => item.item_key === first.item_key); assert(count);
       count.requested = 2; count.missing = 2 - integer(count.delivered);
     }

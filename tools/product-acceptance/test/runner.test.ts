@@ -371,3 +371,36 @@ it("collects concurrent snapshots without imposing response order", async () => 
   };
   await expect(runProbe(backend, probe)).resolves.toBeUndefined();
 });
+
+it("rejects source routing rewritten consistently across interpretation and status", async () => {
+  const { backend, request } = scripted();
+  const item = probe.expectedItems[0]; assert(item);
+  const source = text(objects(item.eligible_sources)[0]?.source_id);
+  backend.request = async (...args) => {
+    const reply = await request(...args);
+    const changed: unknown = JSON.parse(JSON.stringify(reply.body).replaceAll(source, "synthetic-wrong-source"));
+    return { ...reply, body: changed };
+  };
+  await expect(runProbe(backend, probe)).rejects.toThrow("eligible sources differ from pinned scenario");
+});
+it.each(["bug_type_id", "quantity", "description", "difficulty", "status", "unmatched_text", "problems"])("rejects rewritten interpreted item %s", async (field) => {
+  const { backend, request } = scripted();
+  backend.request = async (...args) => {
+    const reply = await request(...args);
+    if (reply.body === null) return reply;
+    const value = object(reply.body);
+    const interpretation = args[1].endsWith("/interpretations") ? value : value.interpretation;
+    if (interpretation) {
+      const item = objects(object(interpretation).items)[0]; assert(item);
+      const changes: Record<string, unknown> = {
+        bug_type_id: "date_time", quantity: 2, description: null,
+        difficulty: { requested: "source_inferable_allowed", status: "unsupported" },
+        status: "unsupported", unmatched_text: ["synthetic-unmatched"],
+        problems: [{ code: "no_matching_source", severity: "blocking", item_key: item.item_key }],
+      };
+      item[field] = changes[field];
+    }
+    return reply;
+  };
+  await expect(runProbe(backend, probe)).rejects.toThrow("item interpretation differs from pinned scenario");
+});
