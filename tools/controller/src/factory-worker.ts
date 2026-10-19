@@ -1,0 +1,300 @@
+// The factory worker: what the `factory-worker` command runs inside its sandbox (or locally with
+// the docker runner). In request mode it heartbeats, appends worker_started, runs the factory
+// core's request loop (injected as `orchestrate`) with a copy meter for every copy, a checkpoint
+// for stops between copies and a fenced event appender, then finishes the request if the loop did
+// not, settles its own operation at its full worst case (it cannot measure its own sandbox's end),
+// closes the budget with the stop code and releases the slot (the ledger refuses while any
+// operation of the request is open or uncertain, which keeps the slot held for reconciliation).
+// In validation mode it runs the standalone harness (injected as `validate`) on the case's two
+// parts with copies recorded under the run's own operation, inside 1,800 s of the accepted POST,
+// then settles the run (its worker in full, its copies as measured), finishes it and releases the
+// slot, or, when any copy is uncertain, leaves the run's operation uncertain and the slot held.
+//
+// The fence: once the request (or run) was finished by someone else, such as the lost-worker
+// routine, the worker's next checkpoint answers `fenced`, no copy starts, no event other than the
+// contract's late ones is appended, and nothing is settled or released.
+import type { Rates } from "@rbw/envelope";
+import type { EventType, StopCode, ValidationMatrix, ValidationResult } from "@rbw/factory-contract";
+import {
+  EVENT_KEYS,
+  WORKER_ACTOR,
+  appendBudgetUpdate,
+  finishRequest,
+  finishValidation,
+  finishedEvent,
+  fullSettlement,
+  makeUncertain,
+  usd,
+  validationOperation,
+  validationSettlement,
+  workerOperation,
+} from "./factory-ledger.ts";
+import { CopyMeter } from "./factory-meter.ts";
+import { FACTORY_PROFILE } from "./factory-profile.ts";
+import type { FactoryProfile } from "./factory-profile.ts";
+import type { AppendOutcome, FactoryEventInput, FactoryIdentity, FactoryLedger, FactoryRecords, FactoryRequestRecord, FactoryValidationRecord, HeartbeatTarget, WorkerSandboxSdk } from "./factory-ports.ts";
+
+export interface WorkerDeps {
+  ledger: FactoryLedger;
+  records: FactoryRecords;
+  identity: FactoryIdentity;
+  rates: Rates;
+  now: () => Date;
+  log: (line: string) => void;
+  /** The copies' provider: `vercel-sandbox` hosted, `docker` for local proofs. */
+  provider: "vercel-sandbox" | "docker";
+  /** The worker's own sandbox, stopped on a best-effort basis by the command after the run. */
+  sandbox?: WorkerSandboxSdk;
+  profile?: FactoryProfile;
+  /** Overrides the profile's heartbeat interval (tests). */
+  heartbeat_ms?: number;
+}
+
+export class WorkerInputError extends Error {
+  override name = "WorkerInputError";
+}
+
+export interface Heartbeat {
+  stop(): Promise<void>;
+}
+
+/**
+ * Writes a heartbeat now and then every `intervalMs` until stopped, one write at a time. A failed
+ * write is logged and the next one is still made: a missed heartbeat is what the lost-worker rule
+ * measures.
+ */
+export function startHeartbeat(records: FactoryRecords, target: HeartbeatTarget, now: () => Date, intervalMs: number, log: (line: string) => void): Heartbeat {
+  let chain: Promise<void> = Promise.resolve();
+  const beat = (): void => {
+    chain = chain.then(
+      () =>
+        records.recordHeartbeat(target, now()).catch((error: unknown) => {
+          log(`factory: a heartbeat write failed (${error instanceof Error ? error.name : "non-error"})`);
+        }),
+      () => undefined,
+    );
+  };
+  beat();
+  const timer = setInterval(beat, intervalMs);
+  return {
+    async stop() {
+      clearInterval(timer);
+      await chain;
+    },
+  };
+}
+
+export type Checkpoint = "continue" | "stop" | "fenced";
+
+/** What the factory core's request loop is given. It appends its events through `append`. */
+export interface RequestHooks {
+  request: FactoryRequestRecord;
+  profile: FactoryProfile;
+  /** The worker sandbox's end: no copy starts unless it ends, with its margin, before this. */
+  deadline: Date;
+  now: () => Date;
+  /** Runs each copy: reserve, launch, settle; one at a time; refuses after a stop or a fence. */
+  meter: CopyMeter;
+  /** Before each candidate and between copies: `stop` after a recorded stop, `fenced` once the request was finished elsewhere. */
+  checkpoint(): Promise<Checkpoint>;
+  /** The fenced appender: refuses every event but the contract's late ones once the request was finished elsewhere. */
+  append(event: FactoryEventInput): Promise<AppendOutcome>;
+}
+
+export interface RequestRun {
+  stop_code: StopCode;
+  /** True when the loop appended request_finished itself. */
+  finished: boolean;
+}
+
+export type Orchestrate = (hooks: RequestHooks) => Promise<RequestRun>;
+
+export type WorkerOutcome = { kind: "finished"; stop_code: StopCode; slot_released: boolean } | { kind: "fenced" };
+
+/** Contract section 8.4: the only event types allowed after request_finished. */
+const LATE_TYPES: ReadonlySet<EventType> = new Set(["budget_updated", "attention", "attention_cleared", "validation_started", "validation_finished"]);
+/** The worker's operation ID depends on its identity only. */
+const ANY_IMAGE = "unused";
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? `${error.name}: ${error.message}` : "non-error";
+}
+
+async function releaseSlot(deps: WorkerDeps, root: string): Promise<boolean> {
+  const profile = deps.profile ?? FACTORY_PROFILE;
+  const released = await deps.ledger.spend.releaseSlot({ slot_key: profile.slot_key, root_execution_id: root, actor_role: WORKER_ACTOR, evidence: null, reason: null });
+  if (!released.ok) deps.log(`factory: the slot stays held (${released.code})`);
+  return released.ok;
+}
+
+/** Runs one request to its end. */
+export async function runFactoryWorker(deps: WorkerDeps, args: { request_id: string; deadline: Date; orchestrate: Orchestrate }): Promise<WorkerOutcome> {
+  const profile = deps.profile ?? FACTORY_PROFILE;
+  const id = args.request_id;
+  const record = await deps.records.request(id);
+  if (record === null) throw new WorkerInputError("the request is not recorded");
+  const heartbeat = startHeartbeat(deps.records, { request_id: id }, deps.now, deps.heartbeat_ms ?? profile.heartbeat.interval_s * 1000, deps.log);
+  try {
+    let fence = false;
+    let ownFinish = false;
+    const fenced = async (): Promise<boolean> => {
+      if (!fence && !ownFinish && finishedEvent(await deps.records.events(id)) !== null) fence = true;
+      return fence;
+    };
+    if (await fenced()) return { kind: "fenced" };
+    await deps.records.appendEvent(id, { event_key: EVENT_KEYS.workerStarted, type: "worker_started", host_id: null, candidate_id: null, item_key: null, case_id: null, message: "The worker started.", data: {} }, deps.now());
+
+    const checkpoint = async (): Promise<Checkpoint> => {
+      if (await fenced()) return "fenced";
+      return (await deps.records.stopRequested(id)) ? "stop" : "continue";
+    };
+    const append = async (event: FactoryEventInput): Promise<AppendOutcome> => {
+      if (!LATE_TYPES.has(event.type) && (await fenced())) return { kind: "refused", reason: "the request was finished elsewhere" };
+      const appended = await deps.records.appendEvent(id, event, deps.now());
+      if (event.type === "request_finished" && (appended.kind === "appended" || appended.kind === "replay")) ownFinish = true;
+      return appended;
+    };
+    const meter = new CopyMeter({
+      ledger: deps.ledger,
+      identity: deps.identity,
+      rates: deps.rates,
+      now: deps.now,
+      root: record.root,
+      namespace: deps.identity.request_namespace,
+      task_revision: record.interpretation_sha256,
+      budget_key: record.budget_key,
+      provider: deps.provider,
+      deadline: args.deadline,
+      margin_s: profile.copy_launch_margin_s,
+      mode: { kind: "own_operation", role: "request" },
+      beforeLaunch: async () => (await checkpoint()) === "continue",
+      onBudgetChange: (key, message) => appendBudgetUpdate(deps, record, key, message),
+      log: deps.log,
+      profile,
+    });
+
+    let run: RequestRun;
+    try {
+      run = await args.orchestrate({ request: record, profile, deadline: args.deadline, now: deps.now, meter, checkpoint, append });
+    } catch (error) {
+      deps.log(`factory ${id} the request loop failed (${errorText(error)})`);
+      run = { stop_code: "operational_error", finished: false };
+    }
+    if (await fenced()) return { kind: "fenced" };
+
+    const finishedHere = run.finished || ownFinish;
+    const stop: StopCode = meter.uncertain && !finishedHere ? "needs_reconciliation" : run.stop_code;
+    if (finishedHere) {
+      const closed = await deps.ledger.budgets.close(record.budget_key, stop);
+      if (!closed.ok) deps.log(`factory ${id} the budget close was refused (${closed.code})`);
+    } else {
+      const attention = stop === "needs_reconciliation" ? "A sandbox run's outcome is uncertain; its spend needs reconciliation." : null;
+      if (!(await finishRequest(deps, record, stop, { attention }))) return { kind: "fenced" };
+    }
+
+    const op = workerOperation({ identity: deps.identity, rates: deps.rates, profile }, record, ANY_IMAGE);
+    const ended = await deps.ledger.spend.transition({ operation_id: op.operation_id, from_state: "running", to_state: "terminal", actor_role: WORKER_ACTOR, terminal_status: "completed" });
+    if (ended.ok) {
+      const settled = await deps.ledger.spend.settle(fullSettlement(op.envelope, op.operation_id));
+      if (settled.ok) await appendBudgetUpdate(deps, record, EVENT_KEYS.workerSettled, `The worker settled at ${usd(settled.settled_microusd)}.`);
+      else deps.log(`factory ${id} the worker's settlement was refused (${settled.code})`);
+    } else {
+      deps.log(`factory ${id} the worker's operation was not ended (${ended.code})`);
+    }
+    return { kind: "finished", stop_code: stop, slot_released: await releaseSlot(deps, record.root) };
+  } finally {
+    await heartbeat.stop();
+  }
+}
+
+export interface ValidationHooks {
+  validation: FactoryValidationRecord;
+  request: FactoryRequestRecord;
+  /** accepted_at + 1,800 s: no copy starts unless its timeout and shutdown allowance end by this. */
+  deadline: Date;
+  now: () => Date;
+  /** Runs each copy as a child resource of the run's operation, one at a time. */
+  meter: CopyMeter;
+  checkpoint(): Promise<Checkpoint>;
+}
+
+export interface ValidationRunResult {
+  result: ValidationResult;
+  matrix: ValidationMatrix | null;
+  message: string | null;
+}
+
+export type Validate = (hooks: ValidationHooks) => Promise<ValidationRunResult>;
+
+export type ValidationOutcome = { kind: "finished"; result: ValidationResult; slot_released: boolean } | { kind: "fenced" };
+
+/** Runs one validation run to its end. */
+export async function runFactoryValidation(deps: WorkerDeps, args: { validation_id: string; validate: Validate }): Promise<ValidationOutcome> {
+  const profile = deps.profile ?? FACTORY_PROFILE;
+  const id = args.validation_id;
+  const validation = await deps.records.validation(id);
+  if (validation === null) throw new WorkerInputError("the validation run is not recorded");
+  const request = await deps.records.request(validation.request_id);
+  if (request === null) throw new WorkerInputError("the validation run's request is not recorded");
+  const heartbeat = startHeartbeat(deps.records, { validation_id: id }, deps.now, deps.heartbeat_ms ?? profile.heartbeat.interval_s * 1000, deps.log);
+  try {
+    let fence = false;
+    const fenced = async (): Promise<boolean> => {
+      if (!fence && (await deps.records.validationEvents(id)).some((event) => event.type === "finished")) fence = true;
+      return fence;
+    };
+    if (await fenced()) return { kind: "fenced" };
+    await deps.records.appendValidationEvent(id, { event_key: "running", type: "running", data: { started_at: deps.now().toISOString() } }, deps.now());
+    const deadline = new Date(Date.parse(validation.accepted_at) + profile.validation.max_run_s * 1000);
+    const op = validationOperation({ identity: deps.identity, rates: deps.rates, profile }, validation, ANY_IMAGE);
+    const checkpoint = async (): Promise<Checkpoint> => ((await fenced()) ? "fenced" : "continue");
+    const meter = new CopyMeter({
+      ledger: deps.ledger,
+      identity: deps.identity,
+      rates: deps.rates,
+      now: deps.now,
+      root: validation.root,
+      namespace: deps.identity.validation_namespace,
+      task_revision: validation.case_id,
+      budget_key: request.budget_key,
+      provider: deps.provider,
+      deadline,
+      margin_s: 0,
+      mode: { kind: "child_of", operation_id: op.operation_id },
+      beforeLaunch: async () => (await checkpoint()) === "continue",
+      log: deps.log,
+      profile,
+    });
+
+    let result: ValidationRunResult;
+    try {
+      result = await args.validate({ validation, request, deadline, now: deps.now, meter, checkpoint });
+    } catch (error) {
+      deps.log(`factory validation ${id} the harness failed (${errorText(error)})`);
+      result = { result: "error", matrix: null, message: "The validation run failed before it finished." };
+    }
+    if (await fenced()) return { kind: "fenced" };
+
+    const { spend } = deps.ledger;
+    if (meter.uncertain) {
+      await makeUncertain(spend, op.operation_id, WORKER_ACTOR);
+      await finishValidation(deps, request, validation, { result: "error", matrix: result.matrix, message: "A copy's outcome is uncertain; the run's spend needs reconciliation.", cost_microusd: null, uncertain: true });
+      return { kind: "finished", result: "error", slot_released: false };
+    }
+    const ended = await spend.transition({ operation_id: op.operation_id, from_state: "running", to_state: "terminal", actor_role: WORKER_ACTOR, terminal_status: result.result === "error" ? "failed" : "completed" });
+    if (!ended.ok) {
+      deps.log(`factory validation ${id} the run's operation was not ended (${ended.code})`);
+      return { kind: "fenced" };
+    }
+    const settled = await spend.settle(validationSettlement(op.envelope, op.operation_id, validation.host_id, meter.usage, profile));
+    if (!settled.ok) {
+      deps.log(`factory validation ${id} the run's settlement was refused (${settled.code})`);
+      await finishValidation(deps, request, validation, { result: "error", matrix: result.matrix, message: "The run's spend could not be settled; it needs reconciliation.", cost_microusd: null, uncertain: true });
+      return { kind: "finished", result: "error", slot_released: false };
+    }
+    await finishValidation(deps, request, validation, { ...result, cost_microusd: Number(settled.settled_microusd), uncertain: false });
+    return { kind: "finished", result: result.result, slot_released: await releaseSlot(deps, validation.root) };
+  } finally {
+    await heartbeat.stop();
+  }
+}

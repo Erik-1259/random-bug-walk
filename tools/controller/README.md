@@ -365,6 +365,33 @@ Adding `--backend docker` (and leaving out `--sandbox-image`) runs any of these 
 
    A root that stopped before the write stage has no `candidate/ledger.json`; jq then names the missing file. `tools/release stage` then takes `--run "$run" --root-run "$run/root-run.json"` with `--symptom`, `--card` and `--novelty` from `$run/candidate/`, and `build` takes `--issue "$run/candidate/issue.json" --issue-check "$run/candidate/issue-check.json" --recordings "$run/candidate/recordings"`.
 
+## Factory worker
+
+The bug request service (`docs/product/bug-request-v1.md`) runs each request, and each validation run a user starts, in its own worker sandbox on Vercel Sandbox, so the developer's laptop can be off. The files are `src/factory-*.ts`; the image is `kit/factory-worker/`.
+
+**The factory profile** (`src/factory-profile.ts`) is the one frozen object with every factory limit, lifetime and envelope, and its own sha256. The other factory modules receive it; none defines these numbers. Its envelopes are priced from the pinned rate sheet, a test recomputes them, and every reservation re-prices its lines and refuses when the total differs from the profile's. The lifetimes and copy counts are predictions until measured on the hosted path.
+
+| Value | Profile |
+|---|---|
+| Request budget | 1,000,000 to 3,000,000 µUSD, default 1,500,000; presets 1,000,000, 1,500,000, 2,000,000, 3,000,000 |
+| Wall clock, candidates | 2,700 s, 10 candidates |
+| Worker sandbox | 2 vCPU, 4 GB, 3,600 s: 346,482 µUSD reserved, settled in full (it cannot measure its own end) |
+| Copy sandbox (both hosts) | at most 4 vCPU, 8 GB, 720 s: 147,682 µUSD reserved, settled from its measured lifetime |
+| Validation run | its worker 2 vCPU, 4 GB, 1,800 s, and at most 3 (Umami) or 7 (task-report) copies inside 1,800 s: 550,964 or 596,405 µUSD |
+| Heartbeat | every 15 s; worker_unresponsive after 60 s; lost after 180 s |
+
+**The web entry** `@rbw/controller/factory-web` (`src/factory-web.ts`) imports no runner, harness, driver or PGlite, like `judge-web.ts`. It exports the profile, the operation identities (`workerOperation`, `copyOperation`, `validationOperation`: built as `judgeOperation` builds the judge's, with the deterministic sandbox name as the replay key), and:
+- `startFactoryWorker(deps, request_id)`: after the service took the slot, created the budget and recorded the request, it reserves the worker's worst case on the request budget, creates the worker sandbox from `RBW_FACTORY_WORKER_IMAGE` (which must be pinned by digest), with the credentials as create-time environment values, and starts `factory-worker --request-id` detached. A duplicate or concurrent start finds the reservation and launches nothing. A refused reservation, or a create the provider refused before anything existed (a 4xx answer other than 408, 409, 425 or 429, with nothing found by the sandbox's name), finishes the request `operational_error` and releases the slot. Every other create or start failure is uncertain: the operation goes to `uncertain`, the request finishes `needs_reconciliation`, the sandbox is stopped on a best-effort basis, and the slot stays held. Nothing is retried.
+- `startFactoryValidation(deps, args)`: in the validation POST, the slot under the validation root, then the host's validation worst case reserved on the request budget with the `validation` role (also after the request finished). `busy` or a refused reservation records nothing. Then it records the run, appends `validation_started` and `budget_updated`, and launches `factory-worker --validation-id` the same way.
+- `finalizeLostWorker(deps, target)`: the one lost-worker routine, idempotent. For a request silent for 180 s, the worker's and any in-flight copy's operations go to `uncertain` and are never settled; the in-flight candidate ends `candidate_incomplete` (`incomplete_run`); `attention` becomes `needs_reconciliation`; the request finishes `operational_error` / `worker_lost`; the budget closes `worker_lost`; the sandboxes are stopped on a best-effort basis; the slot stays held. For a validation run silent for 180 s or past 1,800 s, it finishes `error`; when every one of its sandboxes is confirmed stopped it settles at the full worst case and releases the slot, and otherwise its operation is `uncertain` and the slot stays held.
+- `noteWorkerUnresponsive` (the `worker_unresponsive` attention after 60 s) and `completeReconciliation` (after an operator reconciled every uncertain operation: `budget_updated`, `attention_cleared` unless the budget is overrun, and the slot released).
+
+**Copies** go through `CopyMeter` (`src/factory-meter.ts`), one at a time: a copy whose limits exceed its host's copy limits, or whose timeout, shutdown allowance and margin would not end before the worker's end (a validation run: 1,800 s after its POST), does not start; then a stop check, the reservation on the request budget, `launching` under the `factory` slot, `running` when the provider created the sandbox, and after the run the confirmed stop and the settlement of the measured lifetime, each with a `budget_updated` event. A launch that rejects, or a stop that cannot be confirmed, is uncertain, and no later copy starts. A validation run reserves its copies with its own operation at the POST, so its copies are recorded and confirmed as child resources of that operation and settled with it.
+
+**The command** `factory-worker` (`src/factory-cli.ts`, `src/factory-worker.ts`) heartbeats, appends `worker_started`, runs the factory core's request loop with the copy meter, a checkpoint for stops between copies and a fenced event appender, then finishes the request if the loop did not, settles its own operation, closes the budget with the stop code and releases the slot. Once the request was finished elsewhere (by the lost-worker routine), its next checkpoint answers `fenced` and it starts, appends and settles nothing more. In validation mode it runs the standalone harness on the case's two parts the same way.
+
+The factory core's request loop and identity module, the spend ledger's request budgets and factory records, and the harness with its host registry are other workspace packages; this build reaches them only through the ports in `src/factory-ports.ts`, and `src/factory-wiring.ts` has no wiring yet, so the command exits 2 and names what is missing. The hosted `sandbox` copy runner (`src/factory-sandbox-runner.ts`) is held until the shared runner types (`CopyRunner.run(plan, roots)` and `CollectedCopy`) are in `@rbw/factory-contract`. The tests run the whole path with synthetic stand-ins.
+
 ## Tests
 
 ```sh
@@ -383,6 +410,8 @@ The unit tests use a PGlite ledger with every spend migration, plus the local ru
 - the per-copy envelope;
 - the committed proof inputs, and the grader proof against the fake backend;
 - the candidate attempt: `runJob` with shared IDs and a policy, the symptom, the phrase picker, the order and identity of one root, the metering of all six searches, the source and docs records and the doc excerpts, staging without private material, its stops, a failed or uncertain source search or extract, the search policy checks on the input, no resume, the keys and the privacy of the issue text, and the command's missing variable. These tests run on the Docker backend with a fake writer `fetch` and a search client answered in process. They replace the driver's canned response bodies with an Umami-shaped one, and use a fake clock that moves only when released, so 13 simulated copies fit the admission's deadline.
+
+The factory tests (`test/unit/factory-*.test.ts`) use the same PGlite ledger with a `factory` pool and slot key, and synthetic stand-ins for the request budgets, the factory records, the Sandbox SDK, the request loop and the harness (`test/unit/factory-fakes.ts`). They cover the profile's envelopes recomputed from the rate sheet; one launch under duplicate and concurrent starts; definite and uncertain creates; the refused worker reservation; validation starts (busy, budget, after the request closed); per-copy settlement, serial copies, limits and deadlines; heartbeats; stops between copies; budget exhaustion; the lost worker under concurrent calls; the fence against a live worker; reconciliation; and a full local request with a validation run through the `factory-worker` command.
 
 Spec §6.1's four serial-run checks are in `test/support/serial-checks.ts`:
 - a replay creates no second job;
