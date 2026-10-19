@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://example.invalid/rbw/bug-request-v1.schema.json",
-  "title": "Bug request contract bug-request/1, revision 1, and the factory's internal shapes",
+  "title": "Bug request contract bug-request/1, revision 2, and the factory's internal shapes",
   "description": "The machine-readable definition of every shape in docs/product/bug-request-v1.md. Every object forbids unknown fields and requires every field; a nullable field holds null. Every pattern starts with ^ and ends with $.",
   "$defs": {
     "SafeInteger": {
@@ -53,6 +53,11 @@
       "type": "string",
       "pattern": "^(?:\\.?[^./\\\\\\u0000-\\u001f\\u007f]|\\.\\.[^/\\\\\\u0000-\\u001f\\u007f])[^/\\\\\\u0000-\\u001f\\u007f]*(?:/(?:\\.?[^./\\\\\\u0000-\\u001f\\u007f]|\\.\\.[^/\\\\\\u0000-\\u001f\\u007f])[^/\\\\\\u0000-\\u001f\\u007f]*)*$"
     },
+    "AbsolutePath": {
+      "description": "An absolute POSIX path inside a copy: '/' and then segments joined by '/', with no trailing '/', no empty, '.' or '..' segment, and no backslash or control character.",
+      "type": "string",
+      "pattern": "^(?:/(?:\\.?[^./\\\\\\u0000-\\u001f\\u007f]|\\.\\.[^/\\\\\\u0000-\\u001f\\u007f])[^/\\\\\\u0000-\\u001f\\u007f]*)+$"
+    },
     "UtcTime": {
       "description": "UTC ISO 8601 time with milliseconds and Z (contract section 3). The format adds the calendar check (no 2026-02-30, no second 60).",
       "type": "string",
@@ -70,7 +75,7 @@
       "minLength": 1
     },
     "Description": {
-      "description": "Plain-language text with no leading or trailing white space, as String.prototype.trim leaves it (contract section 5).",
+      "description": "A normalized request description: plain-language text with no leading or trailing white space, as String.prototype.trim leaves it, and never empty (contract section 6).",
       "type": "string",
       "pattern": "^[^\\t\\n\\u000b\\f\\r \\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff](?:(?:.|[\\n\\r\\u2028\\u2029])*[^\\t\\n\\u000b\\f\\r \\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff])?$"
     },
@@ -183,6 +188,7 @@
         "no_matching_source",
         "unsupported_difficulty",
         "budget_below_minimum",
+        "budget_below_item_minimum",
         "quantity_exceeds_source",
         "host_unused"
       ]
@@ -383,7 +389,6 @@
         "interpretation_stale",
         "busy",
         "budget_unavailable",
-        "not_ready",
         "unsupported_request",
         "unavailable"
       ]
@@ -395,12 +400,77 @@
         "needs_reconciliation"
       ]
     },
+    "TestScenario": {
+      "description": "A test-mode scenario (contract section 15.1).",
+      "type": "string",
+      "enum": [
+        "two-host-fulfilled",
+        "partial-budget",
+        "sources-exhausted",
+        "duplicate-defect",
+        "zero-result",
+        "wrong-failure",
+        "cancel-midway",
+        "worker-lost",
+        "uncertain-provider",
+        "validation-failed",
+        "validation-error"
+      ]
+    },
+    "TestOperationKind": {
+      "type": "string",
+      "enum": [
+        "worker",
+        "candidate_copy",
+        "validation",
+        "validation_copy"
+      ]
+    },
+    "TestOperationState": {
+      "type": "string",
+      "enum": [
+        "prepared",
+        "launching",
+        "running",
+        "terminal",
+        "uncertain",
+        "reconciled"
+      ]
+    },
+    "TestSlotKey": {
+      "type": "string",
+      "enum": [
+        "factory"
+      ]
+    },
+    "TestProvider": {
+      "type": "string",
+      "enum": [
+        "sandbox"
+      ]
+    },
+    "TestProviderAction": {
+      "type": "string",
+      "enum": [
+        "create",
+        "stop"
+      ]
+    },
     "CopyRecordStatus": {
       "type": "string",
       "enum": [
         "complete",
         "invalid",
         "incomplete"
+      ]
+    },
+    "CopyRunOutcome": {
+      "description": "How a runner's copy ended: ran (the command ran), setup_failed (the copy could not be set up, for example a file whose sha256 does not match) or timed_out (the command passed its time limit).",
+      "type": "string",
+      "enum": [
+        "ran",
+        "setup_failed",
+        "timed_out"
       ]
     },
     "Architecture": {
@@ -573,6 +643,7 @@
       }
     },
     "Criterion": {
+      "description": "A versioned criterion of a bug type. Its example phrases are matched exactly (contract section 6.1), and its failure code is published per criterion version (section 6.3).",
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -580,7 +651,8 @@
         "version",
         "label",
         "description",
-        "example_phrases"
+        "example_phrases",
+        "failure_code"
       ],
       "properties": {
         "criterion_id": {
@@ -596,10 +668,15 @@
           "type": "string"
         },
         "example_phrases": {
+          "description": "Matched exactly, as word sequences (contract section 6.1).",
           "type": "array",
           "items": {
             "type": "string"
           }
+        },
+        "failure_code": {
+          "description": "What the verification checks report on the buggy copy when a candidate demonstrates this criterion (contract section 6.3).",
+          "$ref": "#/$defs/Identifier"
         }
       }
     },
@@ -926,6 +1003,7 @@
       }
     },
     "RequestItemInput": {
+      "description": "One item of a RequestInput, as the client sends it.",
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -947,7 +1025,79 @@
           "$ref": "#/$defs/PositiveInteger"
         },
         "description": {
-          "description": "An empty description is sent as null; at most limits.max_description_chars.",
+          "description": "Any text or null. The service trims it and maps an empty result to null (contract section 6); at most limits.max_description_chars after trimming.",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "difficulty": {
+          "$ref": "#/$defs/DifficultyOptionId"
+        }
+      }
+    },
+    "NormalizedRequestInput": {
+      "description": "The normalized form of a RequestInput: each description trimmed, and null when nothing is left (contract section 6). Interpretation.input carries it.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "hosts",
+        "items",
+        "budget_microusd"
+      ],
+      "properties": {
+        "hosts": {
+          "description": "One or two hosts, no repeats.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/HostId"
+          },
+          "minItems": 1,
+          "maxItems": 2,
+          "uniqueItems": true
+        },
+        "items": {
+          "description": "At least one item; at most limits.max_items.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/NormalizedRequestItemInput"
+          },
+          "minItems": 1
+        },
+        "budget_microusd": {
+          "description": "Shared by every host and item; within the limits' budget range.",
+          "$ref": "#/$defs/MicroUsd"
+        }
+      }
+    },
+    "NormalizedRequestItemInput": {
+      "description": "One item of a NormalizedRequestInput.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "item_key",
+        "bug_type_id",
+        "quantity",
+        "description",
+        "difficulty"
+      ],
+      "properties": {
+        "item_key": {
+          "$ref": "#/$defs/ItemKey"
+        },
+        "bug_type_id": {
+          "$ref": "#/$defs/BugTypeId"
+        },
+        "quantity": {
+          "description": "At most limits.max_quantity_per_item.",
+          "$ref": "#/$defs/PositiveInteger"
+        },
+        "description": {
+          "description": "Trimmed and non-empty, or null.",
           "anyOf": [
             {
               "$ref": "#/$defs/Description"
@@ -985,6 +1135,7 @@
           "$ref": "#/$defs/ContractVersion"
         },
         "interpretation_sha256": {
+          "description": "Canonical hash of the normalized input and the interpreter, catalog, route and source versions.",
           "$ref": "#/$defs/Sha256"
         },
         "interpreter": {
@@ -994,8 +1145,8 @@
           "$ref": "#/$defs/QualificationRoute"
         },
         "input": {
-          "description": "The normalized input actually interpreted.",
-          "$ref": "#/$defs/RequestInput"
+          "description": "The normalized input actually interpreted (contract section 6).",
+          "$ref": "#/$defs/NormalizedRequestInput"
         },
         "startable": {
           "description": "True only when no problem has severity blocking.",
@@ -1026,7 +1177,7 @@
           "$ref": "#/$defs/InterpretationLimits"
         },
         "problems": {
-          "description": "Request-level problems.",
+          "description": "Request-level problems, so none has an item.",
           "type": "array",
           "items": {
             "$ref": "#/$defs/Problem"
@@ -1111,6 +1262,22 @@
               }
             ]
           }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "problems": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "item_key": {
+                    "type": "null"
+                  }
+                }
+              }
+            }
+          }
         }
       ]
     },
@@ -1140,10 +1307,10 @@
           "$ref": "#/$defs/PositiveInteger"
         },
         "description": {
-          "description": "Kept verbatim.",
+          "description": "The normalized description, kept verbatim (contract section 6.1).",
           "anyOf": [
             {
-              "type": "string"
+              "$ref": "#/$defs/Description"
             },
             {
               "type": "null"
@@ -1333,6 +1500,39 @@
                     "code"
                   ]
                 }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "problems": {
+                "type": "array",
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "const": "budget_below_item_minimum"
+                    }
+                  },
+                  "required": [
+                    "code"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "problems"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "eligible_sources": {
+                "type": "array",
+                "minItems": 1
               }
             }
           }
@@ -1575,7 +1775,8 @@
             {
               "type": "null"
             }
-          ]
+          ],
+          "description": "Null for the request-level budget_below_minimum; set for every item-level code (contract section 6.2)."
         }
       },
       "allOf": [
@@ -1585,6 +1786,7 @@
             "properties": {
               "code": {
                 "enum": [
+                  "budget_below_item_minimum",
                   "quantity_exceeds_source",
                   "host_unused"
                 ]
@@ -1631,6 +1833,34 @@
               }
             }
           }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "enum": [
+                  "unsupported_combination",
+                  "unrecognized_description",
+                  "no_matching_source",
+                  "unsupported_difficulty",
+                  "budget_below_item_minimum",
+                  "quantity_exceeds_source"
+                ]
+              }
+            },
+            "required": [
+              "code"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "item_key": {
+                "type": "string"
+              }
+            }
+          }
         }
       ]
     },
@@ -1648,6 +1878,7 @@
           "$ref": "#/$defs/Uuid"
         },
         "input": {
+          "description": "As the client sends it; the canonical body holds its normalized form (contract section 7).",
           "$ref": "#/$defs/RequestInput"
         },
         "interpretation_sha256": {
@@ -1818,6 +2049,29 @@
               },
               "stop_reason": {
                 "type": "object"
+              },
+              "candidates": {
+                "type": "array",
+                "not": {
+                  "contains": {
+                    "type": "object",
+                    "properties": {
+                      "stage": {
+                        "enum": [
+                          "selected",
+                          "preparing",
+                          "checking",
+                          "behavior_checks_passed",
+                          "requested_criteria_passed",
+                          "packaging"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "stage"
+                    ]
+                  }
+                }
               }
             }
           },
@@ -2051,6 +2305,136 @@
               }
             }
           }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "candidates": {
+              "type": "array",
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "stage": {
+                    "enum": [
+                      "selected",
+                      "preparing",
+                      "checking",
+                      "behavior_checks_passed",
+                      "requested_criteria_passed",
+                      "packaging"
+                    ]
+                  }
+                },
+                "required": [
+                  "stage"
+                ]
+              },
+              "minContains": 0,
+              "maxContains": 1
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "interpretation": {
+                "type": "object",
+                "properties": {
+                  "items": {
+                    "type": "array",
+                    "contains": {
+                      "type": "object",
+                      "properties": {
+                        "problems": {
+                          "type": "array",
+                          "contains": {
+                            "type": "object",
+                            "properties": {
+                              "code": {
+                                "enum": [
+                                  "budget_below_item_minimum",
+                                  "quantity_exceeds_source"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "code"
+                            ]
+                          }
+                        }
+                      },
+                      "required": [
+                        "problems"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "items"
+                ]
+              }
+            },
+            "required": [
+              "interpretation"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "outcome": {
+                "not": {
+                  "const": "fulfilled"
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "fulfilled",
+                  "stopped_at_limit",
+                  "sources_exhausted",
+                  "cancelled"
+                ]
+              },
+              "budget": {
+                "type": "object",
+                "properties": {
+                  "overrun": {
+                    "const": true
+                  }
+                },
+                "required": [
+                  "overrun"
+                ]
+              }
+            },
+            "required": [
+              "outcome",
+              "budget"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "attention": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "const": "needs_reconciliation"
+                  }
+                },
+                "required": [
+                  "code"
+                ]
+              }
+            }
+          }
         }
       ]
     },
@@ -2224,9 +2608,10 @@
           "$ref": "#/$defs/BugTypeId"
         },
         "description": {
+          "description": "The normalized description of the item.",
           "anyOf": [
             {
-              "type": "string"
+              "$ref": "#/$defs/Description"
             },
             {
               "type": "null"
@@ -4860,10 +5245,11 @@
             {
               "type": "null"
             }
-          ]
+          ],
+          "description": "Set exactly in state finished."
         },
         "cost_microusd": {
-          "description": "Settled cost; null until the run settles.",
+          "description": "Settled cost; null until the run settles: null before state finished, set for passed and failed, and null after an error whose spend is uncertain (contract section 11).",
           "anyOf": [
             {
               "$ref": "#/$defs/MicroUsd"
@@ -4895,6 +5281,9 @@
             "properties": {
               "result": {
                 "type": "string"
+              },
+              "finished_at": {
+                "type": "string"
               }
             }
           },
@@ -4905,6 +5294,12 @@
                 "type": "null"
               },
               "matrix": {
+                "type": "null"
+              },
+              "finished_at": {
+                "type": "null"
+              },
+              "cost_microusd": {
                 "type": "null"
               }
             }
@@ -4930,6 +5325,9 @@
             "properties": {
               "matrix": {
                 "type": "object"
+              },
+              "cost_microusd": {
+                "type": "integer"
               }
             }
           }
@@ -5919,6 +6317,216 @@
         }
       ]
     },
+    "TestEvidence": {
+      "description": "GET /api/factory/test/evidence?request_id= in test mode: read-only evidence of one request (contract section 15.1).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contract_version",
+        "request_id",
+        "operations",
+        "slot",
+        "provider_calls"
+      ],
+      "properties": {
+        "contract_version": {
+          "$ref": "#/$defs/ContractVersion"
+        },
+        "request_id": {
+          "$ref": "#/$defs/Uuid"
+        },
+        "operations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TestOperation"
+          }
+        },
+        "slot": {
+          "$ref": "#/$defs/TestSlot"
+        },
+        "provider_calls": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TestProviderCall"
+          }
+        }
+      }
+    },
+    "TestOperation": {
+      "description": "One spend ledger operation of the request.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "operation_id",
+        "kind",
+        "call_name",
+        "state",
+        "reserved_microusd",
+        "settled_microusd",
+        "attempt_ordinal"
+      ],
+      "properties": {
+        "operation_id": {
+          "description": "The spend ledger's operation ID: 64 lowercase hexadecimal characters.",
+          "$ref": "#/$defs/Sha256"
+        },
+        "kind": {
+          "$ref": "#/$defs/TestOperationKind"
+        },
+        "call_name": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "state": {
+          "description": "A settled operation is terminal with settled_microusd set.",
+          "$ref": "#/$defs/TestOperationState"
+        },
+        "reserved_microusd": {
+          "description": "Held until the operation is settled or reconciled.",
+          "$ref": "#/$defs/MicroUsd"
+        },
+        "settled_microusd": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MicroUsd"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "attempt_ordinal": {
+          "$ref": "#/$defs/PositiveInteger"
+        }
+      }
+    },
+    "TestSlot": {
+      "description": "The factory slot and what holds it, if anything.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "slot_key",
+        "holder_request_id",
+        "holder_validation_id"
+      ],
+      "properties": {
+        "slot_key": {
+          "$ref": "#/$defs/TestSlotKey"
+        },
+        "holder_request_id": {
+          "description": "The request whose start or validation run holds the slot.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "holder_validation_id": {
+          "description": "Set while a validation run holds the slot.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "holder_validation_id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "holder_validation_id"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "holder_request_id": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "TestProviderCall": {
+      "description": "One call made to the fake provider.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "call_name",
+        "provider",
+        "action",
+        "at"
+      ],
+      "properties": {
+        "call_name": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "provider": {
+          "$ref": "#/$defs/TestProvider"
+        },
+        "action": {
+          "$ref": "#/$defs/TestProviderAction"
+        },
+        "at": {
+          "$ref": "#/$defs/UtcTime"
+        }
+      }
+    },
+    "TestReconcileRequest": {
+      "description": "The body of POST /api/factory/test/reconcile; the answer is the RequestStatus after reconciliation (contract section 15.1).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "request_id"
+      ],
+      "properties": {
+        "request_id": {
+          "$ref": "#/$defs/Uuid"
+        }
+      }
+    },
+    "TestResetRequest": {
+      "description": "The body of POST /api/factory/test/reset (contract section 15.1).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "scenario"
+      ],
+      "properties": {
+        "scenario": {
+          "$ref": "#/$defs/TestScenario"
+        }
+      }
+    },
+    "TestResetResponse": {
+      "description": "The answer of POST /api/factory/test/reset.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contract_version",
+        "scenario"
+      ],
+      "properties": {
+        "contract_version": {
+          "$ref": "#/$defs/ContractVersion"
+        },
+        "scenario": {
+          "$ref": "#/$defs/TestScenario"
+        }
+      }
+    },
     "BaselineIdentity": {
       "description": "Internal: a host's pinned baseline.",
       "type": "object",
@@ -5979,7 +6587,6 @@
         "host_id",
         "bug_type_id",
         "criteria",
-        "failure_code",
         "plant",
         "reference_repair",
         "incident",
@@ -6008,11 +6615,8 @@
           "type": "array",
           "items": {
             "$ref": "#/$defs/CriterionRef"
-          }
-        },
-        "failure_code": {
-          "description": "What the verification checks report on the buggy copy.",
-          "$ref": "#/$defs/Identifier"
+          },
+          "description": "The criteria the entry targets. Each criterion's failure code comes from the criteria catalog, never from the entry (contract section 6.3)."
         },
         "plant": {
           "$ref": "#/$defs/PlantedChange"
@@ -6577,6 +7181,7 @@
         "image",
         "files",
         "evaluator_files",
+        "destinations",
         "command",
         "limits"
       ],
@@ -6594,18 +7199,21 @@
           "$ref": "#/$defs/ImagePin"
         },
         "files": {
-          "description": "The app source tree placed before start.",
+          "description": "The app source tree, placed at destinations.app before start.",
           "type": "array",
           "items": {
             "$ref": "#/$defs/FileDigest"
           }
         },
         "evaluator_files": {
-          "description": "Validator material, in an evaluator-only location.",
+          "description": "Validator material, placed at destinations.evaluator, an evaluator-only location.",
           "type": "array",
           "items": {
             "$ref": "#/$defs/FileDigest"
           }
+        },
+        "destinations": {
+          "$ref": "#/$defs/CopyDestinations"
         },
         "command": {
           "type": "array",
@@ -6643,6 +7251,30 @@
         }
       }
     },
+    "CopyDestinations": {
+      "description": "Absolute paths inside the copy.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "app",
+        "evaluator",
+        "results"
+      ],
+      "properties": {
+        "app": {
+          "description": "Where the runner places every file of files.",
+          "$ref": "#/$defs/AbsolutePath"
+        },
+        "evaluator": {
+          "description": "Where the runner places every file of evaluator_files; evaluator-only.",
+          "$ref": "#/$defs/AbsolutePath"
+        },
+        "results": {
+          "description": "Where the copy writes its results; the runner copies this directory back.",
+          "$ref": "#/$defs/AbsolutePath"
+        }
+      }
+    },
     "CopyLimits": {
       "type": "object",
       "additionalProperties": false,
@@ -6666,6 +7298,138 @@
           "const": "none"
         }
       }
+    },
+    "CopyRoots": {
+      "description": "Internal: the local directories the harness built from an UnpackedPair, which a runner reads a copy's files from.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "app_root",
+        "evaluator_root"
+      ],
+      "properties": {
+        "app_root": {
+          "description": "A local directory holding the plan's files.",
+          "$ref": "#/$defs/Identifier"
+        },
+        "evaluator_root": {
+          "description": "A local directory holding the plan's evaluator files.",
+          "$ref": "#/$defs/Identifier"
+        }
+      }
+    },
+    "CollectedCopy": {
+      "description": "Internal: what a runner brings back from one copy, which the host adapter's collect parses into a CopyRecord.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "copy_id",
+        "outcome",
+        "exit_code",
+        "results_dir",
+        "image_digest",
+        "architecture",
+        "started_at",
+        "finished_at",
+        "results_sha256"
+      ],
+      "properties": {
+        "copy_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "outcome": {
+          "$ref": "#/$defs/CopyRunOutcome"
+        },
+        "exit_code": {
+          "description": "The command's exit code, or null when there is none.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SafeInteger"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "results_dir": {
+          "description": "A fresh local directory with the copy's results, or null.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Identifier"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "image_digest": {
+          "$ref": "#/$defs/ImageDigest"
+        },
+        "architecture": {
+          "$ref": "#/$defs/Architecture"
+        },
+        "started_at": {
+          "$ref": "#/$defs/UtcTime"
+        },
+        "finished_at": {
+          "$ref": "#/$defs/UtcTime"
+        },
+        "results_sha256": {
+          "description": "The sha256 of a deterministic tar of results_dir, or null.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "results_dir": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "results_dir"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "results_sha256": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "results_dir": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "results_dir"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "results_sha256": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ]
     },
     "CellObservation": {
       "description": "Internal: never sent to a client.",

@@ -35,7 +35,7 @@
             "a saved change disappears when two updates overlap",
             "lost update"
           ],
-          "failure_code": "lost_acknowledged_change"
+          "failure_code": "acknowledged_completion_not_counted"
         },
         {
           "criterion_id": "concurrency.stale-success-response",
@@ -65,7 +65,7 @@
             "daily totals use the wrong time zone",
             "events are counted on the wrong day"
           ],
-          "failure_code": "wrong_time_zone_grouping"
+          "failure_code": "local_day_counts_mismatch"
         }
       ]
     }

@@ -79,6 +79,18 @@ describe("schema conventions", () => {
     }
   });
 
+  it("keeps the normalized input identical to the input except for its descriptions", () => {
+    // Drops description annotations (strings), not the `description` property of an item.
+    const strip = (node: unknown): unknown =>
+      JSON.parse(JSON.stringify(node, (key, value: unknown) => (key === "description" && typeof value === "string" ? undefined : value)));
+    const input = structuredClone(schema.$defs.RequestInput) as { properties: { items: { items: unknown } } };
+    input.properties.items.items = { $ref: "#/$defs/NormalizedRequestItemInput" };
+    expect(strip(schema.$defs.NormalizedRequestInput)).toEqual(strip(input));
+    const item = structuredClone(schema.$defs.RequestItemInput) as { properties: { description: unknown } };
+    item.properties.description = { anyOf: [{ $ref: "#/$defs/Description" }, { type: "null" }] };
+    expect(strip(schema.$defs.NormalizedRequestItemInput)).toEqual(strip(item));
+  });
+
   it("gives every event type exactly one Event variant", () => {
     const event = schema.$defs.Event;
     const variants = (event?.oneOf as { $ref: string }[]).map((item) => item.$ref.replace("#/$defs/", ""));

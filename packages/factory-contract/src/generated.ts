@@ -12,6 +12,7 @@ export const DEF_NAMES = [
   "GitCommitId",
   "ImageDigest",
   "RelativePath",
+  "AbsolutePath",
   "UtcTime",
   "ItemKey",
   "Identifier",
@@ -51,7 +52,14 @@ export const DEF_NAMES = [
   "ValidationResult",
   "ErrorCode",
   "BusyReason",
+  "TestScenario",
+  "TestOperationKind",
+  "TestOperationState",
+  "TestSlotKey",
+  "TestProvider",
+  "TestProviderAction",
   "CopyRecordStatus",
+  "CopyRunOutcome",
   "Architecture",
   "RepairKind",
   "EmptyObject",
@@ -70,6 +78,8 @@ export const DEF_NAMES = [
   "PackageFormats",
   "RequestInput",
   "RequestItemInput",
+  "NormalizedRequestInput",
+  "NormalizedRequestItemInput",
   "Interpretation",
   "InterpretedItem",
   "ItemDifficulty",
@@ -145,6 +155,13 @@ export const DEF_NAMES = [
   "SessionRequest",
   "SessionStatus",
   "ExampleResponse",
+  "TestEvidence",
+  "TestOperation",
+  "TestSlot",
+  "TestProviderCall",
+  "TestReconcileRequest",
+  "TestResetRequest",
+  "TestResetResponse",
   "BaselineIdentity",
   "OriginalSuiteIdentity",
   "CatalogEntry",
@@ -171,7 +188,10 @@ export const DEF_NAMES = [
   "DifficultyAssessment",
   "CopyPlan",
   "ImagePin",
+  "CopyDestinations",
   "CopyLimits",
+  "CopyRoots",
+  "CollectedCopy",
   "CellObservation",
   "SuiteObservation",
   "CopyRecord",
@@ -212,6 +232,9 @@ export type ImageDigest = string;
 /** A relative POSIX path: segments joined by '/', with no leading or trailing '/', no empty, '.' or '..' segment, and no backslash or control character. Any other character is allowed, so source paths such as 'src/app/(main)/[id]/page.tsx' and dotfiles such as '.gitignore' are valid. */
 export type RelativePath = string;
 
+/** An absolute POSIX path inside a copy: '/' and then segments joined by '/', with no trailing '/', no empty, '.' or '..' segment, and no backslash or control character. */
+export type AbsolutePath = string;
+
 /** UTC ISO 8601 time with milliseconds and Z (contract section 3). The format adds the calendar check (no 2026-02-30, no second 60). */
 export type UtcTime = string;
 
@@ -221,7 +244,7 @@ export type ItemKey = string;
 /** A non-empty identifier declared by the service, a host or a source, such as a baseline, source, entry, criterion, suite, check set, protocol or copy ID. */
 export type Identifier = string;
 
-/** Plain-language text with no leading or trailing white space, as String.prototype.trim leaves it (contract section 5). */
+/** A normalized request description: plain-language text with no leading or trailing white space, as String.prototype.trim leaves it, and never empty (contract section 6). */
 export type Description = string;
 
 /** A non-empty version label, such as "1". */
@@ -271,7 +294,7 @@ export const PACKAGE_FORMAT_VALUES = ["rbw-bug-case/1", "rbw-validator/1"] as co
 export type PackageFormat = (typeof PACKAGE_FORMAT_VALUES)[number];
 
 /** Contract section 6.2. */
-export const PROBLEM_CODE_VALUES = ["unsupported_combination", "unrecognized_description", "no_matching_source", "unsupported_difficulty", "budget_below_minimum", "quantity_exceeds_source", "host_unused"] as const;
+export const PROBLEM_CODE_VALUES = ["unsupported_combination", "unrecognized_description", "no_matching_source", "unsupported_difficulty", "budget_below_minimum", "budget_below_item_minimum", "quantity_exceeds_source", "host_unused"] as const;
 export type ProblemCode = (typeof PROBLEM_CODE_VALUES)[number];
 
 export const PROBLEM_SEVERITY_VALUES = ["blocking", "warning"] as const;
@@ -330,14 +353,37 @@ export const VALIDATION_RESULT_VALUES = ["passed", "failed", "error"] as const;
 export type ValidationResult = (typeof VALIDATION_RESULT_VALUES)[number];
 
 /** Contract section 12. */
-export const ERROR_CODE_VALUES = ["invalid_request", "unauthorized", "passcode_incorrect", "not_found", "idempotency_conflict", "interpretation_stale", "busy", "budget_unavailable", "not_ready", "unsupported_request", "unavailable"] as const;
+export const ERROR_CODE_VALUES = ["invalid_request", "unauthorized", "passcode_incorrect", "not_found", "idempotency_conflict", "interpretation_stale", "busy", "budget_unavailable", "unsupported_request", "unavailable"] as const;
 export type ErrorCode = (typeof ERROR_CODE_VALUES)[number];
 
 export const BUSY_REASON_VALUES = ["active", "needs_reconciliation"] as const;
 export type BusyReason = (typeof BUSY_REASON_VALUES)[number];
 
+/** A test-mode scenario (contract section 15.1). */
+export const TEST_SCENARIO_VALUES = ["two-host-fulfilled", "partial-budget", "sources-exhausted", "duplicate-defect", "zero-result", "wrong-failure", "cancel-midway", "worker-lost", "uncertain-provider", "validation-failed", "validation-error"] as const;
+export type TestScenario = (typeof TEST_SCENARIO_VALUES)[number];
+
+export const TEST_OPERATION_KIND_VALUES = ["worker", "candidate_copy", "validation", "validation_copy"] as const;
+export type TestOperationKind = (typeof TEST_OPERATION_KIND_VALUES)[number];
+
+export const TEST_OPERATION_STATE_VALUES = ["prepared", "launching", "running", "terminal", "uncertain", "reconciled"] as const;
+export type TestOperationState = (typeof TEST_OPERATION_STATE_VALUES)[number];
+
+export const TEST_SLOT_KEY_VALUES = ["factory"] as const;
+export type TestSlotKey = (typeof TEST_SLOT_KEY_VALUES)[number];
+
+export const TEST_PROVIDER_VALUES = ["sandbox"] as const;
+export type TestProvider = (typeof TEST_PROVIDER_VALUES)[number];
+
+export const TEST_PROVIDER_ACTION_VALUES = ["create", "stop"] as const;
+export type TestProviderAction = (typeof TEST_PROVIDER_ACTION_VALUES)[number];
+
 export const COPY_RECORD_STATUS_VALUES = ["complete", "invalid", "incomplete"] as const;
 export type CopyRecordStatus = (typeof COPY_RECORD_STATUS_VALUES)[number];
+
+/** How a runner's copy ended: ran (the command ran), setup_failed (the copy could not be set up, for example a file whose sha256 does not match) or timed_out (the command passed its time limit). */
+export const COPY_RUN_OUTCOME_VALUES = ["ran", "setup_failed", "timed_out"] as const;
+export type CopyRunOutcome = (typeof COPY_RUN_OUTCOME_VALUES)[number];
 
 export const ARCHITECTURE_VALUES = ["amd64", "arm64"] as const;
 export type Architecture = (typeof ARCHITECTURE_VALUES)[number];
@@ -384,12 +430,16 @@ export interface BugType {
   criteria: Criterion[];
 }
 
+/** A versioned criterion of a bug type. Its example phrases are matched exactly (contract section 6.1), and its failure code is published per criterion version (section 6.3). */
 export interface Criterion {
   criterion_id: Identifier;
   version: Version;
   label: string;
   description: string;
+  /** Matched exactly, as word sequences (contract section 6.1). */
   example_phrases: string[];
+  /** What the verification checks report on the buggy copy when a candidate demonstrates this criterion (contract section 6.3). */
+  failure_code: Identifier;
 }
 
 /** Supported means a declared source with at least one entry exists and its verification checks are implemented (contract section 4.2). */
@@ -469,12 +519,34 @@ export interface RequestInput {
   budget_microusd: MicroUsd;
 }
 
+/** One item of a RequestInput, as the client sends it. */
 export interface RequestItemInput {
   item_key: ItemKey;
   bug_type_id: BugTypeId;
   /** At most limits.max_quantity_per_item. */
   quantity: PositiveInteger;
-  /** An empty description is sent as null; at most limits.max_description_chars. */
+  /** Any text or null. The service trims it and maps an empty result to null (contract section 6); at most limits.max_description_chars after trimming. */
+  description: string | null;
+  difficulty: DifficultyOptionId;
+}
+
+/** The normalized form of a RequestInput: each description trimmed, and null when nothing is left (contract section 6). Interpretation.input carries it. */
+export interface NormalizedRequestInput {
+  /** One or two hosts, no repeats. */
+  hosts: HostId[];
+  /** At least one item; at most limits.max_items. */
+  items: NormalizedRequestItemInput[];
+  /** Shared by every host and item; within the limits' budget range. */
+  budget_microusd: MicroUsd;
+}
+
+/** One item of a NormalizedRequestInput. */
+export interface NormalizedRequestItemInput {
+  item_key: ItemKey;
+  bug_type_id: BugTypeId;
+  /** At most limits.max_quantity_per_item. */
+  quantity: PositiveInteger;
+  /** Trimmed and non-empty, or null. */
   description: Description | null;
   difficulty: DifficultyOptionId;
 }
@@ -482,11 +554,12 @@ export interface RequestItemInput {
 /** The answer of POST /api/factory/interpretations (contract section 6). */
 export interface Interpretation {
   contract_version: ContractVersion;
+  /** Canonical hash of the normalized input and the interpreter, catalog, route and source versions. */
   interpretation_sha256: Sha256;
   interpreter: InterpreterIdentity;
   qualification_route: QualificationRoute;
-  /** The normalized input actually interpreted. */
-  input: RequestInput;
+  /** The normalized input actually interpreted (contract section 6). */
+  input: NormalizedRequestInput;
   /** True only when no problem has severity blocking. */
   startable: boolean;
   items: InterpretedItem[];
@@ -494,7 +567,7 @@ export interface Interpretation {
   hosts: InterpretationHost[];
   budget: InterpretationBudget;
   limits: InterpretationLimits;
-  /** Request-level problems. */
+  /** Request-level problems, so none has an item. */
   problems: Problem[];
 }
 
@@ -502,8 +575,8 @@ export interface InterpretedItem {
   item_key: ItemKey;
   bug_type_id: BugTypeId;
   quantity: PositiveInteger;
-  /** Kept verbatim. */
-  description: string | null;
+  /** The normalized description, kept verbatim (contract section 6.1). */
+  description: Description | null;
   difficulty: ItemDifficulty;
   /** Empty when the item has no description (contract section 6.1). */
   criteria: InterpretedCriterion[];
@@ -568,12 +641,14 @@ export interface Problem {
   /** Fixed by the code (contract section 6.2). */
   severity: ProblemSeverity;
   message: string;
+  /** Null for the request-level budget_below_minimum; set for every item-level code (contract section 6.2). */
   item_key: ItemKey | null;
 }
 
 /** The body of POST /api/factory/requests (contract section 7). */
 export interface StartRequest {
   request_id: Uuid;
+  /** As the client sends it; the canonical body holds its normalized form (contract section 7). */
   input: RequestInput;
   interpretation_sha256: Sha256;
 }
@@ -650,7 +725,8 @@ export interface Funnel {
 export interface ItemProgress {
   item_key: ItemKey;
   bug_type_id: BugTypeId;
-  description: string | null;
+  /** The normalized description of the item. */
+  description: Description | null;
   requested: NonNegativeInteger;
   delivered: NonNegativeInteger;
   missing: NonNegativeInteger;
@@ -1054,8 +1130,9 @@ export interface ValidationRun {
   harness: HarnessIdentity;
   message: string | null;
   started_at: UtcTime | null;
+  /** Set exactly in state finished. */
   finished_at: UtcTime | null;
-  /** Settled cost; null until the run settles. */
+  /** Settled cost; null until the run settles: null before state finished, set for passed and failed, and null after an error whose spend is uncertain (contract section 11). */
   cost_microusd: MicroUsd | null;
   poll_after_ms: NonNegativeInteger;
 }
@@ -1132,6 +1209,62 @@ export interface ExampleResponse {
   case: Case;
 }
 
+/** GET /api/factory/test/evidence?request_id= in test mode: read-only evidence of one request (contract section 15.1). */
+export interface TestEvidence {
+  contract_version: ContractVersion;
+  request_id: Uuid;
+  operations: TestOperation[];
+  slot: TestSlot;
+  provider_calls: TestProviderCall[];
+}
+
+/** One spend ledger operation of the request. */
+export interface TestOperation {
+  /** The spend ledger's operation ID: 64 lowercase hexadecimal characters. */
+  operation_id: Sha256;
+  kind: TestOperationKind;
+  call_name: Identifier;
+  /** A settled operation is terminal with settled_microusd set. */
+  state: TestOperationState;
+  /** Held until the operation is settled or reconciled. */
+  reserved_microusd: MicroUsd;
+  settled_microusd: MicroUsd | null;
+  attempt_ordinal: PositiveInteger;
+}
+
+/** The factory slot and what holds it, if anything. */
+export interface TestSlot {
+  slot_key: TestSlotKey;
+  /** The request whose start or validation run holds the slot. */
+  holder_request_id: Uuid | null;
+  /** Set while a validation run holds the slot. */
+  holder_validation_id: Uuid | null;
+}
+
+/** One call made to the fake provider. */
+export interface TestProviderCall {
+  call_name: Identifier;
+  provider: TestProvider;
+  action: TestProviderAction;
+  at: UtcTime;
+}
+
+/** The body of POST /api/factory/test/reconcile; the answer is the RequestStatus after reconciliation (contract section 15.1). */
+export interface TestReconcileRequest {
+  request_id: Uuid;
+}
+
+/** The body of POST /api/factory/test/reset (contract section 15.1). */
+export interface TestResetRequest {
+  scenario: TestScenario;
+}
+
+/** The answer of POST /api/factory/test/reset. */
+export interface TestResetResponse {
+  contract_version: ContractVersion;
+  scenario: TestScenario;
+}
+
 /** Internal: a host's pinned baseline. */
 export interface BaselineIdentity {
   host_id: HostId;
@@ -1154,9 +1287,8 @@ export interface CatalogEntry {
   catalog_version: Version;
   host_id: HostId;
   bug_type_id: BugTypeId;
+  /** The criteria the entry targets. Each criterion's failure code comes from the criteria catalog, never from the entry (contract section 6.3). */
   criteria: CriterionRef[];
-  /** What the verification checks report on the buggy copy. */
-  failure_code: Identifier;
   plant: PlantedChange;
   reference_repair: ReferenceRepair;
   /** The permitted plain-language description, without fix hints. */
@@ -1326,10 +1458,11 @@ export interface CopyPlan {
   host_id: HostId;
   state: CopyState;
   image: ImagePin;
-  /** The app source tree placed before start. */
+  /** The app source tree, placed at destinations.app before start. */
   files: FileDigest[];
-  /** Validator material, in an evaluator-only location. */
+  /** Validator material, placed at destinations.evaluator, an evaluator-only location. */
   evaluator_files: FileDigest[];
+  destinations: CopyDestinations;
   command: string[];
   limits: CopyLimits;
 }
@@ -1340,11 +1473,45 @@ export interface ImagePin {
   digest: ImageDigest | null;
 }
 
+/** Absolute paths inside the copy. */
+export interface CopyDestinations {
+  /** Where the runner places every file of files. */
+  app: AbsolutePath;
+  /** Where the runner places every file of evaluator_files; evaluator-only. */
+  evaluator: AbsolutePath;
+  /** Where the copy writes its results; the runner copies this directory back. */
+  results: AbsolutePath;
+}
+
 export interface CopyLimits {
   timeout_s: PositiveInteger;
   vcpus: PositiveInteger;
   memory_mb: PositiveInteger;
   network: "none";
+}
+
+/** Internal: the local directories the harness built from an UnpackedPair, which a runner reads a copy's files from. */
+export interface CopyRoots {
+  /** A local directory holding the plan's files. */
+  app_root: Identifier;
+  /** A local directory holding the plan's evaluator files. */
+  evaluator_root: Identifier;
+}
+
+/** Internal: what a runner brings back from one copy, which the host adapter's collect parses into a CopyRecord. */
+export interface CollectedCopy {
+  copy_id: Identifier;
+  outcome: CopyRunOutcome;
+  /** The command's exit code, or null when there is none. */
+  exit_code: SafeInteger | null;
+  /** A fresh local directory with the copy's results, or null. */
+  results_dir: Identifier | null;
+  image_digest: ImageDigest;
+  architecture: Architecture;
+  started_at: UtcTime;
+  finished_at: UtcTime;
+  /** The sha256 of a deterministic tar of results_dir, or null. */
+  results_sha256: Sha256 | null;
 }
 
 /** Internal: never sent to a client. */
@@ -1446,6 +1613,7 @@ export interface DefTypes {
   GitCommitId: GitCommitId;
   ImageDigest: ImageDigest;
   RelativePath: RelativePath;
+  AbsolutePath: AbsolutePath;
   UtcTime: UtcTime;
   ItemKey: ItemKey;
   Identifier: Identifier;
@@ -1485,7 +1653,14 @@ export interface DefTypes {
   ValidationResult: ValidationResult;
   ErrorCode: ErrorCode;
   BusyReason: BusyReason;
+  TestScenario: TestScenario;
+  TestOperationKind: TestOperationKind;
+  TestOperationState: TestOperationState;
+  TestSlotKey: TestSlotKey;
+  TestProvider: TestProvider;
+  TestProviderAction: TestProviderAction;
   CopyRecordStatus: CopyRecordStatus;
+  CopyRunOutcome: CopyRunOutcome;
   Architecture: Architecture;
   RepairKind: RepairKind;
   EmptyObject: EmptyObject;
@@ -1504,6 +1679,8 @@ export interface DefTypes {
   PackageFormats: PackageFormats;
   RequestInput: RequestInput;
   RequestItemInput: RequestItemInput;
+  NormalizedRequestInput: NormalizedRequestInput;
+  NormalizedRequestItemInput: NormalizedRequestItemInput;
   Interpretation: Interpretation;
   InterpretedItem: InterpretedItem;
   ItemDifficulty: ItemDifficulty;
@@ -1579,6 +1756,13 @@ export interface DefTypes {
   SessionRequest: SessionRequest;
   SessionStatus: SessionStatus;
   ExampleResponse: ExampleResponse;
+  TestEvidence: TestEvidence;
+  TestOperation: TestOperation;
+  TestSlot: TestSlot;
+  TestProviderCall: TestProviderCall;
+  TestReconcileRequest: TestReconcileRequest;
+  TestResetRequest: TestResetRequest;
+  TestResetResponse: TestResetResponse;
   BaselineIdentity: BaselineIdentity;
   OriginalSuiteIdentity: OriginalSuiteIdentity;
   CatalogEntry: CatalogEntry;
@@ -1605,7 +1789,10 @@ export interface DefTypes {
   DifficultyAssessment: DifficultyAssessment;
   CopyPlan: CopyPlan;
   ImagePin: ImagePin;
+  CopyDestinations: CopyDestinations;
   CopyLimits: CopyLimits;
+  CopyRoots: CopyRoots;
+  CollectedCopy: CollectedCopy;
   CellObservation: CellObservation;
   SuiteObservation: SuiteObservation;
   CopyRecord: CopyRecord;

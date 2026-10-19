@@ -8,19 +8,24 @@
   },
   "files": [
     {
-      "path": "app/src/synthetic/store.ts",
+      "path": "src/synthetic/store.ts",
       "sha256": "d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3"
     }
   ],
   "evaluator_files": [
     {
-      "path": "evaluator/checks/synthetic-check.ts",
+      "path": "checks/synthetic-check.ts",
       "sha256": "d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8"
     }
   ],
+  "destinations": {
+    "app": "/workspace/app",
+    "evaluator": "/workspace/evaluator",
+    "results": "/workspace/results"
+  },
   "command": [
     "node",
-    "evaluator/run.ts",
+    "/workspace/evaluator/run.ts",
     "--copy",
     "buggy"
   ],
