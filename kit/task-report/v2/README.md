@@ -24,4 +24,6 @@ node packages/host-task-report/adapter/qualify.ts build --tag rbw-task-report:<n
 ```
 
 builds this image from `kit/task-report/v2/Dockerfile` with the vendored app and the Umami kit's
-launcher as named build contexts. Version 1's image (`kit/task-report/Dockerfile`) is unchanged.
+launcher as named build contexts; `qualify.ts pin` with the same tag then pins it for the
+qualification (see `packages/host-task-report/README.md`). Version 1's image
+(`kit/task-report/Dockerfile`) is unchanged.

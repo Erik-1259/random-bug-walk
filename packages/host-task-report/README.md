@@ -190,11 +190,20 @@ node packages/host-task-report/src/local/cli.ts evaluate <dir> <dir> <dir>
 
 # version 2
 node packages/host-task-report/adapter/qualify.ts build --tag rbw-task-report:<name>
+node packages/host-task-report/adapter/qualify.ts pin --tag rbw-task-report:<name>
 node packages/host-task-report/adapter/qualify.ts prepare --out <new dir>
 node packages/host-task-report/adapter/qualify.ts run --dir <dir>
 node packages/host-task-report/adapter/qualify.ts evaluate --dir <dir>
 ```
 
-`prepare` and `evaluate` need this package's dependencies installed; `build` and `run` use Node's
-built-ins only, so they run where Docker is. `run --smoke f3q2-smoke-<name>` runs one reduced clean
-copy, which the evaluation never counts.
+A version 2 qualification is of the pinned kit image, the one the entry's environment and case ID
+name. `pin` writes the built image's reference, image ID and architecture, as Docker reports them,
+to `catalog/kit-image.v2.json`; `prepare` and `evaluate` read the image from that pin, and the
+runner refuses a copy whose image has another ID, so the image a qualification records is the
+image its copies ran. Without `pin`, the copies run the image pinned before, or fail setup where it
+is absent. A new pin changes the environment hash and with it the case ID, so it is committed with
+the qualification that ran on it.
+
+`prepare` and `evaluate` need this package's dependencies installed; `build`, `pin` and `run` use
+Node's built-ins only, so they run where Docker is. `run --smoke f3q2-smoke-<name>` runs one
+reduced clean copy, which the evaluation never counts.

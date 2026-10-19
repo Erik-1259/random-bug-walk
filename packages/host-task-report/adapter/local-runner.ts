@@ -14,6 +14,8 @@ import { HashError, hashTree, sha256Hex } from "../src/hash.ts";
 import type { CollectedCopy, CopyPlan, CopyRoots, CopyRunner } from "./contract.ts";
 
 export const KILL_GRACE_S = 10;
+/** How the runner, and qualify.ts pin, read a local image: its image ID and architecture. */
+export const IMAGE_INSPECT_FORMAT = "{{.Id}} {{.Architecture}}";
 const UNKNOWN_DIGEST = `sha256:${"0".repeat(64)}`;
 
 export interface LocalRunnerOptions {
@@ -85,7 +87,7 @@ export function createLocalDockerRunner(options: LocalRunnerOptions): CopyRunner
       const failed = (detail: string): CollectedCopy =>
         finish({ copy_id: plan.copy_id, outcome: "setup_failed", exit_code: null, results_dir: null, image_digest: imageDigest, architecture, started_at: startedAt, finished_at: new Date().toISOString(), results_sha256: null }, detail);
 
-      const inspect = await exec(["image", "inspect", "--format", "{{.Id}} {{.Architecture}}", plan.image.reference], 60_000);
+      const inspect = await exec(["image", "inspect", "--format", IMAGE_INSPECT_FORMAT, plan.image.reference], 60_000);
       const [id, arch] = inspect.stdout.trim().split(/\s+/);
       if (inspect.code !== 0 || id === undefined || !/^sha256:[0-9a-f]{64}$/.test(id)) return failed(`image ${plan.image.reference} is not available`);
       imageDigest = id;

@@ -1,24 +1,32 @@
-// The local qualification of the task-report entry under evaluator v2, in four steps:
+// The local qualification of the task-report entry under evaluator v2, in five steps:
 //
 //   node adapter/qualify.ts build --tag rbw-task-report:<name>      build the version 2 kit image
+//   node adapter/qualify.ts pin --tag rbw-task-report:<name>        pin that image in catalog/kit-image.v2.json
 //   node adapter/qualify.ts prepare --out <new dir>                 adapter inputs, the three states, the copy plans
 //   node adapter/qualify.ts run --dir <dir> [--smoke <copy ID>]     every copy plan through local Docker
 //   node adapter/qualify.ts evaluate --dir <dir>                    collect, interpret and the verdict per state
 //
-// prepare and evaluate need this package's dependencies; build and run use Node's built-ins only,
-// so they run on a host where Docker is and the package is not installed. prepare builds the
-// states the way the package harness will (see local-harness.ts) and asks the adapter for the copy
-// plans; run passes each plan with its roots to the local Docker runner (buggy, then fixed, then
-// clean); evaluate turns each collected copy into a copy record with the adapter's collect, combines
-// each state's records with interpret, and records the cells, the verdict per state and, as a
-// cross-check, the evaluation of the copies' record sets.
+// The qualification is of the pinned image, the one the catalog entry's environment and case ID
+// name: prepare and evaluate read the kit image from the pin, and the runner refuses an image with
+// another ID, so the image a qualification records is the image its copies ran. Without pin, the
+// copies run the image pinned before, or fail setup where it is absent. prepare and evaluate need
+// this package's dependencies; build, pin and run use Node's built-ins only, so they run on a host
+// where Docker is and the package is not installed.
+//
+// prepare builds the states the way the package harness will (see local-harness.ts) and asks the
+// adapter for the copy plans; run passes each plan with its roots to the local Docker runner
+// (buggy, then fixed, then clean); evaluate turns each collected copy into a copy record with the
+// adapter's collect, combines each state's records with interpret, and records the cells, the
+// verdict per state and, as a cross-check, the evaluation of the copies' record sets.
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import type { CollectedCopy, CopyPlan, CopyRecord, CopyState, UnpackedPair } from "./contract.ts";
-import { createLocalDockerRunner } from "./local-runner.ts";
+import { KIT_IMAGE_FILE, KIT_IMAGE_FORMAT, parseKitImage } from "./kit.ts";
+import type { KitImagePin } from "./kit.ts";
+import { IMAGE_INSPECT_FORMAT, createLocalDockerRunner } from "./local-runner.ts";
 
 export const PACKAGE_DIR = fileURLToPath(new URL("..", import.meta.url));
 export const REPO_ROOT = resolve(PACKAGE_DIR, "../..");
@@ -66,6 +74,44 @@ function build(tag: string): Promise<number> {
       resolvePromise(code === 0 ? 0 : 1);
     });
   });
+}
+
+/**
+ * Writes the kit image pin of a local image from its `docker image inspect` line (the image ID and
+ * architecture, in the runner's format); refuses, before writing, an image it cannot identify.
+ */
+export function writeKitImagePin(file: string, reference: string, inspected: string): KitImagePin {
+  const [digest, architecture] = inspected.trim().split(/\s+/);
+  const kit = parseKitImage({ format: KIT_IMAGE_FORMAT, reference, digest, architecture });
+  writeJson(file, {
+    format: KIT_IMAGE_FORMAT,
+    ...kit,
+    built_from: "kit/task-report/v2/Dockerfile, on local Docker",
+    note: "Pinned by qualify.ts pin from the local image's ID and architecture. A hosted amd64 build in a registry replaces this pin when it is pushed (planned); a new pin changes the environment hash and with it the case ID.",
+  });
+  return kit;
+}
+
+function inspectImage(reference: string): Promise<string | null> {
+  return new Promise((resolvePromise) => {
+    const child = spawn("docker", ["image", "inspect", "--format", IMAGE_INSPECT_FORMAT, reference], { stdio: ["ignore", "pipe", "inherit"] });
+    const chunks: Buffer[] = [];
+    child.stdout.on("data", (chunk: Buffer) => chunks.push(chunk));
+    child.once("error", () => {
+      resolvePromise(null);
+    });
+    child.once("close", (code) => {
+      resolvePromise(code === 0 ? Buffer.concat(chunks).toString("utf8") : null);
+    });
+  });
+}
+
+async function pin(tag: string): Promise<number> {
+  if (!TAG.test(tag)) throw new QualifyError("--tag must be rbw-task-report:<name>");
+  const inspected = await inspectImage(tag);
+  if (inspected === null) throw new QualifyError(`image ${tag} is not available`);
+  process.stdout.write(`${JSON.stringify(writeKitImagePin(KIT_IMAGE_FILE, tag, inspected), null, 2)}\n`);
+  return 0;
 }
 
 async function prepare(out: string): Promise<number> {
@@ -196,6 +242,7 @@ export async function main(argv: string[]): Promise<number> {
   const [command, ...rest] = argv;
   const { values } = parseArgs({ args: rest, strict: true, options: { tag: { type: "string" }, out: { type: "string" }, dir: { type: "string" }, smoke: { type: "string" } } });
   if (command === "build") return build(values.tag ?? "");
+  if (command === "pin") return pin(values.tag ?? "");
   if (command === "prepare") {
     if (values.out === undefined) throw new QualifyError("--out is required");
     return prepare(resolve(values.out));
@@ -208,7 +255,7 @@ export async function main(argv: string[]): Promise<number> {
     if (values.dir === undefined) throw new QualifyError("--dir is required");
     return evaluate(resolve(values.dir));
   }
-  throw new QualifyError("usage: build | prepare | run | evaluate");
+  throw new QualifyError("usage: build | pin | prepare | run | evaluate");
 }
 
 if (import.meta.main) {
