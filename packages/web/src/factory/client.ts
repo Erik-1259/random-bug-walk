@@ -151,20 +151,24 @@ export class FactoryController {
     this.refreshAfterValidation = false;
     this.update({ status: { ...status, events: [...events.values()].sort((a, b) => a.seq - b.seq) }, interpretation: status.interpretation, message: null, canRetryStart: false });
   }
+  private restoreIdentity() {
+    const id = this.storage.getItem(REQUEST_KEY);
+    if (id !== this.view.requestId) this.update({ requestId: id, status: null, validation: null, canRetryStart: false, canRetryValidation: false });
+    const raw = this.storage.getItem(START_KEY);
+    const saved: unknown = raw === null ? null : JSON.parse(raw);
+    this.startBody = record(saved) && saved.request_id === id ? saved as unknown as StartRequest : null;
+    const validation = this.storage.getItem(VALIDATION_KEY);
+    const savedValidation: unknown = validation === null ? null : JSON.parse(validation);
+    this.validationIdentity = record(savedValidation) && savedValidation.request_id === id && typeof savedValidation.case_id === "string" && typeof savedValidation.validation_id === "string" ? savedValidation as unknown as StoredValidation : null;
+    return id;
+  }
   async initialize() {
     if (this.view.busy) return;
     this.update({ busy: true });
     const mayResume = !this.initialized || this.now() >= this.nextPollAt;
     this.initialized = true;
     try {
-      const id = this.storage.getItem(REQUEST_KEY);
-      this.update({ requestId: id });
-      const raw = this.storage.getItem(START_KEY);
-      const saved: unknown = raw === null ? null : JSON.parse(raw);
-      if (record(saved) && saved.request_id === id) this.startBody = saved as unknown as StartRequest;
-      const validation = this.storage.getItem(VALIDATION_KEY);
-      const savedValidation: unknown = validation === null ? null : JSON.parse(validation);
-      if (record(savedValidation) && savedValidation.request_id === id && typeof savedValidation.case_id === "string" && typeof savedValidation.validation_id === "string") this.validationIdentity = savedValidation as unknown as StoredValidation;
+      const id = this.restoreIdentity();
       const [capabilities, session] = await Promise.allSettled([this.client.capabilities(), this.client.session()]);
       if (capabilities.status === "fulfilled") this.update({ capabilities: capabilities.value }); else this.error(capabilities.reason);
       if (session.status === "fulfilled") this.update({ signedIn: session.value.signed_in }); else this.error(session.reason);
@@ -190,6 +194,12 @@ export class FactoryController {
     if (this.view.busy || !this.view.signedIn || this.view.capabilities?.service.state !== "available" || this.view.requestId !== null || !this.view.interpretation?.startable) return;
     this.update({ busy: true });
     try {
+      // Another tab may have started since this tab initialized. Resume its identity before writing.
+      if (this.restoreIdentity() !== null) {
+        await this.readStatus();
+        if (this.validationIdentity !== null) await this.readValidation();
+        return;
+      }
       const interpretation = this.view.interpretation;
       const id = this.uuid();
       this.startBody = { request_id: id, input: interpretation.input, interpretation_sha256: interpretation.interpretation_sha256 };
@@ -232,7 +242,9 @@ export class FactoryController {
     }
   }
   private clearIdentity() {
-    this.storage.removeItem(REQUEST_KEY); this.storage.removeItem(START_KEY); this.storage.removeItem(VALIDATION_KEY);
+    if (this.storage.getItem(REQUEST_KEY) === this.view.requestId) {
+      this.storage.removeItem(REQUEST_KEY); this.storage.removeItem(START_KEY); this.storage.removeItem(VALIDATION_KEY);
+    }
     this.startBody = null; this.validationIdentity = null; this.moreEvents = false; this.refreshAfterValidation = false;
     this.update({ requestId: null, status: null, validation: null, canRetryStart: false, canRetryValidation: false });
   }

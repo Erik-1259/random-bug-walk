@@ -95,6 +95,23 @@ const fixture = name => JSON.parse(fs.readFileSync(new URL(`./fixtures/factory-v
   console.log(`PASS synthetic ${width}px: capabilities/form/limits/errors, host preservation, removal focus, interpretation invalidation, busy refusal preserves draft, stored-id lost response/reload, duplicate clicks, stop retained case, separate downloads, validation identity recovery; no real service calls`);
   await context.close();
  }
+ const tabs=await browser.newContext();let tabStarts=0,savedId=null;
+ await tabs.route('**/api/factory/**',async route=>{
+  const request=route.request(),path=new URL(request.url()).pathname;
+  let body;
+  if(path.endsWith('/capabilities')){body=fixture('capabilities');body.service.message='Synthetic two-tab fixture — not live execution.';}
+  else if(path.endsWith('/session'))body=fixture('session');
+  else if(path.endsWith('/interpretations')){body=fixture('interpretation-supported');body.input=request.postDataJSON();}
+  else {if(request.method()==='POST'){tabStarts++;savedId=request.postDataJSON().request_id;}body=fixture('status-running');body.request_id=savedId;}
+  await route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(body)});
+ });
+ const first=await tabs.newPage(),second=await tabs.newPage();
+ for(const tab of [first,second]){await tab.goto(origin+'/factory',{waitUntil:'networkidle'});await tab.getByRole('button',{name:'Review requirements',exact:true}).click();await tab.getByRole('button',{name:'Start request',exact:true}).waitFor();}
+ await first.getByRole('button',{name:'Start request',exact:true}).click();await first.getByRole('heading',{name:'Request running',exact:true}).waitFor();
+ await second.getByRole('button',{name:'Start request',exact:true}).click();await second.getByRole('heading',{name:'Request running',exact:true}).waitFor();
+ assert.equal(tabStarts,1);assert.equal(await second.evaluate(()=>localStorage.getItem('rbw-factory-request-id')),savedId);
+ await first.reload({waitUntil:'networkidle'});await first.getByRole('heading',{name:'Request running',exact:true}).waitFor();assert.equal(tabStarts,1);
+ await tabs.close();console.log('PASS synthetic two-tab stale start resumes the persisted request without a second POST; reload preserves identity.');
  const context=await browser.newContext();const page=await context.newPage();const writes=[];
  page.on('request',request=>{if(request.method()!=='GET')writes.push(request.url());});
  await page.goto(origin+'/factory',{waitUntil:'networkidle'});await page.getByText('Live requests unavailable',{exact:true}).waitFor();

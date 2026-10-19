@@ -67,6 +67,34 @@ describe("browser request lifecycle with synthetic service responses", () => {
     release?.(fixture<RequestStatus>("status-queued")); await first;
     expect(c.controller.snapshot().status?.state).toBe("queued");
   });
+  it("adopts another tab's saved request before a stale tab can start", async () => {
+    const c = await prepared();
+    const otherId = "00000000-0000-4000-8000-000000000999";
+    const otherUuid = vi.fn(() => otherId);
+    const other = new FactoryController(c.api, c.storage, otherUuid);
+    await other.initialize(); await other.interpret(input.input);
+    await c.controller.start();
+    await other.start();
+    expect(c.api.start).toHaveBeenCalledTimes(1);
+    expect(otherUuid).not.toHaveBeenCalled();
+    expect(other.snapshot().requestId).toBe(input.request_id);
+    expect(c.storage.getItem(REQUEST_KEY)).toBe(input.request_id);
+    expect(JSON.parse(c.storage.getItem("rbw-factory-start") ?? "null")).toEqual(input);
+    const resumed = new FactoryController(c.api, c.storage, c.uuid); await resumed.initialize();
+    expect(resumed.snapshot().requestId).toBe(input.request_id);
+  });
+  it("a stale completed tab cannot clear another tab's newer saved request", async () => {
+    const c = await prepared(); c.api.start.mockResolvedValue(fixture<RequestStatus>("status-fulfilled")); await c.controller.start();
+    const otherId = "00000000-0000-4000-8000-000000000999";
+    const otherBody = { ...input, request_id: otherId };
+    c.storage.setItem(REQUEST_KEY, otherId); c.storage.setItem("rbw-factory-start", JSON.stringify(otherBody));
+    c.storage.setItem("rbw-factory-validation", JSON.stringify({ request_id: otherId, case_id: "synthetic-case", validation_id: "synthetic-validation" }));
+    c.controller.newDraft();
+    expect(c.controller.snapshot().requestId).toBeNull();
+    expect(c.storage.getItem(REQUEST_KEY)).toBe(otherId);
+    expect(c.storage.getItem("rbw-factory-start")).toBe(JSON.stringify(otherBody));
+    expect(c.storage.getItem("rbw-factory-validation")).not.toBeNull();
+  });
   it("does not send a paid start when local storage fails", async () => {
     const c = setup();
     const controller = new FactoryController(c.api, { ...c.storage, setItem: () => { throw new Error("storage unavailable"); } }, c.uuid);
