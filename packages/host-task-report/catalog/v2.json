@@ -1,0 +1,56 @@
+{
+  "format": "rbw.task-report.catalog.v2",
+  "catalog_id": "task-report-candidates",
+  "version": 2,
+  "baseline_id": "task-report@ca4a71f",
+  "entries": [
+    {
+      "entry_id": "task-report-f3-001",
+      "source_id": "task-report-concurrency",
+      "bug_type_id": "concurrency",
+      "criteria": [
+        {
+          "criterion_id": "concurrency.lost-acknowledged-change",
+          "version": "1"
+        }
+      ],
+      "check_set": {
+        "check_set_id": "task-report-f3",
+        "version": "2",
+        "data_file": "data/f3.v1.json",
+        "data_sha256": "02db325c908b4f71834f9554239ad4f289a7e7500b6c77f4d647a287c0dbf5b5",
+        "protocol_file": "v2/protocol/f3-repeatability.v2.json",
+        "protocol_sha256": "520fe75734bdc020c35e164c912c1d9673f1d614c051de8e35cf6d1da812e67d"
+      },
+      "target_path": "src/completions/store.ts",
+      "baseline_sha256": "5424120c0110adf3a755fe6a1aed2fcd99d87565dce1c4c84a5d62965f67f93f",
+      "buggy_sha256": "22eb94274610254f2aee10463418af669afb46a1579468cfb11726d7baa3d71c",
+      "buggy_git_tree": "5dd205932f23419ce22874a12d2cb8f4582e859c",
+      "planted_patch": {
+        "file": "f3/planted.patch",
+        "sha256": "d901b154c44fcbed9735270529c143361fcfa48ebce36bb2b29b41cae6f11c78"
+      },
+      "reference_repair": {
+        "file": "f3/repair.patch",
+        "sha256": "552b23d0ac417a6cc917ecc4806afd893236780419cc736b09369ad6fc41f82f",
+        "kind": "revert",
+        "result_sha256": "5424120c0110adf3a755fe6a1aed2fcd99d87565dce1c4c84a5d62965f67f93f"
+      },
+      "clean_reconstruction": {
+        "file": "f3/repair.patch",
+        "sha256": "552b23d0ac417a6cc917ecc4806afd893236780419cc736b09369ad6fc41f82f"
+      },
+      "incident": {
+        "file": "f3/incident.md",
+        "sha256": "eeb5deddff4582da215dc9c13c0afd49e25e355a6adebdbd197879a270eb9ed7"
+      },
+      "presentation": {
+        "title": "An acknowledged completion is missing from the daily report",
+        "observed_failure": "The service answers 201 Created for a completion of an existing task, but the daily completion report for that date does not count it. It was seen only while the service was busy and another request for an unknown task arrived at about the same time.",
+        "how_checked": "The service's own suite of 193 tests runs unchanged on the clean, buggy and reference-fixed copies. Separate verification checks record completions under overlapping requests and compare the daily report with the completions the service acknowledged; control runs repeat the same report check without the overlap.",
+        "repetition_summary": "Each copy starts fresh instances one after another: three for the buggy and reference-fixed copies, one for the clean copy. Each instance runs the original suite once, then 20 valid overlapping trials and 5 valid trials of each of four controls."
+      },
+      "difficulty": "not_assessed"
+    }
+  ]
+}
