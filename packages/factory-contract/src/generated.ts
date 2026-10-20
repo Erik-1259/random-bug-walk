@@ -609,7 +609,7 @@ export interface InterpretedCriterion {
 export interface EligibleSource {
   host_id: HostId;
   source_id: Identifier;
-  entries: NonNegativeInteger;
+  entries: PositiveInteger;
 }
 
 export interface TypeQuantity {
