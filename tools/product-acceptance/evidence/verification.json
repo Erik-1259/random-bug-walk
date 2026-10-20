@@ -10,12 +10,12 @@
   },
   "self_tests": {
     "command": "pnpm --filter @rbw/product-acceptance test --reporter=json",
-    "passed": 369,
+    "passed": 379,
     "failed": 0,
     "skipped": 0,
     "exit_code": 0
   },
-  "test_floor": 369,
+  "test_floor": 379,
   "failing_first": [
     {
       "scope": "final-contract invariant regressions",
@@ -214,6 +214,26 @@
       "failed": 10,
       "skipped": 105,
       "exit_code": 1
+    },
+    {
+      "scope": "uncertain-provider first candidate/create evidence and ordered selection instead of worker-only uncertainty",
+      "passed": 1,
+      "failed": 6,
+      "skipped": 65,
+      "exit_code": 1
+    },
+    {
+      "scope": "uncertain-provider selected source outside the independently pinned input",
+      "passed": 0,
+      "failed": 1,
+      "exit_code": 1
+    },
+    {
+      "scope": "terminal events appended on the same or following reconnect page with the old comparison restored",
+      "passed": 0,
+      "failed": 2,
+      "skipped": 117,
+      "exit_code": 1
     }
   ],
   "local_checks": [
@@ -269,6 +289,12 @@
       "command": "pnpm --filter @rbw/product-acceptance test --reporter=json",
       "meaning": "independent focused review reran the full suite after launch-failure and request-holder fixes",
       "passed": 369,
+      "exit_code": 0
+    },
+    {
+      "command": "pnpm --filter @rbw/product-acceptance test --reporter=json",
+      "meaning": "independent focused review reran the full suite after candidate-attempt and reconnect-history fixes",
+      "passed": 379,
       "exit_code": 0
     }
   ],
@@ -365,6 +391,14 @@
     {
       "finding": "A request awaiting reconciliation could also report a validation holder, then hide it by clearing both fields during reconciliation.",
       "disposition": "Require the pre-reconciliation validation holder to be null before issuing the control. Negative tests keep post-reconciliation evidence clear and verify no reconcile POST occurs. A positive generic-evidence regression preserves legitimate uncertain-validation holders."
+    },
+    {
+      "finding": "Uncertain-provider could pass with only an uncertain worker and no candidate attempt.",
+      "disposition": "Require the documented first candidate selection after worker start, its independently pinned eligible source, and the pinned service profile of one uncertain copy create with a settled worker. Retain all originals and unused zero settlements; no complete end-state fixture is invented."
+    },
+    {
+      "finding": "The reconnect comparison accepted a correct old-history prefix while ignoring newly appended terminal events.",
+      "disposition": "Compare the full reconnect history and require an empty trailing page before intentional reconciliation or validation. Negative regressions reject an extra budget event on the same page or beyond the witnessed cursor."
     }
   ],
   "http_regression_evidence": {

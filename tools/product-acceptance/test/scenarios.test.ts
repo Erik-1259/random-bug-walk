@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
-import { contractRevision, runAcceptance, runProbe, type IsolatedBackend, type Reply } from "../src/runner.ts";
+import { contractRevision, runAcceptance, runProbe, type IsolatedBackend, type Probe, type Reply } from "../src/runner.ts";
 import { integer, object, objects, text } from "../src/invariants.ts";
 const fixture = (name: string) => object(JSON.parse(readFileSync(new URL(`../fixtures/${name}.json`, import.meta.url), "utf8")) as unknown);
 
@@ -189,4 +189,67 @@ it("rejects a missing behavior event despite correct pinned funnel counts", asyn
   s.state.events = objects(s.state.events).filter(e => e.type !== "behavior_checks_passed").map((e, index) => ({ ...e, seq: index + 1 }));
   s.state.next_after = objects(s.state.events).length;
   await expect(runProbe(s.backend, s.probe)).rejects.toThrow("funnel history");
+});
+
+// Synthetic transport setup for the documented first-create uncertainty sequence;
+// this is not a published complete uncertain-provider end-state fixture.
+function uncertainControl() {
+  const s = terminalScenario("operational-error");
+  const probe: Probe = { ...s.probe, scenario: "uncertain-provider", stopCode: "needs_reconciliation" };
+  delete probe.expectedCandidates; delete probe.expectedFunnel;
+  object(s.state.stop_reason).code = "needs_reconciliation";
+  s.state.funnel = { candidates_explored: 0, behavior_checks_passed: 0, requested_criteria_passed: 0, packages_ready: 0 };
+  s.state.events = objects(s.state.events).filter(event => event.type !== "check_finished"
+    && !(event.type === "attention" && object(event.data).code === "worker_unresponsive"));
+  for (const event of objects(s.state.events)) if (event.type === "request_finished") object(event.data).stop_code = "needs_reconciliation";
+  const worker = objects(s.evidence.operations).find(op => op.kind === "worker"); assert(worker);
+  worker.state = "terminal"; worker.settled_microusd = worker.reserved_microusd;
+  const copies = objects(s.evidence.operations).filter(op => op.kind === "candidate_copy");
+  for (const op of copies.slice(1)) { op.state = "terminal"; op.settled_microusd = 0; }
+  s.evidence.provider_calls = objects(s.evidence.provider_calls).filter(call => call.call_name === worker.call_name || call.call_name === copies[0]?.call_name);
+  const normalize = () => {
+    s.state.events = objects(s.state.events).map((event, index) => ({ ...event, seq: index + 1 }));
+    s.state.next_after = objects(s.state.events).length;
+    const ops = objects(s.evidence.operations);
+    const reserved = ops.filter(op => op.settled_microusd === null).reduce((sum, op) => sum + integer(op.reserved_microusd), 0);
+    const spent = ops.reduce((sum, op) => sum + (op.settled_microusd === null ? 0 : integer(op.settled_microusd)), 0);
+    Object.assign(object(s.state.budget), { reserved_microusd: reserved, spent_microusd: spent, committed_microusd: reserved + spent,
+      remaining_microusd: integer(object(s.state.budget).budget_microusd) - reserved - spent });
+  };
+  normalize();
+  return { ...s, probe, worker, copies, normalize };
+}
+it("accepts the first uncertain candidate create with unused originals retained", async () => {
+  const s = uncertainControl(); await expect(runProbe(s.backend, s.probe)).resolves.toBeUndefined();
+});
+it("rejects uncertain-provider on an internally consistent unrelated source", async () => {
+  const s = uncertainControl();
+  const candidate = objects(s.state.candidates)[0]; assert(candidate);
+  candidate.source_id = "synthetic-unrelated-source";
+  for (const event of objects(s.state.events)) if (event.type === "candidate_selected") object(event.data).source_id = candidate.source_id;
+  await expect(runProbe(s.backend, s.probe)).rejects.toThrow("uncertain-provider");
+});
+it.each(["worker-only", "uncertain-worker", "missing-selection", "wrong-selection", "missing-worker-start", "replacement-create"])("rejects uncertain-provider %s despite consistent accounting", async change => {
+  const s = uncertainControl();
+  const first = s.copies[0]; const second = s.copies[1]; assert(first && second);
+  if (change === "worker-only") {
+    s.state.candidates = []; object(s.state.limits).candidates_started = 0;
+    s.state.events = objects(s.state.events).filter(event => event.candidate_id === null);
+    s.evidence.operations = [s.worker];
+    s.evidence.provider_calls = objects(s.evidence.provider_calls).filter(call => call.call_name === s.worker.call_name);
+    s.worker.state = "uncertain"; s.worker.settled_microusd = null;
+  }
+  if (change === "uncertain-worker") {
+    first.state = "terminal"; first.settled_microusd = first.reserved_microusd;
+    s.worker.state = "uncertain"; s.worker.settled_microusd = null;
+  }
+  if (change === "missing-selection") s.state.events = objects(s.state.events).filter(event => event.type !== "candidate_selected");
+  if (change === "wrong-selection") for (const event of objects(s.state.events)) if (event.type === "candidate_selected") event.candidate_id = "ef".repeat(32);
+  if (change === "missing-worker-start") s.state.events = objects(s.state.events).filter(event => event.type !== "worker_started");
+  if (change === "replacement-create") {
+    second.state = "uncertain"; second.settled_microusd = null;
+    s.evidence.provider_calls = [...objects(s.evidence.provider_calls), { call_name: second.call_name, provider: "sandbox", action: "create", at: s.state.created_at }];
+  }
+  s.normalize();
+  await expect(runProbe(s.backend, s.probe)).rejects.toThrow("uncertain-provider");
 });

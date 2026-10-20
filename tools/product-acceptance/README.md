@@ -119,7 +119,12 @@ compare catalog entries, stages, reason codes and linked outcome events without
 fixing generated IDs, timestamps or message text. The duplicate scenario also
 checks that the skipped entry shares the earlier candidate's defect. The
 uncertain-provider scenario has no published candidate end-state fixture, so it
-does not borrow the worker-lost scenario's candidate expectations. Every named
+does not borrow the worker-lost scenario's candidate expectations. Instead, its
+partial sequence requires one selected candidate from the pinned eligible source,
+after worker start, and a matching candidate-copy create that remains uncertain.
+The pinned service profile settles the worker, retains all three copy originals,
+attempts only the first copy and releases the unused copies at zero. Worker-only
+uncertainty cannot satisfy this probe. Every named
 terminal checks its expected attention; ordinary completed requests must show
 no held spend and both slot holders cleared before any subsequent action or reset.
 
@@ -138,6 +143,8 @@ Both slot holders must be clear before any subsequent scenario reset.
 Before an intentional reconciliation or
 validation, every terminal observation retains its budget and attention as well
 as its completed results, starting with the concurrent Start responses.
+Reconnect must return exactly the witnessed terminal history, including an empty
+trailing page; no new event may appear before those intentional operations.
 
 The named failed/error validation probes also read request status and ledger
 evidence after completion. They check the pinned host cost, cleared reservations

@@ -154,6 +154,26 @@ it("does not accept changed terminal identity after reconnect", async () => {
   };
   await expect(runProbe(backend, probe)).rejects.toThrow();
 });
+it.each(["same-page", "next-page"])("rejects terminal history appended on reconnect in %s", async location => {
+  const { backend, request } = scripted(); let reconnected = false;
+  backend.reconnect = () => { reconnected = true; return Promise.resolve(); };
+  backend.request = async (...args) => {
+    const reply = await request(...args);
+    if (reconnected && args[0] === "GET") {
+      const value = object(reply.body);
+      const history = objects(fixture("status-fulfilled").events);
+      const last = history.at(-1); assert(last);
+      const budget = history.findLast(event => event.type === "budget_updated"); assert(budget);
+      const added = { ...structuredClone(budget), seq: integer(last.seq) + 1, at: last.at };
+      const cursor = Number(args[1].split("?after=")[1] ?? 0);
+      const events = [...objects(value.events), added];
+      value.events = location === "next-page" && cursor === 0 ? events.slice(0, history.length) : events;
+      value.next_after = objects(value.events).at(-1)?.seq ?? cursor;
+    }
+    return reply;
+  };
+  await expect(runProbe(backend, probe)).rejects.toThrow("terminal history changed on reconnect");
+});
 it("backs off unavailable status reads without starting a replacement request", async () => {
   const { backend, request } = scripted();
   let outages = 0;
@@ -881,6 +901,11 @@ async function runRecordedFailure(expected: Record<string, unknown>, paged = fal
     if (reply.status === 202 || (reply.status === 200 && args[1].includes("/requests"))) {
       const value = object(JSON.parse(JSON.stringify(expected).replaceAll(text(expected.request_id), text(object(reply.body).request_id))) as unknown);
       if (paged && reply.status === 202) { value.events = objects(value.events).slice(0, 2); value.next_after = 2; }
+      if (args[0] === "GET") {
+        const cursor = Number(args[1].split("?after=")[1] ?? 0);
+        value.events = objects(value.events).filter(event => integer(event.seq) > cursor);
+        value.next_after = objects(value.events).at(-1)?.seq ?? cursor;
+      }
       return { ...reply, body: value };
     }
     return reply;

@@ -265,18 +265,22 @@ export async function runProbe(backend: IsolatedBackend, probe: Probe): Promise<
   let page = reconnect;
   observe(page);
   let checked = 0;
-  while (checked < history.length) {
+  for (;;) {
     const events = objects(page.events);
-    assert(events.length > 0, "previous events disappeared");
+    if (events.length === 0) {
+      assert.equal(checked, history.length, "previous events disappeared");
+      assert.equal(page.next_after, checked, "terminal history changed on reconnect");
+      break;
+    }
     for (const event of events) {
-      if (checked === history.length) break;
+      assert(checked < history.length, "terminal history changed on reconnect");
       assert.deepEqual(event, history[checked++], "previous event changed");
     }
-    if (checked < history.length) {
-      await backend.wait(integer(page.poll_after_ms));
-      page = await read(backend, `${path}?after=${String(checked)}`);
-      observe(page);
-    }
+    assert.equal(page.next_after, checked, "terminal history changed on reconnect");
+    // Read the trailing page too: an exact old-history page can hide new events.
+    await backend.wait(integer(page.poll_after_ms));
+    page = await read(backend, `${path}?after=${String(checked)}`);
+    observe(page);
   }
   checkScenarioStatus(reconnect);
   // No validation or reconciliation runs between these reads. Only paging and
@@ -291,6 +295,7 @@ export async function runProbe(backend: IsolatedBackend, probe: Probe): Promise<
   }
   if (probe.evidence) {
     const evidence = await runEvidence(backend, state);
+    if (probe.scenario === "uncertain-provider") checkUncertainAttempt(state, history, evidence, probe.expectedItems);
     if (state.attention === null) {
       assert.equal(object(state.budget).reserved_microusd, 0, "terminal request left held spend");
       assert.equal(evidence.slot.holder_request_id, null, "terminal request left the factory slot held");
@@ -300,6 +305,39 @@ export async function runProbe(backend: IsolatedBackend, probe: Probe): Promise<
   if (probe.downloads) await runDownloads(backend, state);
   if (probe.reconcile) await runReconciliation(backend, state, history);
   if (probe.validation) await runValidation(backend, state, probe.validation, history);
+}
+
+/** Section 15.1 requires a candidate create, not just worker uncertainty. */
+function checkUncertainAttempt(state: Record<string, unknown>, history: Record<string, unknown>[], evidence: TestEvidence, expectedItems: Record<string, unknown>[]): void {
+  const candidates = objects(state.candidates);
+  assert.equal(candidates.length, 1, "uncertain-provider must attempt the first candidate only");
+  const candidate = candidates[0]; assert(candidate);
+  assert.notEqual(candidate.stage, "skipped", "uncertain-provider skipped its candidate");
+  assert(expectedItems.some(item => item.bug_type_id === candidate.bug_type_id && objects(item.eligible_sources)
+    .some(source => source.host_id === candidate.host_id && source.source_id === candidate.source_id)),
+  "uncertain-provider attempted a source outside the pinned input");
+  assert.equal(object(state.limits).candidates_started, 1, "uncertain-provider must start one candidate");
+  const started = history.filter(event => event.type === "worker_started");
+  const selected = history.filter(event => event.type === "candidate_selected");
+  assert.equal(started.length, 1, "uncertain-provider must start its worker");
+  assert.equal(selected.length, 1, "uncertain-provider must select its first candidate");
+  const start = started[0]; const selection = selected[0]; assert(start && selection);
+  assert(integer(start.seq) < integer(selection.seq), "uncertain-provider selected before worker start");
+  assert.equal(selection.candidate_id, candidate.candidate_id, "uncertain-provider selected a different candidate");
+  assert.equal(selection.host_id, candidate.host_id, "uncertain-provider selected a different host");
+  for (const field of ["source_id", "entry_id"]) {
+    assert.equal(object(selection.data)[field], candidate[field], `uncertain-provider selected a different ${field}`);
+  }
+  const worker = evidence.operations.find(op => op.kind === "worker"); assert(worker);
+  assert.equal(worker.settled_microusd, worker.reserved_microusd, "uncertain-provider left its worker uncertain");
+  // The pinned service reserves all three copies but only attempts the first.
+  // Keep opaque call names and allow the unused originals to settle at zero.
+  const creates = evidence.provider_calls.filter(call => call.action === "create").map(call => call.call_name);
+  const launched = evidence.operations.filter(op => op.kind === "candidate_copy" && creates.includes(op.call_name));
+  assert.equal(launched.length, 1, "uncertain-provider must have one candidate create attempt");
+  const attempt = launched[0]; assert(attempt);
+  assert.equal(attempt.state, "uncertain", "uncertain-provider did not retain candidate uncertainty");
+  assert.equal(attempt.settled_microusd, null, "uncertain-provider prematurely settled its candidate create");
 }
 
 /** Exercise one named deterministic validation scenario after request completion. */
