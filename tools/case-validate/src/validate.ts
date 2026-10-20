@@ -24,8 +24,8 @@ import type {
 import { COPY_STATE_VALUES } from "@rbw/factory-contract";
 import { sha256Hex } from "@rbw/schema";
 import { evaluateMatrix, type CellMatrix } from "./matrix.ts";
-import { PairRefused, verifyPair } from "./verify.ts";
-import { buildWorkspace } from "./workspace.ts";
+import { PairRefused, verifyPair, type VerifiedPair } from "./verify.ts";
+import { buildWorkspace, type Workspace } from "./workspace.ts";
 
 export interface ValidatePairInput {
   bug_case: Uint8Array;
@@ -265,7 +265,8 @@ function entryOf(adapter: HostAdapter, entryId: string): CatalogEntry | null {
  * `error` (contract section 11); every refusal, every adapter fault and every invalid or incomplete copy or cell is
  * `error`. Rejects only when the runner rejects (an uncertain provider outcome) or one of the caller's own
  * callbacks throws: the records collected before it have been passed to onCopy, no further copy runs, and
- * the error is rethrown unchanged.
+ * the error is rethrown unchanged. A workspace that cannot be removed afterwards changes neither: the result
+ * stands, with the leftover named in `diagnostic`.
  */
 export async function validatePair(input: ValidatePairInput): Promise<ValidatePairResult> {
   const packageSha256: PackageHashes = { bug_case: sha256Hex(input.bug_case), validator: sha256Hex(input.validator) };
@@ -281,7 +282,7 @@ export async function validatePair(input: ValidatePairInput): Promise<ValidatePa
     error_code: code,
   });
 
-  let verified;
+  let verified: VerifiedPair;
   try {
     verified = verifyPair(input.bug_case, input.validator);
   } catch (refusal) {
@@ -294,7 +295,7 @@ export async function validatePair(input: ValidatePairInput): Promise<ValidatePa
     return error("unsupported_host", "no host adapter is registered for the package's host", `host_id ${manifest.host_id}`, verified.pair_sha256);
   }
 
-  let workspace;
+  let workspace: Workspace;
   try {
     workspace = await buildWorkspace(verified, input.workdir);
   } catch (refusal) {
@@ -303,7 +304,7 @@ export async function validatePair(input: ValidatePairInput): Promise<ValidatePa
     const reason = refusal instanceof Error ? refusal.message : String(refusal);
     return error("workspace_error", "the harness could not prepare its workspace", reason, verified.pair_sha256);
   }
-  try {
+  const run = async (): Promise<ValidatePairResult> => {
     const protocol = manifest.protocol;
     let plans: Record<CopyState, CopyPlan[]>;
     let availability: HostAvailability | null = null;
@@ -360,7 +361,31 @@ export async function validatePair(input: ValidatePairInput): Promise<ValidatePa
       diagnostic: null,
       error_code: result === "error" ? "cells_invalid" : null,
     };
-  } finally {
+  };
+
+  let outcome: ValidatePairResult;
+  try {
+    outcome = await run();
+  } catch (rejection) {
+    // The rejection is what the caller acts on (an uncertain provider outcome or its own callback's
+    // failure); a workspace left behind is only cleanup and never replaces it.
+    await removeWorkspace(workspace);
+    throw rejection;
+  }
+  const leftover = await removeWorkspace(workspace);
+  if (leftover === null) return outcome;
+  return { ...outcome, diagnostic: outcome.diagnostic === null ? leftover : `${outcome.diagnostic}; ${leftover}` };
+}
+
+/**
+ * Removes the run's workspace. A failure is returned as evaluator-only text, never thrown: the run's result
+ * is already definite (copies may have been paid for), and removal cannot change it.
+ */
+async function removeWorkspace(workspace: Workspace): Promise<string | null> {
+  try {
     await workspace.dispose();
+    return null;
+  } catch (failure) {
+    return `the workspace could not be removed: ${failure instanceof Error ? failure.message : String(failure)}`;
   }
 }
