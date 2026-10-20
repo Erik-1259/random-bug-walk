@@ -1,6 +1,6 @@
 # Bug request contract enforcement
 
-This map lists each requirement of the bug request contract [`bug-request/1`](bug-request-v1.md) (revision 2), the layer that enforces it, the component responsible for it and the tests that cover it. It describes the contract package at this revision and the producers in the packages listed under [Components](#components). Two components are still in open pull requests, and their entries change as those pull requests land.
+This map lists each requirement of the bug request contract [`bug-request/1`](bug-request-v1.md) (revision 2), the layer that enforces it, the component responsible for it and the tests that cover it. It describes the contract package at this revision and the producers in the packages listed under [Components](#components). One component is still in an open pull request, and its entry changes when that pull request lands.
 
 ## What each layer covers
 
@@ -24,7 +24,7 @@ Test files are named without their directory: contract tests are in `packages/fa
 | Spend ledger: request budgets, factory records and events | `packages/spend/` (`migrations/0006_factory.sql`) | on `main` | backend lane |
 | Request page and client adapter | `packages/web/src/factory/client.ts`, `packages/web/src/components/factory-*.tsx` | on `main` | UI lane |
 | Umami host adapter | `packages/host-umami/` | on `main` | Umami lane |
-| Task-report host adapter | `packages/host-task-report/` | open pull request #126 | custom host lane |
+| Task-report host adapter | `packages/host-task-report/` | on `main` | custom host lane |
 | Package format, exporter and `rbw-validate` | `tools/case-package/`, `tools/case-validate/` | on `main` | package lane |
 | API acceptance runner | `tools/product-acceptance/` | open pull request #124 | acceptance lane |
 
