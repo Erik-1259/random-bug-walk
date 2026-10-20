@@ -221,7 +221,8 @@ name. `pin` writes the pin to `catalog/kit-image.v2.json` in one of two modes:
   the registry serves, with architecture `amd64`. Docker must hold the image under that digest,
   as it does after the push or after `docker pull --platform linux/amd64 <repository>@sha256:<digest>`.
   `pin` refuses an image that is not amd64 or whose repository digests do not include the given
-  one. The shared Docker runner of `@rbw/case-validate` and the Sandbox runner start
+  one. It reads only the image Docker holds and never asks the registry, so it runs after the
+  push. The shared Docker runner of `@rbw/case-validate` and the Sandbox runner start
   `<repository>@<digest>`; the local runner checks the image ID under the bare reference, so
   `run` needs a `--tag` pin.
 

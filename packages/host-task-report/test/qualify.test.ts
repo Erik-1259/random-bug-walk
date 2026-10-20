@@ -129,7 +129,7 @@ describe("qualify pin --registry", () => {
     const file = pinFile();
     const registry = parseRegistryReference(PUSHED);
     expect(() => writeRegistryPin(file, registry, inspectLine("arm64", [PUSHED]))).toThrow(new QualifyError(`image ${PUSHED} is for arm64, not amd64`));
-    // A local build that was never pushed has no repository digest.
+    // The classic image store lists no repository digest for a build before its push.
     expect(() => writeRegistryPin(file, registry, inspectLine("amd64", []))).toThrow(new QualifyError(`${PUSHED} is not one of the image's repository digests`));
     expect(() => writeRegistryPin(file, registry, inspectLine("amd64", null))).toThrow(QualifyError);
     expect(() => writeRegistryPin(file, registry, inspectLine("amd64", [`${REPOSITORY}@sha256:${"d4".repeat(32)}`]))).toThrow(QualifyError);
