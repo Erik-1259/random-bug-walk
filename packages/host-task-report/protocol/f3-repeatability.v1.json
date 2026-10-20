@@ -1,0 +1,55 @@
+{
+  "format": "rbw.task-report.protocol.v1",
+  "protocol_id": "f3-repeatability",
+  "version": 1,
+  "baseline_id": "task-report@ca4a71f",
+  "check": {
+    "id": "f3.acknowledged-completion-counted",
+    "version": 1,
+    "data_file": "data/f3.v1.json",
+    "data_sha256": "02db325c908b4f71834f9554239ad4f289a7e7500b6c77f4d647a287c0dbf5b5"
+  },
+  "original_suite": {
+    "on_every_instance": true,
+    "before_checks": true,
+    "required_verdict": "passed",
+    "required_passed": 193
+  },
+  "states": {
+    "buggy": {
+      "copies": 1,
+      "instances": 3
+    },
+    "fixed": {
+      "copies": 1,
+      "instances": 3
+    },
+    "clean": {
+      "copies": 1,
+      "instances": 1
+    }
+  },
+  "instance_order": ["original_suite", "main", "sequential", "valid_partner", "x_alone", "dx_order", "late_reread"],
+  "blocks": {
+    "main": {
+      "valid_target": 20,
+      "max_invalid": 2,
+      "max_top_ups": 10
+    },
+    "control": {
+      "valid_target": 5,
+      "max_invalid": 1,
+      "max_top_ups": 5
+    }
+  },
+  "decision": {
+    "block": "A block runs trials with indices 1, 2, ... until it has valid_target valid trials; each invalid trial is topped up by a trial with the next new index. It is incomplete as soon as it has more than max_invalid invalid trials, or after valid_target + max_top_ups attempts. With these values the invalid ceiling binds first; the top-up cap stays as a hard bound on attempts.",
+    "state_met": "The state's copy ran its declared fresh instances, each passed the original suite with 193 of 193, and every block of every instance completed with every valid trial equal to the data file's expected outcome for the state and kind.",
+    "state_not_met": "A valid trial differs from the expected outcome, or the original suite did not pass on an instance.",
+    "state_incomplete": "Otherwise: a copy is missing, invalid or ran another check or protocol version, an instance did not become ready, or a block is incomplete. An incomplete state is neither reproduction nor a miss.",
+    "qualified": "buggy, fixed and clean are all met."
+  },
+  "invalid_trials": "never a pass and never a detection; recorded with their codes",
+  "retuning": "none after the first counted trial; any change to the data file or to this file is a new version",
+  "natural_bursts": "not part of this protocol"
+}

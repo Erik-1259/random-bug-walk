@@ -328,6 +328,21 @@ async function prove(root: string, gitleaks: string): Promise<number> {
     check(`gitleaks: names differing by ${label} give blocked`, result.code === 1 && result.stdout.toString("utf8") === `blocked\n${secretName}:1\n`);
   }
 
+  // Additional: scan-public finds a runtime-built token in an added path and prints only the path-list position.
+  await git(names, ["reset", "-q", "--hard", namesBase]);
+  const tokenPath = await commitFiles(names, { [`keys/${token}.txt`]: "nothing here\n" }, "feat: synthetic key file");
+  const pathPublic = await runProcess(process.execPath, [cliPath, "scan-public", "--gitleaks", gitleaks, "--range", `${namesBase}..HEAD`], {
+    cwd: names,
+    env: setupEnv,
+  });
+  const pathOutput = pathPublic.stdout.toString("utf8");
+  check(
+    "gitleaks: scan-public finds a token in an added path and reports only its path-list position",
+    pathPublic.code === 1 &&
+      pathOutput.split("\n").slice(0, 2).join("\n") === `credential and attribution checks: blocked\npaths-${tokenPath.slice(0, 12)}:2` &&
+      !(pathOutput + pathPublic.stderr.toString("utf8")).includes(token),
+  );
+
   // Additional: hostile and partial-clone working copies run nothing, with GIT_NO_LAZY_FETCH=0 given to the helper.
   const markers = join(root, "markers");
   await mkdir(markers);
