@@ -2,7 +2,9 @@ import { validateContract } from "@rbw/factory-contract/validate";
 import type { CopyRecord, Event, InterpretedCells } from "@rbw/factory-contract";
 import { canonicalDigest } from "@rbw/schema";
 import { describe, expect, it } from "vitest";
+import { candidateId } from "../src/identity.ts";
 import type { CasePackages, RequestLedger, ValidatorPartInfo } from "../src/ports.ts";
+import { copyEnvelope, entryWorstCase } from "../src/profile.ts";
 import { FakeHostAdapter, TEST_PROFILE, syntheticEntry, syntheticSha } from "../src/testing/catalog.ts";
 import { lostWorkerEvents } from "../src/projection.ts";
 import { UncertainOutcomeError, qualifyingPlan } from "../src/testing/harness.ts";
@@ -61,6 +63,28 @@ const concurrencyOnly = (quantity: number, budget = 1_500_000) => ({
 });
 
 describe("runRequest: delivery", () => {
+  it("reserves each candidate with its entry's protocol from its host adapter, the protocol its worst case counts", async () => {
+    const w = world({ input: fixtureInput("status-fulfilled.json") });
+    const reserved: Parameters<RequestLedger["reserveCandidate"]>[0][] = [];
+    ledgerWith(w, {
+      reserveCandidate: (input) => {
+        reserved.push(structuredClone(input));
+        return w.ledger.reserveCandidate(input);
+      },
+    });
+    expect((await w.run()).stop_code).toBe("fulfilled");
+    expect(reserved.map((input) => input.host_id)).toEqual(["task-report", "umami"]);
+    for (const input of reserved) {
+      const adapter = w.deps.registry.find((candidate) => candidate.host_id === input.host_id);
+      const entry = adapter?.catalog().find((candidate) => candidateId(candidate) === input.candidate_id);
+      if (adapter === undefined || entry === undefined) throw new Error(`the reservation of ${input.candidate_id} names no registry entry`);
+      expect(input.protocol).toEqual(adapter.protocol(entry));
+      expect(input.worst_case_microusd).toBe(entryWorstCase(input.protocol, copyEnvelope(w.deps.profile, input.host_id)));
+    }
+    // The two hosts declare different protocols, so a protocol taken from the wrong adapter fails above.
+    expect(reserved[0]?.protocol.sha256).not.toBe(reserved[1]?.protocol.sha256);
+  });
+
   it("fulfils a two-host request one candidate at a time and settles the worker before finishing", async () => {
     const w = world({ input: fixtureInput("status-fulfilled.json") });
     const result = await w.run();
@@ -969,24 +993,41 @@ describe("runRequest: internal failures and admission edges", () => {
     expect(validateContract("RequestStatus", w.status())).toEqual([]);
   });
 
-  it("finishes needs_reconciliation, ending the candidate, when an adapter fails while the candidate holds its reservation", async () => {
+  /** A registry whose adapter fails its protocol call number `failAt` once armed (after the world interpreted the request). */
+  function failingProtocol(failAt: number): { registry: FakeHostAdapter[]; arm: { armed: boolean } } {
     const arm = { armed: false, calls: 0 };
     class Failing extends FakeHostAdapter {
       override protocol(): ReturnType<FakeHostAdapter["protocol"]> {
         if (arm.armed) arm.calls += 1;
-        // The first call of the run prices the candidate; the second, as it starts, fails.
-        if (arm.calls > 1) throw new Error("the protocol file is unreadable");
+        if (arm.calls >= failAt) throw new Error("the protocol file is unreadable");
         return super.protocol();
       }
     }
-    const registry = [new Failing({ host_id: "task-report", entries: [syntheticEntry({ host_id: "task-report", bug_type_id: "concurrency", n: 1, criteria: [LOST] })] })];
-    const w = world({ input: concurrencyOnly(1), registry });
-    arm.armed = true;
+    return { registry: [new Failing({ host_id: "task-report", entries: [syntheticEntry({ host_id: "task-report", bug_type_id: "concurrency", n: 1, criteria: [LOST] })] })], arm };
+  }
+
+  it("finishes needs_reconciliation, ending the candidate, when an adapter fails while the candidate holds its reservation", async () => {
+    // The run's first protocol call prices the candidate and the second goes with its reservation; the third, as it starts, fails.
+    const failing = failingProtocol(3);
+    const w = world({ input: concurrencyOnly(1), registry: failing.registry });
+    failing.arm.armed = true;
     const result = await w.run();
     expect(result).toMatchObject({ outcome: "operational_error", stop_code: "needs_reconciliation", needs_reconciliation: true });
     expect(ended(w.events.events)).toEqual([{ type: "candidate_incomplete", reason: "incomplete_run" }]);
     expect(w.ledger.calls.map((call) => call.call)).toEqual(["reserveCandidate", "settleWorker"]);
     expect(w.status()).toMatchObject({ attention: { code: "needs_reconciliation" }, budget: { reserved_microusd: 300_000 } });
+  });
+
+  it("finishes operational_error without reserving when the adapter fails as the candidate's reservation is prepared", async () => {
+    const failing = failingProtocol(2);
+    const w = world({ input: concurrencyOnly(1), registry: failing.registry });
+    failing.arm.armed = true;
+    const result = await w.run();
+    expect(result).toMatchObject({ outcome: "operational_error", stop_code: "operational_error", needs_reconciliation: false });
+    expect(ended(w.events.events)).toEqual([{ type: "candidate_incomplete", reason: "incomplete_run" }]);
+    expect(w.ledger.calls.map((call) => call.call)).toEqual(["settleWorker"]);
+    expect(w.events.events.some((event) => event.type === "attention")).toBe(false);
+    expect(w.status().limits.candidates_started).toBe(0);
   });
 
   it("records the selection before ending the candidate when its candidate_selected append fails without committing", async () => {

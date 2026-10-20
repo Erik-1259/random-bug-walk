@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   FACTORY_REQUEST_NAMESPACE,
   FACTORY_VALIDATION_NAMESPACE,
+  budgetKey,
   candidateId,
   caseId,
   copyExecutionId,
@@ -42,6 +43,22 @@ describe("namespaces and roots", () => {
   it("refuses IDs that are not lowercase UUIDs", () => {
     expect(() => requestRoot("00000000-0000-4000-8000-00000000010A")).toThrow(/lowercase UUID/);
     expect(() => validationRoot("x")).toThrow(/lowercase UUID/);
+  });
+
+  it("keys a request's budget by the canonical digest of its kind and request ID", () => {
+    const id = "00000000-0000-4000-8000-000000000101";
+    const key = budgetKey(id);
+    expect(key).toBe(canonicalDigest({ schema_version: 1, kind: "factory.request_budget", request_id: id }).sha256);
+    expect(key).toMatch(/^[0-9a-f]{64}$/);
+    // Pinned: the spend ledger stores budgets under these keys, so the formula must not change.
+    expect(key).toBe("e8bd9cbf3c7fbc3ea27bde0afca3f6932712e06e1755c397ef4ab7ae99d5aca6");
+    expect(budgetKey(id)).toBe(key);
+    expect(budgetKey("00000000-0000-4000-8000-000000000102")).not.toBe(key);
+  });
+
+  it("refuses a budget key for a request ID that is not a lowercase UUID", () => {
+    expect(() => budgetKey("00000000-0000-4000-8000-00000000010A")).toThrow(/lowercase UUID/);
+    expect(() => budgetKey("")).toThrow(/lowercase UUID/);
   });
 
   it("names each copy's execution under its root's namespace", () => {
