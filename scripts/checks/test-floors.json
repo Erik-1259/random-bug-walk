@@ -26,7 +26,7 @@
     "scripts/checks": 197,
     "tools/candidates": 119,
     "tools/case-package": 67,
-    "tools/case-validate": 61,
+    "tools/case-validate": 62,
     "tools/controller": 186,
     "tools/local-runner": 212,
     "tools/neon-ci": 98,

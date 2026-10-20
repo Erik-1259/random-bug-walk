@@ -247,4 +247,21 @@ describe("validatePair runs the copies (synthetic host)", () => {
     expect(outcome.error_code).toBe("adapter_error");
     expect(runner.plans).toHaveLength(0);
   });
+
+  it("refuses copy plans that place an evaluator file the validator package does not hold", async () => {
+    const base = syntheticAdapter({ seeds: ["01"], workdir: parent });
+    const withEvaluatorFiles = (change: (plan: CopyPlan) => CopyPlan["evaluator_files"]): HostAdapter => ({
+      ...base,
+      copyPlans: (state: CopyState, unpacked, protocol) => base.copyPlans(state, unpacked, protocol).map((plan) => ({ ...plan, evaluator_files: change(plan) })),
+    });
+    const changedHash = withEvaluatorFiles((plan) => plan.evaluator_files.map((file) => ({ ...file, sha256: "0".repeat(64) })));
+    const unlisted = withEvaluatorFiles((plan) => [...plan.evaluator_files, { path: "synthetic-unlisted.js", sha256: plan.evaluator_files[0]?.sha256 ?? "0".repeat(64) }]);
+    for (const adapter of [changedHash, unlisted]) {
+      const runner = scriptedRunner(copies, qualifying);
+      const outcome = await validatePair({ ...input(runner), adapters: { "task-report": adapter } });
+      expect(outcome.result).toBe("error");
+      expect(outcome.error_code).toBe("adapter_error");
+      expect(runner.plans).toHaveLength(0);
+    }
+  });
 });
