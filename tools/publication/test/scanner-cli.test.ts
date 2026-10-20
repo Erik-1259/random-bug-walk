@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   PINNED_GITLEAKS_VERSION,
   STUB_LEAK_MARKER,
+  boundedLeakPattern,
   cleanEnv,
   commit,
   forms,
@@ -606,6 +607,35 @@ describe("PUB-02 scanner CLI: gitleaks", () => {
       const all = result.stdout + result.stderr;
       expect(all).not.toContain(path);
       expect(all).not.toContain(STUB_LEAK_MARKER);
+      expect(all).not.toContain(TERM);
+    }
+  });
+
+  it.each([
+    ["a credential", STUB_LEAK_MARKER],
+    ["a credential with dots inside it", STUB_LEAK_MARKER.replaceAll("-", ".")],
+  ])("finds %s that needs a boundary after it in a directory name and before an extension", async (_label, marker) => {
+    const root = tempDir();
+    const repo = initRepo(join(root, "repo"));
+    const tree = {
+      [`cfg/${marker}/notes.md`]: `ok\n${forms.signedOff}: x\n${TERM}\n`,
+      [`keys/${marker}.txt`]: "nothing here\n",
+      "z.txt": "z\n",
+    };
+    const base = commit(repo, { "a.txt": "base\n" }, "chore: base\n");
+    const head = commit(repo, tree, "feat: add\n");
+    const patterns = writePatterns(root, TERMS);
+    const stub = writeStubGitleaks(root, { leakPattern: boundedLeakPattern(marker) });
+    const range = await runCli(["scan", "--patterns", patterns, "--gitleaks", stub.command, "--range", `${base}..HEAD`], { cwd: repo });
+    // The sorted list is cfg, cfg/<marker>, cfg/<marker>/notes.md, keys, keys/<marker>.txt and z.txt.
+    const list = `paths-${short(head)}`;
+    expect(outputLines(range)).toEqual(["blocked", `${list}:2`, `${list}:3`, `${list}:5`]);
+    expect(range.code).toBe(1);
+    const files = await scanFiles(tree, { stub });
+    expectBlocked(files, ["paths:1", "paths:2"]);
+    for (const result of [range, files.result]) {
+      const all = result.stdout + result.stderr;
+      expect(all).not.toContain(marker);
       expect(all).not.toContain(TERM);
     }
   });

@@ -364,6 +364,41 @@ async function prove(root: string, gitleaks: string): Promise<number> {
       !contains(fullPrinted, term),
   );
 
+  // Additional: tokens whose gitleaks rules need a space, quote or line end after the secret, one of them with dots
+  // inside, are found in a directory name and before an extension, in range and files mode and on scan-public. The
+  // file under that directory, which also holds an attribution line and a forbidden term, is reported only at its
+  // path-list position.
+  const pick = (count: number): string => Array.from(randomBytes(count), (byte) => alphabet[byte % alphabet.length]).join("");
+  const bounded: [string, string][] = [
+    ["plain", ["sk", "ant", "api03"].join("-") + "-" + pick(93) + "AA"],
+    ["dotted", ["S", "G"].join("") + "." + pick(22) + "." + pick(43)],
+  ];
+  for (const [label, secret] of bounded) {
+    await git(names, ["reset", "-q", "--hard", namesBase]);
+    const tree = { [`cfg/${secret}/notes.md`]: `ok\n${signedOff}: synthetic\n${term}\n`, [`keys/${secret}.txt`]: "nothing here\n" };
+    const list = `paths-${(await commitFiles(names, tree, "feat: synthetic bounded names")).slice(0, 12)}`;
+    const range = await fullScan(["--range", `${namesBase}..HEAD`]);
+    const filesMode = await fullScan(["--files", ...Object.keys(tree)]);
+    const publicRange = await runProcess(process.execPath, [cliPath, "scan-public", "--gitleaks", gitleaks, "--range", `${namesBase}..HEAD`], {
+      cwd: names,
+      env: setupEnv,
+    });
+    const printed = [range, filesMode, publicRange].map((result) => result.stdout.toString("utf8") + result.stderr.toString("utf8")).join("");
+    // The sorted list is cfg, cfg/<token>, cfg/<token>/notes.md, keys and keys/<token>.txt.
+    const positions = `${list}:2\n${list}:3\n${list}:5`;
+    check(
+      `gitleaks: a ${label} token whose rule needs a boundary after it is found in a directory name and before an extension`,
+      range.code === 1 &&
+        range.stdout.toString("utf8") === `blocked\n${positions}\n` &&
+        filesMode.code === 1 &&
+        filesMode.stdout.toString("utf8") === "blocked\npaths:1\npaths:2\n" &&
+        publicRange.code === 1 &&
+        publicRange.stdout.toString("utf8").startsWith(`credential and attribution checks: blocked\n${positions}\n`) &&
+        !printed.includes(secret) &&
+        !contains(printed, term),
+    );
+  }
+
   // Additional: hostile and partial-clone working copies run nothing, with GIT_NO_LAZY_FETCH=0 given to the helper.
   const markers = join(root, "markers");
   await mkdir(markers);

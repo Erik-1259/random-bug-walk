@@ -14,6 +14,14 @@ export const hookPath = join(packageDir, "hooks", "pre-push");
 export const PINNED_GITLEAKS_VERSION = "8.30.1";
 export const STUB_LEAK_MARKER = ["SYNTHETIC", "STUB", "LEAK"].join("-");
 
+/**
+ * A stub leakPattern for `marker` (letters, "-" and "." only) that, like many gitleaks rules,
+ * needs a word boundary before the secret and a space, quote, ";" or line end after it.
+ */
+export function boundedLeakPattern(marker: string): string {
+  return String.raw`(?:^|\W)` + marker.replaceAll(".", String.raw`\.`) + String.raw`(?=[\s'"\x60;]|$)`;
+}
+
 // Attribution forms are assembled at runtime so this file passes its own scan.
 export const forms = {
   coauthored: ["Co", "authored", "by"].join("-"),
@@ -165,6 +173,11 @@ export interface StubGitleaksOptions {
   hang?: boolean;
   /** Kills the calling process with SIGKILL from a `dir` scan. */
   killParent?: boolean;
+  /**
+   * Reports a line only when this expression matches it, like a gitleaks rule that needs a
+   * boundary after the secret. By default every line containing STUB_LEAK_MARKER is reported.
+   */
+  leakPattern?: string;
 }
 
 export interface StubGitleaks {
@@ -175,8 +188,9 @@ export interface StubGitleaks {
 
 /**
  * Writes a Node script that imitates gitleaks: `version` prints a version and `dir`
- * reports a finding for each line containing STUB_LEAK_MARKER. It records a marker
- * file when `{dir}` was not substituted or a path argument lies outside it.
+ * reports a finding for each line containing STUB_LEAK_MARKER, or matching the
+ * leakPattern option. It records a marker file when `{dir}` was not substituted or a
+ * path argument lies outside it.
  */
 export function writeStubGitleaks(dir: string, options: StubGitleaksOptions = {}): StubGitleaks {
   const scriptPath = join(dir, "stub-gitleaks.mjs");
@@ -192,6 +206,7 @@ export function writeStubGitleaks(dir: string, options: StubGitleaksOptions = {}
     replaceDirectory: options.replaceDirectory ?? null,
     hang: options.hang ?? false,
     killParent: options.killParent ?? false,
+    leakPattern: options.leakPattern ?? null,
     violationMarker,
     callsLog,
     leakMarker: STUB_LEAK_MARKER,
@@ -228,6 +243,8 @@ if (settings.replaceDirectory) {
 if (settings.hang) await new Promise(() => setInterval(() => undefined, 1000));
 if (settings.killParent) process.kill(process.ppid, "SIGKILL");
 const findings = [];
+const leakPattern = settings.leakPattern === null ? null : new RegExp(settings.leakPattern);
+const leaks = (line) => (leakPattern === null ? line.includes(settings.leakMarker) : leakPattern.test(line));
 const walk = (d) => {
   for (const name of readdirSync(d).sort()) {
     const p = join(d, name);
@@ -236,7 +253,7 @@ const walk = (d) => {
     else if (st.isFile() && !(settings.skipPaths !== null && new RegExp(settings.skipPaths).test(p))) {
       const lines = readFileSync(p, "latin1").split("\\n");
       lines.forEach((line, i) => {
-        if (line.includes(settings.leakMarker)) findings.push({ RuleID: "stub", File: p, StartLine: i + 1, Secret: "REDACTED", Match: "REDACTED" });
+        if (leaks(line)) findings.push({ RuleID: "stub", File: p, StartLine: i + 1, Secret: "REDACTED", Match: "REDACTED" });
       });
     }
   }

@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   STUB_LEAK_MARKER,
+  boundedLeakPattern,
   cleanEnv,
   commit,
   forms,
@@ -109,6 +110,20 @@ describe("PUB-02 public-source route: scan-public", () => {
     const stub = writeStubGitleaks(root);
     const result = await runCli(["scan-public", "--gitleaks", stub.command, "--range", `${base}..HEAD`], { cwd: repo });
     expectPublic(result, "blocked", [`paths-${short(head)}:1`]);
+    expect(result.stdout + result.stderr).not.toContain(STUB_LEAK_MARKER);
+  });
+
+  it("finds a credential that needs a boundary after it in a directory name and before an extension", async () => {
+    const root = tempDir();
+    const repo = initRepo(join(root, "repo"));
+    const base = commit(repo, { "a.txt": "base\n" }, "chore: base\n");
+    const tree = { [`cfg/${STUB_LEAK_MARKER}/notes.md`]: `ok\n${forms.signedOff}: x\n`, [`keys/${STUB_LEAK_MARKER}.txt`]: "x\n" };
+    const head = commit(repo, tree, "docs: add\n");
+    const stub = writeStubGitleaks(root, { leakPattern: boundedLeakPattern(STUB_LEAK_MARKER) });
+    const result = await runCli(["scan-public", "--gitleaks", stub.command, "--range", `${base}..HEAD`], { cwd: repo });
+    // The sorted list is cfg, cfg/<marker>, cfg/<marker>/notes.md, keys and keys/<marker>.txt.
+    const list = `paths-${short(head)}`;
+    expectPublic(result, "blocked", [`${list}:2`, `${list}:3`, `${list}:5`]);
     expect(result.stdout + result.stderr).not.toContain(STUB_LEAK_MARKER);
   });
 
