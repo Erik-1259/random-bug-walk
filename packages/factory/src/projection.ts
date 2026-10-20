@@ -1,6 +1,7 @@
 // RequestStatus (contract section 8) projected from the request record, its events, the per-case
-// evidence, the latest validation run of each case, the heartbeat and the ledger's budget status, with
-// an injected clock. Counts come from events only and count distinct candidates.
+// evidence, the latest validation run of each case, the heartbeat and the ledger's budget status.
+// Counts come from events only and count distinct candidates, and so does attention: the clock-based
+// worker_unresponsive changes are events the status side appends (workerAttentionEvent).
 //
 // A candidate counts as started (`started_at`, `limits.candidates_started`) from its selection while
 // it is in flight, and keeps that once something after its selection shows it started: a
@@ -47,6 +48,7 @@ export interface ProjectionInput {
   last_heartbeat_at: string | null;
   /** A stop record exists. */
   stop_recorded: boolean;
+  /** The read's time. The projection derives nothing from it; attention comes from the events. */
   now: Date;
   /** The `after` query parameter. */
   after: number;
@@ -301,10 +303,9 @@ export function projectStatus(input: ProjectionInput): RequestStatus {
   const committed = input.budget.reserved_microusd + input.budget.spent_microusd;
   const remaining = budgetRoom(input.budget);
 
-  let attention: Attention | null = folded.attention === null ? null : { code: folded.attention, message: ATTENTION_TEXT[folded.attention] };
-  if (attention === null && state !== "finished" && heartbeatAge(input.last_heartbeat_at, request.created_at, input.now) > UNRESPONSIVE_AFTER_MS) {
-    attention = { code: "worker_unresponsive", message: ATTENTION_TEXT.worker_unresponsive };
-  }
+  // Attention comes from the events only (contract section 8.1): a stale heartbeat shows worker_unresponsive
+  // once the status side appended its raise (workerAttentionEvent), never from this read's clock.
+  const attention: Attention | null = folded.attention === null ? null : { code: folded.attention, message: ATTENTION_TEXT[folded.attention] };
 
   const after = input.events.filter((event) => event.seq > input.after);
   const page = after.slice(0, MAX_EVENTS_PER_RESPONSE);

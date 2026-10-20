@@ -94,11 +94,27 @@ describe("status projection", () => {
     expect(validateContract("RequestStatus", projected)).toEqual([]);
   });
 
-  it("shows worker_unresponsive after 60 s without a heartbeat while the request is active", () => {
+  it("reads worker_unresponsive from events only: shown once its raise is appended, gone once its clear is", async () => {
     const status = statusFixture("status-running.json");
     const heartbeat = Date.parse(status.last_heartbeat_at ?? "");
-    expect(projectStatus(inputsOf(status, { now: new Date(heartbeat + 60_000) })).attention).toBeNull();
-    expect(projectStatus(inputsOf(status, { now: new Date(heartbeat + 60_001) })).attention?.code).toBe("worker_unresponsive");
+    const stale = new Date(heartbeat + 61_000);
+    const store = await storeOf(status.events);
+    const project = (lastHeartbeat: string | null, now: Date) => projectStatus(inputsOf(status, { events: store.events, last_heartbeat_at: lastHeartbeat, now }));
+    // A stale heartbeat with no event is not attention: the status side appends the raise (contract section 8.1).
+    expect(project(status.last_heartbeat_at, stale).attention).toBeNull();
+    const raise = workerAttentionEvent({ events: store.events, last_heartbeat_at: status.last_heartbeat_at, created_at: status.created_at, now: stale });
+    if (raise === null) throw new Error("a heartbeat 61 s old raises worker_unresponsive");
+    await store.append(raise);
+    expect(project(status.last_heartbeat_at, stale).attention?.code).toBe("worker_unresponsive");
+    // A heartbeat that resumed changes nothing until its clear is appended.
+    const resumed = new Date(heartbeat + 90_000).toISOString();
+    const later = new Date(heartbeat + 90_500);
+    expect(project(resumed, later).attention?.code).toBe("worker_unresponsive");
+    const clear = workerAttentionEvent({ events: store.events, last_heartbeat_at: resumed, created_at: status.created_at, now: later });
+    if (clear === null) throw new Error("a resumed heartbeat clears worker_unresponsive");
+    await store.append(clear);
+    expect(project(resumed, later).attention).toBeNull();
+    expect(validateContract("RequestStatus", project(resumed, later))).toEqual([]);
   });
 
   it("shows stopping once a stop is recorded and the request has not finished", () => {
