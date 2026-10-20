@@ -6,9 +6,9 @@
   "isolated_target_verified": true,
   "acceptance_executed": false,
   "summary": {
-    "passed": 4,
+    "passed": 3,
     "failed": 0,
-    "unavailable": 4
+    "unavailable": 5
   },
   "scenarios": [
     {
@@ -23,11 +23,13 @@
     },
     {
       "id": "quantities",
-      "status": "passed",
+      "status": "unavailable",
       "checks": [
         "sources-exhausted"
       ],
-      "dependencies": []
+      "dependencies": [
+        "A published startable scenario with unequal requested quantities and pinned per-item delivered/missing counts is unavailable; named multi-item inputs request 1/1."
+      ]
     },
     {
       "id": "shared-budget",

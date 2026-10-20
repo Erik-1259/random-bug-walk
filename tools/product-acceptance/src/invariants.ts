@@ -125,6 +125,37 @@ export function checkCriteriaEvents(value: unknown, history: unknown, completeHi
   }
 }
 
+/** Named fixture outcomes use catalog entries; generated identities stay opaque. */
+export function checkScenarioCandidates(value: unknown, expected: Record<string, unknown>[], history: Record<string, unknown>[]): void {
+  const candidates = objects(object(value).candidates);
+  const key = (candidate: Record<string, unknown>) => JSON.stringify([candidate.host_id, candidate.source_id, candidate.entry_id]);
+  assert.deepEqual(candidates.map(key).sort(), expected.map(key).sort(), "candidates differ from pinned scenario");
+  const meaning = (candidate: Record<string, unknown>) => ({
+    host_id: candidate.host_id, bug_type_id: candidate.bug_type_id, source_id: candidate.source_id, entry_id: candidate.entry_id,
+    stage: candidate.stage, reason: candidate.reason === null ? null : object(candidate.reason).code,
+    item_key: candidate.item_key, has_case: candidate.case_id !== null,
+  });
+  const terminalEvents = history.filter(event => ["candidate_rejected", "candidate_invalid", "candidate_incomplete", "candidate_skipped"].includes(text(event.type)));
+  for (const event of terminalEvents) assert(candidates.some(candidate => candidate.candidate_id === event.candidate_id), "candidate outcome event has no candidate");
+  for (const pinned of expected) {
+    const actual = candidates.find(candidate => key(candidate) === key(pinned)); assert(actual);
+    assert.deepEqual(meaning(actual), meaning(pinned), "candidate outcome differs from pinned scenario");
+    for (const other of expected) {
+      const counterpart = candidates.find(candidate => key(candidate) === key(other)); assert(counterpart);
+      assert.equal(actual.defect_id === counterpart.defect_id, pinned.defect_id === other.defect_id, "candidate defect relationship differs from pinned scenario");
+    }
+    const events = terminalEvents.filter(event => event.candidate_id === actual.candidate_id);
+    if (pinned.reason === null) assert.equal(events.length, 0, "qualified candidate has an unsuccessful outcome event");
+    else {
+      assert.equal(events.length, 1, "candidate has missing or duplicate outcome events");
+      const event = events[0]; assert(event);
+      assert.equal(event.type, `candidate_${text(pinned.stage)}`);
+      assert.deepEqual(event.data, { reason: object(pinned.reason).code }, "candidate event reason differs from pinned scenario");
+      for (const field of ["host_id", "item_key", "case_id"]) assert.equal(event[field], actual[field], "candidate outcome event identifies another result");
+    }
+  }
+}
+
 /** Checks public response invariants, not provider side effects or package replay. */
 export function checkStatus(value: unknown): void {
   const s = object(value);

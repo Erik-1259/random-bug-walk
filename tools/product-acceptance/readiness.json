@@ -25,6 +25,7 @@
       "status": "unavailable",
       "checks": [],
       "dependencies": [
+        "A published startable scenario with unequal requested quantities and pinned per-item delivered/missing counts is unavailable; named multi-item inputs request 1/1.",
         "No verified isolated backend was selected."
       ]
     },

@@ -68,9 +68,9 @@ self-tests and local checks separately. `readiness.json` is the no-backend repor
 | Group | Implemented checks | Remaining coverage dependency |
 | --- | --- | --- |
 | identity | Overlapping and repeated starts, conflict refusal, stable identity, one worker reservation and no duplicate create call names | Durable request/job identities are not exposed by `TestEvidence` |
-| quantities | Unequal per-item quantities, independent expected delivery/missing counts, case ownership, type totals and pinned interpretation | Durable backend integration |
+| quantities | Separate described items, independent expected delivery/missing counts, case ownership, type totals and pinned interpretation | A startable unequal-quantity scenario with expected per-item counts; durable backend integration |
 | shared-budget | One request budget, every observed response within the deterministic limit, original reservation and settlement accounting | Evidence does not associate copy operations with hosts |
-| qualification | Duplicate, incomplete, rejected and wrong-failure candidates cannot deliver; demonstrated criteria match event history and cases; default difficulty stays unassessed | No named `setup_failed` scenario; real qualification is not run |
+| qualification | Pinned candidate stages and reasons with linked rejection/skip/incomplete events; duplicate defect relationships; demonstrated criteria match cases; default difficulty stays unassessed | No named `setup_failed` scenario; real qualification is not run |
 | unsupported | Pinned unsupported combinations, description, source and difficulty outcomes; start refusal; unknown host/type errors | Real interpretation beyond the named test scenarios |
 | stops | Partial/zero exhaustion, budget stop, cancellation, worker loss and uncertain spend; retained cases and reconciliation | Durable worker integration and actual operational failure recovery |
 | continuity | Repeated reads, reconnect, frozen terminal results, contiguous event history and reconciliation | Persistence across a service restart is not exercised |
@@ -82,6 +82,21 @@ The named probes are `two-host-fulfilled`, `partial-budget`, `sources-exhausted`
 Each obtains a fresh interpretation hash from the service. Synthetic fixture
 hashes are not sent as live interpretations. The runner honors polling hints and
 status backoff; reaching its observation limit reports unavailable.
+
+The runnable multi-item fixtures request 1/1. Their separate outcomes exercise
+item ownership and count reconciliation, but do not test unequal requested
+quantities. The quantities group therefore remains unavailable until a published
+startable scenario provides unequal quantities and expected delivered/missing
+counts. The service's fixture-only controls do not accept an invented input.
+
+Candidate expectations come from each scenario's pinned end-state fixture and
+compare catalog entries, stages, reason codes and linked outcome events without
+fixing generated IDs, timestamps or message text. The duplicate scenario also
+checks that the skipped entry shares the earlier candidate's defect. The
+uncertain-provider scenario has no published candidate end-state fixture, so it
+does not borrow the worker-lost scenario's candidate expectations. Every named
+terminal checks its expected attention; ordinary completed requests must show
+no held spend and both slot holders cleared before any subsequent action or reset.
 
 Reconciliation must return a `200 RequestStatus`. Both that response and later
 status reads must retain terminal data and event history and settle the previously

@@ -10,12 +10,12 @@
   },
   "self_tests": {
     "command": "pnpm --filter @rbw/product-acceptance test --reporter=json",
-    "passed": 208,
+    "passed": 249,
     "failed": 0,
     "skipped": 0,
     "exit_code": 0
   },
-  "test_floor": 208,
+  "test_floor": 249,
   "failing_first": [
     {
       "scope": "final-contract invariant regressions",
@@ -91,6 +91,19 @@
       "scope": "new reconciliation transitions and pre-action terminal budget/attention continuity",
       "passed": 62,
       "failed": 13,
+      "exit_code": 1
+    },
+    {
+      "scope": "ordinary terminal slot release, pinned candidate outcomes/events and truthful unequal-quantity availability",
+      "passed": 7,
+      "failed": 33,
+      "exit_code": 1
+    },
+    {
+      "scope": "ordinary terminal retains open spend with consistent ledger totals and a free slot",
+      "failed": 1,
+      "passed": 0,
+      "skipped": 40,
       "exit_code": 1
     }
   ],
@@ -177,6 +190,18 @@
     {
       "finding": "Terminal Start observations excluded budget and attention, allowing later responses to silently replace them before any post-completion action.",
       "disposition": "Include budget and attention in every pre-action terminal continuity baseline, including accepted, concurrent replay and repeated Start responses."
+    },
+    {
+      "finding": "Ordinary terminal probes could retain a factory slot until the next reset without failing.",
+      "disposition": "Compare expected terminal attention and require zero held spend and both slot holders cleared in read-only evidence before any follow-up action or reset."
+    },
+    {
+      "finding": "Wrong-failure and related negative candidate paths could report correct counts while omitting or relabeling the candidate outcome.",
+      "disposition": "Compare pinned catalog entries, stages, reason codes, item/case ownership and defect relationships, plus linked rejection/skip/incomplete events; leave uncertain-provider candidate details unpinned because its end state is not specified."
+    },
+    {
+      "finding": "The quantities group claimed unequal requested quantities although runnable multi-item fixtures request 1/1.",
+      "disposition": "Mark that coverage unavailable and document the exact missing startable unequal-quantity control; retain existing separate-item count checks without inventing inputs."
     }
   ]
 }

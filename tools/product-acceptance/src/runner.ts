@@ -5,7 +5,7 @@ import { checkEvidence } from "./evidence.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { isDeepStrictEqual } from "node:util";
-import { checkCriteriaEvents, checkStatus, checkValidation, integer, object, objects, text } from "./invariants.ts";
+import { checkCriteriaEvents, checkScenarioCandidates, checkStatus, checkValidation, integer, object, objects, text } from "./invariants.ts";
 
 export const contractRevision = "66651d67fcb09c402b25d9688ea492c0e69e1c2b";
 export const scenarioIds = ["identity", "quantities", "shared-budget", "qualification", "unsupported", "stops", "continuity", "downloads"] as const;
@@ -26,6 +26,8 @@ export interface Probe {
   expectedDelivery: string;
   expectedItems: Record<string, unknown>[];
   expectedCounts: Record<string, unknown>[];
+  expectedCandidates?: Record<string, unknown>[];
+  expectedAttention?: string | null;
   concurrent?: boolean;
   cancel?: boolean;
   validation?: "failed" | "error";
@@ -178,6 +180,8 @@ export async function runProbe(backend: IsolatedBackend, probe: Probe): Promise<
   assert.equal(state.delivery, probe.expectedDelivery, "delivery differs from pinned scenario");
   assert.equal(state.outcome, probe.outcome);
   assert.equal(object(state.stop_reason).code, probe.stopCode);
+  assert.equal(state.attention === null ? null : object(state.attention).code, probe.expectedAttention ?? null, "attention differs from pinned scenario");
+  if (probe.expectedCandidates) checkScenarioCandidates(state, probe.expectedCandidates, history);
   await backend.reconnect();
   const reconnect = await read(backend, `${path}?after=0`);
   let page = reconnect;
@@ -207,7 +211,14 @@ export async function runProbe(backend: IsolatedBackend, probe: Probe): Promise<
     observe(again);
     for (const field of ["outcome", "items", "cases"]) assert.deepEqual(again[field], state[field]);
   }
-  if (probe.evidence && !probe.validation) await runEvidence(backend, state);
+  if (probe.evidence) {
+    const evidence = await runEvidence(backend, state);
+    if (state.attention === null) {
+      assert.equal(object(state.budget).reserved_microusd, 0, "terminal request left held spend");
+      assert.equal(evidence.slot.holder_request_id, null, "terminal request left the factory slot held");
+      assert.equal(evidence.slot.holder_validation_id, null, "terminal request left a validation slot holder");
+    }
+  }
   if (probe.downloads) await runDownloads(backend, state);
   if (probe.reconcile) await runReconciliation(backend, state, history);
   if (probe.validation) await runValidation(backend, state, probe.validation, history);
@@ -473,6 +484,9 @@ function probes(): { groups: ScenarioId[]; probe: Probe }[] {
     const input = object(interpretation.input);
     return { groups, probe: {
     scenario, input, outcome, stopCode, expectedDelivery: text(expected.delivery), expectedItems: objects(interpretation.items), expectedCounts: objects(expected.items),
+    expectedAttention: expected.attention === null ? null : text(object(expected.attention).code),
+    // The uncertain-provider control specifies no candidate end-state fixture.
+    ...(scenario === "uncertain-provider" ? {} : { expectedCandidates: objects(expected.candidates) }),
     concurrent: scenario === "two-host-fulfilled", cancel: scenario === "cancel-midway",
     reconcile: scenario === "worker-lost" || scenario === "uncertain-provider",
     downloads: scenario === "two-host-fulfilled", evidence: true,
@@ -482,7 +496,7 @@ function probes(): { groups: ScenarioId[]; probe: Probe }[] {
 interface Result { id: ScenarioId; status: "passed" | "failed" | "unavailable"; checks: string[]; dependencies: string[] }
 const gaps: Record<ScenarioId, string[]> = {
   identity: ["Durable request/job identities are not exposed by TestEvidence; worker reservations alone do not prove durable job uniqueness."],
-  quantities: [],
+  quantities: ["A published startable scenario with unequal requested quantities and pinned per-item delivered/missing counts is unavailable; named multi-item inputs request 1/1."],
   "shared-budget": ["TestEvidence does not associate copy operations with hosts; cross-host reservation attribution remains unavailable."],
   qualification: ["A deterministic setup_failed candidate control is not named in revision 2."],
   unsupported: [],
