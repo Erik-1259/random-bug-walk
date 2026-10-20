@@ -12,14 +12,14 @@ export const CHECKED_DOCS: readonly string[] = ["docs/uc1-preregistration.md", "
 
 /**
  * The single docs-path rule. A file that a test or check reads must never match it, which is
- * why root Markdown other than README.md, Markdown inside code directories and CHECKED_DOCS
- * are excluded.
+ * why root Markdown other than README.md, Markdown inside code directories (a README.md there
+ * too: package tests read their own README's commands and hashes) and CHECKED_DOCS are excluded.
  */
 export function isDocsPath(path: string): boolean {
   if (CHECKED_DOCS.includes(path)) {
     return false;
   }
-  if (path === "LICENSE" || path === "README.md" || path.endsWith("/README.md")) {
+  if (path === "LICENSE" || path === "README.md") {
     return true;
   }
   return path.startsWith("docs/") && (path.endsWith(".md") || path.endsWith(".mdx"));
