@@ -5,7 +5,7 @@
 //
 // Prints the store's index SHA-256. Exit 0 on success, 1 when an input is not the pinned one,
 // 2 for a usage error.
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
@@ -34,6 +34,9 @@ if (import.meta.main) {
       if (!(error instanceof UmamiRefusal)) throw error;
       process.stderr.write(`refused ${error.message}\n`);
       process.exitCode = 1;
+    } finally {
+      // The work directory holds only the exported source; the store is written under --dest.
+      await rm(work, { recursive: true, force: true });
     }
   }
 }

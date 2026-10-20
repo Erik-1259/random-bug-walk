@@ -1,7 +1,9 @@
 // The prepare step over a fake Docker layer that serves `docker cp` archives built here; no
 // container is created or started for real.
-import { readFileSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { sha256Hex } from "@rbw/schema";
 import type { Docker } from "@rbw/local-runner";
 import { pack } from "tar-stream";
@@ -10,6 +12,7 @@ import { buildUmamiAdapter } from "../src/adapter.ts";
 import { UmamiRefusal } from "../src/errors.ts";
 import { prepareStore } from "../src/prepare.ts";
 import type { PlantedDerivation, PrepareOptions } from "../src/prepare.ts";
+import { UMAMI_PINS } from "../src/pins.ts";
 import type { UmamiPins } from "../src/pins.ts";
 import { openStore } from "../src/store.ts";
 import { SYNTHETIC_CLEAN_TARGET, SYNTHETIC_PLANTED_TARGET, cleanupTemp, recordingNewDir, repoFixture, syntheticSource, syntheticWorld, tempDir } from "./support.ts";
@@ -206,5 +209,26 @@ describe("prepareStore", () => {
     const { pins } = world;
     // The synthetic clean file is not the pinned image's, so the default derivation refuses it.
     await expect(prepareStore(fakeDocker(fakeImage(world), []), options(world), pins)).rejects.toThrow(/base_hash_mismatch/);
+  });
+});
+
+describe("prepare-cli", () => {
+  it("removes its work directory when it refuses an input, after the export has filled it", async () => {
+    const files = tempDir("rbw-host-umami-cli-");
+    // A docker on PATH that serves the pinned digest, a one-file app tree and a manifest that is not the pinned one.
+    writeFileSync(join(files, "app.tar"), await tarOf([{ name: "app/" }, { name: "app/README.md", content: Buffer.from("synthetic\n") }]));
+    writeFileSync(join(files, "manifest.tar"), await tarOf([{ name: "image-manifest.json", content: MANIFEST }]));
+    const script = ["#!/bin/sh", `echo "$*" >> '${files}/commands.log'`, 'case "$1 $2" in', `  "image inspect") echo '${UMAMI_PINS.kit.digest}' ;;`, `  "cp "*:/workspace/app) cat '${files}/app.tar' ;;`, `  "cp "*) cat '${files}/manifest.tar' ;;`, "esac", ""].join("\n");
+    writeFileSync(join(files, "docker"), script, { mode: 0o755 });
+    const temp = tempDir("rbw-host-umami-tmp-");
+    const world = kitWorld();
+    const { suite, incident } = inputs(world);
+    const cli = fileURLToPath(new URL("../src/prepare-cli.ts", import.meta.url));
+    const args = ["--image", "synthetic-kit:local", "--dest", join(files, "store"), "--original-suite", suite, "--incident", incident];
+    const run = spawnSync(process.execPath, [cli, ...args], { encoding: "utf8", env: { ...process.env, PATH: `${files}:${process.env.PATH ?? ""}`, TMPDIR: temp } });
+    expect(run.stderr).toBe("refused store_tree_mismatch: image manifest is not the pinned one\n");
+    expect(run.status).toBe(1);
+    expect(readFileSync(join(files, "commands.log"), "utf8")).toMatch(/^cp \S+:\/workspace\/app -$/m);
+    expect(readdirSync(temp)).toEqual([]);
   });
 });
