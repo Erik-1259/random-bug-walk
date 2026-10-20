@@ -145,6 +145,16 @@ function shape(status: RequestStatus) {
   };
 }
 
+/** Contract section 8.2: a candidate has started checks once its first check_finished is recorded; only then is it explored and checking. */
+function expectExploredByChecks(current: RequestStatus): void {
+  const checked = new Set(current.events.flatMap((event) => (event.type === "check_finished" && event.candidate_id !== null ? [event.candidate_id] : [])));
+  expect(current.funnel.candidates_explored).toBe(checked.size);
+  for (const candidate of current.candidates) if (candidate.stage === "checking") expect(checked.has(candidate.candidate_id)).toBe(true);
+}
+
+/** Whether the last event is the reservation of the candidate selected just before it. */
+const justReserved = (current: RequestStatus): boolean => current.events.at(-2)?.type === "candidate_selected" && current.events.at(-1)?.type === "budget_updated";
+
 function expectBudgetArithmetic(current: RequestStatus): void {
   const { budget } = current;
   expect(budget.committed_microusd).toBe(budget.reserved_microusd + budget.spent_microusd);
@@ -176,6 +186,7 @@ describe("scenarios", () => {
     for (const earlier of seen) {
       expect(earlier.events).toEqual(last.events.slice(0, earlier.events.length));
       expectBudgetArithmetic(earlier);
+      expectExploredByChecks(earlier);
     }
     expect(last.request_id).toBe(REQUEST_ID);
     for (const item of last.cases) expect(item.provenance.request_id).toBe(REQUEST_ID);
@@ -232,11 +243,21 @@ describe("scenarios", () => {
 });
 
 describe("funnel (contract section 8.2)", () => {
-  it("counts a candidate as explored once its checks start, so one selected and then skipped never counts", async () => {
+  it("counts a candidate as explored from its first check_finished, so one reserved but unchecked, or selected and then skipped, never counts", async () => {
     const w = makeWorld();
     await reset(w, "partial-budget");
     await start(w, "partial-budget");
     const seen = await runToEnd(w, "partial-budget");
+    // The first candidate's reservation is recorded before its first check finishes: it stays selected and unexplored.
+    const reserved = seen.filter(justReserved);
+    expect(reserved.length).toBeGreaterThan(0);
+    for (const current of reserved) {
+      expect(current.candidates[0]?.stage).toBe("selected");
+      expect(current.funnel.candidates_explored).toBe(0);
+    }
+    const checking = seen.filter((current) => current.candidates[0]?.stage === "checking");
+    expect(checking.length).toBeGreaterThan(0);
+    for (const current of checking) expect(current.funnel.candidates_explored).toBe(1);
     const selected = seen.filter((current) => current.candidates[1]?.stage === "selected");
     expect(selected.length).toBeGreaterThan(0);
     for (const current of selected) expect(current.funnel.candidates_explored).toBe(1);
@@ -259,6 +280,27 @@ describe("funnel (contract section 8.2)", () => {
     expect(last?.candidates.map((candidate) => [candidate.stage, candidate.reason?.code])).toEqual([["incomplete", "stopped"]]);
     expect(last?.funnel.candidates_explored).toBe(0);
     expect((await evidence(w)).operations.map((op) => op.kind)).toEqual(["worker"]);
+  });
+
+  it("does not count a candidate stopped between its reservation and its first check_finished", async () => {
+    const w = makeWorld();
+    await reset(w, "two-host-fulfilled");
+    await start(w, "two-host-fulfilled");
+    let current = await status(w);
+    for (let poll = 0; !justReserved(current); poll += 1) {
+      if (poll > 100) throw new Error("synthetic: no candidate was reserved");
+      w.clock.ms += STEP_MS;
+      current = await status(w);
+    }
+    expect(current.candidates.map((candidate) => candidate.stage)).toEqual(["selected"]);
+    expect(current.funnel.candidates_explored).toBe(0);
+    expect((await postStop(request(`${STATUS_PATH}/stop`, { body: {} }), w.server, { request_id: REQUEST_ID })).status).toBe(200);
+    const last = (await runToEnd(w, "two-host-fulfilled")).at(-1);
+    expect(last?.events.filter((event) => event.type === "check_finished")).toEqual([]);
+    expect(last?.candidates.map((candidate) => [candidate.stage, candidate.reason?.code])).toEqual([["incomplete", "stopped"]]);
+    expect(last?.funnel.candidates_explored).toBe(0);
+    expect(last?.limits.candidates_started).toBe(1);
+    expect((await evidence(w)).operations.map((op) => op.kind)).toEqual(["worker", "candidate_copy", "candidate_copy", "candidate_copy"]);
   });
 });
 
@@ -346,6 +388,8 @@ describe("worker-lost and reconciliation", () => {
     const last = (await runToEnd(w, "uncertain-provider")).at(-1);
     expect([last?.outcome, last?.stop_reason?.code, last?.delivery, last?.attention?.code]).toEqual(["operational_error", "needs_reconciliation", "none", "needs_reconciliation"]);
     expect(last?.candidates.map((candidate) => [candidate.stage, candidate.reason?.code])).toEqual([["incomplete", "incomplete_run"]]);
+    // Its copy's create was uncertain, so no check finished: the candidate never counts as explored.
+    expect(last?.funnel.candidates_explored).toBe(0);
     const proof = await evidence(w);
     expect(proof.operations.map((op) => [op.kind, op.state, op.reserved_microusd, op.settled_microusd])).toEqual([
       ["worker", "terminal", TEST_PROFILE.worker_microusd, TEST_PROFILE.worker_microusd],

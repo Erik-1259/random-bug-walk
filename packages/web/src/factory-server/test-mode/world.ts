@@ -914,6 +914,8 @@ export class TestWorld implements FactoryServerPorts, FactoryTestControls {
     // The request budget's remaining amount after the last budget event, and when the request finished.
     let remaining = req.interpretation.input.budget_microusd;
     let remainingAtFinish = remaining;
+    // Candidates with a recorded check_finished, which have started checks (contract section 8.2).
+    const checked = new Set<string>();
     const update = (id: string | null, change: Partial<Candidate>): void => {
       const found = id === null ? undefined : candidates.get(id);
       if (found !== undefined && id !== null) candidates.set(id, { ...found, ...change });
@@ -940,6 +942,7 @@ export class TestWorld implements FactoryServerPorts, FactoryTestControls {
           break;
         }
         case "check_finished":
+          if (event.candidate_id !== null) checked.add(event.candidate_id);
           update(event.candidate_id, { stage: "checking" });
           break;
         case "behavior_checks_passed":
@@ -977,9 +980,9 @@ export class TestWorld implements FactoryServerPorts, FactoryTestControls {
       return { bug_type_id: total.bug_type_id, requested: total.quantity, delivered: count, missing: Math.max(0, total.quantity - count) };
     });
     const started = [...candidates.values()].filter((candidate) => candidate.stage !== "skipped").length;
-    // Explored counts candidates whose checks started (contract section 8.2): their reservation creates their
-    // copies' sandboxes. A candidate skipped after its selection, or stopped before its reservation, never counts.
-    const explored = req.reserved.length;
+    // Explored counts candidates whose checks started (contract section 8.2), from their first check_finished on.
+    // A candidate only selected, or reserved and then stopped, skipped or halted before a check finished, never counts.
+    const explored = checked.size;
     const budget = this.budget(req);
     const events = req.events.filter((event) => event.seq > after).slice(0, 200);
     const created = iso(req.createdMs);
