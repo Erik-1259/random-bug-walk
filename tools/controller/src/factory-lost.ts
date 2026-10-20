@@ -44,7 +44,7 @@ import {
 import type { FactoryOperation } from "./factory-ledger.ts";
 import { FACTORY_PROFILE } from "./factory-profile.ts";
 import type { FactoryProfile } from "./factory-profile.ts";
-import type { FactoryEventBuilders, FactoryIdentity, FactoryLedger, FactoryRecords, FactoryRequestRecord, FactoryValidationRecord, ValidationEventInput, WorkerSandboxSdk } from "./factory-ports.ts";
+import type { FactoryEventBuilders, FactoryIdentity, FactoryLedger, FactoryRecords, FactoryRequestRecord, FactoryValidationRecord, StoredFactoryEvent, ValidationEventInput, WorkerSandboxSdk } from "./factory-ports.ts";
 
 export interface LostDeps {
   ledger: FactoryLedger;
@@ -270,10 +270,25 @@ export async function finalizeLostWorker(deps: LostDeps, target: LostTarget): Pr
 
 export type ReconciliationOutcome = { kind: "released" } | { kind: "blocked"; operation_ids: string[] } | { kind: "not_held" } | { kind: "not_found" };
 
+/** Appends attention_cleared under `key` unless it is there already or the budget is overrun (contract section 8.5); whether it appended. */
+async function clearAttention(deps: LostDeps, request: FactoryRequestRecord, key: string, events: readonly StoredFactoryEvent[]): Promise<boolean> {
+  if (events.some((event) => event.event_key === key)) return false;
+  const totals = await deps.ledger.budgets.status(request.budget_key);
+  if (totals.ok && totals.available_microusd < 0n) return false;
+  const appended = await deps.records.appendEvent(
+    request.request_id,
+    { event_key: key, type: "attention_cleared", host_id: null, candidate_id: null, item_key: null, case_id: null, message: "Reconciliation finished; the factory is available again.", data: { code: "needs_reconciliation" } },
+    deps.now(),
+  );
+  return appended.kind === "appended";
+}
+
 /**
  * After an operator reconciled every uncertain operation of a request or validation run: appends
- * budget_updated, clears needs_reconciliation unless the budget is overrun (contract section 8.5),
- * and releases the slot. Refuses while any operation or child resource of the root is still open.
+ * budget_updated, releases the slot and clears needs_reconciliation unless the budget is overrun
+ * (contract section 8.5). Refuses while any operation or child resource of the root is still open.
+ * The budget event comes first and marks the completion as begun, so a call interrupted after the
+ * release (a failed write) is finished by the next call instead of answering not_held for good.
  */
 export async function completeReconciliation(deps: LostDeps, target: LostTarget): Promise<ReconciliationOutcome> {
   const profile = deps.profile ?? FACTORY_PROFILE;
@@ -290,20 +305,18 @@ export async function completeReconciliation(deps: LostDeps, target: LostTarget)
     if (request === null) return { kind: "not_found" };
     root = validation.root;
   }
+  const begun = `reconciled:${root}:budget`;
+  const cleared = `reconciled:${root}:attention_cleared`;
   const blockers = await rootBlockers(deps, root);
-  if (!blockers.held) return { kind: "not_held" };
+  if (!blockers.held) {
+    const events = await deps.records.events(request.request_id);
+    if (!events.some((event) => event.event_key === begun)) return { kind: "not_held" };
+    return (await clearAttention(deps, request, cleared, events)) ? { kind: "released" } : { kind: "not_held" };
+  }
   if (blockers.operation_ids.length > 0 || blockers.children.length > 0) return { kind: "blocked", operation_ids: blockers.operation_ids };
+  await appendBudgetUpdate(deps, request, begun, "Reconciled spend settled.");
   const released = await deps.ledger.spend.releaseSlot({ slot_key: profile.slot_key, root_execution_id: root, actor_role: ROUTE_ACTOR, evidence: null, reason: null });
   if (!released.ok) return { kind: "blocked", operation_ids: released.blocking_operation_ids ?? [] };
-  await appendBudgetUpdate(deps, request, `reconciled:${root}:budget`, "Reconciled spend settled.");
-  const totals = await deps.ledger.budgets.status(request.budget_key);
-  const overrun = totals.ok && totals.available_microusd < 0n;
-  if (!overrun) {
-    await deps.records.appendEvent(
-      request.request_id,
-      { event_key: `reconciled:${root}:attention_cleared`, type: "attention_cleared", host_id: null, candidate_id: null, item_key: null, case_id: null, message: "Reconciliation finished; the factory is available again.", data: { code: "needs_reconciliation" } },
-      deps.now(),
-    );
-  }
+  await clearAttention(deps, request, cleared, await deps.records.events(request.request_id));
   return { kind: "released" };
 }

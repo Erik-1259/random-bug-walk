@@ -71,6 +71,32 @@ async function runningRequest(): Promise<FactoryRequestRecord> {
   return record;
 }
 
+/** What an operator does before completing a reconciliation: reconciles every operation that keeps the slot held. */
+async function reconcileHeld(): Promise<void> {
+  const slot = await w.spend.slotStatus({ slot_key: "factory" });
+  if (!slot.ok) throw new Error("synthetic: slot status refused");
+  for (const id of slot.release_blockers.operation_ids) {
+    const status = await w.spend.operationStatus({ operation_id: id });
+    if (!status.ok) throw new Error("synthetic: unknown operation");
+    const resources = slot.children.filter((child) => child.operation_id === id).map((child) => child.resource_id);
+    const never = status.state === "prepared";
+    const reconciled = await w.spend.reconcile({
+      schema_version: 1,
+      operation_id: id,
+      previous_state: status.state,
+      evidence: [{ key: `synthetic/reconcile/${id}`, sha256: "f".repeat(64) }],
+      provider_resource_ids: never ? [] : resources,
+      recorded_at: w.clock.now().toISOString(),
+      actor_role: "operator",
+      decision: never ? "confirm_no_launch" : "confirm_stopped_incomplete",
+      retained_microusd: never ? 0 : Number(status.open_microusd),
+      released_microusd: never ? Number(status.open_microusd) : 0,
+      reason: "synthetic reconciliation",
+    });
+    expect(reconciled.ok).toBe(true);
+  }
+}
+
 const FINISHED = { event_key: "run:finished", type: "request_finished" as const, host_id: null, candidate_id: null, item_key: null, case_id: null, message: "Request finished: fulfilled.", data: { outcome: "fulfilled", stop_code: "fulfilled" } };
 
 describe("finalizeLostWorker for a request", () => {
@@ -216,26 +242,7 @@ describe("finalizeLostWorker for a request", () => {
     const blocked = await completeReconciliation(lostDeps(), { request_id: record.request_id });
     expect(blocked.kind).toBe("blocked");
     expect(blocked.kind === "blocked" && [...blocked.operation_ids].sort()).toEqual([workerId(record), copyId(record)].sort());
-    for (const id of [workerId(record), copyId(record)]) {
-      const status = await w.spend.operationStatus({ operation_id: id });
-      if (!status.ok) throw new Error("synthetic: unknown operation");
-      const slot = await w.spend.slotStatus({ slot_key: "factory" });
-      const resources = slot.ok ? slot.children.filter((child) => child.operation_id === id).map((child) => child.resource_id) : [];
-      const reconciled = await w.spend.reconcile({
-        schema_version: 1,
-        operation_id: id,
-        previous_state: "uncertain",
-        evidence: [{ key: `synthetic/reconcile/${id}`, sha256: "f".repeat(64) }],
-        provider_resource_ids: resources,
-        recorded_at: w.clock.now().toISOString(),
-        actor_role: "operator",
-        decision: "confirm_stopped_incomplete",
-        retained_microusd: Number(status.open_microusd),
-        released_microusd: 0,
-        reason: "synthetic reconciliation",
-      });
-      expect(reconciled.ok).toBe(true);
-    }
+    await reconcileHeld();
     expect(await completeReconciliation(lostDeps(), { request_id: record.request_id })).toEqual({ kind: "released" });
     expect(await slotHolder(w)).toBeNull();
     const tail = (await w.records.events(record.request_id)).slice(-2);
@@ -243,6 +250,24 @@ describe("finalizeLostWorker for a request", () => {
       ["budget_updated", null],
       ["attention_cleared", { code: "needs_reconciliation" }],
     ]);
+    expect(await completeReconciliation(lostDeps(), { request_id: record.request_id })).toEqual({ kind: "not_held" });
+  });
+
+  it("finishes a completion whose release went through but whose attention clearing failed when it is called again", async () => {
+    const record = await runningRequest();
+    w.clock.advance(181_000);
+    await finalizeLostWorker(lostDeps(), { request_id: record.request_id });
+    await reconcileHeld();
+    const append = w.records.appendEvent.bind(w.records);
+    let failing = true;
+    w.records.appendEvent = (id, event, at) => (failing && event.type === "attention_cleared" ? Promise.reject(new Error("synthetic: the connection dropped")) : append(id, event, at));
+    await expect(completeReconciliation(lostDeps(), { request_id: record.request_id })).rejects.toThrow(/connection dropped/);
+    expect(await slotHolder(w)).toBeNull();
+    failing = false;
+    expect(await completeReconciliation(lostDeps(), { request_id: record.request_id })).toEqual({ kind: "released" });
+    const events = await w.records.events(record.request_id);
+    expect(events.filter((event) => event.type === "attention_cleared").map((event) => event.data)).toEqual([{ code: "needs_reconciliation" }]);
+    expect(events.filter((event) => event.type === "budget_updated" && event.event_key.startsWith("reconciled:"))).toHaveLength(1);
     expect(await completeReconciliation(lostDeps(), { request_id: record.request_id })).toEqual({ kind: "not_held" });
   });
 });
