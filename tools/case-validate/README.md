@@ -40,7 +40,14 @@ It resolves `{ result, stopped, package_sha256, pair_sha256, matrix, records, me
 
 ## Host registry
 
-`REGISTRATIONS` in `src/registry.ts` lists the real hosts as `{ host_id, label, description, license, adapter }`. It is empty until the host adapters land; each adds one line (see [`docs/product/adding-a-host.md`](../../docs/product/adding-a-host.md)).
+`REGISTRATIONS` in `src/registry.ts` lists the real hosts as `{ host_id, label, description, license, adapter }`, one line each (see [`docs/product/adding-a-host.md`](../../docs/product/adding-a-host.md)); the label and description are the factory's `HOST_PRESENTATION` text. It holds `task-report` (`taskReportAdapter` from `@rbw/host-task-report/adapter`, MIT). The `umami` line is planned, added with its own runtime image; until then the harness answers `unsupported_host` for an Umami package.
+
+`@rbw/case-validate/factory-prepare` (`src/factory-prepare.ts`) is the module `case-package prepare` loads for both `--registry` and `--identity`: it re-exports `HOST_REGISTRY` and exports `CASE_IDENTITY`, the factory core's `defectId` and `caseId` bound to the criteria catalog version, so a prepared index's `case_id` is the core's:
+
+```
+node tools/case-package/src/cli.ts prepare --registry tools/case-validate/src/factory-prepare.ts \
+  --identity tools/case-validate/src/factory-prepare.ts (--scan-hook <module> | --no-scan) --host task-report --out <dir>
+```
 
 ## Tests
 
@@ -48,4 +55,4 @@ It resolves `{ result, stopped, package_sha256, pair_sha256, matrix, records, me
 pnpm --filter @rbw/case-validate test
 ```
 
-The tests use synthetic pairs and the synthetic host. The end-to-end test runs the synthetic copy driver as local Node processes; the docker runner's tests use a fake docker command. No test starts a container or uses the network.
+The tests use synthetic pairs and the synthetic host, plus one in-memory export of the task-report catalog entry from this repository's files, which checks that `CASE_IDENTITY` gives the factory core's case ID. The end-to-end test runs the synthetic copy driver as local Node processes; the docker runner's tests use a fake docker command. No test starts a container or uses the network.

@@ -593,9 +593,15 @@ importers:
       '@rbw/case-package':
         specifier: workspace:*
         version: link:../case-package
+      '@rbw/factory':
+        specifier: workspace:*
+        version: link:../../packages/factory
       '@rbw/factory-contract':
         specifier: workspace:*
         version: link:../../packages/factory-contract
+      '@rbw/host-task-report':
+        specifier: workspace:*
+        version: link:../../packages/host-task-report
       '@rbw/schema':
         specifier: workspace:*
         version: link:../../packages/schema
