@@ -500,7 +500,7 @@ Public. Answers `{ contract_version, label, note, case: Case }`, with `case.prov
 | Service routes (`packages/web/app/api/factory/**`) and server modules (`packages/web/src/factory-server/**`) | planned | backend lane |
 | Request loop, interpreter, identity, budget use, events, hosted worker (`packages/factory/**`, `tools/controller/src/factory-*.ts`, spend migration and budget functions in `packages/spend/`) | planned | backend lane |
 | Custom host adapter, recipe catalog and checks (`packages/host-task-report/**`) | planned | custom host lane |
-| Umami adapter and recipe catalog (`packages/host-umami/**`) | planned | Umami lane |
+| Umami adapter and recipe catalog (`packages/host-umami/**`) | implemented: the adapter, its catalog entry, protocol, bug-case and validator inputs, copy plans and collect; a bug-case runtime image without the evaluator material is still required before any Umami case is delivered | Umami lane |
 | Exporter, standalone harness `rbw-validate`, package format and host-extension guide (`tools/case-package/**`, `tools/case-validate/**`, `docs/product/bug-package-v1.md`, `docs/product/adding-a-host.md`) | planned | package lane |
 | API acceptance tests (`tools/product-acceptance/**`) | in progress | acceptance lane |
 | Completed example (section 14): its two archives, their publication and the example record | planned | package lane prepares the archives; they are published through the existing release route (`tools/release/`); the backend lane's service serves the example record from that release (`GET /api/factory/example`). No new publication path is added. |
