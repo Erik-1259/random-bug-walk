@@ -398,10 +398,13 @@ export type EmptyObject = Record<string, never>;
 export interface Capabilities {
   contract_version: ContractVersion;
   service: ServiceStatus;
+  /** Every HostId appears exactly once: clients build the form from this list and never hard-code hosts (contract section 4). */
   hosts: Host[];
+  /** Every BugTypeId appears exactly once: clients build the form from this list and never hard-code bug types (contract section 4). */
   bug_types: BugType[];
   /** Every (host, bug type) pair of HostId and BugTypeId appears exactly once (contract section 4.2). */
   combinations: Combination[];
+  /** Every DifficultyOptionId appears exactly once: source_inferable_allowed is the available default and source_only_difficulty_required is listed as unavailable (contract section 4.4). */
   difficulty_options: DifficultyOption[];
   limits: Limits;
   interpreter: InterpreterCapability;

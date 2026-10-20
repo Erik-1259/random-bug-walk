@@ -518,16 +518,90 @@
           "$ref": "#/$defs/ServiceStatus"
         },
         "hosts": {
+          "description": "Every HostId appears exactly once: clients build the form from this list and never hard-code hosts (contract section 4).",
           "type": "array",
           "items": {
             "$ref": "#/$defs/Host"
-          }
+          },
+          "minItems": 2,
+          "maxItems": 2,
+          "allOf": [
+            {
+              "type": "array",
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "host_id": {
+                    "const": "umami"
+                  }
+                },
+                "required": [
+                  "host_id"
+                ]
+              },
+              "minContains": 1,
+              "maxContains": 1
+            },
+            {
+              "type": "array",
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "host_id": {
+                    "const": "task-report"
+                  }
+                },
+                "required": [
+                  "host_id"
+                ]
+              },
+              "minContains": 1,
+              "maxContains": 1
+            }
+          ]
         },
         "bug_types": {
+          "description": "Every BugTypeId appears exactly once: clients build the form from this list and never hard-code bug types (contract section 4).",
           "type": "array",
           "items": {
             "$ref": "#/$defs/BugType"
-          }
+          },
+          "minItems": 2,
+          "maxItems": 2,
+          "allOf": [
+            {
+              "type": "array",
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "bug_type_id": {
+                    "const": "concurrency"
+                  }
+                },
+                "required": [
+                  "bug_type_id"
+                ]
+              },
+              "minContains": 1,
+              "maxContains": 1
+            },
+            {
+              "type": "array",
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "bug_type_id": {
+                    "const": "date_time"
+                  }
+                },
+                "required": [
+                  "bug_type_id"
+                ]
+              },
+              "minContains": 1,
+              "maxContains": 1
+            }
+          ]
         },
         "combinations": {
           "description": "Every (host, bug type) pair of HostId and BugTypeId appears exactly once (contract section 4.2).",
@@ -621,10 +695,47 @@
           ]
         },
         "difficulty_options": {
+          "description": "Every DifficultyOptionId appears exactly once: source_inferable_allowed is the available default and source_only_difficulty_required is listed as unavailable (contract section 4.4).",
           "type": "array",
           "items": {
             "$ref": "#/$defs/DifficultyOption"
-          }
+          },
+          "minItems": 2,
+          "maxItems": 2,
+          "allOf": [
+            {
+              "type": "array",
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "option_id": {
+                    "const": "source_inferable_allowed"
+                  }
+                },
+                "required": [
+                  "option_id"
+                ]
+              },
+              "minContains": 1,
+              "maxContains": 1
+            },
+            {
+              "type": "array",
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "option_id": {
+                    "const": "source_only_difficulty_required"
+                  }
+                },
+                "required": [
+                  "option_id"
+                ]
+              },
+              "minContains": 1,
+              "maxContains": 1
+            }
+          ]
         },
         "limits": {
           "$ref": "#/$defs/Limits"

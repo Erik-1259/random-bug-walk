@@ -1,0 +1,1646 @@
+{
+  "format": "rbw.task-report.baseline.v1",
+  "baseline_id": "task-report@ca4a71f",
+  "source": {
+    "path": "hosts/task-report/app",
+    "commit": "ca4a71fc4486ba68fda9fd9f5c13a5664edb36fa",
+    "git_tree": "f281f20356277e5f6bdbf0c7f4be6bac2fafa33a",
+    "file_count": 40,
+    "tree_sha256": "22e67f24fdc4e2edffe357d10572ed3a799b7ddbeb8b8176a29d6f7581c3eedd",
+    "files": {
+      ".gitignore": "a1b9b3aabbabe90958f5b13afee01981b529713cc1a54d5109e4ba88c5b0c77f",
+      "README.md": "990f1802b8586387d3cee8ef608f78db6617a6b8f11bf443dabb5abed6d42055",
+      "compose.yaml": "716e448d963a4d30edd3527948b3593fcfc413ff33813784d37e9754ec455f7e",
+      "fixtures/demo.v1.json": "6acfe547e128560832f4123b731efa77018914b680f3ca22b580e7065c029f5e",
+      "migrations/0001_init.sql": "012c100bd6fdbe39beab13c927078e312485f743766e728e1078bd013cab5673",
+      "package-lock.json": "b7fa6ad51b8d07e830bcc9a60a1730a60717b0a4f8310e384cf3b45a71e9c483",
+      "package.json": "f0445c032c82907a9d46831081f8351e2a391157606caa21b33f85672eebd29b",
+      "playwright.config.ts": "8097e20b4b74922b3a152d962f26963afe2d4e2ab61b6a031b4741440b9500a2",
+      "scripts/init-db.sql": "0bfa002b9574db68077f4d92fab4c4894b041ccdf12ec6d75ad21711db8bac58",
+      "scripts/load-fixture.ts": "b74456d17576b76e00ea76e50978bcd76f2568729f83f77fa70de9fe0681535a",
+      "src/completions/routes.ts": "aa9fa230d59eb7e5ee183a029eaf81454c82938bd43030f93e6f6c54d0cfe27c",
+      "src/completions/store.ts": "5424120c0110adf3a755fe6a1aed2fcd99d87565dce1c4c84a5d62965f67f93f",
+      "src/config.ts": "6af702b03b05ae71351987c631e3285d444ffabdf85ded79f7b190b1fa097e80",
+      "src/db/migrate.ts": "b96a507b4d2aafca8c6ccc003d5f30ca5215dd7c0fc00124792e2f4d9cc05d4f",
+      "src/db/pool.ts": "889869b761e44a1e41a3407a66b3c94e215bd20976e7e1ca559bc09f6dbce0a3",
+      "src/http/body.ts": "e0570435f211f5a3df69cdd4a3e1e892a55da8fd8105f377ed2220e4e9a761eb",
+      "src/http/errors.ts": "6a183e55d945cf54699a1877045e80ae41b4b19cb37f6ed0c048ac4b5d13b399",
+      "src/http/respond.ts": "bfbb5f5fed798b9983573b179bc54a25a4c5b8657aecf884c3f88bbe0f344fdf",
+      "src/log.ts": "7e7a797ad035deeb4dfc66ea6dc6bc1934d83c21e5ea7ecf7945788d9c2b968b",
+      "src/main.ts": "5a2e096d827f3ac702556afd61b4c433097b11a7715dfe5f9eb777022d92d61b",
+      "src/reports/routes.ts": "ef5bc8d2427e2f133b97b6a4929c8bd9d04d962a836b1a243c397fc4a4e46842",
+      "src/reports/store.ts": "e623591b3fb5c09879075076ee21bb724fcae3e00f79ae32cf6393f1dc49d28b",
+      "src/server.ts": "93362c40aca71177d88e40e301224c1ce945884402a03933dc6474ccd915e928",
+      "src/tasks/routes.ts": "724de0dd31086f0ccc02f414d4ae91acdf4d7a3b8e3fa65daacd4acc7d8aba89",
+      "src/tasks/store.ts": "ae6e58fe7a22c1b9a3686086ef5424e743233ac19c122e95bc249af56b8d38ae",
+      "src/tasks/validate.ts": "4211a1a303d6345e16877dd655fe48880f03282c0fa705a2ce664a7b4c9fb855",
+      "src/time/calendar-date.ts": "a9fb5191102f5e002b11fed3f3e7a45a9f33118c87e09a4da96d6ee74b20f0bf",
+      "src/time/instant.ts": "28ef5c7b13ae5a4787290419383d81ec6dc29983f199ed23890ccf72534e540e",
+      "src/time/local-day.ts": "1f1f3c55a21e9b5aad66d642c0ae4a59020e62acda94ea24336007cb69826b42",
+      "src/time/time-zone.ts": "3e84c948d0382f01897ed07004a4a48a77b5a1fa174e8013364afb54e4acffdc",
+      "test/.gitkeep": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "test/completions.spec.ts": "6d5325b5dab40728cbb0e0e036dd70cb280fa12372e5d3a486f59715555e8d26",
+      "test/helpers.ts": "e1486e7114518c4efc1eb31c8cd402a725dc361ff616210850ee3b819df740b6",
+      "test/reports-validation.spec.ts": "2c17c0cb6706663bf7b65e7a79389c6547f43cdf5943de4373739fab7e52c909",
+      "test/reports-windows.spec.ts": "b50bf6fdbe4fdeae5b831e597f7cf59dbbfc954ae3dd8f568851b4ea91a8066d",
+      "test/request-body.spec.ts": "a9951bfbd72db9c38d85ab1da93b062c3ac8c830ee143f4693eb20e286510023",
+      "test/routing.spec.ts": "f04115770b719b59548666f4bed368d40aa43b9ac4b0aa0598156d607c29cff2",
+      "test/task-concurrency.spec.ts": "6f4c61244d923b78cf8e3a501b984162fa00a0c4f7188a0bdb905935d06988a0",
+      "test/tasks.spec.ts": "e6863b0cf75fbcfb2f826889110f9a9624fb13a2aa772bedb60dbfc15395da37",
+      "tsconfig.json": "94d4e4d1e7c9d94a542156893af5d37b359303a46bffd9a8b06bb7c521311381"
+    }
+  },
+  "contract": {
+    "source": "README.md, from the line after the '## Contract' heading and its blank line to the end",
+    "sha256": "f8336e71536506809012f2c3b730dd56f813c38cd3b09b042f3375f42995c1ea"
+  },
+  "dependency_manifests": [
+    "package.json",
+    "package-lock.json"
+  ],
+  "original_suite": {
+    "revision": "ordinary-v1",
+    "files": {
+      "package.json": "f0445c032c82907a9d46831081f8351e2a391157606caa21b33f85672eebd29b",
+      "playwright.config.ts": "8097e20b4b74922b3a152d962f26963afe2d4e2ab61b6a031b4741440b9500a2",
+      "test/.gitkeep": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "test/completions.spec.ts": "6d5325b5dab40728cbb0e0e036dd70cb280fa12372e5d3a486f59715555e8d26",
+      "test/helpers.ts": "e1486e7114518c4efc1eb31c8cd402a725dc361ff616210850ee3b819df740b6",
+      "test/reports-validation.spec.ts": "2c17c0cb6706663bf7b65e7a79389c6547f43cdf5943de4373739fab7e52c909",
+      "test/reports-windows.spec.ts": "b50bf6fdbe4fdeae5b831e597f7cf59dbbfc954ae3dd8f568851b4ea91a8066d",
+      "test/request-body.spec.ts": "a9951bfbd72db9c38d85ab1da93b062c3ac8c830ee143f4693eb20e286510023",
+      "test/routing.spec.ts": "f04115770b719b59548666f4bed368d40aa43b9ac4b0aa0598156d607c29cff2",
+      "test/task-concurrency.spec.ts": "6f4c61244d923b78cf8e3a501b984162fa00a0c4f7188a0bdb905935d06988a0",
+      "test/tasks.spec.ts": "e6863b0cf75fbcfb2f826889110f9a9624fb13a2aa772bedb60dbfc15395da37",
+      "tsconfig.json": "94d4e4d1e7c9d94a542156893af5d37b359303a46bffd9a8b06bb7c521311381"
+    },
+    "tree_sha256": "8ec1e3d58c3fb62e6de601c4b726201e38c11d697a15e0e86fc1808bd93812fc",
+    "runner": {
+      "config_path": "playwright.config.ts",
+      "config_sha256": "8097e20b4b74922b3a152d962f26963afe2d4e2ab61b6a031b4741440b9500a2",
+      "cli_args": [
+        "--workers=1",
+        "--retries=0",
+        "--reporter=json",
+        "--global-timeout=600000"
+      ],
+      "playwright_version": "1.63.0"
+    },
+    "test_count": 193,
+    "tests": [
+      {
+        "id": "417a7f70aeefc902a65b-06909576f324cae6bf87",
+        "file": "test/task-concurrency.spec.ts",
+        "title_path": [
+          "concurrent updates elsewhere",
+          "concurrent changes to the same field: both succeed and one of the values wins (C-6)"
+        ]
+      },
+      {
+        "id": "417a7f70aeefc902a65b-16c36bf9b6658ed38ce1",
+        "file": "test/task-concurrency.spec.ts",
+        "title_path": [
+          "independent updates to one task (C-3, C-4)",
+          "many concurrent single-field updates to one task all land"
+        ]
+      },
+      {
+        "id": "417a7f70aeefc902a65b-8ca8b0bf1ceabaf4bc66",
+        "file": "test/task-concurrency.spec.ts",
+        "title_path": [
+          "independent updates to one task (C-3, C-4)",
+          "B = {note:N1} then A = {title:T1}: both succeed and the task ends T1/N1"
+        ]
+      },
+      {
+        "id": "417a7f70aeefc902a65b-9c126d15f04d33212870",
+        "file": "test/task-concurrency.spec.ts",
+        "title_path": [
+          "independent updates to one task (C-3, C-4)",
+          "A = {title:T1} then B = {note:N1}: both succeed and the task ends T1/N1"
+        ]
+      },
+      {
+        "id": "417a7f70aeefc902a65b-b3e08d89eccc4bbda4ca",
+        "file": "test/task-concurrency.spec.ts",
+        "title_path": [
+          "concurrent updates elsewhere",
+          "concurrent updates to different tasks never change each other (C-5)"
+        ]
+      },
+      {
+        "id": "417a7f70aeefc902a65b-bed80a97ec24737d5cd7",
+        "file": "test/task-concurrency.spec.ts",
+        "title_path": [
+          "independent updates to one task (C-3, C-4)",
+          "A and B overlapping (A first): both get 2xx and a fresh GET returns T1/N1"
+        ]
+      },
+      {
+        "id": "417a7f70aeefc902a65b-e1e188a9233646e0b872",
+        "file": "test/task-concurrency.spec.ts",
+        "title_path": [
+          "independent updates to one task (C-3, C-4)",
+          "A and B overlapping (B first): both get 2xx and a fresh GET returns T1/N1"
+        ]
+      },
+      {
+        "id": "43935043b4e8ab2472fa-0da57258a52cbf8b7000",
+        "file": "test/routing.spec.ts",
+        "title_path": [
+          "routing: unknown paths get 404 not_found",
+          "GET /api/heart%62eat"
+        ]
+      },
+      {
+        "id": "43935043b4e8ab2472fa-0e25454aae9b6cab76cb",
+        "file": "test/routing.spec.ts",
+        "title_path": [
+          "routing: wrong method gets 405 with an allow header",
+          "DELETE /api/heartbeat"
+        ]
+      },
+      {
+        "id": "43935043b4e8ab2472fa-10daf1b9e5bc0d40c816",
+        "file": "test/routing.spec.ts",
+        "title_path": [
+          "routing: unknown paths get 404 not_found",
+          "GET /api/tasks/6f1c2b3a-0000-4000-8000-0000000000aa/completions/"
+        ]
+      },
+      {
+        "id": "43935043b4e8ab2472fa-12a595d145b806fa17c3",
+        "file": "test/routing.spec.ts",
+        "title_path": [
+          "routing: wrong method gets 405 with an allow header",
+          "POST /api/reports/completions/daily"
+        ]
+      },
+      {
+        "id": "43935043b4e8ab2472fa-14a98eabe6ef2b39dd17",
+        "file": "test/routing.spec.ts",
+        "title_path": [
+          "routing: unknown paths get 404 not_found",
+          "GET /api"
+        ]
+      },
+      {
+        "id": "43935043b4e8ab2472fa-15667954b50b78326226",
+        "file": "test/routing.spec.ts",
+        "title_path": [
+          "routing: ids",
+          "a non-UUID id \"6f1c2b3a-0000-4000-8000-0000000000a\" is 404 on every id route"
+        ]
+      },
+      {
+        "id": "43935043b4e8ab2472fa-15b37dee6430d9d2edf0",
+        "file": "test/routing.spec.ts",
+        "title_path": [
+          "routing: wrong method gets 405 with an allow header",
+          "PUT /api/tasks/6f1c2b3a-0000-4000-8000-0000000000aa/completions"
+        ]
+      },
+      {
+        "id": "43935043b4e8ab2472fa-1fed40e526ce9044b5f0",
+        "file": "test/routing.spec.ts",
+        "title_path": [
+          "routing: wrong method gets 405 with an allow header",
+          "HEAD /api/tasks/6f1c2b3a-0000-4000-8000-0000000000aa"
+        ]
+      },
+      {
+        "id": "43935043b4e8ab2472fa-1fff997f5fd5e2d7b198",
+        "file": "test/routing.spec.ts",
+        "title_path": [
+          "routing: ids",
+          "well-formed UUIDs that match no row are 404 not_found"
+        ]
+      },
+      {
+        "id": "43935043b4e8ab2472fa-201759462a77bb97840c",
+        "file": "test/routing.spec.ts",
+        "title_path": [
+          "routing: wrong method gets 405 with an allow header",
+          "HEAD /api/tasks/6f1c2b3a-0000-4000-8000-0000000000aa/completions"
+        ]
+      },
+      {
+        "id": "43935043b4e8ab2472fa-21225eacfefaa68752b1",
+        "file": "test/routing.spec.ts",
+        "title_path": [
+          "routing: unknown paths get 404 not_found",
+          "GET /api/tasks/6f1c2b3a-0000-4000-8000-0000000000aa/"
+        ]
+      },
+      {
+        "id": "43935043b4e8ab2472fa-250d110f1381e46d53c7",
+        "file": "test/routing.spec.ts",
+        "title_path": [
+          "routing: ids",
+          "a non-UUID id \"6f1c2b3g-0000-4000-8000-0000000000aa\" is 404 on every id route"
+        ]
+      },
+      {
+        "id": "43935043b4e8ab2472fa-2d249d84bf671fde9bfa",
+        "file": "test/routing.spec.ts",
+        "title_path": [
+          "routing: wrong method gets 405 with an allow header",
+          "GET /api/tasks/6f1c2b3a-0000-4000-8000-0000000000aa/completions"
+        ]
+      },
+      {
+        "id": "43935043b4e8ab2472fa-39a20a1996369365ddcf",
+        "file": "test/routing.spec.ts",
+        "title_path": [
+          "routing: wrong method gets 405 with an allow header",
+          "DELETE /api/tasks/6f1c2b3a-0000-4000-8000-0000000000aa/completions"
+        ]
+      },
+      {
+        "id": "43935043b4e8ab2472fa-3a844a18a9d07b1484ea",
+        "file": "test/routing.spec.ts",
+        "title_path": [
+          "routing: unknown paths get 404 not_found",
+          "GET /API/heartbeat"
+        ]
+      },
+      {
+        "id": "43935043b4e8ab2472fa-3c48b492744e670584bc",
+        "file": "test/routing.spec.ts",
+        "title_path": [
+          "routing: unknown paths get 404 not_found",
+          "GET /api/tasks/x/y"
+        ]
+      },
+      {
+        "id": "43935043b4e8ab2472fa-3c6948e6d02cb19eeec5",
+        "file": "test/routing.spec.ts",
+        "title_path": [
+          "routing: ids",
+          "a non-UUID id \"not-a-uuid\" is 404 on every id route"
+        ]
+      },
+      {
+        "id": "43935043b4e8ab2472fa-3e9623900e23ada254ec",
+        "file": "test/routing.spec.ts",
+        "title_path": [
+          "routing: unknown paths get 404 not_found",
+          "no slash normalization: double slashes and dot segments are not collapsed"
+        ]
+      },
+      {
+        "id": "43935043b4e8ab2472fa-40f65a4daee2624b773c",
+        "file": "test/routing.spec.ts",
+        "title_path": [
+          "routing: wrong method gets 405 with an allow header",
+          "POST /api/heartbeat"
+        ]
+      },
+      {
+        "id": "43935043b4e8ab2472fa-4205a925cc5682ffc68e",
+        "file": "test/routing.spec.ts",
+        "title_path": [
+          "heartbeat",
+          "GET /api/heartbeat answers 200 {\"status\":\"ok\"}"
+        ]
+      },
+      {
+        "id": "43935043b4e8ab2472fa-4d3335cc31dce187d21b",
+        "file": "test/routing.spec.ts",
+        "title_path": [
+          "routing: ids",
+          "a non-UUID id \"6f1c2b3a-0000-4000-80000-000000000aa\" is 404 on every id route"
+        ]
+      },
+      {
+        "id": "43935043b4e8ab2472fa-4d502b1f20a21d47d9e3",
+        "file": "test/routing.spec.ts",
+        "title_path": [
+          "routing: wrong method gets 405 with an allow header",
+          "OPTIONS /api/tasks/6f1c2b3a-0000-4000-8000-0000000000aa/completions"
+        ]
+      },
+      {
+        "id": "43935043b4e8ab2472fa-53225f1000ec0bc575a8",
+        "file": "test/routing.spec.ts",
+        "title_path": [
+          "routing: ids",
+          "a non-UUID id \"6f1c2b3a00004000800000000000000aa\" is 404 on every id route"
+        ]
+      },
+      {
+        "id": "43935043b4e8ab2472fa-5596c36d85227077d25d",
+        "file": "test/routing.spec.ts",
+        "title_path": [
+          "routing: wrong method gets 405 with an allow header",
+          "DELETE /api/tasks"
+        ]
+      },
+      {
+        "id": "43935043b4e8ab2472fa-5623cb8ba1fae91bc532",
+        "file": "test/routing.spec.ts",
+        "title_path": [
+          "routing: unknown paths get 404 not_found",
+          "GET /api/heartbeat/"
+        ]
+      },
+      {
+        "id": "43935043b4e8ab2472fa-599610b41e3fea055401",
+        "file": "test/routing.spec.ts",
+        "title_path": [
+          "routing: wrong method gets 405 with an allow header",
+          "PATCH /api/tasks"
+        ]
+      },
+      {
+        "id": "43935043b4e8ab2472fa-59a97d99021fd1aaccc7",
+        "file": "test/routing.spec.ts",
+        "title_path": [
+          "routing: unknown paths get 404 not_found",
+          "GET /api/reports/completions/daily/"
+        ]
+      },
+      {
+        "id": "43935043b4e8ab2472fa-5e166bdbcc11297cdcd8",
+        "file": "test/routing.spec.ts",
+        "title_path": [
+          "routing: ids",
+          "a non-UUID id \"6f1c2b3a-0000-4000-8000-0000000000aa%20\" is 404 on every id route"
+        ]
+      },
+      {
+        "id": "43935043b4e8ab2472fa-5eeeb9a69a58e5171cad",
+        "file": "test/routing.spec.ts",
+        "title_path": [
+          "routing: unknown paths get 404 not_found",
+          "GET /api/tasks//completions"
+        ]
+      },
+      {
+        "id": "43935043b4e8ab2472fa-608fcf9c163a61d5c3a8",
+        "file": "test/routing.spec.ts",
+        "title_path": [
+          "routing: wrong method gets 405 with an allow header",
+          "PUT /api/heartbeat"
+        ]
+      },
+      {
+        "id": "43935043b4e8ab2472fa-61a44261c5cb534e3ea4",
+        "file": "test/routing.spec.ts",
+        "title_path": [
+          "routing: unknown paths get 404 not_found",
+          "an unknown path is 404 whatever the method (step 1 before step 2)"
+        ]
+      },
+      {
+        "id": "43935043b4e8ab2472fa-676d41fbe7c8d6fd8a2e",
+        "file": "test/routing.spec.ts",
+        "title_path": [
+          "routing: wrong method gets 405 with an allow header",
+          "HEAD /api/tasks"
+        ]
+      },
+      {
+        "id": "43935043b4e8ab2472fa-68d992bda7feb295cea1",
+        "file": "test/routing.spec.ts",
+        "title_path": [
+          "routing: unknown paths get 404 not_found",
+          "GET /"
+        ]
+      },
+      {
+        "id": "43935043b4e8ab2472fa-710f23fb06e7353351a8",
+        "file": "test/routing.spec.ts",
+        "title_path": [
+          "routing: ids",
+          "a non-UUID id \"6f1c2b3a0000400080000000000000aa\" is 404 on every id route"
+        ]
+      },
+      {
+        "id": "43935043b4e8ab2472fa-717578adf32d887b3b7e",
+        "file": "test/routing.spec.ts",
+        "title_path": [
+          "routing: wrong method gets 405 with an allow header",
+          "OPTIONS /api/reports/completions/daily"
+        ]
+      },
+      {
+        "id": "43935043b4e8ab2472fa-7a5f0add5ee9463eb01b",
+        "file": "test/routing.spec.ts",
+        "title_path": [
+          "routing: unknown paths get 404 not_found",
+          "GET /api/reports/completions"
+        ]
+      },
+      {
+        "id": "43935043b4e8ab2472fa-804a3f3290818eedf029",
+        "file": "test/routing.spec.ts",
+        "title_path": [
+          "routing: ids",
+          "a non-UUID id \"6f1c2b3a-0000-4000-8000-0000000000aaa\" is 404 on every id route"
+        ]
+      },
+      {
+        "id": "43935043b4e8ab2472fa-86c9895b4cbfc6881323",
+        "file": "test/routing.spec.ts",
+        "title_path": [
+          "routing: ids",
+          "a non-UUID id \"%206f1c2b3a-0000-4000-8000-0000000000aa\" is 404 on every id route"
+        ]
+      },
+      {
+        "id": "43935043b4e8ab2472fa-884d70a12dde6ade1c7c",
+        "file": "test/routing.spec.ts",
+        "title_path": [
+          "routing: wrong method gets 405 with an allow header",
+          "OPTIONS /api/tasks/6f1c2b3a-0000-4000-8000-0000000000aa"
+        ]
+      },
+      {
+        "id": "43935043b4e8ab2472fa-89d2b130407db830fccd",
+        "file": "test/routing.spec.ts",
+        "title_path": [
+          "routing: unknown paths get 404 not_found",
+          "GET /api/tasks/6f1c2b3a-0000-4000-8000-0000000000aa/Completions"
+        ]
+      },
+      {
+        "id": "43935043b4e8ab2472fa-8bc2fdd6886d6aa29dad",
+        "file": "test/routing.spec.ts",
+        "title_path": [
+          "routing: unknown paths get 404 not_found",
+          "GET /api/"
+        ]
+      },
+      {
+        "id": "43935043b4e8ab2472fa-8d6c10db0468d9ad6121",
+        "file": "test/routing.spec.ts",
+        "title_path": [
+          "routing: wrong method gets 405 with an allow header",
+          "PATCH /api/tasks/6f1c2b3a-0000-4000-8000-0000000000aa/completions"
+        ]
+      },
+      {
+        "id": "43935043b4e8ab2472fa-a79729dc6bbfedc7f067",
+        "file": "test/routing.spec.ts",
+        "title_path": [
+          "routing: wrong method gets 405 with an allow header",
+          "PUT /api/tasks"
+        ]
+      },
+      {
+        "id": "43935043b4e8ab2472fa-aa30bd8bac92c8586967",
+        "file": "test/routing.spec.ts",
+        "title_path": [
+          "routing: wrong method gets 405 with an allow header",
+          "OPTIONS /api/tasks"
+        ]
+      },
+      {
+        "id": "43935043b4e8ab2472fa-b4e6385fb27b3c08ff3b",
+        "file": "test/routing.spec.ts",
+        "title_path": [
+          "routing: unknown paths get 404 not_found",
+          "GET /api/reports/completions/Daily"
+        ]
+      },
+      {
+        "id": "43935043b4e8ab2472fa-b751ba3299127802a2b0",
+        "file": "test/routing.spec.ts",
+        "title_path": [
+          "routing: ids",
+          "a non-UUID id \"123\" is 404 on every id route"
+        ]
+      },
+      {
+        "id": "43935043b4e8ab2472fa-b7e11d9e07ef81f94094",
+        "file": "test/routing.spec.ts",
+        "title_path": [
+          "routing: unknown paths get 404 not_found",
+          "GET /api/tasks/"
+        ]
+      },
+      {
+        "id": "43935043b4e8ab2472fa-bf09ace6138a7a33d071",
+        "file": "test/routing.spec.ts",
+        "title_path": [
+          "routing: wrong method gets 405 with an allow header",
+          "DELETE /api/tasks/6f1c2b3a-0000-4000-8000-0000000000aa"
+        ]
+      },
+      {
+        "id": "43935043b4e8ab2472fa-bff96323380e2ac52e8a",
+        "file": "test/routing.spec.ts",
+        "title_path": [
+          "routing: wrong method gets 405 with an allow header",
+          "PATCH /api/heartbeat"
+        ]
+      },
+      {
+        "id": "43935043b4e8ab2472fa-c535db7802b96edc925c",
+        "file": "test/routing.spec.ts",
+        "title_path": [
+          "routing: ids",
+          "a non-UUID id is 404 without reading the body (step 3 before steps 4 to 7)"
+        ]
+      },
+      {
+        "id": "43935043b4e8ab2472fa-cb413172e57926789b18",
+        "file": "test/routing.spec.ts",
+        "title_path": [
+          "routing: ids",
+          "the query string is ignored on task routes"
+        ]
+      },
+      {
+        "id": "43935043b4e8ab2472fa-cb84cf54ece691c4f67b",
+        "file": "test/routing.spec.ts",
+        "title_path": [
+          "routing: wrong method gets 405 with an allow header",
+          "OPTIONS /api/heartbeat"
+        ]
+      },
+      {
+        "id": "43935043b4e8ab2472fa-d4949801a304955dd2ac",
+        "file": "test/routing.spec.ts",
+        "title_path": [
+          "heartbeat",
+          "the query string is ignored"
+        ]
+      },
+      {
+        "id": "43935043b4e8ab2472fa-e00fe3c4e3a7b7f7a797",
+        "file": "test/routing.spec.ts",
+        "title_path": [
+          "routing: wrong method gets 405 with an allow header",
+          "405 is decided before the id is checked (step 2 before step 3)"
+        ]
+      },
+      {
+        "id": "43935043b4e8ab2472fa-e4859bf6ddd531306291",
+        "file": "test/routing.spec.ts",
+        "title_path": [
+          "routing: wrong method gets 405 with an allow header",
+          "DELETE /api/reports/completions/daily"
+        ]
+      },
+      {
+        "id": "43935043b4e8ab2472fa-e6719ff18cd18160efbd",
+        "file": "test/routing.spec.ts",
+        "title_path": [
+          "common response headers",
+          "every response has cache-control: no-store and a fresh x-request-id"
+        ]
+      },
+      {
+        "id": "43935043b4e8ab2472fa-e7812018b4ab42ad550a",
+        "file": "test/routing.spec.ts",
+        "title_path": [
+          "routing: ids",
+          "a non-UUID id \"6f1c2b3a%2D0000-4000-8000-0000000000aa\" is 404 on every id route"
+        ]
+      },
+      {
+        "id": "43935043b4e8ab2472fa-ed3b7f3e2d11d5689439",
+        "file": "test/routing.spec.ts",
+        "title_path": [
+          "routing: ids",
+          "an id in uppercase or mixed case addresses the same task; output ids stay lowercase"
+        ]
+      },
+      {
+        "id": "43935043b4e8ab2472fa-eef80977ed72314da0f7",
+        "file": "test/routing.spec.ts",
+        "title_path": [
+          "routing: ids",
+          "a non-UUID id \"{6f1c2b3a-0000-4000-8000-0000000000aa}\" is 404 on every id route"
+        ]
+      },
+      {
+        "id": "43935043b4e8ab2472fa-f1e5cf8683e693964662",
+        "file": "test/routing.spec.ts",
+        "title_path": [
+          "routing: wrong method gets 405 with an allow header",
+          "PUT /api/tasks/6f1c2b3a-0000-4000-8000-0000000000aa"
+        ]
+      },
+      {
+        "id": "43935043b4e8ab2472fa-f52da7c91fa570de1f28",
+        "file": "test/routing.spec.ts",
+        "title_path": [
+          "routing: wrong method gets 405 with an allow header",
+          "HEAD /api/heartbeat"
+        ]
+      },
+      {
+        "id": "43935043b4e8ab2472fa-f7e49b26fd7f3714cf6c",
+        "file": "test/routing.spec.ts",
+        "title_path": [
+          "routing: wrong method gets 405 with an allow header",
+          "POST /api/tasks/6f1c2b3a-0000-4000-8000-0000000000aa"
+        ]
+      },
+      {
+        "id": "43935043b4e8ab2472fa-f855d6f7fdb67da7ce14",
+        "file": "test/routing.spec.ts",
+        "title_path": [
+          "routing: wrong method gets 405 with an allow header",
+          "GET /api/tasks"
+        ]
+      },
+      {
+        "id": "43935043b4e8ab2472fa-f8c7b289911575af4b8d",
+        "file": "test/routing.spec.ts",
+        "title_path": [
+          "routing: wrong method gets 405 with an allow header",
+          "PATCH /api/reports/completions/daily"
+        ]
+      },
+      {
+        "id": "43935043b4e8ab2472fa-fae56e69cca67301984c",
+        "file": "test/routing.spec.ts",
+        "title_path": [
+          "routing: wrong method gets 405 with an allow header",
+          "HEAD /api/reports/completions/daily"
+        ]
+      },
+      {
+        "id": "43935043b4e8ab2472fa-fb41d1bf017cbb41f665",
+        "file": "test/routing.spec.ts",
+        "title_path": [
+          "routing: unknown paths get 404 not_found",
+          "GET /api/Heartbeat"
+        ]
+      },
+      {
+        "id": "43935043b4e8ab2472fa-fc1e4cecee2488bd4cb6",
+        "file": "test/routing.spec.ts",
+        "title_path": [
+          "routing: unknown paths get 404 not_found",
+          "GET /api/tasks/6f1c2b3a-0000-4000-8000-0000000000aa/notes"
+        ]
+      },
+      {
+        "id": "43935043b4e8ab2472fa-ff370830e6ead71becfb",
+        "file": "test/routing.spec.ts",
+        "title_path": [
+          "routing: wrong method gets 405 with an allow header",
+          "PUT /api/reports/completions/daily"
+        ]
+      },
+      {
+        "id": "4df966b3812c4c361521-13756b7ae7755efd8e43",
+        "file": "test/request-body.spec.ts",
+        "title_path": [
+          "PATCH /api/tasks/{id} body handling",
+          "415 comes before 413 and 400 (step 4 before steps 5 and 6)"
+        ]
+      },
+      {
+        "id": "4df966b3812c4c361521-13da2c17c65119d78413",
+        "file": "test/request-body.spec.ts",
+        "title_path": [
+          "POST /api/tasks body handling",
+          "an empty body is 400 invalid_json"
+        ]
+      },
+      {
+        "id": "4df966b3812c4c361521-15f8d96227de65337add",
+        "file": "test/request-body.spec.ts",
+        "title_path": [
+          "POST /api/tasks/{id}/completions body handling",
+          "415 comes before 413 and 400 (step 4 before steps 5 and 6)"
+        ]
+      },
+      {
+        "id": "4df966b3812c4c361521-1d76eb9372d73ac5bb28",
+        "file": "test/request-body.spec.ts",
+        "title_path": [
+          "PATCH /api/tasks/{id} body handling",
+          "unknown keys are 400 validation_failed naming the key"
+        ]
+      },
+      {
+        "id": "4df966b3812c4c361521-26414d5a48ce452ca24d",
+        "file": "test/request-body.spec.ts",
+        "title_path": [
+          "JSON parsing semantics",
+          "a BOM-prefixed body on an unknown task still reaches the 404 step"
+        ]
+      },
+      {
+        "id": "4df966b3812c4c361521-2eda16dcf9da74057864",
+        "file": "test/request-body.spec.ts",
+        "title_path": [
+          "POST /api/tasks body handling",
+          "the body is decoded as UTF-8 whatever the charset parameter says"
+        ]
+      },
+      {
+        "id": "4df966b3812c4c361521-39ecaad5f56735d358f3",
+        "file": "test/request-body.spec.ts",
+        "title_path": [
+          "POST /api/tasks/{id}/completions body handling",
+          "unknown keys are 400 validation_failed naming the key"
+        ]
+      },
+      {
+        "id": "4df966b3812c4c361521-3cb002f94162e25f9e6c",
+        "file": "test/request-body.spec.ts",
+        "title_path": [
+          "PATCH /api/tasks/{id} body handling",
+          "the body is decoded as UTF-8 whatever the charset parameter says"
+        ]
+      },
+      {
+        "id": "4df966b3812c4c361521-57d31569b839b03cf3de",
+        "file": "test/request-body.spec.ts",
+        "title_path": [
+          "POST /api/tasks body handling",
+          "415 comes before 413 and 400 (step 4 before steps 5 and 6)"
+        ]
+      },
+      {
+        "id": "4df966b3812c4c361521-5aa2835c4b9008076ad6",
+        "file": "test/request-body.spec.ts",
+        "title_path": [
+          "PATCH /api/tasks/{id} body handling",
+          "any other media type, +json types included, is 415"
+        ]
+      },
+      {
+        "id": "4df966b3812c4c361521-5cefc88cf78b0206a951",
+        "file": "test/request-body.spec.ts",
+        "title_path": [
+          "PATCH /api/tasks/{id} body handling",
+          "unparseable JSON and top-level non-objects are 400 invalid_json"
+        ]
+      },
+      {
+        "id": "4df966b3812c4c361521-5fec3b9fa14e23aef864",
+        "file": "test/request-body.spec.ts",
+        "title_path": [
+          "PATCH /api/tasks/{id} body handling",
+          "a leading BOM is ignored"
+        ]
+      },
+      {
+        "id": "4df966b3812c4c361521-603093c0635c4ea4f2c8",
+        "file": "test/request-body.spec.ts",
+        "title_path": [
+          "POST /api/tasks body handling",
+          "bad UTF-8 is 400 invalid_json"
+        ]
+      },
+      {
+        "id": "4df966b3812c4c361521-62189ff7885d8adcb2a8",
+        "file": "test/request-body.spec.ts",
+        "title_path": [
+          "PATCH /api/tasks/{id} body handling",
+          "a missing content-type is 415"
+        ]
+      },
+      {
+        "id": "4df966b3812c4c361521-690f5f622043b4664211",
+        "file": "test/request-body.spec.ts",
+        "title_path": [
+          "PATCH /api/tasks/{id} body handling",
+          "a chunked body over 64 KiB is 413"
+        ]
+      },
+      {
+        "id": "4df966b3812c4c361521-6c5f67b762363c616ef2",
+        "file": "test/request-body.spec.ts",
+        "title_path": [
+          "POST /api/tasks body handling",
+          "a chunked body over 64 KiB is 413"
+        ]
+      },
+      {
+        "id": "4df966b3812c4c361521-82807314b8f5d0067805",
+        "file": "test/request-body.spec.ts",
+        "title_path": [
+          "PATCH /api/tasks/{id} body handling",
+          "a body of exactly 64 KiB is accepted"
+        ]
+      },
+      {
+        "id": "4df966b3812c4c361521-82cec04a91eed5b88770",
+        "file": "test/request-body.spec.ts",
+        "title_path": [
+          "POST /api/tasks body handling",
+          "a missing content-type is 415"
+        ]
+      },
+      {
+        "id": "4df966b3812c4c361521-8650292dbe7dc15bec6e",
+        "file": "test/request-body.spec.ts",
+        "title_path": [
+          "POST /api/tasks/{id}/completions body handling",
+          "accepts application/json in any ASCII case, with parameters and surrounding spaces"
+        ]
+      },
+      {
+        "id": "4df966b3812c4c361521-875dff85fde2dc4d49bd",
+        "file": "test/request-body.spec.ts",
+        "title_path": [
+          "POST /api/tasks/{id}/completions body handling",
+          "a chunked body over 64 KiB is 413"
+        ]
+      },
+      {
+        "id": "4df966b3812c4c361521-891419a353e655680cca",
+        "file": "test/request-body.spec.ts",
+        "title_path": [
+          "PATCH /api/tasks/{id} body handling",
+          "an empty body is 400 invalid_json"
+        ]
+      },
+      {
+        "id": "4df966b3812c4c361521-8c315564ddf3cc762995",
+        "file": "test/request-body.spec.ts",
+        "title_path": [
+          "POST /api/tasks body handling",
+          "unparseable JSON and top-level non-objects are 400 invalid_json"
+        ]
+      },
+      {
+        "id": "4df966b3812c4c361521-90598faf49d35731e44f",
+        "file": "test/request-body.spec.ts",
+        "title_path": [
+          "POST /api/tasks/{id}/completions body handling",
+          "the body is decoded as UTF-8 whatever the charset parameter says"
+        ]
+      },
+      {
+        "id": "4df966b3812c4c361521-9e2c710e9d872e22029a",
+        "file": "test/request-body.spec.ts",
+        "title_path": [
+          "PATCH /api/tasks/{id} body handling",
+          "accepts application/json in any ASCII case, with parameters and surrounding spaces"
+        ]
+      },
+      {
+        "id": "4df966b3812c4c361521-9f66eb427badde053195",
+        "file": "test/request-body.spec.ts",
+        "title_path": [
+          "POST /api/tasks body handling",
+          "accepts application/json in any ASCII case, with parameters and surrounding spaces"
+        ]
+      },
+      {
+        "id": "4df966b3812c4c361521-a57444e75ac38541f763",
+        "file": "test/request-body.spec.ts",
+        "title_path": [
+          "POST /api/tasks/{id}/completions body handling",
+          "an empty body is 400 invalid_json"
+        ]
+      },
+      {
+        "id": "4df966b3812c4c361521-a646c8b37003bc3fd9d8",
+        "file": "test/request-body.spec.ts",
+        "title_path": [
+          "POST /api/tasks body handling",
+          "a body over 64 KiB is 413, before JSON parsing and validation"
+        ]
+      },
+      {
+        "id": "4df966b3812c4c361521-b4ee5e18823e92e823d7",
+        "file": "test/request-body.spec.ts",
+        "title_path": [
+          "POST /api/tasks/{id}/completions body handling",
+          "a missing content-type is 415"
+        ]
+      },
+      {
+        "id": "4df966b3812c4c361521-b5a22801d5bb459da7f8",
+        "file": "test/request-body.spec.ts",
+        "title_path": [
+          "POST /api/tasks/{id}/completions body handling",
+          "a body of exactly 64 KiB is accepted"
+        ]
+      },
+      {
+        "id": "4df966b3812c4c361521-be7365f90adbc70baaf0",
+        "file": "test/request-body.spec.ts",
+        "title_path": [
+          "PATCH /api/tasks/{id} body handling",
+          "bad UTF-8 is 400 invalid_json"
+        ]
+      },
+      {
+        "id": "4df966b3812c4c361521-bedebac7dabf73a8c8f8",
+        "file": "test/request-body.spec.ts",
+        "title_path": [
+          "POST /api/tasks/{id}/completions body handling",
+          "a leading BOM is ignored"
+        ]
+      },
+      {
+        "id": "4df966b3812c4c361521-c6a9b921feefd13c1bb6",
+        "file": "test/request-body.spec.ts",
+        "title_path": [
+          "POST /api/tasks body handling",
+          "a leading BOM is ignored"
+        ]
+      },
+      {
+        "id": "4df966b3812c4c361521-c93f60aaf316956f1032",
+        "file": "test/request-body.spec.ts",
+        "title_path": [
+          "POST /api/tasks body handling",
+          "unknown keys are 400 validation_failed naming the key"
+        ]
+      },
+      {
+        "id": "4df966b3812c4c361521-cbf191d8deedd1dec4d1",
+        "file": "test/request-body.spec.ts",
+        "title_path": [
+          "JSON parsing semantics",
+          "JSON escapes are decoded before validation and storage"
+        ]
+      },
+      {
+        "id": "4df966b3812c4c361521-cd9858d25c4adeae82e1",
+        "file": "test/request-body.spec.ts",
+        "title_path": [
+          "POST /api/tasks body handling",
+          "any other media type, +json types included, is 415"
+        ]
+      },
+      {
+        "id": "4df966b3812c4c361521-d33043ead7844a95aceb",
+        "file": "test/request-body.spec.ts",
+        "title_path": [
+          "POST /api/tasks/{id}/completions body handling",
+          "bad UTF-8 is 400 invalid_json"
+        ]
+      },
+      {
+        "id": "4df966b3812c4c361521-dc7cb98d8b88e1c8eb1c",
+        "file": "test/request-body.spec.ts",
+        "title_path": [
+          "JSON parsing semantics",
+          "a charset parameter does not change the UTF-8 decoding of stored text"
+        ]
+      },
+      {
+        "id": "4df966b3812c4c361521-e0f7ad01621fdb3a7539",
+        "file": "test/request-body.spec.ts",
+        "title_path": [
+          "JSON parsing semantics",
+          "a repeated key: the last one wins"
+        ]
+      },
+      {
+        "id": "4df966b3812c4c361521-e2504b9f1f0a917dc8c7",
+        "file": "test/request-body.spec.ts",
+        "title_path": [
+          "POST /api/tasks/{id}/completions body handling",
+          "a body over 64 KiB is 413, before JSON parsing and validation"
+        ]
+      },
+      {
+        "id": "4df966b3812c4c361521-e3f7009ad6c51e5c6e0d",
+        "file": "test/request-body.spec.ts",
+        "title_path": [
+          "PATCH /api/tasks/{id} body handling",
+          "a body over 64 KiB is 413, before JSON parsing and validation"
+        ]
+      },
+      {
+        "id": "4df966b3812c4c361521-e5c5e73e3cd2b1afa873",
+        "file": "test/request-body.spec.ts",
+        "title_path": [
+          "POST /api/tasks/{id}/completions body handling",
+          "any other media type, +json types included, is 415"
+        ]
+      },
+      {
+        "id": "4df966b3812c4c361521-e60ecc29b12b09c00542",
+        "file": "test/request-body.spec.ts",
+        "title_path": [
+          "POST /api/tasks body handling",
+          "a body of exactly 64 KiB is accepted"
+        ]
+      },
+      {
+        "id": "4df966b3812c4c361521-f114d3f927a6fd4a6c52",
+        "file": "test/request-body.spec.ts",
+        "title_path": [
+          "POST /api/tasks/{id}/completions body handling",
+          "unparseable JSON and top-level non-objects are 400 invalid_json"
+        ]
+      },
+      {
+        "id": "577ba0c7550b9f7644ad-1e51aac6e0c344484461",
+        "file": "test/reports-validation.spec.ts",
+        "title_path": [
+          "GET /api/reports/completions/daily: date",
+          "date is required exactly once"
+        ]
+      },
+      {
+        "id": "577ba0c7550b9f7644ad-225d412ef7382893e8e4",
+        "file": "test/reports-validation.spec.ts",
+        "title_path": [
+          "GET /api/reports/completions/daily: date",
+          "rejects impossible dates"
+        ]
+      },
+      {
+        "id": "577ba0c7550b9f7644ad-2e1019f92eeb71a43747",
+        "file": "test/reports-validation.spec.ts",
+        "title_path": [
+          "GET /api/reports/completions/daily: time_zone",
+          "accepts UTC and Area/Location names"
+        ]
+      },
+      {
+        "id": "577ba0c7550b9f7644ad-2ef5ade6921c57f0696e",
+        "file": "test/reports-validation.spec.ts",
+        "title_path": [
+          "GET /api/reports/completions/daily: shape",
+          "values may be percent-encoded, and + must be encoded as %2B"
+        ]
+      },
+      {
+        "id": "577ba0c7550b9f7644ad-3308803031517e6ac01d",
+        "file": "test/reports-validation.spec.ts",
+        "title_path": [
+          "GET /api/reports/completions/daily: date",
+          "rejects dates outside 1970-01-01 to 2099-12-31"
+        ]
+      },
+      {
+        "id": "577ba0c7550b9f7644ad-59fb40a566de789dec44",
+        "file": "test/reports-validation.spec.ts",
+        "title_path": [
+          "GET /api/reports/completions/daily: date",
+          "accepts real Gregorian dates from 1970-01-01 to 2099-12-31"
+        ]
+      },
+      {
+        "id": "577ba0c7550b9f7644ad-6be6f50052c3905ae4d0",
+        "file": "test/reports-validation.spec.ts",
+        "title_path": [
+          "GET /api/reports/completions/daily: shape",
+          "returns 200 with exactly date, time_zone, start, end and count"
+        ]
+      },
+      {
+        "id": "577ba0c7550b9f7644ad-9f347d38d2af140862ff",
+        "file": "test/reports-validation.spec.ts",
+        "title_path": [
+          "GET /api/reports/completions/daily: shape",
+          "time_zone is echoed exactly as given"
+        ]
+      },
+      {
+        "id": "577ba0c7550b9f7644ad-beaba894a8a743570a58",
+        "file": "test/reports-validation.spec.ts",
+        "title_path": [
+          "GET /api/reports/completions/daily: time_zone",
+          "time_zone is required exactly once"
+        ]
+      },
+      {
+        "id": "577ba0c7550b9f7644ad-cb03ed0e598cfbfbca91",
+        "file": "test/reports-validation.spec.ts",
+        "title_path": [
+          "GET /api/reports/completions/daily: date",
+          "rejects other shapes"
+        ]
+      },
+      {
+        "id": "577ba0c7550b9f7644ad-cd2f024a71522810fdf9",
+        "file": "test/reports-validation.spec.ts",
+        "title_path": [
+          "GET /api/reports/completions/daily: shape",
+          "parameter order does not matter"
+        ]
+      },
+      {
+        "id": "577ba0c7550b9f7644ad-d98a123ed31227637447",
+        "file": "test/reports-validation.spec.ts",
+        "title_path": [
+          "GET /api/reports/completions/daily: time_zone",
+          "rejects well-shaped names that are not time zones"
+        ]
+      },
+      {
+        "id": "577ba0c7550b9f7644ad-e4d4e8c8647e25eb70a2",
+        "file": "test/reports-validation.spec.ts",
+        "title_path": [
+          "GET /api/reports/completions/daily: time_zone",
+          "rejects names over 64 characters"
+        ]
+      },
+      {
+        "id": "577ba0c7550b9f7644ad-e6ecbcbaa541ca27ade9",
+        "file": "test/reports-validation.spec.ts",
+        "title_path": [
+          "GET /api/reports/completions/daily: unknown parameters and order",
+          "validation order: date, then time_zone, then unknown parameters"
+        ]
+      },
+      {
+        "id": "577ba0c7550b9f7644ad-e9ea50d8243047a0acd0",
+        "file": "test/reports-validation.spec.ts",
+        "title_path": [
+          "GET /api/reports/completions/daily: unknown parameters and order",
+          "the report route ignores request bodies and content types"
+        ]
+      },
+      {
+        "id": "577ba0c7550b9f7644ad-f3e9ba9b5a8c223b36e0",
+        "file": "test/reports-validation.spec.ts",
+        "title_path": [
+          "GET /api/reports/completions/daily: unknown parameters and order",
+          "an unknown query parameter is 400 naming it"
+        ]
+      },
+      {
+        "id": "577ba0c7550b9f7644ad-f740f36f3299901582e8",
+        "file": "test/reports-validation.spec.ts",
+        "title_path": [
+          "GET /api/reports/completions/daily: time_zone",
+          "rejects abbreviations, POSIX-style names, numeric offsets and other shapes"
+        ]
+      },
+      {
+        "id": "a5d7f0cc5abbf1038107-1c29ad18197c789e81cf",
+        "file": "test/reports-windows.spec.ts",
+        "title_path": [
+          "daily report windows and counts (C-8)",
+          "rows sharing an instant each count, across tasks"
+        ]
+      },
+      {
+        "id": "a5d7f0cc5abbf1038107-2a5b41c0732711e9cff5",
+        "file": "test/reports-windows.spec.ts",
+        "title_path": [
+          "no 24-hour-day assumption (C-9)",
+          "a 25-hour day: America/New_York 2023-11-05"
+        ]
+      },
+      {
+        "id": "a5d7f0cc5abbf1038107-3e0ea243db13be797922",
+        "file": "test/reports-windows.spec.ts",
+        "title_path": [
+          "no 24-hour-day assumption (C-9)",
+          "where the local date steps backward, the windows are deterministic"
+        ]
+      },
+      {
+        "id": "a5d7f0cc5abbf1038107-414f39828f46dd001ece",
+        "file": "test/reports-windows.spec.ts",
+        "title_path": [
+          "no 24-hour-day assumption (C-9)",
+          "a missing midnight: America/Havana 2024-03-10"
+        ]
+      },
+      {
+        "id": "a5d7f0cc5abbf1038107-4d6f37279ce47a4f4dbb",
+        "file": "test/reports-windows.spec.ts",
+        "title_path": [
+          "no 24-hour-day assumption (C-9)",
+          "a skipped date gives start = end and count 0: Pacific/Apia 2011-12-30"
+        ]
+      },
+      {
+        "id": "a5d7f0cc5abbf1038107-5f40094ab315a96a0ad7",
+        "file": "test/reports-windows.spec.ts",
+        "title_path": [
+          "daily report windows and counts (C-8)",
+          "counts start <= completed_at < end on a UTC day"
+        ]
+      },
+      {
+        "id": "a5d7f0cc5abbf1038107-631da68828ca0277a6b0",
+        "file": "test/reports-windows.spec.ts",
+        "title_path": [
+          "no 24-hour-day assumption (C-9)",
+          "a half-hour DST change gives a 24.5-hour day: Australia/Lord_Howe 2022-04-03"
+        ]
+      },
+      {
+        "id": "a5d7f0cc5abbf1038107-73a9f3a35808a6eed09e",
+        "file": "test/reports-windows.spec.ts",
+        "title_path": [
+          "daily report windows and counts (C-8)",
+          "a 24-hour day in a DST zone, and a year boundary"
+        ]
+      },
+      {
+        "id": "a5d7f0cc5abbf1038107-747969497c573ab0bbd4",
+        "file": "test/reports-windows.spec.ts",
+        "title_path": [
+          "no 24-hour-day assumption (C-9)",
+          "a 23-hour day without a 24-hour-day UTC equivalent: Europe/London 2022-03-27"
+        ]
+      },
+      {
+        "id": "a5d7f0cc5abbf1038107-7fc27bb6b4c60ca495c3",
+        "file": "test/reports-windows.spec.ts",
+        "title_path": [
+          "no 24-hour-day assumption (C-9)",
+          "a repeated midnight means its first occurrence: America/Havana 2024-11-03"
+        ]
+      },
+      {
+        "id": "a5d7f0cc5abbf1038107-8030e37670cbd0875638",
+        "file": "test/reports-windows.spec.ts",
+        "title_path": [
+          "no 24-hour-day assumption (C-9)",
+          "a 23-hour day: America/New_York 2023-03-12"
+        ]
+      },
+      {
+        "id": "a5d7f0cc5abbf1038107-bcb704ad6a369699c3ad",
+        "file": "test/reports-windows.spec.ts",
+        "title_path": [
+          "no 24-hour-day assumption (C-9)",
+          "a missing midnight: the day starts when the gap ends (America/Sao_Paulo 2018-11-04)"
+        ]
+      },
+      {
+        "id": "a5d7f0cc5abbf1038107-d298a3f569146949da69",
+        "file": "test/reports-windows.spec.ts",
+        "title_path": [
+          "daily report windows and counts (C-8)",
+          "fixed-offset and half-hour zones"
+        ]
+      },
+      {
+        "id": "a5d7f0cc5abbf1038107-d3344f54235608502058",
+        "file": "test/reports-windows.spec.ts",
+        "title_path": [
+          "daily report windows and counts (C-8)",
+          "the same rows fall on different local dates in different zones"
+        ]
+      },
+      {
+        "id": "a5d7f0cc5abbf1038107-fc09ba8f593b0b4458f0",
+        "file": "test/reports-windows.spec.ts",
+        "title_path": [
+          "no 24-hour-day assumption (C-9)",
+          "a 25-hour day with a repeated 23:00 hour: America/Sao_Paulo 2019-02-16"
+        ]
+      },
+      {
+        "id": "c5c15ae5efb55317240f-334fc9faac00dd73846d",
+        "file": "test/completions.spec.ts",
+        "title_path": [
+          "POST /api/tasks/{id}/completions",
+          "instants are normalized to UTC with milliseconds, and the stored instant is what is counted (C-7)"
+        ]
+      },
+      {
+        "id": "c5c15ae5efb55317240f-3508c11986e15347d4e3",
+        "file": "test/completions.spec.ts",
+        "title_path": [
+          "POST /api/tasks/{id}/completions",
+          "calendar and clock fields are range-checked, never rolled over"
+        ]
+      },
+      {
+        "id": "c5c15ae5efb55317240f-57784ed92c690f667101",
+        "file": "test/completions.spec.ts",
+        "title_path": [
+          "POST /api/tasks/{id}/completions",
+          "an uppercase task id is accepted; task_id is returned lowercase"
+        ]
+      },
+      {
+        "id": "c5c15ae5efb55317240f-629375473615c7bcfc9c",
+        "file": "test/completions.spec.ts",
+        "title_path": [
+          "POST /api/tasks/{id}/completions",
+          "stores the given instant and returns 201 with the Completion shape (C-7)"
+        ]
+      },
+      {
+        "id": "c5c15ae5efb55317240f-6c735ffb5a02694fcc42",
+        "file": "test/completions.spec.ts",
+        "title_path": [
+          "POST /api/tasks/{id}/completions",
+          "an unknown task is 404, but only after validation (C-7, step 7 before step 8)"
+        ]
+      },
+      {
+        "id": "c5c15ae5efb55317240f-71f7cb767433830a8c13",
+        "file": "test/completions.spec.ts",
+        "title_path": [
+          "POST /api/tasks/{id}/completions",
+          "leap days follow the Gregorian rule"
+        ]
+      },
+      {
+        "id": "c5c15ae5efb55317240f-8c28ef8d6c4995a24af0",
+        "file": "test/completions.spec.ts",
+        "title_path": [
+          "POST /api/tasks/{id}/completions",
+          "each completion gets a new unique id, also for the same task and instant (C-7)"
+        ]
+      },
+      {
+        "id": "c5c15ae5efb55317240f-913cb587938f5cd6f575",
+        "file": "test/completions.spec.ts",
+        "title_path": [
+          "POST /api/tasks/{id}/completions",
+          "field validation order: completed_at, then the first unknown key"
+        ]
+      },
+      {
+        "id": "c5c15ae5efb55317240f-988578ef6c0b641d66c7",
+        "file": "test/completions.spec.ts",
+        "title_path": [
+          "POST /api/tasks/{id}/completions",
+          "day, month and year roll over through the offset"
+        ]
+      },
+      {
+        "id": "c5c15ae5efb55317240f-9a2ad5b3ada3bcd8c40e",
+        "file": "test/completions.spec.ts",
+        "title_path": [
+          "POST /api/tasks/{id}/completions",
+          "the instant must lie in [1970-01-01T00:00:00.000Z, 2100-01-01T00:00:00.000Z)"
+        ]
+      },
+      {
+        "id": "c5c15ae5efb55317240f-a1816b4a3fa4aa066ec5",
+        "file": "test/completions.spec.ts",
+        "title_path": [
+          "POST /api/tasks/{id}/completions",
+          "{} stores the database now(): a fresh UTC instant no earlier than the task"
+        ]
+      },
+      {
+        "id": "c5c15ae5efb55317240f-ae5a33856cc160f1718a",
+        "file": "test/completions.spec.ts",
+        "title_path": [
+          "POST /api/tasks/{id}/completions",
+          "completed_at must match the RFC 3339 shape with an offset"
+        ]
+      },
+      {
+        "id": "c5c15ae5efb55317240f-de420691889985191c77",
+        "file": "test/completions.spec.ts",
+        "title_path": [
+          "POST /api/tasks/{id}/completions",
+          "adding a completion does not change the task"
+        ]
+      },
+      {
+        "id": "d2d3f88df070d751ab05-101f143c9f6cf4a2b4ae",
+        "file": "test/tasks.spec.ts",
+        "title_path": [
+          "PATCH /api/tasks/{id}",
+          "at least one field is required: {} is 400 with field \"body\""
+        ]
+      },
+      {
+        "id": "d2d3f88df070d751ab05-12469df502f3520e0b9d",
+        "file": "test/tasks.spec.ts",
+        "title_path": [
+          "PATCH /api/tasks/{id}",
+          "changes only the title when only the title is sent (C-3)"
+        ]
+      },
+      {
+        "id": "d2d3f88df070d751ab05-2116db8f7bab8f002fc9",
+        "file": "test/tasks.spec.ts",
+        "title_path": [
+          "GET /api/tasks/{id}",
+          "GET ignores any request body"
+        ]
+      },
+      {
+        "id": "d2d3f88df070d751ab05-21b34f48537bef8664ce",
+        "file": "test/tasks.spec.ts",
+        "title_path": [
+          "POST /api/tasks",
+          "note length is 0 to 10,000 code points"
+        ]
+      },
+      {
+        "id": "d2d3f88df070d751ab05-27489b260436fae516b1",
+        "file": "test/tasks.spec.ts",
+        "title_path": [
+          "POST /api/tasks",
+          "title and note are stored exactly as given (C-1)"
+        ]
+      },
+      {
+        "id": "d2d3f88df070d751ab05-2ab7120733e56ae80ab2",
+        "file": "test/tasks.spec.ts",
+        "title_path": [
+          "POST /api/tasks",
+          "a title with non-whitespace format characters is not blank"
+        ]
+      },
+      {
+        "id": "d2d3f88df070d751ab05-320ae57e26437fe04fc5",
+        "file": "test/tasks.spec.ts",
+        "title_path": [
+          "POST /api/tasks",
+          "title must be a well-formed string without U+0000"
+        ]
+      },
+      {
+        "id": "d2d3f88df070d751ab05-3a148b1539c8a5510615",
+        "file": "test/tasks.spec.ts",
+        "title_path": [
+          "PATCH /api/tasks/{id}",
+          "the same title and note rules apply as on create"
+        ]
+      },
+      {
+        "id": "d2d3f88df070d751ab05-41021c7fc2940f93cea5",
+        "file": "test/tasks.spec.ts",
+        "title_path": [
+          "POST /api/tasks",
+          "note defaults to \"\" when omitted (C-1)"
+        ]
+      },
+      {
+        "id": "d2d3f88df070d751ab05-4ed46188854ef372f137",
+        "file": "test/tasks.spec.ts",
+        "title_path": [
+          "PATCH /api/tasks/{id}",
+          "values are stored exactly as given"
+        ]
+      },
+      {
+        "id": "d2d3f88df070d751ab05-50982347890ce0776ea1",
+        "file": "test/tasks.spec.ts",
+        "title_path": [
+          "POST /api/tasks",
+          "each task gets a new id"
+        ]
+      },
+      {
+        "id": "d2d3f88df070d751ab05-52d26d164778fcf5fb45",
+        "file": "test/tasks.spec.ts",
+        "title_path": [
+          "PATCH /api/tasks/{id}",
+          "changes both fields when both are sent"
+        ]
+      },
+      {
+        "id": "d2d3f88df070d751ab05-5b68267aa5d97c589fd3",
+        "file": "test/tasks.spec.ts",
+        "title_path": [
+          "PATCH /api/tasks/{id}",
+          "changes only the note when only the note is sent (C-3)"
+        ]
+      },
+      {
+        "id": "d2d3f88df070d751ab05-6ba1c588aa49ebc4edad",
+        "file": "test/tasks.spec.ts",
+        "title_path": [
+          "POST /api/tasks",
+          "the error message is a fixed string per code"
+        ]
+      },
+      {
+        "id": "d2d3f88df070d751ab05-6e820c1bbb9b7a0dcbfa",
+        "file": "test/tasks.spec.ts",
+        "title_path": [
+          "POST /api/tasks",
+          "a title that is empty after ECMAScript trim() is rejected"
+        ]
+      },
+      {
+        "id": "d2d3f88df070d751ab05-75916b7f1cc337017bdb",
+        "file": "test/tasks.spec.ts",
+        "title_path": [
+          "PATCH /api/tasks/{id}",
+          "validation order: title, note, unknown keys, then the at-least-one rule"
+        ]
+      },
+      {
+        "id": "d2d3f88df070d751ab05-77e43b7af3223f70a277",
+        "file": "test/tasks.spec.ts",
+        "title_path": [
+          "PATCH /api/tasks/{id}",
+          "an unknown task is 404, but only after validation (step 7 before step 8)"
+        ]
+      },
+      {
+        "id": "d2d3f88df070d751ab05-7b488f2d9bc408be5a5d",
+        "file": "test/tasks.spec.ts",
+        "title_path": [
+          "POST /api/tasks",
+          "creates a task and returns 201 with the Task shape and a location header (C-1)"
+        ]
+      },
+      {
+        "id": "d2d3f88df070d751ab05-835ca6c3ac837be62499",
+        "file": "test/tasks.spec.ts",
+        "title_path": [
+          "PATCH /api/tasks/{id}",
+          "null is rejected for every field"
+        ]
+      },
+      {
+        "id": "d2d3f88df070d751ab05-85b80d73f34bb533caba",
+        "file": "test/tasks.spec.ts",
+        "title_path": [
+          "PATCH /api/tasks/{id}",
+          "a PATCH with the current values still succeeds"
+        ]
+      },
+      {
+        "id": "d2d3f88df070d751ab05-94978b891ca3e5549890",
+        "file": "test/tasks.spec.ts",
+        "title_path": [
+          "GET /api/tasks/{id}",
+          "an unknown id is 404 not_found (C-2)"
+        ]
+      },
+      {
+        "id": "d2d3f88df070d751ab05-958f37931fb0e84c8949",
+        "file": "test/tasks.spec.ts",
+        "title_path": [
+          "POST /api/tasks",
+          "a whitespace-only note is allowed and stored as given"
+        ]
+      },
+      {
+        "id": "d2d3f88df070d751ab05-9c1ddaceed7d8cba5c6a",
+        "file": "test/tasks.spec.ts",
+        "title_path": [
+          "POST /api/tasks",
+          "fields are validated in order: title, note, then the first unknown key"
+        ]
+      },
+      {
+        "id": "d2d3f88df070d751ab05-ae87f60184449a5501a5",
+        "file": "test/tasks.spec.ts",
+        "title_path": [
+          "POST /api/tasks",
+          "title is required"
+        ]
+      },
+      {
+        "id": "d2d3f88df070d751ab05-b47f85f6e8815f35232c",
+        "file": "test/tasks.spec.ts",
+        "title_path": [
+          "PATCH /api/tasks/{id}",
+          "an empty note is \"\" and clears the note"
+        ]
+      },
+      {
+        "id": "d2d3f88df070d751ab05-cf7592353ac778f42a88",
+        "file": "test/tasks.spec.ts",
+        "title_path": [
+          "PATCH /api/tasks/{id}",
+          "updates to different tasks never change each other (C-5)"
+        ]
+      },
+      {
+        "id": "d2d3f88df070d751ab05-dba81f06f755fea272a6",
+        "file": "test/tasks.spec.ts",
+        "title_path": [
+          "POST /api/tasks",
+          "note must be a well-formed string without U+0000"
+        ]
+      },
+      {
+        "id": "d2d3f88df070d751ab05-ddd08ed00490f8a25aae",
+        "file": "test/tasks.spec.ts",
+        "title_path": [
+          "POST /api/tasks",
+          "title length is 1 to 200 code points"
+        ]
+      },
+      {
+        "id": "d2d3f88df070d751ab05-f4f45d4dc9ddfc922d62",
+        "file": "test/tasks.spec.ts",
+        "title_path": [
+          "GET /api/tasks/{id}",
+          "returns the stored task (C-2)"
+        ]
+      },
+      {
+        "id": "d2d3f88df070d751ab05-ff325685acd3b9e1e7a2",
+        "file": "test/tasks.spec.ts",
+        "title_path": [
+          "PATCH /api/tasks/{id}",
+          "updated_at never moves backward and created_at never changes"
+        ]
+      }
+    ]
+  },
+  "runtime": {
+    "node": "24.21.0",
+    "postgres": "15.19",
+    "pg": "8.23.1",
+    "pg_pool": "3.14.0",
+    "db_pool_max": 10,
+    "app_tz": "Asia/Tokyo",
+    "postgres_timezone": "Asia/Tokyo"
+  }
+}
