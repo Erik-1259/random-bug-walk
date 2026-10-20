@@ -35,9 +35,10 @@ export interface DockerRunnerOptions {
   /** The directory each copy's fresh results directory is created in; defaults to the system temporary directory. */
   resultsDir?: string;
   /**
-   * The local image to run for a plan, in place of its kit (a stand-in image); the collected image_digest is
-   * then that image's ID. By default a pinned plan runs only its pinned digest and reports the pin: the daemon's
-   * `reference@digest`, otherwise the image under the reference when its ID or a repository digest is the pin.
+   * A local image name to run for a plan in place of its reference. A pinned plan runs only its pinned digest
+   * and reports the pin: by default the daemon's `reference@digest`, otherwise the image under the reference
+   * (or under this name, when given) when its ID or a repository digest is the pin; any other image is
+   * `setup_failed`. A plan with no pin runs this name or its reference and reports the image ID that ran.
    */
   image?: (plan: CopyPlan) => string;
   now?: () => Date;
@@ -181,23 +182,23 @@ async function inspectImage(docker: DockerCommand, name: string): Promise<Inspec
 /**
  * The image a plan runs and the digest its copy reports. A pinned plan runs only its pin: `reference@digest`
  * when the daemon resolves it (the daemon has checked the digest, so the copy reports the pin, whatever image
- * ID the image store gives it), otherwise the image under the bare reference when its image ID is the pin (a
- * locally built kit) or one of its repository digests is. A plan with no pin runs its reference, and the
- * caller's `image` choice runs as it is; both report the image ID that ran.
+ * ID the image store gives it), otherwise the image under the bare reference, or under the caller's `image`
+ * name, when its image ID is the pin (a locally built kit) or one of its repository digests is. A plan with
+ * no pin runs the caller's name or its reference and reports the image ID that ran.
  */
 async function resolveImage(docker: DockerCommand, plan: CopyPlan, choose: DockerRunnerOptions["image"]): Promise<ResolvedImage | null> {
   const pin = plan.image.digest;
-  if (choose !== undefined || pin === null) {
+  if (pin === null) {
     const name = choose !== undefined ? choose(plan) : plan.image.reference;
     const image = await inspectImage(docker, name);
     return image === null ? null : { name, digest: image.id, architecture: image.architecture };
   }
-  if (!plan.image.reference.includes("@")) {
+  if (choose === undefined && !plan.image.reference.includes("@")) {
     const pinned = `${plan.image.reference}@${pin}`;
     const exact = await inspectImage(docker, pinned);
     if (exact !== null) return { name: pinned, digest: pin, architecture: exact.architecture };
   }
-  const tagged = await inspectImage(docker, plan.image.reference);
+  const tagged = await inspectImage(docker, choose !== undefined ? choose(plan) : plan.image.reference);
   if (tagged === null || (tagged.id !== pin && !tagged.repoDigests.some((item) => item.endsWith(`@${pin}`)))) return null;
   // Runs the image ID that was checked, so a tag moved after the check cannot run another image.
   return { name: tagged.id, digest: pin, architecture: tagged.architecture };

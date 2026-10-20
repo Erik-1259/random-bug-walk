@@ -192,9 +192,27 @@ describe("dockerRunner", () => {
     expect((await dockerRunner({ command: garbled.command, resultsDir: join(dir, "results") }).run(plan(), roots)).outcome).toBe("setup_failed");
   });
 
-  it("runs the image the caller chooses, or the reference of a plan that pins no digest, and reports the image ID that ran", async () => {
+  it("runs the image the caller chooses for a pinned plan only when that image is the pin, and reports the pin", async () => {
+    // A stand-in whose image ID and repository digests are not the pin is never run.
     const standIn = fakeDocker({ images: { "synthetic-stand-in:1": inspect(LOCAL_ID, "arm64") } });
-    const chosen = await dockerRunner({ command: standIn.command, resultsDir: join(dir, "results"), image: () => "synthetic-stand-in:1" }).run(plan(), roots);
+    const refused = await dockerRunner({ command: standIn.command, resultsDir: join(dir, "results"), image: () => "synthetic-stand-in:1" }).run(plan(), roots);
+    expect(refused.outcome).toBe("setup_failed");
+    expect(refused.image_digest).toBe(PINNED);
+    expect(standIn.calls.some((call) => call[0] === "create")).toBe(false);
+
+    // Another local name for the pinned image runs the image ID that was checked.
+    const renamed = fakeDocker({ images: { "synthetic-local-kit:1": inspect(LOCAL_ID, "amd64", [`registry.invalid/synthetic/task-report-kit@${PINNED}`]) } });
+    const chosen = await dockerRunner({ command: renamed.command, resultsDir: join(dir, "results"), image: () => "synthetic-local-kit:1" }).run(plan(), roots);
+    expect(chosen.outcome).toBe("ran");
+    expect(chosen.image_digest).toBe(PINNED);
+    expect((renamed.calls.find((call) => call[0] === "create") ?? []).slice(-3)).toEqual([LOCAL_ID, "node", "/rbw/evaluator/run-copy.js"]);
+    const built = fakeDocker({ images: { "synthetic-local-kit:1": inspect(PINNED, "arm64") } });
+    expect((await dockerRunner({ command: built.command, resultsDir: join(dir, "results"), image: () => "synthetic-local-kit:1" }).run(plan(), roots)).image_digest).toBe(PINNED);
+  });
+
+  it("runs the image the caller chooses, or the reference, for a plan that pins no digest, and reports the image ID that ran", async () => {
+    const standIn = fakeDocker({ images: { "synthetic-stand-in:1": inspect(LOCAL_ID, "arm64") } });
+    const chosen = await dockerRunner({ command: standIn.command, resultsDir: join(dir, "results"), image: () => "synthetic-stand-in:1" }).run(plan({ image: { reference: REFERENCE, digest: null } }), roots);
     expect(chosen.outcome).toBe("ran");
     expect(chosen.image_digest).toBe(LOCAL_ID);
     expect((standIn.calls.find((call) => call[0] === "create") ?? []).slice(-3)).toEqual(["synthetic-stand-in:1", "node", "/rbw/evaluator/run-copy.js"]);
