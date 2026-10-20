@@ -1,0 +1,96 @@
+{
+  "route": {
+    "route_id": "behavioral-qualification",
+    "version": "1"
+  },
+  "case_id": "cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca",
+  "defect_id": "dadadadadadadadadadadadadadadadadadadadadadadadadadadadadadadada",
+  "entry_id": "synthetic-task-report-concurrency-01",
+  "item_key": "concurrency-1",
+  "cells": {
+    "original_suite": {
+      "clean": {
+        "observed": "pass",
+        "runs_valid": 3,
+        "runs_total": 3,
+        "failure_codes": [],
+        "detail": "synthetic detail: pass",
+        "expected": "pass",
+        "matches_expectation": true
+      },
+      "buggy": {
+        "observed": "pass",
+        "runs_valid": 3,
+        "runs_total": 3,
+        "failure_codes": [],
+        "detail": "synthetic detail: pass",
+        "expected": "pass",
+        "matches_expectation": true
+      },
+      "fixed": {
+        "observed": "pass",
+        "runs_valid": 3,
+        "runs_total": 3,
+        "failure_codes": [],
+        "detail": "synthetic detail: pass",
+        "expected": "pass",
+        "matches_expectation": true
+      }
+    },
+    "verification": {
+      "clean": {
+        "observed": "pass",
+        "runs_valid": 3,
+        "runs_total": 3,
+        "failure_codes": [],
+        "detail": "synthetic detail: pass",
+        "expected": "pass",
+        "matches_expectation": true
+      },
+      "buggy": {
+        "observed": "fail",
+        "runs_valid": 3,
+        "runs_total": 3,
+        "failure_codes": [
+          "acknowledged_completion_not_counted"
+        ],
+        "detail": "synthetic detail: fail",
+        "expected": "fail",
+        "matches_expectation": true
+      },
+      "fixed": {
+        "observed": "pass",
+        "runs_valid": 3,
+        "runs_total": 3,
+        "failure_codes": [],
+        "detail": "synthetic detail: pass",
+        "expected": "pass",
+        "matches_expectation": true
+      }
+    }
+  },
+  "criteria": [
+    {
+      "criterion_id": "concurrency.lost-acknowledged-change",
+      "matched": true
+    }
+  ],
+  "export_verification": {
+    "bug_case_sha256": "b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1",
+    "validator_sha256": "f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1",
+    "harness": {
+      "name": "rbw-validate",
+      "version": "1.0.0"
+    }
+  },
+  "verdict": "accepted",
+  "reason_code": null,
+  "copy_record_sha256s": [
+    "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1",
+    "e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2",
+    "e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3",
+    "e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4",
+    "e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5",
+    "e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6"
+  ]
+}

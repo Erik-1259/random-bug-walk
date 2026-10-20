@@ -1,0 +1,32 @@
+{
+  "name": "@rbw/factory-contract",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Machine-readable bug request contract bug-request/1: JSON Schema, generated TypeScript types and a validator",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./validate": "./src/validate.ts",
+    "./schema.json": "./schema/bug-request-v1.schema.json"
+  },
+  "engines": {
+    "node": ">=24.21 <25"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint . --max-warnings 0",
+    "test": "vitest run",
+    "generate": "node scripts/generate.ts"
+  },
+  "dependencies": {
+    "@rbw/schema": "workspace:*",
+    "ajv": "8.20.0"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.1",
+    "typescript": "6.0.3",
+    "vitest": "5.0.3"
+  }
+}
