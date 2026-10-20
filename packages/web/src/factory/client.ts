@@ -1,9 +1,9 @@
-/** Client integration with bug-request/1 draft revision 2 at the pinned shared-package commit.
+/** Client integration with bug-request/1 revision 2 at the pinned shared-package commit.
  * Qualification, interpretation and execution remain service responsibilities. */
 import { CONTRACT_VERSION_VALUES } from "@rbw/factory-contract";
 import type { Capabilities, RequestInput, Interpretation, RequestStatus, StartRequest, ValidationRun, SessionStatus } from "@rbw/factory-contract";
 export type { Capabilities, RequestInput, Interpretation, RequestStatus, StartRequest, ValidationRun, Cell, PackagePart, Problem, Case as FactoryCase, Event as FactoryEvent } from "@rbw/factory-contract";
-export const FACTORY_CONTRACT_REVISION = "572cb0ee069e453bf2eacccfbce74139e4e177be";
+export const FACTORY_CONTRACT_REVISION = "66651d67fcb09c402b25d9688ea492c0e69e1c2b";
 export class FactoryError extends Error {
   code: string; status: number; details: Record<string, unknown> | null;
   constructor(code: string, message: string, status = 0, details: Record<string, unknown> | null = null) { super(message); this.code = code; this.status = status; this.details = details; }
@@ -253,7 +253,7 @@ export class FactoryController {
       if (await this.adoptOtherIdentity()) return;
       const status = this.view.status;
       const found = status?.cases.find(item => item.case_id === caseId);
-      if (!this.view.signedIn || status?.state !== "finished" || status.attention !== null || !found?.packages.bug_case.ready || !found.packages.validator.ready || (this.validationIdentity !== null && this.view.validation?.state !== "finished")) return;
+      if (!this.view.signedIn || status?.state !== "finished" || status.attention !== null || !found?.packages.bug_case.ready || !found.packages.bug_case.download_path || !found.packages.validator.ready || !found.packages.validator.download_path || (this.validationIdentity !== null && this.view.validation?.state !== "finished")) return;
       const worstCase = status.interpretation.budget.worst_case_per_validation_microusd.find(entry => entry.host_id === found.host_id)?.microusd;
       if (worstCase === undefined || status.budget.remaining_microusd < worstCase || status.cases.some(item => item.validation !== null && item.validation.state !== "finished")) return;
       const identity = { request_id: status.request_id, case_id: caseId, validation_id: this.uuid() };
