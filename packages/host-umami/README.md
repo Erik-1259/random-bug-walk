@@ -11,7 +11,7 @@ The Umami host adapter of the bug factory: it makes Umami a factory host through
 
 ## Baseline
 
-`umami@ec0ff503`: Umami at commit `ec0ff50388c264ed8ce46f00967e92f7e71476ae`, with the original API suite `umami-api@ec0ff503`, 271 tests in 24 spec files, frozen-manifest SHA-256 `8162af64…` (the driver's `freeze` writes it and every copy re-checks it). `test_ids_sha256` is the canonical JSON hash of the sorted test IDs.
+`umami@ec0ff503`: Umami at commit `ec0ff50388c264ed8ce46f00967e92f7e71476ae`, with the original API suite `umami-api@ec0ff503`, pinned in `src/pins.ts` as `test_count: 271` in 24 spec files with frozen-manifest SHA-256 `8162af64…` (the driver's `freeze` writes the manifest and every copy re-checks it; `test/real.test.ts` checks the pins against a real prepared store when one is given). `test_ids_sha256` is the canonical JSON hash of the sorted test IDs.
 
 ## Catalog `umami-date-time`, version 1
 
@@ -51,7 +51,7 @@ Its valid-trial rules:
 
 `bugCaseInputs` and `validatorInputs` read the pinned inputs from a prepared store, a directory kept by content hash: `objects/<sha256>` holds each distinct file once and `index.json` (canonical JSON, format `rbw-host-umami-store/1`) lists:
 
-- the image's app source (`/workspace/app` without `node_modules`, `src/proxy.ts` and the empty build outputs, as the local runner exports it): 2026 files, tree hash `712ebd68…`;
+- the image's app source (`/workspace/app` without `node_modules`, `src/proxy.ts` and the empty build outputs, as the local runner exports it): pinned in `src/pins.ts` as `source_file_count: 2026` with tree hash `712ebd68…`;
 - the fixture package the image runs (`/opt/rbw/verifier/kit/umami-fixture`, without `node_modules` and `test-results`): tree hash `42c50a8b…`;
 - the planted target file, the frozen original-suite manifest and the released incident.
 
