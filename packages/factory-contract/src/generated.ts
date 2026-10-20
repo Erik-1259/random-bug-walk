@@ -629,7 +629,9 @@ export interface InterpretationHost {
 export interface InterpretationBudget {
   budget_microusd: MicroUsd;
   worker_worst_case_microusd: MicroUsd;
+  /** At most one entry per host. */
   worst_case_per_candidate_microusd: HostAmount[];
+  /** At most one entry per host, and one for each host that a supported item draws from, since a validation run reserves the worst case of its case's host (contract section 11). */
   worst_case_per_validation_microusd: HostAmount[];
   estimate_note: string;
 }
@@ -765,7 +767,7 @@ export interface Candidate {
   stage: CandidateStage;
   /** Set exactly for the stages rejected, invalid, incomplete and skipped, with a reason of that stage (contract section 8.3). */
   reason: CandidateReasonDetail | null;
-  /** Set at requested_criteria_passed, when the candidate is assigned to an item; null for a candidate that fits no item (wrong_failure) or is skipped before it runs (duplicate_defect, no_budget_for_candidate). */
+  /** Set at requested_criteria_passed, when the candidate is assigned to an item; null for a candidate whose cells did not match in export verification (the original-suite and check reasons and bug_not_detected), one that fits no item (wrong_failure) and one skipped before it runs (duplicate_defect, no_budget_for_candidate). */
   item_key: ItemKey | null;
   /** Set exactly in stage qualified: only a qualified candidate becomes a case (contract sections 10 and 10.5). */
   case_id: Sha256 | null;
@@ -1032,7 +1034,7 @@ export interface Case {
   difficulty: CaseDifficulty;
   qualification: CaseQualification;
   packages: Packages;
-  /** The latest user-started validation run, if any. */
+  /** The latest user-started validation run, if any. A run takes the slot that the request holds until it finishes, so a case has none before its request is finished. */
   validation: ValidationRun | null;
   provenance: Provenance;
 }

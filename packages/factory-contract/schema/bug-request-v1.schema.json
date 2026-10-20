@@ -2498,6 +2498,303 @@
               }
             ]
           }
+        },
+        {
+          "if": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "problems": {
+                    "type": "array",
+                    "contains": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "const": "host_unused"
+                        }
+                      },
+                      "required": [
+                        "code"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "problems"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "items": {
+                    "type": "array",
+                    "contains": {
+                      "type": "object",
+                      "properties": {
+                        "problems": {
+                          "type": "array",
+                          "contains": {
+                            "type": "object",
+                            "properties": {
+                              "code": {
+                                "const": "host_unused"
+                              }
+                            },
+                            "required": [
+                              "code"
+                            ]
+                          }
+                        }
+                      },
+                      "required": [
+                        "problems"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "items"
+                ]
+              }
+            ]
+          },
+          "then": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "input": {
+                    "type": "object",
+                    "properties": {
+                      "hosts": {
+                        "type": "array",
+                        "contains": {
+                          "const": "umami"
+                        }
+                      }
+                    }
+                  },
+                  "items": {
+                    "type": "array",
+                    "items": {
+                      "if": {
+                        "type": "object",
+                        "properties": {
+                          "status": {
+                            "const": "supported"
+                          }
+                        },
+                        "required": [
+                          "status"
+                        ]
+                      },
+                      "then": {
+                        "type": "object",
+                        "properties": {
+                          "eligible_sources": {
+                            "type": "array",
+                            "not": {
+                              "contains": {
+                                "type": "object",
+                                "properties": {
+                                  "host_id": {
+                                    "const": "umami"
+                                  }
+                                },
+                                "required": [
+                                  "host_id"
+                                ]
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "input": {
+                    "type": "object",
+                    "properties": {
+                      "hosts": {
+                        "type": "array",
+                        "contains": {
+                          "const": "task-report"
+                        }
+                      }
+                    }
+                  },
+                  "items": {
+                    "type": "array",
+                    "items": {
+                      "if": {
+                        "type": "object",
+                        "properties": {
+                          "status": {
+                            "const": "supported"
+                          }
+                        },
+                        "required": [
+                          "status"
+                        ]
+                      },
+                      "then": {
+                        "type": "object",
+                        "properties": {
+                          "eligible_sources": {
+                            "type": "array",
+                            "not": {
+                              "contains": {
+                                "type": "object",
+                                "properties": {
+                                  "host_id": {
+                                    "const": "task-report"
+                                  }
+                                },
+                                "required": [
+                                  "host_id"
+                                ]
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "items": {
+                "type": "array",
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "const": "supported"
+                    },
+                    "eligible_sources": {
+                      "type": "array",
+                      "contains": {
+                        "type": "object",
+                        "properties": {
+                          "host_id": {
+                            "const": "umami"
+                          }
+                        },
+                        "required": [
+                          "host_id"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "eligible_sources"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "items"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "budget": {
+                "type": "object",
+                "properties": {
+                  "worst_case_per_validation_microusd": {
+                    "type": "array",
+                    "contains": {
+                      "type": "object",
+                      "properties": {
+                        "host_id": {
+                          "const": "umami"
+                        }
+                      },
+                      "required": [
+                        "host_id"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "items": {
+                "type": "array",
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "const": "supported"
+                    },
+                    "eligible_sources": {
+                      "type": "array",
+                      "contains": {
+                        "type": "object",
+                        "properties": {
+                          "host_id": {
+                            "const": "task-report"
+                          }
+                        },
+                        "required": [
+                          "host_id"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "eligible_sources"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "items"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "budget": {
+                "type": "object",
+                "properties": {
+                  "worst_case_per_validation_microusd": {
+                    "type": "array",
+                    "contains": {
+                      "type": "object",
+                      "properties": {
+                        "host_id": {
+                          "const": "task-report"
+                        }
+                      },
+                      "required": [
+                        "host_id"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
         }
       ]
     },
@@ -3155,18 +3452,96 @@
           "type": "array",
           "items": {
             "$ref": "#/$defs/HostAmount"
-          }
+          },
+          "description": "At most one entry per host."
         },
         "worst_case_per_validation_microusd": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/HostAmount"
-          }
+          },
+          "description": "At most one entry per host, and one for each host that a supported item draws from, since a validation run reserves the worst case of its case's host (contract section 11)."
         },
         "estimate_note": {
           "type": "string"
         }
-      }
+      },
+      "allOf": [
+        {
+          "type": "object",
+          "properties": {
+            "worst_case_per_candidate_microusd": {
+              "type": "array",
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "host_id": {
+                    "const": "umami"
+                  }
+                },
+                "required": [
+                  "host_id"
+                ]
+              },
+              "minContains": 0,
+              "maxContains": 1
+            },
+            "worst_case_per_validation_microusd": {
+              "type": "array",
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "host_id": {
+                    "const": "umami"
+                  }
+                },
+                "required": [
+                  "host_id"
+                ]
+              },
+              "minContains": 0,
+              "maxContains": 1
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "worst_case_per_candidate_microusd": {
+              "type": "array",
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "host_id": {
+                    "const": "task-report"
+                  }
+                },
+                "required": [
+                  "host_id"
+                ]
+              },
+              "minContains": 0,
+              "maxContains": 1
+            },
+            "worst_case_per_validation_microusd": {
+              "type": "array",
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "host_id": {
+                    "const": "task-report"
+                  }
+                },
+                "required": [
+                  "host_id"
+                ]
+              },
+              "minContains": 0,
+              "maxContains": 1
+            }
+          }
+        }
+      ]
     },
     "HostAmount": {
       "type": "object",
@@ -5482,6 +5857,37 @@
               }
             }
           }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "state": {
+                "not": {
+                  "const": "finished"
+                }
+              }
+            },
+            "required": [
+              "state"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "cases": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "validation": {
+                      "type": "null"
+                    }
+                  }
+                }
+              }
+            }
+          }
         }
       ]
     },
@@ -5795,7 +6201,7 @@
           ]
         },
         "item_key": {
-          "description": "Set at requested_criteria_passed, when the candidate is assigned to an item; null for a candidate that fits no item (wrong_failure) or is skipped before it runs (duplicate_defect, no_budget_for_candidate).",
+          "description": "Set at requested_criteria_passed, when the candidate is assigned to an item; null for a candidate whose cells did not match in export verification (the original-suite and check reasons and bug_not_detected), one that fits no item (wrong_failure) and one skipped before it runs (duplicate_defect, no_budget_for_candidate).",
           "anyOf": [
             {
               "$ref": "#/$defs/ItemKey"
@@ -6099,6 +6505,12 @@
                 "properties": {
                   "code": {
                     "enum": [
+                      "original_suite_failed_clean",
+                      "original_suite_caught_bug",
+                      "original_suite_failed_fixed",
+                      "checks_failed_clean",
+                      "checks_failed_fixed",
+                      "bug_not_detected",
                       "wrong_failure",
                       "duplicate_defect",
                       "no_budget_for_candidate"
@@ -7669,7 +8081,7 @@
           "$ref": "#/$defs/Packages"
         },
         "validation": {
-          "description": "The latest user-started validation run, if any.",
+          "description": "The latest user-started validation run, if any. A run takes the slot that the request holds until it finishes, so a case has none before its request is finished.",
           "anyOf": [
             {
               "$ref": "#/$defs/ValidationRun"
@@ -7740,6 +8152,33 @@
             "properties": {
               "item_key": {
                 "type": "null"
+              },
+              "packages": {
+                "type": "object",
+                "properties": {
+                  "bug_case": {
+                    "type": "object",
+                    "properties": {
+                      "download_path": {
+                        "not": {
+                          "type": "string",
+                          "pattern": "^/api/factory/requests/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/cases/[0-9a-f]{64}/packages/(bug-case|validator)$"
+                        }
+                      }
+                    }
+                  },
+                  "validator": {
+                    "type": "object",
+                    "properties": {
+                      "download_path": {
+                        "not": {
+                          "type": "string",
+                          "pattern": "^/api/factory/requests/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/cases/[0-9a-f]{64}/packages/(bug-case|validator)$"
+                        }
+                      }
+                    }
+                  }
+                }
               }
             }
           }
