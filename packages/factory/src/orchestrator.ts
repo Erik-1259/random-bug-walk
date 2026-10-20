@@ -4,10 +4,10 @@
 //
 // For each candidate, in assignment order across the selected hosts: the fill, stop, deadline, sources
 // and candidate-limit checks, then the ledger's halt and overrun check, `candidate_selected`, the
-// duplicate-defect skip, budget admission (`no_budget_for_candidate`),
-// the reservation, export verification through the harness (with the stop, time and accounting check
-// before every copy and `check_finished` after every copy state), the verdict, assignment, packaging
-// and delivery, and the candidate's settlement. The loop appends every request event except
+// duplicate-defect skip, budget admission (`no_budget_for_candidate`), the reservation, export
+// verification through the harness (with the stop, time and accounting check before every copy and
+// `check_finished` after every copy state), the verdict, assignment, packaging and delivery, and the
+// candidate's settlement. The loop appends every request event except
 // `request_accepted`, `stop_requested`, the start reservation's `budget_updated`, `worker_started`, the
 // validation events and the lost-worker finish.
 //
@@ -121,9 +121,10 @@ class RequestRun {
   private readonly notes: string[] = [];
   /**
    * The candidate of the current iteration: its `candidate_selected` event, whether that append resolved,
-   * and whether the candidate ended, holds a reservation, and settled.
+   * and whether the candidate ended, holds a reservation, has that reservation's budget event recorded,
+   * and settled.
    */
-  private current: { candidate: PlannedCandidate; selection: NewEvent; selected: boolean; ended: boolean; reserved: boolean; settled: boolean } | null = null;
+  private current: { candidate: PlannedCandidate; selection: NewEvent; selected: boolean; ended: boolean; reserved: boolean; reservationRecorded: boolean; settled: boolean } | null = null;
   private finishing = false;
 
   constructor(deps: RunRequestDeps) {
@@ -159,6 +160,11 @@ class RequestRun {
     await this.append(budgetUpdated(key, status, budgetMessage(before ?? amounts, amounts, subject), this.at()));
     this.lastAmounts = amounts;
     return status;
+  }
+
+  /** The candidate's reservation event; the status counts the candidate as started from it. */
+  private async recordReservation(candidate: PlannedCandidate): Promise<void> {
+    await this.budgetChanged(`cand:${candidate.candidate_id}:reserved`, `this candidate's worst case on ${HOST_PRESENTATION[candidate.host_id].name}`, true);
   }
 
   /** Marks the run uncertain and records the attention event once; a retry after a failed append appends it again. */
@@ -229,8 +235,9 @@ class RequestRun {
   /**
    * Runs the loop. An unexpected failure (a port read, a hook, an adapter, an append) ends the candidate
    * in flight as incomplete and finishes the request: `needs_reconciliation` once an outcome was
-   * uncertain or while that candidate's reservation is held, otherwise `operational_error`. A failure while finishing, or a store that refuses the recovery's
-   * events, propagates: the lost-worker finish then applies.
+   * uncertain or while that candidate's reservation is held, otherwise `operational_error`. A failure
+   * while finishing, or a store that refuses the recovery's events, propagates: the lost-worker finish
+   * then applies.
    */
   async run(): Promise<RunResult> {
     try {
@@ -243,6 +250,8 @@ class RequestRun {
         // A selection whose append failed may or may not have committed. Appending the same event again
         // replays it or records it, so the end never names a candidate the event log lacks.
         if (!current.selected) await this.append(current.selection);
+        // Likewise a reservation whose budget event failed, so the status counts the held candidate as started.
+        if (current.reserved && !current.reservationRecorded) await this.recordReservation(current.candidate);
         await this.append(candidateEnded(current.candidate, "incomplete_run", this.at(), "Incomplete: the worker hit an internal error during this candidate. It is not reproduction and was not retried."));
       }
       if (this.uncertain || (current !== null && current.reserved && !current.settled)) return this.finishUncertain();
@@ -286,7 +295,7 @@ class RequestRun {
       if (ledgerStop(status) !== null) return this.finish("operational_error");
       tried.add(next.candidate_id);
       const selection = candidateSelected(next, this.at());
-      this.current = { candidate: next, selection, selected: false, ended: false, reserved: false, settled: false };
+      this.current = { candidate: next, selection, selected: false, ended: false, reserved: false, reservationRecorded: false, settled: false };
       await this.append(selection);
       this.current.selected = true;
       if (duplicateOf !== undefined) {
@@ -324,7 +333,8 @@ class RequestRun {
       this.current.reserved = true;
       defects.set(next.defect_id, next.entry_id);
       started += 1;
-      await this.budgetChanged(`cand:${next.candidate_id}:reserved`, `this candidate's worst case on ${host}`, true);
+      await this.recordReservation(next);
+      this.current.reservationRecorded = true;
       const outcome = await this.runCandidate(next);
       if (outcome.kind === "uncertain") {
         await this.append(candidateEnded(next, "incomplete_run", this.at(), "Incomplete: a sandbox run's outcome is uncertain, so this candidate was stopped and is not retried."));

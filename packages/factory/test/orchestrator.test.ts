@@ -585,6 +585,32 @@ describe("runRequest: uncertain outcomes", () => {
     expect([status.funnel.candidates_explored, status.limits.candidates_started]).toEqual([1, 1]);
   });
 
+  it("records a reservation whose budget event failed before ending the candidate, so the status counts the candidate it holds", async () => {
+    const w = world({ input: concurrencyOnly(1) });
+    let reserved = false;
+    let failed = false;
+    ledgerWith(w, {
+      reserveCandidate: async (input) => {
+        const outcome = await w.ledger.reserveCandidate(input);
+        reserved = true;
+        return outcome;
+      },
+      status: () => {
+        if (!reserved || failed) return w.ledger.status();
+        failed = true;
+        return Promise.reject(new Error("connection reset"));
+      },
+    });
+    const result = await w.run();
+    expect(result).toMatchObject({ outcome: "operational_error", stop_code: "needs_reconciliation", needs_reconciliation: true });
+    expect(w.qualified).toEqual([]);
+    const status = w.status();
+    expect(status.candidates.map((c) => [c.stage, c.started_at !== null])).toEqual([["incomplete", true]]);
+    expect([status.funnel.candidates_explored, status.limits.candidates_started]).toEqual([1, 1]);
+    // The worker settled at the finish; the candidate's worst case stays held.
+    expect(status.budget.reserved_microusd).toBe(300_000);
+  });
+
   it("finishes needs_reconciliation after an uncertain reservation even when the attention's first append fails", async () => {
     const w = world({ input: concurrencyOnly(1) });
     ledgerWith(w, { reserveCandidate: () => Promise.reject(new Error("timeout")) });
