@@ -94,6 +94,19 @@ async function runToEnd(w: World, scenario: TestScenario): Promise<RequestStatus
   throw new Error(`synthetic: ${scenario} did not finish`);
 }
 
+/** Advances the fake timers in 100 ms steps until the promise settles; returns its value. */
+async function settle<T>(pending: Promise<T>): Promise<T> {
+  const state = { done: false };
+  const watched = pending.finally(() => {
+    state.done = true;
+  });
+  for (let elapsed = 0; !state.done; elapsed += 100) {
+    if (elapsed > 10_000) throw new Error("synthetic: the promise did not settle within 10 s of fake time");
+    await vi.advanceTimersByTimeAsync(100);
+  }
+  return watched;
+}
+
 /** A text with its dollar amounts replaced: the fixtures' amounts are illustrative, the fake ledger's differ. */
 const amountless = <T extends { message: string } | null>(value: T): T => (value === null ? value : { ...value, message: value.message.replace(/\$\d+\.\d{2}/g, "$#.##") });
 
@@ -469,6 +482,43 @@ describe("controls", () => {
     expect((await start(w, "zero-result")).status).toBe(202);
     const bad = await postTestReset(request("/api/factory/test/reset", { body: { scenario: "synthetic-none" }, session: false }), w.server);
     expect(bad.status).toBe(400);
+  });
+
+  it("reset during a start's 2 s hold leaves nothing of that start in the emptied world", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout"] });
+    const w = makeWorld(2000);
+    await reset(w, "two-host-fulfilled");
+    const held = start(w, "two-host-fulfilled");
+    await vi.advanceTimersByTimeAsync(1000);
+    await settle(reset(w, "two-host-fulfilled"));
+    await settle(held);
+    expect((await getRequestStatus(request(STATUS_PATH), w.server, { request_id: REQUEST_ID })).status).toBe(404);
+    expect((await getTestEvidence(request(`/api/factory/test/evidence?request_id=${REQUEST_ID}`, { session: false }), w.server)).status).toBe(404);
+    const next = await settle(start(w, "two-host-fulfilled", OTHER_REQUEST_ID));
+    expect(next.status).toBe(202);
+    expect((await evidence(w, OTHER_REQUEST_ID)).slot.holder_request_id).toBe(OTHER_REQUEST_ID);
+  });
+
+  it("reset during a validation start's hold leaves no run of it in the next world, also for a queued duplicate", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout"] });
+    const w = makeWorld(2000);
+    await reset(w, "two-host-fulfilled");
+    expect((await settle(start(w, "two-host-fulfilled"))).status).toBe(202);
+    const caseId = (await runToEnd(w, "two-host-fulfilled")).at(-1)?.cases[0]?.case_id ?? "";
+    const validationId = "00000000-0000-4000-8000-0000000002f1";
+    // The duplicate waits behind the first in the validation ID's lock and is held 2 s after it.
+    const held = [validate(w, caseId, validationId), validate(w, caseId, validationId)];
+    await vi.advanceTimersByTimeAsync(1000);
+    await settle(reset(w, "two-host-fulfilled"));
+    // The same request ID delivers the same case in the next world.
+    expect((await settle(start(w, "two-host-fulfilled"))).status).toBe(202);
+    await runToEnd(w, "two-host-fulfilled");
+    await settle(Promise.all(held));
+    const run = await getValidationRun(request(`${STATUS_PATH}/cases/${caseId}/validations/${validationId}`), w.server, { request_id: REQUEST_ID, case_id: caseId, validation_id: validationId });
+    expect(run.status).toBe(404);
+    const proof = await evidence(w);
+    expect(proof.operations.filter((op) => op.kind === "validation")).toEqual([]);
+    expect(proof.slot).toEqual({ slot_key: "factory", holder_request_id: null, holder_validation_id: null });
   });
 
   it("refuses a start whose input is not the selected scenario's, and releases the slot", async () => {

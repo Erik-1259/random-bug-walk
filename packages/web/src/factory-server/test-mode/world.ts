@@ -526,7 +526,10 @@ export class TestWorld implements FactoryServerPorts, FactoryTestControls {
     return Promise.resolve(true);
   }
 
-  reset(scenario: TestScenario): Promise<void> {
+  async reset(scenario: TestScenario): Promise<void> {
+    // A start or validation start inside its ID lock would otherwise write into the emptied world after
+    // reset answers; reset discards every record (contract section 15.1), so it waits for every held lock.
+    while (this.locks.size > 0) await Promise.all(this.locks.values());
     this.scenario = scenario;
     this.skewMs = 0;
     this.slot = null;
@@ -534,7 +537,6 @@ export class TestWorld implements FactoryServerPorts, FactoryTestControls {
     this.validations.clear();
     this.ops = [];
     this.providerCalls = [];
-    return Promise.resolve();
   }
 
   // The fake ledger.
