@@ -1,0 +1,44 @@
+{
+  "host_id": "task-report",
+  "entry_id": "synthetic-task-report-concurrency-01",
+  "baseline": {
+    "host_id": "task-report",
+    "baseline_id": "task-report@ca4a71f",
+    "app_commit": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+    "original_suite": {
+      "suite_id": "synthetic-task-report-original-suite",
+      "sha256": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+      "test_count": 42,
+      "test_ids_sha256": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c"
+    }
+  },
+  "source": {
+    "root": "/work/synthetic/bug-case/source",
+    "files": [
+      {
+        "path": "src/synthetic/store.ts",
+        "sha256": "d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3"
+      },
+      {
+        "path": "test/synthetic/store.test.ts",
+        "sha256": "5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d"
+      }
+    ]
+  },
+  "incident": {
+    "root": "/work/synthetic/bug-case/incident",
+    "files": [
+      {
+        "path": "synthetic-incident.md",
+        "sha256": "d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5"
+      }
+    ]
+  },
+  "runtime": {
+    "kit_image": "registry.invalid/synthetic/task-report-kit:1",
+    "kit_image_digest": "sha256:e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9",
+    "setup": [
+      "pnpm install --frozen-lockfile"
+    ]
+  }
+}

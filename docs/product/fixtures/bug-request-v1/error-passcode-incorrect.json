@@ -1,0 +1,9 @@
+{
+  "contract_version": "bug-request/1",
+  "error": {
+    "code": "passcode_incorrect",
+    "message": "The passcode is not correct. Check it and try again.",
+    "retryable": false,
+    "details": null
+  }
+}

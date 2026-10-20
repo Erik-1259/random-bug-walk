@@ -1,0 +1,11 @@
+{
+  "host_id": "task-report",
+  "baseline_id": "task-report@ca4a71f",
+  "app_commit": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+  "original_suite": {
+    "suite_id": "synthetic-task-report-original-suite",
+    "sha256": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+    "test_count": 42,
+    "test_ids_sha256": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c"
+  }
+}

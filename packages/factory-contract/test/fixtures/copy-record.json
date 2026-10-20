@@ -1,0 +1,30 @@
+{
+  "copy_id": "synthetic-copy-buggy-01",
+  "state": "buggy",
+  "status": "complete",
+  "original_suite": {
+    "observed": "pass",
+    "runs_valid": 3,
+    "runs_total": 3,
+    "failure_codes": [],
+    "detail": "synthetic detail: pass",
+    "executed": 42,
+    "expected": 42,
+    "failing_test_ids": [],
+    "suite_sha256": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"
+  },
+  "verification": {
+    "observed": "fail",
+    "runs_valid": 3,
+    "runs_total": 3,
+    "failure_codes": [
+      "acknowledged_completion_not_counted"
+    ],
+    "detail": "synthetic detail: fail"
+  },
+  "image_digest": "sha256:e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9",
+  "architecture": "amd64",
+  "started_at": "2026-10-20T14:04:02.728Z",
+  "finished_at": "2026-10-20T14:05:21.150Z",
+  "evidence_sha256": "e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8"
+}

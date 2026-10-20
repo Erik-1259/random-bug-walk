@@ -1,23 +1,39 @@
 # Factory UI integration status
 
-The additive `/factory` page is presentation scaffolding. Live requests, package downloads and validation are unavailable. It must not be presented as a completed request product.
+The `/factory` UI follows **bug-request/1 draft revision 2**, pinned to code commit [`572cb0ee069e453bf2eacccfbce74139e4e177be`](https://github.com/Erik-1259/random-bug-walk/blob/572cb0ee069e453bf2eacccfbce74139e4e177be/docs/product/bug-request-v1.md). Endpoints in that revision are planned. An unavailable service produces an explicit unavailable state; the production page never substitutes fixtures.
 
-## Contract dependency
+## Implemented UI behavior
 
-No published revision of `docs/product/bug-request-v1.md` was available on `main` or `feat/rbw-product-contracts` when this scaffolding was prepared. Contract revision: **not yet available**. No request endpoints, authentication scheme, backend status schema, budget limits or package format have been defined by this UI change.
+Capabilities supply host choices, bug types, combination explanations, difficulty availability and all numeric limits. Items retain independent keys, descriptions and quantities. The service interpretation is displayed before start, and editing invalidates it. The UI does not implement the interpreter or decide qualification.
 
-`packages/web/src/factory/client.ts` is a disconnected presentation boundary, not an API specification. Replace it with a client for the exact published contract. The form and progress component types are local view props. Development options and snapshots are used only in tests, visibly labeled, and never loaded into the production page.
+The factory session is separate from the Umami replay session. The client persists the request identity and exact start body before sending a start. Duplicate clicks are locked. Uncertain responses, failed polls and reloads read the saved identity, never launch replacement work. A `busy` refusal is reconciled against status before a new identity is permitted. Explicit same-identity retry is available after an uncertain start is still not found. Definite input/interpretation/budget refusals require another interpretation.
 
-## Connections required
+Status renders service events and counts without an invented percentage. Delivered cases remain visible for every outcome. Downloads keep debugging-agent and evaluator packages separate and require readiness. Validation stores its own identity before posting, resumes on reload and distinguishes behavioral failure from operational error. A click is never a completed validation result. No verification code or reference repairs are rendered in the page.
 
-- Read the published contract and record its commit here before implementing transport. Use its supported host/type combinations, per-description requirements, quantity rules, shared budget limits and unsupported-input responses. A draft summary is not a backend interpretation.
-- Use the factory service's authentication and idempotency rules. The existing judge cookie and `/api/judge` transport are not a factory API. Retain the same backend request identity across repeated clicks, uncertain responses and reloads; do not start a replacement request on a temporary polling error.
-- Render actual events and canonical terminal outcomes, including partial results, exhaustion, cancellation and operational failure. Retain each backend-qualified case independently of the request outcome. Do not count retries, rejected candidates or incomplete cases as delivered.
-- Use only permitted package metadata. Enable separate debugging and validator downloads only on the service's readiness response. Never include verification tests, reference fixes or answers in agent-facing payloads. Qualification is determined by the service.
-- Connect validation to the real replay service and display its actual progress and result. A local click is not evidence of execution. Leave the harder per-description option unavailable until supported calibration is declared.
+## Shared contract handoff
 
-## Verification boundary
+The UI consumes the unchanged Git workspace package `@rbw/factory-contract` from the pinned PR #121 revision above. Client code imports its root entry's types and contract-version constant. The former local transport projections are removed. The package's `/validate` entry reads files and uses Node/Ajv, so it is used only by tests to parse every pinned UI fixture, never imported into a client component. The browser still checks JSON and contract-version envelopes; full runtime response validation requires a client-safe parser if the contract owner later supplies one.
 
-Presentation tests exercise local fixtures and unavailable states. They do not establish backend integration, paid-request idempotency, qualification, package readiness or replay execution. Real-service verification remains required using the published contract and an authorized non-paid test facility; no live paid request is part of these UI checks.
+Revision 2 stores the validation UUID under `rbw-factory-validation-id` before POST, with scoped request/case metadata kept separately. Existing revision-1 scoped metadata is migrated without starting work. Definite validation refusals clear the rejected ID; uncertain responses retain it for the same-ID retry. Stale factory tabs adopt the saved request before Start, and clearing an older request does not delete a newer tab's identity. New warning codes and criterion failure-code fixtures come from the shared contract, while interpretation and qualification remain service decisions.
 
-The published Umami example is linked separately from draft requests. Existing case anchors, immutable release files and judge replay controls remain unchanged. Use a build against the public results snapshot for browser regression checks; the default development fixture contains no released case.
+The shared package also supplies `CopyPlan.destinations`, `CopyRoots`, `CollectedCopy`, `CopyRunner.run(plan, roots)` and `HostAdapter.collect`. These are backend/harness interfaces; the UI does not execute or implement them. Later contract corrections must be integrated explicitly with an updated Git pin and fixtures.
+
+## Runtime and verification dependencies
+
+Request and validation identity mutations use one origin-wide Web Lock, held through Start persistence and reconciliation. A stale tab adopts a newer request or validation before acting; cleanup cannot erase that newer identity. Browsers without Web Locks cannot start this workflow. The synthetic browser proof queues simultaneous Start clicks behind a held lock and checks cleanup while another tab's validation POST is in flight. This verifies UI coordination, not server idempotency or live acceptance.
+
+Backend ownership remains `app/api/factory/**`, `src/factory-server/**` and request execution. Required runtime handoff: implemented revision-2 routes, session cookie behavior, capabilities declaring actual supported sources, interpretation/status/event pagination, idempotent starts/stops/validation, ready package paths, and an authorized non-paid test-service startup command with scenarios and disposable storage. UI tests cannot establish those server properties.
+
+Synthetic contract fixtures are copied byte-for-byte into `packages/web/test/fixtures/factory-v1/` with the pinned source documented. Unit and browser tests use fake transport responses and explicitly label that evidence as synthetic. No provider or paid execution is part of UI verification. Real backend integration and API acceptance remain separate, unfinished work.
+
+The published Umami example, case anchors, immutable release files and existing replay controls remain unchanged. The historical example is not relabeled as a newly exported revision-1 package.
+
+## Repeating the browser proof
+
+Build the web package with `RBW_RESULTS_DIR` pointing to the assembled public results snapshot, then start it on a local port. With an externally available Playwright installation and Chromium binary, run from `packages/web`:
+
+```sh
+node test/factory-browser.mjs <playwright-index.mjs> <chromium-binary> <local-origin> <evidence-output-directory> <public-results-repository>
+```
+
+The script refuses a non-local origin, intercepts only factory endpoints in its synthetic scenarios, and separately checks the real missing-endpoint state. It never submits the legacy replay controls. The project adds no browser dependency or deployment configuration.

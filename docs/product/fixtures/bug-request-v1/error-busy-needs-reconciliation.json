@@ -1,0 +1,11 @@
+{
+  "contract_version": "bug-request/1",
+  "error": {
+    "code": "busy",
+    "message": "A finished request has spend that is waiting for an operator to reconcile it. No new factory work can start until then.",
+    "retryable": false,
+    "details": {
+      "reason": "needs_reconciliation"
+    }
+  }
+}

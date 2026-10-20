@@ -1,0 +1,70 @@
+{
+  "host_id": "task-report",
+  "entry_id": "synthetic-task-report-concurrency-01",
+  "checks": {
+    "root": "/work/synthetic/validator/checks",
+    "files": [
+      {
+        "path": "checks/synthetic-check.ts",
+        "sha256": "d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8"
+      },
+      {
+        "path": "checks/expected.json",
+        "sha256": "d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9"
+      }
+    ]
+  },
+  "expected": {
+    "original_suite": {
+      "clean": "pass",
+      "buggy": "pass",
+      "fixed": "pass"
+    },
+    "verification": {
+      "clean": "pass",
+      "buggy": "fail",
+      "fixed": "pass"
+    }
+  },
+  "clean_reconstruction": {
+    "patch": "synthetic clean reconstruction patch text\n",
+    "patch_sha256": "dbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdb"
+  },
+  "reference_repair": {
+    "patch": "synthetic repair patch text\n",
+    "patch_sha256": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+    "result_sha256": [
+      {
+        "path": "src/synthetic/store.ts",
+        "sha256": "d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2"
+      }
+    ],
+    "kind": "revert"
+  },
+  "protocol": {
+    "protocol_id": "synthetic-repetition-protocol",
+    "version": "1",
+    "sha256": "d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7",
+    "per_state": {
+      "clean": {
+        "copies": 1,
+        "rounds_per_copy": 5,
+        "min_valid_runs": 5
+      },
+      "buggy": {
+        "copies": 1,
+        "rounds_per_copy": 5,
+        "min_valid_runs": 5
+      },
+      "fixed": {
+        "copies": 1,
+        "rounds_per_copy": 5,
+        "min_valid_runs": 5
+      }
+    },
+    "valid_trial_rules": [
+      "synthetic-rule-exit-code",
+      "synthetic-rule-report-present"
+    ]
+  }
+}
