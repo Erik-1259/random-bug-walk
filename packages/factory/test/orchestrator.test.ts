@@ -666,6 +666,31 @@ describe("runRequest: uncertain outcomes", () => {
     expect(status.budget.reserved_microusd).toBe(300_000);
   });
 
+  it("still records the held reservation, ends the candidate and finishes needs_reconciliation once when the ledger stays unreadable after the reservation", async () => {
+    const w = world({ input: concurrencyOnly(1) });
+    let reserved = false;
+    ledgerWith(w, {
+      reserveCandidate: async (input) => {
+        const outcome = await w.ledger.reserveCandidate(input);
+        reserved = true;
+        return outcome;
+      },
+      status: () => (reserved ? Promise.reject(new Error("connection reset")) : w.ledger.status()),
+    });
+    const result = await w.run();
+    expect(result).toMatchObject({ outcome: "operational_error", stop_code: "needs_reconciliation", needs_reconciliation: true, delivered: 0 });
+    expect(w.qualified).toEqual([]);
+    expect(w.events.events.filter((event) => event.type === "request_finished").map((event) => event.data)).toEqual([{ outcome: "operational_error", stop_code: "needs_reconciliation" }]);
+    expect(ended(w.events.events)).toEqual([{ type: "candidate_incomplete", reason: "incomplete_run" }]);
+    expect(w.ledger.calls.map((call) => call.call)).toEqual(["reserveCandidate", "settleWorker"]);
+    const status = w.status();
+    expect(validateContract("RequestStatus", status)).toEqual([]);
+    expect(status.candidates.map((c) => [c.stage, c.started_at !== null])).toEqual([["incomplete", true]]);
+    expect([status.funnel.candidates_explored, status.limits.candidates_started]).toEqual([1, 1]);
+    expect(status.attention).toMatchObject({ code: "needs_reconciliation" });
+    expect(status.budget.reserved_microusd).toBe(300_000);
+  });
+
   it("finishes needs_reconciliation after an uncertain reservation even when the attention's first append fails", async () => {
     const w = world({ input: concurrencyOnly(1) });
     ledgerWith(w, { reserveCandidate: () => Promise.reject(new Error("timeout")) });

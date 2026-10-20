@@ -100,10 +100,7 @@ type StopCause = "cancelled_by_user" | "time_limit" | "operational_error";
 
 type CandidateOutcome = { kind: "done" } | { kind: "stop"; stop_code: StopCause } | { kind: "uncertain" } | { kind: "failed" };
 
-interface Amounts {
-  reserved_microusd: number;
-  spent_microusd: number;
-}
+type Amounts = Pick<LedgerStatus, "budget_microusd" | "reserved_microusd" | "spent_microusd">;
 
 function caseCell(cell: CellObservation, set: CheckSet, state: CopyState): Cell {
   const expected = EXPECTED[set][state];
@@ -159,24 +156,44 @@ class RequestRun {
     return status;
   }
 
-  /**
-   * Appends `budget_updated` when the ledger's amounts changed since the last one this run saw, or
-   * always with `always`: a candidate's reservation is recorded even when a ledger that reserves per
-   * copy changed nothing yet, because the status counts a candidate as started from that event.
-   */
-  private async budgetChanged(key: string, subject: string, always = false): Promise<LedgerStatus> {
+  /** Reads the ledger and appends `budget_updated` when its amounts changed since the last one this run recorded. */
+  private async budgetChanged(key: string, subject: string): Promise<LedgerStatus> {
     const status = await this.readLedger();
-    const amounts = { reserved_microusd: status.reserved_microusd, spent_microusd: status.spent_microusd };
-    const before = this.lastAmounts;
-    if (!always && before !== null && before.reserved_microusd === amounts.reserved_microusd && before.spent_microusd === amounts.spent_microusd) return status;
-    await this.append(budgetUpdated(key, status, budgetMessage(before ?? amounts, amounts, subject), this.at()));
-    this.lastAmounts = amounts;
+    await this.recordBudget(key, subject, status, false);
     return status;
   }
 
-  /** The candidate's reservation event; the status counts the candidate as started from it. */
-  private async recordReservation(candidate: PlannedCandidate): Promise<void> {
-    await this.budgetChanged(`cand:${candidate.candidate_id}:reserved`, `this candidate's worst case on ${HOST_PRESENTATION[candidate.host_id].name}`, true);
+  /**
+   * Appends `budget_updated` with these amounts when they changed since the last one this run recorded,
+   * or always with `always`: a candidate's reservation is recorded even when a ledger that reserves per
+   * copy changed nothing yet, because the status counts a candidate as started from that event.
+   */
+  private async recordBudget(key: string, subject: string, status: Amounts, always: boolean): Promise<void> {
+    const amounts: Amounts = { budget_microusd: status.budget_microusd, reserved_microusd: status.reserved_microusd, spent_microusd: status.spent_microusd };
+    const before = this.lastAmounts;
+    if (!always && before !== null && before.reserved_microusd === amounts.reserved_microusd && before.spent_microusd === amounts.spent_microusd) return;
+    await this.append(budgetUpdated(key, amounts, budgetMessage(before ?? amounts, amounts, subject), this.at()));
+    this.lastAmounts = amounts;
+  }
+
+  /** The candidate's reservation event, with these amounts; the status counts the candidate as started from it. */
+  private async recordReservation(candidate: PlannedCandidate, status: Amounts): Promise<void> {
+    await this.recordBudget(`cand:${candidate.candidate_id}:reserved`, `this candidate's worst case on ${HOST_PRESENTATION[candidate.host_id].name}`, status, true);
+  }
+
+  /**
+   * The amounts for a held reservation's event in the recovery: a fresh ledger read, or the amounts this
+   * run last recorded when the ledger cannot be read, so the candidate's end and the finish still follow.
+   */
+  private async recoveryAmounts(): Promise<Amounts> {
+    try {
+      return await this.readLedger();
+    } catch (error) {
+      this.note("reading the ledger to record a held reservation", error);
+      // A candidate is selected only after the loop's first read recorded the amounts.
+      if (this.lastAmounts === null) throw error;
+      return this.lastAmounts;
+    }
   }
 
   /** Marks the run uncertain and records the attention event once; a retry after a failed append appends it again. */
@@ -265,7 +282,7 @@ class RequestRun {
         // replays it or records it, so the end never names a candidate the event log lacks.
         if (!current.selected) await this.append(current.selection);
         // Likewise a reservation whose budget event failed, so the status counts the held candidate as started.
-        if (current.reserved && !current.reservationRecorded) await this.recordReservation(current.candidate);
+        if (current.reserved && !current.reservationRecorded) await this.recordReservation(current.candidate, await this.recoveryAmounts());
         await this.append(candidateEnded(current.candidate, "incomplete_run", this.at(), "Incomplete: the worker hit an internal error during this candidate. It is not reproduction and was not retried."));
       }
       if (this.uncertain || (current !== null && current.reserved && !current.settled)) return this.finishUncertain();
@@ -276,7 +293,7 @@ class RequestRun {
   private async loop(): Promise<RunResult> {
     const { deps } = this;
     const start = await this.readLedger();
-    this.lastAmounts = { reserved_microusd: start.reserved_microusd, spent_microusd: start.spent_microusd };
+    this.lastAmounts = { budget_microusd: start.budget_microusd, reserved_microusd: start.reserved_microusd, spent_microusd: start.spent_microusd };
     let planned: PlannedCandidate[];
     try {
       planned = this.plan();
@@ -347,7 +364,7 @@ class RequestRun {
       this.current.reserved = true;
       defects.set(next.defect_id, next.entry_id);
       started += 1;
-      await this.recordReservation(next);
+      await this.recordReservation(next, await this.readLedger());
       this.current.reservationRecorded = true;
       const outcome = await this.runCandidate(next);
       if (outcome.kind === "uncertain") {
