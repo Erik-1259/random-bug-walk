@@ -99,7 +99,7 @@ A patch that does not apply, or whose changed paths and hashes differ from its `
 
 `exportCase` (`@rbw/case-package`) takes a host adapter, one of its catalog entries, the factory's identity functions and the host's license. It:
 
-1. reads the adapter's bug case and validator inputs and checks them against the entry and the adapter (host, entry, baseline, protocol, incident description, runtime image, patch hashes, the planted change present in the exported source, the qualification table);
+1. refuses an entry that is not canonically equal to the adapter's own `catalog()` entry with the same `entry_id`, then reads the adapter's bug case and validator inputs and checks them against the entry and the adapter (host, entry, baseline, protocol, incident description, runtime image, patch hashes, the planted change present in the exported source, the qualification table);
 2. reads every listed file, refusing links, other non-regular files and bytes that differ from the listed hash;
 3. applies both patches to the exported buggy source and compares the results with their recorded hashes (section 5);
 4. refuses a bug case that breaks section 2's list (the separation checks);

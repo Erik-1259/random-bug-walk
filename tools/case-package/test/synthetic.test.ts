@@ -68,6 +68,18 @@ describe("synthetic catalog", () => {
     const target = entry.plant.targets[0];
     expect(bugCase.source.files.find((file) => file.path === target?.path)?.sha256).toBe(target?.after_sha256);
   });
+
+  it("writes inputs only for its own catalog entries, refusing an edited entry with the same entry ID", async () => {
+    const adapter = syntheticAdapter({ seeds: ["01"], workdir });
+    const entry = adapter.catalog()[0];
+    if (entry === undefined) throw new Error("no entry");
+    const edited = { ...entry, verification: { ...entry.verification, check_set_sha256: "e".repeat(64) } };
+    await expect(adapter.bugCaseInputs(edited)).rejects.toThrow(/differs from the synthetic catalog's entry/);
+    await expect(adapter.validatorInputs(edited)).rejects.toThrow(/differs from the synthetic catalog's entry/);
+    await expect(adapter.validatorInputs({ ...entry, entry_id: "synthetic-task-report-99" })).rejects.toThrow(/unknown entry/);
+    // A copy of the entry (as one read back from storage) is the same entry.
+    expect((await adapter.validatorInputs(structuredClone(entry))).entry_id).toBe(entry.entry_id);
+  });
 });
 
 describe("synthetic copyPlans", () => {
