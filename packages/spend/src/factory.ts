@@ -1,13 +1,14 @@
-import type { Event, Interpretation } from "@rbw/factory-contract";
+import type { Event, HarnessIdentity, HostId, Interpretation, PackageHashes } from "@rbw/factory-contract";
 import type { SqlClient } from "./client.ts";
 import { databaseCalls } from "./spend.ts";
 import type { CreateBudgetRequest, Result } from "./types.ts";
 
-// Durable records of factory requests (migration 0006): the request and its frozen interpretation,
-// its numbered events, the worker's heartbeats, a stop request, per-case evidence, and validation
-// runs with their own numbered events. Every write is idempotent: the same key with the same
-// content replays (`replay: true`) and writes nothing; the same key with other content is refused
-// with `idempotency_conflict`. Times are UTC ISO 8601 strings with milliseconds and `Z`.
+// Durable records of factory requests (migrations 0006 and 0007): the request and its frozen
+// interpretation, its numbered events, the worker's heartbeats, a stop request, per-case evidence,
+// and validation runs with the details of their start and their own numbered events. Every write
+// is idempotent: the same key with the same content replays (`replay: true`) and writes nothing;
+// the same key with other content is refused with `idempotency_conflict`. Times are UTC ISO 8601
+// strings with milliseconds and `Z`.
 
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
 
@@ -90,6 +91,12 @@ export interface StoredValidation {
   root_execution_id: string;
   recorded_at: string;
   last_heartbeat_at: string | null;
+  host_id: HostId;
+  /** The first recorded acceptance; a replayed record keeps it. */
+  accepted_at: string;
+  package_sha256: PackageHashes;
+  harness: HarnessIdentity;
+  copies: number;
 }
 
 export interface RequestRecord {
@@ -150,6 +157,19 @@ export interface RecordValidation {
   case_id: string;
   /** The validation root; never a budget's root. */
   root_execution_id: string;
+  /** The case's host. */
+  host_id: HostId;
+  /**
+   * When the start was accepted (UTC, ending in `Z`). Not part of the replay comparison: a start
+   * retried after its reservation replays and keeps the first value.
+   */
+  accepted_at: string;
+  /** The hashes of the case's delivered packages. */
+  package_sha256: PackageHashes;
+  /** The harness the start accepted; `name` is always `rbw-validate`. */
+  harness: HarnessIdentity;
+  /** The total copies of the validator package's protocol, at least 3. */
+  copies: number;
 }
 
 export interface ValidationRecorded {
@@ -168,6 +188,8 @@ export interface AppendValidationEvent {
 export interface ValidationEvent {
   seq: number;
   at: string;
+  /** The key the event was appended under. */
+  event_key: string;
   type: string;
   data: Record<string, unknown>;
 }
@@ -176,6 +198,18 @@ export interface ValidationRecord {
   validation: StoredValidation;
   events: ValidationEvent[];
   next_after: number;
+  last_seq: number;
+}
+
+/** A request event as stored: the contract's `Event` with the key it was appended under. */
+export type KeyedEvent = Event & { event_key: string };
+
+export interface RequestEvents {
+  /** Events with `seq > after`, in order, at most `limit`. */
+  events: KeyedEvent[];
+  /** The last returned event's seq, or `after` when none is returned. */
+  next_after: number;
+  /** The request's latest event seq (0 before any event). */
   last_seq: number;
 }
 
@@ -195,6 +229,11 @@ export interface FactoryRecords {
   recordRequest(request: RecordRequest): Promise<Result<RequestRecorded>>;
   /** The request, its events after `after` (at most `limit`, 1 to 1000), heartbeat, stop, evidence and validations. */
   readRequest(request: { request_id: string; after: number; limit: number }): Promise<Result<RequestRecord>>;
+  /**
+   * The request's events after `after` (at most `limit`, 1 to 1000), each with its `event_key`, for
+   * writers that check which keyed events exist. `readRequest` keeps the contract's `Event` shape.
+   */
+  readRequestEvents(request: { request_id: string; after: number; limit: number }): Promise<Result<RequestEvents>>;
   /** Appends one event with the next seq; concurrent writers get consecutive numbers. */
   appendEvent(event: AppendEvent): Promise<Result<EventAppended>>;
   /** A worker heartbeat for the request (`validation_id` null) or one of its validation runs. Never an event. */
@@ -202,7 +241,11 @@ export interface FactoryRecords {
   recordStop(request: RecordStop): Promise<Result<StopRecorded>>;
   recordEvidence(request: RecordEvidence): Promise<Result<EvidenceRecorded>>;
   readEvidence(request: { request_id: string; case_id: string }): Promise<Result<StoredEvidence>>;
-  /** Records a validation run. Record it only after its reservation succeeded: a refused run records nothing. */
+  /**
+   * Records a validation run with the details of its start. Record it only after its reservation
+   * succeeded: a refused run records nothing. A repeat replays when every field but `accepted_at`
+   * is the same.
+   */
   recordValidation(request: RecordValidation): Promise<Result<ValidationRecorded>>;
   /** A validation run by ID, whatever its request and case, with its events after `after`. */
   readValidation(request: { validation_id: string; after: number; limit: number }): Promise<Result<ValidationRecord>>;
@@ -233,6 +276,7 @@ interface WriteOperations {
 
 interface ReadOperations {
   factory_request_read: [{ request_id: string; after: number; limit: number }, RequestRecord];
+  factory_request_events_read: [{ request_id: string; after: number; limit: number }, RequestEvents];
   factory_evidence_read: [{ request_id: string; case_id: string }, StoredEvidence];
   factory_validation_read: [{ validation_id: string; after: number; limit: number }, ValidationRecord];
   factory_root_read: [{ root_execution_id: string }, RootOwner];
@@ -252,6 +296,7 @@ export function createFactoryRecords(options: FactoryRecordsOptions): FactoryRec
     acceptRequest: (request) => write("factory_accept_request", request),
     recordRequest: (request) => write("factory_record_request", request),
     readRequest: (request) => read("factory_request_read", request),
+    readRequestEvents: (request) => read("factory_request_events_read", request),
     appendEvent: (event) => write("factory_append_event", event),
     recordHeartbeat: (request) => write("factory_record_heartbeat", request),
     recordStop: (request) => write("factory_record_stop", request),
