@@ -750,6 +750,31 @@ describe("runRequest: uncertain outcomes", () => {
     expect(status.limits.candidates_started).toBe(0);
   });
 
+  it.each([
+    ["its reservation's ledger read finds a halt", (w: World): void => {
+      w.ledger.halted = true;
+    }, "operational_error"],
+    ["the user's stop is recorded once its reservation resolved", (w: World): void => {
+      w.stop.requested = true;
+    }, "cancelled_by_user"],
+  ] as const)("counts a candidate that ends before any copy as started, never as explored, when %s", async (_name, mutate, stopCode) => {
+    const w = world({ input: concurrencyOnly(1) });
+    ledgerWith(w, {
+      reserveCandidate: async (input) => {
+        const outcome = await w.ledger.reserveCandidate(input);
+        mutate(w);
+        return outcome;
+      },
+    });
+    const result = await w.run();
+    expect(result).toMatchObject({ stop_code: stopCode, delivered: 0 });
+    expect(types(w.events.events)).not.toContain("check_finished");
+    const status = w.status();
+    expect(validateContract("RequestStatus", status)).toEqual([]);
+    expect(status.candidates.map((c) => [c.stage, c.reason?.code, c.started_at !== null])).toEqual([["incomplete", "stopped", true]]);
+    expect([status.funnel.candidates_explored, status.limits.candidates_started]).toEqual([0, 1]);
+  });
+
   it("counts a candidate as started from its reservation even when a ledger that reserves per copy changed nothing yet", async () => {
     // The worker is lost while the candidate's first copy runs, before any copy settles or any cell finishes.
     let paused: () => void = () => undefined;
@@ -773,7 +798,7 @@ describe("runRequest: uncertain outcomes", () => {
     for (const event of lostWorkerEvents({ events: w.events.events, now: new Date(w.clock.now + 180_000) })) await w.events.append(event);
     const status = w.status();
     expect(status.candidates.map((c) => [c.stage, c.started_at !== null])).toEqual([["incomplete", true]]);
-    expect([status.funnel.candidates_explored, status.limits.candidates_started]).toEqual([1, 1]);
+    expect([status.funnel.candidates_explored, status.limits.candidates_started]).toEqual([0, 1]);
   });
 
   it("records a reservation whose budget event failed before ending the candidate, so the status counts the candidate it holds", async () => {
@@ -797,7 +822,7 @@ describe("runRequest: uncertain outcomes", () => {
     expect(w.qualified).toEqual([]);
     const status = w.status();
     expect(status.candidates.map((c) => [c.stage, c.started_at !== null])).toEqual([["incomplete", true]]);
-    expect([status.funnel.candidates_explored, status.limits.candidates_started]).toEqual([1, 1]);
+    expect([status.funnel.candidates_explored, status.limits.candidates_started]).toEqual([0, 1]);
     // The worker settled at the finish; the candidate's worst case stays held.
     expect(status.budget.reserved_microusd).toBe(300_000);
   });
@@ -822,7 +847,7 @@ describe("runRequest: uncertain outcomes", () => {
     const status = w.status();
     expect(validateContract("RequestStatus", status)).toEqual([]);
     expect(status.candidates.map((c) => [c.stage, c.started_at !== null])).toEqual([["incomplete", true]]);
-    expect([status.funnel.candidates_explored, status.limits.candidates_started]).toEqual([1, 1]);
+    expect([status.funnel.candidates_explored, status.limits.candidates_started]).toEqual([0, 1]);
     expect(status.attention).toMatchObject({ code: "needs_reconciliation" });
     expect(status.budget.reserved_microusd).toBe(300_000);
   });

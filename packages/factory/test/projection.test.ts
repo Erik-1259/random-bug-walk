@@ -147,13 +147,34 @@ describe("status projection", () => {
     const selection = status.events.filter((event) => event.seq <= 8);
     const inFlight = projectStatus(inputsOf(status, { events: selection }));
     expect(inFlight.candidates.map((c) => [c.stage, c.started_at])).toEqual([["selected", "2026-10-20T14:02:41.812Z"]]);
-    expect([inFlight.funnel.candidates_explored, inFlight.limits.candidates_started]).toEqual([1, 1]);
+    expect([inFlight.funnel.candidates_explored, inFlight.limits.candidates_started]).toEqual([0, 1]);
     const candidateId = inFlight.candidates[0]?.candidate_id ?? null;
     const end: Event = { seq: 9, at: "2026-10-20T14:02:41.900Z", type: "candidate_incomplete", host_id: "task-report", candidate_id: candidateId, item_key: null, case_id: null, message: "Incomplete.", data: { reason: "incomplete_run" } };
     const ended = projectStatus(inputsOf(status, { events: [...selection, end] }));
     expect(ended.candidates.map((c) => [c.stage, c.started_at, c.finished_at])).toEqual([["incomplete", null, "2026-10-20T14:02:41.900Z"]]);
     expect([ended.funnel.candidates_explored, ended.limits.candidates_started]).toEqual([0, 0]);
     expect(validateContract("RequestStatus", ended)).toEqual([]);
+  });
+
+  it("keeps a candidate that was only selected, or also reserved, out of candidates_explored and in stage selected", () => {
+    // Contract section 8.2: candidates_explored counts candidates that started checks, and a candidate
+    // has started checks once its first check_finished is recorded. Seq 8 selects it, seq 9 reserves it.
+    const status = statusFixture("status-running.json");
+    for (const last of [8, 9]) {
+      const projected = projectStatus(inputsOf(status, { events: status.events.filter((event) => event.seq <= last) }));
+      expect(projected.candidates.map((c) => c.stage)).toEqual(["selected"]);
+      expect([projected.funnel.candidates_explored, projected.limits.candidates_started]).toEqual([0, 1]);
+      expect(validateContract("RequestStatus", projected)).toEqual([]);
+    }
+  });
+
+  it("counts a candidate as explored, in stage checking, from its first check_finished", () => {
+    const status = statusFixture("status-running.json");
+    const projected = projectStatus(inputsOf(status, { events: status.events.filter((event) => event.seq <= 10) }));
+    expect(projected.events.at(-1)?.type).toBe("check_finished");
+    expect(projected.candidates.map((c) => c.stage)).toEqual(["checking"]);
+    expect([projected.funnel.candidates_explored, projected.limits.candidates_started]).toEqual([1, 1]);
+    expect(validateContract("RequestStatus", projected)).toEqual([]);
   });
 
   it("refuses a delivered case without its evidence", () => {

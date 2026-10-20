@@ -2,12 +2,18 @@
 // evidence, the latest validation run of each case, the heartbeat and the ledger's budget status, with
 // an injected clock. Counts come from events only and count distinct candidates.
 //
-// A candidate counts as started (`started_at`, `limits.candidates_started`, `candidates_explored`) from
-// its selection while it is in flight, and keeps that once something after its selection shows it
-// started: a `budget_updated` before its end (its reservation or a copy's settlement; one candidate
-// runs at a time, the start reservation comes before any selection and validation runs only follow
-// the finish) or one of its own progress events. A candidate that ends skipped, or ends with nothing
-// of the kind recorded (for example after an uncertain reservation), never started.
+// A candidate counts as started (`started_at`, `limits.candidates_started`) from its selection while
+// it is in flight, and keeps that once something after its selection shows it started: a
+// `budget_updated` before its end (its reservation or a copy's settlement; one candidate runs at a
+// time, the start reservation comes before any selection and validation runs only follow the finish)
+// or one of its own progress events. A candidate that ends skipped, or ends with nothing of the kind
+// recorded (for example after an uncertain reservation), never started.
+//
+// `candidates_explored` counts candidates that started checks (contract section 8.2). No event marks
+// the start of a copy, so a candidate has started checks once its first `check_finished` is recorded:
+// it counts as explored, and is in stage `checking`, from that event on. One that was only selected,
+// or reserved and then stopped, skipped or halted before any `check_finished`, is never explored and
+// stays `selected` until it ends.
 import type { Attention, AttentionCode, Candidate, CandidateReasonDetail, CandidateStage, Case, Event, HostId, QualificationRecord, RequestState, RequestStatus, StopCode, ValidationRun } from "@rbw/factory-contract";
 import { ATTENTION_TEXT, attention as attentionEvent, attentionCleared, candidateEnded, requestFinished } from "./events.ts";
 import { budgetRoom } from "./budget.ts";
@@ -76,6 +82,7 @@ interface CandidateFold {
 
 interface Fold {
   candidates: Map<string, CandidateFold>;
+  /** Candidates with a `check_finished` event (see the module comment). */
   explored: Set<string>;
   behaviorPassed: Set<string>;
   criteriaPassed: Set<string>;
@@ -123,7 +130,6 @@ function fold(events: readonly Event[]): Fold {
         if (event.candidate_id === null) throw new ProjectionError(`event ${String(event.seq)} selects no candidate`);
         const selected: CandidateFold = { candidate_id: event.candidate_id, host_id: event.host_id, stage: "selected", reason: null, item_key: null, case_id: null, started_at: event.at, finished_at: null, packaged: false, begun: false };
         state.candidates.set(event.candidate_id, selected);
-        state.explored.add(event.candidate_id);
         inFlight = selected;
         break;
       }
@@ -134,6 +140,7 @@ function fold(events: readonly Event[]): Fold {
         const entry = candidate(event);
         entry.begun = true;
         advance(entry, "checking");
+        state.explored.add(entry.candidate_id);
         break;
       }
       case "behavior_checks_passed": {
@@ -183,10 +190,7 @@ function fold(events: readonly Event[]): Fold {
         entry.item_key = null;
         entry.case_id = null;
         entry.finished_at = event.at;
-        if (event.type === "candidate_skipped" || !entry.begun) {
-          entry.started_at = null;
-          state.explored.delete(entry.candidate_id);
-        }
+        if (event.type === "candidate_skipped" || !entry.begun) entry.started_at = null;
         if (inFlight === entry) inFlight = null;
         break;
       }
