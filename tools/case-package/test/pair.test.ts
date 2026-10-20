@@ -104,6 +104,27 @@ describe("packPair", () => {
     }
   });
 
+  it("refuses one hunk of a patch in the bug case, without the patch's file header", () => {
+    for (const patch of ["plant", "repair", "reconstruction"] as const) {
+      const input = syntheticPairInput();
+      const textOf = patch === "plant" ? input.entry.plant.patch
+        : patch === "repair" ? input.validator.reference_repair.patch
+        : input.validator.clean_reconstruction.patch;
+      const hunk = textOf.slice(textOf.indexOf("\n@@ ") + 1);
+      expect(hunk.startsWith("@@ "), patch).toBe(true);
+      input.bug_case.source.push({ path: "notes/hunk.txt", bytes: encoder.encode(`a note\n${hunk}`) });
+      expect(refusal(input).problems, patch).toEqual(["patch_text: source/notes/hunk.txt"]);
+    }
+  });
+
+  it("refuses the repaired content of an independent repair anywhere in the bug case", () => {
+    // An independent repair's result differs from the clean file, so only the repair's own result hash finds it.
+    const input = withIndependentRepair(syntheticPairInput());
+    expect(() => packPair(input)).not.toThrow();
+    input.bug_case.source.push({ path: "src/counter.fixed.js", bytes: input.repaired });
+    expect(refusal(input).problems).toEqual(["pristine_copy: source/src/counter.fixed.js"]);
+  });
+
   it("refuses a check file or the expected vectors embedded in a larger bug case file", () => {
     for (const name of ["verify.js", "expected.json", "run-copy.js"]) {
       for (const [before, after] of [["", "// helper copy\n"], ["// helper copy\n", ""]]) {
@@ -113,6 +134,37 @@ describe("packPair", () => {
         input.bug_case.source.push({ path: "test/helpers.js", bytes: Buffer.concat([encoder.encode(before), check.bytes, encoder.encode(after)]) });
         expect(refusal(input).problems, `${name} ${JSON.stringify(before)}`).toEqual(["validator_file_text: source/test/helpers.js"]);
       }
+    }
+  });
+
+  it("names each inconsistency on its own", () => {
+    const other = withIndependentRepair(syntheticPairInput()).validator.reference_repair;
+    const changes: [string, (input: PairInput) => void][] = [
+      ["case_id and defect_id must be 64 lowercase hex characters", (input) => { input.case_id = "C".repeat(64); }],
+      ["case_id and defect_id must be 64 lowercase hex characters", (input) => { input.defect_id = input.defect_id.slice(1); }],
+      ["package_version must be a positive integer", (input) => { input.package_version = 0; }],
+      ["the license must be named", (input) => { input.license = " "; }],
+      ["the planted change's patch hash does not match its text", (input) => { input.entry = { ...input.entry, plant: { ...input.entry.plant, patch_sha256: "0".repeat(64) } }; }],
+      ["the reference repair differs from the entry's", (input) => { input.validator.reference_repair = other; }],
+      ["the planted change has no targets", (input) => { input.entry = { ...input.entry, plant: { ...input.entry.plant, targets: [] } }; }],
+      ["a changed path is not a relative path", (input) => {
+        const repair = { ...input.entry.reference_repair, result_sha256: input.entry.reference_repair.result_sha256.map((item) => ({ ...item, path: `../${item.path}` })) };
+        input.entry = { ...input.entry, reference_repair: repair };
+        input.validator.reference_repair = repair;
+      }],
+      ["the repair lists a path twice", (input) => {
+        const repair = { ...input.entry.reference_repair, result_sha256: [...input.entry.reference_repair.result_sha256, ...input.entry.reference_repair.result_sha256] };
+        input.entry = { ...input.entry, reference_repair: repair };
+        input.validator.reference_repair = repair;
+      }],
+      ["the planted change lists a path twice", (input) => { input.entry = { ...input.entry, plant: { ...input.entry.plant, targets: [...input.entry.plant.targets, ...input.entry.plant.targets] } }; }],
+    ];
+    for (const [problem, change] of changes) {
+      const input = syntheticPairInput();
+      change(input);
+      const error = refusal(input);
+      expect(error.code, problem).toBe("inconsistent_inputs");
+      expect(error.problems, problem).toEqual([problem]);
     }
   });
 
@@ -262,4 +314,21 @@ function cleanBytes(input: PairInput): Uint8Array {
   const added = lines.find((line) => line.startsWith("+") && !line.startsWith("+++"))?.slice(1);
   if (removed === undefined || added === undefined) throw new Error("unexpected synthetic patch");
   return encoder.encode(new TextDecoder().decode(buggy.bytes).replace(added, removed));
+}
+
+/** Gives the synthetic entry an independent repair: another correct line, so its result differs from the clean file. */
+function withIndependentRepair(input: PairInput): PairInput & { repaired: Uint8Array } {
+  const target = input.entry.plant.targets[0];
+  const buggy = input.bug_case.source.find((member) => member.path === target?.path);
+  if (target === undefined || buggy === undefined) throw new Error("no buggy target");
+  const lines = input.entry.plant.patch.split("\n");
+  const planted = lines.find((line) => line.startsWith("+") && !line.startsWith("+++"))?.slice(1);
+  if (planted === undefined) throw new Error("unexpected synthetic patch");
+  const fixedLine = "  return Math.max(count, 0);";
+  const repaired = encoder.encode(new TextDecoder().decode(buggy.bytes).replace(planted, fixedLine));
+  const patch = lines
+    .map((line) => (line.startsWith("-") && !line.startsWith("---") ? `-${planted}` : line.startsWith("+") && !line.startsWith("+++") ? `+${fixedLine}` : line))
+    .join("\n");
+  const repair = { patch, patch_sha256: sha(encoder.encode(patch)), result_sha256: [{ path: target.path, sha256: sha(repaired) }], kind: "independent" as const };
+  return { ...input, entry: { ...input.entry, reference_repair: repair }, validator: { ...input.validator, reference_repair: repair }, repaired };
 }

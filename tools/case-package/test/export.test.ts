@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdtemp, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { CatalogEntry, HostAdapter } from "@rbw/factory-contract";
+import type { BugCaseInputs, CatalogEntry, HostAdapter, ValidatorInputs } from "@rbw/factory-contract";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { exportCase, ExportRefused, type ScanHook } from "../src/export.ts";
 import { readPreparedIndex, readPreparedObject, writePrepared } from "../src/prepared.ts";
@@ -126,6 +126,40 @@ describe("exportCase", () => {
     const other: HostAdapter = { ...adapter, bugCaseInputs: async () => ({ ...(await adapter.bugCaseInputs(entry)), entry_id: "synthetic-other" }) };
     const error = await refusalOf(exportCase({ adapter: other, entry, identity: syntheticIdentity, license: SYNTHETIC_LICENSE, scan: null }));
     expect(error.code).toBe("inconsistent_inputs");
+  });
+
+  it("names each disagreement between the adapter, its inputs and the entry on its own", async () => {
+    const adapter = syntheticAdapter({ seeds: ["01"], workdir });
+    const entry = only(adapter);
+    const umami = syntheticAdapter({ host_id: "umami", seeds: ["01"], workdir: join(workdir, "umami") });
+    // Each change leaves every other check satisfied, so the refusal names only the check under test.
+    const withBugCase = (change: (inputs: BugCaseInputs) => object): HostAdapter => ({
+      ...adapter,
+      bugCaseInputs: async (item) => change(await adapter.bugCaseInputs(item)) as BugCaseInputs,
+    });
+    const withValidator = (change: (inputs: ValidatorInputs) => object): HostAdapter => ({
+      ...adapter,
+      validatorInputs: async (item) => change(await adapter.validatorInputs(item)) as ValidatorInputs,
+    });
+    const cases: [string, HostAdapter, string[] | RegExp][] = [
+      ["an adapter for another host", umami, ["the entry belongs to another host"]],
+      ["bug case inputs for another host", withBugCase((inputs) => ({ ...inputs, host_id: "umami" })), ["the inputs belong to another host"]],
+      ["validator inputs for another host", withValidator((inputs) => ({ ...inputs, host_id: "umami" })), ["the inputs belong to another host"]],
+      ["validator inputs for another entry", withValidator((inputs) => ({ ...inputs, entry_id: "synthetic-other" })), ["the inputs belong to another entry"]],
+      ["a bug case baseline other than the adapter's", withBugCase((inputs) => ({ ...inputs, baseline: { ...inputs.baseline, baseline_id: "synthetic-task-report@0000000" } })), ["the bug case baseline differs from the adapter's"]],
+      ["bug case inputs outside the schema", withBugCase((inputs) => ({ ...inputs, synthetic_extra: true })), /^bug case inputs: /],
+      ["validator inputs outside the schema", withValidator((inputs) => ({ ...inputs, synthetic_extra: true })), /^validator inputs: /],
+    ];
+    for (const [name, candidate, problems] of cases) {
+      const error = await refusalOf(exportCase({ adapter: candidate, entry, identity: syntheticIdentity, license: SYNTHETIC_LICENSE, scan: null }));
+      expect(error.code, name).toBe("inconsistent_inputs");
+      if (problems instanceof RegExp) {
+        expect(error.problems.length, name).toBeGreaterThan(0);
+        for (const problem of error.problems) expect(problem, name).toMatch(problems);
+      } else {
+        expect(error.problems, name).toEqual(problems);
+      }
+    }
   });
 
   it("refuses incident files that do not hold the entry's incident description", async () => {

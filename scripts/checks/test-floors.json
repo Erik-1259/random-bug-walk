@@ -25,7 +25,7 @@
     "packages/writer": 246,
     "scripts/checks": 197,
     "tools/candidates": 119,
-    "tools/case-package": 69,
+    "tools/case-package": 82,
     "tools/case-validate": 67,
     "tools/controller": 186,
     "tools/local-runner": 212,
