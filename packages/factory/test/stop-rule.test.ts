@@ -147,8 +147,8 @@ const SINGLE: Record<Point, Record<Source, End>> = {
 /** Two sources at the same point (precedence), and the last-needed-case variants. */
 const COMBINED: Omit<Row, "name">[] = [
   { point: "start", sources: ["overrun", "stop"], quantity: 2, end: end(null, 0, "operational_error", 0) },
-  // The stop ends the loop before a candidate would meet the halt: the halt stopped no work.
-  { point: "start", sources: ["halt", "stop"], quantity: 2, end: end(null, 0, "cancelled_by_user", 0) },
+  // The loop's first read showed the halt, and it would stop the first candidate as the stop does: the halt comes first.
+  { point: "start", sources: ["halt", "stop"], quantity: 2, end: end(null, 0, "operational_error", 0) },
   { point: "reservation", sources: ["halt", "stop"], quantity: 2, end: end("stopped", 0, "operational_error", 0) },
   { point: "reservation", sources: ["overrun", "stop"], quantity: 2, end: end("stopped", 0, "operational_error", 0) },
   { point: "between_copies", sources: ["halt", "stop"], quantity: 2, end: end("stopped", 1, "operational_error", 0) },
@@ -159,15 +159,18 @@ const COMBINED: Omit<Row, "name">[] = [
   { point: "between_copies", sources: ["overrun", "uncertain"], quantity: 2, end: end("incomplete_run", 1, "needs_reconciliation", 0) },
   { point: "last_copy", sources: ["halt", "stop"], quantity: 2, end: end("stopped", 3, "operational_error", 0) },
   { point: "last_copy", sources: ["pool_halt", "deadline"], quantity: 2, end: end("stopped", 3, "operational_error", 0) },
-  // A complete rejection keeps its reason; the halt meets the next candidate's check, unless the stop ends the loop first.
+  // A complete rejection keeps its reason; the halt stops the next candidate, ahead of a stop found at the loop's top.
   { point: "last_copy", sources: ["halt"], quantity: 2, plan: "rejected", end: end("checks_failed_fixed", 3, "operational_error", 0) },
-  { point: "last_copy", sources: ["halt", "stop"], quantity: 2, plan: "rejected", end: end("checks_failed_fixed", 3, "cancelled_by_user", 0) },
+  { point: "last_copy", sources: ["halt", "stop"], quantity: 2, plan: "rejected", end: end("checks_failed_fixed", 3, "operational_error", 0) },
   { point: "last_copy", sources: ["overrun", "stop"], quantity: 2, end: end("stopped", 3, "operational_error", 0) },
   { point: "last_copy", sources: ["stop", "deadline"], quantity: 2, end: end("stopped", 3, "cancelled_by_user", 0) },
   { point: "last_copy", sources: ["overrun", "uncertain"], quantity: 2, end: end("incomplete_run", 3, "needs_reconciliation", 0) },
-  // After qualification, a halt and a stop: the stop ends the loop before the next candidate meets the halt.
-  { point: "packaging", sources: ["halt", "stop"], quantity: 2, end: end("qualified", 3, "cancelled_by_user", 1) },
+  // After qualification, a halt the settlement's read showed, with a stop or the deadline: each would stop the next
+  // candidate, so the halt comes first.
+  { point: "packaging", sources: ["halt", "stop"], quantity: 2, end: end("qualified", 3, "operational_error", 1) },
+  { point: "packaging", sources: ["halt", "deadline"], quantity: 2, end: end("qualified", 3, "operational_error", 1) },
   { point: "packaging", sources: ["overrun", "stop"], quantity: 2, end: end("qualified", 3, "operational_error", 1) },
+  // No read showed the halt before the loop's checks found the deadline: the deadline's code stands.
   { point: "loop_top", sources: ["halt", "deadline"], quantity: 2, end: end("qualified", 3, "time_limit", 1) },
   // The first candidate's case is the last one needed.
   { point: "last_copy", sources: ["halt"], quantity: 1, end: end("stopped", 3, "operational_error", 0) },
@@ -175,6 +178,8 @@ const COMBINED: Omit<Row, "name">[] = [
   { point: "last_copy", sources: ["overrun"], quantity: 1, end: end("stopped", 3, "operational_error", 0) },
   { point: "last_copy", sources: ["deadline"], quantity: 1, end: end("qualified", 3, "fulfilled", 1) },
   { point: "packaging", sources: ["halt"], quantity: 1, end: end("qualified", 3, "fulfilled", 1) },
+  // Every item is filled, so the halt stops no work and the stop's code stands.
+  { point: "packaging", sources: ["halt", "stop"], quantity: 1, end: end("qualified", 3, "cancelled_by_user", 1) },
   { point: "package_ready", sources: ["deadline"], quantity: 1, end: end("qualified", 3, "fulfilled", 1) },
   { point: "loop_top", sources: ["stop"], quantity: 1, end: end("qualified", 3, "cancelled_by_user", 1) },
   { point: "loop_top", sources: ["halt"], quantity: 1, end: end("qualified", 3, "fulfilled", 1) },

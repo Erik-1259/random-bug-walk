@@ -21,8 +21,10 @@
 //   cells matched. A candidate's check boundaries are before each copy and, for a candidate that would
 //   qualify, the harness's return; each checks, in this order, a halt or an overrun a copy's read found,
 //   the user's stop and (before a copy) that the copy's timeout fits before the deadline, so a halt
-//   found with a stop or the deadline finishes `operational_error`. The deadline bounds only what starts
-//   (a copy, a candidate): a matched candidate whose copies all started in time is delivered.
+//   found with a stop or the deadline finishes `operational_error`. The top of the loop applies the same
+//   order before a next candidate: a halt or an overrun the run's latest read showed comes ahead of a
+//   stop or the deadline found there. The deadline bounds only what starts (a copy, a candidate): a
+//   matched candidate whose copies all started in time is delivered.
 // - An overrun finishes `operational_error`, ahead of a fill, a stop or a limit. Every ledger read while
 //   the request runs (the reservation's, a copy's, a candidate's settlement, the worker's) checks for
 //   one, and once seen it stays seen, even when a later read no longer shows it (a ledger that releases
@@ -30,10 +32,10 @@
 //   finishes with that code at once (so the budget closes with it), and the finish turns the decided
 //   code into it.
 // - A halt seen only once no work is left (after the last needed case or the last candidate settled,
-//   or once the loop stops for another reason before a next candidate would run) stopped nothing and
-//   keeps the outcome, as contract revision 2 keeps it for an overrun after the finish. A candidate
-//   whose complete verdict is not a match keeps its reason, so a halt its last copy's read found is
-//   left to the next candidate's check.
+//   or when no entry is left or the candidate limit is reached) stopped nothing and keeps the outcome,
+//   as contract revision 2 keeps it for an overrun after the finish. A candidate whose complete verdict
+//   is not a match keeps its reason, so a halt its last copy's read found is left to the loop's checks
+//   before the next candidate.
 // - The worker's settlement closes the budget with the code `request_finished` names, an overrun seen
 //   by then included. Between the loop's last ledger read and that settlement only the worker itself
 //   runs (preparing hosts, checking, packaging), and its use settles there, so only that settlement's
@@ -138,6 +140,8 @@ class RequestRun {
   private delivered = 0;
   /** A ledger read while the request ran showed an overrun; it stays set (contract section 8.5). */
   private overrunSeen = false;
+  /** The run's latest ledger read showed a halt, a halted pool or an overrun. */
+  private latestReadStops = false;
   /** An uncertain outcome happened: its spend stays held for an operator, and the request finishes needs_reconciliation. */
   private uncertain = false;
   /** The needs_reconciliation attention event is recorded. */
@@ -176,6 +180,7 @@ class RequestRun {
   private async readLedger(): Promise<LedgerStatus> {
     const status = await this.deps.ledger.status();
     if (overrun(status)) this.overrunSeen = true;
+    this.latestReadStops = ledgerStop(status) !== null;
     return status;
   }
 
@@ -346,13 +351,25 @@ class RequestRun {
     const defects = new Map<string, string>();
     const budgetSkipped = new Set<string>();
     let started = 0;
+    /**
+     * A stop or the deadline found at the top of the loop, where a halt or an overrun the run's latest
+     * ledger read showed comes first when it would stop the same next candidate. A halt that no next
+     * candidate would meet (every item filled, no entry left, the candidate limit reached) stops no work
+     * and keeps their code.
+     */
+    const loopStop = (code: "cancelled_by_user" | "time_limit"): StopCode => {
+      if (!this.latestReadStops) return code;
+      const next = nextCandidate(this.items, planned, tried);
+      if (next === null || (!defects.has(next.defect_id) && started >= deps.request.interpretation.limits.max_candidates)) return code;
+      return "operational_error";
+    };
     for (;;) {
       this.current = null;
       // A stop recorded before the finish makes the outcome cancelled, even once every item is filled
       // (contract section 9).
-      if (await deps.stopRequested()) return this.finish("cancelled_by_user");
+      if (await deps.stopRequested()) return this.finish(loopStop("cancelled_by_user"));
       if (this.items.every((item) => unfilledUnits(item) === 0)) return this.finish("fulfilled");
-      if (deps.now().getTime() >= this.deadlineMs) return this.finish("time_limit");
+      if (deps.now().getTime() >= this.deadlineMs) return this.finish(loopStop("time_limit"));
       const next = nextCandidate(this.items, planned, tried);
       if (next === null) return this.exhausted(planned, tried, budgetSkipped);
       const duplicateOf = defects.get(next.defect_id);
