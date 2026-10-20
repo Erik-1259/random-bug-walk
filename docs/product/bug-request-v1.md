@@ -388,7 +388,7 @@ PackagePart { kind: "bug_case" | "validator", format: "rbw-bug-case/1" | "rbw-va
 
 A cell's `observed` is `error` when its copy could not be prepared or run, and `incomplete` when fewer runs were valid than the repetition protocol requires; `matches_expectation` is then false.
 
-A case appears in `RequestStatus.cases` only once it is qualified. Its two parts become `ready` together, after export verification and storage. The client offers a download only when `ready` is true and `download_path` is not null.
+A case appears in `RequestStatus.cases` only once it is qualified and both its parts are `ready`. Its two parts become `ready` together, after export verification and storage. The client offers a download only when `ready` is true and `download_path` is not null.
 
 ### 10.1 What a client may show
 
@@ -535,7 +535,7 @@ TestEvidence {
   operations: { operation_id: string,     // the spend ledger's operation ID: 64 lowercase hex characters
                 kind: "worker" | "candidate_copy" | "validation" | "validation_copy", call_name: string,
                 state: "prepared" | "launching" | "running" | "terminal" | "uncertain" | "reconciled",  // settled = terminal with settled_microusd set
-                reserved_microusd: integer, settled_microusd: integer | null, attempt_ordinal: integer }[]
+                reserved_microusd: integer, settled_microusd: integer | null, attempt_ordinal: integer }[]  // settled_microusd is null unless the state is terminal or reconciled, and set when reconciled
   slot: { slot_key: "factory", holder_request_id: string | null,     // the request whose start or validation run holds the slot
           holder_validation_id: string | null }                       // set while a validation run holds it
   provider_calls: { call_name: string, provider: "sandbox", action: "create" | "stop", at: string }[]
