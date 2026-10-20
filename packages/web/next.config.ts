@@ -29,8 +29,9 @@ const config: NextConfig = {
   // The record packages read their schema files next to their sources at load time, so Node
   // loads them from the workspace instead of the bundler. The judge routes import the controller's
   // slim judge entry by name, and the bundler builds it into them with what it imports, the schema
-  // file included.
-  serverExternalPackages: ["@rbw/schema", "@rbw/admission"],
+  // file included. The factory routes check their bodies with the contract package's validator,
+  // which reads its schema file the same way.
+  serverExternalPackages: ["@rbw/schema", "@rbw/admission", "@rbw/factory-contract"],
   poweredByHeader: false,
   env: { RBW_JUDGE_FROZEN: frozenJudge() },
 };

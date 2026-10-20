@@ -170,6 +170,40 @@ importers:
         specifier: 5.0.3
         version: 5.0.3(@types/node@24.19.1)(vite@8.3.2(@types/node@24.19.1)(yaml@2.9.1))
 
+  packages/host-umami:
+    dependencies:
+      '@rbw/admission':
+        specifier: workspace:*
+        version: link:../admission
+      '@rbw/factory-contract':
+        specifier: workspace:*
+        version: link:../factory-contract
+      '@rbw/local-runner':
+        specifier: workspace:*
+        version: link:../../tools/local-runner
+      '@rbw/schema':
+        specifier: workspace:*
+        version: link:../schema
+      '@rbw/shapes':
+        specifier: workspace:*
+        version: link:../shapes
+      tar-stream:
+        specifier: 3.2.2
+        version: 3.2.2
+    devDependencies:
+      '@rbw/umami-driver':
+        specifier: workspace:*
+        version: link:../umami-driver
+      '@types/node':
+        specifier: 24.19.1
+        version: 24.19.1
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
+      vitest:
+        specifier: 5.0.3
+        version: 5.0.3(@types/node@24.19.1)(vite@8.3.2(@types/node@24.19.1)(yaml@2.9.1))
+
   packages/projection:
     devDependencies:
       '@types/node':
@@ -316,6 +350,9 @@ importers:
 
   packages/spend:
     dependencies:
+      '@rbw/factory-contract':
+        specifier: workspace:*
+        version: link:../factory-contract
       pg:
         specifier: 8.23.1
         version: 8.23.1
@@ -497,6 +534,53 @@ importers:
       '@types/pg':
         specifier: 8.23.1
         version: 8.23.1
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
+      vitest:
+        specifier: 5.0.3
+        version: 5.0.3(@types/node@24.19.1)(vite@8.3.2(@types/node@24.19.1)(yaml@2.9.1))
+
+  tools/case-package:
+    dependencies:
+      '@rbw/factory-contract':
+        specifier: workspace:*
+        version: link:../../packages/factory-contract
+      '@rbw/projection':
+        specifier: workspace:*
+        version: link:../../packages/projection
+      '@rbw/schema':
+        specifier: workspace:*
+        version: link:../../packages/schema
+      fflate:
+        specifier: 0.8.2
+        version: 0.8.2
+    devDependencies:
+      '@types/node':
+        specifier: 24.19.1
+        version: 24.19.1
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
+      vitest:
+        specifier: 5.0.3
+        version: 5.0.3(@types/node@24.19.1)(vite@8.3.2(@types/node@24.19.1)(yaml@2.9.1))
+
+  tools/case-validate:
+    dependencies:
+      '@rbw/case-package':
+        specifier: workspace:*
+        version: link:../case-package
+      '@rbw/factory-contract':
+        specifier: workspace:*
+        version: link:../../packages/factory-contract
+      '@rbw/schema':
+        specifier: workspace:*
+        version: link:../../packages/schema
+    devDependencies:
+      '@types/node':
+        specifier: 24.19.1
+        version: 24.19.1
       typescript:
         specifier: 6.0.3
         version: 6.0.3
@@ -1603,6 +1687,9 @@ packages:
     peerDependenciesMeta:
       picomatch:
         optional: true
+
+  fflate@0.8.2:
+    resolution: {integrity: sha512-cPJU47OaAoCbg0pBvzsgpTPhmhqI5eJjh/JIu8tPj5q+T7iLvW/JAYUqmE7KOB4R1ZyEhzBaIQpQpardBF5z8A==}
 
   file-entry-cache@11.1.5:
     resolution: {integrity: sha512-+PFTHITI08JIGhnNpGNI8T8inUpgZfk3GNEqfT9R2zZV2iFXg3CvqzSl/uEhs7TSGujYRELEANyDvS8Fj7+S7Q==}
@@ -3071,6 +3158,8 @@ snapshots:
   fdir@6.5.0(picomatch@4.0.7):
     optionalDependencies:
       picomatch: 4.0.7
+
+  fflate@0.8.2: {}
 
   file-entry-cache@11.1.5:
     dependencies:

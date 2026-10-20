@@ -1,0 +1,9 @@
+{
+  "contract_version": "bug-request/1",
+  "error": {
+    "code": "unavailable",
+    "message": "The spend ledger is halted, so no paid work can start. Try again later.",
+    "retryable": true,
+    "details": null
+  }
+}

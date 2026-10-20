@@ -518,16 +518,90 @@
           "$ref": "#/$defs/ServiceStatus"
         },
         "hosts": {
+          "description": "Every HostId appears exactly once: clients build the form from this list and never hard-code hosts (contract section 4).",
           "type": "array",
           "items": {
             "$ref": "#/$defs/Host"
-          }
+          },
+          "minItems": 2,
+          "maxItems": 2,
+          "allOf": [
+            {
+              "type": "array",
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "host_id": {
+                    "const": "umami"
+                  }
+                },
+                "required": [
+                  "host_id"
+                ]
+              },
+              "minContains": 1,
+              "maxContains": 1
+            },
+            {
+              "type": "array",
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "host_id": {
+                    "const": "task-report"
+                  }
+                },
+                "required": [
+                  "host_id"
+                ]
+              },
+              "minContains": 1,
+              "maxContains": 1
+            }
+          ]
         },
         "bug_types": {
+          "description": "Every BugTypeId appears exactly once: clients build the form from this list and never hard-code bug types (contract section 4).",
           "type": "array",
           "items": {
             "$ref": "#/$defs/BugType"
-          }
+          },
+          "minItems": 2,
+          "maxItems": 2,
+          "allOf": [
+            {
+              "type": "array",
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "bug_type_id": {
+                    "const": "concurrency"
+                  }
+                },
+                "required": [
+                  "bug_type_id"
+                ]
+              },
+              "minContains": 1,
+              "maxContains": 1
+            },
+            {
+              "type": "array",
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "bug_type_id": {
+                    "const": "date_time"
+                  }
+                },
+                "required": [
+                  "bug_type_id"
+                ]
+              },
+              "minContains": 1,
+              "maxContains": 1
+            }
+          ]
         },
         "combinations": {
           "description": "Every (host, bug type) pair of HostId and BugTypeId appears exactly once (contract section 4.2).",
@@ -621,10 +695,47 @@
           ]
         },
         "difficulty_options": {
+          "description": "Every DifficultyOptionId appears exactly once: source_inferable_allowed is the available default and source_only_difficulty_required is listed as unavailable (contract section 4.4).",
           "type": "array",
           "items": {
             "$ref": "#/$defs/DifficultyOption"
-          }
+          },
+          "minItems": 2,
+          "maxItems": 2,
+          "allOf": [
+            {
+              "type": "array",
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "option_id": {
+                    "const": "source_inferable_allowed"
+                  }
+                },
+                "required": [
+                  "option_id"
+                ]
+              },
+              "minContains": 1,
+              "maxContains": 1
+            },
+            {
+              "type": "array",
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "option_id": {
+                    "const": "source_only_difficulty_required"
+                  }
+                },
+                "required": [
+                  "option_id"
+                ]
+              },
+              "minContains": 1,
+              "maxContains": 1
+            }
+          ]
         },
         "limits": {
           "$ref": "#/$defs/Limits"
@@ -786,7 +897,7 @@
           "$ref": "#/$defs/SupportStatus"
         },
         "reason": {
-          "description": "Why the pair is unsupported; null when supported.",
+          "description": "Why the pair is unsupported (the host's availability reason when no entry is available over the planned window); null when supported (contract section 4.2).",
           "anyOf": [
             {
               "type": "string"
@@ -871,10 +982,11 @@
           "$ref": "#/$defs/Version"
         },
         "entries": {
-          "description": "The size of the finite catalog; at least 1 for a supported pair.",
+          "description": "The number of catalog entries available over the planned window [now, now + max_wall_clock_s], by the host's availability; at least 1 for a supported pair (contract section 4.2).",
           "$ref": "#/$defs/NonNegativeInteger"
         },
         "criteria_ids": {
+          "description": "The criteria that the entries available over the planned window target (contract section 4.2).",
           "type": "array",
           "items": {
             "$ref": "#/$defs/Identifier"
@@ -998,6 +1110,7 @@
           "$ref": "#/$defs/NonNegativeInteger"
         },
         "max_description_chars": {
+          "description": "Counted in Unicode code points after trimming (contract section 5).",
           "$ref": "#/$defs/NonNegativeInteger"
         },
         "budget_presets_microusd": {
@@ -1160,7 +1273,7 @@
           "$ref": "#/$defs/PositiveInteger"
         },
         "description": {
-          "description": "Any text or null. The service trims it and maps an empty result to null (contract section 6); at most limits.max_description_chars after trimming.",
+          "description": "Any text or null. The service trims it and maps an empty result to null (contract section 6); at most limits.max_description_chars Unicode code points after trimming.",
           "anyOf": [
             {
               "type": "string"
@@ -1270,7 +1383,7 @@
           "$ref": "#/$defs/ContractVersion"
         },
         "interpretation_sha256": {
-          "description": "Canonical hash of the normalized input and the interpreter, catalog, route and source versions.",
+          "description": "Canonical hash of the normalized input, the interpreter, catalog, route and source versions, the factory profile and the availability result for the planned window, not the raw time (contract section 6.1).",
           "$ref": "#/$defs/Sha256"
         },
         "interpreter": {
@@ -1288,16 +1401,53 @@
           "type": "boolean"
         },
         "items": {
+          "description": "Each input item interpreted, so at least one (contract section 6).",
           "type": "array",
           "items": {
             "$ref": "#/$defs/InterpretedItem"
-          }
+          },
+          "minItems": 1
         },
         "type_totals": {
+          "description": "At most one total per bug type. A requested type's total is the sum of its items' quantities, so it is listed and at least 1; a type no item requests has 0 if it is listed (contract section 5).",
           "type": "array",
           "items": {
             "$ref": "#/$defs/TypeQuantity"
-          }
+          },
+          "allOf": [
+            {
+              "type": "array",
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "bug_type_id": {
+                    "const": "concurrency"
+                  }
+                },
+                "required": [
+                  "bug_type_id"
+                ]
+              },
+              "minContains": 0,
+              "maxContains": 1
+            },
+            {
+              "type": "array",
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "bug_type_id": {
+                    "const": "date_time"
+                  }
+                },
+                "required": [
+                  "bug_type_id"
+                ]
+              },
+              "minContains": 0,
+              "maxContains": 1
+            }
+          ]
         },
         "hosts": {
           "type": "array",
@@ -1413,6 +1563,1248 @@
               }
             }
           }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "input": {
+                "type": "object",
+                "properties": {
+                  "items": {
+                    "type": "array",
+                    "contains": {
+                      "type": "object",
+                      "properties": {
+                        "difficulty": {
+                          "const": "source_only_difficulty_required"
+                        }
+                      },
+                      "required": [
+                        "difficulty"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "items"
+                ]
+              }
+            },
+            "required": [
+              "input"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "items": {
+                "type": "array",
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "difficulty": {
+                      "type": "object",
+                      "properties": {
+                        "requested": {
+                          "const": "source_only_difficulty_required"
+                        }
+                      },
+                      "required": [
+                        "requested"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "difficulty"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "items": {
+                "type": "array",
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "difficulty": {
+                      "type": "object",
+                      "properties": {
+                        "requested": {
+                          "const": "source_only_difficulty_required"
+                        }
+                      },
+                      "required": [
+                        "requested"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "difficulty"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "items"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "input": {
+                "type": "object",
+                "properties": {
+                  "items": {
+                    "type": "array",
+                    "contains": {
+                      "type": "object",
+                      "properties": {
+                        "difficulty": {
+                          "const": "source_only_difficulty_required"
+                        }
+                      },
+                      "required": [
+                        "difficulty"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "input": {
+                "type": "object",
+                "properties": {
+                  "items": {
+                    "type": "array",
+                    "contains": {
+                      "type": "object",
+                      "properties": {
+                        "bug_type_id": {
+                          "const": "concurrency"
+                        }
+                      },
+                      "required": [
+                        "bug_type_id"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "items"
+                ]
+              }
+            },
+            "required": [
+              "input"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "type_totals": {
+                "type": "array",
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "bug_type_id": {
+                      "const": "concurrency"
+                    },
+                    "quantity": {
+                      "type": "integer",
+                      "minimum": 1
+                    }
+                  },
+                  "required": [
+                    "bug_type_id",
+                    "quantity"
+                  ]
+                }
+              }
+            }
+          },
+          "else": {
+            "type": "object",
+            "properties": {
+              "type_totals": {
+                "type": "array",
+                "items": {
+                  "if": {
+                    "type": "object",
+                    "properties": {
+                      "bug_type_id": {
+                        "const": "concurrency"
+                      }
+                    },
+                    "required": [
+                      "bug_type_id"
+                    ]
+                  },
+                  "then": {
+                    "type": "object",
+                    "properties": {
+                      "quantity": {
+                        "const": 0
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "input": {
+                "type": "object",
+                "properties": {
+                  "items": {
+                    "type": "array",
+                    "contains": {
+                      "type": "object",
+                      "properties": {
+                        "bug_type_id": {
+                          "const": "date_time"
+                        }
+                      },
+                      "required": [
+                        "bug_type_id"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "items"
+                ]
+              }
+            },
+            "required": [
+              "input"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "type_totals": {
+                "type": "array",
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "bug_type_id": {
+                      "const": "date_time"
+                    },
+                    "quantity": {
+                      "type": "integer",
+                      "minimum": 1
+                    }
+                  },
+                  "required": [
+                    "bug_type_id",
+                    "quantity"
+                  ]
+                }
+              }
+            }
+          },
+          "else": {
+            "type": "object",
+            "properties": {
+              "type_totals": {
+                "type": "array",
+                "items": {
+                  "if": {
+                    "type": "object",
+                    "properties": {
+                      "bug_type_id": {
+                        "const": "date_time"
+                      }
+                    },
+                    "required": [
+                      "bug_type_id"
+                    ]
+                  },
+                  "then": {
+                    "type": "object",
+                    "properties": {
+                      "quantity": {
+                        "const": 0
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "items": {
+                "type": "array",
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "bug_type_id": {
+                      "const": "concurrency"
+                    },
+                    "problems": {
+                      "type": "array",
+                      "minItems": 1,
+                      "contains": {
+                        "type": "object",
+                        "properties": {
+                          "code": {
+                            "const": "unsupported_combination"
+                          }
+                        },
+                        "required": [
+                          "code"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "bug_type_id",
+                    "problems"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "items"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "if": {
+                    "type": "object",
+                    "properties": {
+                      "bug_type_id": {
+                        "const": "concurrency"
+                      }
+                    },
+                    "required": [
+                      "bug_type_id"
+                    ]
+                  },
+                  "then": {
+                    "type": "object",
+                    "properties": {
+                      "problems": {
+                        "type": "array",
+                        "minItems": 1,
+                        "contains": {
+                          "type": "object",
+                          "properties": {
+                            "code": {
+                              "const": "unsupported_combination"
+                            }
+                          },
+                          "required": [
+                            "code"
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "items": {
+                "type": "array",
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "bug_type_id": {
+                      "const": "date_time"
+                    },
+                    "problems": {
+                      "type": "array",
+                      "minItems": 1,
+                      "contains": {
+                        "type": "object",
+                        "properties": {
+                          "code": {
+                            "const": "unsupported_combination"
+                          }
+                        },
+                        "required": [
+                          "code"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "bug_type_id",
+                    "problems"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "items"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "if": {
+                    "type": "object",
+                    "properties": {
+                      "bug_type_id": {
+                        "const": "date_time"
+                      }
+                    },
+                    "required": [
+                      "bug_type_id"
+                    ]
+                  },
+                  "then": {
+                    "type": "object",
+                    "properties": {
+                      "problems": {
+                        "type": "array",
+                        "minItems": 1,
+                        "contains": {
+                          "type": "object",
+                          "properties": {
+                            "code": {
+                              "const": "unsupported_combination"
+                            }
+                          },
+                          "required": [
+                            "code"
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "items": {
+                "type": "array",
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "bug_type_id": {
+                      "const": "concurrency"
+                    },
+                    "problems": {
+                      "type": "array",
+                      "minItems": 1,
+                      "contains": {
+                        "type": "object",
+                        "properties": {
+                          "code": {
+                            "const": "quantity_exceeds_source"
+                          }
+                        },
+                        "required": [
+                          "code"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "bug_type_id",
+                    "problems"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "items"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "if": {
+                    "type": "object",
+                    "properties": {
+                      "bug_type_id": {
+                        "const": "concurrency"
+                      },
+                      "status": {
+                        "const": "supported"
+                      }
+                    },
+                    "required": [
+                      "bug_type_id",
+                      "status"
+                    ]
+                  },
+                  "then": {
+                    "type": "object",
+                    "properties": {
+                      "problems": {
+                        "type": "array",
+                        "minItems": 1,
+                        "contains": {
+                          "type": "object",
+                          "properties": {
+                            "code": {
+                              "const": "quantity_exceeds_source"
+                            }
+                          },
+                          "required": [
+                            "code"
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "items": {
+                "type": "array",
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "bug_type_id": {
+                      "const": "date_time"
+                    },
+                    "problems": {
+                      "type": "array",
+                      "minItems": 1,
+                      "contains": {
+                        "type": "object",
+                        "properties": {
+                          "code": {
+                            "const": "quantity_exceeds_source"
+                          }
+                        },
+                        "required": [
+                          "code"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "bug_type_id",
+                    "problems"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "items"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "if": {
+                    "type": "object",
+                    "properties": {
+                      "bug_type_id": {
+                        "const": "date_time"
+                      },
+                      "status": {
+                        "const": "supported"
+                      }
+                    },
+                    "required": [
+                      "bug_type_id",
+                      "status"
+                    ]
+                  },
+                  "then": {
+                    "type": "object",
+                    "properties": {
+                      "problems": {
+                        "type": "array",
+                        "minItems": 1,
+                        "contains": {
+                          "type": "object",
+                          "properties": {
+                            "code": {
+                              "const": "quantity_exceeds_source"
+                            }
+                          },
+                          "required": [
+                            "code"
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "input": {
+                "type": "object",
+                "properties": {
+                  "hosts": {
+                    "type": "array",
+                    "not": {
+                      "contains": {
+                        "const": "umami"
+                      }
+                    }
+                  }
+                },
+                "required": [
+                  "hosts"
+                ]
+              }
+            },
+            "required": [
+              "input"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "eligible_sources": {
+                      "type": "array",
+                      "not": {
+                        "contains": {
+                          "type": "object",
+                          "properties": {
+                            "host_id": {
+                              "const": "umami"
+                            }
+                          },
+                          "required": [
+                            "host_id"
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "input": {
+                "type": "object",
+                "properties": {
+                  "hosts": {
+                    "type": "array",
+                    "not": {
+                      "contains": {
+                        "const": "task-report"
+                      }
+                    }
+                  }
+                },
+                "required": [
+                  "hosts"
+                ]
+              }
+            },
+            "required": [
+              "input"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "eligible_sources": {
+                      "type": "array",
+                      "not": {
+                        "contains": {
+                          "type": "object",
+                          "properties": {
+                            "host_id": {
+                              "const": "task-report"
+                            }
+                          },
+                          "required": [
+                            "host_id"
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "input": {
+                "type": "object",
+                "properties": {
+                  "hosts": {
+                    "type": "array",
+                    "contains": {
+                      "const": "umami"
+                    }
+                  }
+                },
+                "required": [
+                  "hosts"
+                ]
+              },
+              "items": {
+                "type": "array",
+                "not": {
+                  "contains": {
+                    "type": "object",
+                    "properties": {
+                      "eligible_sources": {
+                        "type": "array",
+                        "contains": {
+                          "type": "object",
+                          "properties": {
+                            "host_id": {
+                              "const": "umami"
+                            }
+                          },
+                          "required": [
+                            "host_id"
+                          ]
+                        }
+                      }
+                    },
+                    "required": [
+                      "eligible_sources"
+                    ]
+                  }
+                }
+              }
+            },
+            "required": [
+              "input",
+              "items"
+            ]
+          },
+          "then": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "problems": {
+                    "type": "array",
+                    "contains": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "const": "host_unused"
+                        }
+                      },
+                      "required": [
+                        "code"
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "items": {
+                    "type": "array",
+                    "contains": {
+                      "type": "object",
+                      "properties": {
+                        "problems": {
+                          "type": "array",
+                          "contains": {
+                            "type": "object",
+                            "properties": {
+                              "code": {
+                                "const": "host_unused"
+                              }
+                            },
+                            "required": [
+                              "code"
+                            ]
+                          }
+                        }
+                      },
+                      "required": [
+                        "problems"
+                      ]
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "input": {
+                "type": "object",
+                "properties": {
+                  "hosts": {
+                    "type": "array",
+                    "contains": {
+                      "const": "task-report"
+                    }
+                  }
+                },
+                "required": [
+                  "hosts"
+                ]
+              },
+              "items": {
+                "type": "array",
+                "not": {
+                  "contains": {
+                    "type": "object",
+                    "properties": {
+                      "eligible_sources": {
+                        "type": "array",
+                        "contains": {
+                          "type": "object",
+                          "properties": {
+                            "host_id": {
+                              "const": "task-report"
+                            }
+                          },
+                          "required": [
+                            "host_id"
+                          ]
+                        }
+                      }
+                    },
+                    "required": [
+                      "eligible_sources"
+                    ]
+                  }
+                }
+              }
+            },
+            "required": [
+              "input",
+              "items"
+            ]
+          },
+          "then": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "problems": {
+                    "type": "array",
+                    "contains": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "const": "host_unused"
+                        }
+                      },
+                      "required": [
+                        "code"
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "items": {
+                    "type": "array",
+                    "contains": {
+                      "type": "object",
+                      "properties": {
+                        "problems": {
+                          "type": "array",
+                          "contains": {
+                            "type": "object",
+                            "properties": {
+                              "code": {
+                                "const": "host_unused"
+                              }
+                            },
+                            "required": [
+                              "code"
+                            ]
+                          }
+                        }
+                      },
+                      "required": [
+                        "problems"
+                      ]
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "if": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "problems": {
+                    "type": "array",
+                    "contains": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "const": "host_unused"
+                        }
+                      },
+                      "required": [
+                        "code"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "problems"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "items": {
+                    "type": "array",
+                    "contains": {
+                      "type": "object",
+                      "properties": {
+                        "problems": {
+                          "type": "array",
+                          "contains": {
+                            "type": "object",
+                            "properties": {
+                              "code": {
+                                "const": "host_unused"
+                              }
+                            },
+                            "required": [
+                              "code"
+                            ]
+                          }
+                        }
+                      },
+                      "required": [
+                        "problems"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "items"
+                ]
+              }
+            ]
+          },
+          "then": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "input": {
+                    "type": "object",
+                    "properties": {
+                      "hosts": {
+                        "type": "array",
+                        "contains": {
+                          "const": "umami"
+                        }
+                      }
+                    }
+                  },
+                  "items": {
+                    "type": "array",
+                    "items": {
+                      "if": {
+                        "type": "object",
+                        "properties": {
+                          "status": {
+                            "const": "supported"
+                          }
+                        },
+                        "required": [
+                          "status"
+                        ]
+                      },
+                      "then": {
+                        "type": "object",
+                        "properties": {
+                          "eligible_sources": {
+                            "type": "array",
+                            "not": {
+                              "contains": {
+                                "type": "object",
+                                "properties": {
+                                  "host_id": {
+                                    "const": "umami"
+                                  }
+                                },
+                                "required": [
+                                  "host_id"
+                                ]
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "input": {
+                    "type": "object",
+                    "properties": {
+                      "hosts": {
+                        "type": "array",
+                        "contains": {
+                          "const": "task-report"
+                        }
+                      }
+                    }
+                  },
+                  "items": {
+                    "type": "array",
+                    "items": {
+                      "if": {
+                        "type": "object",
+                        "properties": {
+                          "status": {
+                            "const": "supported"
+                          }
+                        },
+                        "required": [
+                          "status"
+                        ]
+                      },
+                      "then": {
+                        "type": "object",
+                        "properties": {
+                          "eligible_sources": {
+                            "type": "array",
+                            "not": {
+                              "contains": {
+                                "type": "object",
+                                "properties": {
+                                  "host_id": {
+                                    "const": "task-report"
+                                  }
+                                },
+                                "required": [
+                                  "host_id"
+                                ]
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "startable": {
+                "const": true
+              },
+              "items": {
+                "type": "array",
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "const": "supported"
+                    },
+                    "eligible_sources": {
+                      "type": "array",
+                      "contains": {
+                        "type": "object",
+                        "properties": {
+                          "host_id": {
+                            "const": "umami"
+                          }
+                        },
+                        "required": [
+                          "host_id"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "eligible_sources"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "startable",
+              "items"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "budget": {
+                "type": "object",
+                "properties": {
+                  "worst_case_per_validation_microusd": {
+                    "type": "array",
+                    "contains": {
+                      "type": "object",
+                      "properties": {
+                        "host_id": {
+                          "const": "umami"
+                        }
+                      },
+                      "required": [
+                        "host_id"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "startable": {
+                "const": true
+              },
+              "items": {
+                "type": "array",
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "const": "supported"
+                    },
+                    "eligible_sources": {
+                      "type": "array",
+                      "contains": {
+                        "type": "object",
+                        "properties": {
+                          "host_id": {
+                            "const": "task-report"
+                          }
+                        },
+                        "required": [
+                          "host_id"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "eligible_sources"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "startable",
+              "items"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "budget": {
+                "type": "object",
+                "properties": {
+                  "worst_case_per_validation_microusd": {
+                    "type": "array",
+                    "contains": {
+                      "type": "object",
+                      "properties": {
+                        "host_id": {
+                          "const": "task-report"
+                        }
+                      },
+                      "required": [
+                        "host_id"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
         }
       ]
     },
@@ -1463,18 +2855,53 @@
           }
         },
         "unmatched_text": {
-          "description": "The description's words that no criterion or filler phrase covers; empty when the item has no description. Any entry makes the item unsupported with unrecognized_description (contract section 6.1).",
+          "description": "Each maximal run of words that no criterion or filler phrase covers, from its first word to its last, so an entry starts and ends with a letter or digit; empty when the item has no description. Any entry makes the item unsupported with unrecognized_description, and that problem needs an entry (contract section 6.1).",
           "type": "array",
           "items": {
-            "type": "string"
+            "type": "string",
+            "pattern": "^[\\p{L}\\p{N}](?:(?:.|[\\n\\r\\u2028\\u2029])*[\\p{L}\\p{N}])?$"
           }
         },
         "eligible_sources": {
-          "description": "At least one when the item is supported: an item with no eligible source is unsupported, with unsupported_combination or no_matching_source (contract section 6.2).",
+          "description": "Sources on the selected hosts, at most one per host, and at least one when the item is supported. An item has none exactly when it carries unsupported_combination or no_matching_source (contract section 6.2).",
           "type": "array",
           "items": {
             "$ref": "#/$defs/EligibleSource"
-          }
+          },
+          "allOf": [
+            {
+              "type": "array",
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "host_id": {
+                    "const": "umami"
+                  }
+                },
+                "required": [
+                  "host_id"
+                ]
+              },
+              "minContains": 0,
+              "maxContains": 1
+            },
+            {
+              "type": "array",
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "host_id": {
+                    "const": "task-report"
+                  }
+                },
+                "required": [
+                  "host_id"
+                ]
+              },
+              "minContains": 0,
+              "maxContains": 1
+            }
+          ]
         },
         "status": {
           "description": "Unsupported exactly when the item has a blocking problem; an item that requires source-only difficulty or has unmatched text is unsupported.",
@@ -1484,7 +2911,8 @@
           "type": "array",
           "items": {
             "$ref": "#/$defs/Problem"
-          }
+          },
+          "description": "The item's own problems, so each names an item; request-level problems belong to Interpretation.problems."
         }
       },
       "allOf": [
@@ -1676,6 +3104,198 @@
               }
             }
           }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "problems": {
+                "type": "array",
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "const": "unrecognized_description"
+                    }
+                  },
+                  "required": [
+                    "code"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "problems"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "unmatched_text": {
+                "type": "array",
+                "minItems": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "problems": {
+                "type": "array",
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "const": "unsupported_difficulty"
+                    }
+                  },
+                  "required": [
+                    "code"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "problems"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "difficulty": {
+                "type": "object",
+                "properties": {
+                  "requested": {
+                    "const": "source_only_difficulty_required"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "problems": {
+                "type": "array",
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "const": "no_matching_source"
+                    }
+                  },
+                  "required": [
+                    "code"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "problems"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "criteria": {
+                "type": "array",
+                "minItems": 1
+              },
+              "eligible_sources": {
+                "type": "array",
+                "maxItems": 0
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "problems": {
+                "type": "array",
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "const": "unsupported_combination"
+                    }
+                  },
+                  "required": [
+                    "code"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "problems"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "eligible_sources": {
+                "type": "array",
+                "maxItems": 0
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "eligible_sources": {
+                "type": "array",
+                "maxItems": 0
+              }
+            },
+            "required": [
+              "eligible_sources"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "problems": {
+                "type": "array",
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "unsupported_combination",
+                        "no_matching_source"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "code"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "problems": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "item_key": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
         }
       ]
     },
@@ -1774,7 +3394,8 @@
           "$ref": "#/$defs/Identifier"
         },
         "entries": {
-          "$ref": "#/$defs/NonNegativeInteger"
+          "description": "The number of the source's catalog entries available over the planned window that satisfy the item's criteria (contract sections 4.2 and 6).",
+          "$ref": "#/$defs/PositiveInteger"
         }
       }
     },
@@ -1842,18 +3463,96 @@
           "type": "array",
           "items": {
             "$ref": "#/$defs/HostAmount"
-          }
+          },
+          "description": "At most one entry per host."
         },
         "worst_case_per_validation_microusd": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/HostAmount"
-          }
+          },
+          "description": "At most one entry per host. A startable interpretation, the kind a request freezes, has one for each host that a supported item draws from, since a validation run reserves the worst case of its case's host from the frozen interpretation (contract section 11)."
         },
         "estimate_note": {
           "type": "string"
         }
-      }
+      },
+      "allOf": [
+        {
+          "type": "object",
+          "properties": {
+            "worst_case_per_candidate_microusd": {
+              "type": "array",
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "host_id": {
+                    "const": "umami"
+                  }
+                },
+                "required": [
+                  "host_id"
+                ]
+              },
+              "minContains": 0,
+              "maxContains": 1
+            },
+            "worst_case_per_validation_microusd": {
+              "type": "array",
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "host_id": {
+                    "const": "umami"
+                  }
+                },
+                "required": [
+                  "host_id"
+                ]
+              },
+              "minContains": 0,
+              "maxContains": 1
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "worst_case_per_candidate_microusd": {
+              "type": "array",
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "host_id": {
+                    "const": "task-report"
+                  }
+                },
+                "required": [
+                  "host_id"
+                ]
+              },
+              "minContains": 0,
+              "maxContains": 1
+            },
+            "worst_case_per_validation_microusd": {
+              "type": "array",
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "host_id": {
+                    "const": "task-report"
+                  }
+                },
+                "required": [
+                  "host_id"
+                ]
+              },
+              "minContains": 0,
+              "maxContains": 1
+            }
+          }
+        }
+      ]
     },
     "HostAmount": {
       "type": "object",
@@ -2092,7 +3791,7 @@
           ]
         },
         "delivery": {
-          "description": "Derived from the counts; a fulfilled outcome always has complete.",
+          "description": "Derived from the counts: complete when nothing is missing, none when no case was delivered; a fulfilled outcome always has complete.",
           "$ref": "#/$defs/Delivery"
         },
         "attention": {
@@ -2119,16 +3818,53 @@
           "$ref": "#/$defs/Funnel"
         },
         "items": {
+          "description": "Each request item, so at least one.",
           "type": "array",
           "items": {
             "$ref": "#/$defs/ItemProgress"
-          }
+          },
+          "minItems": 1
         },
         "type_totals": {
+          "description": "At most one total per bug type. A requested type is listed with requested at least 1; a type no item requests has requested 0 if it is listed (contract section 5).",
           "type": "array",
           "items": {
             "$ref": "#/$defs/TypeProgress"
-          }
+          },
+          "allOf": [
+            {
+              "type": "array",
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "bug_type_id": {
+                    "const": "concurrency"
+                  }
+                },
+                "required": [
+                  "bug_type_id"
+                ]
+              },
+              "minContains": 0,
+              "maxContains": 1
+            },
+            {
+              "type": "array",
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "bug_type_id": {
+                    "const": "date_time"
+                  }
+                },
+                "required": [
+                  "bug_type_id"
+                ]
+              },
+              "minContains": 0,
+              "maxContains": 1
+            }
+          ]
         },
         "candidates": {
           "type": "array",
@@ -2144,7 +3880,7 @@
           }
         },
         "events": {
-          "description": "Up to 200 events with seq greater than the after parameter.",
+          "description": "Up to 200 events with seq greater than the after parameter. Event 1 is request_accepted. A request_finished event, at most one, names the outcome and stop code and appears only in state finished; a stop_requested event, at most one, only in states stopping and finished; validation events only in state finished.",
           "type": "array",
           "items": {
             "$ref": "#/$defs/Event"
@@ -2152,7 +3888,8 @@
           "maxItems": 200
         },
         "next_after": {
-          "$ref": "#/$defs/NonNegativeInteger"
+          "description": "The seq of the last event returned, or the after parameter when none is; at least 1, since event 1 always exists.",
+          "$ref": "#/$defs/PositiveInteger"
         },
         "last_heartbeat_at": {
           "anyOf": [
@@ -2575,6 +4312,1593 @@
               }
             }
           }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "delivery": {
+                "const": "complete"
+              }
+            },
+            "required": [
+              "delivery"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "missing": {
+                      "const": 0
+                    }
+                  }
+                }
+              },
+              "type_totals": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "missing": {
+                      "const": 0
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "else": {
+            "type": "object",
+            "properties": {
+              "items": {
+                "type": "array",
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "missing": {
+                      "type": "integer",
+                      "minimum": 1
+                    }
+                  },
+                  "required": [
+                    "missing"
+                  ]
+                }
+              },
+              "type_totals": {
+                "type": "array",
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "missing": {
+                      "type": "integer",
+                      "minimum": 1
+                    }
+                  },
+                  "required": [
+                    "missing"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "delivery": {
+                "const": "none"
+              }
+            },
+            "required": [
+              "delivery"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "delivered": {
+                      "const": 0
+                    }
+                  }
+                }
+              },
+              "type_totals": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "delivered": {
+                      "const": 0
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "else": {
+            "type": "object",
+            "properties": {
+              "items": {
+                "type": "array",
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "delivered": {
+                      "type": "integer",
+                      "minimum": 1
+                    }
+                  },
+                  "required": [
+                    "delivered"
+                  ]
+                }
+              },
+              "type_totals": {
+                "type": "array",
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "delivered": {
+                      "type": "integer",
+                      "minimum": 1
+                    }
+                  },
+                  "required": [
+                    "delivered"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "items": {
+                "type": "array",
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "bug_type_id": {
+                      "const": "concurrency"
+                    }
+                  },
+                  "required": [
+                    "bug_type_id"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "items"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "type_totals": {
+                "type": "array",
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "bug_type_id": {
+                      "const": "concurrency"
+                    },
+                    "requested": {
+                      "type": "integer",
+                      "minimum": 1
+                    }
+                  },
+                  "required": [
+                    "bug_type_id",
+                    "requested"
+                  ]
+                }
+              }
+            }
+          },
+          "else": {
+            "type": "object",
+            "properties": {
+              "type_totals": {
+                "type": "array",
+                "items": {
+                  "if": {
+                    "type": "object",
+                    "properties": {
+                      "bug_type_id": {
+                        "const": "concurrency"
+                      }
+                    },
+                    "required": [
+                      "bug_type_id"
+                    ]
+                  },
+                  "then": {
+                    "type": "object",
+                    "properties": {
+                      "requested": {
+                        "const": 0
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "items": {
+                "type": "array",
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "bug_type_id": {
+                      "const": "date_time"
+                    }
+                  },
+                  "required": [
+                    "bug_type_id"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "items"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "type_totals": {
+                "type": "array",
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "bug_type_id": {
+                      "const": "date_time"
+                    },
+                    "requested": {
+                      "type": "integer",
+                      "minimum": 1
+                    }
+                  },
+                  "required": [
+                    "bug_type_id",
+                    "requested"
+                  ]
+                }
+              }
+            }
+          },
+          "else": {
+            "type": "object",
+            "properties": {
+              "type_totals": {
+                "type": "array",
+                "items": {
+                  "if": {
+                    "type": "object",
+                    "properties": {
+                      "bug_type_id": {
+                        "const": "date_time"
+                      }
+                    },
+                    "required": [
+                      "bug_type_id"
+                    ]
+                  },
+                  "then": {
+                    "type": "object",
+                    "properties": {
+                      "requested": {
+                        "const": 0
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "events": {
+              "type": "array",
+              "items": {
+                "if": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "const": "request_accepted"
+                    }
+                  },
+                  "required": [
+                    "type"
+                  ]
+                },
+                "then": {
+                  "type": "object",
+                  "properties": {
+                    "seq": {
+                      "const": 1
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "events": {
+              "type": "array",
+              "items": {
+                "if": {
+                  "type": "object",
+                  "properties": {
+                    "seq": {
+                      "const": 1
+                    }
+                  },
+                  "required": [
+                    "seq"
+                  ]
+                },
+                "then": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "const": "request_accepted"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "events": {
+              "type": "array",
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "const": "request_finished"
+                  }
+                },
+                "required": [
+                  "type"
+                ]
+              },
+              "minContains": 0,
+              "maxContains": 1
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "events": {
+                "type": "array",
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "const": "request_finished"
+                    }
+                  },
+                  "required": [
+                    "type"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "events"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "state": {
+                "const": "finished"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "stop_reason": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "const": "fulfilled"
+                  }
+                },
+                "required": [
+                  "code"
+                ]
+              }
+            },
+            "required": [
+              "stop_reason"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "events": {
+                "type": "array",
+                "items": {
+                  "if": {
+                    "type": "object",
+                    "properties": {
+                      "type": {
+                        "const": "request_finished"
+                      }
+                    },
+                    "required": [
+                      "type"
+                    ]
+                  },
+                  "then": {
+                    "type": "object",
+                    "properties": {
+                      "data": {
+                        "type": "object",
+                        "properties": {
+                          "stop_code": {
+                            "const": "fulfilled"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "stop_reason": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "const": "budget_exhausted"
+                  }
+                },
+                "required": [
+                  "code"
+                ]
+              }
+            },
+            "required": [
+              "stop_reason"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "events": {
+                "type": "array",
+                "items": {
+                  "if": {
+                    "type": "object",
+                    "properties": {
+                      "type": {
+                        "const": "request_finished"
+                      }
+                    },
+                    "required": [
+                      "type"
+                    ]
+                  },
+                  "then": {
+                    "type": "object",
+                    "properties": {
+                      "data": {
+                        "type": "object",
+                        "properties": {
+                          "stop_code": {
+                            "const": "budget_exhausted"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "stop_reason": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "const": "time_limit"
+                  }
+                },
+                "required": [
+                  "code"
+                ]
+              }
+            },
+            "required": [
+              "stop_reason"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "events": {
+                "type": "array",
+                "items": {
+                  "if": {
+                    "type": "object",
+                    "properties": {
+                      "type": {
+                        "const": "request_finished"
+                      }
+                    },
+                    "required": [
+                      "type"
+                    ]
+                  },
+                  "then": {
+                    "type": "object",
+                    "properties": {
+                      "data": {
+                        "type": "object",
+                        "properties": {
+                          "stop_code": {
+                            "const": "time_limit"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "stop_reason": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "const": "candidate_limit"
+                  }
+                },
+                "required": [
+                  "code"
+                ]
+              }
+            },
+            "required": [
+              "stop_reason"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "events": {
+                "type": "array",
+                "items": {
+                  "if": {
+                    "type": "object",
+                    "properties": {
+                      "type": {
+                        "const": "request_finished"
+                      }
+                    },
+                    "required": [
+                      "type"
+                    ]
+                  },
+                  "then": {
+                    "type": "object",
+                    "properties": {
+                      "data": {
+                        "type": "object",
+                        "properties": {
+                          "stop_code": {
+                            "const": "candidate_limit"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "stop_reason": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "const": "sources_exhausted"
+                  }
+                },
+                "required": [
+                  "code"
+                ]
+              }
+            },
+            "required": [
+              "stop_reason"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "events": {
+                "type": "array",
+                "items": {
+                  "if": {
+                    "type": "object",
+                    "properties": {
+                      "type": {
+                        "const": "request_finished"
+                      }
+                    },
+                    "required": [
+                      "type"
+                    ]
+                  },
+                  "then": {
+                    "type": "object",
+                    "properties": {
+                      "data": {
+                        "type": "object",
+                        "properties": {
+                          "stop_code": {
+                            "const": "sources_exhausted"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "stop_reason": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "const": "cancelled_by_user"
+                  }
+                },
+                "required": [
+                  "code"
+                ]
+              }
+            },
+            "required": [
+              "stop_reason"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "events": {
+                "type": "array",
+                "items": {
+                  "if": {
+                    "type": "object",
+                    "properties": {
+                      "type": {
+                        "const": "request_finished"
+                      }
+                    },
+                    "required": [
+                      "type"
+                    ]
+                  },
+                  "then": {
+                    "type": "object",
+                    "properties": {
+                      "data": {
+                        "type": "object",
+                        "properties": {
+                          "stop_code": {
+                            "const": "cancelled_by_user"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "stop_reason": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "const": "worker_lost"
+                  }
+                },
+                "required": [
+                  "code"
+                ]
+              }
+            },
+            "required": [
+              "stop_reason"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "events": {
+                "type": "array",
+                "items": {
+                  "if": {
+                    "type": "object",
+                    "properties": {
+                      "type": {
+                        "const": "request_finished"
+                      }
+                    },
+                    "required": [
+                      "type"
+                    ]
+                  },
+                  "then": {
+                    "type": "object",
+                    "properties": {
+                      "data": {
+                        "type": "object",
+                        "properties": {
+                          "stop_code": {
+                            "const": "worker_lost"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "stop_reason": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "const": "needs_reconciliation"
+                  }
+                },
+                "required": [
+                  "code"
+                ]
+              }
+            },
+            "required": [
+              "stop_reason"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "events": {
+                "type": "array",
+                "items": {
+                  "if": {
+                    "type": "object",
+                    "properties": {
+                      "type": {
+                        "const": "request_finished"
+                      }
+                    },
+                    "required": [
+                      "type"
+                    ]
+                  },
+                  "then": {
+                    "type": "object",
+                    "properties": {
+                      "data": {
+                        "type": "object",
+                        "properties": {
+                          "stop_code": {
+                            "const": "needs_reconciliation"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "stop_reason": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "const": "operational_error"
+                  }
+                },
+                "required": [
+                  "code"
+                ]
+              }
+            },
+            "required": [
+              "stop_reason"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "events": {
+                "type": "array",
+                "items": {
+                  "if": {
+                    "type": "object",
+                    "properties": {
+                      "type": {
+                        "const": "request_finished"
+                      }
+                    },
+                    "required": [
+                      "type"
+                    ]
+                  },
+                  "then": {
+                    "type": "object",
+                    "properties": {
+                      "data": {
+                        "type": "object",
+                        "properties": {
+                          "stop_code": {
+                            "const": "operational_error"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "events": {
+              "type": "array",
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "const": "stop_requested"
+                  }
+                },
+                "required": [
+                  "type"
+                ]
+              },
+              "minContains": 0,
+              "maxContains": 1
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "events": {
+                "type": "array",
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "const": "stop_requested"
+                    }
+                  },
+                  "required": [
+                    "type"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "events"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "state": {
+                "enum": [
+                  "stopping",
+                  "finished"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "events": {
+                "type": "array",
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "enum": [
+                        "validation_started",
+                        "validation_finished"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "type"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "events"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "state": {
+                "const": "finished"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "cases": {
+                "type": "array",
+                "minItems": 1
+              }
+            },
+            "required": [
+              "cases"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "candidates": {
+                "type": "array",
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "stage": {
+                      "const": "qualified"
+                    }
+                  },
+                  "required": [
+                    "stage"
+                  ]
+                }
+              },
+              "funnel": {
+                "type": "object",
+                "properties": {
+                  "candidates_explored": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "behavior_checks_passed": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "requested_criteria_passed": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "packages_ready": {
+                    "type": "integer",
+                    "minimum": 1
+                  }
+                }
+              }
+            }
+          },
+          "else": {
+            "type": "object",
+            "properties": {
+              "candidates": {
+                "type": "array",
+                "not": {
+                  "contains": {
+                    "type": "object",
+                    "properties": {
+                      "stage": {
+                        "const": "qualified"
+                      }
+                    },
+                    "required": [
+                      "stage"
+                    ]
+                  }
+                }
+              },
+              "funnel": {
+                "type": "object",
+                "properties": {
+                  "packages_ready": {
+                    "const": 0
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "candidates": {
+                "type": "array",
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "stage": {
+                      "enum": [
+                        "checking",
+                        "behavior_checks_passed",
+                        "requested_criteria_passed",
+                        "packaging",
+                        "qualified"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "stage"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "candidates"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "funnel": {
+                "type": "object",
+                "properties": {
+                  "candidates_explored": {
+                    "type": "integer",
+                    "minimum": 1
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "candidates": {
+                "type": "array",
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "stage": {
+                      "enum": [
+                        "behavior_checks_passed",
+                        "requested_criteria_passed",
+                        "packaging",
+                        "qualified"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "stage"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "candidates"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "funnel": {
+                "type": "object",
+                "properties": {
+                  "behavior_checks_passed": {
+                    "type": "integer",
+                    "minimum": 1
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "candidates": {
+                "type": "array",
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "item_key": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "item_key"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "candidates"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "funnel": {
+                "type": "object",
+                "properties": {
+                  "requested_criteria_passed": {
+                    "type": "integer",
+                    "minimum": 1
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "candidates": {
+                "type": "array",
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "reason": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "const": "duplicate_defect"
+                        }
+                      },
+                      "required": [
+                        "code"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "reason"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "candidates"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "candidates": {
+                "type": "array",
+                "minItems": 2
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "interpretation": {
+                "type": "object",
+                "properties": {
+                  "input": {
+                    "type": "object",
+                    "properties": {
+                      "hosts": {
+                        "type": "array",
+                        "not": {
+                          "contains": {
+                            "const": "umami"
+                          }
+                        }
+                      }
+                    },
+                    "required": [
+                      "hosts"
+                    ]
+                  }
+                },
+                "required": [
+                  "input"
+                ]
+              }
+            },
+            "required": [
+              "interpretation"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "candidates": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "host_id": {
+                      "not": {
+                        "const": "umami"
+                      }
+                    }
+                  }
+                }
+              },
+              "cases": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "host_id": {
+                      "not": {
+                        "const": "umami"
+                      }
+                    }
+                  }
+                }
+              },
+              "events": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "host_id": {
+                      "not": {
+                        "const": "umami"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "interpretation": {
+                "type": "object",
+                "properties": {
+                  "input": {
+                    "type": "object",
+                    "properties": {
+                      "hosts": {
+                        "type": "array",
+                        "not": {
+                          "contains": {
+                            "const": "task-report"
+                          }
+                        }
+                      }
+                    },
+                    "required": [
+                      "hosts"
+                    ]
+                  }
+                },
+                "required": [
+                  "input"
+                ]
+              }
+            },
+            "required": [
+              "interpretation"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "candidates": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "host_id": {
+                      "not": {
+                        "const": "task-report"
+                      }
+                    }
+                  }
+                }
+              },
+              "cases": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "host_id": {
+                      "not": {
+                        "const": "task-report"
+                      }
+                    }
+                  }
+                }
+              },
+              "events": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "host_id": {
+                      "not": {
+                        "const": "task-report"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "items": {
+                "type": "array",
+                "not": {
+                  "contains": {
+                    "type": "object",
+                    "properties": {
+                      "bug_type_id": {
+                        "const": "concurrency"
+                      }
+                    },
+                    "required": [
+                      "bug_type_id"
+                    ]
+                  }
+                }
+              }
+            },
+            "required": [
+              "items"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "candidates": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "bug_type_id": {
+                      "not": {
+                        "const": "concurrency"
+                      }
+                    }
+                  }
+                }
+              },
+              "cases": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "bug_type_id": {
+                      "not": {
+                        "const": "concurrency"
+                      }
+                    }
+                  }
+                }
+              },
+              "events": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "bug_type_id": {
+                          "not": {
+                            "const": "concurrency"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "items": {
+                "type": "array",
+                "not": {
+                  "contains": {
+                    "type": "object",
+                    "properties": {
+                      "bug_type_id": {
+                        "const": "date_time"
+                      }
+                    },
+                    "required": [
+                      "bug_type_id"
+                    ]
+                  }
+                }
+              }
+            },
+            "required": [
+              "items"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "candidates": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "bug_type_id": {
+                      "not": {
+                        "const": "date_time"
+                      }
+                    }
+                  }
+                }
+              },
+              "cases": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "bug_type_id": {
+                      "not": {
+                        "const": "date_time"
+                      }
+                    }
+                  }
+                }
+              },
+              "events": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "bug_type_id": {
+                          "not": {
+                            "const": "date_time"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "state": {
+                "not": {
+                  "const": "finished"
+                }
+              }
+            },
+            "required": [
+              "state"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "cases": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "validation": {
+                      "type": "null"
+                    }
+                  }
+                }
+              }
+            }
+          }
         }
       ]
     },
@@ -2759,7 +6083,8 @@
           ]
         },
         "requested": {
-          "$ref": "#/$defs/NonNegativeInteger"
+          "description": "The item's quantity, so at least 1.",
+          "$ref": "#/$defs/PositiveInteger"
         },
         "delivered": {
           "$ref": "#/$defs/NonNegativeInteger"
@@ -2768,12 +6093,47 @@
           "$ref": "#/$defs/NonNegativeInteger"
         },
         "case_ids": {
+          "description": "The delivered cases that fill the item, each listed once; empty exactly when delivered is 0.",
           "type": "array",
           "items": {
             "$ref": "#/$defs/Sha256"
+          },
+          "uniqueItems": true
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "delivered": {
+                "const": 0
+              }
+            },
+            "required": [
+              "delivered"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "case_ids": {
+                "type": "array",
+                "maxItems": 0
+              }
+            }
+          },
+          "else": {
+            "type": "object",
+            "properties": {
+              "case_ids": {
+                "type": "array",
+                "minItems": 1
+              }
+            }
           }
         }
-      }
+      ]
     },
     "TypeProgress": {
       "type": "object",
@@ -2852,7 +6212,7 @@
           ]
         },
         "item_key": {
-          "description": "Set at requested_criteria_passed, when the candidate is assigned to an item.",
+          "description": "Set at requested_criteria_passed, when the candidate is assigned to an item; null for a candidate whose cells did not match in export verification (the original-suite and check reasons and bug_not_detected), one that fits no item (wrong_failure) and one skipped before it runs (duplicate_defect, no_budget_for_candidate).",
           "anyOf": [
             {
               "$ref": "#/$defs/ItemKey"
@@ -3142,6 +6502,45 @@
             "type": "object",
             "properties": {
               "case_id": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "reason": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "enum": [
+                      "original_suite_failed_clean",
+                      "original_suite_caught_bug",
+                      "original_suite_failed_fixed",
+                      "checks_failed_clean",
+                      "checks_failed_fixed",
+                      "bug_not_detected",
+                      "wrong_failure",
+                      "duplicate_defect",
+                      "no_budget_for_candidate"
+                    ]
+                  }
+                },
+                "required": [
+                  "code"
+                ]
+              }
+            },
+            "required": [
+              "reason"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "item_key": {
                 "type": "null"
               }
             }
@@ -4366,10 +7765,13 @@
       ],
       "properties": {
         "criterion_ids": {
+          "description": "The criteria the candidate demonstrated, which become its case's criteria_met: at least one, each once (contract sections 6.3 and 8.4).",
           "type": "array",
           "items": {
             "$ref": "#/$defs/Identifier"
-          }
+          },
+          "minItems": 1,
+          "uniqueItems": true
         }
       }
     },
@@ -4667,10 +8069,12 @@
           ]
         },
         "criteria_met": {
+          "description": "Criteria the case demonstrated in export verification; at least one (contract section 6.3).",
           "type": "array",
           "items": {
             "$ref": "#/$defs/CriterionSummary"
-          }
+          },
+          "minItems": 1
         },
         "summary": {
           "$ref": "#/$defs/CaseSummary"
@@ -4691,7 +8095,7 @@
           "$ref": "#/$defs/Packages"
         },
         "validation": {
-          "description": "The latest user-started validation run, if any.",
+          "description": "The latest user-started validation run, if any. A run takes the slot that the request holds until it finishes, so a case has none before its request is finished.",
           "anyOf": [
             {
               "$ref": "#/$defs/ValidationRun"
@@ -4731,6 +8135,29 @@
             "properties": {
               "item_key": {
                 "type": "string"
+              },
+              "packages": {
+                "type": "object",
+                "properties": {
+                  "bug_case": {
+                    "type": "object",
+                    "properties": {
+                      "download_path": {
+                        "type": "string",
+                        "pattern": "^/api/factory/requests/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/cases/[0-9a-f]{64}/packages/bug-case$"
+                      }
+                    }
+                  },
+                  "validator": {
+                    "type": "object",
+                    "properties": {
+                      "download_path": {
+                        "type": "string",
+                        "pattern": "^/api/factory/requests/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/cases/[0-9a-f]{64}/packages/validator$"
+                      }
+                    }
+                  }
+                }
               }
             }
           },
@@ -4739,6 +8166,33 @@
             "properties": {
               "item_key": {
                 "type": "null"
+              },
+              "packages": {
+                "type": "object",
+                "properties": {
+                  "bug_case": {
+                    "type": "object",
+                    "properties": {
+                      "download_path": {
+                        "not": {
+                          "type": "string",
+                          "pattern": "^/api/factory/requests/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/cases/[0-9a-f]{64}/packages/(bug-case|validator)$"
+                        }
+                      }
+                    }
+                  },
+                  "validator": {
+                    "type": "object",
+                    "properties": {
+                      "download_path": {
+                        "not": {
+                          "type": "string",
+                          "pattern": "^/api/factory/requests/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/cases/[0-9a-f]{64}/packages/(bug-case|validator)$"
+                        }
+                      }
+                    }
+                  }
+                }
               }
             }
           }
@@ -5100,7 +8554,7 @@
       }
     },
     "Packages": {
-      "description": "The two parts become ready together.",
+      "description": "Both parts of a case are ready and have a download path: a case appears only once it is qualified, after its parts are verified and stored (contract sections 10 and 10.2).",
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -5147,47 +8601,29 @@
           }
         },
         {
-          "if": {
-            "type": "object",
-            "properties": {
-              "bug_case": {
-                "type": "object",
-                "properties": {
-                  "ready": {
-                    "const": true
-                  }
+          "type": "object",
+          "properties": {
+            "bug_case": {
+              "type": "object",
+              "properties": {
+                "ready": {
+                  "const": true
                 },
-                "required": [
-                  "ready"
-                ]
-              }
-            },
-            "required": [
-              "bug_case"
-            ]
-          },
-          "then": {
-            "type": "object",
-            "properties": {
-              "validator": {
-                "type": "object",
-                "properties": {
-                  "ready": {
-                    "const": true
-                  }
+                "download_path": {
+                  "type": "string",
+                  "minLength": 1
                 }
               }
-            }
-          },
-          "else": {
-            "type": "object",
-            "properties": {
-              "validator": {
-                "type": "object",
-                "properties": {
-                  "ready": {
-                    "const": false
-                  }
+            },
+            "validator": {
+              "type": "object",
+              "properties": {
+                "ready": {
+                  "const": true
+                },
+                "download_path": {
+                  "type": "string",
+                  "minLength": 1
                 }
               }
             }
@@ -5443,7 +8879,7 @@
           "description": "Set exactly in state finished."
         },
         "cost_microusd": {
-          "description": "Settled cost; null until the run settles: null before state finished, set for passed and failed, and null after an error whose spend is uncertain (contract section 11).",
+          "description": "The run's cost recorded when it completed: null before state finished, set for passed and failed, and possibly null after an error whose spend is uncertain, since reconciliation updates the request's budget, not the run. Null is not 0 (contract section 11).",
           "anyOf": [
             {
               "$ref": "#/$defs/MicroUsd"
@@ -6575,10 +10011,11 @@
           "$ref": "#/$defs/TestOperationState"
         },
         "reserved_microusd": {
-          "description": "Held until the operation is settled or reconciled.",
+          "description": "The operation's original reservation in every state. It is held until the operation is settled or reconciled, so the request's reserved_microusd sums only the operations still holding theirs (contract section 15.1).",
           "$ref": "#/$defs/MicroUsd"
         },
         "settled_microusd": {
+          "description": "Set only in state terminal, once settled, and in state reconciled, which always records it.",
           "anyOf": [
             {
               "$ref": "#/$defs/MicroUsd"
@@ -6591,7 +10028,56 @@
         "attempt_ordinal": {
           "$ref": "#/$defs/PositiveInteger"
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "state": {
+                "enum": [
+                  "prepared",
+                  "launching",
+                  "running",
+                  "uncertain"
+                ]
+              }
+            },
+            "required": [
+              "state"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "settled_microusd": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "state": {
+                "const": "reconciled"
+              }
+            },
+            "required": [
+              "state"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "settled_microusd": {
+                "type": "integer"
+              }
+            }
+          }
+        }
+      ]
     },
     "TestSlot": {
       "description": "The factory slot and what holds it, if anything.",

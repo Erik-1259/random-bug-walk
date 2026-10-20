@@ -1,0 +1,36 @@
+{
+  "name": "@rbw/host-umami",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The Umami host adapter of the bug factory: baseline, catalog, protocol, calendar window, package inputs, copy plans and copy results",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./prepare": "./src/prepare.ts"
+  },
+  "engines": {
+    "node": ">=24.21 <25"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint . --max-warnings 0",
+    "test": "vitest run",
+    "prepare-store": "node src/prepare-cli.ts"
+  },
+  "dependencies": {
+    "@rbw/admission": "workspace:*",
+    "@rbw/factory-contract": "workspace:*",
+    "@rbw/local-runner": "workspace:*",
+    "@rbw/schema": "workspace:*",
+    "@rbw/shapes": "workspace:*",
+    "tar-stream": "3.2.2"
+  },
+  "devDependencies": {
+    "@rbw/umami-driver": "workspace:*",
+    "@types/node": "24.19.1",
+    "typescript": "6.0.3",
+    "vitest": "5.0.3"
+  }
+}

@@ -398,10 +398,13 @@ export type EmptyObject = Record<string, never>;
 export interface Capabilities {
   contract_version: ContractVersion;
   service: ServiceStatus;
+  /** Every HostId appears exactly once: clients build the form from this list and never hard-code hosts (contract section 4). */
   hosts: Host[];
+  /** Every BugTypeId appears exactly once: clients build the form from this list and never hard-code bug types (contract section 4). */
   bug_types: BugType[];
   /** Every (host, bug type) pair of HostId and BugTypeId appears exactly once (contract section 4.2). */
   combinations: Combination[];
+  /** Every DifficultyOptionId appears exactly once: source_inferable_allowed is the available default and source_only_difficulty_required is listed as unavailable (contract section 4.4). */
   difficulty_options: DifficultyOption[];
   limits: Limits;
   interpreter: InterpreterCapability;
@@ -447,7 +450,7 @@ export interface Combination {
   host_id: HostId;
   bug_type_id: BugTypeId;
   status: SupportStatus;
-  /** Why the pair is unsupported; null when supported. */
+  /** Why the pair is unsupported (the host's availability reason when no entry is available over the planned window); null when supported (contract section 4.2). */
   reason: string | null;
   /** The declared source; set when supported. */
   source: SourceSummary | null;
@@ -457,8 +460,9 @@ export interface SourceSummary {
   source_id: Identifier;
   kind: SourceKind;
   catalog_version: Version;
-  /** The size of the finite catalog; at least 1 for a supported pair. */
+  /** The number of catalog entries available over the planned window [now, now + max_wall_clock_s], by the host's availability; at least 1 for a supported pair (contract section 4.2). */
   entries: NonNegativeInteger;
+  /** The criteria that the entries available over the planned window target (contract section 4.2). */
   criteria_ids: Identifier[];
   description: string;
 }
@@ -477,6 +481,7 @@ export interface Limits {
   max_items: NonNegativeInteger;
   max_quantity_per_item: NonNegativeInteger;
   max_total_quantity: NonNegativeInteger;
+  /** Counted in Unicode code points after trimming (contract section 5). */
   max_description_chars: NonNegativeInteger;
   budget_presets_microusd: MicroUsd[];
   default_budget_microusd: MicroUsd;
@@ -526,7 +531,7 @@ export interface RequestItemInput {
   bug_type_id: BugTypeId;
   /** At most limits.max_quantity_per_item. */
   quantity: PositiveInteger;
-  /** Any text or null. The service trims it and maps an empty result to null (contract section 6); at most limits.max_description_chars after trimming. */
+  /** Any text or null. The service trims it and maps an empty result to null (contract section 6); at most limits.max_description_chars Unicode code points after trimming. */
   description: string | null;
   difficulty: DifficultyOptionId;
 }
@@ -555,7 +560,7 @@ export interface NormalizedRequestItemInput {
 /** The answer of POST /api/factory/interpretations (contract section 6). */
 export interface Interpretation {
   contract_version: ContractVersion;
-  /** Canonical hash of the normalized input and the interpreter, catalog, route and source versions. */
+  /** Canonical hash of the normalized input, the interpreter, catalog, route and source versions, the factory profile and the availability result for the planned window, not the raw time (contract section 6.1). */
   interpretation_sha256: Sha256;
   interpreter: InterpreterIdentity;
   qualification_route: QualificationRoute;
@@ -563,7 +568,9 @@ export interface Interpretation {
   input: NormalizedRequestInput;
   /** True only when no problem has severity blocking. */
   startable: boolean;
+  /** Each input item interpreted, so at least one (contract section 6). */
   items: InterpretedItem[];
+  /** At most one total per bug type. A requested type's total is the sum of its items' quantities, so it is listed and at least 1; a type no item requests has 0 if it is listed (contract section 5). */
   type_totals: TypeQuantity[];
   hosts: InterpretationHost[];
   budget: InterpretationBudget;
@@ -581,12 +588,13 @@ export interface InterpretedItem {
   difficulty: ItemDifficulty;
   /** Empty when the item has no description (contract section 6.1). */
   criteria: InterpretedCriterion[];
-  /** The description's words that no criterion or filler phrase covers; empty when the item has no description. Any entry makes the item unsupported with unrecognized_description (contract section 6.1). */
+  /** Each maximal run of words that no criterion or filler phrase covers, from its first word to its last, so an entry starts and ends with a letter or digit; empty when the item has no description. Any entry makes the item unsupported with unrecognized_description, and that problem needs an entry (contract section 6.1). */
   unmatched_text: string[];
-  /** At least one when the item is supported: an item with no eligible source is unsupported, with unsupported_combination or no_matching_source (contract section 6.2). */
+  /** Sources on the selected hosts, at most one per host, and at least one when the item is supported. An item has none exactly when it carries unsupported_combination or no_matching_source (contract section 6.2). */
   eligible_sources: EligibleSource[];
   /** Unsupported exactly when the item has a blocking problem; an item that requires source-only difficulty or has unmatched text is unsupported. */
   status: SupportStatus;
+  /** The item's own problems, so each names an item; request-level problems belong to Interpretation.problems. */
   problems: Problem[];
 }
 
@@ -606,7 +614,8 @@ export interface InterpretedCriterion {
 export interface EligibleSource {
   host_id: HostId;
   source_id: Identifier;
-  entries: NonNegativeInteger;
+  /** The number of the source's catalog entries available over the planned window that satisfy the item's criteria (contract sections 4.2 and 6). */
+  entries: PositiveInteger;
 }
 
 export interface TypeQuantity {
@@ -623,7 +632,9 @@ export interface InterpretationHost {
 export interface InterpretationBudget {
   budget_microusd: MicroUsd;
   worker_worst_case_microusd: MicroUsd;
+  /** At most one entry per host. */
   worst_case_per_candidate_microusd: HostAmount[];
+  /** At most one entry per host. A startable interpretation, the kind a request freezes, has one for each host that a supported item draws from, since a validation run reserves the worst case of its case's host from the frozen interpretation (contract section 11). */
   worst_case_per_validation_microusd: HostAmount[];
   estimate_note: string;
 }
@@ -666,7 +677,7 @@ export interface RequestStatus {
   outcome: RequestOutcome | null;
   /** Set only in state finished; its code belongs to the outcome. */
   stop_reason: StopReason | null;
-  /** Derived from the counts; a fulfilled outcome always has complete. */
+  /** Derived from the counts: complete when nothing is missing, none when no case was delivered; a fulfilled outcome always has complete. */
   delivery: Delivery;
   attention: Attention | null;
   /** Frozen at start; always startable. */
@@ -674,14 +685,17 @@ export interface RequestStatus {
   budget: RequestBudget;
   limits: RequestLimits;
   funnel: Funnel;
+  /** Each request item, so at least one. */
   items: ItemProgress[];
+  /** At most one total per bug type. A requested type is listed with requested at least 1; a type no item requests has requested 0 if it is listed (contract section 5). */
   type_totals: TypeProgress[];
   candidates: Candidate[];
   /** Qualified cases of this request only; empty exactly when delivery is none. */
   cases: Case[];
-  /** Up to 200 events with seq greater than the after parameter. */
+  /** Up to 200 events with seq greater than the after parameter. Event 1 is request_accepted. A request_finished event, at most one, names the outcome and stop code and appears only in state finished; a stop_requested event, at most one, only in states stopping and finished; validation events only in state finished. */
   events: Event[];
-  next_after: NonNegativeInteger;
+  /** The seq of the last event returned, or the after parameter when none is; at least 1, since event 1 always exists. */
+  next_after: PositiveInteger;
   last_heartbeat_at: UtcTime | null;
   poll_after_ms: NonNegativeInteger;
 }
@@ -729,9 +743,11 @@ export interface ItemProgress {
   bug_type_id: BugTypeId;
   /** The normalized description of the item. */
   description: Description | null;
-  requested: NonNegativeInteger;
+  /** The item's quantity, so at least 1. */
+  requested: PositiveInteger;
   delivered: NonNegativeInteger;
   missing: NonNegativeInteger;
+  /** The delivered cases that fill the item, each listed once; empty exactly when delivered is 0. */
   case_ids: Sha256[];
 }
 
@@ -754,7 +770,7 @@ export interface Candidate {
   stage: CandidateStage;
   /** Set exactly for the stages rejected, invalid, incomplete and skipped, with a reason of that stage (contract section 8.3). */
   reason: CandidateReasonDetail | null;
-  /** Set at requested_criteria_passed, when the candidate is assigned to an item. */
+  /** Set at requested_criteria_passed, when the candidate is assigned to an item; null for a candidate whose cells did not match in export verification (the original-suite and check reasons and bug_not_detected), one that fits no item (wrong_failure) and one skipped before it runs (duplicate_defect, no_budget_for_candidate). */
   item_key: ItemKey | null;
   /** Set exactly in stage qualified: only a qualified candidate becomes a case (contract sections 10 and 10.5). */
   case_id: Sha256 | null;
@@ -959,6 +975,7 @@ export interface CheckFinishedData {
 }
 
 export interface CriteriaPassedData {
+  /** The criteria the candidate demonstrated, which become its case's criteria_met: at least one, each once (contract sections 6.3 and 8.4). */
   criterion_ids: Identifier[];
 }
 
@@ -1013,6 +1030,7 @@ export interface Case {
   bug_type_id: BugTypeId;
   /** The request item it fills; null for the completed example. */
   item_key: ItemKey | null;
+  /** Criteria the case demonstrated in export verification; at least one (contract section 6.3). */
   criteria_met: CriterionSummary[];
   summary: CaseSummary;
   matrix: CaseMatrix;
@@ -1020,7 +1038,7 @@ export interface Case {
   difficulty: CaseDifficulty;
   qualification: CaseQualification;
   packages: Packages;
-  /** The latest user-started validation run, if any. */
+  /** The latest user-started validation run, if any. A run takes the slot that the request holds until it finishes, so a case has none before its request is finished. */
   validation: ValidationRun | null;
   provenance: Provenance;
 }
@@ -1089,7 +1107,7 @@ export interface CaseQualification {
   qualified_at: UtcTime;
 }
 
-/** The two parts become ready together. */
+/** Both parts of a case are ready and have a download path: a case appears only once it is qualified, after its parts are verified and stored (contract sections 10 and 10.2). */
 export interface Packages {
   package_version: PositiveInteger;
   /** Canonical hash of the two parts' SHA-256 values and the case ID. */
@@ -1135,7 +1153,7 @@ export interface ValidationRun {
   started_at: UtcTime | null;
   /** Set exactly in state finished. */
   finished_at: UtcTime | null;
-  /** Settled cost; null until the run settles: null before state finished, set for passed and failed, and null after an error whose spend is uncertain (contract section 11). */
+  /** The run's cost recorded when it completed: null before state finished, set for passed and failed, and possibly null after an error whose spend is uncertain, since reconciliation updates the request's budget, not the run. Null is not 0 (contract section 11). */
   cost_microusd: MicroUsd | null;
   poll_after_ms: NonNegativeInteger;
 }
@@ -1229,8 +1247,9 @@ export interface TestOperation {
   call_name: Identifier;
   /** A settled operation is terminal with settled_microusd set. */
   state: TestOperationState;
-  /** Held until the operation is settled or reconciled. */
+  /** The operation's original reservation in every state. It is held until the operation is settled or reconciled, so the request's reserved_microusd sums only the operations still holding theirs (contract section 15.1). */
   reserved_microusd: MicroUsd;
+  /** Set only in state terminal, once settled, and in state reconciled, which always records it. */
   settled_microusd: MicroUsd | null;
   attempt_ordinal: PositiveInteger;
 }

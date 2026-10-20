@@ -1,0 +1,646 @@
+{
+  "contract_version": "bug-request/1",
+  "request_id": "00000000-0000-4000-8000-000000000103",
+  "created_at": "2026-10-20T17:00:00.000Z",
+  "updated_at": "2026-10-20T17:10:37.977Z",
+  "state": "finished",
+  "outcome": "sources_exhausted",
+  "stop_reason": {
+    "code": "sources_exhausted",
+    "message": "Every eligible catalog entry was tried. 1 of 2 requested concurrency cases was delivered; the eligible catalog has 1 entry."
+  },
+  "delivery": "partial",
+  "attention": null,
+  "interpretation": {
+    "contract_version": "bug-request/1",
+    "interpretation_sha256": "1313131313131313131313131313131313131313131313131313131313131313",
+    "interpreter": {
+      "interpreter_id": "criteria-match",
+      "version": "1",
+      "criteria_catalog_version": "1"
+    },
+    "qualification_route": {
+      "route_id": "behavioral-qualification",
+      "version": "1"
+    },
+    "input": {
+      "hosts": [
+        "task-report"
+      ],
+      "items": [
+        {
+          "item_key": "concurrency-any",
+          "bug_type_id": "concurrency",
+          "quantity": 1,
+          "description": null,
+          "difficulty": "source_inferable_allowed"
+        },
+        {
+          "item_key": "concurrency-1",
+          "bug_type_id": "concurrency",
+          "quantity": 1,
+          "description": "I want a bug where an acknowledged change is lost when requests overlap",
+          "difficulty": "source_inferable_allowed"
+        }
+      ],
+      "budget_microusd": 1500000
+    },
+    "startable": true,
+    "items": [
+      {
+        "item_key": "concurrency-any",
+        "bug_type_id": "concurrency",
+        "quantity": 1,
+        "description": null,
+        "difficulty": {
+          "requested": "source_inferable_allowed",
+          "status": "not_required"
+        },
+        "criteria": [],
+        "unmatched_text": [],
+        "eligible_sources": [
+          {
+            "host_id": "task-report",
+            "source_id": "synthetic-task-report-concurrency",
+            "entries": 1
+          }
+        ],
+        "status": "supported",
+        "problems": [
+          {
+            "code": "quantity_exceeds_source",
+            "severity": "warning",
+            "message": "Only 1 distinct concurrency defect is eligible on the selected hosts, so at most 1 of the 2 requested concurrency cases can be delivered and the request cannot end fulfilled.",
+            "item_key": "concurrency-any"
+          }
+        ]
+      },
+      {
+        "item_key": "concurrency-1",
+        "bug_type_id": "concurrency",
+        "quantity": 1,
+        "description": "I want a bug where an acknowledged change is lost when requests overlap",
+        "difficulty": {
+          "requested": "source_inferable_allowed",
+          "status": "not_required"
+        },
+        "criteria": [
+          {
+            "criterion_id": "concurrency.lost-acknowledged-change",
+            "version": "1",
+            "label": "An acknowledged change is lost when requests overlap",
+            "matched_text": "an acknowledged change is lost when requests overlap"
+          }
+        ],
+        "unmatched_text": [],
+        "eligible_sources": [
+          {
+            "host_id": "task-report",
+            "source_id": "synthetic-task-report-concurrency",
+            "entries": 1
+          }
+        ],
+        "status": "supported",
+        "problems": [
+          {
+            "code": "quantity_exceeds_source",
+            "severity": "warning",
+            "message": "Only 1 distinct concurrency defect is eligible on the selected hosts, so at most 1 of the 2 requested concurrency cases can be delivered and the request cannot end fulfilled.",
+            "item_key": "concurrency-1"
+          }
+        ]
+      }
+    ],
+    "type_totals": [
+      {
+        "bug_type_id": "concurrency",
+        "quantity": 2
+      }
+    ],
+    "hosts": [
+      {
+        "host_id": "task-report",
+        "used": true,
+        "reason": null
+      }
+    ],
+    "budget": {
+      "budget_microusd": 1500000,
+      "worker_worst_case_microusd": 200000,
+      "worst_case_per_candidate_microusd": [
+        {
+          "host_id": "task-report",
+          "microusd": 300000
+        }
+      ],
+      "worst_case_per_validation_microusd": [
+        {
+          "host_id": "task-report",
+          "microusd": 200000
+        }
+      ],
+      "estimate_note": "The worker's worst case is reserved when the request starts, and each candidate's worst case before it starts; afterward the actual spend is settled and the rest is released. A validation run reserves its host's worst case the same way. These are limits, not predictions."
+    },
+    "limits": {
+      "max_wall_clock_s": 3600,
+      "max_candidates": 10
+    },
+    "problems": []
+  },
+  "budget": {
+    "budget_microusd": 1500000,
+    "reserved_microusd": 0,
+    "spent_microusd": 410000,
+    "committed_microusd": 410000,
+    "remaining_microusd": 1090000,
+    "overrun": false
+  },
+  "limits": {
+    "max_wall_clock_s": 3600,
+    "deadline_at": "2026-10-20T18:00:00.000Z",
+    "max_candidates": 10,
+    "candidates_started": 1
+  },
+  "funnel": {
+    "candidates_explored": 1,
+    "behavior_checks_passed": 1,
+    "requested_criteria_passed": 1,
+    "packages_ready": 1
+  },
+  "items": [
+    {
+      "item_key": "concurrency-any",
+      "bug_type_id": "concurrency",
+      "description": null,
+      "requested": 1,
+      "delivered": 0,
+      "missing": 1,
+      "case_ids": []
+    },
+    {
+      "item_key": "concurrency-1",
+      "bug_type_id": "concurrency",
+      "description": "I want a bug where an acknowledged change is lost when requests overlap",
+      "requested": 1,
+      "delivered": 1,
+      "missing": 0,
+      "case_ids": [
+        "cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca"
+      ]
+    }
+  ],
+  "type_totals": [
+    {
+      "bug_type_id": "concurrency",
+      "requested": 2,
+      "delivered": 1,
+      "missing": 1
+    }
+  ],
+  "candidates": [
+    {
+      "candidate_id": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1",
+      "defect_id": "dadadadadadadadadadadadadadadadadadadadadadadadadadadadadadadada",
+      "host_id": "task-report",
+      "bug_type_id": "concurrency",
+      "source_id": "synthetic-task-report-concurrency",
+      "entry_id": "synthetic-task-report-concurrency-01",
+      "stage": "qualified",
+      "reason": null,
+      "item_key": "concurrency-1",
+      "case_id": "cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca",
+      "started_at": "2026-10-20T17:01:13.322Z",
+      "finished_at": "2026-10-20T17:10:37.507Z"
+    }
+  ],
+  "cases": [
+    {
+      "case_id": "cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca",
+      "defect_id": "dadadadadadadadadadadadadadadadadadadadadadadadadadadadadadadada",
+      "title": "Overlapping task updates lose an acknowledged change",
+      "host_id": "task-report",
+      "host_label": "Task and report service",
+      "baseline_id": "task-report@ca4a71f",
+      "bug_type_id": "concurrency",
+      "item_key": "concurrency-1",
+      "criteria_met": [
+        {
+          "criterion_id": "concurrency.lost-acknowledged-change",
+          "version": "1",
+          "label": "An acknowledged change is lost when requests overlap"
+        }
+      ],
+      "summary": {
+        "observed_failure": "When two updates to the same task overlap, both receive a success response, but the stored task keeps only one of the two changes.",
+        "how_checked": "Separate verification checks ran on fresh clean, buggy and reference-fixed copies and detected the lost change only on the buggy copy. The unchanged original suite passed on all three."
+      },
+      "matrix": {
+        "original_suite": {
+          "suite_id": "synthetic-task-report-original-suite",
+          "suite_sha256": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+          "test_count": 48,
+          "clean": {
+            "expected": "pass",
+            "observed": "pass",
+            "runs_valid": 3,
+            "runs_total": 3,
+            "matches_expectation": true
+          },
+          "buggy": {
+            "expected": "pass",
+            "observed": "pass",
+            "runs_valid": 3,
+            "runs_total": 3,
+            "matches_expectation": true
+          },
+          "fixed": {
+            "expected": "pass",
+            "observed": "pass",
+            "runs_valid": 3,
+            "runs_total": 3,
+            "matches_expectation": true
+          }
+        },
+        "verification": {
+          "check_set_id": "synthetic-task-report-concurrency-checks",
+          "clean": {
+            "expected": "pass",
+            "observed": "pass",
+            "runs_valid": 5,
+            "runs_total": 5,
+            "matches_expectation": true
+          },
+          "buggy": {
+            "expected": "fail",
+            "observed": "fail",
+            "runs_valid": 5,
+            "runs_total": 5,
+            "matches_expectation": true
+          },
+          "fixed": {
+            "expected": "pass",
+            "observed": "pass",
+            "runs_valid": 5,
+            "runs_total": 5,
+            "matches_expectation": true
+          }
+        }
+      },
+      "repetition": {
+        "protocol_id": "synthetic-repetition-protocol",
+        "version": "1",
+        "summary": "Each copy ran the original suite 3 times and the verification checks 5 times. All runs were valid and agreed."
+      },
+      "difficulty": {
+        "status": "not_assessed",
+        "note": "No difficulty assessment ran. This case may be easy or hard to diagnose from source."
+      },
+      "qualification": {
+        "route_id": "behavioral-qualification",
+        "version": "1",
+        "verdict": "accepted",
+        "record_sha256": "7474747474747474747474747474747474747474747474747474747474747474",
+        "qualified_at": "2026-10-20T17:10:37.507Z"
+      },
+      "packages": {
+        "package_version": 1,
+        "pair_sha256": "a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4",
+        "bug_case": {
+          "kind": "bug_case",
+          "format": "rbw-bug-case/1",
+          "filename": "rbw-bug-case-cacacacacaca-v1.tar.gz",
+          "media_type": "application/gzip",
+          "size_bytes": 1843207,
+          "sha256": "b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4",
+          "ready": true,
+          "download_path": "/api/factory/requests/00000000-0000-4000-8000-000000000103/cases/cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca/packages/bug-case"
+        },
+        "validator": {
+          "kind": "validator",
+          "format": "rbw-validator/1",
+          "filename": "rbw-validator-cacacacacaca-v1.tar.gz",
+          "media_type": "application/gzip",
+          "size_bytes": 48213,
+          "sha256": "f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4",
+          "ready": true,
+          "download_path": "/api/factory/requests/00000000-0000-4000-8000-000000000103/cases/cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca/packages/validator"
+        }
+      },
+      "validation": null,
+      "provenance": {
+        "origin": "live_request",
+        "request_id": "00000000-0000-4000-8000-000000000103",
+        "source_id": "synthetic-task-report-concurrency",
+        "entry_id": "synthetic-task-report-concurrency-01"
+      }
+    }
+  ],
+  "events": [
+    {
+      "seq": 1,
+      "at": "2026-10-20T17:00:00.000Z",
+      "type": "request_accepted",
+      "host_id": null,
+      "candidate_id": null,
+      "item_key": null,
+      "case_id": null,
+      "message": "Request accepted.",
+      "data": {}
+    },
+    {
+      "seq": 2,
+      "at": "2026-10-20T17:00:00.058Z",
+      "type": "budget_updated",
+      "host_id": null,
+      "candidate_id": null,
+      "item_key": null,
+      "case_id": null,
+      "message": "Reserved $0.20 for the worker's worst case.",
+      "data": {
+        "reserved_microusd": 200000,
+        "spent_microusd": 0,
+        "remaining_microusd": 1300000
+      }
+    },
+    {
+      "seq": 3,
+      "at": "2026-10-20T17:00:06.412Z",
+      "type": "worker_started",
+      "host_id": null,
+      "candidate_id": null,
+      "item_key": null,
+      "case_id": null,
+      "message": "The worker started.",
+      "data": {}
+    },
+    {
+      "seq": 4,
+      "at": "2026-10-20T17:00:07.022Z",
+      "type": "host_preparing",
+      "host_id": "task-report",
+      "candidate_id": null,
+      "item_key": null,
+      "case_id": null,
+      "message": "Preparing the task-and-report service at its pinned baseline.",
+      "data": {
+        "baseline_id": "task-report@ca4a71f"
+      }
+    },
+    {
+      "seq": 5,
+      "at": "2026-10-20T17:01:13.035Z",
+      "type": "host_ready",
+      "host_id": "task-report",
+      "candidate_id": null,
+      "item_key": null,
+      "case_id": null,
+      "message": "The task-and-report service is ready.",
+      "data": {
+        "baseline_id": "task-report@ca4a71f"
+      }
+    },
+    {
+      "seq": 6,
+      "at": "2026-10-20T17:01:13.322Z",
+      "type": "candidate_selected",
+      "host_id": "task-report",
+      "candidate_id": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1",
+      "item_key": null,
+      "case_id": null,
+      "message": "Selected catalog entry synthetic-task-report-concurrency-01.",
+      "data": {
+        "source_id": "synthetic-task-report-concurrency",
+        "entry_id": "synthetic-task-report-concurrency-01"
+      }
+    },
+    {
+      "seq": 7,
+      "at": "2026-10-20T17:01:13.380Z",
+      "type": "budget_updated",
+      "host_id": null,
+      "candidate_id": null,
+      "item_key": null,
+      "case_id": null,
+      "message": "Reserved $0.30 for this candidate's worst case on the task-and-report service.",
+      "data": {
+        "reserved_microusd": 500000,
+        "spent_microusd": 0,
+        "remaining_microusd": 1000000
+      }
+    },
+    {
+      "seq": 8,
+      "at": "2026-10-20T17:02:34.238Z",
+      "type": "check_finished",
+      "host_id": "task-report",
+      "candidate_id": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1",
+      "item_key": null,
+      "case_id": null,
+      "message": "Original suite on the clean copy: pass (3 of 3 runs valid).",
+      "data": {
+        "check_set": "original_suite",
+        "copy": "clean",
+        "outcome": "pass",
+        "runs_valid": 3,
+        "runs_total": 3
+      }
+    },
+    {
+      "seq": 9,
+      "at": "2026-10-20T17:03:52.660Z",
+      "type": "check_finished",
+      "host_id": "task-report",
+      "candidate_id": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1",
+      "item_key": null,
+      "case_id": null,
+      "message": "Original suite on the buggy copy: pass (3 of 3 runs valid).",
+      "data": {
+        "check_set": "original_suite",
+        "copy": "buggy",
+        "outcome": "pass",
+        "runs_valid": 3,
+        "runs_total": 3
+      }
+    },
+    {
+      "seq": 10,
+      "at": "2026-10-20T17:05:11.127Z",
+      "type": "check_finished",
+      "host_id": "task-report",
+      "candidate_id": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1",
+      "item_key": null,
+      "case_id": null,
+      "message": "Original suite on the reference-fixed copy: pass (3 of 3 runs valid).",
+      "data": {
+        "check_set": "original_suite",
+        "copy": "fixed",
+        "outcome": "pass",
+        "runs_valid": 3,
+        "runs_total": 3
+      }
+    },
+    {
+      "seq": 11,
+      "at": "2026-10-20T17:06:47.450Z",
+      "type": "check_finished",
+      "host_id": "task-report",
+      "candidate_id": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1",
+      "item_key": null,
+      "case_id": null,
+      "message": "Verification checks on the clean copy: pass (5 of 5 runs valid).",
+      "data": {
+        "check_set": "verification",
+        "copy": "clean",
+        "outcome": "pass",
+        "runs_valid": 5,
+        "runs_total": 5
+      }
+    },
+    {
+      "seq": 12,
+      "at": "2026-10-20T17:08:24.881Z",
+      "type": "check_finished",
+      "host_id": "task-report",
+      "candidate_id": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1",
+      "item_key": null,
+      "case_id": null,
+      "message": "Verification checks on the buggy copy: fail (5 of 5 runs valid).",
+      "data": {
+        "check_set": "verification",
+        "copy": "buggy",
+        "outcome": "fail",
+        "runs_valid": 5,
+        "runs_total": 5
+      }
+    },
+    {
+      "seq": 13,
+      "at": "2026-10-20T17:10:02.214Z",
+      "type": "check_finished",
+      "host_id": "task-report",
+      "candidate_id": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1",
+      "item_key": null,
+      "case_id": null,
+      "message": "Verification checks on the reference-fixed copy: pass (5 of 5 runs valid).",
+      "data": {
+        "check_set": "verification",
+        "copy": "fixed",
+        "outcome": "pass",
+        "runs_valid": 5,
+        "runs_total": 5
+      }
+    },
+    {
+      "seq": 14,
+      "at": "2026-10-20T17:10:02.300Z",
+      "type": "behavior_checks_passed",
+      "host_id": "task-report",
+      "candidate_id": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1",
+      "item_key": null,
+      "case_id": null,
+      "message": "All six cells matched their expected outcomes in export verification.",
+      "data": {}
+    },
+    {
+      "seq": 15,
+      "at": "2026-10-20T17:10:02.328Z",
+      "type": "requested_criteria_passed",
+      "host_id": "task-report",
+      "candidate_id": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1",
+      "item_key": "concurrency-1",
+      "case_id": null,
+      "message": "The observed failure matches the criteria of item concurrency-1, which has more criteria than concurrency-any.",
+      "data": {
+        "criterion_ids": [
+          "concurrency.lost-acknowledged-change"
+        ]
+      }
+    },
+    {
+      "seq": 16,
+      "at": "2026-10-20T17:10:37.446Z",
+      "type": "package_ready",
+      "host_id": "task-report",
+      "candidate_id": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1",
+      "item_key": "concurrency-1",
+      "case_id": "cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca",
+      "message": "Both package parts are stored and ready for download.",
+      "data": {
+        "bug_case_sha256": "b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4",
+        "validator_sha256": "f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4"
+      }
+    },
+    {
+      "seq": 17,
+      "at": "2026-10-20T17:10:37.507Z",
+      "type": "case_delivered",
+      "host_id": "task-report",
+      "candidate_id": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1",
+      "item_key": "concurrency-1",
+      "case_id": "cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca",
+      "message": "Case delivered for item concurrency-1.",
+      "data": {}
+    },
+    {
+      "seq": 18,
+      "at": "2026-10-20T17:10:37.817Z",
+      "type": "budget_updated",
+      "host_id": null,
+      "candidate_id": null,
+      "item_key": null,
+      "case_id": null,
+      "message": "Settled $0.21 for the finished candidate and released the rest of its reservation.",
+      "data": {
+        "reserved_microusd": 200000,
+        "spent_microusd": 210000,
+        "remaining_microusd": 1090000
+      }
+    },
+    {
+      "seq": 19,
+      "at": "2026-10-20T17:10:37.857Z",
+      "type": "source_exhausted",
+      "host_id": "task-report",
+      "candidate_id": null,
+      "item_key": null,
+      "case_id": null,
+      "message": "Every entry in synthetic-task-report-concurrency was tried.",
+      "data": {
+        "bug_type_id": "concurrency",
+        "source_id": "synthetic-task-report-concurrency"
+      }
+    },
+    {
+      "seq": 20,
+      "at": "2026-10-20T17:10:37.917Z",
+      "type": "budget_updated",
+      "host_id": null,
+      "candidate_id": null,
+      "item_key": null,
+      "case_id": null,
+      "message": "Settled $0.20 for the worker and closed its reservation.",
+      "data": {
+        "reserved_microusd": 0,
+        "spent_microusd": 410000,
+        "remaining_microusd": 1090000
+      }
+    },
+    {
+      "seq": 21,
+      "at": "2026-10-20T17:10:37.977Z",
+      "type": "request_finished",
+      "host_id": null,
+      "candidate_id": null,
+      "item_key": null,
+      "case_id": null,
+      "message": "Request finished: sources exhausted.",
+      "data": {
+        "outcome": "sources_exhausted",
+        "stop_code": "sources_exhausted"
+      }
+    }
+  ],
+  "next_after": 21,
+  "last_heartbeat_at": "2026-10-20T17:10:37.507Z",
+  "poll_after_ms": 30000
+}
