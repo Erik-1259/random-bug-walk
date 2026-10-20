@@ -139,6 +139,8 @@ interface WorldValidation {
   acceptedMs: number;
   finishDueMs: number;
   finishedMs: number | null;
+  /** The cost recorded when the run completed (contract section 11): null before, and after uncertain spend. */
+  cost: number | null;
 }
 
 export interface TestWorldOptions {
@@ -443,6 +445,7 @@ export class TestWorld implements FactoryServerPorts, FactoryTestControls {
       acceptedMs: now,
       finishDueMs: now + 3 * this.stepMs,
       finishedMs: null,
+      cost: null,
     };
     this.validations.set(run.validation_id, run);
     this.budgetEvent(req, `Reserved ${money(worst)} for a validation run's worst case on ${HOST_TEXT[run.host_id]}.`, now);
@@ -818,9 +821,12 @@ export class TestWorld implements FactoryServerPorts, FactoryTestControls {
     if (req === undefined) return;
     run.finishedMs = run.finishDueMs;
     this.settle(run.op);
+    // An uncertain operation stays unsettled, so its run keeps null; a later reconcile changes the request's budget only.
+    run.cost = run.op.settled;
     const delivered = this.deliveredCase(req, run.case_id);
     this.append(req, draft({ type: "validation_finished", host_id: run.host_id, item_key: delivered?.item_key ?? null, case_id: run.case_id, message: `Validation run ${run.validation_id} finished: ${run.result}.`, data: { validation_id: run.validation_id, result: run.result } }), run.finishedMs);
-    this.budgetEvent(req, `Settled ${money(run.op.settled ?? 0)} for the validation run and closed its reservation.`, run.finishedMs);
+    const settled = run.cost === null ? `The validation run's spend is uncertain, so its ${money(run.op.reserved)} reservation stays held until reconciliation.` : `Settled ${money(run.cost)} for the validation run and closed its reservation.`;
+    this.budgetEvent(req, settled, run.finishedMs);
     if (this.slot === run.root) this.slot = null;
   }
 
@@ -882,7 +888,7 @@ export class TestWorld implements FactoryServerPorts, FactoryTestControls {
       package_sha256: { bug_case: pair.bug_case.sha256, validator: pair.validator.sha256 },
       started_at: iso(run.acceptedMs),
       finished_at: run.finishedMs === null ? null : iso(run.finishedMs),
-      cost_microusd: run.op.settled,
+      cost_microusd: run.cost,
       poll_after_ms: finished ? 1000 : 250,
     };
   }

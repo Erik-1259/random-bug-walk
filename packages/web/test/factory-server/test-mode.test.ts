@@ -591,6 +591,33 @@ describe("validation runs in test mode", () => {
     expect((await validate(w, otherCase, SECOND)).status).toBe(202);
   });
 
+  it("keeps a run's cost as recorded when it completed: null after uncertain spend, which a reconcile settles in the request's budget, not on the run", async () => {
+    const { w, last } = await finishedFulfilled("validation-error");
+    const caseRecord = last.cases[0];
+    if (caseRecord === undefined) throw new Error("synthetic: no case");
+    expect((await validate(w, caseRecord.case_id, VALIDATION)).status).toBe(202);
+    // No scenario makes a run's spend uncertain, so the test marks its operation's outcome uncertain while it runs.
+    const internals = w.world as unknown as { ops: { kind: string; state: string }[] };
+    const op = internals.ops.findLast((item) => item.kind === "validation");
+    if (op === undefined) throw new Error("synthetic: no validation operation");
+    op.state = "uncertain";
+    w.clock.ms += 3 * STEP_MS;
+    const finished = await readRun(w, caseRecord.case_id, VALIDATION);
+    expect(finished).toMatchObject({ state: "finished", result: "error" });
+    expect(finished.cost_microusd).toBeNull();
+    const worst = TEST_PROFILE.validation_microusd[caseRecord.host_id];
+    const before = await status(w);
+    expect(before.budget.reserved_microusd).toBe(worst);
+    expect(before.events.at(-1)).toMatchObject({ type: "budget_updated", message: "The validation run's spend is uncertain, so its $0.20 reservation stays held until reconciliation." });
+    await postTestReconcile(request("/api/factory/test/reconcile", { body: { request_id: REQUEST_ID }, session: false }), w.server);
+    const after = await status(w);
+    expect(after.budget).toMatchObject({ reserved_microusd: 0, spent_microusd: before.budget.spent_microusd + worst });
+    expect(after.events.at(-1)?.type).toBe("budget_updated");
+    // null is never read as 0, and the reconciled amount never becomes the run's cost.
+    expect((await readRun(w, caseRecord.case_id, VALIDATION)).cost_microusd).toBeNull();
+    expect(after.cases[0]?.validation?.cost_microusd).toBeNull();
+  });
+
   it("answers busy while the request itself holds the slot, and budget_unavailable once the budget's room is spent", async () => {
     const { w, last } = await finishedFulfilled("partial-budget");
     const caseId = last.cases[0]?.case_id ?? "";
