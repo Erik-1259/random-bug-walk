@@ -2,8 +2,9 @@
 // injected: the event store, the ledger, the stop check, the export-verification harness, packaging,
 // evidence storage and the clock. One candidate runs at a time; an uncertain operation is never retried.
 //
-// For each candidate, in assignment order across the selected hosts: the ledger's halt and overrun
-// check, `candidate_selected`, the duplicate-defect skip, budget admission (`no_budget_for_candidate`),
+// For each candidate, in assignment order across the selected hosts: the fill, stop, deadline, sources
+// and candidate-limit checks, then the ledger's halt and overrun check, `candidate_selected`, the
+// duplicate-defect skip, budget admission (`no_budget_for_candidate`),
 // the reservation, export verification through the harness (with the stop, time and accounting check
 // before every copy and `check_finished` after every copy state), the verdict, assignment, packaging
 // and delivery, and the candidate's settlement. The loop appends every request event except
@@ -276,12 +277,13 @@ class RequestRun {
       if (this.items.every((item) => unfilledUnits(item) === 0)) return this.finish("fulfilled");
       if (await deps.stopRequested()) return this.finish("cancelled_by_user");
       if (deps.now().getTime() >= this.deadlineMs) return this.finish("time_limit");
-      const status = await deps.ledger.status();
-      if (ledgerStop(status) !== null) return this.finish("operational_error");
       const next = nextCandidate(this.items, planned, tried);
       if (next === null) return this.exhausted(planned, tried, budgetSkipped);
       const duplicateOf = defects.get(next.defect_id);
       if (duplicateOf === undefined && started >= deps.request.interpretation.limits.max_candidates) return this.finish("candidate_limit");
+      // A halt or an overrun stops the work still to do, so it is read once a next candidate exists.
+      const status = await deps.ledger.status();
+      if (ledgerStop(status) !== null) return this.finish("operational_error");
       tried.add(next.candidate_id);
       const selection = candidateSelected(next, this.at());
       this.current = { candidate: next, selection, selected: false, ended: false, reserved: false, settled: false };

@@ -382,6 +382,19 @@ describe("runRequest: budget", () => {
     expect(result).toMatchObject({ outcome: "fulfilled", stop_code: "fulfilled", delivered: 1 });
   });
 
+  it("keeps sources_exhausted when the ledger halts after the last candidate settled: the halt stopped no work", async () => {
+    const w = world({ input: concurrencyOnly(1), plan: () => ({ states: { ...qualifyingPlan([LOST_CODE]), buggy: { original_suite: "fail", verification: "fail", failure_codes: [LOST_CODE] } } }) });
+    ledgerWith(w, {
+      settleCandidate: async (input) => {
+        await w.ledger.settleCandidate(input);
+        w.ledger.halted = true;
+      },
+    });
+    const result = await w.run();
+    expect(result).toMatchObject({ outcome: "sources_exhausted", stop_code: "sources_exhausted", delivered: 0 });
+    expect(ended(w.events.events)).toEqual([{ type: "candidate_rejected", reason: "original_suite_caught_bug" }]);
+  });
+
   it("still appends request_finished, operational_error, when the ledger read after the worker's settlement fails", async () => {
     const w = world({ input: concurrencyOnly(1) });
     let workerSettled = false;
