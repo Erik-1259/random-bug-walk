@@ -1,7 +1,8 @@
 import { validateContract } from "@rbw/factory-contract/validate";
 import type { CopyRecord, Event, InterpretedCells } from "@rbw/factory-contract";
+import { canonicalDigest } from "@rbw/schema";
 import { describe, expect, it } from "vitest";
-import type { RequestLedger, ValidatorPartInfo } from "../src/ports.ts";
+import type { CasePackages, RequestLedger, ValidatorPartInfo } from "../src/ports.ts";
 import { FakeHostAdapter, TEST_PROFILE, syntheticEntry, syntheticSha } from "../src/testing/catalog.ts";
 import { lostWorkerEvents } from "../src/projection.ts";
 import { UncertainOutcomeError, qualifyingPlan } from "../src/testing/harness.ts";
@@ -280,6 +281,42 @@ describe("runRequest: packaging and evidence", () => {
     const ready = w.events.events.find((event) => event.type === "package_ready");
     expect(ready?.data).toEqual({ bug_case_sha256: syntheticSha(`bug-case:${entryId}`), validator_sha256: validator?.sha256 });
     expect(status.cases[0]?.packages.validator.sha256).toBe(validator?.sha256);
+  });
+
+  // pair_sha256 binds the stored parts to the case (contract section 10.3): the canonical hash of exactly
+  // { bug_case_sha256, case_id, validator_sha256 }, as the package tooling computes it.
+  const pairOf = (input: { bug_case_sha256: string; case_id: string; validator_sha256: string }): string => canonicalDigest(input).sha256;
+  const alteredPairs: [string, (packages: CasePackages, caseId: string) => string][] = [
+    ["over another case ID", (packages) => pairOf({ bug_case_sha256: packages.bug_case.sha256, case_id: syntheticSha("another-case"), validator_sha256: packages.validator.sha256 })],
+    ["with the two part hashes swapped", (packages, caseId) => pairOf({ bug_case_sha256: packages.validator.sha256, case_id: caseId, validator_sha256: packages.bug_case.sha256 })],
+  ];
+
+  it.each(alteredPairs)("rejects with export_mismatch and delivers nothing when the stored parts are the tested ones but the reported pair digest is %s, leaving the unit for the next entry", async (_, alter) => {
+    const w = world({ input: concurrencyOnly(1), registry: twoEntries() });
+    const store = w.deps.packageCase;
+    w.deps.packageCase = async (input) => {
+      const packages = await store(input);
+      return input.entry.entry_id.endsWith("-01") ? { ...packages, pair_sha256: alter(packages, input.case_id) } : packages;
+    };
+    const result = await w.run();
+    expect(result).toMatchObject({ stop_code: "fulfilled", delivered: 1 });
+    expect(ended(w.events.events)).toEqual([{ type: "candidate_rejected", reason: "export_mismatch" }]);
+    const status = w.status();
+    const [first, second] = status.candidates;
+    expect([first?.stage, second?.stage]).toEqual(["rejected", "qualified"]);
+    const delivering = w.events.events.filter((event) => (event.type === "package_ready" || event.type === "case_delivered") && event.candidate_id === first?.candidate_id);
+    expect(delivering).toEqual([]);
+    expect(status.cases.map((c) => c.provenance.entry_id)).toEqual([second?.entry_id]);
+    expect([...w.evidence.values()].map((evidence) => evidence.record.entry_id)).toEqual([second?.entry_id]);
+    expect(status.items[0]).toMatchObject({ delivered: 1, missing: 0 });
+  });
+
+  it("delivers the pair digest of the stored parts' hashes and the case ID", async () => {
+    const w = world({ input: concurrencyOnly(1), registry: twoEntries() });
+    const result = await w.run();
+    expect(result).toMatchObject({ stop_code: "fulfilled", delivered: 1 });
+    const [delivered] = w.status().cases;
+    expect(delivered?.packages.pair_sha256).toBe(pairOf({ bug_case_sha256: delivered?.packages.bug_case.sha256 ?? "", case_id: delivered?.case_id ?? "", validator_sha256: delivered?.packages.validator.sha256 ?? "" }));
   });
 
   it("ends the candidate incomplete, settles it and finishes operational_error when its parts cannot be stored", async () => {

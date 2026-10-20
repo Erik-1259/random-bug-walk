@@ -142,9 +142,10 @@ export interface CasePackages {
  * Builds and stores the case's final parts: the entry's bug case and the validator archive made from
  * the validator core plus this qualification record (`record_json`, canonical JSON) as its evidence
  * member. Every hash it reports is of the stored bytes. The loop delivers the case only when the bug
- * case is the archive export verification ran on, `validator.core_sha256` is the core it ran on and
- * `validator.evidence_sha256` is the SHA-256 of `record_json`; otherwise the candidate is rejected
- * with `export_mismatch`.
+ * case is the archive export verification ran on, `validator.core_sha256` is the core it ran on,
+ * `validator.evidence_sha256` is the SHA-256 of `record_json` and `pair_sha256` is the canonical hash of
+ * `{ bug_case_sha256, case_id, validator_sha256 }` over the stored parts; otherwise the candidate is
+ * rejected with `export_mismatch`.
  */
 export type PackageCase = (input: { request_id: string; case_id: string; entry: CatalogEntry; record_json: Uint8Array }) => Promise<CasePackages>;
 

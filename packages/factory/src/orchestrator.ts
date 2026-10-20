@@ -120,11 +120,13 @@ type Amounts = Pick<LedgerStatus, "budget_microusd" | "reserved_microusd" | "spe
 
 /**
  * Whether the stored parts are the pair export verification ran on: the bug case is the archive it
- * ran on, and the downloadable validator holds the validator core it ran on plus this qualification
- * record, as read back from the stored validator.
+ * ran on, the downloadable validator holds the validator core it ran on plus this qualification
+ * record, as read back from the stored validator, and the reported `pair_sha256` is the canonical hash
+ * of the stored parts' hashes and the case ID (contract section 10.3), with the package tooling's layout.
  */
-function storedAsVerified(packages: CasePackages, verified: HarnessResult["package_sha256"], record_sha256: string): boolean {
-  return packages.bug_case.sha256 === verified.bug_case && packages.validator.core_sha256 === verified.validator && packages.validator.evidence_sha256 === record_sha256;
+function storedAsVerified(packages: CasePackages, verified: HarnessResult["package_sha256"], record_sha256: string, case_id: string): boolean {
+  const pair = canonicalDigest({ bug_case_sha256: packages.bug_case.sha256, case_id, validator_sha256: packages.validator.sha256 }).sha256;
+  return packages.bug_case.sha256 === verified.bug_case && packages.validator.core_sha256 === verified.validator && packages.validator.evidence_sha256 === record_sha256 && packages.pair_sha256 === pair;
 }
 
 function caseCell(cell: CellObservation, set: CheckSet, state: CopyState): Cell {
@@ -588,7 +590,7 @@ class RequestRun {
       await this.append(candidateEnded(candidate, "incomplete_run", this.at(), "Incomplete: the case's package parts could not be stored. It is not delivered."));
       return { kind: "failed" };
     }
-    if (!storedAsVerified(packages, result.package_sha256, recordDigest.sha256)) {
+    if (!storedAsVerified(packages, result.package_sha256, recordDigest.sha256, caseIdValue)) {
       // A stored part that is not what export verification ran on failed the integrity check of the
       // exported parts (contract section 8.3): the candidate is rejected, never delivered.
       await this.append(candidateEnded(candidate, "export_mismatch", this.at()));
