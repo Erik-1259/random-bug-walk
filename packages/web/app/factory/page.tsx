@@ -1,10 +1,8 @@
 import type { Metadata } from "next";
 import { FactoryExample } from "../../src/components/factory-example.tsx";
-import { FactoryProgress } from "../../src/components/factory-progress.tsx";
-import { FactoryRequestForm } from "../../src/components/factory-request-form.tsx";
+import { FactoryWorkspace } from "../../src/components/factory-workspace.tsx";
 import { RELEASED_TIME_ZONE_CASE } from "../../src/components/historical-replays.tsx";
 import { loadSiteConfig } from "../../src/config.ts";
-import { factoryClient } from "../../src/factory/client.ts";
 import { loadResults } from "../../src/release.ts";
 import "./factory.css";
 
@@ -15,10 +13,7 @@ export const metadata: Metadata = {
 };
 
 export default async function FactoryPage() {
-  const [availability, { results }] = await Promise.all([
-    factoryClient.availability(),
-    loadResults(loadSiteConfig().resultsDir),
-  ]);
+  const { results } = await loadResults(loadSiteConfig().resultsDir);
   return (
     <main className="factory">
       <div className="factory-heading">
@@ -26,13 +21,8 @@ export default async function FactoryPage() {
         <h1>Synthetic bugs. Useful test cases.</h1>
         <p>Explore where tests miss an intended defect, with the original test suite and separate verification checks kept distinct.</p>
       </div>
-      <aside className="factory-availability" aria-label="Request availability">
-        <strong>Live requests unavailable</strong>
-        <p>{availability.message}</p>
-      </aside>
       <FactoryExample availableLocally={results.releases.some(({ release }) => release.record.release_id === RELEASED_TIME_ZONE_CASE)} />
-      <FactoryRequestForm />
-      <FactoryProgress snapshot={null} />
+      <FactoryWorkspace />
       <section className="factory-panel" aria-labelledby="factory-qualification">
         <h2 id="factory-qualification">What makes a case qualified?</h2>
         <p>The service must confirm that unchanged original tests pass on clean, buggy and reference-fixed copies.

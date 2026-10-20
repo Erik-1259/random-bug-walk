@@ -1,0 +1,238 @@
+{
+  "contract_version": "bug-request/1",
+  "request_id": "00000000-0000-4000-8000-000000000101",
+  "created_at": "2026-10-20T14:00:00.000Z",
+  "updated_at": "2026-10-20T14:00:00.058Z",
+  "state": "queued",
+  "outcome": null,
+  "stop_reason": null,
+  "delivery": "none",
+  "attention": null,
+  "interpretation": {
+    "contract_version": "bug-request/1",
+    "interpretation_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "interpreter": {
+      "interpreter_id": "criteria-match",
+      "version": "1",
+      "criteria_catalog_version": "1"
+    },
+    "qualification_route": {
+      "route_id": "behavioral-qualification",
+      "version": "1"
+    },
+    "input": {
+      "hosts": [
+        "umami",
+        "task-report"
+      ],
+      "items": [
+        {
+          "item_key": "concurrency-1",
+          "bug_type_id": "concurrency",
+          "quantity": 1,
+          "description": "I want a bug where an acknowledged change is lost when requests overlap",
+          "difficulty": "source_inferable_allowed"
+        },
+        {
+          "item_key": "date-time-1",
+          "bug_type_id": "date_time",
+          "quantity": 1,
+          "description": null,
+          "difficulty": "source_inferable_allowed"
+        }
+      ],
+      "budget_microusd": 2000000
+    },
+    "startable": true,
+    "items": [
+      {
+        "item_key": "concurrency-1",
+        "bug_type_id": "concurrency",
+        "quantity": 1,
+        "description": "I want a bug where an acknowledged change is lost when requests overlap",
+        "difficulty": {
+          "requested": "source_inferable_allowed",
+          "status": "not_required"
+        },
+        "criteria": [
+          {
+            "criterion_id": "concurrency.lost-acknowledged-change",
+            "version": "1",
+            "label": "An acknowledged change is lost when requests overlap",
+            "matched_text": "an acknowledged change is lost when requests overlap"
+          }
+        ],
+        "unmatched_text": [],
+        "eligible_sources": [
+          {
+            "host_id": "task-report",
+            "source_id": "synthetic-task-report-concurrency",
+            "entries": 1
+          }
+        ],
+        "status": "supported",
+        "problems": []
+      },
+      {
+        "item_key": "date-time-1",
+        "bug_type_id": "date_time",
+        "quantity": 1,
+        "description": null,
+        "difficulty": {
+          "requested": "source_inferable_allowed",
+          "status": "not_required"
+        },
+        "criteria": [],
+        "unmatched_text": [],
+        "eligible_sources": [
+          {
+            "host_id": "umami",
+            "source_id": "synthetic-umami-date-time",
+            "entries": 1
+          }
+        ],
+        "status": "supported",
+        "problems": []
+      }
+    ],
+    "type_totals": [
+      {
+        "bug_type_id": "concurrency",
+        "quantity": 1
+      },
+      {
+        "bug_type_id": "date_time",
+        "quantity": 1
+      }
+    ],
+    "hosts": [
+      {
+        "host_id": "umami",
+        "used": true,
+        "reason": null
+      },
+      {
+        "host_id": "task-report",
+        "used": true,
+        "reason": null
+      }
+    ],
+    "budget": {
+      "budget_microusd": 2000000,
+      "worker_worst_case_microusd": 200000,
+      "worst_case_per_candidate_microusd": [
+        {
+          "host_id": "umami",
+          "microusd": 600000
+        },
+        {
+          "host_id": "task-report",
+          "microusd": 300000
+        }
+      ],
+      "worst_case_per_validation_microusd": [
+        {
+          "host_id": "umami",
+          "microusd": 300000
+        },
+        {
+          "host_id": "task-report",
+          "microusd": 200000
+        }
+      ],
+      "estimate_note": "The worker's worst case is reserved when the request starts, and each candidate's worst case before it starts; afterward the actual spend is settled and the rest is released. A validation run reserves its host's worst case the same way. These are limits, not predictions."
+    },
+    "limits": {
+      "max_wall_clock_s": 3600,
+      "max_candidates": 10
+    },
+    "problems": []
+  },
+  "budget": {
+    "budget_microusd": 2000000,
+    "reserved_microusd": 200000,
+    "spent_microusd": 0,
+    "committed_microusd": 200000,
+    "remaining_microusd": 1800000,
+    "overrun": false
+  },
+  "limits": {
+    "max_wall_clock_s": 3600,
+    "deadline_at": "2026-10-20T15:00:00.000Z",
+    "max_candidates": 10,
+    "candidates_started": 0
+  },
+  "funnel": {
+    "candidates_explored": 0,
+    "behavior_checks_passed": 0,
+    "requested_criteria_passed": 0,
+    "packages_ready": 0
+  },
+  "items": [
+    {
+      "item_key": "concurrency-1",
+      "bug_type_id": "concurrency",
+      "description": "I want a bug where an acknowledged change is lost when requests overlap",
+      "requested": 1,
+      "delivered": 0,
+      "missing": 1,
+      "case_ids": []
+    },
+    {
+      "item_key": "date-time-1",
+      "bug_type_id": "date_time",
+      "description": null,
+      "requested": 1,
+      "delivered": 0,
+      "missing": 1,
+      "case_ids": []
+    }
+  ],
+  "type_totals": [
+    {
+      "bug_type_id": "concurrency",
+      "requested": 1,
+      "delivered": 0,
+      "missing": 1
+    },
+    {
+      "bug_type_id": "date_time",
+      "requested": 1,
+      "delivered": 0,
+      "missing": 1
+    }
+  ],
+  "candidates": [],
+  "cases": [],
+  "events": [
+    {
+      "seq": 1,
+      "at": "2026-10-20T14:00:00.000Z",
+      "type": "request_accepted",
+      "host_id": null,
+      "candidate_id": null,
+      "item_key": null,
+      "case_id": null,
+      "message": "Request accepted.",
+      "data": {}
+    },
+    {
+      "seq": 2,
+      "at": "2026-10-20T14:00:00.058Z",
+      "type": "budget_updated",
+      "host_id": null,
+      "candidate_id": null,
+      "item_key": null,
+      "case_id": null,
+      "message": "Reserved $0.20 for the worker's worst case.",
+      "data": {
+        "reserved_microusd": 200000,
+        "spent_microusd": 0,
+        "remaining_microusd": 1800000
+      }
+    }
+  ],
+  "next_after": 2,
+  "last_heartbeat_at": null,
+  "poll_after_ms": 1000
+}
