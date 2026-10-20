@@ -199,18 +199,27 @@ export function readCopyResults(pins: UmamiPins, input: CopyResultsInput): CopyO
 }
 
 /**
+ * Why a copy that ran is not evidence for the plan, or null: it ran another image than the plan's,
+ * or on another architecture than the pinned one. A pinned digest can name a multi-architecture
+ * index, so a matching digest alone does not show that the copy ran the pinned amd64 image.
+ */
+function otherEnvironment(pins: UmamiPins, plan: CopyPlan, collected: CollectedCopy): string | null {
+  if (plan.image.digest !== null && collected.image_digest !== plan.image.digest) return "the copy ran another image than the plan's";
+  if (collected.architecture !== pins.kit.architecture) return `the copy ran on ${collected.architecture}, not the pinned ${pins.kit.architecture}`;
+  return null;
+}
+
+/**
  * HostAdapter.collect: one copy's CopyRecord from what the runner brought back. Only the plan's
- * results directory is read. A copy that ran another image is invalid; one that brought back no
- * results has no evidence hash and is never complete. Throws `copy_mismatch` when the collected
- * copy is not the plan's.
+ * results directory is read. A copy that ran another image, or on another architecture than the
+ * pinned one, is invalid; one that brought back no results has no evidence hash and is never
+ * complete. Throws `copy_mismatch` when the collected copy is not the plan's.
  */
 export function collectCopy(pins: UmamiPins, plan: CopyPlan, collected: CollectedCopy): CopyRecord {
   if (plan.host_id !== "umami" || collected.copy_id !== plan.copy_id) throw new UmamiRefusal("copy_mismatch", `the collected copy ${collected.copy_id} is not the plan's ${plan.copy_id}`);
   const resultsDir = collected.results_sha256 === null ? null : collected.results_dir;
-  const read =
-    collected.outcome === "ran" && plan.image.digest !== null && collected.image_digest !== plan.image.digest
-      ? unread(pins, plan.state, "invalid", "the copy ran another image than the plan's")
-      : readCopyResults(pins, { state: plan.state, outcome: collected.outcome, resultsDir });
+  const mismatch = collected.outcome === "ran" ? otherEnvironment(pins, plan, collected) : null;
+  const read = mismatch === null ? readCopyResults(pins, { state: plan.state, outcome: collected.outcome, resultsDir }) : unread(pins, plan.state, "invalid", mismatch);
   return {
     copy_id: plan.copy_id,
     state: plan.state,

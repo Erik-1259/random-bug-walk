@@ -9,7 +9,7 @@ import { DEFAULT_PHASE_LIMITS } from "@rbw/umami-driver/limits";
 import { describe, expect, it } from "vitest";
 import { COPY_LIMITS, COPY_SCRIPT } from "../src/copy-plans.ts";
 import { isClosurePath } from "../src/closure.ts";
-import { fixtureVectors } from "../src/inputs.ts";
+import { RUNTIME_SETUP, fixtureVectors } from "../src/inputs.ts";
 import { frozenTaskIdentity, mutationIdOf } from "../src/job.ts";
 import { RELEASED_CASE } from "../src/mapping.ts";
 import { UMAMI_PINS } from "../src/pins.ts";
@@ -73,6 +73,11 @@ describe("the copy", () => {
     expect(UMAMI_PINS.kit.profile_sha256).toBe(profileSha256());
     expect(COPY_LIMITS).toEqual({ timeout_s: 720, vcpus: 4, memory_mb: 8192, network: "none" });
     expect(DEFAULT_PHASE_LIMITS.tests_ms).toBe(240_000);
+  });
+
+  it("pins the kit image's architecture, amd64, which the runtime instructions name", () => {
+    expect(UMAMI_PINS.kit.architecture).toBe("amd64");
+    expect(RUNTIME_SETUP[0]).toContain(`linux/${UMAMI_PINS.kit.architecture} container of the kit image`);
   });
 
   it("is of the driver's pinned Umami commit", () => {

@@ -79,7 +79,7 @@ Destinations: the app files go to `/workspace/app`, the validator's `job/` files
 
 ## Collect
 
-`collect(plan, collected)` reads only the plan's results directory as the runner brought it back: the exit statuses and the driver's record set under `out/`. A `setup_failed` copy is `invalid` and a `timed_out` copy `incomplete`, whatever it left behind; a copy whose driver did not finish, whose in-copy freeze failed or whose driver refused the job is `invalid`; a copy that ran another image than the plan's, or brought back no results, is never `complete`. Otherwise the record set is imported with `@rbw/admission` under the valid-trial rules above, and the record's `evidence_sha256` is the collected `results_sha256`. `readCopyResults` is the same reading without the runner's envelope.
+`collect(plan, collected)` reads only the plan's results directory as the runner brought it back: the exit statuses and the driver's record set under `out/`. A `setup_failed` copy is `invalid` and a `timed_out` copy `incomplete`, whatever it left behind; a copy whose driver did not finish, whose in-copy freeze failed or whose driver refused the job is `invalid`; a copy that ran another image than the plan's, or ran on another architecture than the pinned `amd64` (the pins' `kit.architecture`; a pinned digest can name a multi-architecture index, so a matching digest alone does not show it), is `invalid` and its results are not read; a copy that brought back no results is never `complete`. Otherwise the record set is imported with `@rbw/admission` under the valid-trial rules above, and the record's `evidence_sha256` is the collected `results_sha256`. `readCopyResults` is the same reading without the runner's envelope.
 
 ## Released-case mapping
 

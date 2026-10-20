@@ -2,7 +2,7 @@
 // catalog entry's planted change and reference repair, and the released incident. Each value was
 // read once from the pinned image, the repository's probe files or the released case's record;
 // the tests check each against its source where the source is in the repository.
-import type { PatchText, PlantTarget } from "@rbw/factory-contract";
+import type { Architecture, PatchText, PlantTarget } from "@rbw/factory-contract";
 import type { ExpectedCheck } from "@rbw/schema";
 
 /** The expected outcome of every verification check per copy state, in the fixture's check order. */
@@ -35,6 +35,11 @@ export interface UmamiPins {
      */
     image: string;
     digest: string;
+    /**
+     * The architecture the image is pinned for. A digest can name a multi-architecture index, so
+     * the digest alone does not fix it; collect makes a copy that ran on another one invalid.
+     */
+    architecture: Architecture;
     /** SHA-256 of the image manifest (/opt/rbw/verifier/image-manifest.json). */
     kit_sha256: string;
     /** treeSha256 of the image's app source (/workspace/app without the kit's non-source paths). */
@@ -145,6 +150,7 @@ export const UMAMI_PINS: UmamiPins = {
   kit: {
     image: "random-bug-walk/umami-kit",
     digest: "sha256:295433e5a8b0dc81e1492a4d18220f5e1d323a78bc38cbb5eca688efde7863ff",
+    architecture: "amd64",
     kit_sha256: "ef54eab2864b9772900a587b2f3b1bf318f40fbbd5d8b522fd643dca49d191e3",
     source_tree_sha256: "712ebd687ed85386d3c1bea26204f120d18260aa03ad8fc6b15737afadd8fd2d",
     source_file_count: 2026,

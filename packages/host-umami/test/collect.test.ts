@@ -108,6 +108,27 @@ describe("collect", () => {
     expect(record).toMatchObject({ status: "invalid", verification: { observed: "error", failure_codes: [] } });
   });
 
+  it("makes a copy that ran on another architecture than the pinned amd64 invalid, as for another image", async () => {
+    const { world, adapter, plan } = setup();
+    const states: CopyState[] = ["clean", "buggy", "fixed"];
+    for (const state of states) {
+      const current = plan(state);
+      const results = writeCopyResults(world.job, copyDraft(world.job, state));
+      const record = await adapter.collect(current, collected(current, results, { architecture: "arm64" }));
+      const otherImage = await adapter.collect(current, collected(current, results, { image_digest: `sha256:${"6".repeat(64)}` }));
+      expect(validateContract("CopyRecord", record)).toEqual([]);
+      expect(record).toMatchObject({
+        status: "invalid",
+        architecture: "arm64",
+        original_suite: { observed: "error", runs_valid: 0, executed: 0 },
+        verification: { observed: "error", runs_valid: 0, failure_codes: [] },
+        evidence_sha256: RESULTS_SHA,
+      });
+      expect(record.verification.detail).toMatch(/arm64/);
+      expect([record.status, record.original_suite.observed, record.verification.observed]).toEqual([otherImage.status, otherImage.original_suite.observed, otherImage.verification.observed]);
+    }
+  });
+
   it("refuses a collected copy that is not the plan's", async () => {
     const { world, adapter, plan } = setup();
     const buggy = plan("buggy");
