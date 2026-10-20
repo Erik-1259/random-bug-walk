@@ -5,7 +5,7 @@
 // request or a validation run, and the slot's busy reason. Web-safe: no runner, driver or PGlite.
 import { toReserveRequest } from "@rbw/envelope";
 import type { Rates } from "@rbw/envelope";
-import { VALIDATION_RESULT_VALUES } from "@rbw/factory-contract";
+import { STOP_CODE_VALUES, VALIDATION_RESULT_VALUES } from "@rbw/factory-contract";
 import type { CopyState, HostId, RequestOutcome, StopCode, ValidationMatrix, ValidationResult } from "@rbw/factory-contract";
 import { callName, canonicalDigest, operationId, providerCallIdentity } from "@rbw/schema";
 import type { OperationState, ReserveRequest, Spend, UsageSettlement } from "@rbw/spend";
@@ -276,6 +276,7 @@ export interface StepDeps {
   records: FactoryRecords;
   now: () => Date;
   log: (line: string) => void;
+  profile?: FactoryProfile;
 }
 
 /** Appends budget_updated with the budget's current totals, under the given event key. */
@@ -413,6 +414,48 @@ export interface ValidationFinish {
   ours: boolean;
 }
 
+/** The run's finished record as it stands: none, one whose result or cost cannot be read, or its result and cost. */
+async function recordedFinish(records: Pick<FactoryRecords, "validationEvents">, validationId: string): Promise<{ result: ValidationResult; cost_microusd: number | null } | "none" | "unreadable"> {
+  const recorded = (await records.validationEvents(validationId)).find((event) => event.type === "finished");
+  if (recorded === undefined) return "none";
+  const result = VALIDATION_RESULT_VALUES.find((value) => value === recorded.data.result);
+  const cost = recorded.data.cost_microusd;
+  if (result === undefined || (cost !== null && typeof cost !== "number")) return "unreadable";
+  return { result, cost_microusd: cost };
+}
+
+/** The key of the budget event that begins a reconciliation's completion for a root (completeReconciliation). */
+export function reconciledKey(root: string): string {
+  return `reconciled:${root}:budget`;
+}
+
+type FinishedRun = Pick<FactoryValidationRecord, "validation_id" | "case_id" | "host_id" | "root">;
+
+/**
+ * The request's events that follow a run's recorded finish, in order, each keyed by the validation
+ * ID so a repeated call replays it: attention needs_reconciliation when the finish has no cost
+ * (unless a reconciliation of the run's root already began, which settles and clears it), then
+ * validation_finished and budget_updated. Every writer appends them in this order, so once the last
+ * one is there nothing is appended again (a later budget_updated would carry later totals).
+ */
+async function validationFinishEvents(deps: StepDeps, request: Pick<FactoryRequestRecord, "request_id" | "budget_key">, validation: FinishedRun, finish: { result: ValidationResult; cost_microusd: number | null }): Promise<void> {
+  const id = validation.validation_id;
+  const settledKey = `validation:${id}:settled`;
+  const events = await deps.records.events(request.request_id);
+  if (events.some((event) => event.event_key === settledKey)) return;
+  const uncertain = finish.cost_microusd === null;
+  if (uncertain) {
+    const key = validationAttentionKey(id);
+    if (!events.some((event) => event.event_key === key || event.event_key === reconciledKey(validation.root))) await appendNeedsReconciliation(deps, request.request_id, VALIDATION_ATTENTION, key);
+  }
+  await deps.records.appendEvent(
+    request.request_id,
+    { event_key: `validation:${id}:finished`, type: "validation_finished", host_id: validation.host_id, candidate_id: null, item_key: null, case_id: validation.case_id, message: RESULT_MESSAGES[finish.result], data: { validation_id: id, result: finish.result } },
+    deps.now(),
+  );
+  await appendBudgetUpdate(deps, request, settledKey, uncertain ? "A validation run's reservation stays held until reconciliation." : `A validation run settled at ${usd(finish.cost_microusd ?? 0)}.`);
+}
+
 /**
  * Finishes a validation run: its finished record, then, from the finish that record holds (this
  * call's, or the one another writer, such as the worker or an overlapping lost-worker call, recorded
@@ -423,7 +466,7 @@ export interface ValidationFinish {
 export async function finishValidation(
   deps: StepDeps,
   request: Pick<FactoryRequestRecord, "request_id" | "budget_key">,
-  validation: Pick<FactoryValidationRecord, "validation_id" | "case_id" | "host_id">,
+  validation: FinishedRun,
   result: { result: ValidationResult; matrix: ValidationMatrix | null; message: string | null; cost_microusd: number | null },
 ): Promise<ValidationFinish> {
   const id = validation.validation_id;
@@ -436,21 +479,86 @@ export async function finishValidation(
   if (appended.kind === "refused") throw new Error(`the validation run's finish was refused (${appended.reason})`);
   let finish: ValidationFinish = { result: result.result, cost_microusd: result.cost_microusd, ours: true };
   if (appended.kind === "conflict") {
-    const recorded = (await deps.records.validationEvents(id)).find((event) => event.type === "finished");
-    const recordedResult = VALIDATION_RESULT_VALUES.find((value) => value === recorded?.data.result);
-    const cost = recorded?.data.cost_microusd;
-    if (recordedResult === undefined || (cost !== null && typeof cost !== "number")) throw new Error("the validation run's finish conflicts with a record that cannot be read");
-    finish = { result: recordedResult, cost_microusd: cost, ours: false };
+    const recorded = await recordedFinish(deps.records, id);
+    if (typeof recorded === "string") throw new Error("the validation run's finish conflicts with a record that cannot be read");
+    finish = { ...recorded, ours: false };
   }
-  const uncertain = finish.cost_microusd === null;
-  if (uncertain) await appendNeedsReconciliation(deps, request.request_id, VALIDATION_ATTENTION, validationAttentionKey(id));
-  await deps.records.appendEvent(
-    request.request_id,
-    { event_key: `validation:${id}:finished`, type: "validation_finished", host_id: validation.host_id, candidate_id: null, item_key: null, case_id: validation.case_id, message: RESULT_MESSAGES[finish.result], data: { validation_id: id, result: finish.result } },
-    deps.now(),
-  );
-  await appendBudgetUpdate(deps, request, `validation:${id}:settled`, uncertain ? "A validation run's reservation stays held until reconciliation." : `A validation run settled at ${usd(finish.cost_microusd ?? 0)}.`);
+  await validationFinishEvents(deps, request, validation, finish);
   return finish;
+}
+
+/**
+ * Where a root's hold on the slot stands after releaseFinishedHold: `released` by that call,
+ * `not_held` (it was released before, or another caller released it first), or `held`.
+ */
+export type HoldAfter = "released" | "not_held" | "held";
+
+/**
+ * Releases a finished request's or run's hold on the slot when its root still holds it and nothing
+ * of the root is open: an open or uncertain operation, or an unconfirmed sandbox, keeps it held (the
+ * ledger refuses such a release too) for the lost-worker routine or reconciliation. A refusal is logged.
+ */
+export async function releaseFinishedHold(deps: StepDeps, root: string): Promise<HoldAfter> {
+  const profile = deps.profile ?? FACTORY_PROFILE;
+  const status = async (): Promise<HoldAfter | "free"> => {
+    const slot = await deps.ledger.spend.slotStatus({ slot_key: profile.slot_key });
+    if (!slot.ok) {
+      deps.log(`factory: the slot status was refused (${slot.code}); the hold of ${root} is left as it is`);
+      return "held";
+    }
+    if (slot.holder !== root) return "not_held";
+    return slot.release_blockers.operation_ids.length > 0 || slot.release_blockers.child_resources.length > 0 ? "held" : "free";
+  };
+  const before = await status();
+  if (before !== "free") return before;
+  const released = await deps.ledger.spend.releaseSlot({ slot_key: profile.slot_key, root_execution_id: root, actor_role: ROUTE_ACTOR, evidence: null, reason: null });
+  if (released.ok) return "released";
+  const after = await status();
+  if (after === "not_held") return after;
+  deps.log(`factory: the slot of ${root} was not released (${released.code})`);
+  return "held";
+}
+
+/**
+ * Completes a validation run's recorded finish, whoever recorded it (its worker, its start or the
+ * lost-worker routine) and wherever that writer ended: the request's events that follow it
+ * (validationFinishEvents), then, for a finish with a cost, the slot release (releaseFinishedHold);
+ * a finish with no cost keeps the slot held for reconciliation. Null when no finish is recorded, or
+ * when the recorded one cannot be read (logged; nothing is written from it). Every step replays or
+ * skips what an earlier call took, so each write is made once.
+ */
+export async function completeValidationFinish(deps: StepDeps, request: Pick<FactoryRequestRecord, "request_id" | "budget_key">, validation: FinishedRun): Promise<{ result: ValidationResult; cost_microusd: number | null; hold: HoldAfter } | null> {
+  const finish = await recordedFinish(deps.records, validation.validation_id);
+  if (finish === "none") return null;
+  if (finish === "unreadable") {
+    deps.log(`factory validation ${validation.validation_id} the recorded finish cannot be read; nothing follows it`);
+    return null;
+  }
+  await validationFinishEvents(deps, request, validation, finish);
+  return { ...finish, hold: finish.cost_microusd === null ? "held" : await releaseFinishedHold(deps, validation.root) };
+}
+
+/**
+ * Completes a request's recorded finish (from `events`), whoever recorded it and wherever that
+ * writer ended: the budget closed with its stop code (closing again with the same cause replays, as
+ * after the core's loop, which closes it through settleWorker before it finishes; a refused close is
+ * logged and the finish stands), then the slot released (releaseFinishedHold) unless the request's
+ * spend needs reconciliation: a worker_lost or needs_reconciliation finish, or attention at
+ * needs_reconciliation, keeps it held. Null when the request has not finished; `held` when its stop
+ * code cannot be read (logged; the hold is left for the lost-worker routine or the operator).
+ */
+export async function completeRequestFinish(deps: StepDeps, request: Pick<FactoryRequestRecord, "request_id" | "budget_key" | "root">, events: readonly StoredFactoryEvent[]): Promise<HoldAfter | null> {
+  const finished = finishedEvent(events);
+  if (finished === null) return null;
+  const stop = STOP_CODE_VALUES.find((code) => code === finished.data.stop_code);
+  if (stop === undefined) {
+    deps.log(`factory ${request.request_id} the recorded finish has no stop code that can be read; nothing follows it`);
+    return "held";
+  }
+  const closed = await deps.ledger.budgets.close(request.budget_key, stop);
+  if (!closed.ok) deps.log(`factory ${request.request_id} the budget close was refused (${closed.code}); the finish stands`);
+  if (stop === "worker_lost" || stop === "needs_reconciliation" || needsReconciliationRaised(events)) return "held";
+  return releaseFinishedHold(deps, request.root);
 }
 
 /** Sandbox statuses that mean it no longer runs. */

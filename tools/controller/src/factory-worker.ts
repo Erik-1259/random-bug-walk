@@ -134,14 +134,22 @@ function errorText(error: unknown): string {
 
 /**
  * Releases the slot after the finish, on a best-effort basis: a refusal or a failed call is logged
- * and the slot stays held, which the lost-worker routine releases once this worker is silent.
+ * and the slot stays held, which the lost-worker routine releases once this worker is silent. A
+ * refusal because the root no longer holds the slot means another caller completed this finish and
+ * released it first.
  */
 async function releaseSlot(deps: WorkerDeps, root: string): Promise<boolean> {
   const profile = deps.profile ?? FACTORY_PROFILE;
   try {
     const released = await deps.ledger.spend.releaseSlot({ slot_key: profile.slot_key, root_execution_id: root, actor_role: WORKER_ACTOR, evidence: null, reason: null });
-    if (!released.ok) deps.log(`factory: the slot stays held (${released.code})`);
-    return released.ok;
+    if (released.ok) return true;
+    const slot = await deps.ledger.spend.slotStatus({ slot_key: profile.slot_key });
+    if (slot.ok && slot.holder !== root) {
+      deps.log(`factory: the slot was already released (${released.code})`);
+      return true;
+    }
+    deps.log(`factory: the slot stays held (${released.code})`);
+    return false;
   } catch (error) {
     deps.log(`factory: the slot release failed (${errorText(error)}); the slot stays held`);
     return false;

@@ -15,10 +15,13 @@
 // worker or an overlapping call) and the slot is released; otherwise its operation is uncertain,
 // attention is needs_reconciliation and the slot stays held. A ledger step another caller took
 // first is read back, so overlapping calls settle the run once.
-// A finished request or run whose worker went silent while its root still holds the slot (its
-// worker exited before it settled or released) is made visible: its open operations go to
-// uncertain and attention becomes needs_reconciliation; with nothing left open, the slot is
-// released, unless its spend was left for reconciliation, which keeps it held for the operator.
+// A request or run whose finish is recorded, whoever recorded it, first has the writes that follow
+// that finish completed, on every call (completeRequestFinish, completeValidationFinish): a writer
+// may have ended after its finish record and before them. One whose worker went silent while its
+// root still holds the slot (its worker exited before it settled or released) is then made
+// visible: its open operations go to uncertain and attention becomes needs_reconciliation; with
+// nothing left open, the slot is released, unless its spend was left for reconciliation, which
+// keeps it held for the operator.
 // Web-safe: no runner, driver or PGlite.
 import type { Rates } from "@rbw/envelope";
 import { canonicalDigest } from "@rbw/schema";
@@ -29,11 +32,14 @@ import {
   VALIDATION_ATTENTION,
   appendBudgetUpdate,
   appendNeedsReconciliation,
+  completeRequestFinish,
+  completeValidationFinish,
   finishValidation,
   finishedEvent,
   fullSettlement,
   makeUncertain,
   needsReconciliationRaised,
+  reconciledKey,
   stopQuietly,
   stoppedByStatus,
   validationOperation,
@@ -67,7 +73,11 @@ function sleepFor(ms: number): Promise<void> {
 }
 
 export type LostTarget = { request_id: string } | { validation_id: string };
-/** alive: not lost yet, nothing done; finished: the request or run already ended some other way. */
+/**
+ * alive: not lost yet, nothing done; finished: the request or run already ended some other way (the
+ * writes that follow its recorded finish are completed); finalized: this call finished it, released
+ * its hold or noted the hold for reconciliation.
+ */
 export type LostOutcome = { kind: "not_found" } | { kind: "alive" } | { kind: "finished" } | { kind: "finalized"; slot_held: boolean };
 
 async function silentSince(deps: LostDeps, request: FactoryRequestRecord): Promise<Date> {
@@ -146,6 +156,8 @@ async function finalizeRequest(deps: LostDeps, requestId: string): Promise<LostO
   const ours = finished !== null && finished.data.stop_code === "worker_lost";
   const silent = deps.now().getTime() - (await silentSince(deps, request)).getTime() >= profile.heartbeat.lost_after_s * 1000;
   if (finished !== null && !ours) {
+    // The writes that follow the finish, which its writer may have ended before; then a silent worker's hold.
+    if ((await completeRequestFinish(deps, request, events)) === "released") return { kind: "finalized", slot_held: false };
     if (!silent) return { kind: "finished" };
     return strandedHold(deps, request.root, [workerSandboxName(request.root)], needsReconciliationRaised(events), async () => {
       if (needsReconciliationRaised(await deps.records.events(requestId))) return false;
@@ -220,6 +232,8 @@ async function finalizeValidation(deps: LostDeps, validationId: string): Promise
   const silentMs = now - (beat === null ? accepted : beat.getTime());
   const done = await finishedRecord(deps, validationId);
   if (done !== undefined) {
+    // The writes that follow the finish, which its writer may have ended before; then a silent worker's hold.
+    if ((await completeValidationFinish(deps, request, validation))?.hold === "released") return { kind: "finalized", slot_held: false };
     if (silentMs < profile.heartbeat.lost_after_s * 1000) return { kind: "finished" };
     return strandedHold(deps, validation.root, [validationSandboxName(validation.root)], done.data.cost_microusd === null, async () => {
       const key = validationAttentionKey(validationId);
@@ -334,7 +348,7 @@ export async function completeReconciliation(deps: LostDeps, target: LostTarget)
     if (request === null) return { kind: "not_found" };
     root = validation.root;
   }
-  const begun = `reconciled:${root}:budget`;
+  const begun = reconciledKey(root);
   const cleared = `reconciled:${root}:attention_cleared`;
   const blockers = await rootBlockers(deps, root);
   if (!blockers.held) {

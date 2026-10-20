@@ -24,12 +24,15 @@
 // begun gets the worker command again, under the run-once guard. A sandbox that stopped before its
 // worker began, and an operation already uncertain, end the start uncertain: an uncertain operation
 // is never launched again. A refused create's end, its zero settlement, its finish and its release
-// are completed. Once the worker began, the worker and the routines after it own the operation. The
+// are completed. Once the worker began, the worker and the routines after it own the operation. A
+// recorded finish of the request or run, whoever recorded it (the start, the worker or the
+// lost-worker routine), has the writes that follow it completed (completeRequestFinish,
+// completeValidationFinish), as the lost-worker routine completes them too. The
 // service runs starts of one ID one at a time; starts that overlap anyway still create one sandbox
 // and run one worker, and a start that loses a ledger step to another answers replay.
 // Web-safe: no runner, driver or PGlite.
 import type { Rates } from "@rbw/envelope";
-import { STOP_CODE_VALUES, VALIDATION_RESULT_VALUES } from "@rbw/factory-contract";
+import { VALIDATION_RESULT_VALUES } from "@rbw/factory-contract";
 import type { BusyReason, HarnessIdentity, HostId, PackageHashes, Protocol, ValidationMatrix, ValidationRun } from "@rbw/factory-contract";
 import { utcSeconds } from "@rbw/local-runner/shared";
 import type { OperationState } from "@rbw/spend";
@@ -39,6 +42,8 @@ import {
   STOPPED_STATUSES,
   appendBudgetUpdate,
   busyReason,
+  completeRequestFinish,
+  completeValidationFinish,
   finishLaunch,
   finishValidation,
   finishedEvent,
@@ -57,7 +62,6 @@ import type {
   FactoryRecords,
   FactoryRequestRecord,
   FactoryValidationRecord,
-  StoredFactoryEvent,
   ValidationEventInput,
   WorkerSandboxInstance,
   WorkerSandboxSdk,
@@ -305,26 +309,6 @@ async function releaseSlot(deps: FactoryLaunchDeps, root: string): Promise<boole
   return released.ok;
 }
 
-/** Releases the slot when this root still holds it (an earlier start may have released it already). */
-async function releaseHeld(deps: FactoryLaunchDeps, root: string): Promise<void> {
-  const profile = deps.profile ?? FACTORY_PROFILE;
-  const slot = await deps.ledger.spend.slotStatus({ slot_key: profile.slot_key });
-  if (slot.ok && slot.holder === root) await releaseSlot(deps, root);
-}
-
-/**
- * The rest of the start's own finish (a refused reservation, a refused create or an uncertain
- * launch), which an earlier start recorded and may not have completed: the budget closed with its
- * stop code and, unless its spend needs reconciliation, the slot released.
- */
-async function completeLaunchFinish(deps: FactoryLaunchDeps, record: FactoryRequestRecord, finished: StoredFactoryEvent): Promise<void> {
-  const stop = STOP_CODE_VALUES.find((code) => code === finished.data.stop_code);
-  if (stop === undefined) return;
-  const closed = await deps.ledger.budgets.close(record.budget_key, stop);
-  if (!closed.ok) deps.log(`factory ${record.request_id} the budget close was refused (${closed.code}); the finish stands`);
-  if (stop !== "needs_reconciliation") await releaseHeld(deps, record.root);
-}
-
 /**
  * Reserves the worker and launches it once per request. A duplicate or concurrent start finds the
  * operation already reserved and resumes the launch from its state (the file's header): only one
@@ -337,10 +321,9 @@ export async function startFactoryWorker(deps: FactoryLaunchDeps, requestId: str
   const record = await deps.records.request(requestId);
   if (record === null) throw new LaunchConfigError("the request is not recorded");
   const events = await deps.records.events(requestId);
-  // A finished request never gets a worker, whatever its operation's state.
-  const finished = finishedEvent(events);
-  if (finished !== null) {
-    if (finished.event_key === EVENT_KEYS.launchFinish) await completeLaunchFinish(deps, record, finished);
+  // A finished request never gets a worker, whatever its operation's state; the writes that follow its finish are completed.
+  if (finishedEvent(events) !== null) {
+    await completeRequestFinish(deps, record, events);
     return { kind: "replay" };
   }
   const op = workerOperation({ identity: deps.identity, rates: deps.rates, profile }, record);
@@ -473,24 +456,17 @@ async function finishValidationLaunch(deps: FactoryLaunchDeps, request: FactoryR
 }
 
 /**
- * A repeated start of a recorded run. A finished run whose worker never began finished in its
- * launch (or by the lost-worker routine before any worker): the request's events follow its
- * recorded finish, and a settled one releases the slot. An unfinished run resumes its launch.
+ * A repeated start of a recorded run. A finished run, whoever recorded its finish (its launch, its
+ * worker or the lost-worker routine), has the writes that follow it completed: the request's events
+ * from its recorded finish and, for a settled one, the slot release. An unfinished run resumes its launch.
  */
 async function resumeValidation(deps: FactoryLaunchDeps, request: FactoryRequestRecord, record: FactoryValidationRecord, harness: HarnessIdentity): Promise<ValidationStart> {
   const profile = deps.profile ?? FACTORY_PROFILE;
   const id = record.validation_id;
   const runEvents = await deps.records.validationEvents(id);
   const started = async (): Promise<boolean> => runEvents.some((event) => event.type === "running") || (await deps.records.lastHeartbeat({ validation_id: id })) !== null;
-  const finished = runEvents.find((event) => event.type === "finished");
-  if (finished !== undefined) {
-    const result = VALIDATION_RESULT_VALUES.find((value) => value === finished.data.result);
-    const cost = finished.data.cost_microusd;
-    if (result !== undefined && (cost === null || typeof cost === "number") && !(await started())) {
-      const matrix = isMatrix(finished.data.matrix) ? finished.data.matrix : null;
-      const finish = await finishValidation(deps, request, record, { result, matrix, message: text(finished.data.message), cost_microusd: cost });
-      if (finish.cost_microusd !== null) await releaseHeld(deps, record.root);
-    }
+  if (runEvents.some((event) => event.type === "finished")) {
+    await completeValidationFinish(deps, request, record);
   } else {
     const op = validationOperation({ identity: deps.identity, rates: deps.rates, profile }, record);
     const status = await deps.ledger.spend.operationStatus({ operation_id: op.operation_id });

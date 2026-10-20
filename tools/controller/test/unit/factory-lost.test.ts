@@ -169,11 +169,13 @@ describe("finalizeLostWorker for a request", () => {
 
   it("leaves a request that finished on its own and released the slot alone", async () => {
     const record = await acceptRequest(w);
+    // As the core's loop finishes: the budget closed through settleWorker, then request_finished.
+    await w.budgets.close(record.budget_key, "fulfilled");
     await w.records.appendEvent(record.request_id, FINISHED, w.clock.now());
     await w.spend.releaseSlot({ slot_key: "factory", root_execution_id: record.root, actor_role: "factory-worker", evidence: null, reason: null });
     w.clock.advance(1_000_000);
     expect(await finalizeLostWorker(lostDeps(), { request_id: record.request_id })).toEqual({ kind: "finished" });
-    expect(w.budgets.closes).toEqual([]);
+    expect(w.budgets.closes).toEqual([{ budget_key: record.budget_key, cause: "fulfilled" }]);
     expect(w.records.types(record.request_id)).toEqual(["request_accepted", "request_finished"]);
   });
 
@@ -193,11 +195,11 @@ describe("finalizeLostWorker for a request", () => {
     expect(await busyReason({ spend: w.spend, records: w.records }, "factory")).toBe("needs_reconciliation");
     const attention = (await w.records.events(record.request_id)).filter((event) => event.type === "attention");
     expect(attention.map((event) => [event.event_key, event.data])).toEqual([["run:attention:needs_reconciliation", { code: "needs_reconciliation" }]]);
-    // The outcome stands, and a repeated call changes nothing.
+    // The outcome stands, and a repeated call changes nothing. The budget close the worker never made follows the finish, once.
     const events = await w.records.events(record.request_id);
     expect(await finalizeLostWorker(lostDeps(), { request_id: record.request_id })).toEqual({ kind: "finished" });
     expect(await w.records.events(record.request_id)).toEqual(events);
-    expect(w.budgets.closes).toEqual([]);
+    expect(w.budgets.closes).toEqual([{ budget_key: record.budget_key, cause: "fulfilled" }]);
   });
 
   it("releases the slot of a finished request whose worker settled but stopped before releasing it", async () => {
@@ -381,18 +383,21 @@ describe("finalizeLostWorker for a validation run", () => {
     expect(await slotHolder(w)).toBeNull();
   });
 
-  it("releases the slot of a finished run whose worker settled but stopped before releasing it", async () => {
-    const { validationId, operationId } = await runningValidation();
+  it("releases the slot of a finished run whose worker settled but stopped before releasing it, on the first call that sees the finish", async () => {
+    const { record, validationId, operationId } = await runningValidation();
     const root = w.identity.validationRoot(validationId);
     const op = validationOperation({ identity: w.identity, rates: w.rates }, { root, case_id: CASE_ID, host_id: "task-report", copies: 3 });
     await w.spend.transition({ operation_id: operationId, from_state: "running", to_state: "terminal", actor_role: "factory-worker", terminal_status: "completed" });
     expect((await w.spend.settle(fullSettlement(op.envelope, operationId))).ok).toBe(true);
-    await w.records.appendValidationEvent(validationId, { event_key: "finished", type: "finished", data: { result: "passed" } }, w.clock.now());
+    const finish = { result: "passed", matrix: MATRIX, message: "All six cells matched their expected outcomes.", cost_microusd: VALIDATION_3_MICROUSD, finished_at: w.clock.now().toISOString() };
+    await w.records.appendValidationEvent(validationId, { event_key: "finished", type: "finished", data: finish }, w.clock.now());
+    // Within the heartbeat window: the writes that follow the finish are completed, the release among them.
     w.clock.advance(100_000);
-    expect(await finalizeLostWorker(lostDeps(), { validation_id: validationId })).toEqual({ kind: "finished" });
-    w.clock.advance(81_000);
     expect(await finalizeLostWorker(lostDeps(), { validation_id: validationId })).toEqual({ kind: "finalized", slot_held: false });
     expect(await slotHolder(w)).toBeNull();
+    expect(w.records.types(record.request_id).slice(-2)).toEqual(["validation_finished", "budget_updated"]);
+    w.clock.advance(81_000);
+    expect(await finalizeLostWorker(lostDeps(), { validation_id: validationId })).toEqual({ kind: "finished" });
   });
 
   it("gives one finish, no attention and a released slot under overlapping calls for one lost run", async () => {
