@@ -17,10 +17,11 @@ export {
 export type { CapabilitiesInput } from "./capabilities.ts";
 export { CatalogError, bugTypeOf, criteriaCatalogV1, criterionOf, parseCriteriaCatalog } from "./criteria.ts";
 export type { CriteriaCatalog } from "./criteria.ts";
-export { ATTENTION_TEXT, OUTCOME_OF, REASON_TEXT } from "./events.ts";
+export { ATTENTION_TEXT, OUTCOME_OF, REASON_TEXT, attention, requestFinished } from "./events.ts";
 export {
   FACTORY_REQUEST_NAMESPACE,
   FACTORY_VALIDATION_NAMESPACE,
+  budgetKey,
   candidateId,
   caseId,
   copyExecutionId,
