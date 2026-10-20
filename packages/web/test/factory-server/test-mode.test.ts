@@ -402,6 +402,41 @@ describe("controls", () => {
     expect(proof.operations.filter((op) => op.kind === "worker")).toHaveLength(1);
   });
 
+  it("refuses a start outside the limits or with a repeated item key with invalid_request before the ID lock, also for an existing request ID", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout"] });
+    const w = makeWorld(2000);
+    await reset(w, "two-host-fulfilled");
+    const accepted = start(w, "two-host-fulfilled");
+    await vi.advanceTimersByTimeAsync(2000);
+    expect((await accepted).status).toBe(202);
+    const { input, interpretation_sha256 } = endState("two-host-fulfilled").interpretation;
+    const { limits } = TEST_PROFILE;
+    const [first, ...rest] = input.items;
+    if (first === undefined) throw new Error("synthetic: no item");
+    const firstWith = (change: Partial<typeof first>) => ({ ...input, items: [{ ...first, ...change }, ...rest] });
+    const refused = [
+      { ...input, items: [...input.items, { ...first }] },
+      firstWith({ quantity: limits.max_quantity_per_item + 1 }),
+      firstWith({ description: "x".repeat(limits.max_description_chars + 1) }),
+      firstWith({ description: "an unpaired \uD800 surrogate" }),
+      { ...input, budget_microusd: limits.max_budget_microusd + 1 },
+    ];
+    for (const body of refused) {
+      let answered = false;
+      const pending = postStart(request("/api/factory/requests", { body: { request_id: REQUEST_ID, input: body, interpretation_sha256 } }), w.server).then((response) => {
+        answered = true;
+        return response;
+      });
+      // The 2 s hold is inside the lock: an answer before it means the lock was never entered.
+      await vi.advanceTimersByTimeAsync(1999);
+      expect(answered).toBe(true);
+      const response = await pending;
+      expect(response.status).toBe(400);
+      expect((await contractBody("ErrorResponse", response)).error.code).toBe("invalid_request");
+    }
+    expect((await evidence(w)).operations.filter((op) => op.kind === "worker")).toHaveLength(1);
+  });
+
   it("holds every validation start for 2 s too", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout"] });
     const w = makeWorld(2000);

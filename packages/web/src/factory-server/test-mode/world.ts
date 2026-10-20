@@ -188,10 +188,14 @@ function codePoints(text: string): number {
   return count;
 }
 
+/** The factory core's input check (contract sections 4.3 and 5): the first limit the input breaks, or a repeated item key. */
 function limitError(input: RequestInput, limits: Limits): string | null {
   if (input.items.length > limits.max_items) return `At most ${String(limits.max_items)} items.`;
+  const repeated = input.items.find((item, index) => input.items.findIndex((other) => other.item_key === item.item_key) !== index);
+  if (repeated !== undefined) return `The item key ${repeated.item_key} is used twice.`;
   if (input.items.some((item) => item.quantity > limits.max_quantity_per_item)) return `Each quantity is at most ${String(limits.max_quantity_per_item)}.`;
   if (input.items.reduce((sum, item) => sum + item.quantity, 0) > limits.max_total_quantity) return `The quantities add up to at most ${String(limits.max_total_quantity)}.`;
+  if (input.items.some((item) => !(item.description ?? "").isWellFormed())) return "A description holds text that is not well-formed Unicode.";
   if (input.items.some((item) => codePoints(item.description?.trim() ?? "") > limits.max_description_chars)) return `Each description has at most ${String(limits.max_description_chars)} characters.`;
   if (input.budget_microusd < limits.min_budget_microusd || input.budget_microusd > limits.max_budget_microusd) return "The budget is outside the limits.";
   return null;
@@ -262,7 +266,11 @@ export class TestWorld implements FactoryServerPorts, FactoryTestControls {
     const errors = validateContract("StartRequest", body);
     if (errors.length > 0) return { ok: false, message: `The body does not match StartRequest: ${errors.slice(0, 5).join(", ")}.` };
     const start = body as StartRequest;
-    const sha256 = canonicalDigest({ request_id: start.request_id, input: normalize(start.input), interpretation_sha256: start.interpretation_sha256 }).sha256;
+    const input = normalize(start.input);
+    // Before the request-ID lock (contract section 7, step 1): an existing ID never turns such a body into a replay or a conflict.
+    const outside = limitError(input, this.profile.limits);
+    if (outside !== null) return { ok: false, message: outside };
+    const sha256 = canonicalDigest({ request_id: start.request_id, input, interpretation_sha256: start.interpretation_sha256 }).sha256;
     return { ok: true, start, sha256 };
   }
 
