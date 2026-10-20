@@ -15,6 +15,35 @@ fs.mkdirSync(outputDir, { recursive: true });
 const fixture = name => JSON.parse(fs.readFileSync(new URL(`./fixtures/factory-v1/${name}.json`, import.meta.url), "utf8"));
 (async()=>{
  const browser=await chromium.launch({executablePath,headless:true,args:['--no-sandbox']});
+ for(const resumedWidth of [1440,390]) {
+  const resumed=await browser.newContext({viewport:{width:resumedWidth,height:1000}});
+  const saved=fixture('status-fulfilled');const writes=[];let validationFinished=false;
+  await resumed.addInitScript(id=>{localStorage.setItem('rbw-factory-request-id',id);},saved.request_id);
+  await resumed.route('**/api/factory/**',async route=>{
+   const request=route.request(),path=new URL(request.url()).pathname;
+   if(request.method()!=='GET')writes.push(path);
+   let body;
+   if(path.endsWith('/capabilities'))body=fixture('capabilities');
+   else if(path.endsWith('/session'))body=fixture('session');
+   else if(path.includes('/requests/')){
+    body=fixture('status-fulfilled');
+    body.cases[0].validation=fixture(validationFinished?'validation-passed':'validation-running');
+   }else return route.fulfill({status:404,contentType:'application/json',body:JSON.stringify(fixture('error-not-found'))});
+   return route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(body)});
+  });
+  const page=await resumed.newPage();await page.goto(origin+'/factory',{waitUntil:'networkidle'});
+  await page.getByText('Validation: running',{exact:true}).waitFor();
+  assert.equal(await page.evaluate(()=>localStorage.getItem('rbw-factory-validation')),null);
+  assert.equal(await page.evaluate(()=>localStorage.getItem('rbw-factory-validation-id')),null);
+  const prepare=page.getByRole('button',{name:'Prepare another request',exact:true});
+  assert(await prepare.isDisabled(),'server-recorded running validation must disable preparing another request without local validation identity');
+  assert.equal(await page.getByRole('link',{name:'Download bug case',exact:true}).count(),2);
+  assert.equal(await page.getByRole('link',{name:'Download validator package',exact:true}).count(),2);
+  validationFinished=true;await page.reload({waitUntil:'networkidle'});
+  await page.getByText('Validation: passed',{exact:true}).waitFor();assert.equal(await prepare.isDisabled(),false);
+  assert.deepEqual(writes,[]);await resumed.close();
+  console.log(`PASS synthetic ${resumedWidth}px: resumed server-side validation without local validation metadata disables new draft until finished; downloads retained and no work started.`);
+ }
  for(const width of [1440,390]) {
   const context=await browser.newContext({viewport:{width,height:1000}}); const page=await context.newPage();
   let busyOnce=true,requestId=null,phase='running',interpretation=null,validationId=null,validateCalls=0,refuseValidation=false,missingPackage=null; const starts=[],posts=[],errors=[];
