@@ -128,18 +128,27 @@ function pathListForms(paths: readonly string[]): { entries: string[]; positions
 }
 
 /**
+ * Empty lines after each path-list entry. gitleaks' generic-api-key rule allows up to five
+ * line breaks, spaces, quotes or "=" between a key's operator and its value, so with fewer
+ * line breaks an entry ending in a key and "=" took the next entry as its value, and gitleaks
+ * then never matched that next entry on its own. Six line breaks keep each match of that rule
+ * inside one entry.
+ */
+const ENTRY_GAP = ["", "", "", "", ""];
+
+/**
  * The text gitleaks scans for path-list entries, with each line's path-list position (none for
  * the other lines). gitleaks skips a file whose first bytes look like a binary type, such as an
  * executable or a database, so a fixed line comes before the first path. It reads a large file
- * in chunks and ends a chunk early only at an empty line, so an empty line follows each entry
- * and no chunk splits one.
+ * in chunks and ends a chunk early only at an empty line, so the empty lines after each entry
+ * also keep a chunk from splitting one.
  */
 function pathText(entries: readonly string[], positions: readonly number[]): { content: Uint8Array; positions: (number | undefined)[] } {
   const lines = ["path list", ""];
   const linePositions: (number | undefined)[] = [undefined, undefined];
   entries.forEach((entry, index) => {
-    lines.push(entry, "");
-    linePositions.push(positions[index], undefined);
+    lines.push(entry, ...ENTRY_GAP);
+    linePositions.push(positions[index], ...ENTRY_GAP.map(() => undefined));
   });
   return { content: Buffer.from(lines.join("\n")), positions: linePositions };
 }

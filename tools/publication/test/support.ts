@@ -181,6 +181,12 @@ export interface StubGitleaksOptions {
    * boundary after the secret. By default every line containing STUB_LEAK_MARKER is reported.
    */
   leakPattern?: string;
+  /**
+   * Matches this expression against each chunk's whole text instead of line by line, like a
+   * gitleaks rule whose match can run across line breaks: matches do not overlap, and each is
+   * reported at the line where it starts. Replaces the line-by-line check.
+   */
+  spanPattern?: string;
   /** Skips a file whose content starts with one of these, like gitleaks' check for binary file types. */
   binaryPrefixes?: string[];
   /**
@@ -218,6 +224,7 @@ export function writeStubGitleaks(dir: string, options: StubGitleaksOptions = {}
     hang: options.hang ?? false,
     killParent: options.killParent ?? false,
     leakPattern: options.leakPattern ?? null,
+    spanPattern: options.spanPattern ?? null,
     binaryPrefixes: options.binaryPrefixes ?? [],
     chunk: options.chunk ?? null,
     violationMarker,
@@ -258,6 +265,7 @@ if (settings.killParent) process.kill(process.ppid, "SIGKILL");
 const findings = [];
 const leakPattern = settings.leakPattern === null ? null : new RegExp(settings.leakPattern);
 const leaks = (line) => (leakPattern === null ? line.includes(settings.leakMarker) : leakPattern.test(line));
+const spanPattern = settings.spanPattern === null ? null : new RegExp(settings.spanPattern, "g");
 const chunks = (text) => {
   if (settings.chunk === null) return [text];
   const parts = [];
@@ -281,9 +289,14 @@ const walk = (d) => {
       let first = 1;
       for (const part of chunks(text)) {
         const lines = part.split("\\n");
-        lines.forEach((line, i) => {
-          if (leaks(line)) findings.push({ RuleID: "stub", File: p, StartLine: first + i, Secret: "REDACTED", Match: "REDACTED" });
-        });
+        const report = (line) => findings.push({ RuleID: "stub", File: p, StartLine: line, Secret: "REDACTED", Match: "REDACTED" });
+        if (spanPattern !== null) {
+          for (const match of part.matchAll(spanPattern)) report(first + part.slice(0, match.index).split("\\n").length - 1);
+        } else {
+          lines.forEach((line, i) => {
+            if (leaks(line)) report(first + i);
+          });
+        }
         first += lines.length - 1;
       }
     }

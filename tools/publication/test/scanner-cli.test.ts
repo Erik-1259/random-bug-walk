@@ -681,7 +681,7 @@ describe("PUB-02 scanner CLI: gitleaks", () => {
   });
 
   it("finds a credential in a path where a chunked read would split the path list", async () => {
-    // Without an empty line after each entry, a chunk of 64 characters extended by up to 32
+    // Without empty lines after the entries, a chunk of 64 characters extended by up to 32
     // ends inside the marker, which follows 16 paths of 4 characters.
     const tree: Record<string, string> = {};
     for (let index = 0; index < 16; index += 1) tree[`A${String(index).padStart(3, "0")}`] = "x\n";
@@ -699,6 +699,32 @@ describe("PUB-02 scanner CLI: gitleaks", () => {
     const files = await scanFiles(tree, { stub });
     expectBlocked(files, ["paths:17"]);
     for (const result of [range, files.result]) expect(result.stdout + result.stderr).not.toContain(STUB_LEAK_MARKER);
+  });
+
+  it("finds a credential in a path that follows a path ending in a key and \"=\"", async () => {
+    // Like gitleaks' generic-api-key rule, the stub allows up to five line breaks between "=" and
+    // the value. With fewer line breaks between entries, its match from "a-KEY=" would take the
+    // next entry as its value, and that entry would never be matched on its own.
+    const root = tempDir();
+    const repo = initRepo(join(root, "repo"));
+    const tree = { "a-KEY=": "x\n", [`b-KEY=${STUB_LEAK_MARKER}`]: `ok\n${forms.signedOff}: x\n` };
+    const base = commit(repo, { "a.txt": "base\n" }, "chore: base\n");
+    const head = commit(repo, tree, "feat: add\n");
+    const patterns = writePatterns(root, TERMS);
+    const stub = writeStubGitleaks(root, { spanPattern: String.raw`KEY=\s{0,5}[\w.=-]{10,}` });
+    const range = await runCli(["scan", "--patterns", patterns, "--gitleaks", stub.command, "--range", `${base}..HEAD`], { cwd: repo });
+    // The sorted list is a-KEY= and b-KEY=<marker>.
+    expect(outputLines(range)).toEqual(["blocked", `paths-${short(head)}:2`]);
+    expect(range.code).toBe(1);
+    const files = await scanFiles(tree, { stub });
+    expectBlocked(files, ["paths:2"]);
+    for (const result of [range, files.result]) expect(result.stdout + result.stderr).not.toContain(STUB_LEAK_MARKER);
+  });
+
+  it("gives unavailable for a finding on an empty line after a path-list entry", async () => {
+    // The stub reports the third empty line after the entry, in the path list and in its forms.
+    const stub = writeStubGitleaks(tempDir(), { spanPattern: String.raw`(?<=a-KEY=\n\n\n)\n` });
+    expectUnavailable((await scanFiles({ "a-KEY=": "x\n" }, { stub })).result);
   });
 
   it("substitutes {dir} and passes only paths inside it", async () => {

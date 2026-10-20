@@ -368,7 +368,7 @@ async function prove(root: string, gitleaks: string): Promise<number> {
   // inside and one whose rule also needs a space before it, are found in a directory name and before an extension, in
   // range and files mode and on scan-public. The file under that directory, which also holds an attribution line and a
   // forbidden term, is reported only at its path-list position.
-  const pick = (count: number): string => Array.from(randomBytes(count), (byte) => alphabet[byte % alphabet.length]).join("");
+  const pick = (count: number, from = alphabet): string => Array.from(randomBytes(count), (byte) => from[byte % from.length]).join("");
   const bounded: [string, string][] = [
     ["a plain token whose rule needs a boundary after it", ["sk", "ant", "api03"].join("-") + "-" + pick(93) + "AA"],
     ["a dotted token whose rule needs a boundary after it", ["S", "G"].join("") + "." + pick(22) + "." + pick(43)],
@@ -436,6 +436,21 @@ async function prove(root: string, gitleaks: string): Promise<number> {
   // list is MZ, MZ/readme.md, keys and keys/<token>.txt.
   const binaryTree = { "MZ/readme.md": "hello\n", [`keys/${token}.txt`]: attributed };
   await checkPathPositions("a token in a path is found when the first listed path starts like an executable", token, binaryTree, [4], [2]);
+
+  // Additional: gitleaks' generic-api-key rule allows up to five line breaks between "=" and the value, so a path that
+  // ends in a key and "=" must not take the next listed path as its value. That next path is still found on its own,
+  // whether the earlier match would be reported (a root file) or dropped (a nested file). The values hold no vowel, "m",
+  // "p", "x" or "0", so none of that rule's stopwords occurs in them, and end in digits, so its letters-only allowlist
+  // does not apply. The sorted lists are a_token= and api_key=<value>, and cfg, cfg/keys, cfg/keys/api_key= and
+  // db_password=<value>.
+  const consonants = "bcdfghjklnqrstvwz";
+  const keyValue = (): string => pick(30, consonants + consonants.toUpperCase() + "123456789") + pick(2, "123456789");
+  const rootValue = keyValue();
+  const rootTree = { "a_token=": "nothing here\n", [`api_key=${rootValue}`]: attributed };
+  await checkPathPositions('a token in a path is found after a root path that ends in a key and "="', rootValue, rootTree, [2], [2]);
+  const nestedValue = keyValue();
+  const nestedTree = { "cfg/keys/api_key=": "nothing here\n", [`db_password=${nestedValue}`]: attributed };
+  await checkPathPositions('a token in a path is found after a nested path that ends in a key and "="', nestedValue, nestedTree, [4], [2]);
 
   // Additional: gitleaks reads a path list of more than 100 KB in chunks, and with one line per path some chunks would
   // end inside these top-level names. Every one is still found.
