@@ -27,7 +27,12 @@ export interface ProjectionInput {
   request: RequestRecordInput;
   /** Every event of the request, by seq. */
   events: readonly Event[];
-  /** The registry's entries by candidate ID (see `candidateIndex`). */
+  /**
+   * The registry's entries by candidate ID (see `candidateIndex`). It must hold every candidate the
+   * request's events select, including entries of a catalog version the registry no longer serves:
+   * a candidate's defect ID and bug type come only from its catalog entry (no event carries them), so
+   * a missing one is refused with ProjectionError rather than guessed.
+   */
   candidates: ReadonlyMap<string, CandidateInfo>;
   evidence: readonly CaseEvidence[];
   /** The latest validation run of each case, by case ID. */
