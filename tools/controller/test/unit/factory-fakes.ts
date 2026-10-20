@@ -2,11 +2,11 @@
 // factory pool and slot key; an in-memory request-budget layer and factory record store with the
 // behavior the ledger's budget functions and records are specified to have (replay by operation or
 // event key, budget room over committed amounts, validation reserves after close, only the
-// contract's late event types after request_finished); stand-ins for the factory core's identity
-// and event modules over synthetic namespaces; fake Sandbox SDKs for worker and copy sandboxes
-// that record every call; and a settable clock.
+// contract's late event types after request_finished, evidence once per case); stand-ins for the
+// factory core's identity and event modules over synthetic namespaces; fake Sandbox SDKs for worker
+// and copy sandboxes that record every call; and a settable clock.
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
@@ -14,7 +14,8 @@ import { PGlite } from "@electric-sql/pglite";
 import { pack } from "tar-stream";
 import { loadRateSheet } from "@rbw/envelope";
 import type { Rates } from "@rbw/envelope";
-import type { CopyPlan, CopyRoots, CopyState, EventType, HostId, Protocol, StopCode } from "@rbw/factory-contract";
+import type { CaseEvidence } from "@rbw/factory";
+import type { CopyPlan, CopyRoots, CopyState, EventType, HostId, Interpretation, Protocol, StopCode } from "@rbw/factory-contract";
 import type { SandboxInstance, SandboxSdk } from "@rbw/local-runner";
 import { sha256Hex } from "@rbw/schema";
 import { createSpend, migrate } from "@rbw/spend";
@@ -62,6 +63,15 @@ export const INTERPRETATION_SHA256 = "1".repeat(64);
 export const CASE_ID = "c".repeat(64);
 export const CANDIDATE_A = "a".repeat(64);
 export const CANDIDATE_B = "b".repeat(64);
+
+/** The contract's synthetic fixtures (bug-request-v1), validated by the contract package's tests. */
+const FIXTURES = new URL("../../../../docs/product/fixtures/bug-request-v1/", import.meta.url);
+
+/** The contract's supported interpretation fixture with its hash replaced. */
+export function syntheticInterpretation(sha256: string = INTERPRETATION_SHA256): Interpretation {
+  const value = JSON.parse(readFileSync(new URL("interpretation-supported.json", FIXTURES), "utf8")) as Interpretation;
+  return { ...value, interpretation_sha256: sha256 };
+}
 
 /** A synthetic protocol's per-state part: `copies` copies of each state, one round each. */
 export function protocolOf(copies: Record<CopyState, number> = { clean: 1, buggy: 1, fixed: 1 }): Pick<Protocol, "per_state"> {
@@ -231,6 +241,8 @@ export class FakeRecords implements FactoryRecords {
   readonly validationLog = new Map<string, (ValidationEventInput & { seq: number; at: string })[]>();
   /** Every refused append (an event type no longer allowed after request_finished). */
   readonly refusedAppends: FactoryEventInput[] = [];
+  /** Recorded evidence by `<request_id>:<case_id>`, with its digest. */
+  readonly evidence = new Map<string, { evidence: CaseEvidence; sha256: string }>();
 
   async request(requestId: string): Promise<FactoryRequestRecord | null> {
     await roundTrip();
@@ -308,6 +320,24 @@ export class FakeRecords implements FactoryRecords {
     for (const request of this.requests.values()) if (request.root === root) return { request_id: request.request_id, validation_id: null };
     for (const validation of this.validations.values()) if (validation.root === root) return { request_id: validation.request_id, validation_id: validation.validation_id };
     return null;
+  }
+
+  async recordEvidence(input: { request_id: string; case_id: string; evidence: CaseEvidence; sha256: string }): Promise<"recorded" | "replay"> {
+    await roundTrip();
+    const key = `${input.request_id}:${input.case_id}`;
+    const prior = this.evidence.get(key);
+    if (prior !== undefined) {
+      if (prior.sha256 === input.sha256) return "replay";
+      throw new Error("synthetic: the case already has different evidence in this request");
+    }
+    this.evidence.set(key, { evidence: structuredClone(input.evidence), sha256: input.sha256 });
+    return "recorded";
+  }
+
+  async readEvidence(requestId: string, caseId: string): Promise<CaseEvidence | null> {
+    await roundTrip();
+    const found = this.evidence.get(`${requestId}:${caseId}`);
+    return found === undefined ? null : structuredClone(found.evidence);
   }
 
   types(requestId: string): string[] {
@@ -461,7 +491,7 @@ export async function acceptRequest(w: FactoryWorld, options: { budget?: number;
   const root = w.identity.requestRoot(requestId);
   const slot = await w.spend.acquireSlot({ slot_key: "factory", root_execution_id: root, actor_role: "factory-route" });
   if (!slot.ok) throw new Error(`synthetic: the slot was refused (${slot.code})`);
-  const record: FactoryRequestRecord = { request_id: requestId, root, budget_key: `request-${requestId}`, interpretation_sha256: INTERPRETATION_SHA256, profile_sha256: "0".repeat(64), created_at: w.clock.now().toISOString() };
+  const record: FactoryRequestRecord = { request_id: requestId, root, budget_key: `request-${requestId}`, interpretation: syntheticInterpretation(), interpretation_sha256: INTERPRETATION_SHA256, profile_sha256: "0".repeat(64), created_at: w.clock.now().toISOString() };
   w.budgets.create(record.budget_key, root, options.budget ?? 1_500_000);
   w.records.requests.set(requestId, record);
   await w.records.appendEvent(requestId, { event_key: "request_accepted", type: "request_accepted", host_id: null, candidate_id: null, item_key: null, case_id: null, message: "Request accepted.", data: {} }, w.clock.now());
