@@ -365,6 +365,20 @@ describe("startFactoryValidation", () => {
     expect(w.sandbox.count("create")).toBe(1);
   });
 
+  it("records the harness identity accepted at the run's start and answers every start with it, also after a harness version change", async () => {
+    const record = await finishedRequest();
+    const a = args(record.request_id);
+    const first = await startFactoryValidation(deps(), a);
+    expect(first.kind === "accepted" && first.run.harness).toEqual({ name: "rbw-validate", version: "1" });
+    expect((await w.records.validation(a.validation_id))?.harness).toEqual({ name: "rbw-validate", version: "1" });
+    // A redeploy moved the service to a newer harness; the run's worker was started with the one recorded.
+    const again = await startFactoryValidation(deps(), { ...a, harness: { name: "rbw-validate", version: "2" } });
+    if (again.kind !== "accepted") throw new Error("synthetic: the repeated start was not accepted");
+    expect(again.run.harness).toEqual({ name: "rbw-validate", version: "1" });
+    expect(validateContract("ValidationRun", again.run)).toEqual([]);
+    expect(w.sandbox.count("create")).toBe(1);
+  });
+
   it("refuses a worker image that is not pinned by digest before taking the slot", async () => {
     const record = await finishedRequest();
     const a = args(record.request_id);

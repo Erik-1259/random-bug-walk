@@ -3,7 +3,7 @@
 // and factory records of the spend ledger, the identity roots of the factory core, and the
 // Vercel Sandbox SDK with the credentials bound. The integration pass maps each port to the real
 // function once it is on the same base. Type-only, so web-safe.
-import type { CopyState, EventType, HostId, PackageHashes, StopCode } from "@rbw/factory-contract";
+import type { CopyState, EventType, HarnessIdentity, HostId, PackageHashes, StopCode } from "@rbw/factory-contract";
 import type { Reservation, ReserveRequest, Spend } from "@rbw/spend";
 
 // Request budgets ---------------------------------------------------------------------------
@@ -79,10 +79,11 @@ export interface FactoryRequestRecord {
 
 /**
  * A validation run's record. HELD: the spend ledger's validation record stores the IDs, the root
- * and its own record time, but not `host_id`, `accepted_at`, `package_sha256` or `copies`, which
- * this code needs for the run's operation and its price, its 1,800 s window and its harness input.
- * Until one source for them is chosen (columns on that record, or this code's first keyed
- * validation event), the integration cannot map this port; see HELD_INTERFACES in factory-wiring.ts.
+ * and its own record time, but not `host_id`, `accepted_at`, `package_sha256`, `harness` or
+ * `copies`, which this code needs for the run's operation and its price, its 1,800 s window, its
+ * harness input and every answer about the run. The planned source is columns on the ledger's
+ * validation table, added by a forward-only migration in the wiring change; until then the
+ * integration cannot map this port (HELD_INTERFACES in factory-wiring.ts).
  */
 export interface FactoryValidationRecord {
   validation_id: string;
@@ -94,6 +95,11 @@ export interface FactoryValidationRecord {
   /** When the POST was accepted; the run's 1,800 s window counts from it. */
   accepted_at: string;
   package_sha256: PackageHashes;
+  /**
+   * The harness identity the start accepted (the service's at that time): every answer about the
+   * run names it, also after the service moved to a newer harness.
+   */
+  harness: HarnessIdentity;
   /**
    * The total copies the protocol inside the case's delivered validator package declares: the run's
    * reservation is priced for them and no more copies start.

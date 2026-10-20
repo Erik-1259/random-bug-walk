@@ -40,8 +40,9 @@ export const HELD_INTERFACES: readonly string[] = [
   // protocol (CopyMeter.reserveCandidate), and the request loop's reserveCandidate port names the
   // candidate's host and worst case but not its protocol, which the wiring must pass.
   "the candidate's protocol at the request loop's reserveCandidate (the meter reserves per copy of it)",
-  // The ledger's validation record has no host, accepted time, package hashes or package copy count.
-  "the validation record's host_id, accepted_at, package_sha256 and copies (FactoryValidationRecord)",
+  // The ledger's validation record has no host, accepted time, package hashes, harness identity or
+  // package copy count; the planned forward-only migration in the wiring change adds the columns.
+  "the validation record's host_id, accepted_at, package_sha256, harness and copies (FactoryValidationRecord)",
   // The docker runner resolves a CollectedCopy but reports no resource or lifetime of its own.
   "the copy meter's glue around the harness's docker runner for local requests",
 ];

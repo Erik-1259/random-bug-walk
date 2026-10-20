@@ -406,9 +406,10 @@ function isMatrix(value: unknown): value is ValidationMatrix {
 /**
  * The ValidationRun of a recorded run as its record and events stand (contract section 11): queued
  * until its worker appended running, running until the run's finish was recorded, then that finish
- * with its result, matrix, message and settled cost.
+ * with its result, matrix, message and settled cost. The package hashes and the harness identity are
+ * the ones recorded at the run's start, whatever a later caller runs.
  */
-export function validationRunView(record: Pick<FactoryValidationRecord, "validation_id" | "case_id" | "package_sha256">, events: readonly (ValidationEventInput & { at: string })[], harness: HarnessIdentity): ValidationRun {
+export function validationRunView(record: Pick<FactoryValidationRecord, "validation_id" | "case_id" | "package_sha256" | "harness">, events: readonly (ValidationEventInput & { at: string })[]): ValidationRun {
   const running = events.find((event) => event.type === "running");
   const finished = events.find((event) => event.type === "finished");
   const result = VALIDATION_RESULT_VALUES.find((value) => value === finished?.data.result) ?? null;
@@ -422,7 +423,7 @@ export function validationRunView(record: Pick<FactoryValidationRecord, "validat
     result: done === null ? null : result,
     matrix: done !== null && isMatrix(done.data.matrix) ? done.data.matrix : null,
     package_sha256: record.package_sha256,
-    harness,
+    harness: record.harness,
     message: done === null ? null : text(done.data.message),
     started_at: text(running?.data.started_at),
     finished_at: done === null ? null : (text(done.data.finished_at) ?? done.at),
@@ -460,7 +461,7 @@ async function finishValidationLaunch(deps: FactoryLaunchDeps, request: FactoryR
  * worker or the lost-worker routine), has the writes that follow it completed: the request's events
  * from its recorded finish and, for a settled one, the slot release. An unfinished run resumes its launch.
  */
-async function resumeValidation(deps: FactoryLaunchDeps, request: FactoryRequestRecord, record: FactoryValidationRecord, harness: HarnessIdentity): Promise<ValidationStart> {
+async function resumeValidation(deps: FactoryLaunchDeps, request: FactoryRequestRecord, record: FactoryValidationRecord): Promise<ValidationStart> {
   const profile = deps.profile ?? FACTORY_PROFILE;
   const id = record.validation_id;
   const runEvents = await deps.records.validationEvents(id);
@@ -476,7 +477,7 @@ async function resumeValidation(deps: FactoryLaunchDeps, request: FactoryRequest
     const launched = await resumeLaunch(deps, op, status.state, profile.validation.worker, { fresh: args, adopted: args }, started);
     await finishValidationLaunch(deps, request, record, launched);
   }
-  return { kind: "accepted", run: validationRunView(record, await deps.records.validationEvents(id), harness) };
+  return { kind: "accepted", run: validationRunView(record, await deps.records.validationEvents(id)) };
 }
 
 /**
@@ -497,7 +498,7 @@ export async function startFactoryValidation(deps: FactoryLaunchDeps, args: Vali
   const root = deps.identity.validationRoot(args.validation_id);
   const existing = await deps.records.validation(args.validation_id);
   if (existing !== null) {
-    if (existing.request_id === args.request_id && existing.case_id === args.case_id) return resumeValidation(deps, request, existing, args.harness);
+    if (existing.request_id === args.request_id && existing.case_id === args.case_id) return resumeValidation(deps, request, existing);
     return { kind: "unavailable", message: "The validation ID is already used." };
   }
 
@@ -514,6 +515,7 @@ export async function startFactoryValidation(deps: FactoryLaunchDeps, args: Vali
     root,
     accepted_at: deps.now().toISOString(),
     package_sha256: args.package_sha256,
+    harness: args.harness,
     copies,
   };
   const op = validationOperation({ identity: deps.identity, rates: deps.rates, profile }, record);
@@ -538,5 +540,5 @@ export async function startFactoryValidation(deps: FactoryLaunchDeps, args: Vali
 
   const commandArgs = workerCommandArgs({ validation_id: args.validation_id });
   await finishValidationLaunch(deps, request, record, await launchSandbox(deps, op, profile.validation.worker, { fresh: commandArgs, adopted: commandArgs }));
-  return { kind: "accepted", run: validationRunView(record, await deps.records.validationEvents(args.validation_id), args.harness) };
+  return { kind: "accepted", run: validationRunView(record, await deps.records.validationEvents(args.validation_id)) };
 }
