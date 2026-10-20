@@ -1,5 +1,5 @@
 import { assertContract, validateContract } from "@rbw/factory-contract/validate";
-import type { Capabilities, Interpretation, NormalizedRequestInput } from "@rbw/factory-contract";
+import type { BaselineIdentity, Capabilities, Interpretation, NormalizedRequestInput } from "@rbw/factory-contract";
 import { describe, expect, it } from "vitest";
 import { buildCapabilities } from "../src/capabilities.ts";
 import { criteriaCatalogV1 } from "../src/criteria.ts";
@@ -179,6 +179,21 @@ describe("capabilities", () => {
     ]);
     const full = buildCapabilities({ registry: fixtureRegistry(), catalog: fixtureCatalog(), profile: TEST_PROFILE, now: NOW });
     expect(capabilities.combinations.filter((c) => c.host_id === "task-report")).toEqual(full.combinations.filter((c) => c.host_id === "task-report"));
+  });
+
+  it("takes a registered host's baseline from its adapter, not from the pinned list", () => {
+    class MovedBaseline extends FakeHostAdapter {
+      override baseline(): BaselineIdentity {
+        return { ...super.baseline(), baseline_id: "umami@0000000" };
+      }
+    }
+    const registry = fixtureRegistry().map((adapter) => (adapter.host_id === "umami" ? new MovedBaseline({ host_id: "umami", entries: adapter.entries }) : adapter));
+    const capabilities = buildCapabilities({ registry, catalog: fixtureCatalog(), profile: TEST_PROFILE, now: NOW });
+    expect(capabilities.hosts.map((host) => [host.host_id, host.baseline_id])).toEqual([
+      ["umami", "umami@0000000"],
+      ["task-report", "task-report@ca4a71f"],
+    ]);
+    assertContract("Capabilities", capabilities);
   });
 });
 
