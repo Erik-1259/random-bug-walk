@@ -10,7 +10,7 @@ import type { LostDeps } from "../../src/factory-lost.ts";
 import { CopyMeter } from "../../src/factory-meter.ts";
 import type { LaunchReport } from "../../src/factory-meter.ts";
 import type { FactoryRequestRecord } from "../../src/factory-ports.ts";
-import { CANDIDATE_A, CASE_ID, CREDENTIALS, FakeInstance, WORKER_IMAGE, acceptRequest, factoryWorld, operationState, slotHolder, syntheticUuid } from "./factory-fakes.ts";
+import { CANDIDATE_A, CASE_ID, CREDENTIALS, FakeInstance, PROTOCOL, VALIDATION_3_MICROUSD, WORKER_IMAGE, acceptRequest, factoryWorld, operationState, slotHolder, syntheticUuid } from "./factory-fakes.ts";
 import type { FactoryWorld } from "./factory-fakes.ts";
 
 const MATRIX = (JSON.parse(readFileSync(new URL("../../../../docs/product/fixtures/bug-request-v1/validation-passed.json", import.meta.url), "utf8")) as { matrix: ValidationMatrix }).matrix;
@@ -223,7 +223,7 @@ describe("finalizeLostWorker for a request", () => {
     w.ledger.budgets = w.budgets;
     w.clock.advance(181_000);
     expect(await finalizeLostWorker(lostDeps(), { request_id: record.request_id })).toEqual({ kind: "finalized", slot_held: true });
-    const validation = { request_id: record.request_id, case_id: CASE_ID, validation_id: syntheticUuid("7210"), host_id: "task-report" as const, package_sha256: { bug_case: "d".repeat(64), validator: "e".repeat(64) }, harness: { name: "rbw-validate" as const, version: "1" } };
+    const validation = { request_id: record.request_id, case_id: CASE_ID, validation_id: syntheticUuid("7210"), host_id: "task-report" as const, package_sha256: { bug_case: "d".repeat(64), validator: "e".repeat(64) }, harness: { name: "rbw-validate" as const, version: "1" }, protocol: PROTOCOL };
     expect(await startFactoryValidation(launchDeps(), validation)).toEqual({ kind: "busy", reason: "needs_reconciliation" });
     expect(await completeReconciliation(lostDeps(), { request_id: record.request_id })).toEqual({ kind: "released" });
     expect(await slotHolder(w)).toBeNull();
@@ -282,11 +282,11 @@ describe("finalizeLostWorker for a validation run", () => {
     await w.spend.releaseSlot({ slot_key: "factory", root_execution_id: record.root, actor_role: "factory-worker", evidence: null, reason: null });
     await w.budgets.close(record.budget_key, "fulfilled");
     const validationId = syntheticUuid("7200");
-    const started = await startFactoryValidation(launchDeps(), { request_id: record.request_id, case_id: CASE_ID, validation_id: validationId, host_id: "task-report", package_sha256: { bug_case: "d".repeat(64), validator: "e".repeat(64) }, harness: { name: "rbw-validate", version: "1" } });
+    const started = await startFactoryValidation(launchDeps(), { request_id: record.request_id, case_id: CASE_ID, validation_id: validationId, host_id: "task-report", package_sha256: { bug_case: "d".repeat(64), validator: "e".repeat(64) }, harness: { name: "rbw-validate", version: "1" }, protocol: PROTOCOL });
     expect(started.kind).toBe("accepted");
     await w.records.recordHeartbeat({ validation_id: validationId }, w.clock.now());
     const root = w.identity.validationRoot(validationId);
-    const operationId = validationOperation({ identity: w.identity, rates: w.rates }, { root, case_id: CASE_ID, host_id: "task-report" }).operation_id;
+    const operationId = validationOperation({ identity: w.identity, rates: w.rates }, { root, case_id: CASE_ID, host_id: "task-report", copies: 3 }).operation_id;
     return { record, validationId, operationId };
   }
 
@@ -295,10 +295,10 @@ describe("finalizeLostWorker for a validation run", () => {
     w.clock.advance(181_000);
     expect(await finalizeLostWorker(lostDeps(), { validation_id: validationId })).toEqual({ kind: "finalized", slot_held: false });
     const status = await w.spend.operationStatus({ operation_id: operationId });
-    expect(status.ok && [status.state, status.settled_microusd]).toEqual(["reconciled", BigInt(FACTORY_PROFILE.prices.validation_worst_case_microusd["task-report"])]);
+    expect(status.ok && [status.state, status.settled_microusd]).toEqual(["reconciled", BigInt(VALIDATION_3_MICROUSD)]);
     expect(await slotHolder(w)).toBeNull();
     const finished = (await w.records.validationEvents(validationId)).find((event) => event.type === "finished");
-    expect(finished?.data).toMatchObject({ result: "error", cost_microusd: FACTORY_PROFILE.prices.validation_worst_case_microusd["task-report"] });
+    expect(finished?.data).toMatchObject({ result: "error", cost_microusd: VALIDATION_3_MICROUSD });
     expect(w.records.types(record.request_id).slice(-2)).toEqual(["validation_finished", "budget_updated"]);
   });
 
@@ -317,7 +317,7 @@ describe("finalizeLostWorker for a validation run", () => {
   it("releases the slot of a finished run whose worker settled but stopped before releasing it", async () => {
     const { validationId, operationId } = await runningValidation();
     const root = w.identity.validationRoot(validationId);
-    const op = validationOperation({ identity: w.identity, rates: w.rates }, { root, case_id: CASE_ID, host_id: "task-report" });
+    const op = validationOperation({ identity: w.identity, rates: w.rates }, { root, case_id: CASE_ID, host_id: "task-report", copies: 3 });
     await w.spend.transition({ operation_id: operationId, from_state: "running", to_state: "terminal", actor_role: "factory-worker", terminal_status: "completed" });
     expect((await w.spend.settle(fullSettlement(op.envelope, operationId))).ok).toBe(true);
     await w.records.appendValidationEvent(validationId, { event_key: "finished", type: "finished", data: { result: "passed" } }, w.clock.now());
@@ -336,7 +336,7 @@ describe("finalizeLostWorker for a validation run", () => {
     expect(results.every((result) => (result.kind === "finalized" && !result.slot_held) || result.kind === "finished")).toBe(true);
     expect(await slotHolder(w)).toBeNull();
     expect(w.records.types(record.request_id).filter((type) => type === "attention")).toEqual([]);
-    const worst = FACTORY_PROFILE.prices.validation_worst_case_microusd["task-report"];
+    const worst = VALIDATION_3_MICROUSD;
     expect((await w.records.validationEvents(validationId)).filter((event) => event.type === "finished").map((event) => event.data.cost_microusd)).toEqual([worst]);
     const status = await w.spend.operationStatus({ operation_id: operationId });
     expect(status.ok && [status.state, status.settled_microusd]).toEqual(["reconciled", BigInt(worst)]);
@@ -359,7 +359,7 @@ describe("finalizeLostWorker for a validation run", () => {
       provider: "vercel-sandbox",
       deadline: new Date(w.clock.ms + 1_800_000),
       margin_s: 30,
-      mode: { kind: "child_of", operation_id: operationId },
+      mode: { kind: "child_of", operation_id: operationId, max_copies: 3 },
       log: (line) => w.logs.push(line),
     });
     let copy = "";
@@ -377,14 +377,14 @@ describe("finalizeLostWorker for a validation run", () => {
     // The copy was stopped and confirmed: the ledger releases the slot only once every child is confirmed.
     expect(w.sandbox.calls.some((call) => call.action === "stop" && call.name === copy)).toBe(true);
     const status = await w.spend.operationStatus({ operation_id: operationId });
-    expect(status.ok && [status.state, status.settled_microusd]).toEqual(["reconciled", BigInt(FACTORY_PROFILE.prices.validation_worst_case_microusd["task-report"])]);
+    expect(status.ok && [status.state, status.settled_microusd]).toEqual(["reconciled", BigInt(VALIDATION_3_MICROUSD)]);
     expect(await slotHolder(w)).toBeNull();
   });
 
   it("finishes a run past 1,800 s whose worker settled but had not finished it with the settled cost, releasing the slot and raising nothing", async () => {
     const { record, validationId, operationId } = await runningValidation();
     const root = w.identity.validationRoot(validationId);
-    const op = validationOperation({ identity: w.identity, rates: w.rates }, { root, case_id: CASE_ID, host_id: "task-report" });
+    const op = validationOperation({ identity: w.identity, rates: w.rates }, { root, case_id: CASE_ID, host_id: "task-report", copies: 3 });
     // The worker ended its run and settled it as measured, and had not yet finished it or released the slot.
     await w.spend.transition({ operation_id: operationId, from_state: "running", to_state: "terminal", actor_role: "factory-worker", terminal_status: "completed" });
     const settled = await w.spend.settle(validationSettlement(op.envelope, operationId, "task-report", [{ launched: true, lifetime_ms: 90_000 }]));
@@ -401,7 +401,7 @@ describe("finalizeLostWorker for a validation run", () => {
   it("writes the request's validation_finished from the finish recorded first when the worker finished the run during an overlapping call", async () => {
     const { record, validationId, operationId } = await runningValidation();
     const root = w.identity.validationRoot(validationId);
-    const op = validationOperation({ identity: w.identity, rates: w.rates }, { root, case_id: CASE_ID, host_id: "task-report" });
+    const op = validationOperation({ identity: w.identity, rates: w.rates }, { root, case_id: CASE_ID, host_id: "task-report", copies: 3 });
     // The call has read the run as unfinished; while it stops the run's sandbox, the worker ends and settles
     // the run as measured and records its finish, and is stopped before it appends the request's events.
     const get = w.sandbox.get.bind(w.sandbox);
@@ -429,7 +429,7 @@ describe("finalizeLostWorker for a validation run", () => {
   it("keeps the slot held for reconciliation when a run its worker settled but never finished cannot be confirmed stopped", async () => {
     const { record, validationId, operationId } = await runningValidation();
     const root = w.identity.validationRoot(validationId);
-    const op = validationOperation({ identity: w.identity, rates: w.rates }, { root, case_id: CASE_ID, host_id: "task-report" });
+    const op = validationOperation({ identity: w.identity, rates: w.rates }, { root, case_id: CASE_ID, host_id: "task-report", copies: 3 });
     await w.spend.transition({ operation_id: operationId, from_state: "running", to_state: "terminal", actor_role: "factory-worker", terminal_status: "completed" });
     expect((await w.spend.settle(validationSettlement(op.envelope, operationId, "task-report", [{ launched: true, lifetime_ms: 90_000 }]))).ok).toBe(true);
     w.sandbox.stopTakesEffect = false;

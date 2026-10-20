@@ -45,7 +45,8 @@ export interface MeterContext {
   /** No copy starts unless its timeout, the shutdown allowance and margin_s end by this time. */
   deadline: Date;
   margin_s: number;
-  mode: { kind: "own_operation"; role: BudgetRole } | { kind: "child_of"; operation_id: string };
+  /** child_of: `max_copies` is the run's reservation's copy count, from its package's protocol. */
+  mode: { kind: "own_operation"; role: BudgetRole } | { kind: "child_of"; operation_id: string; max_copies: number };
   /** Checked before each copy, before anything is reserved: false stops it. */
   beforeLaunch?: () => Promise<boolean>;
   log: (line: string) => void;
@@ -99,7 +100,7 @@ export class CopyMeter {
   private uncertainSeen = false;
   /** Set when a settlement exceeded its envelope, which halts the spend ledger: no further copy starts. */
   private halted = false;
-  /** Child mode: copies created so far; a validation run's reservation is priced for its host's most copies. */
+  /** Child mode: copies created so far; a validation run's reservation is priced for its package's copies. */
   private childLaunches = 0;
   private refused: { reason: RefusalReason; detail: string } | null = null;
 
@@ -141,8 +142,8 @@ export class CopyMeter {
     if (plan.limits.timeout_s > limits.timeout_s || plan.limits.vcpus > limits.vcpus || plan.limits.memory_mb > limits.memory_mb) {
       return { reason: "limits_exceed_profile", detail: `the plan's limits exceed ${plan.host}'s copy limits (${String(limits.vcpus)} vCPU, ${String(limits.memory_mb)} MB, ${String(limits.timeout_s)} s)` };
     }
-    if (this.ctx.mode.kind === "child_of" && this.childLaunches >= this.profile.validation.max_copies[plan.host]) {
-      return { reason: "limits_exceed_profile", detail: `a validation run of a ${plan.host} case starts at most ${String(this.profile.validation.max_copies[plan.host])} copies` };
+    if (this.ctx.mode.kind === "child_of" && this.childLaunches >= this.ctx.mode.max_copies) {
+      return { reason: "limits_exceed_profile", detail: `this validation run's package declares ${String(this.ctx.mode.max_copies)} copies, so it starts no more` };
     }
     const ends = this.ctx.now().getTime() + (plan.limits.timeout_s + this.profile.shutdown_seconds + this.ctx.margin_s) * 1000;
     if (ends > this.ctx.deadline.getTime()) return { reason: "no_time", detail: "the copy would not end before the deadline" };

@@ -14,7 +14,7 @@
 // Web-safe: no runner, driver or PGlite.
 import type { Rates } from "@rbw/envelope";
 import { VALIDATION_RESULT_VALUES } from "@rbw/factory-contract";
-import type { BusyReason, HarnessIdentity, HostId, PackageHashes, ValidationMatrix, ValidationRun } from "@rbw/factory-contract";
+import type { BusyReason, HarnessIdentity, HostId, PackageHashes, Protocol, ValidationMatrix, ValidationRun } from "@rbw/factory-contract";
 import { utcSeconds } from "@rbw/local-runner/shared";
 import {
   EVENT_KEYS,
@@ -226,6 +226,18 @@ export interface ValidationStartArgs {
   /** The case's two downloadable parts. */
   package_sha256: PackageHashes;
   harness: HarnessIdentity;
+  /**
+   * The protocol inside the case's delivered validator package (what the harness runs): its copies
+   * in all price the run's reservation and cap the copies it starts.
+   */
+  protocol: Pick<Protocol, "per_state">;
+}
+
+/** The total copies a protocol declares; LaunchConfigError when a state's count is not a positive whole number. */
+function protocolCopies(protocol: Pick<Protocol, "per_state">): number {
+  const counts = [protocol.per_state.clean.copies, protocol.per_state.buggy.copies, protocol.per_state.fixed.copies];
+  if (!counts.every((count) => Number.isSafeInteger(count) && count >= 1)) throw new LaunchConfigError("the validator package's protocol must declare a positive whole number of copies for each state");
+  return counts.reduce((total, count) => total + count, 0);
 }
 
 export type ValidationStart = { kind: "accepted"; run: ValidationRun } | { kind: "busy"; reason: BusyReason } | { kind: "budget_unavailable" } | { kind: "unavailable"; message: string };
@@ -273,13 +285,14 @@ const BUDGET_CODES = new Set(["budget_exhausted", "budget_closed", "insufficient
 
 /**
  * Starts a validation run in the POST (contract section 11): the factory
- * slot under the validation root, then the host's validation worst case reserved on the request
- * budget with the validation role. Busy or a refused reservation records nothing (the slot taken
+ * slot under the validation root, then the run's worst case, priced for the copies its package's
+ * protocol declares, reserved on the request budget with the validation role. Busy or a refused reservation records nothing (the slot taken
  * here is released). Then the run is recorded, validation_started and budget_updated are appended,
  * and its worker is launched.
  */
 export async function startFactoryValidation(deps: FactoryLaunchDeps, args: ValidationStartArgs): Promise<ValidationStart> {
   checkImage(deps.launch.image);
+  const copies = protocolCopies(args.protocol);
   const profile = deps.profile ?? FACTORY_PROFILE;
   const { spend, budgets } = deps.ledger;
   const request = await deps.records.request(args.request_id);
@@ -304,6 +317,7 @@ export async function startFactoryValidation(deps: FactoryLaunchDeps, args: Vali
     root,
     accepted_at: deps.now().toISOString(),
     package_sha256: args.package_sha256,
+    copies,
   };
   const op = validationOperation({ identity: deps.identity, rates: deps.rates, profile }, record);
   let reserved: Awaited<ReturnType<typeof budgets.reserve>>;

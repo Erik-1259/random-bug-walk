@@ -126,8 +126,8 @@ export function workerOperation(ctx: OperationContext, request: Pick<FactoryRequ
   });
 }
 
-/** A validation run's operation: its worker and its copies, reserved together on the request budget. */
-export function validationOperation(ctx: OperationContext, validation: Pick<FactoryValidationRecord, "root" | "case_id" | "host_id">): FactoryOperation {
+/** A validation run's operation: its worker and its copies (as many as its package's protocol declares), reserved together on the request budget. */
+export function validationOperation(ctx: OperationContext, validation: Pick<FactoryValidationRecord, "root" | "case_id" | "host_id" | "copies">): FactoryOperation {
   const profile = ctx.profile ?? FACTORY_PROFILE;
   return operation({
     identity: ctx.identity,
@@ -140,8 +140,8 @@ export function validationOperation(ctx: OperationContext, validation: Pick<Fact
     parent_execution_id: null,
     provider: SANDBOX_PROVIDER,
     sandbox_name: validationSandboxName(validation.root),
-    envelope: factoryEnvelope(ctx.rates, { kind: "validation", host: validation.host_id }, profile),
-    payload: { host_id: validation.host_id },
+    envelope: factoryEnvelope(ctx.rates, { kind: "validation", host: validation.host_id, copies: validation.copies }, profile),
+    payload: { host_id: validation.host_id, copies: validation.copies },
   });
 }
 

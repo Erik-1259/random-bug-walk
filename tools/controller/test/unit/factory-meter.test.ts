@@ -251,7 +251,7 @@ describe("CopyMeter (copies of a validation run)", () => {
     await w.spend.releaseSlot({ slot_key: "factory", root_execution_id: record.root, actor_role: "factory-worker", evidence: null, reason: null });
     const root = w.identity.validationRoot(syntheticUuid("7100"));
     await w.spend.acquireSlot({ slot_key: "factory", root_execution_id: root, actor_role: "factory-route" });
-    const validation = validationOperation({ identity: w.identity, rates: w.rates }, { root, case_id: CASE_ID, host_id: "task-report" });
+    const validation = validationOperation({ identity: w.identity, rates: w.rates }, { root, case_id: CASE_ID, host_id: "task-report", copies: 3 });
     const reserved = await w.ledger.budgets.reserve(record.budget_key, "validation", validation.request);
     expect(reserved.ok).toBe(true);
     await w.spend.transition({ operation_id: validation.operation_id, from_state: "prepared", to_state: "launching", actor_role: "factory-route", slot_key: "factory" });
@@ -268,7 +268,7 @@ describe("CopyMeter (copies of a validation run)", () => {
       provider: "vercel-sandbox",
       deadline: new Date(w.clock.ms + 1_800_000),
       margin_s: 0,
-      mode: { kind: "child_of", operation_id: validation.operation_id },
+      mode: { kind: "child_of", operation_id: validation.operation_id, max_copies: 3 },
       log: (line) => w.logs.push(line),
     });
     return { meter, operationId: validation.operation_id, root };
@@ -288,7 +288,7 @@ describe("CopyMeter (copies of a validation run)", () => {
     expect(slot.ok && slot.children.filter((child) => child.kind === "factory.copy").map((child) => child.confirmed)).toEqual([true, true]);
   });
 
-  it("starts no more copies than its host's validation reservation is priced for", async () => {
+  it("starts no more copies than its package's protocol declares, which its reservation is priced for", async () => {
     const { meter } = await validationMeter();
     const umami = (state: MeteredCopyPlan["state"]): MeteredCopyPlan => ({ ...plan(CASE_ID, state), host: "umami" });
     for (const state of ["clean", "buggy", "fixed"] as const) expect((await meter.run(umami(state), lives(1000))).kind).toBe("ran");

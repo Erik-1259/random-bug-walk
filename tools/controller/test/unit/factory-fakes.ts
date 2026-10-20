@@ -14,7 +14,7 @@ import { PGlite } from "@electric-sql/pglite";
 import { pack } from "tar-stream";
 import { loadRateSheet } from "@rbw/envelope";
 import type { Rates } from "@rbw/envelope";
-import type { CopyPlan, CopyRoots, EventType, HostId, StopCode } from "@rbw/factory-contract";
+import type { CopyPlan, CopyRoots, CopyState, EventType, HostId, Protocol, StopCode } from "@rbw/factory-contract";
 import type { SandboxInstance, SandboxSdk } from "@rbw/local-runner";
 import { sha256Hex } from "@rbw/schema";
 import { createSpend, migrate } from "@rbw/spend";
@@ -61,6 +61,22 @@ export const INTERPRETATION_SHA256 = "1".repeat(64);
 export const CASE_ID = "c".repeat(64);
 export const CANDIDATE_A = "a".repeat(64);
 export const CANDIDATE_B = "b".repeat(64);
+
+/** A synthetic protocol's per-state part: `copies` copies of each state, one round each. */
+export function protocolOf(copies: Record<CopyState, number> = { clean: 1, buggy: 1, fixed: 1 }): Pick<Protocol, "per_state"> {
+  const state = (n: number) => ({ copies: n, rounds_per_copy: 1, min_valid_runs: n });
+  return { per_state: { clean: state(copies.clean), buggy: state(copies.buggy), fixed: state(copies.fixed) } };
+}
+
+/** The protocol of the synthetic validator packages: one copy per state. */
+export const PROTOCOL = protocolOf();
+
+/**
+ * A validation run of a three-copy package on either host, worked from the v1 rate sheet: its worker
+ * at 2 vCPU and 4 GB for 1,860 s and its copies at 4 vCPU and 8 GB within 1,800 s plus three 60 s
+ * allowances (11,640 vCPU-s, 23,280 GB-s), and four creations.
+ */
+export const VALIDATION_3_MICROUSD = 413_867 + 137_094 + 3;
 
 /** A stand-in for the factory core's identity module, over synthetic namespaces. */
 export function syntheticIdentity(): FactoryIdentity {

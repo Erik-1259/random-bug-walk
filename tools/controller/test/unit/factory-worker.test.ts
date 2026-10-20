@@ -14,7 +14,7 @@ import type { FactoryEventInput, FactoryRequestRecord } from "../../src/factory-
 import { createSandboxCopyRunner } from "../../src/factory-sandbox-runner.ts";
 import { runFactoryValidation, runFactoryWorker, startHeartbeat } from "../../src/factory-worker.ts";
 import type { Orchestrate, RequestHooks, WorkerDeps } from "../../src/factory-worker.ts";
-import { CANDIDATE_A, CASE_ID, CREDENTIALS, FakeCopySandbox, FakeRecords, WORKER_IMAGE, acceptRequest, copyPlan, copyRoots, factoryWorld, operationState, slotHolder, syntheticUuid } from "./factory-fakes.ts";
+import { CANDIDATE_A, CASE_ID, CREDENTIALS, FakeCopySandbox, FakeRecords, PROTOCOL, VALIDATION_3_MICROUSD, WORKER_IMAGE, acceptRequest, copyPlan, copyRoots, factoryWorld, operationState, protocolOf, slotHolder, syntheticUuid } from "./factory-fakes.ts";
 import type { FactoryWorld } from "./factory-fakes.ts";
 
 const MATRIX = (JSON.parse(readFileSync(new URL("../../../../docs/product/fixtures/bug-request-v1/validation-passed.json", import.meta.url), "utf8")) as { matrix: ValidationMatrix }).matrix;
@@ -283,7 +283,7 @@ describe("runFactoryWorker", () => {
     expect(await operationState(w, workerId)).toBe("terminal");
     expect(await slotHolder(w)).toBe(record.root);
     w.ledger.spend = w.spend;
-    const validation = { request_id: record.request_id, case_id: CASE_ID, validation_id: syntheticUuid("7310"), host_id: "task-report" as const, package_sha256: { bug_case: "d".repeat(64), validator: "e".repeat(64) }, harness: { name: "rbw-validate" as const, version: "1" } };
+    const validation = { request_id: record.request_id, case_id: CASE_ID, validation_id: syntheticUuid("7310"), host_id: "task-report" as const, package_sha256: { bug_case: "d".repeat(64), validator: "e".repeat(64) }, harness: { name: "rbw-validate" as const, version: "1" }, protocol: PROTOCOL };
     expect(await startFactoryValidation(launchDeps(), validation)).toEqual({ kind: "busy", reason: "needs_reconciliation" });
     // The lost-worker routine leaves it held too: only reconciliation releases it.
     w.clock.advance(181_000);
@@ -341,10 +341,10 @@ describe("runFactoryValidation", () => {
     await w.spend.releaseSlot({ slot_key: "factory", root_execution_id: record.root, actor_role: "factory-worker", evidence: null, reason: null });
     await w.budgets.close(record.budget_key, "fulfilled");
     const validationId = syntheticUuid("7300");
-    const started = await startFactoryValidation(launchDeps(), { request_id: record.request_id, case_id: CASE_ID, validation_id: validationId, host_id: "task-report", package_sha256: { bug_case: "d".repeat(64), validator: "e".repeat(64) }, harness: { name: "rbw-validate", version: "1" } });
+    const started = await startFactoryValidation(launchDeps(), { request_id: record.request_id, case_id: CASE_ID, validation_id: validationId, host_id: "task-report", package_sha256: { bug_case: "d".repeat(64), validator: "e".repeat(64) }, harness: { name: "rbw-validate", version: "1" }, protocol: PROTOCOL });
     expect(started.kind).toBe("accepted");
     const root = w.identity.validationRoot(validationId);
-    return { record, validationId, operationId: validationOperation({ identity: w.identity, rates: w.rates }, { root, case_id: CASE_ID, host_id: "task-report" }).operation_id };
+    return { record, validationId, operationId: validationOperation({ identity: w.identity, rates: w.rates }, { root, case_id: CASE_ID, host_id: "task-report", copies: 3 }).operation_id };
   }
 
   it("runs the copies inside the window, settles its worker in full and its copies as measured, finishes and releases the slot", async () => {
@@ -374,6 +374,37 @@ describe("runFactoryValidation", () => {
     expect(w.records.heartbeats.some((beat) => "validation_id" in beat.target)).toBe(true);
     const finished = (await w.records.events(record.request_id)).find((event) => event.type === "validation_finished");
     expect(finished?.data).toEqual({ validation_id: validationId, result: "passed" });
+  });
+
+  it("prices and caps a run by the copies the protocol inside its delivered validator package declares", async () => {
+    const record = await acceptRequest(w);
+    await w.spend.releaseSlot({ slot_key: "factory", root_execution_id: record.root, actor_role: "factory-worker", evidence: null, reason: null });
+    await w.budgets.close(record.budget_key, "fulfilled");
+    const validationId = syntheticUuid("7320");
+    // Two copies of each state: six in all, where the earlier fixed totals priced three for an Umami case.
+    const protocol = protocolOf({ clean: 2, buggy: 2, fixed: 2 });
+    const started = await startFactoryValidation(launchDeps(), { request_id: record.request_id, case_id: CASE_ID, validation_id: validationId, host_id: "umami", package_sha256: { bug_case: "d".repeat(64), validator: "e".repeat(64) }, harness: { name: "rbw-validate", version: "1" }, protocol });
+    expect(started.kind).toBe("accepted");
+    const root = w.identity.validationRoot(validationId);
+    const operationId = validationOperation({ identity: w.identity, rates: w.rates }, { root, case_id: CASE_ID, host_id: "umami", copies: 6 }).operation_id;
+    const reserved = await w.spend.operationStatus({ operation_id: operationId });
+    // Its worker for 1,860 s and six copies inside 1,800 s plus six allowances, seven creations.
+    expect(reserved.ok && reserved.reserved_microusd).toBe(BigInt(439_467 + 145_574 + 5));
+    expect((await w.records.validation(validationId))?.copies).toBe(6);
+    const kinds: string[] = [];
+    const outcome = await runFactoryValidation(workerDeps(), {
+      validation_id: validationId,
+      validate: async (hooks) => {
+        for (const state of ["clean", "clean", "buggy", "buggy", "fixed", "fixed", "fixed"] as const) {
+          kinds.push((await hooks.meter.run({ subject: CASE_ID, host: "umami", state, limits: { timeout_s: 120, vcpus: 4, memory_mb: 8192 } }, lives(10_000))).kind);
+        }
+        return { result: "error", matrix: null, message: "synthetic: a seventh copy was refused" };
+      },
+    });
+    expect(kinds).toEqual(["ran", "ran", "ran", "ran", "ran", "ran", "refused"]);
+    expect(outcome).toEqual({ kind: "finished", result: "error", slot_released: true });
+    const settled = await w.spend.operationStatus({ operation_id: operationId });
+    expect(settled.ok && settled.state).toBe("reconciled");
   });
 
   it("admits a copy that ends inside the run's 30 s finish margin though not inside the request's 120 s copy margin", async () => {
@@ -512,7 +543,7 @@ describe("runFactoryValidation", () => {
     expect((await w.records.validationEvents(validationId)).length).toBe(validationAfterLost);
     // Settled once, by the lost-worker finish, at the full worst case.
     const status = await w.spend.operationStatus({ operation_id: operationId });
-    expect(status.ok && [status.state, status.settled_microusd]).toEqual(["reconciled", BigInt(FACTORY_PROFILE.prices.validation_worst_case_microusd["task-report"])]);
+    expect(status.ok && [status.state, status.settled_microusd]).toEqual(["reconciled", BigInt(VALIDATION_3_MICROUSD)]);
     expect(await slotHolder(w)).toBeNull();
   });
 });

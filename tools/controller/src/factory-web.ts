@@ -6,7 +6,7 @@
 import type { WorkerSandboxInstance, WorkerSandboxSdk } from "./factory-ports.ts";
 
 export { parseRateSheet } from "@rbw/envelope";
-export { FACTORY_HOSTS, FACTORY_PROFILE, ProfileMismatch, RATE_SHEET_V1_SHA256, factoryEnvelope, priceProfile, profileForService } from "./factory-profile.ts";
+export { CopyCountInvalid, FACTORY_HOSTS, FACTORY_PROFILE, ProfileMismatch, RATE_SHEET_V1_SHA256, factoryEnvelope, priceProfile, profileForService, validationWorstCase } from "./factory-profile.ts";
 export type { CopyLimitsProfile, EnvelopeKind, FactoryEnvelope, FactoryPrices, FactoryProfile, FactoryProfileBody, SandboxSize } from "./factory-profile.ts";
 export {
   EVENT_KEYS,

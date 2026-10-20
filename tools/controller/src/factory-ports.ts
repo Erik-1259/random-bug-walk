@@ -79,10 +79,10 @@ export interface FactoryRequestRecord {
 
 /**
  * A validation run's record. HELD: the spend ledger's validation record stores the IDs, the root
- * and its own record time, but not `host_id`, `accepted_at` or `package_sha256`, which this code
- * needs for the run's operation, its 1,800 s window and its harness input. Until one source for
- * them is chosen (columns on that record, or this code's first keyed validation event), the
- * integration cannot map this port; see HELD_INTERFACES in factory-wiring.ts.
+ * and its own record time, but not `host_id`, `accepted_at`, `package_sha256` or `copies`, which
+ * this code needs for the run's operation and its price, its 1,800 s window and its harness input.
+ * Until one source for them is chosen (columns on that record, or this code's first keyed
+ * validation event), the integration cannot map this port; see HELD_INTERFACES in factory-wiring.ts.
  */
 export interface FactoryValidationRecord {
   validation_id: string;
@@ -94,6 +94,11 @@ export interface FactoryValidationRecord {
   /** When the POST was accepted; the run's 1,800 s window counts from it. */
   accepted_at: string;
   package_sha256: PackageHashes;
+  /**
+   * The total copies the protocol inside the case's delivered validator package declares: the run's
+   * reservation is priced for them and no more copies start.
+   */
+  copies: number;
 }
 
 export type HeartbeatTarget = { request_id: string } | { validation_id: string };

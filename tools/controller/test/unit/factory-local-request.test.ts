@@ -19,7 +19,7 @@ import { MISSING_MODULES } from "../../src/factory-wiring.ts";
 import type { FactoryWiring } from "../../src/factory-wiring.ts";
 import type { Orchestrate, Validate } from "../../src/factory-worker.ts";
 import { UsageError } from "../../src/run-options.ts";
-import { CANDIDATE_A, CANDIDATE_B, CASE_ID, CREDENTIALS, WORKER_IMAGE, acceptRequest, factoryWorld, slotHolder, syntheticUuid } from "./factory-fakes.ts";
+import { CANDIDATE_A, CANDIDATE_B, CASE_ID, CREDENTIALS, PROTOCOL, WORKER_IMAGE, acceptRequest, factoryWorld, slotHolder, syntheticUuid } from "./factory-fakes.ts";
 import type { FactoryWorld } from "./factory-fakes.ts";
 
 let w: FactoryWorld;
@@ -145,7 +145,7 @@ describe("a full local request (synthetic integration proof)", () => {
     expect(w.budgets.closes).toEqual([{ budget_key: record.budget_key, cause: "fulfilled" }]);
 
     const validationId = syntheticUuid("7400");
-    const started = await startFactoryValidation(launchDeps(launcher), { request_id: record.request_id, case_id: CASE_ID, validation_id: validationId, host_id: "umami", package_sha256: { bug_case: "d".repeat(64), validator: "e".repeat(64) }, harness: { name: "rbw-validate", version: "1" } });
+    const started = await startFactoryValidation(launchDeps(launcher), { request_id: record.request_id, case_id: CASE_ID, validation_id: validationId, host_id: "umami", package_sha256: { bug_case: "d".repeat(64), validator: "e".repeat(64) }, harness: { name: "rbw-validate", version: "1" }, protocol: PROTOCOL });
     expect(started.kind).toBe("accepted");
     expect(launcher.runs).toHaveLength(2);
     expect(await launcher.runs[1]).toBe(0);

@@ -11,7 +11,7 @@ import { RUN_ONCE_SCRIPT } from "../../src/factory-run-once.ts";
 import { runFactoryValidation } from "../../src/factory-worker.ts";
 import type { FactoryLaunchDeps, ValidationStartArgs } from "../../src/factory-launch.ts";
 import type { WorkerSandboxCreateParams } from "../../src/factory-ports.ts";
-import { CASE_ID, CREDENTIALS, SyntheticApiError, WORKER_IMAGE, acceptRequest, factoryWorld, operationState, slotHolder, syntheticUuid } from "./factory-fakes.ts";
+import { CASE_ID, CREDENTIALS, PROTOCOL, SyntheticApiError, VALIDATION_3_MICROUSD, WORKER_IMAGE, acceptRequest, factoryWorld, operationState, slotHolder, syntheticUuid } from "./factory-fakes.ts";
 import type { FactoryWorld } from "./factory-fakes.ts";
 
 let w: FactoryWorld;
@@ -250,7 +250,7 @@ describe("startFactoryWorker", () => {
     expect(await operationState(w, workerOp(record).operation_id)).toBe("prepared");
     expect(w.sandbox.count("create")).toBe(0);
     expect(await slotHolder(w)).toBe(record.root);
-    const validation = { request_id: record.request_id, case_id: CASE_ID, validation_id: syntheticUuid("7010"), host_id: "task-report" as const, package_sha256: { bug_case: "d".repeat(64), validator: "e".repeat(64) }, harness: { name: "rbw-validate" as const, version: "1" } };
+    const validation = { request_id: record.request_id, case_id: CASE_ID, validation_id: syntheticUuid("7010"), host_id: "task-report" as const, package_sha256: { bug_case: "d".repeat(64), validator: "e".repeat(64) }, harness: { name: "rbw-validate" as const, version: "1" }, protocol: PROTOCOL };
     expect(await startFactoryValidation(deps(), validation)).toEqual({ kind: "busy", reason: "needs_reconciliation" });
   });
 
@@ -285,7 +285,7 @@ describe("startFactoryValidation", () => {
   }
 
   function args(requestId: string, validationId = syntheticUuid("7000")): ValidationStartArgs {
-    return { request_id: requestId, case_id: CASE_ID, validation_id: validationId, host_id: "task-report", package_sha256: { bug_case: "d".repeat(64), validator: "e".repeat(64) }, harness: { name: "rbw-validate", version: "1" } };
+    return { request_id: requestId, case_id: CASE_ID, validation_id: validationId, host_id: "task-report", package_sha256: { bug_case: "d".repeat(64), validator: "e".repeat(64) }, harness: { name: "rbw-validate", version: "1" }, protocol: PROTOCOL };
   }
 
   it("takes the slot, reserves the host's validation worst case on the request budget after it closed, records the run and launches its worker", async () => {
@@ -299,12 +299,12 @@ describe("startFactoryValidation", () => {
     expect(started.run.cost_microusd).toBeNull();
     const root = w.identity.validationRoot(a.validation_id);
     expect(await slotHolder(w)).toBe(root);
-    const op = validationOperation({ identity: w.identity, rates: w.rates }, { root, case_id: CASE_ID, host_id: "task-report" });
+    const op = validationOperation({ identity: w.identity, rates: w.rates }, { root, case_id: CASE_ID, host_id: "task-report", copies: 3 });
     const status = await w.spend.operationStatus({ operation_id: op.operation_id });
     expect(status.ok && status.state).toBe("running");
-    expect(status.ok && status.reserved_microusd).toBe(BigInt(FACTORY_PROFILE.prices.validation_worst_case_microusd["task-report"]));
+    expect(status.ok && status.reserved_microusd).toBe(BigInt(VALIDATION_3_MICROUSD));
     const budget = await w.ledger.budgets.status(record.budget_key);
-    expect(budget.ok && budget.open_microusd).toBe(BigInt(FACTORY_PROFILE.prices.validation_worst_case_microusd["task-report"]));
+    expect(budget.ok && budget.open_microusd).toBe(BigInt(VALIDATION_3_MICROUSD));
     expect((await w.records.validation(a.validation_id))?.root).toBe(root);
     expect(w.records.types(record.request_id).slice(-2)).toEqual(["validation_started", "budget_updated"]);
     const create = w.sandbox.calls.find((call) => call.action === "create")?.detail as WorkerSandboxCreateParams;
@@ -327,7 +327,7 @@ describe("startFactoryValidation", () => {
     expect(again.kind === "accepted" && [again.run.validation_id, again.run.state]).toEqual([a.validation_id, "queued"]);
     expect(w.sandbox.count("create")).toBe(1);
     const budget = await w.ledger.budgets.status(record.budget_key);
-    expect(budget.ok && budget.open_microusd).toBe(BigInt(FACTORY_PROFILE.prices.validation_worst_case_microusd["task-report"]));
+    expect(budget.ok && budget.open_microusd).toBe(BigInt(VALIDATION_3_MICROUSD));
     expect(w.records.types(record.request_id).filter((type) => type === "validation_started")).toHaveLength(1);
     expect(await startFactoryValidation(deps(), { ...a, case_id: "f".repeat(64) })).toEqual({ kind: "unavailable", message: "The validation ID is already used." });
   });
@@ -371,7 +371,7 @@ describe("startFactoryValidation", () => {
     const record = await finishedRequest();
     const a = args(record.request_id);
     const root = w.identity.validationRoot(a.validation_id);
-    const op = validationOperation({ identity: w.identity, rates: w.rates }, { root, case_id: CASE_ID, host_id: "task-report" });
+    const op = validationOperation({ identity: w.identity, rates: w.rates }, { root, case_id: CASE_ID, host_id: "task-report", copies: 3 });
     // An earlier start took the slot, reserved and began the launch, and its record never landed.
     expect((await w.spend.acquireSlot({ slot_key: "factory", root_execution_id: root, actor_role: "factory-route" })).ok).toBe(true);
     expect((await w.ledger.budgets.reserve(record.budget_key, "validation", op.request)).ok).toBe(true);

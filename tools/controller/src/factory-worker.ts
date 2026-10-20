@@ -306,7 +306,7 @@ export async function runFactoryValidation(deps: WorkerDeps, args: { validation_
       deadline,
       // The margin leaves the run time to confirm its last copy's stop, settle and finish inside the window.
       margin_s: profile.validation.finish_margin_s,
-      mode: { kind: "child_of", operation_id: op.operation_id },
+      mode: { kind: "child_of", operation_id: op.operation_id, max_copies: validation.copies },
       beforeLaunch: async () => (await checkpoint()) === "continue",
       log: deps.log,
       profile,

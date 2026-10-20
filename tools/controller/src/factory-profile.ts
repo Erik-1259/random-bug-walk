@@ -3,9 +3,11 @@
 // worker's lifetime and heartbeat timing, each host's copy limits and the validation window live
 // here and nowhere else; the factory core and the web service receive them by injection. Its
 // envelopes are priced from the pinned rate sheet (packages/envelope/rate-sheets/v1.json): the
-// priced amounts are frozen below, a test recomputes them from the sheet, and every reservation
-// re-prices its lines from the sheet it is given and refuses when the total differs. The numbers
-// for lifetimes and copy counts are predictions until measured on the hosted path.
+// worker's and each copy's amounts are frozen below, a test recomputes them from the sheet, and
+// every reservation re-prices its lines from the sheet it is given and refuses when the total
+// differs. A validation run is priced from the protocol inside the case's delivered validator
+// package (its copy count), so its amount is computed per run from the same sheet. The numbers for
+// lifetimes are predictions until measured on the hosted path.
 //
 // This module is web-safe: it imports only @rbw/envelope and @rbw/schema.
 import { priceFor } from "@rbw/envelope";
@@ -58,8 +60,6 @@ export interface FactoryProfileBody {
     /** A copy starts only when its timeout, the shutdown allowance and this margin end within the window, leaving time to settle and finish. */
     finish_margin_s: number;
     worker: SandboxSize;
-    /** The most copies one validation run of a host's case may start (its protocol's total). */
-    max_copies: Record<HostId, number>;
   };
 }
 
@@ -67,7 +67,6 @@ export interface FactoryProfileBody {
 export interface FactoryPrices {
   worker_worst_case_microusd: number;
   copy_worst_case_microusd: Record<HostId, number>;
-  validation_worst_case_microusd: Record<HostId, number>;
 }
 
 export type FactoryProfile = Readonly<FactoryProfileBody & { prices: FactoryPrices; profile_sha256: string }>;
@@ -105,14 +104,12 @@ const BODY: FactoryProfileBody = {
     max_run_s: 1800,
     finish_margin_s: 30,
     worker: { vcpus: 2, memory_gb: 4, timeout_s: 1800 },
-    max_copies: { umami: 3, "task-report": 7 },
   },
 };
 
 const PRICES: FactoryPrices = {
   worker_worst_case_microusd: 346_482,
   copy_worst_case_microusd: { umami: 147_682, "task-report": 147_682 },
-  validation_worst_case_microusd: { umami: 550_964, "task-report": 596_405 },
 };
 
 function deepFreeze<T>(value: T): T {
@@ -172,14 +169,14 @@ export function copyQuantity(host: HostId, profile: FactoryProfileBody = FACTORY
 }
 
 /**
- * One validation run of a host's case: its worker over the whole window, and its copies. The copies
- * run one at a time and none starts unless it ends within the window, so together they live at most
- * the window plus one shutdown allowance per copy (which also covers rounding each lifetime up).
+ * One validation run of a host's case whose protocol declares `copies` copies in all: its worker over
+ * the whole window, and its copies. The copies run one at a time and none starts unless it ends within
+ * the window, so together they live at most the window plus one shutdown allowance per copy (which
+ * also covers rounding each lifetime up).
  */
-export function validationQuantity(host: HostId, profile: FactoryProfileBody = FACTORY_PROFILE): SandboxQuantity {
+export function validationQuantity(host: HostId, copies: number, profile: FactoryProfileBody = FACTORY_PROFILE): SandboxQuantity {
   const v = profile.validation;
   const copy = profile.copy[host];
-  const copies = v.max_copies[host];
   return sum([
     sandboxQuantity(v.worker, v.worker.timeout_s + profile.shutdown_seconds, 1),
     sandboxQuantity({ vcpus: copy.vcpus, memory_gb: copyMemoryGb(copy) }, v.max_run_s + copies * profile.shutdown_seconds, copies),
@@ -242,7 +239,7 @@ export function priceQuantity(rates: Rates, quantity: SandboxQuantity, profile: 
   };
 }
 
-/** Prices every envelope of a profile body from a rate sheet. */
+/** Prices the frozen envelopes of a profile body (the worker's and each host's copy) from a rate sheet. */
 export function priceProfile(rates: Rates, profile: FactoryProfileBody = FACTORY_PROFILE): FactoryPrices | { error: string } {
   const amount = (quantity: SandboxQuantity): number | null => {
     const envelope = priceQuantity(rates, quantity, { profile_sha256: "0".repeat(64) });
@@ -250,35 +247,50 @@ export function priceProfile(rates: Rates, profile: FactoryProfileBody = FACTORY
   };
   const worker = amount(workerQuantity(profile));
   const copy = { umami: amount(copyQuantity("umami", profile)), "task-report": amount(copyQuantity("task-report", profile)) };
-  const validation = { umami: amount(validationQuantity("umami", profile)), "task-report": amount(validationQuantity("task-report", profile)) };
-  if (worker === null || copy.umami === null || copy["task-report"] === null || validation.umami === null || validation["task-report"] === null) return { error: "the rate sheet has no sandbox price" };
+  if (worker === null || copy.umami === null || copy["task-report"] === null) return { error: "the rate sheet has no sandbox price" };
   return {
     worker_worst_case_microusd: worker,
     copy_worst_case_microusd: { umami: copy.umami, "task-report": copy["task-report"] },
-    validation_worst_case_microusd: { umami: validation.umami, "task-report": validation["task-report"] },
   };
 }
 
-export type EnvelopeKind = { kind: "worker" } | { kind: "copy"; host: HostId } | { kind: "validation"; host: HostId };
+/** `copies`: the total copies the protocol inside the case's delivered validator package declares. */
+export type EnvelopeKind = { kind: "worker" } | { kind: "copy"; host: HostId } | { kind: "validation"; host: HostId; copies: number };
 
 export class ProfileMismatch extends Error {
   override name = "ProfileMismatch";
 }
 
+/** The validation run's copy count is not a positive whole number. */
+export class CopyCountInvalid extends Error {
+  override name = "CopyCountInvalid";
+}
+
 /**
  * The envelope a factory operation reserves, priced from `rates`. Throws ProfileMismatch when the
- * sheet is not the profile's or its total differs from the profile's frozen amount, so a changed
- * sheet can never reserve amounts other than the ones the service published.
+ * sheet is not the profile's, or, for the worker and a copy, when its total differs from the
+ * profile's frozen amount, so a changed sheet can never reserve amounts other than the ones the
+ * service published. A validation run's amount depends on its package's copy count; the sheet's
+ * hash fixes its prices.
  */
 export function factoryEnvelope(rates: Rates, which: EnvelopeKind, profile: FactoryProfile = FACTORY_PROFILE): FactoryEnvelope {
   if (rates.rate_sheet_sha256 !== profile.rate_sheet_sha256) throw new ProfileMismatch("the rate sheet is not the factory profile's");
-  const quantity = which.kind === "worker" ? workerQuantity(profile) : which.kind === "copy" ? copyQuantity(which.host, profile) : validationQuantity(which.host, profile);
-  const expected =
-    which.kind === "worker" ? profile.prices.worker_worst_case_microusd : which.kind === "copy" ? profile.prices.copy_worst_case_microusd[which.host] : profile.prices.validation_worst_case_microusd[which.host];
+  if (which.kind === "validation" && (!Number.isSafeInteger(which.copies) || which.copies < 1)) throw new CopyCountInvalid("a validation run's copy count must be a positive whole number");
+  const quantity = which.kind === "worker" ? workerQuantity(profile) : which.kind === "copy" ? copyQuantity(which.host, profile) : validationQuantity(which.host, which.copies, profile);
   const envelope = priceQuantity(rates, quantity, profile);
   if (!envelope.ok) throw new ProfileMismatch(`the rate sheet cannot price the factory profile (${envelope.code})`);
-  if (envelope.reserved_microusd !== BigInt(expected)) throw new ProfileMismatch("the priced envelope differs from the factory profile's amount");
+  const expected = which.kind === "worker" ? profile.prices.worker_worst_case_microusd : which.kind === "copy" ? profile.prices.copy_worst_case_microusd[which.host] : null;
+  if (expected !== null && envelope.reserved_microusd !== BigInt(expected)) throw new ProfileMismatch("the priced envelope differs from the factory profile's amount");
   return envelope;
+}
+
+/**
+ * The worst case of a validation run of a host's case whose protocol declares `copies` copies in
+ * all, in micro-USD: what its accepted POST reserves (contract section 11), and what an
+ * interpretation publishes as the host's worst case per validation for the host's protocol.
+ */
+export function validationWorstCase(rates: Rates, host: HostId, copies: number, profile: FactoryProfile = FACTORY_PROFILE): number {
+  return Number(factoryEnvelope(rates, { kind: "validation", host, copies }, profile).reserved_microusd);
 }
 
 /** The request form's limits and the profile hash, as the web service publishes them. */
