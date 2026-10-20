@@ -14,7 +14,7 @@ import { CHECK_SET_VALUES } from "@rbw/factory-contract";
 import type { Case, CatalogEntry, Cell, CellObservation, CheckSet, CopyState, HostId, RequestOutcome, StopCode } from "@rbw/factory-contract";
 import { assignItem, demonstratedCriteria, itemStates, nextCandidate, servesItem, unfilledUnits } from "./assignment.ts";
 import type { ItemState, PlannedCandidate } from "./assignment.ts";
-import { admitCandidate, budgetRoom, ledgerStop } from "./budget.ts";
+import { admitCandidate, budgetRoom, ledgerStop, overrun } from "./budget.ts";
 import { PACKAGE_FORMATS, QUALIFICATION_ROUTE } from "./capabilities.ts";
 import { bugTypeOf } from "./criteria.ts";
 import type { CriteriaCatalog } from "./criteria.ts";
@@ -148,16 +148,35 @@ class RequestRun {
     this.attentionRaised = true;
   }
 
-  private async finish(stopCode: StopCode): Promise<RunResult> {
+  /**
+   * Settles the worker and appends `request_finished`. The stop code the loop decided stands unless
+   * the request's accounting says otherwise, in this order:
+   * - an uncertain outcome, including a rejected worker settlement (whose reservation then stays
+   *   held, never retried), finishes `needs_reconciliation`;
+   * - an overrun the ledger shows once the worker settled finishes `operational_error` (contract
+   *   section 8.5: an overrun found while the request runs, from a copy, a candidate's settlement or
+   *   the worker's own), ahead of a fill, a stop or a limit;
+   * - a failed ledger read or budget event after the worker settled finishes `operational_error`,
+   *   since the request's accounting could not be confirmed.
+   * The budget is closed with the loop's decided code, which settleWorker needs before the overrun
+   * can be read.
+   */
+  private async finish(decided: StopCode): Promise<RunResult> {
     this.finishing = true;
+    let stopCode = decided;
     try {
-      await this.deps.ledger.settleWorker({ stop_code: stopCode });
+      await this.deps.ledger.settleWorker({ stop_code: decided });
     } catch (error) {
       this.note("settling the worker", error);
-      // The worker's spend is now unknown: it stays held for an operator, and the outcome stands.
       await this.raiseReconciliation();
     }
-    await this.budgetChanged("run:worker-settled", "the worker");
+    try {
+      if (overrun(await this.budgetChanged("run:worker-settled", "the worker"))) stopCode = "operational_error";
+    } catch (error) {
+      this.note("recording the budget after the worker settled", error);
+      stopCode = "operational_error";
+    }
+    if (this.uncertain) stopCode = "needs_reconciliation";
     await this.append(requestFinished(stopCode, this.at()));
     return { outcome: OUTCOME_OF[stopCode], stop_code: stopCode, needs_reconciliation: this.uncertain, delivered: this.delivered, notes: [...this.notes] };
   }
@@ -295,10 +314,9 @@ class RequestRun {
         return this.finishUncertain();
       }
       this.current.settled = true;
-      const settled = await this.budgetChanged(`cand:${next.candidate_id}:settled`, "the finished candidate");
-      // An overrun found while the request runs finishes it operational_error (contract section 8.5),
-      // ahead of a fill, a stop or the deadline.
-      if (ledgerStop(settled) === "overrun") return this.finish("operational_error");
+      // An overrun this settlement shows finishes the request operational_error: finish() reads the
+      // ledger once the worker settled, ahead of a fill, a stop or the deadline.
+      await this.budgetChanged(`cand:${next.candidate_id}:settled`, "the finished candidate");
       if (outcome.kind === "stop") return this.finish(outcome.stop_code);
       if (outcome.kind === "failed") return this.finish("operational_error");
     }

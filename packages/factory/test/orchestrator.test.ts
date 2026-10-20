@@ -314,6 +314,56 @@ describe("runRequest: budget", () => {
     expect(w.status()).toMatchObject({ outcome: "operational_error", delivery: "complete", budget: { overrun: true } });
   });
 
+  it("finishes operational_error, not fulfilled, when the worker's own settlement overruns the budget", async () => {
+    // $1.50 budget: the candidate settles at its $0.30 worst case, then the worker reports $1.30 against its $0.20 reservation.
+    const w = world({ input: concurrencyOnly(1, 1_500_000), ledger: { workerCost: 1_300_000 } });
+    const result = await w.run();
+    expect(result).toMatchObject({ outcome: "operational_error", stop_code: "operational_error", needs_reconciliation: false, delivered: 1 });
+    expect(finished(w.events.events)).toEqual({ outcome: "operational_error", stop_code: "operational_error" });
+    expect(w.status()).toMatchObject({ delivery: "complete", budget: { overrun: true, remaining_microusd: -100_000 } });
+  });
+
+  it("finishes operational_error when the last settlement overruns while the ledger also reports a halt", async () => {
+    const w = world({ input: concurrencyOnly(1, 1_500_000), ledger: { candidateCost: () => 1_400_000 } });
+    ledgerWith(w, {
+      settleCandidate: async (input) => {
+        await w.ledger.settleCandidate(input);
+        w.ledger.halted = true;
+      },
+    });
+    const result = await w.run();
+    expect(result).toMatchObject({ outcome: "operational_error", stop_code: "operational_error", delivered: 1 });
+    expect(w.status().budget.overrun).toBe(true);
+  });
+
+  it("keeps fulfilled when the ledger halts only after the last needed case settled: the halt stopped no work", async () => {
+    const w = world({ input: concurrencyOnly(1) });
+    ledgerWith(w, {
+      settleCandidate: async (input) => {
+        await w.ledger.settleCandidate(input);
+        w.ledger.halted = true;
+      },
+    });
+    const result = await w.run();
+    expect(result).toMatchObject({ outcome: "fulfilled", stop_code: "fulfilled", delivered: 1 });
+  });
+
+  it("still appends request_finished, operational_error, when the ledger read after the worker's settlement fails", async () => {
+    const w = world({ input: concurrencyOnly(1) });
+    let workerSettled = false;
+    ledgerWith(w, {
+      status: () => (workerSettled ? Promise.reject(new Error("connection reset")) : w.ledger.status()),
+      settleWorker: async (input) => {
+        await w.ledger.settleWorker(input);
+        workerSettled = true;
+      },
+    });
+    const result = await w.run();
+    expect(result).toMatchObject({ outcome: "operational_error", stop_code: "operational_error", needs_reconciliation: false, delivered: 1 });
+    expect(result.notes).toEqual([expect.stringContaining("connection reset")]);
+    expect(finished(w.events.events)).toEqual({ outcome: "operational_error", stop_code: "operational_error" });
+  });
+
   it("finishes operational_error, not cancelled, when a stopped candidate's settlement overruns the budget", async () => {
     const w = world({
       input: concurrencyOnly(1, 1_500_000),
@@ -424,13 +474,13 @@ describe("runRequest: uncertain outcomes", () => {
     expect(w.qualified).toEqual([]);
   });
 
-  it("keeps the outcome but asks for reconciliation when the worker's settlement fails", async () => {
+  it("finishes needs_reconciliation when the worker's settlement fails, keeping the worker's reservation and the delivered case", async () => {
     const w = world({ input: concurrencyOnly(1) });
-    const ledger = w.ledger;
-    w.deps.ledger = { status: () => ledger.status(), reserveCandidate: (i) => ledger.reserveCandidate(i), settleCandidate: (i) => ledger.settleCandidate(i), settleWorker: () => Promise.reject(new Error("timeout")) };
+    ledgerWith(w, { settleWorker: () => Promise.reject(new Error("timeout")) });
     const result = await w.run();
-    expect(result).toMatchObject({ outcome: "fulfilled", stop_code: "fulfilled", needs_reconciliation: true });
-    expect(w.status()).toMatchObject({ outcome: "fulfilled", attention: { code: "needs_reconciliation" } });
+    expect(result).toMatchObject({ outcome: "operational_error", stop_code: "needs_reconciliation", needs_reconciliation: true, delivered: 1 });
+    expect(finished(w.events.events)).toEqual({ outcome: "operational_error", stop_code: "needs_reconciliation" });
+    expect(w.status()).toMatchObject({ outcome: "operational_error", delivery: "complete", attention: { code: "needs_reconciliation" }, budget: { reserved_microusd: 200_000 } });
   });
 });
 

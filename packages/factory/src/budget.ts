@@ -15,10 +15,15 @@ export function budgetRoom(status: Pick<LedgerStatus, "budget_microusd" | "reser
   return status.budget_microusd - status.reserved_microusd - status.spent_microusd;
 }
 
+/** Committed exceeds the budget (contract section 8.5), whatever the halt flags say. */
+export function overrun(status: Pick<LedgerStatus, "budget_microusd" | "reserved_microusd" | "spent_microusd">): boolean {
+  return budgetRoom(status) < 0;
+}
+
 export function ledgerStop(status: LedgerStatus): LedgerStop | null {
   if (status.halted) return "halted";
   if (status.pool_halted) return "pool_halted";
-  if (budgetRoom(status) < 0) return "overrun";
+  if (overrun(status)) return "overrun";
   return null;
 }
 
