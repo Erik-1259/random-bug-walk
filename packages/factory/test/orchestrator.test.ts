@@ -441,6 +441,44 @@ describe("runRequest: internal failures and admission edges", () => {
     expect(w.status()).toMatchObject({ attention: { code: "needs_reconciliation" }, budget: { reserved_microusd: 300_000 } });
   });
 
+  it("records the selection before ending the candidate when its candidate_selected append fails without committing", async () => {
+    const w = world({ input: concurrencyOnly(1) });
+    const sink = w.deps.events;
+    let failed = false;
+    w.deps.events = {
+      append: (event) => {
+        if (failed || event.type !== "candidate_selected") return sink.append(event);
+        failed = true;
+        return Promise.reject(new Error("connection reset"));
+      },
+    };
+    const result = await w.run();
+    expect(result).toMatchObject({ outcome: "operational_error", stop_code: "operational_error", needs_reconciliation: false });
+    expect(types(w.events.events).filter((type) => type.startsWith("candidate_"))).toEqual(["candidate_selected", "candidate_incomplete"]);
+    expect(w.ledger.calls.map((call) => call.call)).toEqual(["settleWorker"]);
+    expect(validateContract("RequestStatus", w.status())).toEqual([]);
+    expect(w.status().candidates.map((candidate) => [candidate.stage, candidate.reason?.code])).toEqual([["incomplete", "incomplete_run"]]);
+  });
+
+  it("records the selection once when its candidate_selected append committed but reported a failure", async () => {
+    const w = world({ input: concurrencyOnly(1) });
+    const sink = w.deps.events;
+    let failed = false;
+    w.deps.events = {
+      append: async (event) => {
+        await sink.append(event);
+        if (failed || event.type !== "candidate_selected") return;
+        failed = true;
+        throw new Error("connection reset after the commit");
+      },
+    };
+    const result = await w.run();
+    expect(result).toMatchObject({ outcome: "operational_error", stop_code: "operational_error", needs_reconciliation: false });
+    expect(types(w.events.events).filter((type) => type.startsWith("candidate_"))).toEqual(["candidate_selected", "candidate_incomplete"]);
+    expect(validateContract("RequestStatus", w.status())).toEqual([]);
+    expect(w.status().candidates.map((candidate) => [candidate.stage, candidate.reason?.code])).toEqual([["incomplete", "incomplete_run"]]);
+  });
+
   it("finishes operational_error without a candidate when the stop check fails before one starts", async () => {
     const w = world({ input: concurrencyOnly(1) });
     w.deps.stopRequested = () => Promise.reject(new Error("connection reset"));

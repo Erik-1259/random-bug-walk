@@ -99,8 +99,11 @@ class RequestRun {
   private reconciliation = false;
   private hookError: { error: unknown } | null = null;
   private readonly notes: string[] = [];
-  /** The candidate of the current iteration: whether it ended, holds a reservation, and settled. */
-  private current: { candidate: PlannedCandidate; ended: boolean; reserved: boolean; settled: boolean } | null = null;
+  /**
+   * The candidate of the current iteration: its `candidate_selected` event, whether that append resolved,
+   * and whether the candidate ended, holds a reservation, and settled.
+   */
+  private current: { candidate: PlannedCandidate; selection: NewEvent; selected: boolean; ended: boolean; reserved: boolean; settled: boolean } | null = null;
   private finishing = false;
 
   constructor(deps: RunRequestDeps) {
@@ -192,6 +195,9 @@ class RequestRun {
       this.note("the request loop", error);
       const current = this.current;
       if (current !== null && !current.ended) {
+        // A selection whose append failed may or may not have committed. Appending the same event again
+        // replays it or records it, so the end never names a candidate the event log lacks.
+        if (!current.selected) await this.append(current.selection);
         await this.append(candidateEnded(current.candidate, "incomplete_run", this.at(), "Incomplete: the worker hit an internal error during this candidate. It is not reproduction and was not retried."));
       }
       if (current !== null && current.reserved && !current.settled) return this.finishUncertain();
@@ -233,8 +239,10 @@ class RequestRun {
       const duplicateOf = defects.get(next.defect_id);
       if (duplicateOf === undefined && started >= deps.request.interpretation.limits.max_candidates) return this.finish("candidate_limit");
       tried.add(next.candidate_id);
-      this.current = { candidate: next, ended: false, reserved: false, settled: false };
-      await this.append(candidateSelected(next, this.at()));
+      const selection = candidateSelected(next, this.at());
+      this.current = { candidate: next, selection, selected: false, ended: false, reserved: false, settled: false };
+      await this.append(selection);
+      this.current.selected = true;
       if (duplicateOf !== undefined) {
         await this.append(candidateEnded(next, "duplicate_defect", this.at(), `Skipped: this entry plants the same defect as ${duplicateOf}, which this request already tried.`));
         continue;
