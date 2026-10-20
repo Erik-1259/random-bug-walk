@@ -3,10 +3,12 @@ import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { validateContract } from "@rbw/factory-contract/validate";
 import { FACTORY_PROFILE } from "../../src/factory-profile.ts";
 import { validationOperation, workerOperation, workerSandboxName } from "../../src/factory-ledger.ts";
 import { WORKER_REPOSITORY, WORKER_RUN_ONCE_DIR, startFactoryValidation, startFactoryWorker } from "../../src/factory-launch.ts";
 import { RUN_ONCE_SCRIPT } from "../../src/factory-run-once.ts";
+import { runFactoryValidation } from "../../src/factory-worker.ts";
 import type { FactoryLaunchDeps, ValidationStartArgs } from "../../src/factory-launch.ts";
 import type { WorkerSandboxCreateParams } from "../../src/factory-ports.ts";
 import { CASE_ID, CREDENTIALS, SyntheticApiError, WORKER_IMAGE, acceptRequest, factoryWorld, operationState, slotHolder, syntheticUuid } from "./factory-fakes.ts";
@@ -328,6 +330,32 @@ describe("startFactoryValidation", () => {
     expect(budget.ok && budget.open_microusd).toBe(BigInt(FACTORY_PROFILE.prices.validation_worst_case_microusd["task-report"]));
     expect(w.records.types(record.request_id).filter((type) => type === "validation_started")).toHaveLength(1);
     expect(await startFactoryValidation(deps(), { ...a, case_id: "f".repeat(64) })).toEqual({ kind: "unavailable", message: "The validation ID is already used." });
+  });
+
+  it("answers a repeated start with the stored run as it stands: running once its worker started, then its finish", async () => {
+    const record = await finishedRequest();
+    const a = args(record.request_id);
+    expect((await startFactoryValidation(deps(), a)).kind).toBe("accepted");
+    const startedAt = w.clock.now().toISOString();
+    await w.records.appendValidationEvent(a.validation_id, { event_key: "running", type: "running", data: { started_at: startedAt } }, w.clock.now());
+    const running = await startFactoryValidation(deps(), a);
+    if (running.kind !== "accepted") throw new Error("synthetic: the repeated start was not accepted");
+    expect([running.run.state, running.run.started_at, running.run.result, running.run.finished_at]).toEqual(["running", startedAt, null, null]);
+    expect(validateContract("ValidationRun", running.run)).toEqual([]);
+
+    w.clock.advance(60_000);
+    const finished = await runFactoryValidation(
+      { ledger: w.ledger, records: w.records, identity: w.identity, rates: w.rates, now: w.clock.now, log: (line) => w.logs.push(line), provider: "vercel-sandbox" },
+      { validation_id: a.validation_id, validate: () => Promise.resolve({ result: "error", matrix: null, message: "synthetic: no cell could run" }) },
+    );
+    expect(finished.kind).toBe("finished");
+    const again = await startFactoryValidation(deps(), a);
+    if (again.kind !== "accepted") throw new Error("synthetic: the repeated start was not accepted");
+    const stored = (await w.records.validationEvents(a.validation_id)).find((event) => event.type === "finished")?.data;
+    expect(again.run).toMatchObject({ state: "finished", result: "error", matrix: null, message: "synthetic: no cell could run", started_at: startedAt, finished_at: stored?.finished_at, cost_microusd: stored?.cost_microusd, poll_after_ms: 0 });
+    expect(typeof again.run.cost_microusd).toBe("number");
+    expect(validateContract("ValidationRun", again.run)).toEqual([]);
+    expect(w.sandbox.count("create")).toBe(1);
   });
 
   it("refuses a worker image that is not pinned by digest before taking the slot", async () => {

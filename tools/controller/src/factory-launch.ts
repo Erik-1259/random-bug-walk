@@ -13,7 +13,8 @@
 // needs_reconciliation, the sandbox is stopped on a best-effort basis and the slot stays held.
 // Web-safe: no runner, driver or PGlite.
 import type { Rates } from "@rbw/envelope";
-import type { BusyReason, HarnessIdentity, HostId, PackageHashes, ValidationRun } from "@rbw/factory-contract";
+import { VALIDATION_RESULT_VALUES } from "@rbw/factory-contract";
+import type { BusyReason, HarnessIdentity, HostId, PackageHashes, ValidationMatrix, ValidationRun } from "@rbw/factory-contract";
 import { utcSeconds } from "@rbw/local-runner/shared";
 import {
   EVENT_KEYS,
@@ -32,7 +33,7 @@ import {
 import type { FactoryOperation } from "./factory-ledger.ts";
 import { FACTORY_PROFILE } from "./factory-profile.ts";
 import type { FactoryProfile } from "./factory-profile.ts";
-import type { FactoryIdentity, FactoryLedger, FactoryRecords, FactoryRequestRecord, FactoryValidationRecord, WorkerSandboxInstance, WorkerSandboxSdk } from "./factory-ports.ts";
+import type { FactoryIdentity, FactoryLedger, FactoryRecords, FactoryRequestRecord, FactoryValidationRecord, ValidationEventInput, WorkerSandboxInstance, WorkerSandboxSdk } from "./factory-ports.ts";
 import { runOnceCommand } from "./factory-run-once.ts";
 
 /** How the worker is launched: the image from RBW_FACTORY_WORKER_IMAGE and the credentials it reads. */
@@ -232,21 +233,39 @@ export type ValidationStart = { kind: "accepted"; run: ValidationRun } | { kind:
 /** The poll interval a client is told while a run is queued or running. */
 export const VALIDATION_POLL_MS = 5000;
 
-function runView(args: ValidationStartArgs, finished: { at: Date; message: string; cost_microusd: number | null } | null): ValidationRun {
+function text(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
+}
+
+function isMatrix(value: unknown): value is ValidationMatrix {
+  return typeof value === "object" && value !== null && "original_suite" in value && "verification" in value;
+}
+
+/**
+ * The ValidationRun of a recorded run as its record and events stand (contract section 11): queued
+ * until its worker appended running, running until the run's finish was recorded, then that finish
+ * with its result, matrix, message and settled cost.
+ */
+export function validationRunView(record: Pick<FactoryValidationRecord, "validation_id" | "case_id" | "package_sha256">, events: readonly (ValidationEventInput & { at: string })[], harness: HarnessIdentity): ValidationRun {
+  const running = events.find((event) => event.type === "running");
+  const finished = events.find((event) => event.type === "finished");
+  const result = VALIDATION_RESULT_VALUES.find((value) => value === finished?.data.result) ?? null;
+  const done = finished !== undefined && result !== null ? finished : null;
+  const cost = done?.data.cost_microusd;
   return {
     contract_version: "bug-request/1",
-    validation_id: args.validation_id,
-    case_id: args.case_id,
-    state: finished === null ? "queued" : "finished",
-    result: finished === null ? null : "error",
-    matrix: null,
-    package_sha256: args.package_sha256,
-    harness: args.harness,
-    message: finished?.message ?? null,
-    started_at: null,
-    finished_at: finished === null ? null : finished.at.toISOString(),
-    cost_microusd: finished?.cost_microusd ?? null,
-    poll_after_ms: finished === null ? VALIDATION_POLL_MS : 0,
+    validation_id: record.validation_id,
+    case_id: record.case_id,
+    state: done !== null ? "finished" : running !== undefined ? "running" : "queued",
+    result: done === null ? null : result,
+    matrix: done !== null && isMatrix(done.data.matrix) ? done.data.matrix : null,
+    package_sha256: record.package_sha256,
+    harness,
+    message: done === null ? null : text(done.data.message),
+    started_at: text(running?.data.started_at),
+    finished_at: done === null ? null : (text(done.data.finished_at) ?? done.at),
+    cost_microusd: typeof cost === "number" ? cost : null,
+    poll_after_ms: done === null ? VALIDATION_POLL_MS : 0,
   };
 }
 
@@ -268,7 +287,7 @@ export async function startFactoryValidation(deps: FactoryLaunchDeps, args: Vali
   const root = deps.identity.validationRoot(args.validation_id);
   const existing = await deps.records.validation(args.validation_id);
   if (existing !== null) {
-    if (existing.request_id === args.request_id && existing.case_id === args.case_id) return { kind: "accepted", run: runView(args, null) };
+    if (existing.request_id === args.request_id && existing.case_id === args.case_id) return { kind: "accepted", run: validationRunView(existing, await deps.records.validationEvents(args.validation_id), args.harness) };
     return { kind: "unavailable", message: "The validation ID is already used." };
   }
 
@@ -312,15 +331,12 @@ export async function startFactoryValidation(deps: FactoryLaunchDeps, args: Vali
   await appendBudgetUpdate(deps, request, `validation:${args.validation_id}:reserved`, `Reserved ${usd(reserved.reserved_microusd)} for a validation run's worst case.`);
 
   const launched = await launchSandbox(deps, op, profile.validation.worker, workerCommandArgs({ validation_id: args.validation_id }));
-  if (launched.kind === "launched" || launched.kind === "replay") return { kind: "accepted", run: runView(args, null) };
   if (launched.kind === "definite_failure") {
-    const text = "The validation run could not be started.";
-    await finishValidation(deps, request, record, { result: "error", matrix: null, message: text, cost_microusd: 0, uncertain: false });
+    await finishValidation(deps, request, record, { result: "error", matrix: null, message: "The validation run could not be started.", cost_microusd: 0, uncertain: false });
     await releaseSlot(deps, root);
-    return { kind: "accepted", run: runView(args, { at: deps.now(), message: text, cost_microusd: 0 }) };
+  } else if (launched.kind === "uncertain") {
+    await finishValidation(deps, request, record, { result: "error", matrix: null, message: "The validation run's launch outcome is uncertain; its spend needs reconciliation.", cost_microusd: null, uncertain: true });
+    deps.log(`factory validation ${args.validation_id} launch uncertain: ${launched.detail}; slot held`);
   }
-  const text = "The validation run's launch outcome is uncertain; its spend needs reconciliation.";
-  await finishValidation(deps, request, record, { result: "error", matrix: null, message: text, cost_microusd: null, uncertain: true });
-  deps.log(`factory validation ${args.validation_id} launch uncertain: ${launched.detail}; slot held`);
-  return { kind: "accepted", run: runView(args, { at: deps.now(), message: text, cost_microusd: null }) };
+  return { kind: "accepted", run: validationRunView(record, await deps.records.validationEvents(args.validation_id), args.harness) };
 }
