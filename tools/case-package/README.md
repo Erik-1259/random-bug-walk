@@ -8,7 +8,7 @@ The exporter for a case's two package parts, the bug case (`rbw-bug-case/1`) and
 |---|---|---|
 | `@rbw/case-package` | `exportCase`, the prepared directory (`writePrepared`, `readPreparedIndex`, `readPreparedObject`), manifest readers, patch application, `resultsSha256`, `runPrepareCli`, and everything below | yes (Node) |
 | `@rbw/case-package/format` | Format constants, manifest shapes, `pairSha256`, `packageFilename`, the prepared index shape, `CaseIdentity` | no |
-| `@rbw/case-package/assembly` | `assembleFinalValidator(core, evidence)`: the final validator archive, in memory | no |
+| `@rbw/case-package/assembly` | `assembleFinalValidator(core, evidence)`: the final validator archive, in memory; `inspectValidator(bytes)`: the `core_sha256` and `evidence_sha256` a stored validator archive holds | no |
 | `@rbw/case-package/synthetic` | The synthetic host: `buildSyntheticPair`, `buildMismatchedSyntheticPair`, `syntheticAdapter`, `syntheticEntry`, `syntheticIdentity`, `syntheticPairInput` | only the adapter's input methods and `collect` |
 
 The format, assembly and synthetic pair builder import no runner, no child process and no Docker code, so the web routes and the test mode can use them.
@@ -22,7 +22,7 @@ const prepared = await exportCase({ adapter, entry, identity, license: "MIT", sc
 await writePrepared(outDir, [prepared]);
 ```
 
-`identity` is the factory's identity functions (`CaseIdentity`: `defectId(baseline, entry)` and `caseId(defectId, entry)`); the exporter writes the IDs they return. `scan` is the pre-write scan hook: it receives every member of each part, manifests included, and answers `clean`, `blocked` or `unavailable` (the publication scanner's result shape); `null` exports without a scan and records `scanned: false`. An export is refused (`ExportRefused`, with a code) for inputs that disagree with the entry, unreadable or changed input files, patches that do not reproduce their recorded results on the exported buggy source, a bug case that would carry evaluator material, or a scan that is not clean.
+`identity` is the factory's identity functions (`CaseIdentity`: `defectId(baseline, entry)` and `caseId(defectId, entry)`); the exporter writes the IDs they return. `scan` is the pre-write scan hook: it receives every member of each part, manifests included, and answers `clean`, `blocked` or `unavailable` (the publication scanner's result shape); `null` exports without a scan and records `scanned: false`. An export is refused (`ExportRefused`, with a code) for an entry that is not the adapter's own `catalog()` entry with the same `entry_id`, inputs that disagree with the entry, unreadable or changed input files, patches that do not reproduce their recorded results on the exported buggy source, a bug case that would carry evaluator material, or a scan that is not clean.
 
 From the command line:
 
