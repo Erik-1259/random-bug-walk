@@ -4,7 +4,7 @@ import type { CollectedCopy, StopCode, ValidationMatrix } from "@rbw/factory-con
 import { validateContract } from "@rbw/factory-contract/validate";
 import { sha256Hex } from "@rbw/schema";
 import { FACTORY_PROFILE } from "../../src/factory-profile.ts";
-import { copyOperation, outcomeOf, validationOperation, workerOperation } from "../../src/factory-ledger.ts";
+import { busyReason, copyOperation, outcomeOf, validationOperation, workerOperation } from "../../src/factory-ledger.ts";
 import { startFactoryValidation, startFactoryWorker } from "../../src/factory-launch.ts";
 import type { FactoryLaunchDeps } from "../../src/factory-launch.ts";
 import { finalizeLostWorker } from "../../src/factory-lost.ts";
@@ -439,6 +439,35 @@ describe("runFactoryValidation", () => {
       poll_after_ms: 0,
     };
     expect(validateContract("ValidationRun", run)).toEqual([]);
+  });
+
+  it("finishes error with no cost and the slot held when the run's settlement call fails, and the lost-worker routine never settles it again", async () => {
+    const { validationId, operationId } = await acceptedValidation();
+    const settle = w.spend.settle.bind(w.spend);
+    const settles: string[] = [];
+    w.ledger.spend = {
+      ...w.spend,
+      settle: (request) => {
+        settles.push(request.operation_id);
+        return request.operation_id === operationId ? Promise.reject(new Error("synthetic: the connection dropped")) : settle(request);
+      },
+    };
+    const outcome = await runFactoryValidation(workerDeps(), {
+      validation_id: validationId,
+      validate: async (hooks) => {
+        await hooks.meter.run(plan(CASE_ID, "clean"), lives(90_000));
+        return { result: "passed", matrix: MATRIX, message: "All six cells matched their expected outcomes." };
+      },
+    });
+    expect(outcome).toEqual({ kind: "finished", result: "error", slot_released: false });
+    expect((await w.records.validationEvents(validationId)).find((event) => event.type === "finished")?.data).toMatchObject({ result: "error", matrix: null, cost_microusd: null });
+    const root = w.identity.validationRoot(validationId);
+    w.clock.advance(181_000);
+    expect(await finalizeLostWorker(lostDeps(), { validation_id: validationId })).toEqual({ kind: "finished" });
+    expect(settles.filter((id) => id === operationId)).toHaveLength(1);
+    expect(await operationState(w, operationId)).toBe("terminal");
+    expect(await slotHolder(w)).toBe(root);
+    expect(await busyReason({ spend: w.spend, records: w.records }, "factory")).toBe("needs_reconciliation");
   });
 
   it("stops after a lost-worker finish of its run: no settlement, event or release of its own, even with a copy left uncertain", async () => {

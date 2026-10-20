@@ -328,12 +328,27 @@ export async function runFactoryValidation(deps: WorkerDeps, args: { validation_
       const finish = await finishValidation(deps, request, validation, { result: "error", matrix: result.matrix, message: "A copy's outcome is uncertain; the run's spend needs reconciliation.", cost_microusd: null });
       return finish.ours ? { kind: "finished", result: "error", slot_released: false } : { kind: "fenced" };
     }
-    const ended = await spend.transition({ operation_id: op.operation_id, from_state: "running", to_state: "terminal", actor_role: WORKER_ACTOR, terminal_status: result.result === "error" ? "failed" : "completed" });
-    if (!ended.ok) {
-      deps.log(`factory validation ${id} the run's operation was not ended (${ended.code})`);
-      return { kind: "fenced" };
+    let settled: Awaited<ReturnType<typeof spend.settle>>;
+    try {
+      const ended = await spend.transition({ operation_id: op.operation_id, from_state: "running", to_state: "terminal", actor_role: WORKER_ACTOR, terminal_status: result.result === "error" ? "failed" : "completed" });
+      if (!ended.ok) {
+        deps.log(`factory validation ${id} the run's operation was not ended (${ended.code})`);
+        return { kind: "fenced" };
+      }
+      settled = await spend.settle(validationSettlement(op.envelope, op.operation_id, validation.host_id, meter.usage, profile));
+    } catch (error) {
+      // Whether the end or the settlement took effect is unknown, so it is never tried again: the run's
+      // finish records no cost, which keeps the slot held and leaves the lost-worker routine (it settles
+      // only a run with no recorded finish) nothing to settle; reconciliation settles it.
+      deps.log(`factory validation ${id} a ledger call failed while the run was settled (${errorText(error)}); it needs reconciliation`);
+      try {
+        await makeUncertain(spend, op.operation_id, WORKER_ACTOR);
+      } catch (moveError) {
+        deps.log(`factory validation ${id} the run's operation could not be moved to uncertain (${errorText(moveError)})`);
+      }
+      const finish = await finishValidation(deps, request, validation, { result: "error", matrix: result.matrix, message: "The run's spend could not be settled; it needs reconciliation.", cost_microusd: null });
+      return finish.ours ? { kind: "finished", result: "error", slot_released: false } : { kind: "fenced" };
     }
-    const settled = await spend.settle(validationSettlement(op.envelope, op.operation_id, validation.host_id, meter.usage, profile));
     if (!settled.ok) {
       deps.log(`factory validation ${id} the run's settlement was refused (${settled.code})`);
       const finish = await finishValidation(deps, request, validation, { result: "error", matrix: result.matrix, message: "The run's spend could not be settled; it needs reconciliation.", cost_microusd: null });
