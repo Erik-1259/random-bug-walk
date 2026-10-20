@@ -5,7 +5,7 @@ import type { RequestLedger } from "../src/ports.ts";
 import { FakeHostAdapter, TEST_PROFILE, syntheticEntry, syntheticSha } from "../src/testing/catalog.ts";
 import { lostWorkerEvents } from "../src/projection.ts";
 import { UncertainOutcomeError, qualifyingPlan } from "../src/testing/harness.ts";
-import { fixtureInput, world } from "./orchestrator-support.ts";
+import { CREATED_AT, fixtureInput, world } from "./orchestrator-support.ts";
 import type { World } from "./orchestrator-support.ts";
 
 const LOST = "concurrency.lost-acknowledged-change";
@@ -452,6 +452,40 @@ describe("runRequest: stops and limits", () => {
     expect(types(w.events.events)).not.toContain("check_finished");
   });
 
+  it("stops time_limit at the top of the loop, selecting nothing more, once the deadline passed between candidates", async () => {
+    const w = world({ input: fixtureInput("status-fulfilled.json") });
+    const deadline = Date.parse(CREATED_AT) + w.deps.request.interpretation.limits.max_wall_clock_s * 1000;
+    const sink = w.deps.events;
+    w.deps.events = {
+      append: async (event) => {
+        await sink.append(event);
+        if (event.type === "case_delivered") w.clock.now = deadline;
+      },
+    };
+    const result = await w.run();
+    expect(result).toMatchObject({ outcome: "stopped_at_limit", stop_code: "time_limit", delivered: 1 });
+    expect(types(w.events.events).filter((type) => type === "candidate_selected")).toHaveLength(1);
+    expect(w.ledger.calls.filter((call) => call.call === "reserveCandidate")).toHaveLength(1);
+  });
+
+  it("still selects and skips a duplicate defect at the candidate limit, then stops candidate_limit before a new defect", async () => {
+    const registry = taskReportRegistry([
+      { host_id: "task-report", bug_type_id: "concurrency", n: 1, criteria: [LOST] },
+      { host_id: "task-report", bug_type_id: "concurrency", n: 2, criteria: [LOST], defect_of: 1 },
+      { host_id: "task-report", bug_type_id: "concurrency", n: 3, criteria: [LOST] },
+    ]);
+    const profile = { ...TEST_PROFILE, limits: { ...TEST_PROFILE.limits, max_candidates: 1 } };
+    const w = world({ input: concurrencyOnly(2), registry, profile });
+    const result = await w.run();
+    expect(result).toMatchObject({ outcome: "stopped_at_limit", stop_code: "candidate_limit", delivered: 1 });
+    expect(ended(w.events.events)).toEqual([{ type: "candidate_skipped", reason: "duplicate_defect" }]);
+    expect(w.status().candidates.map((c) => [c.entry_id, c.stage])).toEqual([
+      ["synthetic-task-report-concurrency-01", "qualified"],
+      ["synthetic-task-report-concurrency-02", "skipped"],
+    ]);
+    expect(w.qualified).toEqual(["synthetic-task-report-concurrency-01"]);
+  });
+
   it("stops candidate_limit once the limit of started candidates is reached", async () => {
     const profile = { ...TEST_PROFILE, limits: { ...TEST_PROFILE.limits, max_candidates: 1 } };
     const w = world({ input: fixtureInput("status-fulfilled.json"), profile });
@@ -643,6 +677,27 @@ describe("runRequest: internal failures and admission edges", () => {
     expect(types(w.events.events).filter((type) => type.startsWith("candidate_"))).toEqual(["candidate_selected", "candidate_incomplete"]);
     expect(validateContract("RequestStatus", w.status())).toEqual([]);
     expect(w.status().candidates.map((candidate) => [candidate.stage, candidate.reason?.code])).toEqual([["incomplete", "incomplete_run"]]);
+  });
+
+  it("finishes operational_error, not needs_reconciliation, when a read fails once the candidate settled", async () => {
+    const w = world({ input: concurrencyOnly(1) });
+    let candidateSettled = false;
+    let failed = false;
+    ledgerWith(w, {
+      settleCandidate: async (input) => {
+        await w.ledger.settleCandidate(input);
+        candidateSettled = true;
+      },
+      status: () => {
+        if (!candidateSettled || failed) return w.ledger.status();
+        failed = true;
+        return Promise.reject(new Error("connection reset"));
+      },
+    });
+    const result = await w.run();
+    expect(result).toMatchObject({ outcome: "operational_error", stop_code: "operational_error", needs_reconciliation: false, delivered: 1 });
+    expect(types(w.events.events)).not.toContain("attention");
+    expect(w.ledger.calls.map((call) => call.call)).toEqual(["reserveCandidate", "settleCandidate", "settleWorker"]);
   });
 
   it("finishes operational_error without a candidate when the stop check fails before one starts", async () => {
