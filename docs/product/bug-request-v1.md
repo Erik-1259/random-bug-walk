@@ -1,6 +1,6 @@
 # Bug request contract, version 1
 
-**Status: draft, revision 2.** This file is the binding interface between the bug-request service, the `/factory` page and the automated acceptance tests. It defines shapes and behavior; it does not claim that any endpoint exists. Every endpoint below is **planned** until the pull request that implements it is merged, and section 15 lists which parts are implemented. Later changes are numbered revisions (section 16). Implementations cite the revision they follow.
+**Status: draft, revision 3.** This file is the binding interface between the bug-request service, the `/factory` page and the automated acceptance tests. It defines shapes and behavior; it does not claim that any endpoint exists. Every endpoint below is **planned** until the pull request that implements it is merged, and section 15 lists which parts are implemented. Later changes are numbered revisions (section 16). Implementations cite the revision they follow.
 
 Representative fixtures are in [`fixtures/bug-request-v1/`](fixtures/bug-request-v1/). They use synthetic identifiers (`synthetic-` prefixes, hashes made of a repeated short pattern) and invented amounts. They show shapes and states, not measured results.
 
@@ -494,8 +494,8 @@ Public. Answers `{ contract_version, label, note, case: Case }`, with `case.prov
 
 | Part | Status | Owner |
 |---|---|---|
-| This document and its fixtures | draft, revision 2 | contract owner |
-| Shared types (`packages/factory-contract/`) | draft, revision 2 | contract owner |
+| This document and its fixtures | draft, revision 3 | contract owner |
+| Shared types (`packages/factory-contract/`) | draft, revision 3 | contract owner |
 | `/factory` page, components, client adapter, browser tests (`packages/web/app/factory/**`, `packages/web/src/components/factory-*.tsx`, `packages/web/src/factory/client.ts`, their tests) | in progress | UI lane |
 | Service routes (`packages/web/app/api/factory/**`) and server modules (`packages/web/src/factory-server/**`) | planned | backend lane |
 | Request loop, interpreter, identity, budget use, events, hosted worker (`packages/factory/**`, `tools/controller/src/factory-*.ts`, spend migration and budget functions in `packages/spend/`) | planned | backend lane |
@@ -529,8 +529,11 @@ For automated acceptance, the service can start in a test mode that is refused o
 | `uncertain-provider` | The first candidate's sandbox create returns an uncertain outcome. | `status-operational-error.json` | `operational_error` | `needs_reconciliation` | `none` | `needs_reconciliation` | none |
 | `validation-failed` | As `two-host-fulfilled`; validation runs finish `failed`. | `status-fulfilled.json` | `fulfilled` | `fulfilled` | `complete` | null | `validation-failed.json` |
 | `validation-error` | As `two-host-fulfilled`; validation runs finish `error`. | `status-fulfilled.json` | `fulfilled` | `fulfilled` | `complete` | null | `validation-error.json` |
+| `setup-failed` | The first candidate's first copy cannot be prepared. | `status-zero-result.json` | `sources_exhausted` | `sources_exhausted` | `none` | null | none |
 
 - In `cancel-midway` the fake run pauses after the second candidate's first `check_finished`, with its next check in flight, until `POST …/stop` arrives or 60 s pass; then it continues as `status-cancelled.json` shows.
+- In `setup-failed` the Umami candidate's clean copy is created but cannot be prepared. Its check finishes with the clean copy observed `error`, and the candidate becomes `invalid` (`setup_failed`). Its buggy and fixed copies are never created and settle at 0, and the source is exhausted: `funnel.candidates_explored` is 1 and no case is delivered.
+- In `two-host-fulfilled`, the task-report case (`case_id` `caca…ca`, announced by the first `package_ready`) waits 5 s on the service clock before its `case_delivered`. In that window it is not in `cases`, `funnel.packages_ready` is 0, and its two download paths and a validation `POST` for it answer `404 not_found`.
 - Every start (section 7) and every validation start (section 11) is held for 2 s inside its ID lock, so concurrent duplicates overlap deterministically.
 - Test endpoints need no session and exist only in test mode; otherwise they answer `404 not_found`.
 - `GET /api/factory/test/evidence?request_id=` answers a read-only `TestEvidence` (fixture: `test-evidence.json`). An operation's `reserved_microusd` is its original reservation in every state. Only the operations not yet settled or reconciled still hold theirs, so the request's `reserved_microusd` is the sum over those operations alone; `settled_microusd` values add up to its `spent_microusd`.
@@ -540,14 +543,17 @@ For automated acceptance, the service can start in a test mode that is refused o
 ```text
 TestEvidence {
   contract_version, request_id
+  root_execution_id: string               // the request's root execution (UUID); the worker's execution_id
   operations: { operation_id: string,     // the spend ledger's operation ID: 64 lowercase hex characters
                 kind: "worker" | "candidate_copy" | "validation" | "validation_copy", call_name: string,
+                execution_id: string, host_id: "umami" | "task-report" | null,  // null for the worker
                 state: "prepared" | "launching" | "running" | "terminal" | "uncertain" | "reconciled",  // settled = terminal with settled_microusd set
                 reserved_microusd: integer, settled_microusd: integer | null, attempt_ordinal: integer }[]  // reserved_microusd: the original reservation in every state;
                                           // settled_microusd is null unless the state is terminal or reconciled, and set when reconciled
   slot: { slot_key: "factory", holder_request_id: string | null,     // the request whose start or validation run holds the slot
           holder_validation_id: string | null }                       // set while a validation run holds it
-  provider_calls: { call_name: string, provider: "sandbox", action: "create" | "stop", at: string }[]
+  provider_calls: { call_name: string, execution_id: string,       // the operation's execution whose job it created or stopped
+                    provider: "sandbox", action: "create" | "stop", at: string }[]
 }
 ```
 
@@ -559,6 +565,7 @@ Startup instructions and the exact revision are published with the backend pull 
 |---|---|
 | 1 | First draft. |
 | 2 | Revision 2: validation runs send heartbeats, last at most 1800 s and hold the slot from the accepted POST; a worker lost after missed heartbeats needs reconciliation; the factory pool counts committed amounts; validation IDs are scoped to a case and checked first; new warning `budget_below_item_minimum`; an overrun after finish keeps the outcome; `quantity_exceeds_source` counts distinct defects; one candidate runs at a time; criteria publish failure codes; input normalization and exact phrase matching; `not_ready` removed and identifiers opaque; scenario table, `wrong-failure` scenario, `cancel-midway` pause and test-control shapes. |
+| 3 | Revision 3 (test controls only, additive): `TestEvidence.root_execution_id`; `TestOperation.execution_id` and `host_id`; `TestProviderCall.execution_id`; scenario `setup-failed`; the pending-package window of `two-host-fulfilled`; test mode refused on any Vercel deployment. |
 
 **Revision 2 clarifications.** These settle open wording points of revision 2 without a new revision; one of them adds a list rule to the schema:
 
