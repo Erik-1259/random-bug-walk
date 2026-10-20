@@ -124,12 +124,14 @@ describe("the released case's identities", () => {
     });
   });
 
-  it("pins the image's source tree (2026 files) and the frozen job read once from the prepared store", () => {
+  it("pins the image's source tree (2026 files) and the frozen job on the runtime pin, derived once from the prepared store", () => {
     expect(UMAMI_PINS.kit.source_tree_sha256).toBe("712ebd687ed85386d3c1bea26204f120d18260aa03ad8fc6b15737afadd8fd2d");
     expect(UMAMI_PINS.kit.source_file_count).toBe(2026);
+    // src/pin-cli.ts on the real store gives these for the runtime pin, and the job before the
+    // runtime image (on the kit image's digest: request 89db318c…, expected trials f14185dc…).
     expect(UMAMI_PINS.job).toEqual({
-      request_sha256: "89db318ca3898483a419057501992e2c5c9d21bf5b7a1205b0ee4bb65ebfceac",
-      expected_trials_sha256: "f14185dc7dd0c71b59e1ee72a0cc16fa4caf68dfc73505696f09832f5a4cd10c",
+      request_sha256: "a94bf899d0882218e0e60426b778373fe08f544c61ca1c9e9424619a94e91aaf",
+      expected_trials_sha256: "2b162a87d4b1942911f2c87aabbb4c80732b5fcf3e09064214c6b168bd7f1706",
     });
   });
 });

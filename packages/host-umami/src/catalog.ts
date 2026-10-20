@@ -46,9 +46,9 @@ export function expectedVectorsSha256(vectors: ExpectedVectors): string {
   return canonicalDigest(vectors).sha256;
 }
 
-/** environment_sha256: the canonical hash of the host and the pinned amd64 kit image digest. */
+/** environment_sha256: the canonical hash of the host and the pinned runtime image digest. */
 export function environmentSha256(pins: UmamiPins): string {
-  return canonicalDigest({ host_id: HOST_ID, kit_image_digest: pins.kit.digest }).sha256;
+  return canonicalDigest({ host_id: HOST_ID, kit_image_digest: pins.runtime.digest }).sha256;
 }
 
 /** Refuses an entry whose planted change or repair result touches the original suite's closure. */
@@ -83,7 +83,8 @@ export function buildCatalogEntry(pins: UmamiPins): CatalogEntry {
       protocol_id: UMAMI_PROTOCOL.protocol_id,
       protocol_sha256: UMAMI_PROTOCOL.sha256,
     },
-    environment: { kit_image: pins.kit.image, kit_image_digest: pins.kit.digest, environment_sha256: environmentSha256(pins) },
+    // The runtime image, never the kit image: the kit holds the clean source and the fixture.
+    environment: { kit_image: pins.runtime.image, kit_image_digest: pins.runtime.digest, environment_sha256: environmentSha256(pins) },
     difficulty: { status: "not_assessed" },
   };
   checkEntryTargets(entry);

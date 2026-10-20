@@ -53,14 +53,15 @@ export interface ReleasedCaseMapping {
 /**
  * The mapping record. The case ID depends on the criteria catalog version, which the record names.
  * Refuses (unknown_entry) an entry that is not the released defect: another planted change (its
- * mutation_id), another incident or another kit image.
+ * mutation_id) or another incident, or pins whose kit image is not the one the release ran in.
+ * The entry itself names the runtime image made from that kit image, which its case ID covers.
  */
 export function releasedCaseMapping(pins: UmamiPins, entry: CatalogEntry, identity: FactoryIdentity, criteriaCatalogVersion: string): ReleasedCaseMapping {
   if (mutationIdOf(pins.app_commit, entry.plant.targets) !== RELEASED_CASE.mutation_id) {
     throw new UmamiRefusal("unknown_entry", "the entry's planted change is not the released case's");
   }
-  if (entry.incident.sha256 !== RELEASED_CASE.issue_sha256 || entry.environment.kit_image_digest !== RELEASED_CASE.kit_image_digest) {
-    throw new UmamiRefusal("unknown_entry", "the entry's incident or kit image is not the released case's");
+  if (entry.incident.sha256 !== RELEASED_CASE.issue_sha256 || pins.kit.digest !== RELEASED_CASE.kit_image_digest) {
+    throw new UmamiRefusal("unknown_entry", "the entry's incident or the pins' kit image is not the released case's");
   }
   const baseline = baselineIdentity(pins);
   const defectId = identity.defectId(baseline, entry);
