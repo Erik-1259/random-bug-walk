@@ -156,6 +156,6 @@ A change to the member layout, a manifest field, the encoding or the binding is 
 |---|---|
 | Encoding, both manifests, pair binding, separation checks, exporter, scan hook, prepared directory, final-validator assembly | implemented (`tools/case-package`) |
 | Pair verification, workspace and patch checks, copy loop, matrix and result, CLI, `docker` runner, host registry | implemented (`tools/case-validate`) |
-| Real host adapters in the host registry (`task-report`, `umami`) | planned; the registry is empty until the host adapters land |
-| Wiring of the factory's identity functions into `case-package prepare` | planned; the command takes them as a module until then |
+| Real host adapters in the host registry | `task-report` registered (`tools/case-validate`); `umami` planned, added with its own runtime image |
+| The factory's identity functions for `case-package prepare` | implemented: `tools/case-validate/src/factory-prepare.ts` exports `CASE_IDENTITY` over the factory core's `defectId` and `caseId`, and the registry |
 | Evidence content, the `sandbox` runner, the worker's and the download route's use of the assembly | planned (backend) |

@@ -1,6 +1,6 @@
 # Adding a host
 
-How a third host application is connected to the bug factory. Version 1 serves two hosts, `task-report` and `umami`; their adapters are the references below and are planned (contract section 15). Every step names the code it touches. Parts marked **planned** do not exist yet.
+How a third host application is connected to the bug factory. Version 1 serves two hosts, `task-report` and `umami`; their adapters (section 3) are the references for every step. The host registry holds `task-report`; the `umami` line is planned, added with its own runtime image. Every step names the code it touches. Parts marked **planned** do not exist yet.
 
 ## 1. What a host provides
 
@@ -29,7 +29,7 @@ How a third host application is connected to the bug factory. Version 1 serves t
    - `collect(plan, collected)`: reads only what the copy wrote under `destinations.results`. A copy that could not be set up or timed out becomes a record with status `invalid` or `incomplete` and cells `error` or `incomplete`, never a pass, a fail or a detection; `evidence_sha256` is the collected `results_sha256`.
    - `interpret(records, protocol)`: the state's two cells, with invalid and incomplete kept distinct and fewer valid runs than the protocol requires reported as `incomplete`.
 8. **Registry line.** Add one entry to `REGISTRATIONS` in `tools/case-validate/src/registry.ts`: `{ host_id, label, description, license, adapter }`. The label and description are what capabilities show; the license is the host application's SPDX identifier, recorded in both package manifests. The service builds its capabilities from this registry (planned).
-9. **Prepare and validate locally.** Export the host's entries with `case-package prepare` (`--registry tools/case-validate/src/registry.ts`, the factory's identity module, the scan hook, `--out <dir>`), then run `rbw-validate` on one prepared bug case and its validator with the local `docker` runner. Both are free and need no hosted service.
+9. **Prepare and validate locally.** Export the host's entries with `case-package prepare` (`--registry` and `--identity` both `tools/case-validate/src/factory-prepare.ts`, which exports the registry and the factory's identity functions, then the scan hook and `--out <dir>`), then run `rbw-validate` on one prepared bug case and its validator with the local `docker` runner. Both are free and need no hosted service.
 10. **Tests.** At least: a sentinel placed in every piece of validator material never appears in the bug case inputs; `copyPlans` applies no patch; `collect` never turns a copy that did not run into an observation; `interpret` keeps invalid and incomplete apart; and one local end-to-end validation of a prepared pair.
 
 ## 3. The two existing hosts
@@ -39,8 +39,8 @@ How a third host application is connected to the bug factory. Version 1 serves t
 | Baseline | `task-report@ca4a71f` | `umami@ec0ff503` |
 | Bug type in version 1 | `concurrency` | `date_time` |
 | Criterion | `concurrency.lost-acknowledged-change` | `date_time.time-zone-grouping` |
-| Host package | `packages/host-task-report` (baseline, catalog, checks, protocol and copy driver; adapter planned) | `packages/host-umami` (planned) |
-| What `collect` reads (planned) | the copy driver's record set | the copy script's record set, imported with `@rbw/admission` |
-| Registry line | planned, added when the host adapter lands | planned, added when the host adapter lands |
+| Host package | `packages/host-task-report` (baseline, catalog, checks, protocol, copy driver and the adapter `@rbw/host-task-report/adapter`) | `packages/host-umami` (the adapter `createUmamiAdapter` and the store builder `@rbw/host-umami/prepare`) |
+| What `collect` reads | the copy driver's record set | the copy script's record set, imported with `@rbw/admission` |
+| Registry line | registered | planned, added with its own runtime image |
 
-The synthetic host in `@rbw/case-package/synthetic` implements the whole adapter over a small synthetic application and is the working example until the real hosts land.
+The synthetic host in `@rbw/case-package/synthetic` implements the whole adapter over a small synthetic application, a smaller working example than the two real hosts.

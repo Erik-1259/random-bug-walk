@@ -31,7 +31,7 @@ node tools/case-package/src/cli.ts prepare --registry <module> --identity <modul
      (--scan-hook <module> | --no-scan) [--host <host_id>]... [--entry <entry_id>]... [--package-version <n>]
 ```
 
-The registry module exports `HOST_REGISTRY` (`tools/case-validate/src/registry.ts` does), the identity module exports `CASE_IDENTITY`, and the scan hook module exports `SCAN_HOOK`. Exit codes: 0 prepared, 1 refused, 2 error, 64 usage.
+Modules are named by file path. The registry module exports `HOST_REGISTRY`, the identity module exports `CASE_IDENTITY` (`tools/case-validate/src/factory-prepare.ts` exports both, with the factory core's identity functions), and the scan hook module exports `SCAN_HOOK`. Exit codes: 0 prepared, 1 refused, 2 error, 64 usage.
 
 ## Synthetic host
 

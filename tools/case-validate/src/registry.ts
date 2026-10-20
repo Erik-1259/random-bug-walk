@@ -1,6 +1,8 @@
 // The host registry: the one place that maps a host_id to its adapter. The harness CLI, the worker and the
 // web routes (capabilities, interpretation) read it; it imports no runner, so web routes can import it.
+import { HOST_PRESENTATION } from "@rbw/factory";
 import type { HostAdapter, HostId } from "@rbw/factory-contract";
+import { taskReportAdapter } from "@rbw/host-task-report/adapter";
 
 export interface HostRegistration {
   host_id: HostId;
@@ -43,10 +45,19 @@ export function createHostRegistry(registrations: readonly HostRegistration[]): 
 }
 
 /**
- * The real hosts. Each host adapter adds one line here when it lands (task-report, then umami); see
- * docs/product/adding-a-host.md. Until then the registry is empty and the harness answers `error` with
- * `unsupported_host` for every package.
+ * The real hosts, one line each (see docs/product/adding-a-host.md). The label and description are the
+ * factory's presentation text, so capabilities and the registry cannot drift apart. The Umami line comes with
+ * its own runtime image (planned); until then the harness answers `error` with `unsupported_host` for an
+ * Umami package, and capabilities built from this registry report the host unsupported.
  */
-const REGISTRATIONS: readonly HostRegistration[] = [];
+const REGISTRATIONS: readonly HostRegistration[] = [
+  {
+    host_id: "task-report",
+    label: HOST_PRESENTATION["task-report"].label,
+    description: HOST_PRESENTATION["task-report"].description,
+    license: "MIT",
+    adapter: taskReportAdapter,
+  },
+];
 
 export const HOST_REGISTRY: HostRegistry = createHostRegistry(REGISTRATIONS);
