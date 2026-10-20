@@ -10,12 +10,12 @@
   },
   "self_tests": {
     "command": "pnpm --filter @rbw/product-acceptance test --reporter=json",
-    "passed": 306,
+    "passed": 346,
     "failed": 0,
     "skipped": 0,
     "exit_code": 0
   },
-  "test_floor": 306,
+  "test_floor": 346,
   "failing_first": [
     {
       "scope": "final-contract invariant regressions",
@@ -151,6 +151,55 @@
       "passed": 0,
       "skipped": 86,
       "exit_code": 1
+    },
+    {
+      "scope": "candidate execution reservations and creates despite internally consistent omitted evidence",
+      "passed": 9,
+      "failed": 10,
+      "skipped": 0,
+      "exit_code": 1
+    },
+    {
+      "scope": "candidate evidence for an unselected host",
+      "passed": 20,
+      "failed": 1,
+      "skipped": 0,
+      "exit_code": 1
+    },
+    {
+      "scope": "typed initial/concurrent/replayed status, reset and error boundaries",
+      "passed": 0,
+      "failed": 16,
+      "skipped": 87,
+      "exit_code": 1
+    },
+    {
+      "scope": "unsupported refusal changes the returned interpretation",
+      "passed": 0,
+      "failed": 1,
+      "skipped": 103,
+      "exit_code": 1
+    },
+    {
+      "scope": "download size disagrees with bytes despite a matching digest",
+      "passed": 0,
+      "failed": 1,
+      "skipped": 344,
+      "exit_code": 1
+    },
+    {
+      "scope": "successful terminal result in a fresh202 response",
+      "passed": 0,
+      "failed": 1,
+      "skipped": 345,
+      "exit_code": 1
+    },
+    {
+      "scope": "provider stop without a matching reservation",
+      "passed": 19,
+      "failed": 1,
+      "skipped": 0,
+      "exit_code": 1
     }
   ],
   "local_checks": [
@@ -188,6 +237,12 @@
     },
     {
       "command": "node scripts/checks/prose.ts",
+      "exit_code": 0
+    },
+    {
+      "command": "pnpm --filter @rbw/product-acceptance test --reporter=json",
+      "meaning": "independent focused review reran the full runner suite",
+      "passed": 346,
       "exit_code": 0
     }
   ],
@@ -264,6 +319,14 @@
     {
       "finding": "Exact funnel comparison exposed an early runner stop in the actual cancel-midway HTTP scenario.",
       "disposition": "Wait for the second candidate first check_finished after the first delivery, as the named control specifies. Preserve the initial failed HTTP report separately; no backend change."
+    },
+    {
+      "finding": "Candidate ledger and provider evidence could be omitted together while reported budget totals were reduced to match.",
+      "disposition": "Require pinned original totals for non-skipped candidates, matching worker and candidate creates, and reservations for every provider record. Preserve unused uncertain-provider zero settlements. Structured per-copy attribution remains unavailable."
+    },
+    {
+      "finding": "Initial, concurrent and replayed RequestStatus bodies were not fully schema-checked.",
+      "disposition": "Schema-check every observed status at the boundary in addition to independent invariants. Also validate reset and error envelopes, retain unsupported interpretation details, require fresh finished202 outcomes to be operational failures, and compare archive sizes to downloaded bytes."
     }
   ],
   "http_regression_evidence": {

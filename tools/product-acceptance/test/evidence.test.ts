@@ -76,6 +76,7 @@ it.each(["held", "settled"])("rejects zero original candidate reservations with 
 });
 it.each(["unused-released", "unused-charged", "launched-discounted"])("checks deterministic settlement for %s operations", change => {
   const { evidence, status } = sample();
+  assert(status.stop_reason); status.stop_reason.code = "needs_reconciliation";
   const candidate = first(evidence.operations.filter(op => op.kind === "candidate_copy"));
   evidence.provider_calls = evidence.provider_calls.filter(call => call.call_name === "worker" || call.call_name === candidate.call_name);
   for (const op of evidence.operations) {

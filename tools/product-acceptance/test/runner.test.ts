@@ -17,11 +17,11 @@ function scripted() {
   };
   const request = vi.fn((method: "GET" | "POST", path: string, payload?: unknown): Promise<Reply> => {
     let reply: Reply;
-    if (path.endsWith("/test/reset")) reply = { status: 204, body: null };
+    if (path.endsWith("/test/reset")) reply = { status: 200, body: { contract_version: "bug-request/1", scenario: object(payload).scenario } };
     else if (path.endsWith("/interpretations")) reply = { status: 200, body: fixture("interpretation-supported") };
     else if (method === "POST" && path.endsWith("/requests")) {
       id = String(object(payload).request_id); starts++;
-      if (starts === 5) reply = { status: 409, body: { contract_version: "bug-request/1", error: { code: "idempotency_conflict" } } };
+      if (starts === 5) reply = { status: 409, body: { contract_version: "bug-request/1", error: { code: "idempotency_conflict", message: "synthetic conflict", retryable: false, details: null } } };
       else reply = { status: starts === 1 ? 202 : 200, body: response("status-queued") };
     } else {
       assert(path.includes(id));
@@ -55,6 +55,46 @@ it("does not execute against a different contract revision", async () => {
   backend.verifyIsolation = () => Promise.resolve({ backendRevision: "a".repeat(40), contractRevision: "b".repeat(40) });
   expect((await runAcceptance(backend)).acceptance_executed).toBe(false);
   expect(request).not.toHaveBeenCalled();
+});
+for (const ordinal of [1, 2, 3, 4]) it.each(["missing-field", "extra-field"])(`schema-checks %s in Start response ${String(ordinal)}`, async change => {
+  const { backend, request } = scripted(); let starts = 0;
+  backend.request = async (...args) => {
+    const reply = await request(...args);
+    if (args[0] === "POST" && args[1] === "/api/factory/requests" && ++starts === ordinal) {
+      const value = object(reply.body);
+      if (change === "missing-field") delete value.updated_at;
+      else value.synthetic_internal = "synthetic uncontracted field";
+    }
+    return reply;
+  };
+  await expect(runProbe(backend, probe)).rejects.toThrow("invalid RequestStatus");
+});
+it.each(["poll", "reconnect"])("schema-checks a malformed %s status", async stage => {
+  const { backend, request } = scripted(); let reconnected = false;
+  backend.reconnect = () => { reconnected = true; return Promise.resolve(); };
+  backend.request = async (...args) => {
+    const reply = await request(...args);
+    if (args[0] === "GET" && (stage === "poll" || reconnected)) object(reply.body).synthetic_internal = "synthetic uncontracted field";
+    return reply;
+  };
+  await expect(runProbe(backend, probe)).rejects.toThrow("invalid RequestStatus");
+});
+it.each(["no-body", "malformed", "wrong-scenario"])("rejects a %s reset instead of assuming isolation controls selected the scenario", async change => {
+  const { backend, request } = scripted();
+  backend.request = (...args) => args[1].endsWith("/test/reset")
+    ? Promise.resolve({ status: change === "no-body" ? 204 : 200, body: change === "no-body" ? null
+      : change === "malformed" ? { scenario: "two-host-fulfilled" } : { contract_version: "bug-request/1", scenario: "worker-lost" } })
+    : request(...args);
+  await expect(runProbe(backend, probe)).rejects.toThrow();
+});
+it.each(["message", "retryable", "details"])("requires %s in a conflict error response", async field => {
+  const { backend, request } = scripted();
+  backend.request = async (...args) => {
+    const reply = await request(...args);
+    if (reply.status === 409) object(reply.body).error = Object.fromEntries(Object.entries(object(object(reply.body).error)).filter(([key]) => key !== field));
+    return reply;
+  };
+  await expect(runProbe(backend, probe)).rejects.toThrow("invalid ErrorResponse");
 });
 it("rejects delivery when the complete history omits criterion evidence", async () => {
   const { backend, request } = scripted();
@@ -94,7 +134,11 @@ it("detects incorrect event sequence on status reads", async () => {
   const { backend, request } = scripted();
   backend.request = async (...args) => {
     const reply = await request(...args);
-    if (args[0] === "GET") object(reply.body).events = [{ seq: 7 }];
+    if (args[0] === "GET") {
+      const value = object(reply.body);
+      value.events = objects(value.events).map((event, index) => ({ ...event, seq: index + 7 }));
+      value.next_after = objects(value.events).at(-1)?.seq;
+    }
     return reply;
   };
   await expect(runProbe(backend, probe)).rejects.toThrow("event gap or duplicate");
@@ -114,7 +158,7 @@ it("backs off unavailable status reads without starting a replacement request", 
   const { backend, request } = scripted();
   let outages = 0;
   backend.request = (...args) => {
-    if (args[0] === "GET" && outages++ < 3) return Promise.resolve({ status: 503, body: { contract_version: "bug-request/1", error: { code: "unavailable" } } });
+    if (args[0] === "GET" && outages++ < 3) return Promise.resolve({ status: 503, body: { contract_version: "bug-request/1", error: { code: "unavailable", message: "synthetic unavailable", retryable: true, details: null } } });
     return request(...args);
   };
   await runProbe(backend, probe);
@@ -139,12 +183,23 @@ it("checks unsupported meanings and explicit invalid host/type outcomes", async 
   const { backend } = scripted();
   const unsupported = fixture("interpretation-unsupported");
   backend.request = (_method, path, payload) => {
-    if (path.endsWith("/test/reset")) return Promise.resolve({ status: 204, body: null });
+    if (path.endsWith("/test/reset")) return Promise.resolve({ status: 200, body: { contract_version: "bug-request/1", scenario: object(payload).scenario } });
     if (path.endsWith("/interpretations") && JSON.stringify(payload) === JSON.stringify(unsupported.input)) return Promise.resolve({ status: 200, body: unsupported });
     const code = path.endsWith("/requests") ? "unsupported_request" : "invalid_request";
-    return Promise.resolve({ status: code === "unsupported_request" ? 422 : 400, body: { contract_version: "bug-request/1", error: { code } } });
+    return Promise.resolve({ status: code === "unsupported_request" ? 422 : 400, body: { contract_version: "bug-request/1", error: { code, message: "synthetic refusal", retryable: false, details: code === "unsupported_request" ? { interpretation: unsupported } : null } } });
   };
   await expect(runUnsupported(backend)).resolves.toBeUndefined();
+});
+it("rejects an unsupported refusal carrying a different valid interpretation", async () => {
+  const { runUnsupported } = await import("../src/runner.ts");
+  const { backend } = scripted(); const unsupported = fixture("interpretation-unsupported");
+  const other = structuredClone(unsupported); other.interpretation_sha256 = "ab".repeat(32);
+  backend.request = (_method, path) => {
+    if (path.endsWith("/test/reset")) return Promise.resolve({ status: 200, body: { contract_version: "bug-request/1", scenario: "two-host-fulfilled" } });
+    if (path.endsWith("/interpretations")) return Promise.resolve({ status: 200, body: unsupported });
+    return Promise.resolve({ status: 422, body: { contract_version: "bug-request/1", error: { code: "unsupported_request", message: "synthetic refusal", retryable: false, details: { interpretation: other } } } });
+  };
+  await expect(runUnsupported(backend)).rejects.toThrow("refusal interpretation changed");
 });
 it.each(["misassigned", "missing-warning", "wrong-status"])("rejects %s unsupported item outcomes", async (change) => {
   const { runUnsupported } = await import("../src/runner.ts");
@@ -161,10 +216,10 @@ it.each(["misassigned", "missing-warning", "wrong-status"])("rejects %s unsuppor
     item.problems = [];
   } else first.status = "supported";
   backend.request = (_method, path, payload) => {
-    if (path.endsWith("/test/reset")) return Promise.resolve({ status: 204, body: null });
+    if (path.endsWith("/test/reset")) return Promise.resolve({ status: 200, body: { contract_version: "bug-request/1", scenario: object(payload).scenario } });
     if (path.endsWith("/interpretations") && JSON.stringify(payload) === JSON.stringify(unsupported.input)) return Promise.resolve({ status: 200, body: unsupported });
     const code = path.endsWith("/requests") ? "unsupported_request" : "invalid_request";
-    return Promise.resolve({ status: code === "unsupported_request" ? 422 : 400, body: { contract_version: "bug-request/1", error: { code } } });
+    return Promise.resolve({ status: code === "unsupported_request" ? 422 : 400, body: { contract_version: "bug-request/1", error: { code, message: "synthetic refusal", retryable: false, details: code === "unsupported_request" ? { interpretation: unsupported } : null } } });
   };
   await expect(runUnsupported(backend)).rejects.toThrow("unsupported item");
 });
@@ -175,6 +230,8 @@ it("rejects an earlier delivered case disappearing during a stop", async () => {
     const reply = await request(...args);
     if (args[0] === "GET" && reads++ === 0) {
       const value = object(reply.body); value.state = "running"; value.outcome = null; value.stop_reason = null;
+      value.events = objects(value.events).filter(event => event.type !== "request_finished");
+      value.next_after = objects(value.events).at(-1)?.seq;
       return reply;
     }
     if (args[0] === "GET") {
@@ -186,10 +243,11 @@ it("rejects an earlier delivered case disappearing during a stop", async () => {
       const total = objects(value.type_totals).find(t => t.bug_type_id === removed.bug_type_id); assert(total);
       total.delivered = 0; total.missing = 1;
       const candidate = objects(value.candidates).find(c => c.case_id === removed.case_id); assert(candidate);
-      candidate.stage = "incomplete"; candidate.case_id = null;
+      candidate.stage = "incomplete"; candidate.case_id = null; candidate.reason = { code: "incomplete_run", message: "synthetic incomplete" };
       object(value.funnel).packages_ready = 1;
       value.delivery = "partial"; value.outcome = "stopped_at_limit";
       value.stop_reason = { code: "budget_exhausted", message: "synthetic stop" };
+      for (const event of objects(value.events)) if (event.type === "request_finished") event.data = { outcome: "stopped_at_limit", stop_code: "budget_exhausted" };
       checkStatus(value);
     }
     return reply;
@@ -217,7 +275,7 @@ it("waits for the named second-candidate check before cancelling", async () => {
   const backend: IsolatedBackend = {
     verifyIsolation: () => Promise.resolve({ backendRevision: "a".repeat(40), contractRevision }), wait: () => Promise.resolve(), reconnect: () => Promise.resolve(),
     request: (_method, path, payload) => {
-      if (path.endsWith("/test/reset")) return Promise.resolve({ status: 204, body: null });
+      if (path.endsWith("/test/reset")) return Promise.resolve({ status: 200, body: { contract_version: "bug-request/1", scenario: object(payload).scenario } });
       if (path.endsWith("/interpretations")) return Promise.resolve({ status: 200, body: expected.interpretation });
       if (path.endsWith("/requests")) {
         id = text(object(payload).request_id);
@@ -265,7 +323,7 @@ function reconciliationScenario() {
   const request = vi.fn((method: "GET" | "POST", path: string): Promise<Reply> => {
     if (path.endsWith("/reconcile")) reconciled = true;
     if (path.includes("/test/evidence?") && !reconciled) return Promise.resolve({ status: 200, body: priorEvidence });
-    if (path.endsWith("/requests")) return Promise.resolve({ status: 409, body: { contract_version: "bug-request/1", error: { code: "busy", retryable: false, details: { reason: "needs_reconciliation" } } } });
+    if (path.endsWith("/requests")) return Promise.resolve({ status: 409, body: { contract_version: "bug-request/1", error: { code: "busy", message: "synthetic busy", retryable: false, details: { reason: "needs_reconciliation" } } } });
     if (method === "GET" && path.includes("/requests/")) {
       const cursor = Number(path.split("?after=")[1] ?? 0);
       const events = objects(after.events).filter(event => integer(event.seq) > cursor);
@@ -439,11 +497,26 @@ it("checks separate download paths and hashes without implementing package repla
   const { backend } = scripted();
   for (const c of objects(status.cases)) for (const kind of ["bug_case", "validator"]) {
     object(object(c.packages)[kind]).sha256 = createHash("sha256").update(`synthetic-${kind}`).digest("hex");
+    object(object(c.packages)[kind]).size_bytes = Buffer.byteLength(`synthetic-${kind}`);
   }
   backend.request = (_method, path) => Promise.resolve({ status: 200, body: Buffer.from(path.endsWith("validator") ? "synthetic-validator" : "synthetic-bug_case") });
   await expect(runDownloads(backend, status)).resolves.toBeUndefined();
   backend.request = () => Promise.resolve({ status: 200, body: Buffer.from("synthetic-corruption") });
   await expect(runDownloads(backend, status)).rejects.toThrow("archive hash mismatch");
+});
+it("rejects an archive size that disagrees with its downloaded bytes", async () => {
+  const { createHash } = await import("node:crypto");
+  const { runDownloads } = await import("../src/runner.ts");
+  const status = fixture("status-fulfilled");
+  const { backend } = scripted();
+  const bytes = Buffer.from("synthetic archive");
+  for (const c of objects(status.cases)) for (const kind of ["bug_case", "validator"]) {
+    const part = object(object(c.packages)[kind]);
+    part.sha256 = createHash("sha256").update(bytes).digest("hex");
+    part.size_bytes = bytes.length + 1;
+  }
+  backend.request = () => Promise.resolve({ status: 200, body: bytes });
+  await expect(runDownloads(backend, status)).rejects.toThrow("archive size mismatch");
 });
 it("detects an already observed event being rewritten after reconnect", async () => {
   const { backend, request } = scripted();
@@ -490,6 +563,7 @@ it("requires the pinned scenario's partial delivery rather than trusting its out
     if (args[0] === "GET") {
       const v = object(reply.body); v.outcome = "sources_exhausted";
       v.stop_reason = { code: "sources_exhausted", message: "synthetic exhaustion" };
+      for (const event of objects(v.events)) if (event.type === "request_finished") event.data = { outcome: "sources_exhausted", stop_code: "sources_exhausted" };
     }
     return reply;
   };
@@ -508,13 +582,20 @@ it("rejects assigning the exhausted scenario's case to the less specific item", 
   checkStatus(wrong);
   let starts = 0;
   backend.request = (_method, path, payload) => {
-    if (path.endsWith("/test/reset")) return Promise.resolve({ status: 204, body: null });
+    if (path.endsWith("/test/reset")) return Promise.resolve({ status: 200, body: { contract_version: "bug-request/1", scenario: object(payload).scenario } });
     if (path.endsWith("/interpretations")) return Promise.resolve({ status: 200, body: expected.interpretation });
     if (path.endsWith("/requests")) {
       const id = text(object(payload).request_id);
       const old = text(wrong.request_id);
       Object.assign(wrong, JSON.parse(JSON.stringify(wrong).replaceAll(old, id)) as Record<string, unknown>);
-      return Promise.resolve({ status: ++starts === 1 ? 202 : 200, body: wrong });
+      const first = ++starts === 1;
+      const value = structuredClone(wrong);
+      if (first) {
+        value.state = "running"; value.outcome = null; value.stop_reason = null;
+        value.events = objects(value.events).filter(event => event.type !== "request_finished");
+        value.next_after = objects(value.events).at(-1)?.seq;
+      }
+      return Promise.resolve({ status: first ? 202 : 200, body: value });
     }
     return Promise.resolve({ status: 200, body: wrong });
   };
@@ -557,6 +638,11 @@ it.each([1, 2, 3])("retains cases observed in concurrent start response %s", asy
     const reply = await request(...args);
     if (args[0] === "POST" && args[1] === "/api/factory/requests" && ++starts === ordinal) {
       const initial = fixture("status-fulfilled");
+      if (reply.status === 202) {
+        initial.state = "running"; initial.outcome = null; initial.stop_reason = null;
+        initial.events = objects(initial.events).filter(event => event.type !== "request_finished");
+        initial.next_after = objects(initial.events).at(-1)?.seq;
+      }
       const oldCase = text(objects(initial.cases)[0]?.case_id);
       const replaced: unknown = JSON.parse(JSON.stringify(initial)
         .replaceAll(text(initial.request_id), text(object(reply.body).request_id))
@@ -592,6 +678,9 @@ for (const ordinal of [1, 2, 4]) it.each(["budget", "attention"])(`preserves ter
       const current = ++starts;
       const initial = fixture("status-fulfilled");
       const value = object(JSON.parse(JSON.stringify(initial).replaceAll(text(initial.request_id), text(object(reply.body).request_id))) as unknown);
+      value.outcome = "operational_error";
+      value.stop_reason = { code: "operational_error", message: "synthetic failure" };
+      for (const event of objects(value.events)) if (event.type === "request_finished") event.data = { outcome: "operational_error", stop_code: "operational_error" };
       if (current === ordinal) {
         if (field === "attention") value.attention = fixture("status-operational-error").attention;
         else {
@@ -716,6 +805,11 @@ it.each([1, 2])("retains delivered-case contents observed in Start response %s",
       const current = ++starts;
       if (current === ordinal || current === 4) {
         const initial = fixture("status-fulfilled");
+        if (reply.status === 202) {
+          initial.state = "running"; initial.outcome = null; initial.stop_reason = null;
+          initial.events = objects(initial.events).filter(event => event.type !== "request_finished");
+          initial.next_after = objects(initial.events).at(-1)?.seq;
+        }
         const value: unknown = JSON.parse(JSON.stringify(initial).replaceAll(text(initial.request_id), text(object(reply.body).request_id)));
         if (current === ordinal) { const delivered = objects(object(value).cases)[0]; assert(delivered); delivered.title = "synthetic original delivered title"; }
         return { ...reply, body: value };
@@ -737,6 +831,18 @@ it("rejects a duplicate event present only in the accepted Start response", asyn
     return reply;
   };
   await expect(runProbe(backend, probe)).rejects.toThrow("event gap or duplicate");
+});
+it("rejects a successful terminal result in the fresh 202 response", async () => {
+  const { backend, request } = scripted();
+  backend.request = async (...args) => {
+    const reply = await request(...args);
+    if (args[0] === "POST" && args[1] === "/api/factory/requests" && [200, 202].includes(reply.status)) {
+      const initial = fixture("status-fulfilled");
+      return { ...reply, body: object(JSON.parse(JSON.stringify(initial).replaceAll(text(initial.request_id), text(object(reply.body).request_id))) as unknown) };
+    }
+    return reply;
+  };
+  await expect(runProbe(backend, probe)).rejects.toThrow("finished fresh Start is not an operational failure");
 });
 it("accepts a recorded launch failure already finished in the 202 response", async () => {
   const { backend, request } = scripted();

@@ -41,6 +41,7 @@ class Unavailable extends Error {}
 function checkScenarioStatus(value: unknown): void {
   checkStatus(value);
   assert.equal(object(object(value).budget).overrun, false, "deterministic scenario exceeded budget");
+  assertContract("RequestStatus", value);
 }
 function body(reply: Reply, status: number): Record<string, unknown> {
   assert.equal(reply.status, status, `unexpected HTTP status: received ${String(reply.status)}, expected ${String(status)}`);
@@ -48,8 +49,15 @@ function body(reply: Reply, status: number): Record<string, unknown> {
   assert.equal(result.contract_version, "bug-request/1");
   return result;
 }
-function error(reply: Reply, status: number, code: string): void {
-  assert.equal(object(body(reply, status).error).code, code);
+function error(reply: Reply, status: number, code: string) {
+  const result = assertContract("ErrorResponse", body(reply, status));
+  assert.equal(result.error.code, code);
+  return result.error;
+}
+async function resetScenario(backend: IsolatedBackend, scenario: string): Promise<void> {
+  const response = body(await backend.request("POST", "/api/factory/test/reset", { scenario }), 200);
+  assertContract("TestResetResponse", response);
+  assert.equal(response.scenario, scenario, "reset selected a different scenario");
 }
 
 async function verify(backend: IsolatedBackend) {
@@ -117,13 +125,13 @@ function checkInterpretationProfile(actual: Record<string, unknown>, expected: R
 export async function runProbe(backend: IsolatedBackend, probe: Probe): Promise<void> {
   await verify(backend);
   const call = backend.request.bind(backend);
-  const reset = await call("POST", "/api/factory/test/reset", { scenario: probe.scenario });
-  assert(reset.status >= 200 && reset.status < 300, "reset failed");
+  await resetScenario(backend, probe.scenario);
   const interpretation = body(await call("POST", "/api/factory/interpretations", probe.input), 200);
   assert.equal(interpretation.startable, true);
   checkInterpretedItems(objects(interpretation.items), probe.expectedItems);
   assert.deepEqual(interpretation.input, probe.input, "input silently changed");
   if (probe.expectedInterpretation) checkInterpretationProfile(interpretation, probe.expectedInterpretation);
+  else assertContract("Interpretation", interpretation);
   const requestId = randomUUID();
   const start = { request_id: requestId, input: probe.input, interpretation_sha256: interpretation.interpretation_sha256 };
   const replies = await Promise.all(Array.from({ length: probe.concurrent ? 3 : 1 }, () => call("POST", "/api/factory/requests", start)));
@@ -177,7 +185,11 @@ export async function runProbe(backend: IsolatedBackend, probe: Probe): Promise<
   };
   for (const reply of replies) {
     assert([200, 202].includes(reply.status));
-    observe(object(reply.body), true);
+    const initial = object(reply.body);
+    observe(initial, true);
+    if (reply.status === 202 && initial.state === "finished") {
+      assert.equal(initial.outcome, "operational_error", "finished fresh Start is not an operational failure");
+    }
   }
   const path = `/api/factory/requests/${requestId}`;
   const repeated = body(await call("POST", "/api/factory/requests", start), 200);
@@ -394,6 +406,7 @@ export async function runDownloads(backend: IsolatedBackend, status: Record<stri
       assert.equal(response.status, 200);
       assert(response.body instanceof Uint8Array, "archive response is not bytes");
       assert.equal(createHash("sha256").update(response.body).digest("hex"), part.sha256, "archive hash mismatch");
+      assert.equal(response.body.byteLength, part.size_bytes, "archive size mismatch");
     }
   }
 }
@@ -492,8 +505,7 @@ export async function runReconciliation(backend: IsolatedBackend, before: Record
 export async function runUnsupported(backend: IsolatedBackend): Promise<void> {
   await verify(backend);
   const call = backend.request.bind(backend);
-  const reset = await call("POST", "/api/factory/test/reset", { scenario: "two-host-fulfilled" });
-  assert(reset.status >= 200 && reset.status < 300);
+  await resetScenario(backend, "two-host-fulfilled");
   const fixture: unknown = JSON.parse(readFileSync(new URL("../fixtures/interpretation-unsupported.json", import.meta.url), "utf8"));
   const input = object(object(fixture).input);
   const interpretation = body(await call("POST", "/api/factory/interpretations", input), 200);
@@ -501,9 +513,10 @@ export async function runUnsupported(backend: IsolatedBackend): Promise<void> {
   assert.deepEqual(interpretation.input, input, "unsupported requirements silently changed");
   checkInterpretedItems(objects(interpretation.items), objects(object(fixture).items), "unsupported item: ");
   checkInterpretationProfile(interpretation, object(fixture));
-  error(await call("POST", "/api/factory/requests", {
+  const refusal = error(await call("POST", "/api/factory/requests", {
     request_id: randomUUID(), input, interpretation_sha256: interpretation.interpretation_sha256,
   }), 422, "unsupported_request");
+  assert.deepEqual(object(refusal.details).interpretation, interpretation, "refusal interpretation changed");
   const invalidHost = structuredClone(input); invalidHost.hosts = ["synthetic-unsupported-host"];
   const invalidType = structuredClone(input);
   const item = objects(invalidType.items)[0]; assert(item); item.bug_type_id = "synthetic-unsupported-type";

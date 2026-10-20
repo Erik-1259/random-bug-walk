@@ -29,9 +29,34 @@ export function checkEvidence(evidence: TestEvidence, status: RequestStatus): vo
       spent += op.settled_microusd;
     }
   }
+  if (status.state === "finished") {
+    // These named controls reserve a host's full candidate worst case before
+    // execution. Skipped entries do not execute. Evidence has no structured
+    // copy-to-candidate link, so this proves totals and launch bounds only.
+    const executed = status.candidates.filter(candidate => candidate.stage !== "skipped");
+    const expectedOriginal = executed.reduce((sum, candidate) => {
+      assert(status.interpretation.input.hosts.includes(candidate.host_id), "unselected candidate host in execution evidence");
+      const worst = { "task-report": 300_000, umami: 600_000 }[candidate.host_id];
+      return sum + worst;
+    }, 0);
+    const copies = evidence.operations.filter(op => op.kind === "candidate_copy");
+    assert.equal(copies.reduce((sum, op) => sum + op.reserved_microusd, 0), expectedOriginal,
+      "candidate originals differ from executed host worst cases");
+    const launched = copies.filter(op => calls.includes(op.call_name));
+    assert(launched.length >= executed.length, "candidate execution has missing provider creates");
+    if (executed.length > 0) {
+      const worker = evidence.operations.find(op => op.kind === "worker"); assert(worker);
+      assert(calls.includes(worker.call_name), "executed candidates have no worker create");
+    }
+    // The uncertain-provider control may release never-launched copies at zero.
+    // Its terminal stop code survives reconciliation, while attention clears.
+    if (status.stop_reason?.code !== "needs_reconciliation") {
+      assert.equal(launched.length, copies.length, "ordinary candidate execution has unlaunched copies");
+    }
+  }
   assert.equal(reserved, status.budget.reserved_microusd, "held ledger amounts disagree with status");
   assert.equal(spent, status.budget.spent_microusd, "settled ledger amounts disagree with status");
-  for (const call of creates) assert(evidence.operations.some(op => op.call_name === call.call_name), "provider create without reservation");
+  for (const call of evidence.provider_calls) assert(evidence.operations.some(op => op.call_name === call.call_name), "provider call without reservation");
   if (status.attention?.code === "needs_reconciliation") {
     assert.equal(evidence.slot.holder_request_id, status.request_id, "uncertain request lost its slot");
   }

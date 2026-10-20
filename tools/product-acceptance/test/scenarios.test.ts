@@ -12,12 +12,15 @@ function terminalScenario(name: string) {
   const interpretation = structuredClone(object(expected.interpretation));
   const evidence = fixture("test-evidence");
   const held = state.attention !== null;
-  for (const op of objects(evidence.operations)) {
-    op.state = held ? "uncertain" : "reconciled";
-    op.settled_microusd = held ? null : op.reserved_microusd;
-  }
-  Object.assign(object(state.budget), { reserved_microusd: held ? 500000 : 0, spent_microusd: held ? 0 : 500000,
-    committed_microusd: 500000, remaining_microusd: integer(object(state.budget).budget_microusd) - 500000 });
+  const amounts = [200000, ...objects(state.candidates).filter(candidate => candidate.stage !== "skipped")
+    .flatMap(candidate => Array<number>(3).fill(candidate.host_id === "task-report" ? 100000 : 200000))];
+  evidence.operations = amounts.map((amount, index) => ({ operation_id: (index + 1).toString(16).padStart(64, "0"),
+    kind: index === 0 ? "worker" : "candidate_copy", call_name: `synthetic-operation-${String(index)}`,
+    state: held ? "uncertain" : "reconciled", reserved_microusd: amount, settled_microusd: held ? null : amount, attempt_ordinal: 1 }));
+  evidence.provider_calls = objects(evidence.operations).map(op => ({ call_name: op.call_name, provider: "sandbox", action: "create", at: state.created_at }));
+  const total = amounts.reduce((sum, amount) => sum + amount, 0);
+  Object.assign(object(state.budget), { reserved_microusd: held ? total : 0, spent_microusd: held ? 0 : total,
+    committed_microusd: total, remaining_microusd: integer(object(state.budget).budget_microusd) - total });
   object(evidence.slot).holder_request_id = held ? expected.request_id : null;
   let id = text(expected.request_id); let starts = 0;
   const replaceId = (value: unknown) => object(JSON.parse(JSON.stringify(value).replaceAll(text(expected.request_id), id)) as unknown);
@@ -25,9 +28,21 @@ function terminalScenario(name: string) {
     verifyIsolation: () => Promise.resolve({ backendRevision: "a".repeat(40), contractRevision }),
     wait: () => Promise.resolve(), reconnect: () => Promise.resolve(),
     request: (method, path, payload): Promise<Reply> => {
-      if (path.endsWith("/test/reset")) return Promise.resolve({ status: 204, body: null });
+      if (path.endsWith("/test/reset")) return Promise.resolve({ status: 200, body: { contract_version: "bug-request/1", scenario: object(payload).scenario } });
       if (path.endsWith("/interpretations")) return Promise.resolve({ status: 200, body: interpretation });
-      if (method === "POST") { id = text(object(payload).request_id); return Promise.resolve({ status: ++starts === 1 ? 202 : 200, body: replaceId(state) }); }
+      if (method === "POST") {
+        id = text(object(payload).request_id);
+        const first = ++starts === 1;
+        const body = replaceId(state);
+        if (first) {
+          body.state = objects(body.events).some(event => event.type === "stop_requested") ? "stopping" : "running";
+          body.outcome = null; body.stop_reason = null;
+          body.events = objects(body.events).filter(event => event.type !== "request_finished");
+          const last = objects(body.events).at(-1); assert(last);
+          body.next_after = last.seq; body.updated_at = last.at;
+        }
+        return Promise.resolve({ status: first ? 202 : 200, body });
+      }
       if (path.includes("/test/evidence?")) return Promise.resolve({ status: 200, body: { ...replaceId(evidence), request_id: id } });
       const page = replaceId(state); const cursor = Number(path.split("?after=")[1] ?? 0);
       page.events = objects(page.events).filter(event => integer(event.seq) > cursor);
@@ -35,7 +50,8 @@ function terminalScenario(name: string) {
       return Promise.resolve({ status: 200, body: page });
     },
   };
-  const probe = { scenario: name, input: object(object(expected.interpretation).input), outcome: text(expected.outcome),
+  const scenarioNames: Record<string, string> = { fulfilled: "two-host-fulfilled", exhausted: "sources-exhausted", cancelled: "cancel-midway", "operational-error": "worker-lost" };
+  const probe = { scenario: scenarioNames[name] ?? name, input: object(object(expected.interpretation).input), outcome: text(expected.outcome),
     stopCode: text(object(expected.stop_reason).code), expectedDelivery: text(expected.delivery),
     expectedItems: objects(object(expected.interpretation).items), expectedCounts: objects(expected.items),
     expectedInterpretation: object(expected.interpretation), expectedFunnel: object(expected.funnel),
@@ -58,7 +74,7 @@ it("rejects held spend after ordinary completion even when status and ledger agr
   const s = terminalScenario("fulfilled");
   const worker = objects(s.evidence.operations).find(op => op.kind === "worker"); assert(worker);
   worker.state = "uncertain"; worker.settled_microusd = null;
-  Object.assign(object(s.state.budget), { reserved_microusd: 200000, spent_microusd: 300000 });
+  Object.assign(object(s.state.budget), { reserved_microusd: 200000, spent_microusd: integer(object(s.state.budget).committed_microusd) - 200000 });
   await expect(runProbe(s.backend, s.probe)).rejects.toThrow("terminal request left held spend");
 });
 for (const name of ["wrong-failure", "zero-result", "duplicate-defect", "partial-budget", "cancelled", "operational-error"]) {

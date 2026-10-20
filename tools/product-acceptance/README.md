@@ -6,9 +6,10 @@ PR #124, which remains a separate dependency. The follow-up base combines that
 PR's unchanged head `04e926b9b2ff89078be124d905ad73dd57c24d90` with main
 `f803962dcaf3b51b8881a7c4db99aeded33c7e1d`.
 
-The runner uses `@rbw/factory-contract` for types and evidence-envelope shape
-validation. Expected outcomes, quantities, routing, retention, qualification and
-accounting assertions remain independent of the service's validators. Fixtures
+The runner uses `@rbw/factory-contract` for types and response shape
+validation. Every Start, replay, status and post-completion response is checked
+at its boundary. Expected outcomes, quantities, routing, retention, qualification
+and accounting assertions remain independent of the service's validators. Fixtures
 are exact copies from the pinned contract, not evidence that the backend passes.
 
 ## Invocation
@@ -69,12 +70,18 @@ self-tests and local checks separately. `readiness.json` is the no-backend repor
 | --- | --- | --- |
 | identity | Overlapping and repeated starts, conflict refusal, stable identity, one worker reservation and no duplicate create call names | Durable request/job identities are not exposed by `TestEvidence` |
 | quantities | Separate described items, independent expected delivery/missing counts, case ownership, type totals and pinned interpretation | A startable unequal-quantity scenario with expected per-item counts; durable backend integration |
-| shared-budget | One request budget, every observed response within the deterministic limit, original reservation and settlement accounting | Evidence does not associate copy operations with hosts |
+| shared-budget | One request budget, every observed response within the deterministic limit, original reservation and settlement accounting; candidate execution totals and provider-create bounds | Evidence does not associate copy operations with candidate, copy or host IDs |
 | qualification | Pinned candidate stages and reasons with linked rejection/skip/incomplete events; duplicate defect relationships; demonstrated criteria match cases; default difficulty stays unassessed | No named `setup_failed` scenario; real qualification is not run |
 | unsupported | Pinned unsupported combinations, description, source and difficulty outcomes; start refusal; unknown host/type errors | Real interpretation beyond the named test scenarios |
 | stops | Partial/zero exhaustion, budget stop, cancellation, worker loss and uncertain spend; retained cases and reconciliation | Durable worker integration and actual operational failure recovery |
 | continuity | Repeated reads, reconnect, frozen terminal results, contiguous event history and reconciliation | Persistence across a service restart is not exercised |
-| downloads | Distinct paths and kinds, ready-only delivered cases, archive digest, validation failure/error and completion cost semantics | No pending-package window; synthetic archives do not prove real privacy or replay |
+| downloads | Distinct paths and kinds, ready-only delivered cases, archive digest and byte size, validation failure/error and completion cost semantics | No pending-package window; synthetic archives do not prove real privacy or replay |
+
+Reset must return the typed `200` response naming the selected scenario, and
+refusals use the typed error envelope. Unsupported Start must retain the
+interpretation just returned for that input. A fresh `202` may be finished only
+with an operational failure; successful terminal replays remain valid `200`
+responses. Downloaded archive bytes must match both advertised hash and size.
 
 Interpretations are compared with the complete pinned semantic profile: versions,
 route, item meanings, host use, type quantities, worst-case prices, limits and
@@ -139,7 +146,15 @@ settlement. Launched deterministic operations settle at that original worst
 case; unused reservations without a recorded create settle at zero. The worker
 reservation is pinned to the test-control amount. Operation call names and
 provider create call names are unique in the deterministic scenarios, so one
-create cannot justify duplicate charges. A finished validation error may retain a null completion cost; that
+create cannot justify duplicate charges. For finished named scenarios, the
+sum of original candidate reservations must match the pinned host worst cases
+for every non-skipped candidate. Candidate execution requires a worker create
+and at least one candidate-copy create per executed candidate in aggregate;
+ordinary execution requires creates for all copy reservations. Uncertain-provider
+may release never-launched copies at zero, including after reconciliation.
+Every provider record must match an operation. These checks reject omissions
+that also lower reported budget totals, but cannot prove individual copy-to-host
+or copy-to-candidate assignments without structured evidence links. A finished validation error may retain a null completion cost; that
 is distinct from zero and need not change during reconciliation. Description
 limits count Unicode code points after trimming; the named inputs are already
 normalized and impose no conflicting UTF-16 length assertion.
