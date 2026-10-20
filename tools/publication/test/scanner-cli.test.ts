@@ -612,9 +612,10 @@ describe("PUB-02 scanner CLI: gitleaks", () => {
   });
 
   it.each([
-    ["a credential", STUB_LEAK_MARKER],
-    ["a credential with dots inside it", STUB_LEAK_MARKER.replaceAll("-", ".")],
-  ])("finds %s that needs a boundary after it in a directory name and before an extension", async (_label, marker) => {
+    ["a credential that needs a boundary after it", STUB_LEAK_MARKER, "boundary"],
+    ["a credential with dots inside it that needs a boundary after it", STUB_LEAK_MARKER.replaceAll("-", "."), "boundary"],
+    ["a credential with dots inside it that needs a space before it", STUB_LEAK_MARKER.replaceAll("-", "."), "space"],
+  ] as const)("finds %s in a directory name and before an extension", async (_label, marker, before) => {
     const root = tempDir();
     const repo = initRepo(join(root, "repo"));
     const tree = {
@@ -625,7 +626,7 @@ describe("PUB-02 scanner CLI: gitleaks", () => {
     const base = commit(repo, { "a.txt": "base\n" }, "chore: base\n");
     const head = commit(repo, tree, "feat: add\n");
     const patterns = writePatterns(root, TERMS);
-    const stub = writeStubGitleaks(root, { leakPattern: boundedLeakPattern(marker) });
+    const stub = writeStubGitleaks(root, { leakPattern: boundedLeakPattern(marker, before) });
     const range = await runCli(["scan", "--patterns", patterns, "--gitleaks", stub.command, "--range", `${base}..HEAD`], { cwd: repo });
     // The sorted list is cfg, cfg/<marker>, cfg/<marker>/notes.md, keys, keys/<marker>.txt and z.txt.
     const list = `paths-${short(head)}`;
@@ -638,6 +639,66 @@ describe("PUB-02 scanner CLI: gitleaks", () => {
       expect(all).not.toContain(marker);
       expect(all).not.toContain(TERM);
     }
+  });
+
+  it("finds a credential after a dot in a name through the form with separators as spaces", async () => {
+    const root = tempDir();
+    const repo = initRepo(join(root, "repo"));
+    const tree = { [`cfg/x.${STUB_LEAK_MARKER}.md`]: `ok\n${forms.signedOff}: x\n${TERM}\n`, "z.txt": "z\n" };
+    const base = commit(repo, { "a.txt": "base\n" }, "chore: base\n");
+    const head = commit(repo, tree, "feat: add\n");
+    const patterns = writePatterns(root, TERMS);
+    const stub = writeStubGitleaks(root, { leakPattern: boundedLeakPattern(STUB_LEAK_MARKER, "space") });
+    const range = await runCli(["scan", "--patterns", patterns, "--gitleaks", stub.command, "--range", `${base}..HEAD`], { cwd: repo });
+    // The sorted list is cfg, cfg/x.<marker>.md and z.txt. A "." comes before the marker in the
+    // path and in every prefix, so only "cfg x <marker> md" has a space before it.
+    expect(outputLines(range)).toEqual(["blocked", `paths-${short(head)}:2`]);
+    expect(range.code).toBe(1);
+    const files = await scanFiles(tree, { stub });
+    expectBlocked(files, ["paths:1"]);
+    for (const result of [range, files.result]) {
+      const all = result.stdout + result.stderr;
+      expect(all).not.toContain(STUB_LEAK_MARKER);
+      expect(all).not.toContain(TERM);
+    }
+  });
+
+  it("finds a credential in a path when the first listed path starts like a binary file type", async () => {
+    const root = tempDir();
+    const repo = initRepo(join(root, "repo"));
+    const tree = { "MZ/readme.md": "hello\n", [`keys/${STUB_LEAK_MARKER}.txt`]: `ok\n${forms.signedOff}: x\n` };
+    const base = commit(repo, { "a.txt": "base\n" }, "chore: base\n");
+    const head = commit(repo, tree, "feat: add\n");
+    const patterns = writePatterns(root, TERMS);
+    const stub = writeStubGitleaks(root, { binaryPrefixes: ["MZ"] });
+    const range = await runCli(["scan", "--patterns", patterns, "--gitleaks", stub.command, "--range", `${base}..HEAD`], { cwd: repo });
+    // The sorted list is MZ, MZ/readme.md, keys and keys/<marker>.txt.
+    expect(outputLines(range)).toEqual(["blocked", `paths-${short(head)}:4`]);
+    expect(range.code).toBe(1);
+    const files = await scanFiles(tree, { stub });
+    expectBlocked(files, ["paths:2"]);
+    for (const result of [range, files.result]) expect(result.stdout + result.stderr).not.toContain(STUB_LEAK_MARKER);
+  });
+
+  it("finds a credential in a path where a chunked read would split the path list", async () => {
+    // Without an empty line after each entry, a chunk of 64 characters extended by up to 32
+    // ends inside the marker, which follows 16 paths of 4 characters.
+    const tree: Record<string, string> = {};
+    for (let index = 0; index < 16; index += 1) tree[`A${String(index).padStart(3, "0")}`] = "x\n";
+    tree[STUB_LEAK_MARKER] = `ok\n${forms.signedOff}: x\n`;
+    const root = tempDir();
+    const repo = initRepo(join(root, "repo"));
+    const base = commit(repo, { "a.txt": "base\n" }, "chore: base\n");
+    const head = commit(repo, tree, "feat: add\n");
+    const patterns = writePatterns(root, TERMS);
+    const stub = writeStubGitleaks(root, { chunk: { size: 64, peek: 32 } });
+    const range = await runCli(["scan", "--patterns", patterns, "--gitleaks", stub.command, "--range", `${base}..HEAD`], { cwd: repo });
+    // The sorted list is A000 to A015, then the marker.
+    expect(outputLines(range)).toEqual(["blocked", `paths-${short(head)}:17`]);
+    expect(range.code).toBe(1);
+    const files = await scanFiles(tree, { stub });
+    expectBlocked(files, ["paths:17"]);
+    for (const result of [range, files.result]) expect(result.stdout + result.stderr).not.toContain(STUB_LEAK_MARKER);
   });
 
   it("substitutes {dir} and passes only paths inside it", async () => {

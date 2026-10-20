@@ -16,10 +16,13 @@ export const STUB_LEAK_MARKER = ["SYNTHETIC", "STUB", "LEAK"].join("-");
 
 /**
  * A stub leakPattern for `marker` (letters, "-" and "." only) that, like many gitleaks rules,
- * needs a word boundary before the secret and a space, quote, ";" or line end after it.
+ * needs a word boundary before the secret and a space, quote, ";" or line end after it. With
+ * `before` set to "space", it needs a space or the line start before the secret instead, like
+ * gitleaks' azure-ad-client-secret rule.
  */
-export function boundedLeakPattern(marker: string): string {
-  return String.raw`(?:^|\W)` + marker.replaceAll(".", String.raw`\.`) + String.raw`(?=[\s'"\x60;]|$)`;
+export function boundedLeakPattern(marker: string, before: "boundary" | "space" = "boundary"): string {
+  const left = before === "space" ? String.raw`(?:^|\s)` : String.raw`(?:^|\W)`;
+  return left + marker.replaceAll(".", String.raw`\.`) + String.raw`(?=[\s'"\x60;]|$)`;
 }
 
 // Attribution forms are assembled at runtime so this file passes its own scan.
@@ -178,6 +181,14 @@ export interface StubGitleaksOptions {
    * boundary after the secret. By default every line containing STUB_LEAK_MARKER is reported.
    */
   leakPattern?: string;
+  /** Skips a file whose content starts with one of these, like gitleaks' check for binary file types. */
+  binaryPrefixes?: string[];
+  /**
+   * Reads each file in chunks of `size` characters, like gitleaks, extending a chunk by up to
+   * `peek` characters so that it ends at an empty line; a line split between two chunks is
+   * matched as two parts.
+   */
+  chunk?: { size: number; peek: number };
 }
 
 export interface StubGitleaks {
@@ -207,6 +218,8 @@ export function writeStubGitleaks(dir: string, options: StubGitleaksOptions = {}
     hang: options.hang ?? false,
     killParent: options.killParent ?? false,
     leakPattern: options.leakPattern ?? null,
+    binaryPrefixes: options.binaryPrefixes ?? [],
+    chunk: options.chunk ?? null,
     violationMarker,
     callsLog,
     leakMarker: STUB_LEAK_MARKER,
@@ -245,16 +258,34 @@ if (settings.killParent) process.kill(process.ppid, "SIGKILL");
 const findings = [];
 const leakPattern = settings.leakPattern === null ? null : new RegExp(settings.leakPattern);
 const leaks = (line) => (leakPattern === null ? line.includes(settings.leakMarker) : leakPattern.test(line));
+const chunks = (text) => {
+  if (settings.chunk === null) return [text];
+  const parts = [];
+  for (let start = 0; start < text.length; ) {
+    let end = Math.min(start + settings.chunk.size, text.length);
+    const limit = Math.min(end + settings.chunk.peek, text.length);
+    while (end < limit && !(text[end - 1] === "\\n" && text[end - 2] === "\\n")) end += 1;
+    parts.push(text.slice(start, end));
+    start = end;
+  }
+  return parts;
+};
 const walk = (d) => {
   for (const name of readdirSync(d).sort()) {
     const p = join(d, name);
     const st = lstatSync(p);
     if (st.isDirectory()) walk(p);
     else if (st.isFile() && !(settings.skipPaths !== null && new RegExp(settings.skipPaths).test(p))) {
-      const lines = readFileSync(p, "latin1").split("\\n");
-      lines.forEach((line, i) => {
-        if (leaks(line)) findings.push({ RuleID: "stub", File: p, StartLine: i + 1, Secret: "REDACTED", Match: "REDACTED" });
-      });
+      const text = readFileSync(p, "latin1");
+      if (settings.binaryPrefixes.some((prefix) => text.startsWith(prefix))) continue;
+      let first = 1;
+      for (const part of chunks(text)) {
+        const lines = part.split("\\n");
+        lines.forEach((line, i) => {
+          if (leaks(line)) findings.push({ RuleID: "stub", File: p, StartLine: first + i, Secret: "REDACTED", Match: "REDACTED" });
+        });
+        first += lines.length - 1;
+      }
     }
   }
 };

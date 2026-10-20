@@ -113,18 +113,21 @@ describe("PUB-02 public-source route: scan-public", () => {
     expect(result.stdout + result.stderr).not.toContain(STUB_LEAK_MARKER);
   });
 
-  it("finds a credential that needs a boundary after it in a directory name and before an extension", async () => {
+  it.each([
+    ["a credential that needs a boundary after it", STUB_LEAK_MARKER, "boundary"],
+    ["a credential with dots inside it that needs a space before it", STUB_LEAK_MARKER.replaceAll("-", "."), "space"],
+  ] as const)("finds %s in a directory name and before an extension", async (_label, marker, before) => {
     const root = tempDir();
     const repo = initRepo(join(root, "repo"));
     const base = commit(repo, { "a.txt": "base\n" }, "chore: base\n");
-    const tree = { [`cfg/${STUB_LEAK_MARKER}/notes.md`]: `ok\n${forms.signedOff}: x\n`, [`keys/${STUB_LEAK_MARKER}.txt`]: "x\n" };
+    const tree = { [`cfg/${marker}/notes.md`]: `ok\n${forms.signedOff}: x\n`, [`keys/${marker}.txt`]: "x\n" };
     const head = commit(repo, tree, "docs: add\n");
-    const stub = writeStubGitleaks(root, { leakPattern: boundedLeakPattern(STUB_LEAK_MARKER) });
+    const stub = writeStubGitleaks(root, { leakPattern: boundedLeakPattern(marker, before) });
     const result = await runCli(["scan-public", "--gitleaks", stub.command, "--range", `${base}..HEAD`], { cwd: repo });
     // The sorted list is cfg, cfg/<marker>, cfg/<marker>/notes.md, keys and keys/<marker>.txt.
     const list = `paths-${short(head)}`;
     expectPublic(result, "blocked", [`${list}:2`, `${list}:3`, `${list}:5`]);
-    expect(result.stdout + result.stderr).not.toContain(STUB_LEAK_MARKER);
+    expect(result.stdout + result.stderr).not.toContain(marker);
   });
 
   it("checks --files input and reports a clean result for the checks that ran", async () => {

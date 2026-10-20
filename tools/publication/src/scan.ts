@@ -103,27 +103,45 @@ function gitleaksPath(unit: ScanUnit): string {
 }
 
 /**
- * The other forms of a path list that gitleaks scans, with the 1-based path-list position of
- * each line. Many gitleaks rules need a space, a quote or a line end after the secret, so a
- * credential followed by "/" or "." in a path would pass. Each path is also given with "/" and
- * "." as spaces, and as each prefix that ends before a "/" or "." (each directory, and the name
- * without each extension), which keeps a credential with a "." or "/" inside it whole.
+ * The other forms of a path list's paths that gitleaks scans, with the 1-based path-list
+ * position of each. Many gitleaks rules need a space, a quote or a line end after the secret,
+ * so a credential followed by "/" or "." in a path would pass. Each path is also given with "/"
+ * and "." as spaces, and as each prefix that ends before a "/" or "." (each directory, and the
+ * name without each extension), which keeps a credential with a "." or "/" inside it whole.
+ * Each of those prefixes, and the path itself, is given again with "/" as spaces when it holds
+ * a "/", for a rule that also needs a space before the secret.
  */
-function pathListForms(content: Uint8Array): { content: Uint8Array; positions: number[] } {
-  const lines: string[] = [];
+function pathListForms(paths: readonly string[]): { entries: string[]; positions: number[] } {
+  const entries: string[] = [];
   const positions: number[] = [];
-  Buffer.from(content)
-    .toString("utf8")
-    .split("\n")
-    .forEach((path, index) => {
-      const forms = [path.replace(/[/.]/g, " ")];
-      for (const separator of path.matchAll(/[/.]/g)) if (separator.index > 0) forms.push(path.slice(0, separator.index));
-      for (const form of forms) {
-        lines.push(form);
-        positions.push(index + 1);
-      }
-    });
-  return { content: Buffer.from(lines.join("\n")), positions };
+  paths.forEach((path, index) => {
+    const ends = [...path.matchAll(/[/.]/g)].map((separator) => separator.index).filter((end) => end > 0);
+    const prefixes = ends.map((end) => path.slice(0, end));
+    const forms = [path.replace(/[/.]/g, " "), ...prefixes];
+    for (const prefix of [...prefixes, path]) if (prefix.includes("/")) forms.push(prefix.replaceAll("/", " "));
+    for (const form of forms) {
+      entries.push(form);
+      positions.push(index + 1);
+    }
+  });
+  return { entries, positions };
+}
+
+/**
+ * The text gitleaks scans for path-list entries, with each line's path-list position (none for
+ * the other lines). gitleaks skips a file whose first bytes look like a binary type, such as an
+ * executable or a database, so a fixed line comes before the first path. It reads a large file
+ * in chunks and ends a chunk early only at an empty line, so an empty line follows each entry
+ * and no chunk splits one.
+ */
+function pathText(entries: readonly string[], positions: readonly number[]): { content: Uint8Array; positions: (number | undefined)[] } {
+  const lines = ["path list", ""];
+  const linePositions: (number | undefined)[] = [undefined, undefined];
+  entries.forEach((entry, index) => {
+    lines.push(entry, "");
+    linePositions.push(positions[index], undefined);
+  });
+  return { content: Buffer.from(lines.join("\n")), positions: linePositions };
 }
 
 function compareLocations(a: [string, number], b: [string, number]): number {
@@ -157,13 +175,18 @@ async function scanUnits(request: PublicScanRequest, terms: readonly RegExp[], r
 
   const lines = units.map((unit) => contentViolations(unit, context));
   const blobs: GitleaksBlob[] = units.map((unit) => ({ path: gitleaksPath(unit), content: unit.content }));
-  // Each blob's unit, and for a path list's other forms the position of each line.
-  const targets: { unit: number; positions?: readonly number[] }[] = units.map((_unit, index) => ({ unit: index }));
+  // Each blob's unit, and for a path list and its other forms the path-list position of each line.
+  const targets: { unit: number; positions?: readonly (number | undefined)[] }[] = units.map((_unit, index) => ({ unit: index }));
   units.forEach((unit, index) => {
     if (unit.kind !== "paths") return;
-    const forms = pathListForms(unit.content);
-    blobs.push({ path: gitleaksPath(unit), content: forms.content });
-    targets.push({ unit: index, positions: forms.positions });
+    const paths = Buffer.from(unit.content).toString("utf8").split("\n");
+    const listed = pathText(paths, paths.map((_path, position) => position + 1));
+    const forms = pathListForms(paths);
+    const other = pathText(forms.entries, forms.positions);
+    blobs[index] = { path: gitleaksPath(unit), content: listed.content };
+    targets[index] = { unit: index, positions: listed.positions };
+    blobs.push({ path: gitleaksPath(unit), content: other.content });
+    targets.push({ unit: index, positions: other.positions });
   });
   const gitleaks = { env, timeoutMs: request.gitleaksTimeoutMs ?? DEFAULT_TIMEOUT_MS.gitleaks };
   for (const finding of await runGitleaks(request.gitleaksCommand ?? "gitleaks", blobs, gitleaks)) {
