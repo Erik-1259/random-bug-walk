@@ -6,5 +6,5 @@
     "rewriteRelativeImportExtensions": true,
     "noEmit": true
   },
-  "include": ["src", "test", "vitest.config.ts"]
+  "include": ["src", "v2", "adapter", "test", "vitest.config.ts"]
 }

@@ -1,0 +1,25 @@
+// The factory's shared shapes this adapter uses, all from @rbw/factory-contract (type-only, so the
+// modules that import them stay loadable with Node's built-ins alone).
+export type {
+  BaselineIdentity,
+  BugCaseInputs,
+  CatalogEntry,
+  CellObservation,
+  CollectedCopy,
+  CopyDestinations,
+  CopyPlan,
+  CopyRecord,
+  CopyRoots,
+  CopyRunner,
+  CopyState,
+  FileDigest,
+  FileSet,
+  HostAdapter,
+  HostAvailability,
+  HostId,
+  InterpretedCells,
+  Protocol,
+  SuiteObservation,
+  UnpackedPair,
+  ValidatorInputs,
+} from "@rbw/factory-contract";
