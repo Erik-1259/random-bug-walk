@@ -96,7 +96,11 @@ export interface RequestHooks {
   /** The worker sandbox's end: no copy starts unless it ends, with its margin, before this. */
   deadline: Date;
   now: () => Date;
-  /** Runs each copy: reserve, launch, settle; one at a time; refuses after a stop or a fence. */
+  /**
+   * The copies' spend: reserveCandidate at a candidate's selection (one operation per copy of its
+   * protocol), run for each copy (launch, confirmed stop, settlement; one at a time; refused after
+   * a stop or a fence), settleCandidate when the candidate ends (its unused copies cancelled at zero).
+   */
   meter: CopyMeter;
   /** Before each candidate and between copies: `stop` after a recorded stop, `fenced` once the request was finished elsewhere. */
   checkpoint(): Promise<Checkpoint>;
@@ -224,6 +228,7 @@ export async function runFactoryWorker(deps: WorkerDeps, args: { request_id: str
       margin_s: profile.copy_launch_margin_s,
       mode: { kind: "own_operation", role: "request" },
       beforeLaunch: async () => (await checkpoint()) === "continue",
+      fenced,
       log: deps.log,
       profile,
     });

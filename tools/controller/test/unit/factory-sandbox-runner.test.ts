@@ -11,7 +11,7 @@ import type { MeterContext } from "../../src/factory-meter.ts";
 import type { FactoryRequestRecord } from "../../src/factory-ports.ts";
 import { NO_IMAGE_DIGEST, RUN_ONCE_DIR, RUN_ONCE_SCRIPT, SandboxCopyUncertain, createSandboxCopyRunner, pinnedImage, sandboxVcpus } from "../../src/factory-sandbox-runner.ts";
 import type { SandboxRunnerDeps } from "../../src/factory-sandbox-runner.ts";
-import { CANDIDATE_A, COPY_APP as APP, COPY_CHECK as CHECK, COPY_DIGEST as DIGEST, FakeCopySandbox, acceptRequest, copyPlan, copyRoots, factoryWorld, operationState } from "./factory-fakes.ts";
+import { CANDIDATE_A, CANDIDATE_B, COPY_APP as APP, COPY_CHECK as CHECK, COPY_DIGEST as DIGEST, FakeCopySandbox, PROTOCOL, acceptRequest, copyPlan, copyRoots, factoryWorld, operationState } from "./factory-fakes.ts";
 import type { FactoryWorld } from "./factory-fakes.ts";
 
 let w: FactoryWorld;
@@ -19,12 +19,16 @@ let record: FactoryRequestRecord;
 let sdk: FakeCopySandbox;
 let roots: CopyRoots;
 let work: string;
+/** The request's meter with candidate A selected: one copy of each state reserved. */
+let reserved: CopyMeter;
 
 beforeEach(async () => {
   w = await factoryWorld();
   record = await acceptRequest(w);
   sdk = new FakeCopySandbox();
   ({ roots, work } = copyRoots());
+  reserved = meter();
+  expect((await reserved.reserveCandidate({ candidate_id: CANDIDATE_A, host_id: "task-report", protocol: PROTOCOL })).kind).toBe("reserved");
 });
 
 afterEach(async () => {
@@ -57,7 +61,7 @@ function meter(overrides: Partial<MeterContext> = {}): CopyMeter {
 function deps(overrides: Partial<SandboxRunnerDeps> = {}): SandboxRunnerDeps {
   return {
     sdk,
-    meter: meter(),
+    meter: reserved,
     subject: CANDIDATE_A,
     workDir: work,
     resultsSha256: (dir) => Promise.resolve(sha256Hex(Buffer.from(readdirSync(dir).sort().join("\n")))),
@@ -114,12 +118,12 @@ describe("the sandbox copy runner", () => {
     expect(status.ok && status.settled_microusd > 0n).toBe(true);
   });
 
-  it("returns setup_failed without reserving or creating anything when a file is missing or has another sha256", async () => {
+  it("returns setup_failed without launching or creating anything when a file is missing or has another sha256", async () => {
     for (const bad of [plan({ files: [{ path: "src/store.ts", sha256: "0".repeat(64) }] }), plan({ files: [{ path: "src/missing.ts", sha256: "0".repeat(64) }] }), plan({ evaluator_files: [{ path: "checks/check.txt", sha256: "1".repeat(64) }] })]) {
       expect((await createSandboxCopyRunner(deps()).run(bad, roots)).outcome).toBe("setup_failed");
     }
     expect(sdk.creates).toHaveLength(0);
-    expect(await operationState(w, opId())).toBeNull();
+    expect(await operationState(w, opId())).toBe("prepared");
   });
 
   it("returns setup_failed for a plan whose image is not pinned by digest", async () => {
@@ -134,7 +138,7 @@ describe("the sandbox copy runner", () => {
     const collected = await createSandboxCopyRunner(deps()).run(plan({ limits: { timeout_s: 900, vcpus: 2, memory_mb: 4096, network: "none" } }), roots);
     expect(collected.outcome).toBe("setup_failed");
     expect(sdk.creates).toHaveLength(0);
-    expect(await operationState(w, opId())).toBeNull();
+    expect(await operationState(w, opId())).toBe("prepared");
   });
 
   it("gives a plan whose memory needs more vCPUs the vCPUs for it, and settles the size it created", async () => {
@@ -251,26 +255,29 @@ describe("the sandbox copy runner's refused copies", () => {
     expect(sdk.creates).toHaveLength(0);
   });
 
-  it("reports a refused reservation as timed_out, never setup_failed, and the meter keeps the refusal", async () => {
-    w.budgets.create("synthetic-small-budget", record.root, 100_000);
-    const small = meter({ budget_key: "synthetic-small-budget" });
-    const collected = await createSandboxCopyRunner(deps({ meter: small })).run(plan(), roots);
-    expect(collected.outcome).toBe("timed_out");
-    expect(small.lastRefusal?.reason).toBe("budget");
+  it("reports a copy its candidate has no reserved operation for as setup_failed, creating nothing", async () => {
+    const unreserved = meter();
+    const collected = await createSandboxCopyRunner(deps({ meter: unreserved })).run(plan(), roots);
+    expect(collected.outcome).toBe("setup_failed");
+    expect(unreserved.lastRefusal?.reason).toBe("limits_exceed_profile");
     expect(sdk.creates).toHaveLength(0);
   });
 
-  it("reports a halted ledger as timed_out, never setup_failed, and the meter keeps the refusal", async () => {
-    const halted = meter({
-      ledger: {
-        spend: w.spend,
-        budgets: { reserve: () => Promise.resolve({ ok: false as const, code: "pool_halted" }), close: (key, cause) => w.budgets.close(key, cause), status: (key) => w.budgets.status(key) },
+  it("reports a copy refused after a settlement halted the ledger as timed_out, never setup_failed, and the meter keeps the refusal", async () => {
+    const settle = w.spend.settle.bind(w.spend);
+    w.ledger.spend = {
+      ...w.spend,
+      settle: async (request) => {
+        const settled = await settle(request);
+        return settled.ok ? { ...settled, over_envelope: true } : settled;
       },
-    });
-    const collected = await createSandboxCopyRunner(deps({ meter: halted })).run(plan(), roots);
+    };
+    const runner = createSandboxCopyRunner(deps());
+    expect((await runner.run(plan({ state: "clean" }), roots)).outcome).toBe("ran");
+    const collected = await runner.run(plan(), roots);
     expect(collected.outcome).toBe("timed_out");
-    expect(halted.lastRefusal?.reason).toBe("halted");
-    expect(sdk.creates).toHaveLength(0);
+    expect(reserved.lastRefusal?.reason).toBe("halted");
+    expect(sdk.creates).toHaveLength(1);
   });
 
   it("rejects every later copy as uncertain once one copy was uncertain, creating nothing more", async () => {
@@ -280,7 +287,7 @@ describe("the sandbox copy runner's refused copies", () => {
     sdk.createError = null;
     await expect(runner.run(plan({ state: "fixed" }), roots)).rejects.toThrow(SandboxCopyUncertain);
     expect(sdk.creates).toHaveLength(1);
-    expect(await operationState(w, opId("fixed"))).toBeNull();
+    expect(await operationState(w, opId("fixed"))).toBe("prepared");
   });
 
   it("says in its uncertain rejection whether the stop of a sandbox the ledger could not record was confirmed", async () => {
@@ -288,6 +295,9 @@ describe("the sandbox copy runner's refused copies", () => {
     w.ledger.spend = { ...w.spend, transition: (request) => (request.to_state === "running" ? Promise.resolve({ ok: false as const, code: "invalid_transition" as const }) : transition(request)) };
     await expect(createSandboxCopyRunner(deps()).run(plan(), roots)).rejects.toThrow(/stop confirmed/);
     sdk.stopTakesEffect = false;
-    await expect(createSandboxCopyRunner(deps()).run(plan({ state: "fixed" }), roots)).rejects.toThrow(/stop not confirmed/);
+    // Another candidate's meter, since this one starts nothing after an uncertain copy.
+    const other = meter();
+    expect((await other.reserveCandidate({ candidate_id: CANDIDATE_B, host_id: "task-report", protocol: PROTOCOL })).kind).toBe("reserved");
+    await expect(createSandboxCopyRunner(deps({ meter: other, subject: CANDIDATE_B })).run(plan({ state: "fixed" }), roots)).rejects.toThrow(/stop not confirmed/);
   });
 });

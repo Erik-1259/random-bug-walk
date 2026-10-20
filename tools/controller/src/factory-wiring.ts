@@ -36,10 +36,10 @@ export const MISSING_MODULES: readonly string[] = [
  * not final: no integration claims conformance until it is settled.
  */
 export const HELD_INTERFACES: readonly string[] = [
-  // Contract section 8.5 reserves each candidate's worst case from its selection; the request
-  // mode's copy meter reserves one operation per copy at its launch. The request loop's ledger
-  // port (status, reserveCandidate, settleCandidate) waits for that decision.
-  "the request mode's reservation unit (per copy at launch, or each candidate from its selection)",
+  // The meter reserves a candidate's copies at its selection, one operation per copy of its
+  // protocol (CopyMeter.reserveCandidate), and the request loop's reserveCandidate port names the
+  // candidate's host and worst case but not its protocol, which the wiring must pass.
+  "the candidate's protocol at the request loop's reserveCandidate (the meter reserves per copy of it)",
   // The ledger's validation record has no host, accepted time, package hashes or package copy count.
   "the validation record's host_id, accepted_at, package_sha256 and copies (FactoryValidationRecord)",
   // The docker runner resolves a CollectedCopy but reports no resource or lifetime of its own.

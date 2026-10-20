@@ -38,9 +38,9 @@ const STATES: readonly CopyState[] = ["clean", "buggy", "fixed"];
 const LIMITS = { timeout_s: 720, vcpus: 4, memory_mb: 8192 };
 
 /**
- * The synthetic request loop: per candidate, select, run its copies in order with a checkpoint
- * before each, deliver; then finish as the factory core does: settleWorker, budget_updated,
- * request_finished.
+ * The synthetic request loop: per candidate, select and reserve its copies (one per state), run them
+ * in order with a checkpoint before each, settle the candidate, deliver; then finish as the factory
+ * core does: settleWorker, budget_updated, request_finished.
  */
 const syntheticLoop: Orchestrate = async (hooks) => {
   const candidates: { id: string; host: HostId }[] = [
@@ -53,6 +53,7 @@ const syntheticLoop: Orchestrate = async (hooks) => {
     for (const candidate of candidates) {
       if ((await hooks.checkpoint()) !== "continue") return "cancelled_by_user";
       await event(`cand:${candidate.id}:selected`, "candidate_selected", candidate, { source_id: `synthetic-${candidate.host}`, entry_id: `synthetic-${candidate.host}-01` });
+      if ((await hooks.meter.reserveCandidate({ candidate_id: candidate.id, host_id: candidate.host, protocol: PROTOCOL })).kind !== "reserved") return "budget_exhausted";
       for (const state of STATES) {
         const outcome = await hooks.meter.run({ subject: candidate.id, host: candidate.host, state, limits: LIMITS }, async (name, launch) => {
           await launch.created(name);
@@ -62,6 +63,7 @@ const syntheticLoop: Orchestrate = async (hooks) => {
         if (outcome.kind !== "ran") return outcome.kind === "uncertain" ? "needs_reconciliation" : "operational_error";
         await event(`cand:${candidate.id}:check:${state}`, "check_finished", candidate, { check_set: "verification", copy: state, outcome: "pass", runs_valid: 1, runs_total: 1 });
       }
+      await hooks.meter.settleCandidate({ candidate_id: candidate.id });
       await event(`cand:${candidate.id}:end`, "case_delivered", candidate, {});
     }
     return "fulfilled";

@@ -1,17 +1,18 @@
 // The hosted `sandbox` copy runner: the factory contract package's CopyRunner, run(plan, roots)
-// resolving a CollectedCopy, on Vercel Sandbox, one sandbox per copy. Before anything is reserved
+// resolving a CollectedCopy, on Vercel Sandbox, one sandbox per copy. Before anything is launched
 // or created it reads every plan.files entry from roots.app_root and every evaluator file from
 // roots.evaluator_root and checks its sha256 (a mismatch or a missing file is setup_failed). Then
 // the copy goes through the copy meter, which refuses limits above the host's copy limits and a
-// copy that would not end before the deadline, reserves and settles it (or, in a validation run,
-// records it under the run's operation). Inside: a sandbox from the plan's kit image pinned by
-// digest, named after the copy's execution, with no network, the plan's vCPUs (at least enough for
-// its memory at 2 GB each) and the plan's timeout plus the shutdown allowance as its provider
-// timeout; the files placed at their destinations; the command run once within its timeout, under
-// a run-once guard because the SDK may start a command twice; destinations.results packed and
-// read back into a fresh local directory; the stop confirmed by status. It resolves for every
-// definite outcome and rejects (SandboxCopyUncertain) only when the provider's outcome is
-// uncertain, which the caller turns into needs_reconciliation.
+// copy that would not end before the deadline, launches the operation its candidate reserved at
+// selection and settles it (or, in a validation run, records it under the run's operation).
+// Inside: a sandbox from the plan's kit image pinned by digest, named after the copy's execution,
+// with no network, the plan's vCPUs (at least enough for its memory at 2 GB each) and the plan's
+// timeout plus the shutdown allowance as its provider timeout; the files placed at their
+// destinations; the command run once within its timeout, under a run-once guard because the SDK
+// may start a command twice; destinations.results packed and read back into a fresh local
+// directory; the stop confirmed by status. It resolves for every definite outcome and rejects
+// (SandboxCopyUncertain) only when the provider's outcome is uncertain, which the caller turns
+// into needs_reconciliation.
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { join, posix, resolve, sep } from "node:path";
 import { extract } from "tar-stream";
@@ -64,17 +65,17 @@ function iso(ms: number): string {
 }
 
 /**
- * What a copy the meter did not start becomes. Only limits above the profile mean the copy could
- * not be prepared (setup_failed, an invalid record). A stop, the deadline, a refused reservation and
- * a halted ledger end the copy early without a fault of the copy (timed_out, an incomplete record),
- * never an invalid candidate; the loop reads meter.lastRefusal and the ledger's status for the
- * request's stop code. An earlier uncertain copy makes every later one reject as uncertain.
+ * What a copy the meter did not start becomes. Only limits above the profile, or a copy beyond its
+ * candidate's reserved protocol, mean the copy could not be prepared (setup_failed, an invalid
+ * record). A stop, the deadline and a halted ledger end the copy early without a fault of the copy
+ * (timed_out, an incomplete record), never an invalid candidate; the loop reads meter.lastRefusal
+ * and the ledger's status for the request's stop code. An earlier uncertain outcome makes every
+ * later copy reject as uncertain.
  */
 const REFUSED_OUTCOME: Readonly<Record<Exclude<RefusalReason, "uncertain">, "setup_failed" | "timed_out">> = {
   limits_exceed_profile: "setup_failed",
   no_time: "timed_out",
   stopped: "timed_out",
-  budget: "timed_out",
   halted: "timed_out",
 };
 

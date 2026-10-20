@@ -79,9 +79,18 @@ async function finishAsCore(hooks: RequestHooks, stop: StopCode): Promise<void> 
   await hooks.append({ event_key: "run:finished", type: "request_finished", ...NO_LINKS, message: "Request finished.", data: { outcome: outcomeOf(stop), stop_code: stop } });
 }
 
-/** A synthetic stand-in for the factory core's request loop: one candidate, copies in order, a checkpoint before each; it finishes the request itself. */
+/**
+ * A synthetic stand-in for the factory core's request loop: one candidate, reserved at its selection
+ * (one copy per state), its copies in order with a checkpoint before each, and its unused copies
+ * cancelled when it ends; it finishes the request itself.
+ */
 function synthetic(states: MeteredCopyPlan["state"][], done: StopCode, launch = lives(60_000)): Orchestrate {
   return async (hooks: RequestHooks) => {
+    const reserved = await hooks.meter.reserveCandidate({ candidate_id: CANDIDATE_A, host_id: "task-report", protocol: PROTOCOL });
+    if (reserved.kind === "refused") {
+      await finishAsCore(hooks, "budget_exhausted");
+      return;
+    }
     let stop = done;
     for (const state of states) {
       const checkpoint = await hooks.checkpoint();
@@ -91,16 +100,14 @@ function synthetic(states: MeteredCopyPlan["state"][], done: StopCode, launch = 
         break;
       }
       const outcome = await hooks.meter.run(plan(CANDIDATE_A, state), launch);
-      if (outcome.kind === "refused" && outcome.reason === "budget") {
-        stop = "budget_exhausted";
-        break;
-      }
       if (outcome.kind === "uncertain") {
+        // As the core does: an uncertain copy ends the candidate without settling it; its reservations stay held.
         await hooks.append(CORE_ATTENTION);
-        stop = "needs_reconciliation";
-        break;
+        await finishAsCore(hooks, "needs_reconciliation");
+        return;
       }
     }
+    await hooks.meter.settleCandidate({ candidate_id: CANDIDATE_A });
     await finishAsCore(hooks, stop);
   };
 }
@@ -142,6 +149,9 @@ describe("runFactoryWorker", () => {
     expect(worker.ok && [worker.state, worker.settled_microusd]).toEqual(["reconciled", BigInt(FACTORY_PROFILE.prices.worker_worst_case_microusd)]);
     expect(await operationState(w, copyId(record, "clean"))).toBe("reconciled");
     expect(await operationState(w, copyId(record, "buggy"))).toBe("reconciled");
+    // The copy the loop never ran was reserved at the candidate's selection and cancelled at zero when it ended.
+    const fixed = await w.spend.operationStatus({ operation_id: copyId(record, "fixed") });
+    expect(fixed.ok && [fixed.state, fixed.settled_microusd]).toEqual(["reconciled", 0n]);
     expect(w.budgets.closes).toEqual([{ budget_key: record.budget_key, cause: "fulfilled" }]);
     expect(await slotHolder(w)).toBeNull();
   });
@@ -166,19 +176,25 @@ describe("runFactoryWorker", () => {
       return report;
     };
     const outcome = await runFactoryWorker(workerDeps(), { request_id: record.request_id, deadline: deadline(), orchestrate: synthetic(["clean", "buggy", "fixed"], "fulfilled", launch) });
-    expect(outcome).toMatchObject({ kind: "finished", stop_code: "cancelled_by_user" });
+    expect(outcome).toMatchObject({ kind: "finished", stop_code: "cancelled_by_user", slot_released: true });
     expect(await operationState(w, copyId(record, "clean"))).toBe("reconciled");
-    expect(await operationState(w, copyId(record, "buggy"))).toBeNull();
+    // Reserved at selection, never launched: cancelled at zero when the candidate ended.
+    for (const state of ["buggy", "fixed"] as const) {
+      const status = await w.spend.operationStatus({ operation_id: copyId(record, state) });
+      expect(status.ok && [status.state, status.settled_microusd]).toEqual(["reconciled", 0n]);
+    }
+    expect(w.sandbox.calls.filter((call) => call.action === "create")).toHaveLength(1);
     const finished = (await w.records.events(record.request_id)).find((event) => event.type === "request_finished");
     expect(finished?.data).toEqual({ outcome: "cancelled", stop_code: "cancelled_by_user" });
   });
 
-  it("lets the loop end budget_exhausted when the budget can no longer cover the next copy, launching nothing more", async () => {
-    // The worker and one copy fit; after the first copy settles, the next copy's worst case does not.
+  it("lets the loop end budget_exhausted when the budget cannot cover the candidate's whole worst case, launching nothing", async () => {
+    // The worker and one copy fit, the candidate's three copies do not: its reservation is refused whole.
     const record = await launched(500_000);
     const outcome = await runFactoryWorker(workerDeps(), { request_id: record.request_id, deadline: deadline(), orchestrate: synthetic(["clean", "buggy"], "fulfilled") });
     expect(outcome).toEqual({ kind: "finished", stop_code: "budget_exhausted", slot_released: true });
     expect(await operationState(w, copyId(record, "buggy"))).toBeNull();
+    expect(w.sandbox.calls.filter((call) => call.action === "create")).toHaveLength(1);
     expect(w.budgets.closes).toEqual([{ budget_key: record.budget_key, cause: "budget_exhausted" }]);
     const status = await w.ledger.budgets.status(record.budget_key);
     expect(status.ok && status.open_microusd).toBe(0n);
@@ -202,6 +218,7 @@ describe("runFactoryWorker", () => {
     const record = await launched();
     let afterLost: string[] = [];
     const orchestrate: Orchestrate = async (hooks) => {
+      await hooks.meter.reserveCandidate({ candidate_id: CANDIDATE_A, host_id: "task-report", protocol: PROTOCOL });
       await hooks.meter.run(plan(CANDIDATE_A, "clean"), lives(10_000));
       // The status route declares the worker lost (no heartbeat for 180 s on the request's clock).
       w.clock.advance(400_000);
@@ -211,6 +228,7 @@ describe("runFactoryWorker", () => {
       const late = await hooks.append({ event_key: "late", type: "check_finished", host_id: "task-report", candidate_id: CANDIDATE_A, item_key: null, case_id: null, message: "late", data: {} });
       expect(late.kind).toBe("refused");
       expect(await hooks.meter.run(plan(CANDIDATE_A, "buggy"), lives(10_000))).toMatchObject({ kind: "refused", reason: "stopped" });
+      await expect(hooks.meter.settleCandidate({ candidate_id: CANDIDATE_A })).rejects.toThrow(/finished elsewhere/);
       await expect(hooks.settleWorker("operational_error")).rejects.toThrow(/finished elsewhere/);
     };
     expect(await runFactoryWorker(workerDeps({ heartbeat_ms: 3_600_000 }), { request_id: record.request_id, deadline: deadline(), orchestrate })).toEqual({ kind: "fenced" });
@@ -299,9 +317,8 @@ describe("runFactoryWorker", () => {
     expect(await slotHolder(w)).toBe(record.root);
   });
 
-  it("runs the sandbox copy runner under the worker; a budget refusal comes back as an early-ended copy and the meter's refusal", async () => {
-    // The worker and one copy fit; after the first copy settles, the second's worst case does not.
-    const record = await launched(500_000);
+  it("runs the sandbox copy runner under the worker: a candidate stopped after its first copy has its other copies cancelled at zero, and the slot is released", async () => {
+    const record = await launched();
     const sdk = new FakeCopySandbox();
     const { roots, work } = copyRoots();
     const collected: CollectedCopy[] = [];
@@ -312,7 +329,6 @@ describe("runFactoryWorker", () => {
         subject: CANDIDATE_A,
         workDir: work,
         resultsSha256: (dir) => Promise.resolve(sha256Hex(Buffer.from(readdirSync(dir).sort().join("\n")))),
-        // 30 s per reading: the first copy lives 60 s, so what it settles leaves too little room for the second.
         now: () => {
           w.clock.advance(30_000);
           return w.clock.ms;
@@ -321,16 +337,24 @@ describe("runFactoryWorker", () => {
         attempt: "synthetic-attempt",
         log: (line) => w.logs.push(line),
       });
+      expect(await hooks.meter.reserveCandidate({ candidate_id: CANDIDATE_A, host_id: "task-report", protocol: PROTOCOL })).toEqual({ kind: "reserved", reserved_microusd: 3 * FACTORY_PROFILE.prices.copy_worst_case_microusd["task-report"] });
       collected.push(await runner.run(copyPlan({ state: "clean", copy_id: "synthetic-clean-01" }), roots));
+      w.records.stops.add(record.request_id);
       collected.push(await runner.run(copyPlan({ state: "buggy", copy_id: "synthetic-buggy-01" }), roots));
-      await finishAsCore(hooks, hooks.meter.lastRefusal?.reason === "budget" ? "budget_exhausted" : "fulfilled");
+      await hooks.meter.settleCandidate({ candidate_id: CANDIDATE_A });
+      await finishAsCore(hooks, hooks.meter.lastRefusal?.reason === "stopped" ? "cancelled_by_user" : "fulfilled");
     };
-    expect(await runFactoryWorker(workerDeps(), { request_id: record.request_id, deadline: deadline(), orchestrate })).toEqual({ kind: "finished", stop_code: "budget_exhausted", slot_released: true });
+    expect(await runFactoryWorker(workerDeps(), { request_id: record.request_id, deadline: deadline(), orchestrate })).toEqual({ kind: "finished", stop_code: "cancelled_by_user", slot_released: true });
     expect(collected.map((copy) => copy.outcome)).toEqual(["ran", "timed_out"]);
     expect(sdk.creates).toHaveLength(1);
     expect(await operationState(w, copyId(record, "clean"))).toBe("reconciled");
-    expect(await operationState(w, copyId(record, "buggy"))).toBeNull();
-    // The slot was released, which the ledger allows only once the copy's sandbox was confirmed stopped.
+    for (const state of ["buggy", "fixed"] as const) {
+      const status = await w.spend.operationStatus({ operation_id: copyId(record, state) });
+      expect(status.ok && [status.state, status.settled_microusd]).toEqual(["reconciled", 0n]);
+    }
+    const budget = await w.ledger.budgets.status(record.budget_key);
+    expect(budget.ok && budget.open_microusd).toBe(0n);
+    // The slot was released, which the ledger allows only once the copy's sandbox was confirmed stopped and nothing is open.
     expect(await slotHolder(w)).toBeNull();
   });
 });

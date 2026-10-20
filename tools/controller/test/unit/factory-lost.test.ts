@@ -37,11 +37,11 @@ function workerId(record: FactoryRequestRecord): string {
   return workerOperation({ identity: w.identity, rates: w.rates }, record).operation_id;
 }
 
-function copyId(record: FactoryRequestRecord): string {
-  return copyOperation({ identity: w.identity, rates: w.rates }, { kind: "request", root: record.root, task_revision: record.interpretation_sha256, subject: CANDIDATE_A, state: "clean", n: 1, host: "task-report", provider: "vercel-sandbox" }).operation_id;
+function copyId(record: FactoryRequestRecord, state: "clean" | "buggy" | "fixed" = "clean"): string {
+  return copyOperation({ identity: w.identity, rates: w.rates }, { kind: "request", root: record.root, task_revision: record.interpretation_sha256, subject: CANDIDATE_A, state, n: 1, host: "task-report", provider: "vercel-sandbox" }).operation_id;
 }
 
-/** A request whose worker started, heartbeat once, selected candidate A and has its first copy in flight. */
+/** A request whose worker started, heartbeat once, selected candidate A (its three copies reserved) and has its first copy in flight. */
 async function runningRequest(): Promise<FactoryRequestRecord> {
   const record = await acceptRequest(w, { budget: 1_000_000 });
   expect((await startFactoryWorker(launchDeps(), record.request_id)).kind).toBe("launched");
@@ -65,6 +65,7 @@ async function runningRequest(): Promise<FactoryRequestRecord> {
     mode: { kind: "own_operation", role: "request" },
     log: (line) => w.logs.push(line),
   });
+  expect((await meter.reserveCandidate({ candidate_id: CANDIDATE_A, host_id: "task-report", protocol: PROTOCOL })).kind).toBe("reserved");
   void meter.run({ subject: CANDIDATE_A, host: "task-report", state: "clean", limits: { timeout_s: 720, vcpus: 4, memory_mb: 8192 } }, async (name, hooks) => {
     w.sandbox.sandboxes.set(name, new FakeInstance(name, w.sandbox));
     await hooks.created(name);
@@ -129,9 +130,12 @@ describe("finalizeLostWorker for a request", () => {
     expect(events.filter((event) => event.type === "attention")).toHaveLength(1);
     expect(w.budgets.closes).toEqual([{ budget_key: record.budget_key, cause: "worker_lost" }]);
     expect(await slotHolder(w)).toBe(record.root);
-    // Nothing was settled: the reservations stay held for reconciliation.
+    // Nothing was settled: the reservations, the in-flight candidate's whole worst case among them, stay held for reconciliation.
     const budget = await w.ledger.budgets.status(record.budget_key);
-    expect(budget.ok && [budget.settled_microusd, budget.open_microusd]).toEqual([0n, BigInt(FACTORY_PROFILE.prices.worker_worst_case_microusd + FACTORY_PROFILE.prices.copy_worst_case_microusd["task-report"])]);
+    expect(budget.ok && [budget.settled_microusd, budget.open_microusd]).toEqual([0n, BigInt(FACTORY_PROFILE.prices.worker_worst_case_microusd + 3 * FACTORY_PROFILE.prices.copy_worst_case_microusd["task-report"])]);
+    // The candidate's copies that never launched stay reserved, not uncertain: no provider call was made for them.
+    expect(await operationState(w, copyId(record, "buggy"))).toBe("prepared");
+    expect(await operationState(w, copyId(record, "fixed"))).toBe("prepared");
     // Both sandboxes were asked to stop.
     const stopped = w.sandbox.calls.filter((call) => call.action === "stop").map((call) => call.name);
     expect(stopped).toContain(`rbw-fw-${record.root}`);
@@ -245,7 +249,7 @@ describe("finalizeLostWorker for a request", () => {
     await finalizeLostWorker(lostDeps(), { request_id: record.request_id });
     const blocked = await completeReconciliation(lostDeps(), { request_id: record.request_id });
     expect(blocked.kind).toBe("blocked");
-    expect(blocked.kind === "blocked" && [...blocked.operation_ids].sort()).toEqual([workerId(record), copyId(record)].sort());
+    expect(blocked.kind === "blocked" && [...blocked.operation_ids].sort()).toEqual([workerId(record), copyId(record), copyId(record, "buggy"), copyId(record, "fixed")].sort());
     await reconcileHeld();
     expect(await completeReconciliation(lostDeps(), { request_id: record.request_id })).toEqual({ kind: "released" });
     expect(await slotHolder(w)).toBeNull();
