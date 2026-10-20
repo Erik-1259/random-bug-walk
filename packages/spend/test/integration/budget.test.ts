@@ -5,7 +5,7 @@ import { fromPg } from "../../src/client.ts";
 import { createFactoryRecords, type FactoryRecords } from "../../src/factory.ts";
 import type { Spend } from "../../src/spend.ts";
 import type { Result } from "../../src/types.ts";
-import { budgetRequest, event, exactly, recordRequest } from "../factory-helpers.ts";
+import { budgetRequest, event, exactly, recordRequest, validationRecord } from "../factory-helpers.ts";
 import { expectOk, hex, reserveRequest, uuid } from "../helpers.ts";
 import { openTestDatabase, suffix, waitFor, type TestDatabase } from "./support.ts";
 
@@ -351,20 +351,41 @@ describe("stops, evidence and validation events against a real Postgres", () => 
     expect(secondWaited).toBe(true);
   });
 
-  async function newValidation(): Promise<string> {
+  /** A validation run of a new request, not yet recorded. */
+  async function validationOfNewRequest(): Promise<ReturnType<typeof validationRecord>> {
     const requestId = await acceptNewRequest(await createPool(10_000_000));
     n += 1;
-    const validationId = uuid(73_000 + n);
-    expectOk(
-      await recordsOn({ client: observer }).recordValidation({
-        validation_id: validationId,
-        request_id: requestId,
-        case_id: hex(72_002),
-        root_execution_id: uuid(74_000 + n),
-      }),
-    );
-    return validationId;
+    return validationRecord({
+      validation_id: uuid(73_000 + n),
+      request_id: requestId,
+      case_id: hex(72_002),
+      root_execution_id: uuid(74_000 + n),
+    });
   }
+
+  async function newValidation(): Promise<string> {
+    const run = await validationOfNewRequest();
+    expectOk(await recordsOn({ client: observer }).recordValidation(run));
+    return run.validation_id;
+  }
+
+  it("two overlapping records of one validation run with different acceptance times: the second waits and keeps the first", async () => {
+    const run = await validationOfNewRequest();
+    const a = await database.connect();
+    const b = recordsOn(await database.connect());
+    const { results, secondWaited } = await forcedOverlap(
+      a,
+      "factory_record_validation",
+      (_spend, records) => records.recordValidation({ ...run, accepted_at: "2026-10-04T00:00:00.000Z" }),
+      () => b.recordValidation({ ...run, accepted_at: "2026-10-04T00:00:30.000Z" }),
+    );
+    const [first, second] = results.map((r) => expectOk(r));
+    expect([first?.replay, second?.replay]).toEqual([false, true]);
+    expect(second?.recorded_at).toBe(first?.recorded_at);
+    expect(secondWaited).toBe(true);
+    const stored = expectOk(await recordsOn({ client: observer }).readValidation({ validation_id: run.validation_id, after: 0, limit: 1 }));
+    expect(stored.validation.accepted_at).toBe("2026-10-04T00:00:00.000Z");
+  });
 
   it("two overlapping validation events: the second waits and takes the next seq", async () => {
     const validationId = await newValidation();

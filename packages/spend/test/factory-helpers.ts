@@ -2,9 +2,9 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import type { Event, Interpretation } from "@rbw/factory-contract";
 import { createFactoryRecords } from "../src/factory.ts";
-import type { AppendEvent, EventInput, FactoryRecords, RecordRequest } from "../src/factory.ts";
+import type { AppendEvent, EventInput, FactoryRecords, RecordRequest, RecordValidation } from "../src/factory.ts";
 import type { CreateBudgetRequest, EnvelopeLine, ReserveRequest } from "../src/types.ts";
-import { expectOk, hex, line, reserveRequest, uuid, type Harness } from "./helpers.ts";
+import { expectOk, hex, line, loose, reserveRequest, uuid, type Harness } from "./helpers.ts";
 
 // The factory pool and slot key are created by owner actions after migrating, never by a migration.
 export const FACTORY_POOL = "factory";
@@ -117,6 +117,22 @@ export async function acceptRequest(h: Harness, n: number, cap = 1_000_000): Pro
   return requestId(n);
 }
 
+/** Validation run 9100 of request 1 on case 51, with its own root and every detail of its start. */
+export function validationRecord(overrides: Partial<RecordValidation> = {}): RecordValidation {
+  return {
+    validation_id: uuid(9100),
+    request_id: requestId(1),
+    case_id: hex(51),
+    root_execution_id: validationRoot(1),
+    host_id: "task-report",
+    accepted_at: "2026-10-04T00:00:00.000Z",
+    package_sha256: { bug_case: hex(9501), validator: hex(9502) },
+    harness: { name: "rbw-validate", version: "1" },
+    copies: 9,
+    ...overrides,
+  };
+}
+
 /** IDs written by `populateFactoryTables`. */
 export const POPULATED = {
   /** Accepted, charged, closed, stopped, with evidence and a validation run. */
@@ -138,8 +154,9 @@ export const POPULATED = {
 /**
  * Writes at least one row to every factory table (migration 0006), so row-level guards have
  * something to reject. Uses operation numbers from 900 up; creates the factory pool and slot key.
+ * With `before0007`, the validation run is recorded as migration 0006 took it: IDs and root only.
  */
-export async function populateFactoryTables(h: Harness): Promise<void> {
+export async function populateFactoryTables(h: Harness, options: { before0007?: boolean } = {}): Promise<void> {
   const f = records(h);
   await factorySetup(h);
   await acceptRequest(h, 900);
@@ -169,13 +186,15 @@ export async function populateFactoryTables(h: Harness): Promise<void> {
       evidence_json: evidence,
     }),
   );
+  const run = validationRecord({
+    validation_id: POPULATED.validation,
+    request_id: POPULATED.request,
+    case_id: POPULATED.caseId,
+    root_execution_id: POPULATED.validationRoot,
+  });
+  const { validation_id, request_id, case_id, root_execution_id } = run;
   expectOk(
-    await f.recordValidation({
-      validation_id: POPULATED.validation,
-      request_id: POPULATED.request,
-      case_id: POPULATED.caseId,
-      root_execution_id: POPULATED.validationRoot,
-    }),
+    await f.recordValidation(options.before0007 === true ? loose({ validation_id, request_id, case_id, root_execution_id }) : run),
   );
   expectOk(await f.appendValidationEvent({ validation_id: POPULATED.validation, event_key: "started", type: "running", data: {} }));
 }

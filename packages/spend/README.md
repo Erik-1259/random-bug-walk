@@ -64,6 +64,8 @@ A deployment's slot key is created with `createSlotKey` when the package is firs
 
 The same holds for factory requests: migration `0006_factory.sql` seeds no pool and no slot key. An owner creates the `factory` pool (cap 40,000,000 micro-USD, no allocations) with `createPool` and the `factory` slot key with `createSlotKey`; tests create both in their setup.
 
+Migration `0007_factory_validation_details.sql` adds the details of a validation run's start (host, acceptance time, package hashes, harness and copy count) to its record, and event keys to the factory reads described under [Factory records](#factory-records). Validation records are insert-only, so a run recorded before it could never gain those details: on a database whose `factory_validations` already holds a run, `migrate` fails in that file and applies nothing.
+
 ## TypeScript API
 
 ```ts
@@ -347,20 +349,21 @@ A request budget caps what one factory request commits, on its own pool. It is b
 
 ## Factory records
 
-The factory tables hold a request's durable progress. Every write is idempotent by key: the same key with the same content replays (`replay: true`) and writes nothing, and the same key with other content is refused with `idempotency_conflict`. Times in results are UTC ISO 8601 strings with milliseconds and `Z`, taken from the API clock.
+The factory tables hold a request's durable progress. Every write is idempotent by key: the same key with the same content replays (`replay: true`) and writes nothing, and the same key with other content is refused with `idempotency_conflict`. Times in results are UTC ISO 8601 strings with milliseconds and `Z`, taken from the API clock; a validation run's `accepted_at` is the caller's, returned in the same format.
 
 | Function | Database operation | Purpose |
 | --- | --- | --- |
 | `acceptRequest` | `factory_accept_request` | Create the budget, record the request and append `request_accepted` (event key `request_accepted`, seq 1) in one transaction. A refusal from any step leaves nothing behind, so a refused start can be sent again with the same IDs. |
 | `recordRequest` | `factory_record_request` | Record a request: `request_id`, `request_sha256`, the frozen `interpretation` (its `interpretation_sha256` field must equal `interpretation_sha256`), `budget_key` (an existing budget no other request uses), `root_execution_id` (the budget's root) and `factory_profile_sha256`. |
-| `readRequest` | `factory_request_read` | The request, its events with `seq > after` (at most `limit`, 1 to 1000), `next_after`, `last_seq`, `last_event_at`, the request's `last_heartbeat_at`, its stop, its evidence (case, hash, time) and its validation runs. `unknown_request` if it was never recorded. |
+| `readRequest` | `factory_request_read` | The request, its events with `seq > after` (at most `limit`, 1 to 1000), `next_after`, `last_seq`, `last_event_at`, the request's `last_heartbeat_at`, its stop, its evidence (case, hash, time) and its validation runs. `unknown_request` if it was never recorded. Its events have the contract's `Event` shape, without event keys. |
+| `readRequestEvents` | `factory_request_events_read` | The request's events with `seq > after` (at most `limit`, 1 to 1000), each as `readRequest` returns it plus its `event_key`, with `next_after` and `last_seq`, for writers that check which keyed events a request has. `unknown_request` if it was never recorded. |
 | `appendEvent` | `factory_append_event` | Append one contract event (`type`, `host_id`, `candidate_id`, `item_key`, `case_id`, `message`, `data`) with a deterministic `event_key`; returns its `seq` and `at`. A message is plain text of at most 2,000 characters: tabs and line breaks are allowed, other control characters are not. |
 | `recordHeartbeat` | `factory_record_heartbeat` | Record a worker heartbeat for the request (`validation_id` null) or one of its validation runs. Heartbeats are never events. |
 | `recordStop` | `factory_record_stop` | Record the request's stop request (one per request, keyed by request; `actor_role` is its content). |
 | `recordEvidence` | `factory_record_evidence` | Store a case's evidence as exact JSON text with the SHA-256 of its UTF-8 bytes, which the database checks. |
 | `readEvidence` | `factory_evidence_read` | The evidence text, byte for byte. `unknown_evidence` if none is stored. |
-| `recordValidation` | `factory_record_validation` | Record a validation run: `validation_id`, `request_id`, `case_id` and its own root. The ID is scoped to the request and case: the same ID on another request or case is `idempotency_conflict`. The root may not be a budget's root, another run's root, or a root whose reservations are charged to another request's budget. |
-| `readValidation` | `factory_validation_read` | A run by ID alone (with its request and case), its events after `after` and its `last_heartbeat_at`. `unknown_validation` if it was never recorded. |
+| `recordValidation` | `factory_record_validation` | Record a validation run: `validation_id`, `request_id`, `case_id`, its own root, and the details of its start: `host_id`, `accepted_at` (UTC, ending in `Z`), `package_sha256` (`{ bug_case, validator }`), `harness` (`{ name, version }`: `name` is `rbw-validate`, `version` a non-empty string of at most 512 characters without control characters) and `copies` (at least 3). The ID is scoped to the request and case: the same ID with another request, case, root, host, package hash, harness or copy count is `idempotency_conflict`. `accepted_at` is not compared, so a start retried after its reservation replays and the run keeps its first acceptance time. The root may not be a budget's root, another run's root, or a root whose reservations are charged to another request's budget. |
+| `readValidation` | `factory_validation_read` | A run by ID alone (with its request, case and start details), its events after `after`, each with its `event_key`, and its `last_heartbeat_at`. `unknown_validation` if it was never recorded. |
 | `appendValidationEvent` | `factory_append_validation_event` | Append a run's event (`type`: lowercase letters, digits and underscores; `data`: an object) with an event key. |
 | `readRoot` | `factory_root_read` | The request, or the validation run and its request, that a root execution belongs to, for example the factory slot's holder. |
 
@@ -533,7 +536,7 @@ In `reconciliations`, `recorded_at` is the time given in the record, and `logged
   - forced-overlap reuse of one operation ID on two pools;
   - request budgets: two forced-overlap budget reservations on one budget, a burst of eight, a reservation against a close in both orders, a budget reservation against a plain reservation on the same pool, a `budgetStatus` read held between its totals and its operation list while a reservation commits (both parts answer from one snapshot), and a catalog check that the budget read functions are STABLE and that no function their SQL helpers call, directly or in turn, is VOLATILE;
   - concurrent event appends from eight connections, which get consecutive sequence numbers;
-  - stops, evidence and validation events: two forced-overlap stops and two forced-overlap evidence records under one key (the second replays), two forced-overlap validation events and a burst from eight connections (consecutive sequence numbers);
+  - stops, evidence and validation events: two forced-overlap stops and two forced-overlap evidence records under one key (the second replays), two forced-overlap records of one validation run with different acceptance times (the second replays and the first acceptance time stays), two forced-overlap validation events and a burst from eight connections (consecutive sequence numbers);
   - start locks: two holders of one request ID run one at a time while a record call for that ID on another connection goes ahead, other IDs and the validation scope do not wait, and a holder whose `fn` throws frees the ID;
   - concurrent first runs of `migrate` on one schema;
   - the operator command: a read-only `status` snapshot, a `reconcile` dry run that writes nothing, and `release-slot --apply`;
@@ -545,9 +548,9 @@ In `reconciliations`, `recorded_at` is the time given in the record, and `logged
 
   To run them against a local Postgres, connect as a role created with `LOGIN` and without `SUPERUSER` that owns the test database (`CREATE DATABASE <name> OWNER <role>`). Connected as a superuser, the role test fails.
 
-  I1, I5, the operation ID test and the forced-overlap budget, stop, evidence and validation event tests hold the first call's transaction open until the second call is observed waiting on a lock in `pg_stat_activity`.
+  I1, I5, the operation ID test and the forced-overlap budget, stop, evidence, validation record and validation event tests hold the first call's transaction open until the second call is observed waiting on a lock in `pg_stat_activity`.
 
-The root `pnpm test` runs only the unit tests. A unit test applies `0001`–`0005`, records the judge-demo pool, its allocations and every function, trigger, column and constraint, applies `0006_factory.sql`, and checks that all of them are unchanged.
+The root `pnpm test` runs only the unit tests. A unit test applies `0001`–`0005`, records the judge-demo pool, its allocations and every function, trigger, column and constraint, applies `0006_factory.sql`, and checks that all of them are unchanged. Another applies `0001`–`0006` and a request with events, applies `0007_factory_validation_details.sql`, and checks that it replaces exactly `factory_record_validation_body`, `factory_validation_json` and `factory_validation_read`, adds `factory_request_events_read`, the seven `factory_validations` columns and their three checks, and keeps every row; a third checks that `0007` fails and applies nothing when a validation run is already recorded.
 
 ## Known limits
 

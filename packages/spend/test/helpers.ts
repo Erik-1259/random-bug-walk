@@ -69,12 +69,15 @@ export async function openDb(): Promise<PGlite> {
 
 let schemaCounter = 0;
 
-/** Applies all migrations into a new schema of the shared in-process database. */
-export async function harness(db: PGlite): Promise<Harness> {
+/**
+ * Applies all migrations into a new schema of the shared in-process database, or those in
+ * `migrationsDir` when given (a migration test's subset).
+ */
+export async function harness(db: PGlite, options: { migrationsDir?: string } = {}): Promise<Harness> {
   schemaCounter += 1;
   const schema = `synthetic_unit_${String(schemaCounter)}`;
   await db.exec(`CREATE SCHEMA ${schema}`);
-  await migrate(db, { schema });
+  await migrate(db, { schema, ...options });
   const clock = new TestClock();
   const spend = createSpend({ client: db, schema, clock: clock.now });
   const sql = async (text: string, params?: unknown[]): Promise<Record<string, unknown>[]> => {
