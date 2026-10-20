@@ -37,7 +37,10 @@ export function prepareFactoryInput(capabilities: Capabilities, hosts: RequestIn
       const message = `${label}: quantity must be between 1 and ${String(limits.max_quantity_per_item)}.`;
       errors.push(message); fieldErrors[`factory-quantity-${row.item_key}-error`] = message;
     }
-    if (row.description.trim().length > limits.max_description_chars) errors.push(`${label}: description exceeds ${String(limits.max_description_chars)} characters.`);
+    if (Array.from(row.description.trim()).length > limits.max_description_chars) {
+      const message = `${label}: description exceeds ${String(limits.max_description_chars)} Unicode code points after trimming surrounding whitespace.`;
+      errors.push(message); fieldErrors[`factory-description-${row.item_key}-error`] = message;
+    }
     if (row.bug_type_id === "" || !capabilities.bug_types.some((type) => type.bug_type_id === row.bug_type_id)) errors.push(`${label}: choose an available bug type.`);
     if (row.difficulty === "" || !capabilities.difficulty_options.some((option) => option.option_id === row.difficulty && option.available)) errors.push(`${label}: the selected difficulty option is unavailable.`);
     if (row.bug_type_id !== "" && row.difficulty !== "") items.push({ item_key: row.item_key, bug_type_id: row.bug_type_id, quantity, description: row.description.trim() || null, difficulty: row.difficulty });
@@ -108,7 +111,10 @@ function RequestFields({ capabilities, disabled, onInterpret, onChange }: Props 
           aria-invalid={Boolean(prepared.fieldErrors[`factory-quantity-${row.item_key}-error`])}
           aria-describedby={prepared.fieldErrors[`factory-quantity-${row.item_key}-error`] ? `factory-quantity-${row.item_key}-error` : undefined} onChange={(event) => { update(row.item_key, { quantity: event.target.value }); }} />
         <label htmlFor={`factory-description-${row.item_key}`}>Optional description for item {index + 1}</label>
-        <textarea id={`factory-description-${row.item_key}`} maxLength={capabilities.limits.max_description_chars} value={row.description} onChange={(event) => { update(row.item_key, { description: event.target.value }); }} />
+        <textarea id={`factory-description-${row.item_key}`} value={row.description}
+          aria-invalid={Boolean(prepared.fieldErrors[`factory-description-${row.item_key}-error`])}
+          aria-describedby={`factory-description-${row.item_key}-help${prepared.fieldErrors[`factory-description-${row.item_key}-error`] ? ` factory-description-${row.item_key}-error` : ""}`} onChange={(event) => { update(row.item_key, { description: event.target.value }); }} />
+        <p id={`factory-description-${row.item_key}-help`}>Limit: {capabilities.limits.max_description_chars} Unicode code points after trimming surrounding whitespace. Combining marks count separately.</p>
         <details><summary>Recognized behaviors</summary><ul>{capabilities.bug_types.find((type) => type.bug_type_id === row.bug_type_id)?.criteria.map((criterion) => <li key={criterion.criterion_id}>{criterion.label}: {criterion.example_phrases.join("; ")}</li>)}</ul></details>
         <label htmlFor={`factory-difficulty-${row.item_key}`}>Difficulty for item {index + 1}</label>
         <select id={`factory-difficulty-${row.item_key}`} value={row.difficulty} onChange={(event) => {

@@ -21,7 +21,9 @@ describe("contract-driven factory form", () => {
     for (const host of capabilities.hosts) expect(html).toContain(host.label);
     for (const type of capabilities.bug_types) expect(html).toContain(type.label);
     expect(html).toContain('max="3"');
-    expect(html).toContain('maxLength="500"');
+    expect(html).not.toMatch(/maxlength=/i);
+    expect(html).toContain('aria-describedby="factory-description-item-1-help"');
+    expect(html).toContain("500 Unicode code points after trimming surrounding whitespace");
     expect(html).toContain('value="2.000000"');
     expect(html).toContain("No concurrency catalog with implemented verification checks is declared for Umami yet.");
     expect(html).toContain('value="source_only_difficulty_required" disabled=""');
@@ -58,6 +60,18 @@ describe("contract-driven factory form", () => {
     expect(prepareFactoryInput(capabilities, [], [row()], "2").input).toBeNull();
     expect(validate([row()], "0.499999").input).toBeNull();
     expect(validate([row()], "5.000001").input).toBeNull();
+  });
+
+  it("counts trimmed descriptions by Unicode code points rather than UTF-16 or graphemes", () => {
+    const limited = { ...capabilities, limits: { ...capabilities.limits, max_description_chars: 2 } };
+    const validate = (description: string) => prepareFactoryInput(limited, ["umami"], [{ ...row(), description }], "2");
+    expect(validate("😀😀").input?.items[0]?.description).toBe("😀😀");
+    expect(validate(" \t😀😀\n ").input?.items[0]?.description).toBe("😀😀");
+    expect(validate("😀😀😀").input).toBeNull();
+    expect(validate("😀😀😀").fieldErrors["factory-description-item-1-error"]).toBe("Item 1: description exceeds 2 Unicode code points after trimming surrounding whitespace.");
+    expect(validate("e\u0301").input?.items[0]?.description).toBe("e\u0301");
+    expect(validate("e\u0301\u0301").input).toBeNull();
+    expect(validate(" \t\n ").input?.items[0]?.description).toBeNull();
   });
 
   it("converts dollar input exactly without rounding fractional microdollars", () => {

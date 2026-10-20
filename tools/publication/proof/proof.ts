@@ -343,6 +343,164 @@ async function prove(root: string, gitleaks: string): Promise<number> {
       !(pathOutput + pathPublic.stderr.toString("utf8")).includes(token),
   );
 
+  // Additional: the full scan finds the same token in an added path whose file also holds an attribution line and a
+  // forbidden term, in range and files mode, and prints only the path-list position.
+  await git(names, ["reset", "-q", "--hard", namesBase]);
+  const tokenFile = `keys/${token}.txt`;
+  const signedOff = ["Signed", "off", "by"].join("-");
+  const fullPath = await commitFiles(names, { [tokenFile]: `nothing here\n${signedOff}: synthetic\n${term}\n` }, "feat: synthetic key file");
+  const fullScan = (input: string[]): Promise<ProcessResult> =>
+    runProcess(process.execPath, [cliPath, "scan", "--patterns", patterns, "--gitleaks", gitleaks, ...input], { cwd: names, env: setupEnv });
+  const fullRange = await fullScan(["--range", `${namesBase}..HEAD`]);
+  const fullFiles = await fullScan(["--files", tokenFile]);
+  const fullPrinted = [fullRange, fullFiles].map((result) => result.stdout.toString("utf8") + result.stderr.toString("utf8")).join("");
+  check(
+    "gitleaks: the full scan finds a token in an added path in range and files mode and reports only its path-list position",
+    fullRange.code === 1 &&
+      fullRange.stdout.toString("utf8") === `blocked\npaths-${fullPath.slice(0, 12)}:2\n` &&
+      fullFiles.code === 1 &&
+      fullFiles.stdout.toString("utf8") === "blocked\npaths:1\n" &&
+      !fullPrinted.includes(token) &&
+      !contains(fullPrinted, term),
+  );
+
+  // Additional: tokens whose gitleaks rules need a space, quote or line end after the secret, two of them with dots
+  // inside and one whose rule also needs a space before it, are found in a directory name and before an extension, in
+  // range and files mode and on scan-public. The file under that directory, which also holds an attribution line and a
+  // forbidden term, is reported only at its path-list position.
+  const pick = (count: number, from = alphabet): string => Array.from(randomBytes(count), (byte) => from[byte % from.length]).join("");
+  const bounded: [string, string][] = [
+    ["a plain token whose rule needs a boundary after it", ["sk", "ant", "api03"].join("-") + "-" + pick(93) + "AA"],
+    ["a dotted token whose rule needs a boundary after it", ["S", "G"].join("") + "." + pick(22) + "." + pick(43)],
+    ["a dotted token whose rule needs a space before it", pick(3) + "8" + ["Q", "~"].join("") + pick(16) + "." + pick(16)],
+  ];
+  for (const [label, secret] of bounded) {
+    await git(names, ["reset", "-q", "--hard", namesBase]);
+    const tree = { [`cfg/${secret}/notes.md`]: `ok\n${signedOff}: synthetic\n${term}\n`, [`keys/${secret}.txt`]: "nothing here\n" };
+    const list = `paths-${(await commitFiles(names, tree, "feat: synthetic bounded names")).slice(0, 12)}`;
+    const range = await fullScan(["--range", `${namesBase}..HEAD`]);
+    const filesMode = await fullScan(["--files", ...Object.keys(tree)]);
+    const publicRange = await runProcess(process.execPath, [cliPath, "scan-public", "--gitleaks", gitleaks, "--range", `${namesBase}..HEAD`], {
+      cwd: names,
+      env: setupEnv,
+    });
+    const printed = [range, filesMode, publicRange].map((result) => result.stdout.toString("utf8") + result.stderr.toString("utf8")).join("");
+    // The sorted list is cfg, cfg/<token>, cfg/<token>/notes.md, keys and keys/<token>.txt.
+    const positions = `${list}:2\n${list}:3\n${list}:5`;
+    check(
+      `gitleaks: ${label} is found in a directory name and before an extension`,
+      range.code === 1 &&
+        range.stdout.toString("utf8") === `blocked\n${positions}\n` &&
+        filesMode.code === 1 &&
+        filesMode.stdout.toString("utf8") === "blocked\npaths:1\npaths:2\n" &&
+        publicRange.code === 1 &&
+        publicRange.stdout.toString("utf8").startsWith(`credential and attribution checks: blocked\n${positions}\n`) &&
+        !printed.includes(secret) &&
+        !contains(printed, term),
+    );
+  }
+
+  // Commits `tree` on the base and checks that `scan` in range and files mode and `scan-public` in range mode report
+  // exactly the given path-list positions, and never print `secret` or the forbidden term.
+  const checkPathPositions = async (name: string, secret: string, tree: Record<string, string>, range: number[], files: number[]): Promise<void> => {
+    await git(names, ["reset", "-q", "--hard", namesBase]);
+    const list = `paths-${(await commitFiles(names, tree, "feat: synthetic names")).slice(0, 12)}`;
+    const rangeResult = await fullScan(["--range", `${namesBase}..HEAD`]);
+    const filesResult = await fullScan(["--files", ...Object.keys(tree)]);
+    const publicResult = await runProcess(process.execPath, [cliPath, "scan-public", "--gitleaks", gitleaks, "--range", `${namesBase}..HEAD`], {
+      cwd: names,
+      env: setupEnv,
+    });
+    const printed = [rangeResult, filesResult, publicResult].map((result) => result.stdout.toString("utf8") + result.stderr.toString("utf8")).join("");
+    const rangeLines = range.map((position) => `${list}:${String(position)}\n`).join("");
+    check(
+      `gitleaks: ${name}`,
+      rangeResult.code === 1 &&
+        rangeResult.stdout.toString("utf8") === `blocked\n${rangeLines}` &&
+        filesResult.code === 1 &&
+        filesResult.stdout.toString("utf8") === `blocked\n${files.map((position) => `paths:${String(position)}\n`).join("")}` &&
+        publicResult.code === 1 &&
+        publicResult.stdout.toString("utf8").startsWith(`credential and attribution checks: blocked\n${rangeLines}`) &&
+        !printed.includes(secret) &&
+        !contains(printed, term),
+    );
+  };
+  const attributed = `ok\n${signedOff}: synthetic\n${term}\n`;
+
+  // Additional: a token whose rule needs a space before it, after a "." in a name, is found through the form with "/"
+  // and "." as spaces. The sorted list is cfg and cfg/x.<token>.md.
+  const afterDot = pick(3) + "8" + ["Q", "~"].join("") + pick(33);
+  await checkPathPositions("a token after a dot whose rule needs a space before it is found", afterDot, { [`cfg/x.${afterDot}.md`]: attributed }, [2], [1]);
+
+  // Additional: the same rule's token with a "." inside it, right after a "." in a name, under a directory and at the
+  // top level, is found through the span form that starts after that ".": the form with "/" and "." as spaces splits
+  // the token at its own dot, and every other form keeps the "." before it. The sorted list is cfg, cfg/x.<token>.md
+  // and x.<token>.
+  const dottedAfterDot = pick(3) + "8" + ["Q", "~"].join("") + pick(16) + "." + pick(16);
+  const dottedTree = { [`cfg/x.${dottedAfterDot}.md`]: attributed, [`x.${dottedAfterDot}`]: attributed };
+  await checkPathPositions("a dotted token after a dot whose rule needs a space before it is found", dottedAfterDot, dottedTree, [2, 3], [1, 2]);
+
+  // Additional: a rule's boundary can fail on any character next to a token, not only on "/" and ".". The dotted
+  // azure-ad-client-secret token, whose rule needs a line start or one of a few characters before it and a line end or
+  // one of a few characters after it, is found right after each of these neighbors with a "." after it, as in
+  // cfg/x-<token>.md, and right before each with a "." before it. The sorted list is cfg, then the l and r names.
+  const neighbors = ["-", "_", "~", "+", "@", "=", ",", "(", " "];
+  const azureNext = pick(3) + "8" + ["Q", "~"].join("") + pick(16) + "." + pick(16);
+  const azureTree = Object.fromEntries(
+    neighbors.flatMap((neighbor, index): [string, string][] => [
+      [`cfg/l${String(index)}x${neighbor}${azureNext}.md`, attributed],
+      [`cfg/r${String(index)}x.${azureNext}${neighbor}y.md`, attributed],
+    ]),
+  );
+  const azurePositions = Array.from({ length: 2 * neighbors.length }, (_entry, index) => index + 1);
+  await checkPathPositions(
+    "a dotted token whose rule needs a boundary on both sides is found next to - _ ~ + @ = , ( and a space",
+    azureNext,
+    azureTree,
+    azurePositions.map((position) => position + 1),
+    azurePositions,
+  );
+
+  // Additional: the same for a dotted sendgrid token, whose rule needs a word boundary before it and a space, a quote,
+  // a ";" or a line end after it, with each neighbor on both sides. The sorted list is cfg, then the names.
+  const sendgridNext = ["S", "G"].join("") + "." + pick(22) + "." + pick(43);
+  const sendgridTree = Object.fromEntries(neighbors.map((neighbor, index): [string, string] => [`cfg/s${String(index)}x${neighbor}${sendgridNext}${neighbor}y.md`, attributed]));
+  const sendgridPositions = neighbors.map((_neighbor, index) => index + 1);
+  await checkPathPositions(
+    "a dotted token whose rule needs a boundary after it is found between two of - _ ~ + @ = , ( or spaces",
+    sendgridNext,
+    sendgridTree,
+    sendgridPositions.map((position) => position + 1),
+    sendgridPositions,
+  );
+
+  // Additional: a first listed path that starts like an executable does not make gitleaks skip the path list. The sorted
+  // list is MZ, MZ/readme.md, keys and keys/<token>.txt.
+  const binaryTree = { "MZ/readme.md": "hello\n", [`keys/${token}.txt`]: attributed };
+  await checkPathPositions("a token in a path is found when the first listed path starts like an executable", token, binaryTree, [4], [2]);
+
+  // Additional: gitleaks' generic-api-key rule allows up to five line breaks between "=" and the value, so a path that
+  // ends in a key and "=" must not take the next listed path as its value. That next path is still found on its own,
+  // whether the earlier match would be reported (a root file) or dropped (a nested file). The values hold no vowel, "m",
+  // "p", "x" or "0", so none of that rule's stopwords occurs in them, and end in digits, so its letters-only allowlist
+  // does not apply. The sorted lists are a_token= and api_key=<value>, and cfg, cfg/keys, cfg/keys/api_key= and
+  // db_password=<value>.
+  const consonants = "bcdfghjklnqrstvwz";
+  const keyValue = (): string => pick(30, consonants + consonants.toUpperCase() + "123456789") + pick(2, "123456789");
+  const rootValue = keyValue();
+  const rootTree = { "a_token=": "nothing here\n", [`api_key=${rootValue}`]: attributed };
+  await checkPathPositions('a token in a path is found after a root path that ends in a key and "="', rootValue, rootTree, [2], [2]);
+  const nestedValue = keyValue();
+  const nestedTree = { "cfg/keys/api_key=": "nothing here\n", [`db_password=${nestedValue}`]: attributed };
+  await checkPathPositions('a token in a path is found after a nested path that ends in a key and "="', nestedValue, nestedTree, [4], [2]);
+
+  // Additional: gitleaks reads a path list of more than 100 KB in chunks, and with one line per path some chunks would
+  // end inside these top-level names. Every one is still found.
+  const manyFiles: Record<string, string> = {};
+  for (let index = 0; index < 3500; index += 1) manyFiles[`n${String(index).padStart(5, "0")}-${token}`] = attributed;
+  const allPositions = Array.from({ length: 3500 }, (_entry, index) => index + 1);
+  await checkPathPositions("every token in a path list that gitleaks reads in chunks is found", token, manyFiles, allPositions, allPositions);
+
   // Additional: hostile and partial-clone working copies run nothing, with GIT_NO_LAZY_FETCH=0 given to the helper.
   const markers = join(root, "markers");
   await mkdir(markers);

@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
+import { assertContract } from "@rbw/factory-contract/validate";
 import { createFactoryClient, FactoryController, FactoryError, REQUEST_KEY, VALIDATION_ID_KEY } from "../src/factory/client.ts";
 import type { Capabilities, FactoryClient, Interpretation, RequestStatus, StartRequest, ValidationRun, FactoryIdentityLock } from "../src/factory/client.ts";
 function fixture<T>(name: string, transform: (value: unknown) => T = value => value as T): T { return transform(JSON.parse(readFileSync(new URL(`./fixtures/factory-v1/${name}.json`, import.meta.url), "utf8"))); }
@@ -64,6 +65,76 @@ describe("draft revision 2 transport, synthetic contract fixtures only", () => {
 });
 
 describe("browser request lifecycle with synthetic service responses", () => {
+  it("retains an accepted HTTP 202 finished launch failure across reload without another POST", async () => {
+    const c = await prepared();
+    const finished = fixture<RequestStatus>("status-queued");
+    finished.state = "finished";
+    finished.outcome = "operational_error";
+    finished.stop_reason = { code: "operational_error", message: "Synthetic worker launch failed after request recording." };
+    finished.updated_at = "2026-10-20T14:00:01.000Z";
+    finished.budget = { ...finished.budget, reserved_microusd: 0, committed_microusd: 0, remaining_microusd: finished.budget.budget_microusd };
+    finished.events.push(
+      { seq: 3, at: finished.updated_at, type: "budget_updated", host_id: null, candidate_id: null, item_key: null, case_id: null, message: "Synthetic unused reservation released.", data: { reserved_microusd: 0, spent_microusd: 0, remaining_microusd: finished.budget.remaining_microusd } },
+      { seq: 4, at: finished.updated_at, type: "request_finished", host_id: null, candidate_id: null, item_key: null, case_id: null, message: finished.stop_reason.message, data: { outcome: "operational_error", stop_code: "operational_error" } },
+    );
+    finished.next_after = 4;
+    assertContract("RequestStatus", finished);
+    const fetcher = vi.fn<typeof fetch>().mockImplementation((_path, options) =>
+      Promise.resolve(Response.json(finished, { status: options?.method === "POST" ? 202 : 200 })));
+    const transport = createFactoryClient(fetcher);
+    c.api.start.mockImplementation(body => transport.start(body));
+    c.api.status.mockImplementation((id, after) => transport.status(id, after));
+    await c.controller.start();
+    expect(c.controller.snapshot().status).toEqual(finished);
+    expect(c.controller.snapshot().canRetryStart).toBe(false);
+    expect(c.storage.getItem(REQUEST_KEY)).toBe(input.request_id);
+    await c.controller.retryStart(); await c.controller.start();
+    const resumed = new FactoryController(c.api, c.storage, c.uuid, undefined, c.lock);
+    await resumed.initialize(); await resumed.retryStart(); await resumed.start();
+    expect(resumed.snapshot().status?.outcome).toBe("operational_error");
+    expect(resumed.snapshot().requestId).toBe(input.request_id);
+    expect(fetcher.mock.calls.filter(([, options]) => options?.method === "POST")).toHaveLength(1);
+    expect(c.uuid).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps completed validation error cost null while later reconciliation updates only the request budget", async () => {
+    const c = await prepared();
+    const finished = assertContract("RequestStatus", fixture("status-fulfilled"));
+    c.api.start.mockResolvedValue(finished); await c.controller.start();
+    const run = fixture<ValidationRun>("validation-error");
+    run.cost_microusd = null;
+    run.message = "Synthetic uncertain validation spend awaits reconciliation.";
+    assertContract("ValidationRun", run);
+    c.uuid.mockReturnValue(run.validation_id);
+    c.api.validate.mockResolvedValue(run);
+    const pending = structuredClone(finished);
+    pending.attention = { code: "needs_reconciliation", message: run.message };
+    const item = pending.cases.find(value => value.case_id === run.case_id);
+    if (item === undefined) throw new Error("Missing synthetic validation case");
+    const reservation = pending.interpretation.budget.worst_case_per_validation_microusd.find(value => value.host_id === item.host_id)?.microusd;
+    if (reservation === undefined) throw new Error("Missing synthetic validation reservation");
+    pending.budget = { ...pending.budget, reserved_microusd: reservation, committed_microusd: pending.budget.spent_microusd + reservation, remaining_microusd: pending.budget.remaining_microusd - reservation };
+    item.validation = run;
+    assertContract("RequestStatus", pending);
+    await c.controller.validate(run.case_id);
+    c.api.status.mockResolvedValue(pending); c.advance(); await c.controller.poll();
+    expect(c.controller.snapshot().validation?.cost_microusd).toBeNull();
+    expect(c.controller.needsPoll()).toBe(true);
+    const reconciled = structuredClone(pending);
+    reconciled.attention = null;
+    reconciled.budget = { ...reconciled.budget, reserved_microusd: 0, spent_microusd: reconciled.budget.spent_microusd + reservation };
+    assertContract("RequestStatus", reconciled);
+    c.api.status.mockResolvedValue(reconciled); c.advance(); await c.controller.poll();
+    expect(c.controller.snapshot().status?.budget).toEqual(reconciled.budget);
+    expect(c.controller.snapshot().status?.cases).toEqual(reconciled.cases);
+    expect(c.controller.snapshot().status?.outcome).toBe("fulfilled");
+    expect(c.controller.snapshot().validation).toEqual(run);
+    expect(c.controller.snapshot().validation?.cost_microusd).toBeNull();
+    expect(c.controller.needsPoll()).toBe(false);
+    await c.controller.retryValidation();
+    expect(c.api.validate).toHaveBeenCalledTimes(1);
+    expect(c.storage.getItem(VALIDATION_ID_KEY)).toBe(run.validation_id);
+  });
   it("retains the revision-2 per-item budget warning from the service interpretation", async () => {
     const c = await prepared(); const interpretation = fixture<Interpretation>("interpretation-budget-below-item");
     c.api.interpret.mockResolvedValue(interpretation); await c.controller.interpret(input.input);
@@ -234,6 +305,27 @@ describe("browser request lifecycle with synthetic service responses", () => {
     expect(c.api.validation).toHaveBeenCalledWith(input.request_id, run.case_id, run.validation_id);
     const resumed = new FactoryController(c.api, c.storage, c.uuid, undefined, c.lock); await resumed.initialize();
     expect(resumed.snapshot().validation?.validation_id).toBe(run.validation_id); expect(c.api.validate).toHaveBeenCalledTimes(1);
+  });
+  it.each(["bug_case", "validator"] as const)("does not create validation work for a missing %s download path", async part => {
+    for (const path of [null, ""]) {
+      const c = await prepared();
+      const status = fixture<RequestStatus>("status-fulfilled");
+      const item = status.cases[0];
+      if (item === undefined) throw new Error("Missing fixture case");
+      const originalPath = item.packages[part].download_path;
+      item.packages[part].download_path = path; // Deliberately invalid service response.
+      c.api.start.mockResolvedValue(status); await c.controller.start();
+      const identities = c.uuid.mock.calls.length;
+      await c.controller.validate(item.case_id);
+      expect(c.api.validate).not.toHaveBeenCalled();
+      expect(c.uuid).toHaveBeenCalledTimes(identities);
+      expect(c.storage.getItem(VALIDATION_ID_KEY)).toBeNull();
+      expect(c.storage.getItem("rbw-factory-validation")).toBeNull();
+      expect(c.controller.snapshot().status?.cases).toEqual(status.cases);
+      item.packages[part].download_path = originalPath;
+      await c.controller.validate(item.case_id);
+      expect(c.api.validate).toHaveBeenCalledTimes(1);
+    }
   });
   it.each(["budget_unavailable", "invalid_request", "not_found", "busy"])("clears a definitely refused validation after %s without losing delivered cases", async (code) => {
     const c = await prepared();

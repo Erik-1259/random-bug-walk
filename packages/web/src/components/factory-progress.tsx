@@ -25,17 +25,17 @@ function ValidationStatus({ run }: { run: ValidationRun | null }) {
 function PackageLinks({ item }: { item: FactoryCase }) {
   return <>
     <p>Bug case — debugging agent input, without verification checks or reference repairs.</p>
-    {item.packages.bug_case.ready && item.packages.bug_case.download_path !== null
+    {item.packages.bug_case.ready && item.packages.bug_case.download_path !== null && item.packages.bug_case.download_path !== ""
       ? <a href={item.packages.bug_case.download_path}>Download bug case</a>
       : <p>Bug-case download is not ready.</p>}
     <p>Validator package — evaluator material. Keep it separate from the debugging agent.</p>
-    {item.packages.validator.ready && item.packages.validator.download_path !== null
+    {item.packages.validator.ready && item.packages.validator.download_path !== null && item.packages.validator.download_path !== ""
       ? <a href={item.packages.validator.download_path}>Download validator package</a>
       : <p>Validator download is not ready.</p>}
   </>;
 }
 
-/** Contract bug-request/1, revision 1: render service facts; never infer qualification or completion. */
+/** Contract bug-request/1, revision 2: render service facts; never infer qualification or completion. */
 export function FactoryProgress({ status, busy, onStop, onValidate, validation = null, disabled = false }: {
   status: RequestStatus | null;
   busy: boolean;
@@ -90,7 +90,7 @@ export function FactoryProgress({ status, busy, onStop, onValidate, validation =
       const run = validation?.case_id === item.case_id ? validation : item.validation;
       const cost = status.interpretation.budget.worst_case_per_validation_microusd.find((entry) => entry.host_id === item.host_id)?.microusd;
       const insufficientBudget = cost !== undefined && status.budget.remaining_microusd < cost;
-      const canValidate = !busy && !disabled && !validationActive && status.state === "finished" && status.attention === null && !insufficientBudget && item.packages.bug_case.ready && item.packages.bug_case.download_path !== null && item.packages.validator.ready && item.packages.validator.download_path !== null;
+      const canValidate = !busy && !disabled && !validationActive && status.state === "finished" && status.attention === null && !insufficientBudget && item.packages.bug_case.ready && !!item.packages.bug_case.download_path && item.packages.validator.ready && !!item.packages.validator.download_path;
       return <li className="factory-case-card" key={item.case_id}>
         <h4>{item.title}</h4>
         <p>{item.host_label} — {item.baseline_id}</p>

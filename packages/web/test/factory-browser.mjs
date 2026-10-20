@@ -17,7 +17,7 @@ const fixture = name => JSON.parse(fs.readFileSync(new URL(`./fixtures/factory-v
  const browser=await chromium.launch({executablePath,headless:true,args:['--no-sandbox']});
  for(const width of [1440,390]) {
   const context=await browser.newContext({viewport:{width,height:1000}}); const page=await context.newPage();
-  let busyOnce=true,requestId=null,phase='running',interpretation=null,validationId=null,validateCalls=0,refuseValidation=false; const starts=[],posts=[],errors=[];
+  let busyOnce=true,requestId=null,phase='running',interpretation=null,validationId=null,validateCalls=0,refuseValidation=false,missingPackage=null; const starts=[],posts=[],errors=[];
   page.on('pageerror',e=>errors.push(e.message));
   await page.route('**/api/factory/**',async route=>{
    const req=route.request(),url=new URL(req.url()),method=req.method();
@@ -36,7 +36,7 @@ const fixture = name => JSON.parse(fs.readFileSync(new URL(`./fixtures/factory-v
     assert.equal(await page.evaluate(()=>localStorage.getItem('rbw-factory-request-id')),requestId);
     return route.abort('failed'); // Simulate accepted work with a lost start response.
    }
-   const status=()=>{const data=fixture(phase==='running'?'status-running':phase==='cancelled'?'status-cancelled':'status-fulfilled');data.request_id=requestId;data.interpretation=interpretation;return data;};
+   const status=()=>{const data=fixture(phase==='running'?'status-running':phase==='cancelled'?'status-cancelled':'status-fulfilled');data.request_id=requestId;data.interpretation=interpretation;if(missingPackage!==null)data.cases[0].packages[missingPackage].download_path='';return data;};
    if(url.pathname.endsWith('/stop')){phase='cancelled';return send(status());}
    if(url.pathname.endsWith('/validations')&&method==='POST') {validateCalls++;validationId=req.postDataJSON().validation_id;assert.equal(await page.evaluate(()=>localStorage.getItem('rbw-factory-validation-id')),validationId);if(refuseValidation)return send(fixture('error-busy-needs-reconciliation'),409);return route.abort('failed');}
    if(url.pathname.includes('/validations/')){if(refuseValidation)return send(fixture('error-not-found'),404);const data=fixture('validation-passed');data.validation_id=validationId;return send(data);}
@@ -45,6 +45,20 @@ const fixture = name => JSON.parse(fs.readFileSync(new URL(`./fixtures/factory-v
   });
   await page.goto(origin+'/factory',{waitUntil:'networkidle'});
   await page.getByRole('checkbox',{name:/Task and report service/}).check();
+  const description=page.getByLabel('Optional description for item 1',{exact:true});
+  const reviewRequirements=page.getByRole('button',{name:'Review requirements',exact:true});
+  assert.equal(await description.getAttribute('maxlength'),null);
+  await description.fill(' \n'+'😀'.repeat(500)+' \n');
+  assert.equal(await description.inputValue(),' \n'+'😀'.repeat(500)+' \n');
+  assert.equal(await reviewRequirements.isDisabled(),false);
+  await description.fill('😀'.repeat(501));
+  assert.equal(await description.getAttribute('aria-invalid'),'true');
+  assert(await reviewRequirements.isDisabled());
+  await description.fill('e\u0301'.repeat(250));
+  assert.equal(await reviewRequirements.isDisabled(),false);
+  await description.fill('e\u0301'.repeat(250)+'x');
+  assert(await reviewRequirements.isDisabled());
+  console.log(`PASS synthetic ${width}px: trimmed descriptions accept 500 Unicode code points and reject 501; astral characters and combining marks use the contract's units`);
   await page.getByLabel('Optional description for item 1',{exact:true}).fill('lost update');
   await page.getByLabel('Quantity for item 1',{exact:true}).fill('2');
   await page.getByRole('button',{name:'Add request item',exact:true}).click();
@@ -81,6 +95,20 @@ const fixture = name => JSON.parse(fs.readFileSync(new URL(`./fixtures/factory-v
   await page.reload({waitUntil:'networkidle'});await page.getByText('Validation: passed',{exact:true}).waitFor();assert.equal(validateCalls,1);
   assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));assert.deepEqual(errors,[]);
   await page.screenshot({path:join(outputDir, `fixture-${width}.png`),fullPage:true});
+  for(const part of ['bug_case','validator']){
+   missingPackage=part; // Deliberately malformed response, not a valid contract fixture.
+   await page.reload({waitUntil:'networkidle'});
+   assert(await page.getByRole('button',{name:'Validate case',exact:true}).isDisabled());
+   assert.equal(await page.locator('a[href=""]').count(),0);
+   const missingName=part==='bug_case'?'Download bug case':'Download validator package';
+   const retainedName=part==='bug_case'?'Download validator package':'Download bug case';
+   assert.equal(await page.getByRole('link',{name:missingName,exact:true}).count(),0);
+   assert.equal(await page.getByRole('link',{name:retainedName,exact:true}).count(),1);
+   assert.equal(validateCalls,1);
+  }
+  missingPackage=null;await page.reload({waitUntil:'networkidle'});
+  assert.equal(await page.getByRole('button',{name:'Validate case',exact:true}).isDisabled(),false);
+  console.log(`PASS defensive ${width}px: empty package paths hide only the affected download, block validation and recover after a corrected response`);
   refuseValidation=true;
   await page.getByRole('button',{name:'Validate case',exact:true}).click();
   await page.getByRole('alert').filter({hasText:'busy:'}).waitFor();

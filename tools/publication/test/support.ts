@@ -14,6 +14,17 @@ export const hookPath = join(packageDir, "hooks", "pre-push");
 export const PINNED_GITLEAKS_VERSION = "8.30.1";
 export const STUB_LEAK_MARKER = ["SYNTHETIC", "STUB", "LEAK"].join("-");
 
+/**
+ * A stub leakPattern for `marker` (letters, "-" and "." only) that, like many gitleaks rules,
+ * needs a word boundary before the secret and a space, quote, ";" or line end after it. With
+ * `before` set to "space", it needs a space or the line start before the secret instead, like
+ * gitleaks' azure-ad-client-secret rule.
+ */
+export function boundedLeakPattern(marker: string, before: "boundary" | "space" = "boundary"): string {
+  const left = before === "space" ? String.raw`(?:^|\s)` : String.raw`(?:^|\W)`;
+  return left + marker.replaceAll(".", String.raw`\.`) + String.raw`(?=[\s'"\x60;]|$)`;
+}
+
 // Attribution forms are assembled at runtime so this file passes its own scan.
 export const forms = {
   coauthored: ["Co", "authored", "by"].join("-"),
@@ -165,23 +176,46 @@ export interface StubGitleaksOptions {
   hang?: boolean;
   /** Kills the calling process with SIGKILL from a `dir` scan. */
   killParent?: boolean;
+  /**
+   * Reports a line only when this expression matches it, like a gitleaks rule that needs a
+   * boundary after the secret. By default every line containing STUB_LEAK_MARKER is reported.
+   */
+  leakPattern?: string;
+  /**
+   * Matches this expression against each chunk's whole text instead of line by line, like a
+   * gitleaks rule whose match can run across line breaks: matches do not overlap, and each is
+   * reported at the line where it starts. Replaces the line-by-line check.
+   */
+  spanPattern?: string;
+  /** Skips a file whose content starts with one of these, like gitleaks' check for binary file types. */
+  binaryPrefixes?: string[];
+  /**
+   * Reads each file in chunks of `size` characters, like gitleaks, extending a chunk by up to
+   * `peek` characters so that it ends at an empty line; a line split between two chunks is
+   * matched as two parts.
+   */
+  chunk?: { size: number; peek: number };
 }
 
 export interface StubGitleaks {
   command: string;
   violationMarker: string;
   callsLog: string;
+  /** One JSON line per file a `dir` scan reads: its path inside the scanned directory, its size and whether it starts like a path list. */
+  filesLog: string;
 }
 
 /**
  * Writes a Node script that imitates gitleaks: `version` prints a version and `dir`
- * reports a finding for each line containing STUB_LEAK_MARKER. It records a marker
- * file when `{dir}` was not substituted or a path argument lies outside it.
+ * reports a finding for each line containing STUB_LEAK_MARKER, or matching the
+ * leakPattern option. It records a marker file when `{dir}` was not substituted or a
+ * path argument lies outside it.
  */
 export function writeStubGitleaks(dir: string, options: StubGitleaksOptions = {}): StubGitleaks {
   const scriptPath = join(dir, "stub-gitleaks.mjs");
   const violationMarker = join(dir, "stub-gitleaks-violation");
   const callsLog = join(dir, "stub-gitleaks-calls.jsonl");
+  const filesLog = join(dir, "stub-gitleaks-files.jsonl");
   const settings = {
     version: options.version ?? PINNED_GITLEAKS_VERSION,
     exitStatus: options.exitStatus ?? null,
@@ -192,13 +226,18 @@ export function writeStubGitleaks(dir: string, options: StubGitleaksOptions = {}
     replaceDirectory: options.replaceDirectory ?? null,
     hang: options.hang ?? false,
     killParent: options.killParent ?? false,
+    leakPattern: options.leakPattern ?? null,
+    spanPattern: options.spanPattern ?? null,
+    binaryPrefixes: options.binaryPrefixes ?? [],
+    chunk: options.chunk ?? null,
     violationMarker,
     callsLog,
+    filesLog,
     leakMarker: STUB_LEAK_MARKER,
   };
   const script = `
 import { appendFileSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync, lstatSync } from "node:fs";
-import { join, resolve, isAbsolute } from "node:path";
+import { join, relative, resolve, isAbsolute } from "node:path";
 const settings = ${JSON.stringify(settings)};
 const args = process.argv.slice(2);
 appendFileSync(settings.callsLog, JSON.stringify(args) + "\\n");
@@ -228,16 +267,43 @@ if (settings.replaceDirectory) {
 if (settings.hang) await new Promise(() => setInterval(() => undefined, 1000));
 if (settings.killParent) process.kill(process.ppid, "SIGKILL");
 const findings = [];
+const leakPattern = settings.leakPattern === null ? null : new RegExp(settings.leakPattern);
+const leaks = (line) => (leakPattern === null ? line.includes(settings.leakMarker) : leakPattern.test(line));
+const spanPattern = settings.spanPattern === null ? null : new RegExp(settings.spanPattern, "g");
+const chunks = (text) => {
+  if (settings.chunk === null) return [text];
+  const parts = [];
+  for (let start = 0; start < text.length; ) {
+    let end = Math.min(start + settings.chunk.size, text.length);
+    const limit = Math.min(end + settings.chunk.peek, text.length);
+    while (end < limit && !(text[end - 1] === "\\n" && text[end - 2] === "\\n")) end += 1;
+    parts.push(text.slice(start, end));
+    start = end;
+  }
+  return parts;
+};
 const walk = (d) => {
   for (const name of readdirSync(d).sort()) {
     const p = join(d, name);
     const st = lstatSync(p);
     if (st.isDirectory()) walk(p);
     else if (st.isFile() && !(settings.skipPaths !== null && new RegExp(settings.skipPaths).test(p))) {
-      const lines = readFileSync(p, "latin1").split("\\n");
-      lines.forEach((line, i) => {
-        if (line.includes(settings.leakMarker)) findings.push({ RuleID: "stub", File: p, StartLine: i + 1, Secret: "REDACTED", Match: "REDACTED" });
-      });
+      const text = readFileSync(p, "latin1");
+      appendFileSync(settings.filesLog, JSON.stringify({ path: relative(target, p), size: st.size, pathList: text.startsWith("path list\\n\\n") }) + "\\n");
+      if (settings.binaryPrefixes.some((prefix) => text.startsWith(prefix))) continue;
+      let first = 1;
+      for (const part of chunks(text)) {
+        const lines = part.split("\\n");
+        const report = (line) => findings.push({ RuleID: "stub", File: p, StartLine: line, Secret: "REDACTED", Match: "REDACTED" });
+        if (spanPattern !== null) {
+          for (const match of part.matchAll(spanPattern)) report(first + part.slice(0, match.index).split("\\n").length - 1);
+        } else {
+          lines.forEach((line, i) => {
+            if (leaks(line)) report(first + i);
+          });
+        }
+        first += lines.length - 1;
+      }
     }
   }
 };
@@ -251,7 +317,7 @@ process.exit(findings.length > 0 ? Number(flagValue("--exit-code")) : 0);
 `;
   writeFile(scriptPath, script);
   const mount = settings.mountArgument ? " --stub-mount {dir}:{dir}" : "";
-  return { command: `${process.execPath} ${scriptPath} --stub-dir {dir}${mount}`, violationMarker, callsLog };
+  return { command: `${process.execPath} ${scriptPath} --stub-dir {dir}${mount}`, violationMarker, callsLog, filesLog };
 }
 
 export function readJsonLines(path: string): unknown[] {
