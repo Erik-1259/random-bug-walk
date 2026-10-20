@@ -28,6 +28,7 @@
     "tools/controller": 186,
     "tools/local-runner": 212,
     "tools/neon-ci": 98,
+    "tools/product-acceptance": 84,
     "tools/publication": 175,
     "tools/release": 78,
     "tools/solver-session": 99,
