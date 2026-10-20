@@ -3,6 +3,7 @@
 // planned span and drives the copies through the runner and the adapter's collect, then evaluates the matrix.
 import { validateContract } from "@rbw/factory-contract/validate";
 import type {
+  BugCaseRuntime,
   CatalogEntry,
   CellObservation,
   CollectedCopy,
@@ -215,7 +216,12 @@ function beforeCopies<T>(name: string, call: () => T): T {
   }
 }
 
-function planCopies(adapter: HostAdapter, unpacked: UnpackedPair, protocol: Protocol): Record<CopyState, CopyPlan[]> {
+/**
+ * Asks the adapter for every state's plans and holds them to the harness-built trees and to the bug case's
+ * pinned runtime: every copy runs `kit_image` at `kit_image_digest`, the environment the case was packaged
+ * and identified with, never the adapter's current kit when that has moved on.
+ */
+function planCopies(adapter: HostAdapter, unpacked: UnpackedPair, protocol: Protocol, runtime: BugCaseRuntime): Record<CopyState, CopyPlan[]> {
   const plans = {} as Record<CopyState, CopyPlan[]>;
   const copyIds = new Set<string>();
   const evaluator = new Map(unpacked.evaluator.files.map((file) => [file.path, file.sha256]));
@@ -230,6 +236,9 @@ function planCopies(adapter: HostAdapter, unpacked: UnpackedPair, protocol: Prot
       const errors = validateContract("CopyPlan", plan);
       if (errors.length > 0) throw new PlanError(`a ${state} plan is not a valid CopyPlan: ${errors.join(", ")}`);
       if (plan.state !== state || plan.host_id !== adapter.host_id) throw new PlanError(`a ${state} plan names another state or host`);
+      if (plan.image.reference !== runtime.kit_image || plan.image.digest !== runtime.kit_image_digest) {
+        throw new PlanError(`a ${state} plan runs ${plan.image.reference} at ${plan.image.digest ?? "no digest"}, not the bug case's runtime image ${runtime.kit_image} at ${runtime.kit_image_digest}`);
+      }
       if (copyIds.has(plan.copy_id)) throw new PlanError(`copy_id ${plan.copy_id} appears twice`);
       copyIds.add(plan.copy_id);
       // The plan may only place files of the harness-built tree, unchanged: the adapter applies no patch.
@@ -299,7 +308,7 @@ export async function validatePair(input: ValidatePairInput): Promise<ValidatePa
     let plans: Record<CopyState, CopyPlan[]>;
     let availability: HostAvailability | null = null;
     try {
-      plans = planCopies(adapter, workspace.unpacked, protocol);
+      plans = planCopies(adapter, workspace.unpacked, protocol, verified.bug_case.manifest.runtime);
       const check = adapter.availability?.bind(adapter);
       if (check !== undefined) {
         const entry = entryOf(adapter, manifest.entry_id);

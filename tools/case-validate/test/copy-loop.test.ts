@@ -264,4 +264,30 @@ describe("validatePair runs the copies (synthetic host)", () => {
       expect(runner.plans).toHaveLength(0);
     }
   });
+
+  it("refuses copy plans that run another image than the bug case's pinned runtime, and runs no copy", async () => {
+    // The case was packaged on this kit; an adapter whose kit has moved on must not validate it on another one.
+    const base = syntheticAdapter({ seeds: ["01"], workdir: parent });
+    const { kit_image: reference, kit_image_digest: digest } = pair.entry.environment;
+    const planning = (image: CopyPlan["image"]): HostAdapter => ({
+      ...base,
+      copyPlans: (state: CopyState, unpacked, protocol) => base.copyPlans(state, unpacked, protocol).map((plan) => ({ ...plan, image })),
+    });
+    const images: CopyPlan["image"][] = [
+      { reference, digest: `sha256:${"ab".repeat(32)}` },
+      { reference, digest: null },
+      { reference: "registry.invalid/synthetic/task-report-kit:2", digest },
+    ];
+    for (const image of images) {
+      const runner = scriptedRunner(copies, qualifying);
+      const outcome = await validatePair({ ...input(runner), adapters: { "task-report": planning(image) } });
+      expect(outcome.result, JSON.stringify(image)).toBe("error");
+      expect(outcome.error_code).toBe("adapter_error");
+      expect(outcome.diagnostic).toContain("runtime image");
+      expect(runner.plans).toHaveLength(0);
+    }
+    // The pinned image itself still runs.
+    const runner = scriptedRunner(copies, qualifying);
+    expect((await validatePair({ ...input(runner), adapters: { "task-report": planning({ reference, digest }) } })).result).toBe("passed");
+  });
 });
