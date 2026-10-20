@@ -111,7 +111,8 @@ describe("status projection", () => {
     // Drop the second case's case_delivered: it is no longer delivered, though its package is ready.
     const events = status.events.filter((event) => event.seq <= 31);
     const projected = projectStatus(inputsOf(status, { events, now: new Date("2026-10-20T14:24:20.700Z"), last_heartbeat_at: "2026-10-20T14:24:20.650Z" }));
-    expect(projected.funnel).toEqual({ candidates_explored: 2, behavior_checks_passed: 2, requested_criteria_passed: 2, packages_ready: 2 });
+    // Its parts are ready, but it is not a qualified case until case_delivered (section 8.2).
+    expect(projected.funnel).toEqual({ candidates_explored: 2, behavior_checks_passed: 2, requested_criteria_passed: 2, packages_ready: 1 });
     expect(projected.items.map((item) => item.delivered)).toEqual([1, 0]);
     expect(projected.delivery).toBe("partial");
     expect(projected.cases.map((c) => c.case_id)).toEqual([status.cases[0]?.case_id]);
@@ -128,6 +129,17 @@ describe("status projection", () => {
       ["packaging", true],
     ]);
     expect(validateContract("RequestStatus", projected)).toEqual([]);
+  });
+
+  it("counts no ready package for a candidate the worker was lost with between package_ready and case_delivered", async () => {
+    const status = statusFixture("status-fulfilled.json");
+    const store = await storeOf(status.events.filter((event) => event.seq <= 31));
+    for (const event of lostWorkerEvents({ events: store.events, now: new Date("2026-10-20T14:28:00.000Z") })) await store.append(event);
+    const projected = projectStatus(inputsOf(status, { events: store.events, budget: { budget_microusd: 2_000_000, reserved_microusd: 500_000, spent_microusd: 210_000 } }));
+    expect(validateContract("RequestStatus", projected)).toEqual([]);
+    expect(projected.candidates.map((c) => c.stage)).toEqual(["qualified", "incomplete"]);
+    expect(projected.funnel).toEqual({ candidates_explored: 2, behavior_checks_passed: 2, requested_criteria_passed: 2, packages_ready: 1 });
+    expect(projected).toMatchObject({ outcome: "operational_error", delivery: "partial" });
   });
 
   it("refuses a delivered case without its evidence", () => {

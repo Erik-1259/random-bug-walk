@@ -56,6 +56,8 @@ interface CandidateFold {
   case_id: string | null;
   started_at: string | null;
   finished_at: string | null;
+  /** Its `package_ready` event was seen; it counts in `packages_ready` only once it qualified. */
+  packaged: boolean;
 }
 
 interface Fold {
@@ -63,6 +65,7 @@ interface Fold {
   explored: Set<string>;
   behaviorPassed: Set<string>;
   criteriaPassed: Set<string>;
+  /** Qualified candidates whose package parts are ready (contract section 8.2). */
   packagesReady: Set<string>;
   /** Delivered cases in order. */
   delivered: { item_key: string; case_id: string }[];
@@ -102,7 +105,7 @@ function fold(events: readonly Event[]): Fold {
         break;
       case "candidate_selected": {
         if (event.candidate_id === null) throw new ProjectionError(`event ${String(event.seq)} selects no candidate`);
-        state.candidates.set(event.candidate_id, { candidate_id: event.candidate_id, host_id: event.host_id, stage: "selected", reason: null, item_key: null, case_id: null, started_at: event.at, finished_at: null });
+        state.candidates.set(event.candidate_id, { candidate_id: event.candidate_id, host_id: event.host_id, stage: "selected", reason: null, item_key: null, case_id: null, started_at: event.at, finished_at: null, packaged: false });
         state.explored.add(event.candidate_id);
         break;
       }
@@ -123,10 +126,12 @@ function fold(events: readonly Event[]): Fold {
         break;
       }
       case "package_ready": {
-        // The candidate gets its case_id with case_delivered: only a qualified candidate has a case.
+        // The candidate gets its case_id with case_delivered: only a qualified candidate has a case,
+        // and only a qualified case counts as a ready package (a worker lost before case_delivered
+        // leaves the candidate incomplete).
         const entry = candidate(event);
         advance(entry, "packaging");
-        state.packagesReady.add(entry.candidate_id);
+        entry.packaged = true;
         break;
       }
       case "case_delivered": {
@@ -137,6 +142,7 @@ function fold(events: readonly Event[]): Fold {
         entry.case_id = event.case_id;
         entry.finished_at = event.at;
         state.delivered.push({ item_key: event.item_key, case_id: event.case_id });
+        if (entry.packaged) state.packagesReady.add(entry.candidate_id);
         break;
       }
       case "candidate_rejected":
