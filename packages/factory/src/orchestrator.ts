@@ -16,9 +16,10 @@
 //   reservation refused as halted ends its candidate the same way; the request finishes
 //   `operational_error`. At every boundary the user's stop and the deadline are checked first and keep
 //   their codes, unless the next rule applies.
-// - An overrun the ledger shows when the request finishes (read once the worker settled, so it covers
-//   every copy, candidate and the worker) finishes `operational_error`, ahead of a fill, a stop or a
-//   limit. A halt seen only once no work is left stopped nothing and keeps the outcome.
+// - An overrun finishes `operational_error`, ahead of a fill, a stop or a limit: found at a candidate's
+//   settlement, the loop finishes with that code at once (so the budget closes with it); found once
+//   the worker settled, the finish turns the decided code into it. A halt seen only once no work is
+//   left stopped nothing and keeps the outcome.
 // - An uncertain outcome (a rejected harness, reserve or settle call) finishes `needs_reconciliation`
 //   ahead of both; its reservation stays held and is never retried.
 import { canonicalDigest } from "@rbw/schema";
@@ -177,8 +178,8 @@ class RequestRun {
    *   the worker's own), ahead of a fill, a stop or a limit;
    * - a failed ledger read or budget event after the worker settled finishes `operational_error`,
    *   since the request's accounting could not be confirmed.
-   * The budget is closed with the loop's decided code, which settleWorker needs before the overrun
-   * can be read.
+   * settleWorker closes the budget with the decided code; only an overrun of the worker's own
+   * settlement can therefore leave the budget closed with another code than `request_finished` names.
    */
   private async finish(decided: StopCode): Promise<RunResult> {
     this.finishing = true;
@@ -334,9 +335,11 @@ class RequestRun {
         return this.finishUncertain();
       }
       this.current.settled = true;
-      // An overrun this settlement shows finishes the request operational_error: finish() reads the
-      // ledger once the worker settled, ahead of a fill, a stop or the deadline.
-      await this.budgetChanged(`cand:${next.candidate_id}:settled`, "the finished candidate");
+      // An overrun this settlement shows finishes the request operational_error now, ahead of a fill, a
+      // stop or the deadline, so the worker's settlement closes the budget with that code; finish()
+      // checks again once the worker settled.
+      const settled = await this.budgetChanged(`cand:${next.candidate_id}:settled`, "the finished candidate");
+      if (overrun(settled)) return this.finish("operational_error");
       if (outcome.kind === "stop") return this.finish(outcome.stop_code);
       if (outcome.kind === "failed") return this.finish("operational_error");
     }

@@ -313,6 +313,8 @@ describe("runRequest: budget", () => {
     const result = await w.run();
     expect(result).toMatchObject({ outcome: "operational_error", stop_code: "operational_error", delivered: 1 });
     expect(w.status()).toMatchObject({ outcome: "operational_error", delivery: "complete", budget: { overrun: true } });
+    // The budget closes with the code request_finished names.
+    expect(w.ledger.closedWith).toBe("operational_error");
   });
 
   it.each([
@@ -412,6 +414,7 @@ describe("runRequest: budget", () => {
     expect(result).toMatchObject({ outcome: "operational_error", stop_code: "operational_error", delivered: 0 });
     expect(ended(w.events.events)).toEqual([{ type: "candidate_incomplete", reason: "stopped" }]);
     expect(w.status().budget.overrun).toBe(true);
+    expect(w.ledger.closedWith).toBe("operational_error");
   });
 });
 
