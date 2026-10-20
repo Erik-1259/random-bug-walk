@@ -22,7 +22,7 @@ Test files are named without their directory: contract tests are in `packages/fa
 | Service routes, session and test mode | `packages/web/app/api/factory/`, `packages/web/src/factory-server/` | #129 | backend lane |
 | Hosted worker: launch, heartbeats, lost-worker finish, validation runs, reconciliation | `tools/controller/src/factory-*.ts` | #132 | backend lane |
 | Spend ledger: request budgets, factory records and events | `packages/spend/` (`migrations/0006_factory.sql`) | #127, merged | backend lane |
-| Request page and client adapter | `packages/web/src/factory/client.ts`, `packages/web/src/components/factory-*.tsx` | #123, merged | UI lane |
+| Request page and client adapter | `packages/web/src/factory/client.ts`, `packages/web/src/components/factory-*.tsx` | #123, merged; #136 | UI lane |
 | Umami host adapter | `packages/host-umami/` | #128 | Umami lane |
 | Task-report host adapter | `packages/host-task-report/` | #126 | custom host lane |
 | Package format, exporter and `rbw-validate` | `tools/case-package/`, `tools/case-validate/` | #131 | package lane |
@@ -43,7 +43,7 @@ Test files are named without their directory: contract tests are in `packages/fa
 
 ### Where a producer differs from the text
 
-- Sections 4.3 and 7: test mode checks a start's limits inside the lock after the existing-ID lookup, so an out-of-limits start that reuses an ID answers `409 idempotency_conflict` instead of `400`, and it does not check unique item keys on a start. Test mode and the UI count description length in UTF-16 code units, not in the Unicode code points that sections 4 and 5 count.
+- Sections 4.3 and 7: test mode checks a start's limits inside the lock after the existing-ID lookup, so an out-of-limits start that reuses an ID answers `409 idempotency_conflict` instead of `400`, and it does not check unique item keys on a start. Test mode counts description length in UTF-16 code units, not in the Unicode code points that sections 4 and 5 count. The UI counts Unicode code points after trimming; `factory-request-form.test.tsx` covers astral characters, surrounding whitespace and combining marks.
 - Section 8.1: the factory core projection derives `worker_unresponsive` from the clock with no `attention` event. The service status port appends the event first, so the two together would show it twice.
 - Section 8.2: the factory core projection counts a selected candidate as explored before its checks start. Test mode counts it once checks start.
 - Section 8.5: when the worker settles a validation run above its worst case after the request finished, nothing sets `attention` to `needs_reconciliation`.
