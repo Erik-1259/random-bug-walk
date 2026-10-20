@@ -33,6 +33,7 @@ The issue writer’s model runs on Nebius Token Factory. Vercel hosts the site, 
 | [`packages/envelope`](packages/envelope/README.md) | Versioned provider rates and priced envelopes for the spend ledger |
 | [`packages/harvest`](packages/harvest/README.md) | Finds public source fixes on GitHub that match a bug shape (`DT-1.tz-arg` or the race class `RC-1.guarded-write`) and reports a funnel |
 | [`packages/harvest-review`](packages/harvest-review/README.md) | Two-model review of the harvest's matches |
+| [`packages/host-umami`](packages/host-umami/README.md) | The Umami host adapter of the bug factory: baseline, the released time-zone case as its one catalog entry, protocol, calendar window, package inputs from a prepared store, copy plans and copy results |
 | [`packages/projection`](packages/projection/README.md) | Audits a solver-visible copy: pinned source, one declared change, no history or answer-bearing files (part of ADM-01, ADM-07's scan) |
 | [`packages/publisher`](packages/publisher/README.md) | Trusted publisher of runs and releases to the results repository and the public store |
 | [`packages/schema`](packages/schema/README.md) | Shared record schema, canonical JSON and job contracts (TypeScript, with the Python package in `python/schema`) |

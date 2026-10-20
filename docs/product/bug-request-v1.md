@@ -156,7 +156,7 @@ InterpretedItem {
   difficulty: { requested: "source_inferable_allowed" | "source_only_difficulty_required", status: "not_required" | "unsupported" }
   criteria: { criterion_id, version, label, matched_text: string | null }[]
   unmatched_text: string[]
-  eligible_sources: { host_id, source_id, entries: integer }[]
+  eligible_sources: { host_id, source_id, entries: integer }[]  // entries is at least 1 and counts the source's catalog entries that satisfy the item's criteria
   status: "supported" | "unsupported"
   problems: Problem[]
 }
