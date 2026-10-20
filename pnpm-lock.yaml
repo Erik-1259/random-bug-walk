@@ -612,6 +612,9 @@ importers:
       '@rbw/envelope':
         specifier: workspace:*
         version: link:../../packages/envelope
+      '@rbw/factory-contract':
+        specifier: workspace:*
+        version: link:../../packages/factory-contract
       '@rbw/local-runner':
         specifier: workspace:*
         version: link:../local-runner
