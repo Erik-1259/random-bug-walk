@@ -1,0 +1,134 @@
+{
+  "schema_version": 1,
+  "scope": "runner-self-tests-and-local-service-http",
+  "contract_revision": "66651d67fcb09c402b25d9688ea492c0e69e1c2b",
+  "backend_revision": "f803962dcaf3b51b8881a7c4db99aeded33c7e1d",
+  "runner_dependency": "04e926b9b2ff89078be124d905ad73dd57c24d90",
+  "runtime": {
+    "node": "24.21.0",
+    "pnpm": "10.33.2"
+  },
+  "self_tests": {
+    "command": "pnpm --filter @rbw/product-acceptance test --reporter=json",
+    "passed": 157,
+    "failed": 0,
+    "skipped": 0,
+    "exit_code": 0
+  },
+  "test_floor": 157,
+  "failing_first": [
+    {
+      "scope": "final-contract invariant regressions",
+      "passed": 51,
+      "failed": 19,
+      "exit_code": 1
+    },
+    {
+      "scope": "empty criterion identities",
+      "passed": 70,
+      "failed": 2,
+      "exit_code": 1
+    },
+    {
+      "scope": "missing complete-history criterion evidence",
+      "failed": 1,
+      "exit_code": 1
+    },
+    {
+      "scope": "local HTTP adapter",
+      "failure": "module absent before implementation",
+      "exit_code": 1
+    },
+    {
+      "scope": "initial Start interpretation, events, terminal state and delivered-case witnesses",
+      "failed": 8,
+      "passed": 41,
+      "exit_code": 1
+    },
+    {
+      "scope": "duplicate event in accepted Start",
+      "failed": 1,
+      "passed": 50,
+      "exit_code": 1
+    },
+    {
+      "scope": "original reservation and deterministic settlement amounts",
+      "failed": 3,
+      "passed": 9,
+      "exit_code": 1
+    },
+    {
+      "scope": "pinned criterion membership and positive candidate reservations",
+      "failed": 5,
+      "passed": 84,
+      "exit_code": 1
+    },
+    {
+      "scope": "unused reservations released without a provider create",
+      "failed": 2,
+      "passed": 15,
+      "exit_code": 1
+    }
+  ],
+  "local_checks": [
+    {
+      "command": "pnpm install --frozen-lockfile --offline",
+      "exit_code": 0
+    },
+    {
+      "command": "pnpm --filter @rbw/product-acceptance typecheck",
+      "exit_code": 0
+    },
+    {
+      "command": "pnpm --filter @rbw/product-acceptance lint",
+      "exit_code": 0
+    },
+    {
+      "command": "pnpm --filter @rbw/product-acceptance build",
+      "exit_code": 0
+    },
+    {
+      "command": "node tools/product-acceptance/src/cli.ts",
+      "exit_code": 2,
+      "meaning": "no backend selected; eight groups unavailable"
+    },
+    {
+      "command": "pnpm exec vitest run packages/web/test/factory-server/server.test.ts",
+      "checkout": "pinned backend",
+      "passed": 10,
+      "exit_code": 0
+    },
+    {
+      "command": "node tools/product-acceptance/src/cli.ts --local-backend ../rbw-api-test-backend",
+      "exit_code": 2,
+      "report": "service-http.json"
+    },
+    {
+      "command": "node scripts/checks/prose.ts",
+      "exit_code": 0
+    }
+  ],
+  "limitations": [
+    "Self-tests are not backend acceptance.",
+    "Service HTTP uses the existing in-memory test mode and fixture-driven worker, not durable storage or the factory core/controller worker.",
+    "No real provider execution, host qualification, package privacy or package replay is established."
+  ],
+  "review_dispositions": [
+    {
+      "finding": "Initial Start snapshots could lose interpretation, events, terminal data or delivered-case content before polling.",
+      "disposition": "Fixed with observation witnesses across every response, preserving unordered concurrent snapshots and legitimate finished 202 failures."
+    },
+    {
+      "finding": "Internally consistent evidence could hide changed original reservations or discounted deterministic settlements.",
+      "disposition": "Fixed with the pinned worker reservation, positive candidate originals and provider-create-aware settlement checks."
+    },
+    {
+      "finding": "An undescribed item could deliver a criterion outside its bug type.",
+      "disposition": "Fixed with independent membership in the pinned public capabilities fixture."
+    },
+    {
+      "finding": "A blanket worst-case settlement assertion rejected unused reservations in the real uncertain-provider HTTP scenario.",
+      "disposition": "Corrected the runner to distinguish launched operations from reservations released at zero; no service change."
+    }
+  ]
+}

@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "suite": "request-api-acceptance",
-  "contract_revision": "7540362198f5940f1add45a65593ac314e8d751e",
+  "contract_revision": "66651d67fcb09c402b25d9688ea492c0e69e1c2b",
   "backend_revision": null,
   "isolated_target_verified": false,
   "acceptance_executed": false,
@@ -16,8 +16,8 @@
       "status": "unavailable",
       "checks": [],
       "dependencies": [
-        "Exact evidence response shape and durable request/job identities are not defined in revision 1.",
-        "Approved isolated backend startup, verification and session adapter are unavailable."
+        "Durable request/job identities are not exposed by TestEvidence; worker reservations alone do not prove durable job uniqueness.",
+        "No verified isolated backend was selected."
       ]
     },
     {
@@ -25,7 +25,7 @@
       "status": "unavailable",
       "checks": [],
       "dependencies": [
-        "Approved isolated backend startup, verification and session adapter are unavailable."
+        "No verified isolated backend was selected."
       ]
     },
     {
@@ -33,8 +33,8 @@
       "status": "unavailable",
       "checks": [],
       "dependencies": [
-        "Exact ledger-operation/provider-call evidence shape is needed to verify reservations across hosts.",
-        "Approved isolated backend startup, verification and session adapter are unavailable."
+        "TestEvidence does not associate copy operations with hosts; cross-host reservation attribution remains unavailable.",
+        "No verified isolated backend was selected."
       ]
     },
     {
@@ -42,8 +42,8 @@
       "status": "unavailable",
       "checks": [],
       "dependencies": [
-        "A deterministic setup_failed candidate control is not named in revision 1.",
-        "Approved isolated backend startup, verification and session adapter are unavailable."
+        "A deterministic setup_failed candidate control is not named in revision 2.",
+        "No verified isolated backend was selected."
       ]
     },
     {
@@ -51,7 +51,7 @@
       "status": "unavailable",
       "checks": [],
       "dependencies": [
-        "Approved isolated backend startup, verification and session adapter are unavailable."
+        "No verified isolated backend was selected."
       ]
     },
     {
@@ -59,8 +59,7 @@
       "status": "unavailable",
       "checks": [],
       "dependencies": [
-        "cancel-midway needs an observable pause or documented timing so a stop can arrive after a delivery.",
-        "Approved isolated backend startup, verification and session adapter are unavailable."
+        "No verified isolated backend was selected."
       ]
     },
     {
@@ -68,7 +67,7 @@
       "status": "unavailable",
       "checks": [],
       "dependencies": [
-        "Approved isolated backend startup, verification and session adapter are unavailable."
+        "No verified isolated backend was selected."
       ]
     },
     {
@@ -76,8 +75,8 @@
       "status": "unavailable",
       "checks": [],
       "dependencies": [
-        "Pending-package access needs a documented deterministic window and case ID; archive layout and full payload privacy validation remain pending the package contract.",
-        "Approved isolated backend startup, verification and session adapter are unavailable."
+        "Pending-package access needs a documented deterministic window and case ID. Synthetic test-mode archives do not establish real package privacy or replay.",
+        "No verified isolated backend was selected."
       ]
     }
   ],

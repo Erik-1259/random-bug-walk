@@ -59,7 +59,14 @@
           }
         ],
         "status": "supported",
-        "problems": []
+        "problems": [
+          {
+            "code": "quantity_exceeds_source",
+            "severity": "warning",
+            "message": "The 2 eligible concurrency catalog entries plant only 1 distinct defect on the selected hosts, so at most 1 of the 2 requested concurrency cases can be delivered and the request cannot end fulfilled.",
+            "item_key": "concurrency-1"
+          }
+        ]
       }
     ],
     "type_totals": [

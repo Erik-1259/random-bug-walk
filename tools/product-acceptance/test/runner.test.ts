@@ -56,6 +56,21 @@ it("does not execute against a different contract revision", async () => {
   expect((await runAcceptance(backend)).acceptance_executed).toBe(false);
   expect(request).not.toHaveBeenCalled();
 });
+it("rejects delivery when the complete history omits criterion evidence", async () => {
+  const { backend, request } = scripted();
+  backend.request = async (...args) => {
+    const reply = await request(...args);
+    if (args[0] === "GET") {
+      const value = object(reply.body);
+      const after = Number(args[1].split("?after=")[1] ?? 0);
+      value.events = objects(value.events).filter(event => event.type !== "requested_criteria_passed")
+        .map((event, index) => ({ ...event, seq: after + index + 1 }));
+      value.next_after = after + objects(value.events).length;
+    }
+    return reply;
+  };
+  await expect(runProbe(backend, probe)).rejects.toThrow("criterion event");
+});
 it("exercises repeated, concurrent and conflicting starts with one ID then reconnects", async () => {
   const { backend, request } = scripted();
   await runProbe(backend, probe);
@@ -186,7 +201,6 @@ it("checks reconciliation clears held spend without rewriting terminal delivery"
   const before = fixture("status-operational-error");
   const after = structuredClone(before);
   after.attention = null;
-  after.updated_at = "2026-10-20T19:08:00.000Z";
   const budget = object(after.budget);
   budget.spent_microusd = integer(budget.spent_microusd) + integer(budget.reserved_microusd);
   budget.reserved_microusd = 0;
@@ -291,6 +305,7 @@ it("rejects assigning the exhausted scenario's case to the less specific item", 
   described.delivered = 0; described.missing = 1; described.case_ids = [];
   for (const c of objects(wrong.cases)) c.item_key = any.item_key;
   for (const c of objects(wrong.candidates)) if (c.case_id !== null) c.item_key = any.item_key;
+  for (const event of objects(wrong.events)) if (event.type === "requested_criteria_passed") event.item_key = any.item_key;
   checkStatus(wrong);
   let starts = 0;
   backend.request = (_method, path, payload) => {
@@ -337,7 +352,6 @@ for (const startOrdinal of [1, 2]) it(`rejects an overrun seen only in start res
   };
   await expect(runProbe(backend, probe)).rejects.toThrow("deterministic scenario exceeded budget");
 });
-
 it.each([1, 2, 3])("retains cases observed in concurrent start response %s", async (ordinal) => {
   const { backend, request } = scripted(); let starts = 0;
   backend.request = async (...args) => {
@@ -403,4 +417,93 @@ it.each(["bug_type_id", "quantity", "description", "difficulty", "status", "unma
     return reply;
   };
   await expect(runProbe(backend, probe)).rejects.toThrow("item interpretation differs from pinned scenario");
+});
+
+it.each([1, 2])("rejects a frozen interpretation changed only in Start response %s", async ordinal => {
+  const { backend, request } = scripted(); let starts = 0;
+  backend.request = async (...args) => {
+    const reply = await request(...args);
+    if (args[0] === "POST" && args[1] === "/api/factory/requests" && ++starts === ordinal) {
+      const item = objects(object(object(reply.body).interpretation).items)[0]; assert(item);
+      const source = objects(item.eligible_sources)[0]; assert(source);
+      source.source_id = "synthetic-wrong-source";
+    }
+    return reply;
+  };
+  await expect(runProbe(backend, probe)).rejects.toThrow("frozen interpretation changed");
+});
+it.each([1, 2])("retains event contents observed in Start response %s", async ordinal => {
+  const { backend, request } = scripted(); let starts = 0;
+  backend.request = async (...args) => {
+    const reply = await request(...args);
+    if (args[0] === "POST" && args[1] === "/api/factory/requests" && ++starts === ordinal) {
+      const event = objects(object(reply.body).events)[0]; assert(event);
+      event.message = "synthetic-event-before-rewrite";
+    }
+    return reply;
+  };
+  await expect(runProbe(backend, probe)).rejects.toThrow("previous event changed");
+});
+it.each([1, 2])("rejects completion in Start response %s followed by a queued replay", async ordinal => {
+  const { backend, request } = scripted(); let starts = 0;
+  backend.request = async (...args) => {
+    const reply = await request(...args);
+    if (args[0] === "POST" && args[1] === "/api/factory/requests" && ++starts === ordinal) {
+      const state = object(reply.body);
+      state.state = "finished"; state.outcome = "operational_error";
+      state.stop_reason = { code: "operational_error", message: "synthetic launch failure" };
+    }
+    return reply;
+  };
+  await expect(runProbe(backend, probe)).rejects.toThrow("terminal result changed after completion");
+});
+it.each([1, 2])("retains delivered-case contents observed in Start response %s", async ordinal => {
+  const { backend, request } = scripted(); let starts = 0;
+  backend.request = async (...args) => {
+    const reply = await request(...args);
+    if (args[0] === "POST" && args[1] === "/api/factory/requests") {
+      const current = ++starts;
+      if (current === ordinal || current === 4) {
+        const initial = fixture("status-fulfilled");
+        const value: unknown = JSON.parse(JSON.stringify(initial).replaceAll(text(initial.request_id), text(object(reply.body).request_id)));
+        if (current === ordinal) { const delivered = objects(object(value).cases)[0]; assert(delivered); delivered.title = "synthetic original delivered title"; }
+        return { ...reply, body: value };
+      }
+    }
+    return reply;
+  };
+  await expect(runProbe(backend, probe)).rejects.toThrow("delivered case changed");
+});
+it("rejects a duplicate event present only in the accepted Start response", async () => {
+  const { backend, request } = scripted();
+  backend.request = async (...args) => {
+    const reply = await request(...args);
+    if (reply.status === 202) {
+      const state = object(reply.body); const events = objects(state.events);
+      const first = events[0]; assert(first);
+      state.events = [first, structuredClone(first), ...events.slice(1)];
+    }
+    return reply;
+  };
+  await expect(runProbe(backend, probe)).rejects.toThrow("event gap or duplicate");
+});
+it("accepts a recorded launch failure already finished in the 202 response", async () => {
+  const { backend, request } = scripted();
+  const expected = fixture("status-queued");
+  expected.state = "finished"; expected.outcome = "operational_error";
+  expected.stop_reason = { code: "operational_error", message: "synthetic launch failure" };
+  const budget = object(expected.budget);
+  budget.reserved_microusd = 0; budget.spent_microusd = budget.committed_microusd;
+  const events = objects(expected.events); const last = events.at(-1); assert(last);
+  expected.events = [...events, { ...last, seq: 3, type: "request_finished", message: "synthetic launch failure", data: { outcome: "operational_error", stop_code: "operational_error" } }];
+  expected.next_after = 3;
+  backend.request = async (...args) => {
+    const reply = await request(...args);
+    if (reply.status === 202 || (reply.status === 200 && args[1].includes("/requests"))) {
+      const value: unknown = JSON.parse(JSON.stringify(expected).replaceAll(text(expected.request_id), text(object(reply.body).request_id)));
+      return { ...reply, body: value };
+    }
+    return reply;
+  };
+  await expect(runProbe(backend, { ...probe, outcome: "operational_error", stopCode: "operational_error", expectedDelivery: "none", expectedCounts: objects(expected.items) })).resolves.toBeUndefined();
 });

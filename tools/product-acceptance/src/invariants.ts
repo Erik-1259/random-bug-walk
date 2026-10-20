@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { BUG_TYPE_ID_VALUES } from "@rbw/factory-contract";
 
 export function object(value: unknown): Record<string, unknown> {
   assert(value !== null && typeof value === "object" && !Array.isArray(value), "expected object");
@@ -16,11 +18,19 @@ export function text(value: unknown): string {
   assert(typeof value === "string", "expected string");
   return value;
 }
+const pinnedCapabilities: unknown = JSON.parse(readFileSync(new URL("../fixtures/capabilities.json", import.meta.url), "utf8"));
+const pinnedBugTypes = objects(object(pinnedCapabilities).bug_types);
+
 function nonnegative(value: unknown): number {
   const n = integer(value); assert(n >= 0, "negative count or amount"); return n;
 }
 function unique(values: unknown[]): void {
   assert.equal(new Set(values).size, values.length, "duplicate identity");
+}
+function criterionIdentity(value: unknown): string {
+  const id = text(value);
+  assert(id.length > 0, "empty criterion identity");
+  return id;
 }
 function cells(value: unknown): Record<string, unknown>[] {
   const matrix = object(value);
@@ -48,6 +58,8 @@ export function checkValidation(value: unknown): void {
   const result = observed.length === 0 || observed.some(c => ["error", "incomplete"].includes(text(c.observed)))
     ? "error" : observed.every(c => c.matches_expectation === true) ? "passed" : "failed";
   assert.equal(v.result, result, "validation result contradicts observations");
+  if (result !== "error") assert.notEqual(v.cost_microusd, null, "completed validation has no recorded cost");
+  if (v.cost_microusd !== null) nonnegative(v.cost_microusd);
 }
 const caseFields = new Set([
   "case_id", "defect_id", "title", "host_id", "host_label", "baseline_id", "bug_type_id", "item_key", "criteria_met",
@@ -60,6 +72,16 @@ function checkCase(c: Record<string, unknown>, requestId: unknown): void {
   assert(cells(c.matrix).every(cell => cell.matches_expectation === true), "unqualified matrix");
   assert.equal(object(c.provenance).request_id, requestId);
   assert.equal(object(c.provenance).origin, "live_request");
+  const criteria = objects(c.criteria_met);
+  assert(criteria.length > 0, "case has no demonstrated criterion");
+  unique(criteria.map(criterion => criterionIdentity(criterion.criterion_id)));
+  const bugType = pinnedBugTypes.find(type => type.bug_type_id === c.bug_type_id);
+  assert(bugType, "case bug type is not in the pinned catalog");
+  const declared = objects(bugType.criteria);
+  for (const criterion of criteria) {
+    assert(declared.some(known => known.criterion_id === criterion.criterion_id && known.version === criterion.version),
+      "demonstrated criterion is not in the pinned bug type catalog");
+  }
   const packages = object(c.packages);
   for (const kind of ["bug_case", "validator"]) {
     const part = object(packages[kind]);
@@ -75,6 +97,33 @@ const stopCodes: Record<string, string[]> = {
   sources_exhausted: ["sources_exhausted"], cancelled: ["cancelled_by_user"],
   operational_error: ["worker_lost", "needs_reconciliation", "operational_error"],
 };
+
+/** Check criterion event identities against delivered cases across a page or complete history. */
+export function checkCriteriaEvents(value: unknown, history: unknown, completeHistory = false): void {
+  const status = object(value);
+  const cases = objects(status.cases);
+  const candidates = objects(status.candidates);
+  const criterionEvents = objects(history).filter(event => event.type === "requested_criteria_passed");
+  const witnessedCases = new Set<unknown>();
+  for (const event of criterionEvents) {
+    const rawIds = object(event.data).criterion_ids;
+    assert(Array.isArray(rawIds) && rawIds.length > 0, "criterion event has no demonstrated criterion");
+    const ids = rawIds.map(criterionIdentity);
+    unique(ids);
+    const candidate = candidates.find(candidate => candidate.candidate_id === event.candidate_id);
+    assert(candidate, "criterion event has no candidate");
+    const delivered = cases.find(c => c.case_id === candidate.case_id);
+    if (delivered) {
+      assert.equal(event.item_key, delivered.item_key, "criterion event names another item");
+      assert.deepEqual(ids.sort(), objects(delivered.criteria_met).map(criterion => text(criterion.criterion_id)).sort(),
+        "event criteria differ from delivered case");
+      witnessedCases.add(delivered.case_id);
+    }
+  }
+  if (completeHistory && status.state === "finished") {
+    for (const delivered of cases) assert(witnessedCases.has(delivered.case_id), "delivered case has no criterion event");
+  }
+}
 
 /** Checks public response invariants, not provider side effects or package replay. */
 export function checkStatus(value: unknown): void {
@@ -128,7 +177,11 @@ export function checkStatus(value: unknown): void {
   }
   const totals = objects(s.type_totals);
   unique(totals.map(t => t.bug_type_id));
-  assert.deepEqual(totals.map(t => text(t.bug_type_id)).sort(), [...new Set(items.map(i => text(i.bug_type_id)))].sort(), "type totals do not identify requested types");
+  const totalTypes = totals.map(total => text(total.bug_type_id));
+  assert(totalTypes.every(type => BUG_TYPE_ID_VALUES.some(known => known === type)), "unknown type total");
+  for (const type of new Set(items.map(item => text(item.bug_type_id)))) {
+    assert(totalTypes.includes(type), "missing requested type total");
+  }
   for (const total of totals) for (const field of ["requested", "delivered", "missing"]) {
     assert.equal(total[field], items.filter(i => i.bug_type_id === total.bug_type_id).reduce((sum, i) => sum + nonnegative(i[field]), 0));
   }
@@ -148,4 +201,5 @@ export function checkStatus(value: unknown): void {
     assert(["queued", "starting", "running", "stopping"].includes(text(s.state)));
     assert.equal(s.outcome, null); assert.equal(s.stop_reason, null);
   }
+  checkCriteriaEvents(s, s.events);
 }

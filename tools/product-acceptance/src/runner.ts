@@ -1,15 +1,15 @@
 import assert from "node:assert/strict";
+import { assertContract } from "@rbw/factory-contract/validate";
+import { checkEvidence } from "./evidence.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { checkStatus, checkValidation, integer, object, objects, text } from "./invariants.ts";
+import { checkCriteriaEvents, checkStatus, checkValidation, integer, object, objects, text } from "./invariants.ts";
 
-export const contractRevision = "7540362198f5940f1add45a65593ac314e8d751e";
+export const contractRevision = "66651d67fcb09c402b25d9688ea492c0e69e1c2b";
 export const scenarioIds = ["identity", "quantities", "shared-budget", "qualification", "unsupported", "stops", "continuity", "downloads"] as const;
 type ScenarioId = typeof scenarioIds[number];
 export interface Reply { status: number; body: unknown }
-/** Local adapter interface, NOT a proposed service endpoint or response shape.
- * No adapter ships until the backend supplies its approved isolation procedure.
- */
+/** Local adapter interface, not a service endpoint or response shape. */
 export interface IsolatedBackend {
   verifyIsolation: () => Promise<{ backendRevision: string; contractRevision: string }>;
   request(method: "GET" | "POST", path: string, body?: unknown): Promise<Reply>;
@@ -29,6 +29,7 @@ export interface Probe {
   validation?: "failed" | "error";
   reconcile?: boolean;
   downloads?: boolean;
+  evidence?: boolean;
 }
 class Unavailable extends Error {}
 function checkScenarioStatus(value: unknown): void {
@@ -36,7 +37,7 @@ function checkScenarioStatus(value: unknown): void {
   assert.equal(object(object(value).budget).overrun, false, "deterministic scenario exceeded budget");
 }
 function body(reply: Reply, status: number): Record<string, unknown> {
-  assert.equal(reply.status, status, "unexpected HTTP status");
+  assert.equal(reply.status, status, `unexpected HTTP status: received ${String(reply.status)}, expected ${String(status)}`);
   const result = object(reply.body);
   assert.equal(result.contract_version, "bug-request/1");
   return result;
@@ -93,18 +94,43 @@ export async function runProbe(backend: IsolatedBackend, probe: Probe): Promise<
   const start = { request_id: requestId, input: probe.input, interpretation_sha256: interpretation.interpretation_sha256 };
   const replies = await Promise.all(Array.from({ length: probe.concurrent ? 3 : 1 }, () => call("POST", "/api/factory/requests", start)));
   assert.equal(replies.filter(r => r.status === 202).length, 1, "start accepted more or less than once");
-  const deliveredIds = new Set<unknown>();
-  const retain = (value: Record<string, unknown>) => {
-    const currentIds = objects(value.cases).map(c => c.case_id);
-    for (const id of deliveredIds) assert(currentIds.includes(id), "delivered case disappeared");
-    for (const id of currentIds) deliveredIds.add(id);
+  const deliveredCases = new Map<unknown, Record<string, unknown>>();
+  const observedEvents = new Map<number, Record<string, unknown>>();
+  let terminal: Record<string, unknown> | undefined;
+  const terminalSnapshot = (value: Record<string, unknown>) => Object.fromEntries(Object.entries(value)
+    .filter(([field]) => !["budget", "attention", "updated_at", "events", "next_after", "poll_after_ms"].includes(field)));
+  const observe = (value: Record<string, unknown>, concurrent = false) => {
+    checkScenarioStatus(value);
+    assert.equal(value.request_id, requestId);
+    assert.deepEqual(value.interpretation, interpretation, "frozen interpretation changed");
+    const current = objects(value.cases);
+    if (!concurrent) for (const id of deliveredCases.keys()) {
+      assert(current.some(c => c.case_id === id), "delivered case disappeared");
+    }
+    for (const delivered of current) {
+      const previous = deliveredCases.get(delivered.case_id);
+      if (previous !== undefined) assert.deepEqual(delivered, previous, "delivered case changed");
+      else deliveredCases.set(delivered.case_id, structuredClone(delivered));
+    }
+    let previousSeq: number | undefined;
+    for (const event of objects(value.events)) {
+      const seq = integer(event.seq);
+      assert(seq > 0 && (previousSeq === undefined || seq === previousSeq + 1), "event gap or duplicate");
+      previousSeq = seq;
+      const previous = observedEvents.get(seq);
+      if (previous !== undefined) assert.deepEqual(event, previous, "previous event changed");
+      else observedEvents.set(seq, structuredClone(event));
+    }
+    // Concurrent replies need not arrive in state order. Once all have returned,
+    // sequential observations must preserve any completed request already seen.
+    if (terminal !== undefined && (!concurrent || value.state === "finished")) {
+      assert.deepEqual(terminalSnapshot(value), terminal, "terminal result changed after completion");
+    }
+    if (value.state === "finished" && terminal === undefined) terminal = structuredClone(terminalSnapshot(value));
   };
   for (const reply of replies) {
     assert([200, 202].includes(reply.status));
-    checkScenarioStatus(reply.body); assert.equal(object(reply.body).request_id, requestId);
-    // Concurrent snapshots may represent different instants. Preserve their
-    // union, then require each subsequent sequential response to retain it.
-    for (const c of objects(object(reply.body).cases)) deliveredIds.add(c.case_id);
+    observe(object(reply.body), true);
   }
   const path = `/api/factory/requests/${requestId}`;
   const repeated = body(await call("POST", "/api/factory/requests", start), 200);
@@ -121,18 +147,15 @@ export async function runProbe(backend: IsolatedBackend, probe: Probe): Promise<
   const history: Record<string, unknown>[] = [];
   // Bound a stalled service; do not poll faster than its declared interval.
   for (let polls = 0; polls < 1000; polls++) {
-    checkScenarioStatus(state);
-    retain(state);
+    observe(state);
     for (const event of objects(state.events)) {
       assert.equal(integer(event.seq), ++cursor, "event gap or duplicate");
       history.push(structuredClone(event));
     }
     assert.equal(state.next_after, cursor);
-    assert.equal(state.request_id, requestId);
-    assert.deepEqual(state.interpretation, interpretation, "frozen interpretation changed");
     if (probe.cancel && !stopped && objects(state.cases).length > 0 && state.state !== "finished") {
       const stopping = body(await call("POST", `${path}/stop`, {}), 200);
-      checkScenarioStatus(stopping); retain(stopping);
+      observe(stopping);
       stopped = true;
     }
     if (state.state === "finished") break;
@@ -143,6 +166,8 @@ export async function runProbe(backend: IsolatedBackend, probe: Probe): Promise<
   }
   if (probe.cancel && !stopped) throw new Unavailable("cancel-midway requires an observable pause after the first delivery");
   if (state.state !== "finished") throw new Unavailable("Request observation reached the runner poll limit.");
+  for (const [seq, event] of observedEvents) assert.deepEqual(history[seq - 1], event, "previous event disappeared from history");
+  checkCriteriaEvents(state, history, true);
   const counts = (items: Record<string, unknown>[]) => items.map(item => ({
     item_key: text(item.item_key), requested: integer(item.requested),
     delivered: integer(item.delivered), missing: integer(item.missing),
@@ -154,7 +179,7 @@ export async function runProbe(backend: IsolatedBackend, probe: Probe): Promise<
   await backend.reconnect();
   const reconnect = await read(backend, `${path}?after=0`);
   let page = reconnect;
-  checkScenarioStatus(page); retain(page);
+  observe(page);
   let checked = 0;
   while (checked < history.length) {
     const events = objects(page.events);
@@ -166,7 +191,7 @@ export async function runProbe(backend: IsolatedBackend, probe: Probe): Promise<
     if (checked < history.length) {
       await backend.wait(integer(page.poll_after_ms));
       page = await read(backend, `${path}?after=${String(checked)}`);
-      checkScenarioStatus(page); retain(page);
+      observe(page);
     }
   }
   checkScenarioStatus(reconnect);
@@ -177,9 +202,10 @@ export async function runProbe(backend: IsolatedBackend, probe: Probe): Promise<
   assert.deepEqual(snapshot(reconnect), snapshot(state), "terminal result changed on reconnect");
   if (probe.cancel) {
     const again = body(await call("POST", `${path}/stop`, {}), 200);
-    checkScenarioStatus(again); retain(again);
+    observe(again);
     for (const field of ["outcome", "items", "cases"]) assert.deepEqual(again[field], state[field]);
   }
+  if (probe.evidence) await runEvidence(backend, state);
   if (probe.downloads) await runDownloads(backend, state);
   if (probe.reconcile) await runReconciliation(backend, state);
   if (probe.validation) {
@@ -204,6 +230,14 @@ export async function runProbe(backend: IsolatedBackend, probe: Probe): Promise<
     assert.equal(validation.result, probe.validation);
   }
 }
+/** Schema validation narrows transport data; independent assertions decide accounting correctness. */
+export async function runEvidence(backend: IsolatedBackend, status: unknown): Promise<void> {
+  await verify(backend);
+  const request = assertContract("RequestStatus", status);
+  const evidence = await read(backend, `/api/factory/test/evidence?request_id=${request.request_id}`);
+  checkEvidence(assertContract("TestEvidence", evidence), request);
+}
+
 export async function runDownloads(backend: IsolatedBackend, status: Record<string, unknown>): Promise<void> {
   await verify(backend);
   checkScenarioStatus(status);
@@ -274,6 +308,7 @@ function probes(): { groups: ScenarioId[]; probe: Probe }[] {
     ["partial-budget", "partial-budget", "stopped_at_limit", "budget_exhausted", ["shared-budget", "stops"]],
     ["sources-exhausted", "exhausted", "sources_exhausted", "sources_exhausted", ["quantities", "stops"]],
     ["duplicate-defect", "duplicate-defect", "sources_exhausted", "sources_exhausted", ["qualification"]],
+    ["wrong-failure", "wrong-failure", "sources_exhausted", "sources_exhausted", ["qualification"]],
     ["zero-result", "zero-result", "sources_exhausted", "sources_exhausted", ["qualification", "stops"]],
     ["worker-lost", "operational-error", "operational_error", "worker_lost", ["stops", "continuity"]],
     ["uncertain-provider", "operational-error", "operational_error", "needs_reconciliation", ["stops", "continuity"]],
@@ -285,31 +320,30 @@ function probes(): { groups: ScenarioId[]; probe: Probe }[] {
     const expected = fixtureStatus(`status-${fixture}`);
     const interpretation = object(expected.interpretation);
     const input = object(interpretation.input);
-    if (scenario === "sources-exhausted") {
-      const first = objects(input.items)[0]; assert(first); first.quantity = 2;
-      const interpreted = objects(interpretation.items).find(item => item.item_key === first.item_key); assert(interpreted); interpreted.quantity = 2;
-      const count = objects(expected.items).find(item => item.item_key === first.item_key); assert(count);
-      count.requested = 2; count.missing = 2 - integer(count.delivered);
-    }
     return { groups, probe: {
     scenario, input, outcome, stopCode, expectedDelivery: text(expected.delivery), expectedItems: objects(interpretation.items), expectedCounts: objects(expected.items),
     concurrent: scenario === "two-host-fulfilled", cancel: scenario === "cancel-midway",
     reconcile: scenario === "worker-lost" || scenario === "uncertain-provider",
-    downloads: scenario === "two-host-fulfilled",
+    downloads: scenario === "two-host-fulfilled", evidence: true,
     ...(scenario === "validation-failed" ? { validation: "failed" as const } : scenario === "validation-error" ? { validation: "error" as const } : {}),
   } }; });
 }
 interface Result { id: ScenarioId; status: "passed" | "failed" | "unavailable"; checks: string[]; dependencies: string[] }
 const gaps: Record<ScenarioId, string[]> = {
-  identity: ["Exact evidence response shape and durable request/job identities are not defined in revision 1."],
+  identity: ["Durable request/job identities are not exposed by TestEvidence; worker reservations alone do not prove durable job uniqueness."],
   quantities: [],
-  "shared-budget": ["Exact ledger-operation/provider-call evidence shape is needed to verify reservations across hosts."],
-  qualification: ["A deterministic setup_failed candidate control is not named in revision 1."],
+  "shared-budget": ["TestEvidence does not associate copy operations with hosts; cross-host reservation attribution remains unavailable."],
+  qualification: ["A deterministic setup_failed candidate control is not named in revision 2."],
   unsupported: [],
-  stops: ["cancel-midway needs an observable pause or documented timing so a stop can arrive after a delivery."],
+  stops: [],
   continuity: [],
-  downloads: ["Pending-package access needs a documented deterministic window and case ID; archive layout and full payload privacy validation remain pending the package contract."],
+  downloads: ["Pending-package access needs a documented deterministic window and case ID. Synthetic test-mode archives do not establish real package privacy or replay."],
 };
+function failure(error: unknown): string {
+  return error instanceof assert.AssertionError
+    ? error.message.split("\n")[0] ?? "assertion failed"
+    : "assertion or transport failure";
+}
 export async function runAcceptance(backend?: IsolatedBackend) {
   const results: Result[] = scenarioIds.map(id => ({ id, status: "unavailable", checks: [], dependencies: [...gaps[id]] }));
   let backendRevision: string | null = null;
@@ -325,7 +359,7 @@ export async function runAcceptance(backend?: IsolatedBackend) {
   if (backend && verified) {
     const unsupported = results.find(r => r.id === "unsupported"); assert(unsupported);
     try { await runUnsupported(backend); unsupported.checks.push("unsupported-interpretation-and-start"); }
-    catch { unsupported.status = "failed"; unsupported.checks.push("unsupported: assertion or transport failure"); }
+    catch (error) { unsupported.status = "failed"; unsupported.checks.push(`unsupported: ${failure(error)}`); }
     for (const { groups, probe } of probes()) {
       try {
         await runProbe(backend, probe);
@@ -333,14 +367,14 @@ export async function runAcceptance(backend?: IsolatedBackend) {
       } catch (error) {
         for (const result of results.filter(r => groups.includes(r.id))) {
           if (error instanceof Unavailable) result.dependencies.push(error.message);
-          else { result.status = "failed"; result.checks.push(`${probe.scenario}: assertion or transport failure`); }
+          else { result.status = "failed"; result.checks.push(`${probe.scenario}: ${failure(error)}`); }
         }
       }
     }
     for (const result of results) if (result.status !== "failed") {
       result.status = result.dependencies.length === 0 && result.checks.length > 0 ? "passed" : "unavailable";
     }
-  } else for (const result of results) result.dependencies.push("Approved isolated backend startup, verification and session adapter are unavailable.");
+  } else for (const result of results) result.dependencies.push("No verified isolated backend was selected.");
   const summary = { passed: 0, failed: 0, unavailable: 0 };
   for (const result of results) summary[result.status]++;
   return { schema_version: 1, suite: "request-api-acceptance", contract_revision: contractRevision,

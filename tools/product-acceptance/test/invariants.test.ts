@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { checkStatus, checkValidation, object, objects } from "../src/invariants.ts";
+import { checkCriteriaEvents, checkStatus, checkValidation, object, objects } from "../src/invariants.ts";
 const fixture = (name: string): unknown => JSON.parse(readFileSync(new URL(`../fixtures/${name}.json`, import.meta.url), "utf8"));
 function at(value: unknown, index = 0) { const item = objects(value)[index]; assert(item); return item; }
-describe("pinned revision 1 response invariants (runner self-tests only)", () => {
-  for (const name of ["queued", "running", "fulfilled", "exhausted", "duplicate-defect", "partial-budget", "cancelled", "operational-error", "zero-result"]) {
+describe("pinned revision 2 response invariants (runner self-tests only)", () => {
+  for (const name of ["queued", "running", "fulfilled", "exhausted", "duplicate-defect", "partial-budget", "cancelled", "operational-error", "zero-result", "wrong-failure"]) {
     it(`accepts published status-${name}`, () => { expect(() => { checkStatus(fixture(`status-${name}`)); }).not.toThrow(); });
   }
   for (const name of ["running", "passed", "failed", "error"]) {
@@ -67,4 +67,122 @@ it("rejects unrelated type totals even when their count matches requested types"
     bug_type_id: `synthetic-unrequested-${String(index)}`, requested: 0, delivered: 0, missing: 0,
   }));
   expect(() => { checkStatus(value); }).toThrow();
+});
+it("accepts a zero-count row for an unrequested known type", () => {
+  const value = object(fixture("status-zero-result"));
+  value.type_totals = [...objects(value.type_totals), { bug_type_id: "concurrency", requested: 0, delivered: 0, missing: 0 }];
+  expect(() => { checkStatus(value); }).not.toThrow();
+});
+it.each(["requested", "delivered", "missing"])("rejects an unrequested type with nonzero %s", field => {
+  const value = object(fixture("status-zero-result"));
+  value.type_totals = [...objects(value.type_totals), { bug_type_id: "concurrency", requested: 0, delivered: 0, missing: 0, [field]: 1 }];
+  expect(() => { checkStatus(value); }).toThrow();
+});
+it("rejects an unknown zero-count type", () => {
+  const value = object(fixture("status-zero-result"));
+  value.type_totals = [...objects(value.type_totals), { bug_type_id: "synthetic-unknown", requested: 0, delivered: 0, missing: 0 }];
+  expect(() => { checkStatus(value); }).toThrow("unknown type total");
+});
+it("requires every requested type even when an allowed zero-count type is present", () => {
+  const value = object(fixture("status-zero-result"));
+  value.type_totals = [{ bug_type_id: "concurrency", requested: 0, delivered: 0, missing: 0 }];
+  expect(() => { checkStatus(value); }).toThrow("missing requested type total");
+});
+it("rejects duplicate type total identities", () => {
+  const value = object(fixture("status-zero-result"));
+  value.type_totals = [...objects(value.type_totals), structuredClone(at(value.type_totals))];
+  expect(() => { checkStatus(value); }).toThrow("duplicate identity");
+});
+it("requires a demonstrated criterion for a case whose item has no description", () => {
+  const value = object(fixture("status-fulfilled"));
+  at(value.cases, 1).criteria_met = [];
+  expect(() => { checkStatus(value); }).toThrow("case has no demonstrated criterion");
+});
+it.each(["same-version", "different-version"])("rejects duplicate demonstrated criterion IDs with %s", version => {
+  const value = object(fixture("status-fulfilled"));
+  const c = at(value.cases, 1);
+  const duplicate = structuredClone(at(c.criteria_met));
+  if (version === "different-version") duplicate.version = "synthetic-other-version";
+  c.criteria_met = [...objects(c.criteria_met), duplicate];
+  expect(() => { checkStatus(value); }).toThrow("duplicate identity");
+});
+it.each(["passed", "failed"])("requires a recorded cost for a finished %s validation", result => {
+  const value = object(fixture(`validation-${result}`));
+  value.cost_microusd = null;
+  expect(() => { checkValidation(value); }).toThrow("completed validation has no recorded cost");
+});
+it("preserves null cost for a finished validation with uncertain spend", () => {
+  const value = object(fixture("validation-error"));
+  value.cost_microusd = null;
+  expect(() => { checkValidation(value); }).not.toThrow();
+  expect(value.cost_microusd).toBeNull();
+});
+it.each([-1, 0.5, Number.MAX_SAFE_INTEGER + 1, "synthetic-cost"])("rejects invalid completed validation cost %s", cost => {
+  const value = object(fixture("validation-error"));
+  value.cost_microusd = cost;
+  expect(() => { checkValidation(value); }).toThrow();
+});
+it("checks delivered criteria against the complete event history", () => {
+  const value = object(fixture("status-fulfilled"));
+  expect(() => { checkCriteriaEvents(value, value.events, true); }).not.toThrow();
+});
+it("accepts a status page that omits earlier criterion events", () => {
+  const value = object(fixture("status-fulfilled"));
+  value.events = [];
+  expect(() => { checkStatus(value); }).not.toThrow();
+});
+it("accepts a criterion event before its case is ready", () => {
+  const value = object(fixture("status-fulfilled"));
+  const event = objects(value.events).find(e => e.type === "requested_criteria_passed"); assert(event);
+  value.state = "running";
+  value.cases = [];
+  for (const candidate of objects(value.candidates)) { candidate.case_id = null; candidate.stage = "packaging"; }
+  expect(() => { checkCriteriaEvents(value, [event]); }).not.toThrow();
+});
+it.each(["empty", "duplicate", "non-string"])("rejects %s criterion IDs on an observed page", kind => {
+  const value = object(fixture("status-fulfilled"));
+  const event = objects(value.events).find(e => e.type === "requested_criteria_passed"); assert(event);
+  object(event.data).criterion_ids = kind === "empty" ? [] : kind === "duplicate" ? ["synthetic-criterion", "synthetic-criterion"] : [1];
+  value.events = [event];
+  expect(() => { checkStatus(value); }).toThrow();
+});
+it("rejects event criteria that differ from the delivered case", () => {
+  const value = object(fixture("status-fulfilled"));
+  const event = objects(value.events).find(e => e.type === "requested_criteria_passed"); assert(event);
+  object(event.data).criterion_ids = ["synthetic-other-criterion"];
+  expect(() => { checkCriteriaEvents(value, value.events, true); }).toThrow("event criteria differ from delivered case");
+});
+it("requires the delivered case's criterion event in complete terminal history", () => {
+  const value = object(fixture("status-fulfilled"));
+  const history = objects(value.events).filter(e => e.type !== "requested_criteria_passed");
+  expect(() => { checkCriteriaEvents(value, history, true); }).toThrow("delivered case has no criterion event");
+});
+it("rejects an empty criterion identity even when the case and event agree", () => {
+  const value = object(fixture("status-fulfilled"));
+  const c = at(value.cases, 1);
+  at(c.criteria_met).criterion_id = "";
+  const candidate = objects(value.candidates).find(candidate => candidate.case_id === c.case_id); assert(candidate);
+  const event = objects(value.events).find(event => event.type === "requested_criteria_passed" && event.candidate_id === candidate.candidate_id); assert(event);
+  object(event.data).criterion_ids = [""];
+  expect(() => { checkStatus(value); }).toThrow("empty criterion identity");
+});
+it("rejects an empty criterion identity before a case is delivered", () => {
+  const value = object(fixture("status-fulfilled"));
+  const event = objects(value.events).find(e => e.type === "requested_criteria_passed"); assert(event);
+  object(event.data).criterion_ids = [""];
+  value.state = "running";
+  value.cases = [];
+  expect(() => { checkCriteriaEvents(value, [event]); }).toThrow("empty criterion identity");
+});
+it.each(["wrong-type", "unknown", "unknown-version"])("rejects internally consistent %s demonstrated criteria for a no-description item", change => {
+  const value = object(fixture("status-fulfilled"));
+  const c = at(value.cases, 1);
+  const criterion = at(c.criteria_met);
+  if (change === "wrong-type") criterion.criterion_id = "concurrency.lost-acknowledged-change";
+  if (change === "unknown") criterion.criterion_id = "synthetic-unknown-criterion";
+  if (change === "unknown-version") criterion.version = "synthetic-unknown-version";
+  const candidate = objects(value.candidates).find(candidate => candidate.case_id === c.case_id); assert(candidate);
+  const event = objects(value.events).find(event => event.type === "requested_criteria_passed" && event.candidate_id === candidate.candidate_id); assert(event);
+  object(event.data).criterion_ids = [criterion.criterion_id];
+  expect(() => { checkStatus(value); }).toThrow("demonstrated criterion is not in the pinned bug type catalog");
 });

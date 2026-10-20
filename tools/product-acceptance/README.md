@@ -1,125 +1,113 @@
 # Request API acceptance runner
 
-This is a partial black-box runner for draft revision 1 of `bug-request/1`, pinned
-to contract commit `7540362198f5940f1add45a65593ac314e8d751e`.
-The contract and its response fixtures are published in PR #121. Every service
-endpoint and test control in that revision is labeled planned.
+This partial black-box runner follows the merged `bug-request/1` revision 2
+contract at `66651d67fcb09c402b25d9688ea492c0e69e1c2b`. It extends the runner in
+PR #124, which remains a separate dependency. The follow-up base combines that
+PR's unchanged head `04e926b9b2ff89078be124d905ad73dd57c24d90` with main
+`f803962dcaf3b51b8881a7c4db99aeded33c7e1d`.
 
-The runner has **not run against a backend**. Its current result is eight
-unavailable acceptance groups. `readiness.json` is a dependency report, not a
-successful acceptance run. Passing runner self-tests does not establish that the
-product implements these operations.
-
-The source base is `4e5b5af8dbc7f05a2255e22b9442f2b2b7fae886`. The earlier
-preparation is preserved in PR #120. Later contract revisions require an explicit
-pin update, fixture comparison and review; this runner rejects an adapter reporting
-a different contract revision.
+The runner uses `@rbw/factory-contract` for types and evidence-envelope shape
+validation. Expected outcomes, quantities, routing, retention, qualification and
+accounting assertions remain independent of the service's validators. Fixtures
+are exact copies from the pinned contract, not evidence that the backend passes.
 
 ## Invocation
 
 From the repository root, with the locked Node 24 and pnpm dependencies installed:
 
 ```sh
-pnpm exec vitest run --project product-acceptance
-pnpm exec tsc -p tools/product-acceptance
-pnpm exec eslint tools/product-acceptance --max-warnings 0
+pnpm --filter @rbw/product-acceptance test
+pnpm --filter @rbw/product-acceptance typecheck
+pnpm --filter @rbw/product-acceptance lint
+pnpm --filter @rbw/product-acceptance build
 node tools/product-acceptance/src/cli.ts
 ```
 
-The first three commands check the runner itself. The CLI prints one JSON document
-and exits **2** while the isolated backend adapter is unavailable. It accepts no
-URL, credentials or inherited provider configuration and makes no network calls.
-It does not silently run fixtures as acceptance. Exit codes are 0 for all required
-groups passed, 1 for an assertion or transport failure, and 2 for unavailable
-coverage without a failure. A failed group takes precedence over unavailable
-coverage. The JSON retains both counts.
+The first four commands check the runner itself. Without a selected backend, the
+CLI makes no network calls, prints the report in `readiness.json`, and exits 2
+with all groups unavailable. It never substitutes scripted fixtures for HTTP.
+Exit codes are 0 for all required groups passed, 1 for an assertion or transport
+failure, and 2 for unavailable coverage without a failure. A failed group takes
+precedence over unavailable coverage, and the JSON retains both counts.
 
-`src/runner.ts` implements `runAcceptance`, individual protocol probes, and the
-local `IsolatedBackend` adapter interface. This interface is a runner integration
-boundary, not an additional service contract. No adapter implementation is shipped.
-Before any probe can reset or start work, the adapter must verify the actual
-isolated instance, its backend revision and the pinned contract revision.
-The backend's published startup procedure must establish disposable storage,
-deterministic providers and refusal of test mode in production. A caller-supplied
-URL or a boolean assertion of safety is not sufficient verification.
+To exercise the existing service's explicit isolated test mode, create a separate
+clean checkout at the exact pinned backend revision, install its locked
+dependencies, then pass that checkout's directory. For example, from this checkout:
 
-The eventual approved adapter must:
+```sh
+git worktree add --detach ../rbw-api-test-backend f803962dcaf3b51b8881a7c4db99aeded33c7e1d
+pnpm --dir ../rbw-api-test-backend install --frozen-lockfile
+node tools/product-acceptance/src/cli.ts --local-backend ../rbw-api-test-backend
+```
 
-- Start or attach only to that verified disposable instance, with no production
-  fallback and no inherited live-provider credentials.
-- Authenticate through the public session operation and maintain its cookie.
-  `reconnect` must create a new client connection while preserving the session.
-- Send the declared HTTP methods, paths and JSON bodies without rewriting results.
-  JSON replies use `Reply.body`; download replies use raw `Uint8Array` bytes.
-  Bound individual network requests and refuse cross-origin redirects.
-- Honor `wait` in real time. The runner observes `poll_after_ms` and backs off
-  15, 30 and 60 seconds on unavailable status reads. A timeout never starts a
-  replacement request. A probe that reaches its 1,000-poll observation limit reports
-  unavailable rather than declaring the product failed.
+`--local-backend` is a filesystem checkout, never a URL. The adapter refuses a
+wrong revision, dirty checkout, or dotenv files at the repository or web package
+root. It launches the installed Next service on an allocated loopback port with
+an explicit synthetic environment and test mode enabled. It does not inherit
+provider credentials. Before probing, it verifies the owned process, test reset,
+and signed-in session. Later isolation checks preserve request state. Reconnect
+uses a new HTTP connection and retains the session cookie. Requests have timeouts;
+redirects and paths outside `/api/factory/` are refused. Cleanup stops the owned
+process group, discarding the service's in-memory state.
 
-No invocation against the actual API can be supplied until that startup and
-verification procedure exists. Do not substitute an implementation mock for it.
+The adapter uses the public test-mode controls described in
+`packages/web/README.md` and contract section 15.1. It starts the existing service,
+not a replacement backend. The service selects an in-memory ledger and a
+fixture-driven worker in this mode. It does **not** exercise the durable database,
+factory core, controller worker, live providers, real qualification, or package
+replay. Its JSON therefore says `suite: service-test-mode-http`,
+`service_http_executed: true`, and `acceptance_executed: false` after verification.
+A service HTTP pass is not full request-API or end-to-end product acceptance.
 
 ## Coverage and remaining gaps
 
-Every row is currently **unavailable against the product**. The implemented
-assertions can pass independently without turning an incomplete group green.
+`evidence/service-http.json` records the actual service HTTP result, including
+failures and unavailable coverage. `evidence/verification.json` records runner
+self-tests and local checks separately. `readiness.json` is the no-backend report.
 
-| Group | Revision 1 operations and implemented checks | Remaining coverage dependency |
+| Group | Implemented checks | Remaining coverage dependency |
 | --- | --- | --- |
-| identity | Sections 7 and 15.1: three overlapping starts, one 202 and duplicate 200 responses, repeated start, conflicting payload 409, stable request ID | Exact read-only evidence response shape and durable request/job identifiers, so response identity cannot substitute for proof of one job/reservation |
-| quantities | Sections 5, 6.3, 8.2 and 10.5: sources-exhausted input with two separate items and unequal quantities; counts, descriptions, criteria, case ownership and type totals checked | Runnable deterministic backend |
-| shared-budget | Sections 7 and 8.5: both-host input, one unchanged request budget, reserved plus spent equals committed, remaining arithmetic, partial-budget stop | Exact ledger/provider-call evidence shape to prove reservation behavior independently of reported budget fields |
-| qualification | Sections 8.2, 8.3 and 10: duplicate-defect, zero-result, incomplete worker outcomes; qualified cases only, unique defects, matching matrices and criteria; default difficulty remains not_assessed | A named deterministic setup_failed candidate control; revision 1 names no invalid-candidate scenario |
-| unsupported | Sections 5–7 and 12: unsupported combinations, unmatched description, no matching source and difficulty remain explicit; start refused with 422; unknown host/type refused with 400 | Runnable deterministic backend using the published scenario catalog |
-| stops | Sections 8.1, 8.5 and 9: partial/zero exhaustion, budget stop, cancel, worker loss, uncertain provider; delivered cases cannot disappear; reconciliation clears held spend without rewriting results | Documented cancel-midway timing or an observable pause after a delivery; otherwise the probe reports unavailable if the request finishes before stop |
-| continuity | Sections 7–9: same identity after repeated reads and reconnect, frozen interpretation, contiguous event cursor, terminal result preservation, reconciliation without an automatic retry | Runnable backend and a real reconnect implementation |
-| downloads | Sections 10–11: distinct package paths/kinds, ready-only delivered cases, archive SHA-256, failed/error validation semantics, validation identity and package pair | Pending-package access needs a documented window and case ID; archive layout and full payload privacy checks await the package contract |
+| identity | Overlapping and repeated starts, conflict refusal, stable identity, one worker reservation and no duplicate create call names | Durable request/job identities are not exposed by `TestEvidence` |
+| quantities | Unequal per-item quantities, independent expected delivery/missing counts, case ownership, type totals and pinned interpretation | Durable backend integration |
+| shared-budget | One request budget, every observed response within the deterministic limit, original reservation and settlement accounting | Evidence does not associate copy operations with hosts |
+| qualification | Duplicate, incomplete, rejected and wrong-failure candidates cannot deliver; demonstrated criteria match event history and cases; default difficulty stays unassessed | No named `setup_failed` scenario; real qualification is not run |
+| unsupported | Pinned unsupported combinations, description, source and difficulty outcomes; start refusal; unknown host/type errors | Real interpretation beyond the named test scenarios |
+| stops | Partial/zero exhaustion, budget stop, cancellation, worker loss and uncertain spend; retained cases and reconciliation | Durable worker integration and actual operational failure recovery |
+| continuity | Repeated reads, reconnect, frozen terminal results, contiguous event history and reconciliation | Persistence across a service restart is not exercised |
+| downloads | Distinct paths and kinds, ready-only delivered cases, archive digest, validation failure/error and completion cost semantics | No pending-package window; synthetic archives do not prove real privacy or replay |
 
-The test evidence endpoint in section 15.1 lists operation fields but does not
-specify the response envelope, slot-holder shape or provider-call fields. Please
-publish these shapes, including how durable requests, worker jobs and reservations
-are counted and associated with a request. The runner does not guess those fields.
+The named probes are `two-host-fulfilled`, `partial-budget`, `sources-exhausted`,
+`duplicate-defect`, `zero-result`, `cancel-midway`, `worker-lost`,
+`uncertain-provider`, `wrong-failure`, `validation-failed` and `validation-error`.
+Each obtains a fresh interpretation hash from the service. Synthetic fixture
+hashes are not sent as live interpretations. The runner honors polling hints and
+status backoff; reaching its observation limit reports unavailable.
 
-The runner uses the published input examples and obtains a fresh interpretation
-hash from the service before every start. Synthetic fixture hashes are never sent
-as a replacement for that live interpretation. The named scenarios are
-`two-host-fulfilled`, `partial-budget`, `sources-exhausted`, `duplicate-defect`,
-`zero-result`, `cancel-midway`, `worker-lost`, `uncertain-provider`,
-`validation-failed` and `validation-error`.
-
-The backend must document how its scenarios are started/reset and whether the
-fixture catalog inputs apply unchanged. Reset/reconcile success bodies are not
-specified in revision 1, so the runner checks a successful HTTP status without
-inventing a response shape. It does not call private product helpers.
+The final contract permits zero-count rows for known unrequested types, and a
+202 Start response can already contain a recorded terminal failure. The runner
+accepts those shapes while still checking each scenario's expected outcome.
+Criterion IDs must be nonempty and unique, and complete history must account for
+delivered cases. An operation retains its original reservation amount after
+settlement. Launched deterministic operations settle at that original worst
+case; unused reservations without a recorded create settle at zero. The worker
+reservation is pinned to the test-control amount. A finished validation error may retain a null completion cost; that
+is distinct from zero and need not change during reconciliation. Description
+limits count Unicode code points after trimming; the named inputs are already
+normalized and impose no conflicting UTF-16 length assertion.
 
 ## Runner verification
 
-The 84 self-tests use copied published fixtures and scripted transport replies.
-They check both valid examples and deliberate corruptions; they are not an
-alternate backend and are not request-API acceptance evidence. The JSON fixtures
-in `fixtures/` are byte-for-byte copies from
-`docs/product/fixtures/bug-request-v1/` at the pinned contract commit.
+Self-tests exercise published fixtures, deliberate corruptions and a small
+transport test server. The transport server checks HTTP behavior only; it does
+not implement product scenarios. Failing-first results and the executed count
+are recorded in `evidence/verification.json`. The test floor uses that executed
+count. Existing host, controller, ledger, UI and replay tests remain unchanged.
 
-Failing-first runs were recorded locally before implementation: missing invariant
-and runner modules; missing status backoff and per-probe isolation verification;
-missing unsupported, reconciliation and download probes; and a disappearing
-previously delivered case that initially escaped detection. The corrected runner
-passes the self-tests, strict typecheck and lint with zero warnings.
+The new local transport is needed because the previous runner had no executable
+HTTP adapter; existing service tests call handlers directly. Public HTTP controls
+and read-only evidence are used without private implementation calls.
 
-A frozen offline install used the existing lockfile without changes. A bounded
-existing check uses these judge tests:
-
-```sh
-pnpm --filter @rbw/web exec vitest run test/judge/judge.test.ts -t 'makes one create for two POSTs with one request ID|answers a repeated POST with one request ID'
-```
-
-Those tests exercise existing judge handlers, not the new HTTP request API. Existing
-controller harnesses, search tests and release replay tests remain unchanged. They
-do not replace independent request-API acceptance, which is why this directory
-adds protocol sequencing and independent response assertions.
-
-Request-API acceptance with deterministic providers is separate from end-to-end
-product acceptance. It does not establish real host generation, qualification or
-package replay. No live provider runs, deployment, new publication waiver or merge
-authorization are part of this follow-up.
+No real provider execution or durable backend acceptance is claimed. The next
+integration step needs an approved disposable backend wiring the real core and
+worker, with startup/reset/session instructions and observable durable job and
+host reservation identities. That work belongs to the backend integration lane.
