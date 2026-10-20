@@ -388,6 +388,9 @@ const RULE_CASES: Case[] = [
   { name: "a running validation run on a case of a request that is stopping", def: "RequestStatus", base: fulfilled, edit: (c) => { Object.assign(c, { state: "stopping", outcome: null, stop_reason: null, events: [] }); at(c, ["cases", 0]).validation = contractFixture("validation-running.json"); }, expected: "schema:/cases/0/validation:type" },
   { name: "a skipped event with a reason of another stage", def: "RequestStatus", base: status("status-partial-budget.json"), edit: (c) => { at(c, ["events", 21, "data"]).reason = "stopped"; }, expected: "schema:/events/21/data/reason:enum" },
   { name: "a finished event with a stop code of another outcome", def: "RequestStatus", base: fulfilled, edit: (c) => { at(c, ["events", 34, "data"]).stop_code = "cancelled_by_user"; }, expected: "schema:/events/34/data/stop_code:const" },
+  // Section 8.4: criterion_ids are the criteria the candidate demonstrated, which become its case's criteria_met, so at least one, each once.
+  { name: "a requested_criteria_passed event without criteria", def: "RequestStatus", base: fulfilled, edit: (c) => { at(c, ["events", 16, "data"]).criterion_ids = []; }, expected: "schema:/events/16/data/criterion_ids:minItems" },
+  { name: "a requested_criteria_passed event that lists a criterion twice", def: "RequestStatus", base: fulfilled, edit: (c) => { at(c, ["events", 16, "data"]).criterion_ids = ["concurrency.lost-acknowledged-change", "concurrency.lost-acknowledged-change"]; }, expected: "schema:/events/16/data/criterion_ids:uniqueItems" },
   // Capabilities and interpretation (sections 4 and 6)
   { name: "a supported pair without a source", def: "Capabilities", base: capabilities, edit: (c) => { at(c, ["combinations", 1]).source = null; }, expected: "schema:/combinations/1/source:type" },
   { name: "an unsupported pair without a reason", def: "Capabilities", base: capabilities, edit: (c) => { at(c, ["combinations", 0]).reason = null; }, expected: "schema:/combinations/0/reason:type" },
@@ -583,6 +586,7 @@ const ACCEPTED: Case[] = [
   { name: "a description with a line break", def: "StartRequest", base: start, edit: (c) => { at(c, ["input", "items", 0]).description = "lost update\nwhen two requests overlap"; }, expected: [] },
   { name: "a negative remaining amount on an overrun", def: "RequestStatus", base: status("status-operational-error.json"), edit: (c) => { Object.assign(at(c, ["budget"]), { spent_microusd: 1200000, committed_microusd: 1700000, remaining_microusd: -700000, overrun: true }); }, expected: [] },
   { name: "an error run without a matrix", def: "ValidationRun", base: () => contractFixture("validation-error.json"), edit: (c) => { c.matrix = null; }, expected: [] },
+  { name: "a requested_criteria_passed event with two distinct criteria", def: "RequestStatus", base: fulfilled, edit: (c) => { at(c, ["events", 16, "data"]).criterion_ids = ["concurrency.lost-acknowledged-change", "concurrency.stale-success-response"]; }, expected: [] },
   { name: "a candidate rejected after its assignment that keeps its item", def: "RequestStatus", base: status("status-zero-result.json"), edit: (c) => { Object.assign(at(c, ["candidates", 0]), { item_key: "date-time-1", reason: { code: "export_mismatch", message: "x" } }); Object.assign(at(c, ["funnel"]), { behavior_checks_passed: 1, requested_criteria_passed: 1 }); }, expected: [] },
   ...BUG_TYPE_ID_VALUES.flatMap((type): Case[] => {
     const other = type === FIRST_TYPE ? SECOND_TYPE : FIRST_TYPE;

@@ -897,7 +897,7 @@
           "$ref": "#/$defs/SupportStatus"
         },
         "reason": {
-          "description": "Why the pair is unsupported; null when supported.",
+          "description": "Why the pair is unsupported (the host's availability reason when no entry is available over the planned window); null when supported (contract section 4.2).",
           "anyOf": [
             {
               "type": "string"
@@ -982,10 +982,11 @@
           "$ref": "#/$defs/Version"
         },
         "entries": {
-          "description": "The size of the finite catalog; at least 1 for a supported pair.",
+          "description": "The number of catalog entries available over the planned window [now, now + max_wall_clock_s], by the host's availability; at least 1 for a supported pair (contract section 4.2).",
           "$ref": "#/$defs/NonNegativeInteger"
         },
         "criteria_ids": {
+          "description": "The criteria that the entries available over the planned window target (contract section 4.2).",
           "type": "array",
           "items": {
             "$ref": "#/$defs/Identifier"
@@ -1109,6 +1110,7 @@
           "$ref": "#/$defs/NonNegativeInteger"
         },
         "max_description_chars": {
+          "description": "Counted in Unicode code points after trimming (contract section 5).",
           "$ref": "#/$defs/NonNegativeInteger"
         },
         "budget_presets_microusd": {
@@ -1271,7 +1273,7 @@
           "$ref": "#/$defs/PositiveInteger"
         },
         "description": {
-          "description": "Any text or null. The service trims it and maps an empty result to null (contract section 6); at most limits.max_description_chars after trimming.",
+          "description": "Any text or null. The service trims it and maps an empty result to null (contract section 6); at most limits.max_description_chars Unicode code points after trimming.",
           "anyOf": [
             {
               "type": "string"
@@ -1381,7 +1383,7 @@
           "$ref": "#/$defs/ContractVersion"
         },
         "interpretation_sha256": {
-          "description": "Canonical hash of the normalized input and the interpreter, catalog, route and source versions.",
+          "description": "Canonical hash of the normalized input, the interpreter, catalog, route and source versions, the factory profile and the availability result for the planned window, not the raw time (contract section 6.1).",
           "$ref": "#/$defs/Sha256"
         },
         "interpreter": {
@@ -3392,6 +3394,7 @@
           "$ref": "#/$defs/Identifier"
         },
         "entries": {
+          "description": "The number of the source's catalog entries available over the planned window that satisfy the item's criteria (contract sections 4.2 and 6).",
           "$ref": "#/$defs/PositiveInteger"
         }
       }
@@ -7762,10 +7765,13 @@
       ],
       "properties": {
         "criterion_ids": {
+          "description": "The criteria the candidate demonstrated, which become its case's criteria_met: at least one, each once (contract sections 6.3 and 8.4).",
           "type": "array",
           "items": {
             "$ref": "#/$defs/Identifier"
-          }
+          },
+          "minItems": 1,
+          "uniqueItems": true
         }
       }
     },
@@ -8873,7 +8879,7 @@
           "description": "Set exactly in state finished."
         },
         "cost_microusd": {
-          "description": "Settled cost; null until the run settles: null before state finished, set for passed and failed, and null after an error whose spend is uncertain (contract section 11).",
+          "description": "The run's cost recorded when it completed: null before state finished, set for passed and failed, and possibly null after an error whose spend is uncertain, since reconciliation updates the request's budget, not the run. Null is not 0 (contract section 11).",
           "anyOf": [
             {
               "$ref": "#/$defs/MicroUsd"
@@ -10005,7 +10011,7 @@
           "$ref": "#/$defs/TestOperationState"
         },
         "reserved_microusd": {
-          "description": "Held until the operation is settled or reconciled.",
+          "description": "The operation's original reservation in every state. It is held until the operation is settled or reconciled, so the request's reserved_microusd sums only the operations still holding theirs (contract section 15.1).",
           "$ref": "#/$defs/MicroUsd"
         },
         "settled_microusd": {

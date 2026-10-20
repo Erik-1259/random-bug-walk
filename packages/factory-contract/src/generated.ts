@@ -450,7 +450,7 @@ export interface Combination {
   host_id: HostId;
   bug_type_id: BugTypeId;
   status: SupportStatus;
-  /** Why the pair is unsupported; null when supported. */
+  /** Why the pair is unsupported (the host's availability reason when no entry is available over the planned window); null when supported (contract section 4.2). */
   reason: string | null;
   /** The declared source; set when supported. */
   source: SourceSummary | null;
@@ -460,8 +460,9 @@ export interface SourceSummary {
   source_id: Identifier;
   kind: SourceKind;
   catalog_version: Version;
-  /** The size of the finite catalog; at least 1 for a supported pair. */
+  /** The number of catalog entries available over the planned window [now, now + max_wall_clock_s], by the host's availability; at least 1 for a supported pair (contract section 4.2). */
   entries: NonNegativeInteger;
+  /** The criteria that the entries available over the planned window target (contract section 4.2). */
   criteria_ids: Identifier[];
   description: string;
 }
@@ -480,6 +481,7 @@ export interface Limits {
   max_items: NonNegativeInteger;
   max_quantity_per_item: NonNegativeInteger;
   max_total_quantity: NonNegativeInteger;
+  /** Counted in Unicode code points after trimming (contract section 5). */
   max_description_chars: NonNegativeInteger;
   budget_presets_microusd: MicroUsd[];
   default_budget_microusd: MicroUsd;
@@ -529,7 +531,7 @@ export interface RequestItemInput {
   bug_type_id: BugTypeId;
   /** At most limits.max_quantity_per_item. */
   quantity: PositiveInteger;
-  /** Any text or null. The service trims it and maps an empty result to null (contract section 6); at most limits.max_description_chars after trimming. */
+  /** Any text or null. The service trims it and maps an empty result to null (contract section 6); at most limits.max_description_chars Unicode code points after trimming. */
   description: string | null;
   difficulty: DifficultyOptionId;
 }
@@ -558,7 +560,7 @@ export interface NormalizedRequestItemInput {
 /** The answer of POST /api/factory/interpretations (contract section 6). */
 export interface Interpretation {
   contract_version: ContractVersion;
-  /** Canonical hash of the normalized input and the interpreter, catalog, route and source versions. */
+  /** Canonical hash of the normalized input, the interpreter, catalog, route and source versions, the factory profile and the availability result for the planned window, not the raw time (contract section 6.1). */
   interpretation_sha256: Sha256;
   interpreter: InterpreterIdentity;
   qualification_route: QualificationRoute;
@@ -612,6 +614,7 @@ export interface InterpretedCriterion {
 export interface EligibleSource {
   host_id: HostId;
   source_id: Identifier;
+  /** The number of the source's catalog entries available over the planned window that satisfy the item's criteria (contract sections 4.2 and 6). */
   entries: PositiveInteger;
 }
 
@@ -972,6 +975,7 @@ export interface CheckFinishedData {
 }
 
 export interface CriteriaPassedData {
+  /** The criteria the candidate demonstrated, which become its case's criteria_met: at least one, each once (contract sections 6.3 and 8.4). */
   criterion_ids: Identifier[];
 }
 
@@ -1149,7 +1153,7 @@ export interface ValidationRun {
   started_at: UtcTime | null;
   /** Set exactly in state finished. */
   finished_at: UtcTime | null;
-  /** Settled cost; null until the run settles: null before state finished, set for passed and failed, and null after an error whose spend is uncertain (contract section 11). */
+  /** The run's cost recorded when it completed: null before state finished, set for passed and failed, and possibly null after an error whose spend is uncertain, since reconciliation updates the request's budget, not the run. Null is not 0 (contract section 11). */
   cost_microusd: MicroUsd | null;
   poll_after_ms: NonNegativeInteger;
 }
@@ -1243,7 +1247,7 @@ export interface TestOperation {
   call_name: Identifier;
   /** A settled operation is terminal with settled_microusd set. */
   state: TestOperationState;
-  /** Held until the operation is settled or reconciled. */
+  /** The operation's original reservation in every state. It is held until the operation is settled or reconciled, so the request's reserved_microusd sums only the operations still holding theirs (contract section 15.1). */
   reserved_microusd: MicroUsd;
   /** Set only in state terminal, once settled, and in state reconciled, which always records it. */
   settled_microusd: MicroUsd | null;
