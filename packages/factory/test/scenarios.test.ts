@@ -26,7 +26,8 @@ function summary(status: RequestStatus): unknown {
   };
 }
 
-const RUNS: readonly TestScenario[] = SCENARIOS.filter((scenario) => scenario !== "worker-lost" && scenario !== "uncertain-provider");
+/** The scenarios with an end-state fixture that a run reaches on its own. */
+const RUNS: readonly TestScenario[] = SCENARIOS.filter((scenario) => scenario !== "worker-lost" && scenario !== "uncertain-provider" && scenario !== "setup-failed");
 
 describe("named scenarios (synthetic)", () => {
   const catalog = criteriaCatalogV1();
@@ -84,6 +85,24 @@ describe("named scenarios (synthetic)", () => {
     const result = await w.run();
     expect(result).toMatchObject({ outcome: "operational_error", stop_code: "needs_reconciliation", needs_reconciliation: true });
     expect(w.status()).toMatchObject({ delivery: "none", attention: { code: "needs_reconciliation" } });
+  });
+
+  it("setup-failed: the Umami candidate's clean copy cannot be prepared, so it is invalid and the request ends sources_exhausted with no delivery", async () => {
+    const setup = scenarioSetup("setup-failed", catalog);
+    // Contract section 15.1: input from status-zero-result.json, no end-state fixture.
+    expect([setup.input_fixture, setup.end_fixture]).toEqual(["status-zero-result.json", null]);
+    const w = world({ input: fixtureInput(setup.input_fixture), registry: setup.registry, plan: setup.plan });
+    const result = await w.run();
+    expect(result).toMatchObject({ outcome: "sources_exhausted", stop_code: "sources_exhausted" });
+    const status = w.status();
+    expect(validateContract("RequestStatus", status)).toEqual([]);
+    expect([status.outcome, status.stop_reason?.code, status.delivery, status.attention]).toEqual(["sources_exhausted", "sources_exhausted", "none", null]);
+    expect(status.candidates.map((c) => [c.host_id, c.entry_id, c.stage, c.reason?.code ?? null])).toEqual([["umami", "synthetic-umami-date-time-01", "invalid", "setup_failed"]]);
+    expect(status.funnel).toEqual({ candidates_explored: 1, behavior_checks_passed: 0, requested_criteria_passed: 0, packages_ready: 0 });
+    expect(status.cases).toEqual([]);
+    const clean = status.events.flatMap((event) => (event.type === "check_finished" && event.data.copy === "clean" ? [[event.data.check_set, event.data.outcome]] : []));
+    expect(clean).toEqual([["original_suite", "error"], ["verification", "error"]]);
+    expect(status.events.flatMap((event) => (event.type === "candidate_invalid" ? [event.data.reason] : []))).toEqual(["setup_failed"]);
   });
 
   it("names the validation result each scenario's validation runs observe", () => {

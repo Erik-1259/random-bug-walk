@@ -34,6 +34,7 @@ const INPUT_FIXTURE: Readonly<Record<TestScenario, string>> = {
   "uncertain-provider": "status-operational-error.json",
   "validation-failed": "status-fulfilled.json",
   "validation-error": "status-fulfilled.json",
+  "setup-failed": "status-zero-result.json",
 };
 
 const END_FIXTURE: Readonly<Record<TestScenario, string | null>> = {
@@ -48,6 +49,7 @@ const END_FIXTURE: Readonly<Record<TestScenario, string | null>> = {
   "uncertain-provider": null,
   "validation-failed": "status-fulfilled.json",
   "validation-error": "status-fulfilled.json",
+  "setup-failed": null,
 };
 
 export const SCENARIOS: readonly TestScenario[] = TEST_SCENARIO_VALUES;
@@ -99,6 +101,11 @@ export function scenarioSetup(scenario: TestScenario, catalog: CriteriaCatalog):
         return base;
       case "uncertain-provider":
         if (entry.entry_id === firstTaskReport) base.uncertain_at_copy = 1;
+        return base;
+      case "setup-failed":
+        // The first candidate (the only one, on Umami) cannot prepare its clean copy: both of that
+        // copy's cells observe error, so the candidate is invalid (setup_failed), never rejected.
+        if (entry.entry_id === umami) base.states.clean = { original_suite: "error", verification: "error" };
         return base;
       default:
         return base;
