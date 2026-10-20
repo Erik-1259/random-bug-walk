@@ -156,6 +156,17 @@ export function checkScenarioCandidates(value: unknown, expected: Record<string,
   }
 }
 
+/** Complete history counts distinct candidates, not retry events or pages. */
+export function checkFunnelHistory(value: unknown, history: Record<string, unknown>[]): void {
+  const status = object(value);
+  const candidates = objects(status.candidates);
+  for (const field of ["behavior_checks_passed", "requested_criteria_passed"]) {
+    const events = history.filter(event => event.type === field);
+    for (const event of events) assert(candidates.some(candidate => candidate.candidate_id === event.candidate_id), "funnel history names an unknown candidate");
+    assert.equal(object(status.funnel)[field], new Set(events.map(event => event.candidate_id)).size, "funnel history disagrees with distinct candidate count");
+  }
+}
+
 /** Checks public response invariants, not provider side effects or package replay. */
 export function checkStatus(value: unknown): void {
   const s = object(value);
@@ -216,7 +227,10 @@ export function checkStatus(value: unknown): void {
   for (const total of totals) for (const field of ["requested", "delivered", "missing"]) {
     assert.equal(total[field], items.filter(i => i.bug_type_id === total.bug_type_id).reduce((sum, i) => sum + nonnegative(i[field]), 0));
   }
-  assert.equal(object(s.funnel).packages_ready, cases.length);
+  const funnel = object(s.funnel);
+  assert.equal(funnel.packages_ready, cases.length);
+  const stages = [funnel.packages_ready, funnel.requested_criteria_passed, funnel.behavior_checks_passed, funnel.candidates_explored, candidates.length].map(nonnegative);
+  assert(stages.every((count, index) => index === 0 || count >= (stages[index - 1] ?? 0)), "funnel counts contradict candidate stages");
   const b = object(s.budget);
   assert.equal(b.budget_microusd, input.budget_microusd, "request budget changed");
   const committed = nonnegative(b.reserved_microusd) + nonnegative(b.spent_microusd);

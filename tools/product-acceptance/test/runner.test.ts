@@ -196,6 +196,50 @@ it("rejects an earlier delivered case disappearing during a stop", async () => {
   };
   await expect(runProbe(backend, { ...probe, outcome: "stopped_at_limit", stopCode: "budget_exhausted" })).rejects.toThrow("delivered case disappeared");
 });
+it("waits for the named second-candidate check before cancelling", async () => {
+  const expected = fixture("status-cancelled");
+  const second = objects(expected.candidates)[1]; assert(second);
+  const events = objects(expected.events);
+  const checkpoint = events.findIndex(event => event.type === "check_finished" && event.candidate_id === second.candidate_id);
+  assert(checkpoint > 0);
+  const active = structuredClone(expected);
+  active.state = "running"; active.outcome = null; active.stop_reason = null;
+  const pending = objects(active.candidates)[1]; assert(pending);
+  pending.stage = "checking"; pending.reason = null; pending.finished_at = null;
+  let id = text(expected.request_id); let starts = 0; let paused = false; let stopped = false;
+  const replyState = (value: Record<string, unknown>, path: string, end: number) => {
+    const response = object(JSON.parse(JSON.stringify(value).replaceAll(text(expected.request_id), id)) as unknown);
+    const cursor = Number(path.split("?after=")[1] ?? 0);
+    response.events = objects(response.events).slice(0, end).filter(event => integer(event.seq) > cursor);
+    response.next_after = objects(response.events).at(-1)?.seq ?? cursor;
+    return response;
+  };
+  const backend: IsolatedBackend = {
+    verifyIsolation: () => Promise.resolve({ backendRevision: "a".repeat(40), contractRevision }), wait: () => Promise.resolve(), reconnect: () => Promise.resolve(),
+    request: (_method, path, payload) => {
+      if (path.endsWith("/test/reset")) return Promise.resolve({ status: 204, body: null });
+      if (path.endsWith("/interpretations")) return Promise.resolve({ status: 200, body: expected.interpretation });
+      if (path.endsWith("/requests")) {
+        id = text(object(payload).request_id);
+        const beforePause = replyState(active, path, checkpoint);
+        object(beforePause.funnel).candidates_explored = 1;
+        return Promise.resolve({ status: ++starts === 1 ? 202 : 200, body: beforePause });
+      }
+      if (path.endsWith("/stop")) {
+        if (stopped) return Promise.resolve({ status: 200, body: replyState(expected, path, events.length) });
+        assert(paused, "stop arrived before the named check checkpoint"); stopped = true;
+        return Promise.resolve({ status: 200, body: replyState({ ...active, state: "stopping" }, path, checkpoint + 1) });
+      }
+      if (!stopped) { paused = true; return Promise.resolve({ status: 200, body: replyState(active, path, checkpoint + 1) }); }
+      return Promise.resolve({ status: 200, body: replyState(expected, path, events.length) });
+    },
+  };
+  await expect(runProbe(backend, { scenario: "cancel-midway", input: object(object(expected.interpretation).input),
+    outcome: "cancelled", stopCode: "cancelled_by_user", expectedDelivery: "partial", expectedItems: objects(object(expected.interpretation).items),
+    expectedCounts: objects(expected.items), expectedFunnel: object(expected.funnel), cancel: true,
+  })).resolves.toBeUndefined();
+  expect(stopped).toBe(true);
+});
 function reconciliationScenario() {
   const before = fixture("status-operational-error");
   const after = structuredClone(before);
@@ -213,10 +257,14 @@ function reconciliationScenario() {
   ];
   after.next_after = previousEvents.length + 2;
   const evidence = fixture("test-evidence");
+  const priorEvidence = structuredClone(evidence);
   for (const op of objects(evidence.operations)) { op.state = "reconciled"; op.settled_microusd = op.reserved_microusd; }
   object(evidence.slot).holder_request_id = null;
   const { backend } = scripted();
+  let reconciled = false;
   const request = vi.fn((method: "GET" | "POST", path: string): Promise<Reply> => {
+    if (path.endsWith("/reconcile")) reconciled = true;
+    if (path.includes("/test/evidence?") && !reconciled) return Promise.resolve({ status: 200, body: priorEvidence });
     if (path.endsWith("/requests")) return Promise.resolve({ status: 409, body: { contract_version: "bug-request/1", error: { code: "busy", retryable: false, details: { reason: "needs_reconciliation" } } } });
     if (method === "GET" && path.includes("/requests/")) {
       const cursor = Number(path.split("?after=")[1] ?? 0);
@@ -226,13 +274,14 @@ function reconciliationScenario() {
     return Promise.resolve({ status: 200, body: path.includes("/test/evidence?") ? evidence : after });
   });
   backend.request = request;
-  return { before, after, evidence, backend, request };
+  return { before, after, evidence, backend, request, restart: () => { reconciled = false; } };
 }
 it("checks reconciliation settles held spend and reads released-slot evidence before any reset", async () => {
   const { runReconciliation } = await import("../src/runner.ts");
-  const { before, after, backend, request } = reconciliationScenario();
+  const { before, after, backend, request, restart } = reconciliationScenario();
   await expect(runReconciliation(backend, before)).resolves.toBeUndefined();
   expect(request.mock.calls.map(([method, path]) => `${method} ${path}`)).toEqual([
+    `GET /api/factory/test/evidence?request_id=${text(before.request_id)}`,
     "POST /api/factory/requests", "POST /api/factory/test/reconcile",
     `GET /api/factory/requests/${text(before.request_id)}`,
     `GET /api/factory/requests/${text(before.request_id)}?after=${String(after.next_after)}`,
@@ -242,7 +291,29 @@ it("checks reconciliation settles held spend and reads released-slot evidence be
   for (const event of objects(after.events)) if (event.type === "request_finished") {
     object(event.data).outcome = "sources_exhausted"; object(event.data).stop_code = "sources_exhausted";
   }
+  restart();
   await expect(runReconciliation(backend, before)).rejects.toThrow("reconciliation changed terminal result");
+});
+it.each(["rekeyed", "collapsed", "redistributed", "rewritten-provider"])("rejects %s reconciliation evidence despite conserved totals", async change => {
+  const { runReconciliation } = await import("../src/runner.ts");
+  const { before, evidence, backend } = reconciliationScenario();
+  const copies = objects(evidence.operations).filter(op => op.kind === "candidate_copy");
+  const first = copies[0]; const second = copies[1]; assert(first && second);
+  if (change === "rekeyed") first.operation_id = "ab".repeat(32);
+  if (change === "collapsed") {
+    evidence.operations = objects(evidence.operations).filter(op => op !== second);
+    evidence.provider_calls = objects(evidence.provider_calls).filter(call => call.call_name !== second.call_name);
+    first.reserved_microusd = integer(first.reserved_microusd) + integer(second.reserved_microusd);
+    first.settled_microusd = first.reserved_microusd;
+  }
+  if (change === "redistributed") {
+    first.reserved_microusd = integer(first.reserved_microusd) + 1000; first.settled_microusd = first.reserved_microusd;
+    second.reserved_microusd = integer(second.reserved_microusd) - 1000; second.settled_microusd = second.reserved_microusd;
+  }
+  if (change === "rewritten-provider") {
+    const call = objects(evidence.provider_calls)[0]; assert(call); call.at = "2026-10-20T20:00:00.000Z";
+  }
+  await expect(runReconciliation(backend, before)).rejects.toThrow("reconciliation changed");
 });
 it.each(["candidates", "funnel", "limits"])("rejects changed %s after reconciliation", async (field) => {
   const { runReconciliation } = await import("../src/runner.ts");
@@ -251,7 +322,7 @@ it.each(["candidates", "funnel", "limits"])("rejects changed %s after reconcilia
     const candidates = objects(after.candidates);
     const candidate = candidates[0]; assert(candidate);
     after.candidates = [...candidates, { ...candidate, candidate_id: "ab".repeat(32), entry_id: "synthetic-replacement" }];
-  } else if (field === "funnel") object(after.funnel).candidates_explored = 2;
+  } else if (field === "funnel") object(after.funnel).candidates_explored = 0;
   else object(after.limits).candidates_started = 2;
   checkStatus(after);
   await expect(runReconciliation(backend, before)).rejects.toThrow("reconciliation changed terminal result");
@@ -337,7 +408,7 @@ it("reads reconciliation transitions beyond a POST containing only old history",
   const previousEnd = integer(before.next_after);
   const cursors: number[] = [];
   backend.request = (method, path) => {
-    if (path.endsWith("/reconcile")) return Promise.resolve({ status: 200, body: { ...after, events: before.events, next_after: previousEnd } });
+    if (path.endsWith("/reconcile")) return request(method, path).then(() => ({ status: 200, body: { ...after, events: before.events, next_after: previousEnd } }));
     if (method === "GET" && path.includes("/requests/")) {
       const cursor = Number(path.split("?after=")[1] ?? 0); cursors.push(cursor);
       const events = objects(after.events).filter(event => integer(event.seq) > cursor).slice(0, previousEnd);
@@ -583,6 +654,34 @@ it.each([1, 2])("rejects a frozen interpretation changed only in Start response 
     return reply;
   };
   await expect(runProbe(backend, probe)).rejects.toThrow("frozen interpretation changed");
+});
+for (const ordinal of [1, 2]) it.each(["created_at", "deadline_at"])(`rejects rewritten %s from active Start response ${String(ordinal)}`, async field => {
+  const { backend, request } = scripted(); let starts = 0;
+  backend.request = async (...args) => {
+    const reply = await request(...args);
+    if (args[0] === "POST" && args[1] === "/api/factory/requests" && ++starts === ordinal) {
+      const value = object(reply.body);
+      const target = field === "created_at" ? value : object(value.limits);
+      target[field] = new Date(Date.parse(text(target[field])) + 1000).toISOString();
+    }
+    return reply;
+  };
+  await expect(runProbe(backend, probe)).rejects.toThrow(/request (time|deadline)/);
+});
+it.each([1, 2])("retains funnel progress witnessed in concurrent Start response %s", async ordinal => {
+  const { backend, request } = scripted(); let starts = 0;
+  backend.request = async (...args) => {
+    const reply = await request(...args);
+    if (args[0] === "POST" && args[1] === "/api/factory/requests" && ++starts === ordinal) {
+      const running = fixture("status-running");
+      const value = object(JSON.parse(JSON.stringify(running).replaceAll(text(running.request_id), text(object(reply.body).request_id))) as unknown);
+      // Event paging is independent of the full current counters.
+      value.events = object(reply.body).events; value.next_after = object(reply.body).next_after;
+      return { ...reply, body: value };
+    }
+    return reply;
+  };
+  await expect(runProbe(backend, probe)).rejects.toThrow("funnel progress decreased");
 });
 it.each([1, 2])("retains event contents observed in Start response %s", async ordinal => {
   const { backend, request } = scripted(); let starts = 0;

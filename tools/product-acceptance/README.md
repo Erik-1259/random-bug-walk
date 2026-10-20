@@ -76,12 +76,25 @@ self-tests and local checks separately. `readiness.json` is the no-backend repor
 | continuity | Repeated reads, reconnect, frozen terminal results, contiguous event history and reconciliation | Persistence across a service restart is not exercised |
 | downloads | Distinct paths and kinds, ready-only delivered cases, archive digest, validation failure/error and completion cost semantics | No pending-package window; synthetic archives do not prove real privacy or replay |
 
+Interpretations are compared with the complete pinned semantic profile: versions,
+route, item meanings, host use, type quantities, worst-case prices, limits and
+request problems. Generated hashes and descriptive wording may differ; the
+returned interpretation must then remain frozen in every request response.
+Funnel counters obey their stage bounds, retain witnessed progress across
+sequential reads, and match named end-state fixtures. Complete history must
+account for the distinct candidates that passed behavior and requested criteria.
+Concurrent responses need not arrive in state order. Creation time and deadline
+remain fixed, with the deadline matching the interpreted execution window.
+
 The named probes are `two-host-fulfilled`, `partial-budget`, `sources-exhausted`,
 `duplicate-defect`, `zero-result`, `cancel-midway`, `worker-lost`,
 `uncertain-provider`, `wrong-failure`, `validation-failed` and `validation-error`.
 Each obtains a fresh interpretation hash from the service. Synthetic fixture
 hashes are not sent as live interpretations. The runner honors polling hints and
 status backoff; reaching its observation limit reports unavailable.
+The cancellation probe waits for the second candidate's first completed check,
+as the named control specifies, before sending stop. Stopping at the first
+delivery is too early to exercise the fixture's cancellation outcome.
 
 The runnable multi-item fixtures request 1/1. Their separate outcomes exercise
 item ownership and count reconciliation, but do not test unequal requested
@@ -102,8 +115,12 @@ Reconciliation must return a `200 RequestStatus`. Both that response and later
 status reads must retain terminal data and event history and settle the previously
 held amount. New budget events must account for that settlement before the new
 attention-cleared event, including when they fall beyond the first history page.
-The probe then reads ledger evidence and requires both slot holders to be clear
-before any subsequent scenario reset. Before an intentional reconciliation or
+The probe compares ledger evidence before and after reconciliation: operation
+identities, call metadata, original reservations and existing provider records
+remain intact. Each held row reconciles at its original worst case; previously
+settled rows stay unchanged, and reconciliation launches no new creates.
+Both slot holders must be clear before any subsequent scenario reset.
+Before an intentional reconciliation or
 validation, every terminal observation retains its budget and attention as well
 as its completed results, starting with the concurrent Start responses.
 

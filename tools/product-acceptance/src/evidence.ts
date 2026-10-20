@@ -36,3 +36,33 @@ export function checkEvidence(evidence: TestEvidence, status: RequestStatus): vo
     assert.equal(evidence.slot.holder_request_id, status.request_id, "uncertain request lost its slot");
   }
 }
+
+/** The named reconciliation control settles held rows without creating new work. */
+export function checkReconciledEvidence(before: TestEvidence, after: TestEvidence): void {
+  assert.equal(after.contract_version, before.contract_version, "reconciliation changed evidence contract");
+  assert.equal(after.request_id, before.request_id, "reconciliation changed evidence request");
+  const ids = (evidence: TestEvidence) => evidence.operations.map(op => op.operation_id).sort();
+  assert.deepEqual(ids(after), ids(before), "reconciliation changed operation identities");
+  assert.equal(new Set(ids(after)).size, after.operations.length, "reconciliation duplicated an operation");
+  for (const prior of before.operations) {
+    const current = after.operations.find(op => op.operation_id === prior.operation_id); assert(current);
+    const expected = prior.settled_microusd === null
+      ? { ...prior, state: "reconciled", settled_microusd: prior.reserved_microusd }
+      : prior;
+    assert.deepEqual(current, expected, "reconciliation changed operation metadata or settlement");
+  }
+  const callKey = (call: TestEvidence["provider_calls"][number]) => JSON.stringify([call.call_name, call.provider, call.action, call.at]);
+  const creates = (evidence: TestEvidence) => evidence.provider_calls.filter(call => call.action === "create").map(callKey).sort();
+  assert.deepEqual(creates(after), creates(before), "reconciliation changed provider creates");
+  // Call order is not specified. Retain every existing record; cleanup may add
+  // stop calls for known operations, but it cannot erase earlier evidence.
+  const remaining = after.provider_calls.map(callKey);
+  for (const call of before.provider_calls) {
+    const index = remaining.indexOf(callKey(call));
+    assert(index >= 0, "reconciliation lost prior provider evidence");
+    remaining.splice(index, 1);
+  }
+  for (const call of after.provider_calls) {
+    assert(after.operations.some(op => op.call_name === call.call_name), "reconciliation recorded a provider call without an operation");
+  }
+}

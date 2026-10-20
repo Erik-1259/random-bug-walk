@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { assertContract } from "@rbw/factory-contract/validate";
 import type { TestEvidence } from "@rbw/factory-contract";
-import { checkEvidence } from "./evidence.ts";
+import { checkEvidence, checkReconciledEvidence } from "./evidence.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { isDeepStrictEqual } from "node:util";
-import { checkCriteriaEvents, checkScenarioCandidates, checkStatus, checkValidation, integer, object, objects, text } from "./invariants.ts";
+import { checkCriteriaEvents, checkFunnelHistory, checkScenarioCandidates, checkStatus, checkValidation, integer, object, objects, text } from "./invariants.ts";
 
 export const contractRevision = "66651d67fcb09c402b25d9688ea492c0e69e1c2b";
 export const scenarioIds = ["identity", "quantities", "shared-budget", "qualification", "unsupported", "stops", "continuity", "downloads"] as const;
@@ -25,6 +25,8 @@ export interface Probe {
   stopCode: string;
   expectedDelivery: string;
   expectedItems: Record<string, unknown>[];
+  expectedInterpretation?: Record<string, unknown>;
+  expectedFunnel?: Record<string, unknown>;
   expectedCounts: Record<string, unknown>[];
   expectedCandidates?: Record<string, unknown>[];
   expectedAttention?: string | null;
@@ -84,6 +86,33 @@ function checkInterpretedItems(actualItems: Record<string, unknown>[], expectedI
     assert.deepEqual(meaning(actual), meaning(expected), `${prefix}item interpretation differs from pinned scenario`);
   }
 }
+function checkInterpretationProfile(actual: Record<string, unknown>, expected: Record<string, unknown>): void {
+  const normalize = (value: Record<string, unknown>) => {
+    const result = structuredClone(value);
+    delete result.interpretation_sha256;
+    const sort = (rows: Record<string, unknown>[], key: string) => rows.sort((a, b) => text(a[key]).localeCompare(text(b[key])));
+    const problems = (value: unknown) => objects(value).map(problem => ({ ...problem, message: "" }))
+      .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+    result.items = sort(objects(result.items).map(item => ({ ...item,
+      criteria: sort(objects(item.criteria).map(criterion => ({ ...criterion, label: "" })), "criterion_id"),
+      eligible_sources: objects(item.eligible_sources).sort((a, b) => JSON.stringify([a.host_id, a.source_id]).localeCompare(JSON.stringify([b.host_id, b.source_id]))),
+      problems: problems(item.problems),
+    })), "item_key");
+    const totals = objects(result.type_totals);
+    assert.equal(new Set(totals.map(total => total.bug_type_id)).size, totals.length, "duplicate interpretation type total");
+    const requested = new Set(objects(object(result.input).items).map(item => item.bug_type_id));
+    result.type_totals = sort(totals.filter(total => requested.has(total.bug_type_id) || total.quantity !== 0), "bug_type_id");
+    // Wording is not fixed by the contract. Semantic fields stay pinned and
+    // text types are schema-checked; frozen responses retain the generated hash.
+    result.hosts = sort(objects(result.hosts).map(host => ({ ...host, reason: "" })), "host_id");
+    const budget = object(result.budget); budget.estimate_note = "";
+    for (const field of ["worst_case_per_candidate_microusd", "worst_case_per_validation_microusd"]) budget[field] = sort(objects(budget[field]), "host_id");
+    result.problems = problems(result.problems);
+    return result;
+  };
+  assert.deepEqual(normalize(actual), normalize(expected), "interpretation profile differs from pinned scenario");
+  assertContract("Interpretation", actual);
+}
 /** Exercise ordinary public operations through an approved isolated adapter. */
 export async function runProbe(backend: IsolatedBackend, probe: Probe): Promise<void> {
   await verify(backend);
@@ -94,12 +123,15 @@ export async function runProbe(backend: IsolatedBackend, probe: Probe): Promise<
   assert.equal(interpretation.startable, true);
   checkInterpretedItems(objects(interpretation.items), probe.expectedItems);
   assert.deepEqual(interpretation.input, probe.input, "input silently changed");
+  if (probe.expectedInterpretation) checkInterpretationProfile(interpretation, probe.expectedInterpretation);
   const requestId = randomUUID();
   const start = { request_id: requestId, input: probe.input, interpretation_sha256: interpretation.interpretation_sha256 };
   const replies = await Promise.all(Array.from({ length: probe.concurrent ? 3 : 1 }, () => call("POST", "/api/factory/requests", start)));
   assert.equal(replies.filter(r => r.status === 202).length, 1, "start accepted more or less than once");
   const deliveredCases = new Map<unknown, Record<string, unknown>>();
   const observedEvents = new Map<number, Record<string, unknown>>();
+  const funnelProgress = new Map<string, number>();
+  let requestTimes: { created_at: unknown; deadline_at: unknown } | undefined;
   let terminal: Record<string, unknown> | undefined;
   const terminalSnapshot = (value: Record<string, unknown>) => Object.fromEntries(Object.entries(value)
     .filter(([field]) => !["updated_at", "events", "next_after", "poll_after_ms"].includes(field)));
@@ -107,6 +139,12 @@ export async function runProbe(backend: IsolatedBackend, probe: Probe): Promise<
     checkScenarioStatus(value);
     assert.equal(value.request_id, requestId);
     assert.deepEqual(value.interpretation, interpretation, "frozen interpretation changed");
+    const limits = object(value.limits);
+    assert.deepEqual({ max_wall_clock_s: limits.max_wall_clock_s, max_candidates: limits.max_candidates }, interpretation.limits, "request limits differ from pinned interpretation");
+    const times = { created_at: value.created_at, deadline_at: limits.deadline_at };
+    assert.equal(Date.parse(text(limits.deadline_at)) - Date.parse(text(value.created_at)), integer(limits.max_wall_clock_s) * 1000, "request deadline differs from execution window");
+    if (requestTimes) assert.deepEqual(times, requestTimes, "request times changed after creation");
+    else requestTimes = times;
     const current = objects(value.cases);
     if (!concurrent) for (const id of deliveredCases.keys()) {
       assert(current.some(c => c.case_id === id), "delivered case disappeared");
@@ -115,6 +153,11 @@ export async function runProbe(backend: IsolatedBackend, probe: Probe): Promise<
       const previous = deliveredCases.get(delivered.case_id);
       if (previous !== undefined) assert.deepEqual(delivered, previous, "delivered case changed");
       else deliveredCases.set(delivered.case_id, structuredClone(delivered));
+    }
+    for (const [field, count] of Object.entries(object(value.funnel))) {
+      const previous = funnelProgress.get(field) ?? 0;
+      if (!concurrent) assert(integer(count) >= previous, "funnel progress decreased");
+      funnelProgress.set(field, Math.max(previous, integer(count)));
     }
     let previousSeq: number | undefined;
     for (const event of objects(value.events)) {
@@ -157,7 +200,9 @@ export async function runProbe(backend: IsolatedBackend, probe: Probe): Promise<
       history.push(structuredClone(event));
     }
     assert.equal(state.next_after, cursor);
-    if (probe.cancel && !stopped && objects(state.cases).length > 0 && state.state !== "finished") {
+    const cancelCheckpoint = objects(state.cases).length > 0 && history.some(event => event.type === "check_finished"
+      && objects(state.candidates).some(candidate => candidate.candidate_id === event.candidate_id && candidate.case_id === null));
+    if (probe.cancel && !stopped && cancelCheckpoint && state.state !== "finished") {
       const stopping = body(await call("POST", `${path}/stop`, {}), 200);
       observe(stopping);
       stopped = true;
@@ -168,10 +213,12 @@ export async function runProbe(backend: IsolatedBackend, probe: Probe): Promise<
     await backend.wait(delay);
     state = await read(backend, `${path}?after=${String(cursor)}`);
   }
-  if (probe.cancel && !stopped) throw new Unavailable("cancel-midway requires an observable pause after the first delivery");
+  if (probe.cancel && !stopped) throw new Unavailable("cancel-midway requires its observable pause after the second candidate's first check");
   if (state.state !== "finished") throw new Unavailable("Request observation reached the runner poll limit.");
   for (const [seq, event] of observedEvents) assert.deepEqual(history[seq - 1], event, "previous event disappeared from history");
   checkCriteriaEvents(state, history, true);
+  checkFunnelHistory(state, history);
+  if (probe.expectedFunnel) assert.deepEqual(state.funnel, probe.expectedFunnel, "funnel differs from pinned scenario");
   const counts = (items: Record<string, unknown>[]) => items.map(item => ({
     item_key: text(item.item_key), requested: integer(item.requested),
     delivered: integer(item.delivered), missing: integer(item.missing),
@@ -356,6 +403,7 @@ export async function runReconciliation(backend: IsolatedBackend, before: Record
   checkScenarioStatus(before);
   assert.equal(before.state, "finished");
   assert.equal(object(before.attention).code, "needs_reconciliation");
+  const priorEvidence = structuredClone(await runEvidence(backend, before));
   const interpretation = object(before.interpretation);
   const busy = await backend.request("POST", "/api/factory/requests", {
     request_id: randomUUID(), input: interpretation.input, interpretation_sha256: interpretation.interpretation_sha256,
@@ -435,6 +483,7 @@ export async function runReconciliation(backend: IsolatedBackend, before: Record
   }
   assert(cleared, "reconciliation omitted new settlement or attention transitions");
   const evidence = await runEvidence(backend, after);
+  checkReconciledEvidence(priorEvidence, evidence);
   assert.equal(evidence.slot.holder_request_id, null, "reconciliation left the factory slot held");
   assert.equal(evidence.slot.holder_validation_id, null, "reconciliation left a validation slot holder");
 
@@ -451,6 +500,7 @@ export async function runUnsupported(backend: IsolatedBackend): Promise<void> {
   assert.equal(interpretation.startable, false);
   assert.deepEqual(interpretation.input, input, "unsupported requirements silently changed");
   checkInterpretedItems(objects(interpretation.items), objects(object(fixture).items), "unsupported item: ");
+  checkInterpretationProfile(interpretation, object(fixture));
   error(await call("POST", "/api/factory/requests", {
     request_id: randomUUID(), input, interpretation_sha256: interpretation.interpretation_sha256,
   }), 422, "unsupported_request");
@@ -484,9 +534,10 @@ function probes(): { groups: ScenarioId[]; probe: Probe }[] {
     const input = object(interpretation.input);
     return { groups, probe: {
     scenario, input, outcome, stopCode, expectedDelivery: text(expected.delivery), expectedItems: objects(interpretation.items), expectedCounts: objects(expected.items),
+    expectedInterpretation: interpretation,
     expectedAttention: expected.attention === null ? null : text(object(expected.attention).code),
     // The uncertain-provider control specifies no candidate end-state fixture.
-    ...(scenario === "uncertain-provider" ? {} : { expectedCandidates: objects(expected.candidates) }),
+    ...(scenario === "uncertain-provider" ? {} : { expectedCandidates: objects(expected.candidates), expectedFunnel: object(expected.funnel) }),
     concurrent: scenario === "two-host-fulfilled", cancel: scenario === "cancel-midway",
     reconcile: scenario === "worker-lost" || scenario === "uncertain-provider",
     downloads: scenario === "two-host-fulfilled", evidence: true,

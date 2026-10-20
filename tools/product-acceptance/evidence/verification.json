@@ -10,12 +10,12 @@
   },
   "self_tests": {
     "command": "pnpm --filter @rbw/product-acceptance test --reporter=json",
-    "passed": 249,
+    "passed": 306,
     "failed": 0,
     "skipped": 0,
     "exit_code": 0
   },
-  "test_floor": 249,
+  "test_floor": 306,
   "failing_first": [
     {
       "scope": "final-contract invariant regressions",
@@ -104,6 +104,52 @@
       "failed": 1,
       "passed": 0,
       "skipped": 40,
+      "exit_code": 1
+    },
+    {
+      "scope": "complete pinned profile, terminal funnel counters and behavior history",
+      "passed": 43,
+      "failed": 20,
+      "exit_code": 1
+    },
+    {
+      "scope": "reconciliation evidence continuity helper absent",
+      "passed": 0,
+      "failed": 22,
+      "exit_code": 1
+    },
+    {
+      "scope": "reconciliation continuity assertions temporarily omitted",
+      "passed": 3,
+      "failed": 19,
+      "exit_code": 1
+    },
+    {
+      "scope": "reconciliation wiring with re-keyed or redistributed ledger evidence and conserved totals",
+      "passed": 0,
+      "failed": 4,
+      "skipped": 76,
+      "exit_code": 1
+    },
+    {
+      "scope": "creation/deadline and funnel progress from active concurrent Start responses",
+      "passed": 0,
+      "failed": 6,
+      "skipped": 80,
+      "exit_code": 1
+    },
+    {
+      "scope": "deadline contradicting the interpreted execution window",
+      "passed": 0,
+      "failed": 1,
+      "skipped": 64,
+      "exit_code": 1
+    },
+    {
+      "scope": "cancel-midway stopped after first delivery rather than the named second-candidate check checkpoint",
+      "failed": 1,
+      "passed": 0,
+      "skipped": 86,
       "exit_code": 1
     }
   ],
@@ -202,6 +248,32 @@
     {
       "finding": "The quantities group claimed unequal requested quantities although runnable multi-item fixtures request 1/1.",
       "disposition": "Mark that coverage unavailable and document the exact missing startable unequal-quantity control; retain existing separate-item count checks without inventing inputs."
+    },
+    {
+      "finding": "Reconciliation could delete or rewrite held ledger rows while retaining correct aggregate totals.",
+      "disposition": "Compare validated evidence before and after: preserve operation identities, call metadata, original reservations and provider records; reconcile each held row individually without new creates."
+    },
+    {
+      "finding": "Funnel explored, behavior and criterion counters could be false while delivery counts remained correct.",
+      "disposition": "Pin named terminal funnel counts, enforce stage bounds, compare complete-history distinct candidate events, and retain progress witnessed in concurrent Starts through later sequential reads."
+    },
+    {
+      "finding": "A consistently incorrect interpretation profile could remain frozen and escape the item-only expectations.",
+      "disposition": "Independently compare the complete semantic profile, including versions, route, prices, host use, quantities, limits and request problems; allow generated hashes, descriptive wording and permitted zero-count rows. Preserve request creation/deadline and the interpreted execution window."
+    },
+    {
+      "finding": "Exact funnel comparison exposed an early runner stop in the actual cancel-midway HTTP scenario.",
+      "disposition": "Wait for the second candidate first check_finished after the first delivery, as the named control specifies. Preserve the initial failed HTTP report separately; no backend change."
     }
-  ]
+  ],
+  "http_regression_evidence": {
+    "report": "service-http-before-checkpoint-fix.json",
+    "summary": {
+      "passed": 2,
+      "failed": 1,
+      "unavailable": 5
+    },
+    "exit_code": 1,
+    "meaning": "The new funnel assertion exposed early cancellation in the runner; regression and fix wait at the documented test-control checkpoint."
+  }
 }
