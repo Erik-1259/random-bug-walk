@@ -78,13 +78,15 @@ Combination {
   reason: string | null                  // why unsupported, in plain language
   source: null | { source_id: string, kind: "finite_recipe_catalog", catalog_version: string,
                    entries: integer, criteria_ids: string[], description: string }
+                                         // entries and criteria_ids: the entries available over the planned window (section 4.2)
 }
 DifficultyOption {
   option_id: "source_inferable_allowed" | "source_only_difficulty_required"
   label: string, default: boolean, available: boolean, reason: string | null
 }
 Limits {
-  max_items: integer, max_quantity_per_item: integer, max_total_quantity: integer, max_description_chars: integer
+  max_items: integer, max_quantity_per_item: integer, max_total_quantity: integer
+  max_description_chars: integer               // Unicode code points, counted after trimming (section 5)
   budget_presets_microusd: integer[], default_budget_microusd: integer, min_budget_microusd: integer, max_budget_microusd: integer
   max_wall_clock_s: integer, max_candidates: integer
 }
@@ -96,7 +98,7 @@ Limits {
 
 ### 4.2 Combinations and sources
 
-Every (host, bug type) pair appears once in `combinations`. `supported` means a declared source with at least one entry exists and its verification checks are implemented. Selecting a type never implies every host supports it. `entries` is the size of the finite catalog: a request can deliver at most that many distinct cases of that type from that host.
+Every (host, bug type) pair appears once in `combinations`. `supported` means a declared source with at least one entry available over the planned window exists and its verification checks are implemented. The planned window is [now, now + `limits.max_wall_clock_s`], and availability is the host's existing window-based availability. `entries` counts the catalog entries available over the planned window, so a request can deliver at most that many distinct cases of that type from that host, and `criteria_ids` lists the criteria those entries target. A declared pair with no entry available is `unsupported`, and its `reason` is the host's availability reason. Selecting a type never implies every host supports it. Interpretation counts eligible sources the same way (section 6).
 
 ### 4.3 Limits
 
@@ -118,13 +120,15 @@ RequestItemInput {
   item_key: string
   bug_type_id: "concurrency" | "date_time"
   quantity: integer                          // 1..limits.max_quantity_per_item
-  description: string | null                 // normalized by the service (section 6); at most limits.max_description_chars after trimming
+  description: string | null                 // normalized by the service (section 6); at most limits.max_description_chars
+                                             // Unicode code points after trimming
   difficulty: "source_inferable_allowed" | "source_only_difficulty_required"
 }
 ```
 
 - The budget is shared by every selected host and every item. There are no per-host quotas or per-host budgets.
 - Quantities are per item. A type's requested total is the sum over its items. Extra cases of one type never fill another type's shortfall, and a case never counts for two items.
+- `type_totals` (sections 6 and 8) lists each requested bug type exactly once, with a total of at least 1. It may also list a type that no item requests, with 0.
 - The sum of all quantities is at most `limits.max_total_quantity`.
 - A value outside any of these ranges, including the total, answers `400 invalid_request` (section 4.3).
 
@@ -137,13 +141,14 @@ The service first normalizes the input: it trims each description and maps an em
 ```text
 Interpretation {
   contract_version
-  interpretation_sha256: string     // canonical hash of the normalized input + interpreter, catalog, route and source versions
+  interpretation_sha256: string     // canonical hash of the normalized input, the interpreter, catalog, route and source versions,
+                                    // the factory profile and the availability over the planned window (section 6.1)
   interpreter: { interpreter_id, version, criteria_catalog_version }
   qualification_route: { route_id, version }
   input: RequestInput               // the normalized input actually interpreted
   startable: boolean                // true only when no problem has severity "blocking"
   items: InterpretedItem[]
-  type_totals: { bug_type_id, quantity }[]
+  type_totals: { bug_type_id, quantity }[]   // each requested type once (at least 1); an unrequested type only with 0 (section 5)
   hosts: { host_id, used: boolean, reason: string | null }[]
   budget: { budget_microusd, worker_worst_case_microusd: integer,
             worst_case_per_candidate_microusd: { host_id, microusd }[],
@@ -156,7 +161,8 @@ InterpretedItem {
   difficulty: { requested: "source_inferable_allowed" | "source_only_difficulty_required", status: "not_required" | "unsupported" }
   criteria: { criterion_id, version, label, matched_text: string | null }[]
   unmatched_text: string[]
-  eligible_sources: { host_id, source_id, entries: integer }[]
+  eligible_sources: { host_id, source_id, entries: integer }[]  // entries is at least 1 and counts the source's catalog entries
+                                                                 // available over the planned window (section 4.2) that satisfy the item's criteria
   status: "supported" | "unsupported"
   problems: Problem[]
 }
@@ -165,7 +171,7 @@ Problem { code: string, severity: "blocking" | "warning", message: string, item_
 
 ### 6.1 Interpreting descriptions (`criteria-match`)
 
-The interpreter is deterministic and versioned; the same normalized input and versions always give the same `interpretation_sha256`.
+The interpreter is deterministic and versioned. `interpretation_sha256` covers the normalized input; the interpreter, catalog, route and source versions; the factory profile (the limits and worst cases the interpretation prices with); and the effective availability result for the planned window (section 4.2), not the raw time. The same inputs to the hash always give the same `interpretation_sha256`, so a start answers `interpretation_stale` (section 7, step 3) when the profile or that availability changed.
 
 - **No description:** the item accepts a candidate from any selected host's source that demonstrates any criterion of its bug type (section 6.3). `criteria` lists nothing and `unmatched_text` is empty. A description made only of filler phrases is treated as no description.
 - **With a description:** the interpreter matches exactly the `example_phrases` of each criterion of the item's bug type, plus the declared filler phrases (`capabilities.interpreter.filler_phrases`), as word sequences. Words are maximal runs of letters and digits, compared case-insensitively; punctuation and spaces only separate words. Every word of the description must be covered by a matched criterion phrase or a filler phrase. Each maximal run of uncovered words is returned as one entry of `unmatched_text` (the normalized description's text from the run's first word to its last), and the item is unsupported (`unrecognized_description`). Text is never dropped silently and never replaced by an easier requirement.
@@ -177,7 +183,7 @@ The interpreter is deterministic and versioned; the same normalized input and ve
 |---|---|---|
 | `unsupported_combination` | blocking | No selected host has a supported source for the item's bug type. |
 | `unrecognized_description` | blocking | Part of the description maps to no criterion (see `unmatched_text`). |
-| `no_matching_source` | blocking | Criteria were recognized, but no catalog entry on the selected hosts satisfies all of them. |
+| `no_matching_source` | blocking | Criteria were recognized, but no catalog entry available on the selected hosts (section 4.2) satisfies all of them. |
 | `unsupported_difficulty` | blocking | The item requires source-only difficulty, which is unavailable. |
 | `budget_below_minimum` | blocking | The budget cannot cover the worker's worst case plus one candidate's worst case on any eligible host. Request-level (`item_key` null). |
 | `budget_below_item_minimum` | warning | On an item with at least one eligible host: the budget minus the worker's worst case is below the candidate worst case of every host eligible for that item, so no candidate for it can start. The request cannot end `fulfilled`. |
@@ -207,7 +213,7 @@ The service, in order (steps 2 to 7 hold a lock on the `request_id`, so concurre
 4. Checks the service: a halted spend ledger or missing configuration answers `503 unavailable`.
 5. Checks, without recording anything, that the factory pool's available amount covers the full requested budget (section 8.5). If it does not, the answer is `409 budget_unavailable`.
 6. Takes the single factory slot (section 8.5). If it is held, the answer is `409 busy`. Nothing is recorded under this `request_id`, so the same ID can be sent again later. The answer never reveals another user's request.
-7. Creates the request budget on the factory pool, which needs the pool's available amount to cover the worker's worst case, then records the request, its frozen interpretation and the event `request_accepted`, reserves the worker's worst case from the request budget (event `budget_updated`), and launches the worker. It answers `202` with a `RequestStatus` in state `queued` or `starting`. If this step fails before the request is recorded (for example, the pool can no longer cover the worker's worst case), the slot is released and the start is refused (`409 budget_unavailable` or `503 unavailable`), with nothing recorded or reserved. Once the request is recorded, a later failure is reported through the request's own outcome (section 8.1), never as a refused start.
+7. Creates the request budget on the factory pool, which needs the pool's available amount to cover the worker's worst case, then records the request, its frozen interpretation and the event `request_accepted`, reserves the worker's worst case from the request budget (event `budget_updated`), and launches the worker. It answers `202` with the current `RequestStatus`, normally in state `queued` or `starting`. It is `finished` with a failure outcome only when the worker's reservation or launch failed after the request was recorded. If this step fails before the request is recorded (for example, the pool can no longer cover the worker's worst case), the slot is released and the start is refused (`409 budget_unavailable` or `503 unavailable`), with nothing recorded or reserved. Once the request is recorded, a later failure is reported through the request's own outcome (section 8.1), never as a refused start.
 
 **Client rules.**
 
@@ -236,8 +242,8 @@ RequestStatus {
   budget: { budget_microusd, reserved_microusd, spent_microusd, committed_microusd, remaining_microusd, overrun: boolean }  // section 8.5
   limits: { max_wall_clock_s, deadline_at, max_candidates, candidates_started }
   funnel: { candidates_explored, behavior_checks_passed, requested_criteria_passed, packages_ready }
-  items: { item_key, bug_type_id, description, requested, delivered, missing, case_ids: string[] }[]
-  type_totals: { bug_type_id, requested, delivered, missing }[]
+  items: { item_key, bug_type_id, description, requested, delivered, missing, case_ids: string[] }[]  // case_ids: the delivered cases that fill the item
+  type_totals: { bug_type_id, requested, delivered, missing }[]  // each requested type once (requested at least 1); an unrequested type only with requested 0 (section 5)
   candidates: Candidate[]
   cases: Case[]
   events: Event[]
@@ -328,7 +334,7 @@ Event { seq: integer, at: string, type: EventType, host_id: string | null, candi
 | `candidate_selected` | `{ source_id, entry_id }` |
 | `check_finished` | `{ check_set: "original_suite" \| "verification", copy: "clean" \| "buggy" \| "fixed", outcome: "pass" \| "fail" \| "error" \| "incomplete", runs_valid, runs_total }` |
 | `behavior_checks_passed` | `{}` |
-| `requested_criteria_passed` | `{ criterion_ids }` |
+| `requested_criteria_passed` | `{ criterion_ids }`: the criteria the candidate demonstrated (section 6.3), at least one, each once; they become its case's `criteria_met` |
 | `candidate_rejected` / `candidate_invalid` / `candidate_incomplete` / `candidate_skipped` | `{ reason }` |
 | `package_ready` | `{ bug_case_sha256, validator_sha256 }` |
 | `case_delivered` | `{}` |
@@ -366,7 +372,7 @@ Case {
   title: string                         // short plain-language name of the observed failure
   host_id, host_label, baseline_id, bug_type_id
   item_key: string | null               // the request item it fills (every live case fills one); null for the completed example
-  criteria_met: { criterion_id, version, label }[]
+  criteria_met: { criterion_id, version, label }[]  // at least one (section 6.3)
   summary: { observed_failure: string, how_checked: string }
   matrix: {
     original_suite: { suite_id, suite_sha256, test_count, clean: Cell, buggy: Cell, fixed: Cell }
@@ -388,7 +394,7 @@ PackagePart { kind: "bug_case" | "validator", format: "rbw-bug-case/1" | "rbw-va
 
 A cell's `observed` is `error` when its copy could not be prepared or run, and `incomplete` when fewer runs were valid than the repetition protocol requires; `matches_expectation` is then false.
 
-A case appears in `RequestStatus.cases` only once it is qualified. Its two parts become `ready` together, after export verification and storage. The client offers a download only when `ready` is true and `download_path` is not null.
+A case appears in `RequestStatus.cases` only once it is qualified and both its parts are `ready`. Its two parts become `ready` together, after export verification and storage. The client offers a download only when `ready` is true and `download_path` is not null.
 
 ### 10.1 What a client may show
 
@@ -427,7 +433,7 @@ Version 1 runs one candidate at a time per request, so at most one unit is held,
 - When the POST is accepted, the worst case for the case's host (`interpretation.budget.worst_case_per_validation_microusd`) is reserved from the request budget. If `remaining_microusd` or the factory pool's available amount is below it, the answer is `409 budget_unavailable` (section 8.5).
 - A run sends heartbeats like the worker (at least every 30 s, section 8.1) and runs for at most 1800 s. A run with no heartbeat for 180 s, or still running after 1800 s, finishes with result `error`.
 - When it finishes, `cost_microusd` settles into the request's `spent_microusd` and the rest is released. The request's events record `validation_started`, `validation_finished` and each `budget_updated`.
-- A run whose spend is uncertain (after an uncertain provider outcome, or a timeout whose sandbox use cannot be confirmed) finishes `error`, keeps its reservation held and sets the request's `attention` to `needs_reconciliation`; the slot stays held until reconciliation (section 8.5).
+- A run whose spend is uncertain (after an uncertain provider outcome, or a timeout whose sandbox use cannot be confirmed) finishes `error`, keeps its reservation held and sets the request's `attention` to `needs_reconciliation`; the slot stays held until reconciliation (section 8.5). Its `cost_microusd` may stay `null`: a later reconciliation updates the request's budget (`budget_updated`), not the run. `null` is never read as `0`.
 
 **Client rules.** Generate a `validation_id` once per button press and store it in `localStorage` under `rbw-factory-validation-id` **before** sending the POST. After a timeout, network error or 5xx, send the same ID again; never generate a new one for that press.
 
@@ -445,7 +451,8 @@ ValidationRun {
   harness: { name: "rbw-validate", version: string }
   message: string | null
   started_at: string | null, finished_at: string | null
-  cost_microusd: integer | null         // settled cost; null until the run settles
+  cost_microusd: integer | null         // the run's cost recorded when it completed; null before then,
+                                        // and it may stay null after uncertain spend (above)
   poll_after_ms: integer
 }
 ```
@@ -496,6 +503,7 @@ Public. Answers `{ contract_version, label, note, case: Case }`, with `case.prov
 | Umami adapter and recipe catalog (`packages/host-umami/**`) | planned | Umami lane |
 | Exporter, standalone harness `rbw-validate`, package format and host-extension guide (`tools/case-package/**`, `tools/case-validate/**`, `docs/product/bug-package-v1.md`, `docs/product/adding-a-host.md`) | planned | package lane |
 | API acceptance tests (`tools/product-acceptance/**`) | in progress | acceptance lane |
+| Completed example (section 14): its two archives, their publication and the example record | planned | package lane prepares the archives; they are published through the existing release route (`tools/release/`); the backend lane's service serves the example record from that release (`GET /api/factory/example`). No new publication path is added. |
 
 No lane edits another lane's files. A change to a shape in this document is made only by a new revision of this document and its fixtures.
 
@@ -525,7 +533,7 @@ For automated acceptance, the service can start in a test mode that is refused w
 - In `cancel-midway` the fake run pauses after the second candidate's first `check_finished`, with its next check in flight, until `POST …/stop` arrives or 60 s pass; then it continues as `status-cancelled.json` shows.
 - Every start (section 7) and every validation start (section 11) is held for 2 s inside its ID lock, so concurrent duplicates overlap deterministically.
 - Test endpoints need no session and exist only in test mode; otherwise they answer `404 not_found`.
-- `GET /api/factory/test/evidence?request_id=` answers a read-only `TestEvidence` (fixture: `test-evidence.json`). Operations not yet settled or reconciled hold their `reserved_microusd`, which adds up to the request's `reserved_microusd`; `settled_microusd` values add up to its `spent_microusd`.
+- `GET /api/factory/test/evidence?request_id=` answers a read-only `TestEvidence` (fixture: `test-evidence.json`). An operation's `reserved_microusd` is its original reservation in every state. Only the operations not yet settled or reconciled still hold theirs, so the request's `reserved_microusd` is the sum over those operations alone; `settled_microusd` values add up to its `spent_microusd`.
 - `POST /api/factory/test/reconcile` with `{ "request_id": string }` reconciles every held operation of that request at its worst case, as an operator would (section 8.5), and answers the `RequestStatus` after reconciliation.
 - `POST /api/factory/test/reset` with `{ "scenario": string }` discards every test-mode record, ledger row and fake, releases the slot, selects the scenario for the next starts, and answers `{ contract_version, scenario }`.
 
@@ -535,7 +543,8 @@ TestEvidence {
   operations: { operation_id: string,     // the spend ledger's operation ID: 64 lowercase hex characters
                 kind: "worker" | "candidate_copy" | "validation" | "validation_copy", call_name: string,
                 state: "prepared" | "launching" | "running" | "terminal" | "uncertain" | "reconciled",  // settled = terminal with settled_microusd set
-                reserved_microusd: integer, settled_microusd: integer | null, attempt_ordinal: integer }[]
+                reserved_microusd: integer, settled_microusd: integer | null, attempt_ordinal: integer }[]  // reserved_microusd: the original reservation in every state;
+                                          // settled_microusd is null unless the state is terminal or reconciled, and set when reconciled
   slot: { slot_key: "factory", holder_request_id: string | null,     // the request whose start or validation run holds the slot
           holder_validation_id: string | null }                       // set while a validation run holds it
   provider_calls: { call_name: string, provider: "sandbox", action: "create" | "stop", at: string }[]
@@ -550,3 +559,15 @@ Startup instructions and the exact revision are published with the backend pull 
 |---|---|
 | 1 | First draft. |
 | 2 | Revision 2: validation runs send heartbeats, last at most 1800 s and hold the slot from the accepted POST; a worker lost after missed heartbeats needs reconciliation; the factory pool counts committed amounts; validation IDs are scoped to a case and checked first; new warning `budget_below_item_minimum`; an overrun after finish keeps the outcome; `quantity_exceeds_source` counts distinct defects; one candidate runs at a time; criteria publish failure codes; input normalization and exact phrase matching; `not_ready` removed and identifiers opaque; scenario table, `wrong-failure` scenario, `cancel-midway` pause and test-control shapes. |
+
+**Revision 2 clarifications.** These settle open wording points of revision 2 without a new revision; one of them adds a list rule to the schema:
+
+1. Capabilities and interpretation count the catalog entries available over the planned window, [now, now + `max_wall_clock_s`], by the host's existing window-based availability (`supported`, a source's `entries` and `criteria_ids`, eligible sources), and a declared pair with no entry available is unsupported with the host's availability reason (sections 4.2 and 6).
+2. `interpretation_sha256` covers the normalized input, the versions, the factory profile and the availability result for the planned window, not the raw time, so a changed profile or availability answers `interpretation_stale` (sections 6 and 6.1).
+3. `max_description_chars` counts Unicode code points after trimming (sections 4 and 5).
+4. A `202` start answers the current status, normally `queued` or `starting`, and `finished` with a failure only when the worker's reservation or launch failed after the request was recorded (section 7, step 7).
+5. A `requested_criteria_passed` event's `criterion_ids` are the criteria the candidate demonstrated, which become its case's `criteria_met`: at least one, each once (section 8.4). The schema refuses an empty or repeated list.
+6. `type_totals` lists each requested bug type exactly once, at least 1, and may list an unrequested type only with 0 (sections 5, 6 and 8). The schema already checks this.
+7. A validation run's `cost_microusd` is its cost recorded when it completed; a run that finished `error` with uncertain spend may keep `null`, reconciliation updates the request's budget, not the run, and `null` stays distinct from `0` (section 11).
+8. A test operation's `reserved_microusd` is its original reservation in every state; the request's `reserved_microusd` sums only the operations still holding theirs (section 15.1).
+9. The completed example's archives are prepared by the package lane, published through the existing release route and served by the service at `GET /api/factory/example` (section 15).
