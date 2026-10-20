@@ -675,6 +675,51 @@ describe("runRequest: stops and limits", () => {
     expect(w.ledger.calls.filter((call) => call.call === "reserveCandidate")).toHaveLength(1);
   });
 
+  it.each([
+    ["a stop is recorded", (w: World): void => {
+      w.stop.requested = true;
+    }, "cancelled_by_user", "cancelled"],
+    ["the clock crosses the deadline", (w: World): void => {
+      w.clock.now = Date.parse(CREATED_AT) + w.deps.request.interpretation.limits.max_wall_clock_s * 1000;
+    }, "time_limit", "stopped_at_limit"],
+    // The read shows the halt, which keeps its precedence over the stop.
+    ["the ledger halts and a stop is recorded", (w: World): void => {
+      w.ledger.halted = true;
+      w.stop.requested = true;
+    }, "operational_error", "operational_error"],
+  ] as const)("selects and reserves no next candidate when %s while the loop's ledger read before it is pending", async (_name, during, stopCode, outcome) => {
+    const registry = taskReportRegistry([1, 2].map((n) => ({ host_id: "task-report" as const, bug_type_id: "concurrency" as const, n, criteria: [LOST] })));
+    const w = world({ input: concurrencyOnly(2), registry });
+    // After the first candidate settles, the first read is its settlement's and the second the loop's
+    // read before the next candidate (a new defect): the source arrives while that read is pending.
+    let readsSinceSettled: number | null = null;
+    ledgerWith(w, {
+      settleCandidate: async (input) => {
+        await w.ledger.settleCandidate(input);
+        readsSinceSettled ??= 0;
+      },
+      status: () => {
+        if (readsSinceSettled !== null) {
+          readsSinceSettled += 1;
+          if (readsSinceSettled === 2) during(w);
+        }
+        return w.ledger.status();
+      },
+    });
+    const result = await w.run();
+    expect(readsSinceSettled).toBeGreaterThanOrEqual(2);
+    expect(result).toMatchObject({ outcome, stop_code: stopCode, needs_reconciliation: false, delivered: 1 });
+    expect(types(w.events.events).filter((type) => type === "candidate_selected")).toHaveLength(1);
+    expect(w.qualified).toEqual(["synthetic-task-report-concurrency-01"]);
+    expect(w.ledger.calls.map((call) => call.call)).toEqual(["reserveCandidate", "settleCandidate", "settleWorker"]);
+    expect(w.events.events.filter((event) => event.type === "request_finished").map((event) => event.data)).toEqual([{ outcome, stop_code: stopCode }]);
+    expect(w.ledger.closedWith).toBe(stopCode);
+    const status = w.status();
+    expect(validateContract("RequestStatus", status)).toEqual([]);
+    expect(status.candidates.map((c) => [c.entry_id, c.stage])).toEqual([["synthetic-task-report-concurrency-01", "qualified"]]);
+    expect(status.limits.candidates_started).toBe(1);
+  });
+
   it("still selects and skips a duplicate defect at the candidate limit, then stops candidate_limit before a new defect", async () => {
     const registry = taskReportRegistry([
       { host_id: "task-report", bug_type_id: "concurrency", n: 1, criteria: [LOST] },
@@ -892,13 +937,15 @@ describe("runRequest: internal failures and admission edges", () => {
   it("ends the candidate incomplete, settles it and finishes operational_error when the stop check fails between copies", async () => {
     const w = world({ input: concurrencyOnly(1) });
     let calls = 0;
+    // The loop's two checks (before and after its ledger read) and the one before the first copy answer; the one before the second copy fails.
     w.deps.stopRequested = () => {
       calls += 1;
-      return calls >= 3 ? Promise.reject(new Error("connection reset")) : Promise.resolve(false);
+      return calls >= 4 ? Promise.reject(new Error("connection reset")) : Promise.resolve(false);
     };
     const result = await w.run();
     expect(result).toMatchObject({ outcome: "operational_error", stop_code: "operational_error", needs_reconciliation: false });
     expect(result.notes).toEqual([expect.stringContaining("connection reset")]);
+    expect(types(w.events.events).filter((type) => type === "check_finished")).toHaveLength(2);
     expect(ended(w.events.events)).toEqual([{ type: "candidate_incomplete", reason: "incomplete_run" }]);
     expect(w.ledger.calls.map((call) => call.call)).toEqual(["reserveCandidate", "settleCandidate", "settleWorker"]);
     expect(validateContract("RequestStatus", w.status())).toEqual([]);
@@ -907,14 +954,15 @@ describe("runRequest: internal failures and admission edges", () => {
   it("ends the candidate incomplete, settles it and finishes operational_error when the stop check after its last copy fails", async () => {
     const w = world({ input: concurrencyOnly(1) });
     let calls = 0;
-    // The loop's check and one before each of the three copies answer; the check once the copies ran fails.
+    // The loop's two checks and one before each of the three copies answer; the check once the copies ran fails.
     w.deps.stopRequested = () => {
       calls += 1;
-      return calls >= 5 ? Promise.reject(new Error("connection reset")) : Promise.resolve(false);
+      return calls >= 6 ? Promise.reject(new Error("connection reset")) : Promise.resolve(false);
     };
     const result = await w.run();
     expect(result).toMatchObject({ outcome: "operational_error", stop_code: "operational_error", needs_reconciliation: false, delivered: 0 });
     expect(result.notes).toEqual([expect.stringContaining("connection reset")]);
+    expect(types(w.events.events).filter((type) => type === "check_finished")).toHaveLength(6);
     expect(ended(w.events.events)).toEqual([{ type: "candidate_incomplete", reason: "incomplete_run" }]);
     expect(types(w.events.events)).not.toContain("case_delivered");
     expect(w.ledger.calls.map((call) => call.call)).toEqual(["reserveCandidate", "settleCandidate", "settleWorker"]);

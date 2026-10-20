@@ -3,7 +3,8 @@
 // evidence storage and the clock. One candidate runs at a time; an uncertain operation is never retried.
 //
 // For each candidate, in assignment order across the selected hosts: the stop, fill, deadline, sources
-// and candidate-limit checks, then the ledger's halt and overrun check, `candidate_selected`, the
+// and candidate-limit checks, then the ledger's halt and overrun check, the stop and deadline checks
+// again (either can arrive while that read is pending), `candidate_selected`, the
 // duplicate-defect skip, budget admission (`no_budget_for_candidate`), the reservation, export
 // verification through the harness (with the accounting, stop and time check before every copy and
 // `check_finished` after every copy state), the verdict, the accounting and stop check before a
@@ -354,10 +355,10 @@ class RequestRun {
     const budgetSkipped = new Set<string>();
     let started = 0;
     /**
-     * A stop or the deadline found at the top of the loop, where a halt or an overrun the run's latest
-     * ledger read showed comes first when it would stop the same next candidate. A halt that no next
-     * candidate would meet (every item filled, no entry left, the candidate limit reached) stops no work
-     * and keeps their code.
+     * A stop or the deadline found at the top of the loop or right after its ledger read, where a halt
+     * or an overrun the run's latest ledger read showed comes first when it would stop the same next
+     * candidate. A halt that no next candidate would meet (every item filled, no entry left, the
+     * candidate limit reached) stops no work and keeps their code.
      */
     const loopStop = (code: "cancelled_by_user" | "time_limit"): StopCode => {
       if (!this.latestReadStops) return code;
@@ -379,6 +380,9 @@ class RequestRun {
       // A halt or an overrun stops the work still to do, so it is read once a next candidate exists.
       const status = await this.readLedger();
       if (ledgerStop(status) !== null) return this.finish("operational_error");
+      // A stop recorded or the deadline reached while that read was pending stops the candidate before it is selected.
+      if (await deps.stopRequested()) return this.finish(loopStop("cancelled_by_user"));
+      if (deps.now().getTime() >= this.deadlineMs) return this.finish(loopStop("time_limit"));
       tried.add(next.candidate_id);
       const selection = candidateSelected(next, this.at());
       this.current = { candidate: next, selection, selected: false, ended: false, reserved: false, reservationRecorded: false, settled: false };
