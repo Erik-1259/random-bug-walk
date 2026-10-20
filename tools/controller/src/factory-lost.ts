@@ -45,7 +45,7 @@ import {
 import type { FactoryOperation } from "./factory-ledger.ts";
 import { FACTORY_PROFILE } from "./factory-profile.ts";
 import type { FactoryProfile } from "./factory-profile.ts";
-import type { FactoryEventBuilders, FactoryIdentity, FactoryLedger, FactoryRecords, FactoryRequestRecord, FactoryValidationRecord, StoredFactoryEvent, ValidationEventInput, WorkerSandboxSdk } from "./factory-ports.ts";
+import type { FactoryEventBuilders, FactoryIdentity, FactoryLedger, FactoryRecords, FactoryRequestRecord, FactoryValidationRecord, StoredFactoryEvent, ValidationEventInput, WorkerSandboxInstance, WorkerSandboxSdk } from "./factory-ports.ts";
 
 export interface LostDeps {
   ledger: FactoryLedger;
@@ -177,16 +177,27 @@ async function finalizeRequest(deps: LostDeps, requestId: string): Promise<LostO
   return { kind: "finalized", slot_held: after.held };
 }
 
-/** Stops the sandbox unless it no longer runs, then confirms by status, within the runner's bound, that it stopped. */
+/**
+ * Stops the sandbox unless it no longer runs or is already stopping (an overlapping call or its
+ * worker stopped it), then confirms by status, within the copy runner's bound, that it stopped. A
+ * failed stop is logged and the status still decides, as in the copy runner.
+ */
 async function confirmedStopped(deps: LostDeps, name: string): Promise<boolean> {
   const errorName = (error: unknown): string => (error instanceof Error ? error.name : "non-error");
+  let found: WorkerSandboxInstance | null;
   try {
-    const found = await deps.sandbox.get(name);
-    if (found === null || STOPPED_STATUSES.has(found.status)) return true;
-    await found.stop();
+    found = await deps.sandbox.get(name);
   } catch (error) {
     deps.log(`factory: ${name} could not be confirmed stopped (${errorName(error)})`);
     return false;
+  }
+  if (found === null || STOPPED_STATUSES.has(found.status)) return true;
+  if (found.status !== "stopping") {
+    try {
+      await found.stop();
+    } catch (error) {
+      deps.log(`factory: the stop of ${name} failed (${errorName(error)}); checking its status`);
+    }
   }
   return stoppedByStatus(
     () => deps.sandbox.get(name),

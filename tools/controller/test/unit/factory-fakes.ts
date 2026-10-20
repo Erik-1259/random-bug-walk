@@ -337,6 +337,7 @@ export class FakeInstance implements WorkerSandboxInstance {
       this.stoppingLeft = this.sdk.stoppingReads;
       this.status = this.stoppingLeft > 0 ? "stopping" : "stopped";
     }
+    if (this.sdk.stopAnswerLost) throw new Error("synthetic: the stop's answer was lost");
     return undefined;
   }
 }
@@ -361,6 +362,8 @@ export class FakeWorkerSandbox implements WorkerSandboxSdk {
   stopTakesEffect = true;
   /** Status reads after a stop that still answer stopping, as the provider's asynchronous shutdown does. */
   stoppingReads = 0;
+  /** When set, a stop takes effect but its call throws, as a lost response does. */
+  stopAnswerLost = false;
   /** Held creates wait for this before answering. */
   gate: Promise<void> | null = null;
 

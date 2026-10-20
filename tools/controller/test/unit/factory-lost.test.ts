@@ -355,6 +355,32 @@ describe("finalizeLostWorker for a validation run", () => {
     expect(finished?.data).toMatchObject({ result: "error", cost_microusd: null });
   });
 
+  it("confirms by status, without stopping it again, a sandbox an overlapping call already left stopping", async () => {
+    const { validationId } = await runningValidation();
+    const instance = w.sandbox.sandboxes.get(validationSandboxName(w.identity.validationRoot(validationId)));
+    if (instance === undefined) throw new Error("synthetic: no validation sandbox");
+    instance.status = "stopping";
+    instance.stoppingLeft = 2;
+    // A second stop of a sandbox already stopping would fail.
+    w.sandbox.failStop = true;
+    w.clock.advance(181_000);
+    const stops = w.sandbox.count("stop");
+    expect(await finalizeLostWorker(lostDeps(), { validation_id: validationId })).toEqual({ kind: "finalized", slot_held: false });
+    expect(w.sandbox.count("stop") - stops).toBe(0);
+    expect(sleeps).toEqual([2000]);
+    expect(await slotHolder(w)).toBeNull();
+  });
+
+  it("still confirms the stop by status when the stop call fails after the provider accepted it", async () => {
+    const { validationId } = await runningValidation();
+    w.sandbox.stopAnswerLost = true;
+    w.sandbox.stoppingReads = 1;
+    w.clock.advance(181_000);
+    expect(await finalizeLostWorker(lostDeps(), { validation_id: validationId })).toEqual({ kind: "finalized", slot_held: false });
+    expect(sleeps).toEqual([2000]);
+    expect(await slotHolder(w)).toBeNull();
+  });
+
   it("releases the slot of a finished run whose worker settled but stopped before releasing it", async () => {
     const { validationId, operationId } = await runningValidation();
     const root = w.identity.validationRoot(validationId);
