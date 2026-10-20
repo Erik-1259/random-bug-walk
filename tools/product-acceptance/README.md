@@ -148,7 +148,11 @@ reservation is pinned to the test-control amount. Operation call names and
 provider create call names are unique in the deterministic scenarios, so one
 create cannot justify duplicate charges. For finished named scenarios, the
 sum of original candidate reservations must match the pinned host worst cases
-for every non-skipped candidate. Candidate execution requires a worker create
+for every non-skipped candidate. The published service test-mode profile requires
+three distinct copy operations per executed candidate: the aggregate row count
+must be three times the non-skipped candidate count, before and after
+reconciliation. Operation IDs and call names remain unique. The uncertain-provider
+exception changes which rows launched, never the required number of originals. Candidate execution requires a worker create
 and at least one candidate-copy create per executed candidate in aggregate;
 ordinary execution requires creates for all copy reservations. Uncertain-provider
 may release never-launched copies at zero, including after reconciliation.

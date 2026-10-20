@@ -30,9 +30,10 @@ export function checkEvidence(evidence: TestEvidence, status: RequestStatus): vo
     }
   }
   if (status.state === "finished") {
-    // These named controls reserve a host's full candidate worst case before
-    // execution. Skipped entries do not execute. Evidence has no structured
-    // copy-to-candidate link, so this proves totals and launch bounds only.
+    // The pinned test-mode profile reserves three distinct copies and the host's
+    // full candidate worst case before execution. Skipped entries do not execute.
+    // Evidence has no structured copy-to-candidate link, so this proves aggregate
+    // cardinality, totals and launch bounds, not individual copy assignments.
     const executed = status.candidates.filter(candidate => candidate.stage !== "skipped");
     const expectedOriginal = executed.reduce((sum, candidate) => {
       assert(status.interpretation.input.hosts.includes(candidate.host_id), "unselected candidate host in execution evidence");
@@ -40,6 +41,7 @@ export function checkEvidence(evidence: TestEvidence, status: RequestStatus): vo
       return sum + worst;
     }, 0);
     const copies = evidence.operations.filter(op => op.kind === "candidate_copy");
+    assert.equal(copies.length, 3 * executed.length, "candidate copy count differs from executed candidates");
     assert.equal(copies.reduce((sum, op) => sum + op.reserved_microusd, 0), expectedOriginal,
       "candidate originals differ from executed host worst cases");
     const launched = copies.filter(op => calls.includes(op.call_name));

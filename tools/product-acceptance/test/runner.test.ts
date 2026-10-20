@@ -371,7 +371,7 @@ it.each(["rekeyed", "collapsed", "redistributed", "rewritten-provider"])("reject
   if (change === "rewritten-provider") {
     const call = objects(evidence.provider_calls)[0]; assert(call); call.at = "2026-10-20T20:00:00.000Z";
   }
-  await expect(runReconciliation(backend, before)).rejects.toThrow("reconciliation changed");
+  await expect(runReconciliation(backend, before)).rejects.toThrow(change === "collapsed" ? "candidate copy count differs" : "reconciliation changed");
 });
 it.each(["candidates", "funnel", "limits"])("rejects changed %s after reconciliation", async (field) => {
   const { runReconciliation } = await import("../src/runner.ts");

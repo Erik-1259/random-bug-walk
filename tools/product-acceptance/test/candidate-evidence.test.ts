@@ -116,3 +116,44 @@ it("rejects an unselected candidate host with matching higher reservations", () 
   account(evidence, status);
   expect(() => { checkEvidence(evidence, status); }).toThrow(/unselected candidate host/);
 });
+
+it.each(["fulfilled", "zero-result", "duplicate-defect", "partial-budget", "cancelled", "operational-error"])("rejects collapsed copy identities in %s with unchanged original totals", name => {
+  const { evidence, status } = scenario(name);
+  const copies = evidence.operations.filter(op => op.kind === "candidate_copy").slice(0, 3);
+  const first = copies[0]; assert(first);
+  first.reserved_microusd = copies.reduce((sum, op) => sum + op.reserved_microusd, 0);
+  if (first.settled_microusd !== null) first.settled_microusd = first.reserved_microusd;
+  for (const op of copies.slice(1)) remove(evidence, op);
+  account(evidence, status);
+  expect(() => { checkEvidence(evidence, status); }).toThrow("candidate copy count differs from executed candidates");
+});
+it.each([false, true])("rejects collapsed uncertain-provider copies after reconciliation=%s", reconciled => {
+  const { evidence, status } = scenario("operational-error", true);
+  const copies = evidence.operations.filter(op => op.kind === "candidate_copy");
+  const launched = copies.find(op => op.settled_microusd === null); assert(launched);
+  launched.reserved_microusd = copies.reduce((sum, op) => sum + op.reserved_microusd, 0);
+  for (const op of copies.filter(op => op !== launched)) remove(evidence, op);
+  if (reconciled) {
+    launched.state = "reconciled"; launched.settled_microusd = launched.reserved_microusd;
+    status.attention = null; evidence.slot.holder_request_id = null;
+  }
+  account(evidence, status);
+  expect(() => { checkEvidence(evidence, status); }).toThrow("candidate copy count differs from executed candidates");
+});
+it("rejects extra copy identities with conserved original reservations and settlements", () => {
+  const { evidence, status } = scenario("fulfilled");
+  const first = evidence.operations.find(op => op.kind === "candidate_copy"); assert(first);
+  first.reserved_microusd /= 2; first.settled_microusd = first.reserved_microusd;
+  const extra = { ...first, operation_id: "bc".repeat(32), call_name: "synthetic-split-copy" };
+  evidence.operations.push(extra);
+  evidence.provider_calls.push({ call_name: extra.call_name, provider: "sandbox", action: "create", at: status.created_at });
+  account(evidence, status);
+  expect(() => { checkEvidence(evidence, status); }).toThrow("candidate copy count differs from executed candidates");
+});
+it.each(["operation_id", "call_name"] as const)("rejects repeated candidate %s with the full row count", field => {
+  const { evidence, status } = scenario("fulfilled");
+  const copies = evidence.operations.filter(op => op.kind === "candidate_copy");
+  const first = copies[0]; const second = copies[1]; assert(first && second);
+  second[field] = first[field];
+  expect(() => { checkEvidence(evidence, status); }).toThrow(/duplicate (ledger operation|operation call)/);
+});
