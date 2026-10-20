@@ -17,10 +17,13 @@
 //   reservation refused as halted ends its candidate the same way; the request finishes
 //   `operational_error`. At every boundary the user's stop and the deadline are checked first and keep
 //   their codes, unless the next rule applies.
-// - An overrun finishes `operational_error`, ahead of a fill, a stop or a limit: found at a candidate's
-//   settlement, the loop finishes with that code at once (so the budget closes with it); found once
-//   the worker settled, the finish turns the decided code into it. A halt seen only once no work is
-//   left stopped nothing and keeps the outcome.
+// - An overrun finishes `operational_error`, ahead of a fill, a stop or a limit. Every ledger read while
+//   the request runs (a copy's, a candidate's settlement, the worker's) checks for one, and once seen it
+//   stays seen, even when a later read no longer shows it (a ledger that releases a candidate's unused
+//   copy reservations when it settles): at the candidate's settlement the loop finishes with that code
+//   at once (so the budget closes with it), and the finish turns the decided code into it.
+// - A halt seen only once no work is left (after the last needed case or the last candidate settled)
+//   stopped nothing and keeps the outcome, as contract revision 2 keeps it for an overrun after the finish.
 // - An uncertain outcome (a rejected harness, reserve or settle call) finishes `needs_reconciliation`
 //   ahead of both; its reservation stays held and is never retried.
 import { canonicalDigest } from "@rbw/schema";
@@ -113,6 +116,8 @@ class RequestRun {
   private readonly deadlineMs: number;
   private lastAmounts: Amounts | null = null;
   private delivered = 0;
+  /** A ledger read while the request ran showed an overrun; it stays set (contract section 8.5). */
+  private overrunSeen = false;
   /** An uncertain outcome happened: its spend stays held for an operator, and the request finishes needs_reconciliation. */
   private uncertain = false;
   /** The needs_reconciliation attention event is recorded. */
@@ -147,13 +152,20 @@ class RequestRun {
     if (current !== null && event.candidate_id === current.candidate.candidate_id && (ENDS_CANDIDATE.has(event.type) || event.type === "case_delivered")) current.ended = true;
   }
 
+  /** Every ledger read of the run: one that shows an overrun marks the run for good. */
+  private async readLedger(): Promise<LedgerStatus> {
+    const status = await this.deps.ledger.status();
+    if (overrun(status)) this.overrunSeen = true;
+    return status;
+  }
+
   /**
    * Appends `budget_updated` when the ledger's amounts changed since the last one this run saw, or
    * always with `always`: a candidate's reservation is recorded even when a ledger that reserves per
    * copy changed nothing yet, because the status counts a candidate as started from that event.
    */
   private async budgetChanged(key: string, subject: string, always = false): Promise<LedgerStatus> {
-    const status = await this.deps.ledger.status();
+    const status = await this.readLedger();
     const amounts = { reserved_microusd: status.reserved_microusd, spent_microusd: status.spent_microusd };
     const before = this.lastAmounts;
     if (!always && before !== null && before.reserved_microusd === amounts.reserved_microusd && before.spent_microusd === amounts.spent_microusd) return status;
@@ -180,9 +192,10 @@ class RequestRun {
    * the request's accounting says otherwise, in this order:
    * - an uncertain outcome, including a rejected worker settlement (whose reservation then stays
    *   held, never retried), finishes `needs_reconciliation`;
-   * - an overrun the ledger shows once the worker settled finishes `operational_error` (contract
-   *   section 8.5: an overrun found while the request runs, from a copy, a candidate's settlement or
-   *   the worker's own), ahead of a fill, a stop or a limit;
+   * - an overrun any ledger read of the run showed, including the read once the worker settled,
+   *   finishes `operational_error` (contract section 8.5: an overrun found while the request runs, from
+   *   a copy, a candidate's settlement or the worker's own), ahead of a fill, a stop or a limit, even
+   *   when the last read no longer shows it;
    * - a failed ledger read or budget event after the worker settled finishes `operational_error`,
    *   since the request's accounting could not be confirmed.
    * settleWorker closes the budget with the decided code; only an overrun of the worker's own
@@ -198,11 +211,12 @@ class RequestRun {
       await this.raiseReconciliation();
     }
     try {
-      if (overrun(await this.budgetChanged("run:worker-settled", "the worker"))) stopCode = "operational_error";
+      await this.budgetChanged("run:worker-settled", "the worker");
     } catch (error) {
       this.note("recording the budget after the worker settled", error);
       stopCode = "operational_error";
     }
+    if (this.overrunSeen) stopCode = "operational_error";
     if (this.uncertain) stopCode = "needs_reconciliation";
     await this.append(requestFinished(stopCode, this.at()));
     return { outcome: OUTCOME_OF[stopCode], stop_code: stopCode, needs_reconciliation: this.uncertain, delivered: this.delivered, notes: [...this.notes] };
@@ -261,7 +275,7 @@ class RequestRun {
 
   private async loop(): Promise<RunResult> {
     const { deps } = this;
-    const start = await deps.ledger.status();
+    const start = await this.readLedger();
     this.lastAmounts = { reserved_microusd: start.reserved_microusd, spent_microusd: start.spent_microusd };
     let planned: PlannedCandidate[];
     try {
@@ -291,7 +305,7 @@ class RequestRun {
       const duplicateOf = defects.get(next.defect_id);
       if (duplicateOf === undefined && started >= deps.request.interpretation.limits.max_candidates) return this.finish("candidate_limit");
       // A halt or an overrun stops the work still to do, so it is read once a next candidate exists.
-      const status = await deps.ledger.status();
+      const status = await this.readLedger();
       if (ledgerStop(status) !== null) return this.finish("operational_error");
       tried.add(next.candidate_id);
       const selection = candidateSelected(next, this.at());
@@ -347,11 +361,11 @@ class RequestRun {
         return this.finishUncertain();
       }
       this.current.settled = true;
-      // An overrun this settlement shows finishes the request operational_error now, ahead of a fill, a
-      // stop or the deadline, so the worker's settlement closes the budget with that code; finish()
-      // checks again once the worker settled.
-      const settled = await this.budgetChanged(`cand:${next.candidate_id}:settled`, "the finished candidate");
-      if (overrun(settled)) return this.finish("operational_error");
+      // An overrun seen at any read so far (a copy's, this settlement's) finishes the request
+      // operational_error now, ahead of a fill, a stop or the deadline, so the worker's settlement closes
+      // the budget with that code; finish() checks again once the worker settled.
+      await this.budgetChanged(`cand:${next.candidate_id}:settled`, "the finished candidate");
+      if (this.overrunSeen) return this.finish("operational_error");
       if (outcome.kind === "stop") return this.finish(outcome.stop_code);
       if (outcome.kind === "failed") return this.finish("operational_error");
     }
@@ -405,7 +419,8 @@ class RequestRun {
       }
     };
     // Per copy: the ledger read (settlement happens per copy inside the runner, or at the candidate's end).
-    // A halt or an overrun it finds ends the candidate at the next copy boundary, as a stop does.
+    // A halt or an overrun it finds ends the candidate at the next copy boundary, as a stop does; an
+    // overrun also stays seen, so the candidate's settlement finishes operational_error whatever stopped it.
     const onCopy = async (): Promise<void> => {
       if (this.hookError !== null) return;
       try {

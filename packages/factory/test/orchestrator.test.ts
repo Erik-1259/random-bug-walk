@@ -445,6 +445,45 @@ describe("runRequest: budget", () => {
     expect(w.status().budget.overrun).toBe(true);
     expect(w.ledger.closedWith).toBe("operational_error");
   });
+
+  it.each([
+    ["a recorded stop", (w: World): void => {
+      w.stop.requested = true;
+    }],
+    ["the deadline", (w: World): void => {
+      w.clock.now = Date.parse(CREATED_AT) + w.deps.request.interpretation.limits.max_wall_clock_s * 1000;
+    }],
+    ["nothing else", (): void => undefined],
+  ])("finishes operational_error when a copy's overrun meets %s at the next copy boundary, though releasing the unused reservations ends the overrun", async (_name, boundary) => {
+    // A ledger that reserves the candidate's three copies at selection and releases the unused ones when
+    // it settles: the first copy reports $1.15 against its $0.10 worst case, so committed ($0.20 worker,
+    // $0.20 for the two copies left, $1.15 spent) exceeds the $1.50 budget until that release.
+    const w = world({ input: concurrencyOnly(1, 1_500_000), ledger: { candidateCost: () => 0 } });
+    const inner = w.deps.qualify;
+    let copies = 0;
+    w.deps.qualify = (input) =>
+      inner({
+        ...input,
+        onCopy: async (record) => {
+          copies += 1;
+          if (copies === 1) {
+            const key = [...w.ledger.reservations.keys()].find((name) => name.startsWith("candidate:"));
+            if (key === undefined) throw new Error("the candidate holds no reservation");
+            w.ledger.reservations.set(key, 200_000);
+            w.ledger.spent += 1_150_000;
+            boundary(w);
+          }
+          await input.onCopy(record);
+        },
+      });
+    const result = await w.run();
+    expect(copies).toBe(1);
+    expect(result).toMatchObject({ outcome: "operational_error", stop_code: "operational_error", needs_reconciliation: false, delivered: 0 });
+    expect(ended(w.events.events)).toEqual([{ type: "candidate_incomplete", reason: "stopped" }]);
+    expect(finished(w.events.events)).toEqual({ outcome: "operational_error", stop_code: "operational_error" });
+    expect(w.ledger.closedWith).toBe("operational_error");
+    expect(w.status().budget.overrun).toBe(false);
+  });
 });
 
 describe("runRequest: stops and limits", () => {
