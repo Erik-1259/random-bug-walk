@@ -35,6 +35,6 @@ A planted change often leaves such traces, because the surrounding code still re
 
 - **Class-level rules (race class only).** `packages/shapes/rules/race.class.yml` matches the race class by structure, and `findSites` (`packages/shapes/src/classes.ts`) lists every site in a host tree that matches it. The time-zone shape has only its site rule.
 - **An automated static screen.** `packages/screen`: a bounded, metered model probe per planted candidate that tries to locate the bug from the source and the symptom alone.
-- **A candidate pipeline.** `tools/candidates`: lists the sites a class rule matches, plants each in its own temporary copy, screens each, and ranks the survivors. Its symptom templates cover the race class only.
+- **A candidate pipeline.** `tools/candidates`: lists the sites a class rule matches and plants each. Its default route, `behavioral-qualification/v1`, plants in memory and records the planted candidates for behavioral qualification (checks on clean, buggy and reference-fixed copies, which run outside the tool), with no copy, no screen and no spend, and marks each candidate's difficulty as not assessed. The `static-screen/v1` route (`--route static-screen/v1`) plants each in its own temporary copy, screens each, and ranks the survivors; its symptom templates cover the race class only.
 
 No admitted task has come from these tools so far.
