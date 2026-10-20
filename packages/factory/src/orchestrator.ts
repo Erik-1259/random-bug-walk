@@ -96,7 +96,10 @@ class RequestRun {
   private readonly deadlineMs: number;
   private lastAmounts: Amounts | null = null;
   private delivered = 0;
-  private reconciliation = false;
+  /** An uncertain outcome happened: its spend stays held for an operator, and the request finishes needs_reconciliation. */
+  private uncertain = false;
+  /** The needs_reconciliation attention event is recorded. */
+  private attentionRaised = false;
   private hookError: { error: unknown } | null = null;
   private readonly notes: string[] = [];
   /**
@@ -137,10 +140,12 @@ class RequestRun {
     return status;
   }
 
+  /** Marks the run uncertain and records the attention event once; a retry after a failed append appends it again. */
   private async raiseReconciliation(): Promise<void> {
-    if (this.reconciliation) return;
-    this.reconciliation = true;
+    this.uncertain = true;
+    if (this.attentionRaised) return;
     await this.append(attention("needs_reconciliation", this.at()));
+    this.attentionRaised = true;
   }
 
   private async finish(stopCode: StopCode): Promise<RunResult> {
@@ -154,7 +159,7 @@ class RequestRun {
     }
     await this.budgetChanged("run:worker-settled", "the worker");
     await this.append(requestFinished(stopCode, this.at()));
-    return { outcome: OUTCOME_OF[stopCode], stop_code: stopCode, needs_reconciliation: this.reconciliation, delivered: this.delivered, notes: [...this.notes] };
+    return { outcome: OUTCOME_OF[stopCode], stop_code: stopCode, needs_reconciliation: this.uncertain, delivered: this.delivered, notes: [...this.notes] };
   }
 
   private async finishUncertain(): Promise<RunResult> {
@@ -182,9 +187,9 @@ class RequestRun {
   }
 
   /**
-   * Runs the loop. An unexpected failure (a port read, a hook, an adapter) ends the candidate in flight
-   * as incomplete and finishes the request: `needs_reconciliation` while that candidate's reservation is
-   * held, otherwise `operational_error`. A failure while finishing, or a store that refuses the recovery's
+   * Runs the loop. An unexpected failure (a port read, a hook, an adapter, an append) ends the candidate
+   * in flight as incomplete and finishes the request: `needs_reconciliation` once an outcome was
+   * uncertain or while that candidate's reservation is held, otherwise `operational_error`. A failure while finishing, or a store that refuses the recovery's
    * events, propagates: the lost-worker finish then applies.
    */
   async run(): Promise<RunResult> {
@@ -200,7 +205,7 @@ class RequestRun {
         if (!current.selected) await this.append(current.selection);
         await this.append(candidateEnded(current.candidate, "incomplete_run", this.at(), "Incomplete: the worker hit an internal error during this candidate. It is not reproduction and was not retried."));
       }
-      if (current !== null && current.reserved && !current.settled) return this.finishUncertain();
+      if (this.uncertain || (current !== null && current.reserved && !current.settled)) return this.finishUncertain();
       return this.finish("operational_error");
     }
   }

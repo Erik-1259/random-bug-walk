@@ -5,6 +5,7 @@ import type { RequestLedger } from "../src/ports.ts";
 import { FakeHostAdapter, TEST_PROFILE, syntheticEntry, syntheticSha } from "../src/testing/catalog.ts";
 import { UncertainOutcomeError, qualifyingPlan } from "../src/testing/harness.ts";
 import { fixtureInput, world } from "./orchestrator-support.ts";
+import type { World } from "./orchestrator-support.ts";
 
 const LOST = "concurrency.lost-acknowledged-change";
 const LOST_CODE = "acknowledged_completion_not_counted";
@@ -20,6 +21,31 @@ function ended(events: readonly Event[]): { type: string; reason: string }[] {
 function finished(events: readonly Event[]): unknown {
   const last = events.at(-1);
   return last?.type === "request_finished" ? last.data : null;
+}
+
+/** Routes the loop's ledger calls to the world's in-memory ledger, except the overridden ones. */
+function ledgerWith(w: World, overrides: Partial<RequestLedger>): void {
+  const ledger = w.ledger;
+  w.deps.ledger = {
+    status: () => ledger.status(),
+    reserveCandidate: (input) => ledger.reserveCandidate(input),
+    settleCandidate: (input) => ledger.settleCandidate(input),
+    settleWorker: (input) => ledger.settleWorker(input),
+    ...overrides,
+  };
+}
+
+/** Makes the first append of an event of this type fail without committing. */
+function failFirstAppend(w: World, type: Event["type"]): void {
+  const sink = w.deps.events;
+  let failed = false;
+  w.deps.events = {
+    append: (event) => {
+      if (failed || event.type !== type) return sink.append(event);
+      failed = true;
+      return Promise.reject(new Error("connection reset"));
+    },
+  };
 }
 
 function taskReportRegistry(entries: Parameters<typeof syntheticEntry>[0][]): FakeHostAdapter[] {
@@ -377,6 +403,25 @@ describe("runRequest: uncertain outcomes", () => {
     const result = await w.run();
     expect(result).toMatchObject({ stop_code: "needs_reconciliation", needs_reconciliation: true, delivered: 1 });
     expect(w.status().attention?.code).toBe("needs_reconciliation");
+  });
+
+  it("records the needs_reconciliation attention on the retry when its first append fails", async () => {
+    const w = world({ input: concurrencyOnly(1), plan: () => ({ states: qualifyingPlan([LOST_CODE]), uncertain_at_copy: 1 }) });
+    failFirstAppend(w, "attention");
+    const result = await w.run();
+    expect(result).toMatchObject({ outcome: "operational_error", stop_code: "needs_reconciliation", needs_reconciliation: true });
+    expect(w.events.events.filter((event) => event.type === "attention").map((event) => event.data)).toEqual([{ code: "needs_reconciliation" }]);
+    expect(w.status().attention?.code).toBe("needs_reconciliation");
+  });
+
+  it("finishes needs_reconciliation after an uncertain reservation even when the attention's first append fails", async () => {
+    const w = world({ input: concurrencyOnly(1) });
+    ledgerWith(w, { reserveCandidate: () => Promise.reject(new Error("timeout")) });
+    failFirstAppend(w, "attention");
+    const result = await w.run();
+    expect(result).toMatchObject({ outcome: "operational_error", stop_code: "needs_reconciliation", needs_reconciliation: true });
+    expect(w.events.events.filter((event) => event.type === "attention").map((event) => event.data)).toEqual([{ code: "needs_reconciliation" }]);
+    expect(w.qualified).toEqual([]);
   });
 
   it("keeps the outcome but asks for reconciliation when the worker's settlement fails", async () => {
