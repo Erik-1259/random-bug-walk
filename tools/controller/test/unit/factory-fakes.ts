@@ -316,6 +316,8 @@ export class FakeRecords implements FactoryRecords {
 export class FakeInstance implements WorkerSandboxInstance {
   readonly name: string;
   status: WorkerSandboxStatus = "running";
+  /** Status reads left that answer stopping before this sandbox answers stopped. */
+  stoppingLeft = 0;
   readonly sdk: FakeWorkerSandbox;
   constructor(name: string, sdk: FakeWorkerSandbox) {
     this.name = name;
@@ -331,7 +333,10 @@ export class FakeInstance implements WorkerSandboxInstance {
     await roundTrip();
     this.sdk.calls.push({ action: "stop", name: this.name, detail: null });
     if (this.sdk.failStop) throw new Error("synthetic: the stop failed");
-    if (this.sdk.stopTakesEffect) this.status = "stopped";
+    if (this.sdk.stopTakesEffect) {
+      this.stoppingLeft = this.sdk.stoppingReads;
+      this.status = this.stoppingLeft > 0 ? "stopping" : "stopped";
+    }
     return undefined;
   }
 }
@@ -354,6 +359,8 @@ export class FakeWorkerSandbox implements WorkerSandboxSdk {
   failRun = false;
   failStop = false;
   stopTakesEffect = true;
+  /** Status reads after a stop that still answer stopping, as the provider's asynchronous shutdown does. */
+  stoppingReads = 0;
   /** Held creates wait for this before answering. */
   gate: Promise<void> | null = null;
 
@@ -372,7 +379,12 @@ export class FakeWorkerSandbox implements WorkerSandboxSdk {
   async get(name: string): Promise<WorkerSandboxInstance | null> {
     await roundTrip();
     this.calls.push({ action: "get", name, detail: null });
-    return this.sandboxes.get(name) ?? null;
+    const found = this.sandboxes.get(name) ?? null;
+    if (found?.status === "stopping") {
+      if (found.stoppingLeft > 0) found.stoppingLeft -= 1;
+      else found.status = "stopped";
+    }
+    return found;
   }
 
   count(action: "create" | "get" | "run" | "stop"): number {
@@ -480,6 +492,9 @@ export class FakeCopySandbox implements SandboxSdk {
   createError: Error | null = null;
   reportedImage: string | null = null;
   stopTakesEffect = true;
+  /** Status reads after a stop that still answer stopping, as the provider's asynchronous shutdown does. */
+  stoppingReads = 0;
+  readonly stoppingLeft = new Map<string, number>();
   /** The copy's command: writes results into the sandbox's file system and returns its exit code. */
   copy: (fs: Map<string, Buffer>) => number = (fs) => {
     fs.set("/workspace/results/record.json", Buffer.from('{"synthetic":true}\n'));
@@ -519,7 +534,10 @@ export class FakeCopySandbox implements SandboxSdk {
       },
       stop: () => {
         this.stops.push(params.name);
-        if (this.stopTakesEffect) instance.status = "stopped";
+        if (this.stopTakesEffect) {
+          this.stoppingLeft.set(params.name, this.stoppingReads);
+          instance.status = this.stoppingReads > 0 ? "stopping" : "stopped";
+        }
         return Promise.resolve(undefined);
       },
     };
@@ -528,7 +546,13 @@ export class FakeCopySandbox implements SandboxSdk {
   }
 
   get(name: string): Promise<SandboxInstance | null> {
-    return Promise.resolve(this.instances.get(name) ?? null);
+    const found = this.instances.get(name) ?? null;
+    if (found?.status === "stopping") {
+      const left = this.stoppingLeft.get(name) ?? 0;
+      if (left > 0) this.stoppingLeft.set(name, left - 1);
+      else found.status = "stopped";
+    }
+    return Promise.resolve(found);
   }
 
   readonly archive = new Map<string, Promise<Buffer>>();

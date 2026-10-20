@@ -11,7 +11,7 @@ import type { MeterContext } from "../../src/factory-meter.ts";
 import type { FactoryRequestRecord } from "../../src/factory-ports.ts";
 import { NO_IMAGE_DIGEST, RUN_ONCE_DIR, RUN_ONCE_SCRIPT, SandboxCopyUncertain, createSandboxCopyRunner, pinnedImage, sandboxVcpus } from "../../src/factory-sandbox-runner.ts";
 import type { SandboxRunnerDeps } from "../../src/factory-sandbox-runner.ts";
-import { CANDIDATE_A, CANDIDATE_B, COPY_APP as APP, COPY_CHECK as CHECK, COPY_DIGEST as DIGEST, FakeCopySandbox, PROTOCOL, acceptRequest, copyPlan, copyRoots, factoryWorld, operationState } from "./factory-fakes.ts";
+import { CANDIDATE_A, CANDIDATE_B, COPY_APP as APP, COPY_CHECK as CHECK, COPY_DIGEST as DIGEST, FakeCopySandbox, PROTOCOL, acceptRequest, copyPlan, copyRoots, factoryWorld, operationState, slotHolder } from "./factory-fakes.ts";
 import type { FactoryWorld } from "./factory-fakes.ts";
 
 let w: FactoryWorld;
@@ -195,6 +195,36 @@ describe("the sandbox copy runner", () => {
     await expect(createSandboxCopyRunner(deps()).run(plan(), roots)).rejects.toThrow(SandboxCopyUncertain);
     const status = await w.spend.operationStatus({ operation_id: opId() });
     expect(status.ok && [status.state, status.open_microusd > 0n]).toEqual(["uncertain", true]);
+  });
+
+  it("confirms a stop that passes through stopping within five status reads, two seconds apart, and settles the copy", async () => {
+    sdk.stoppingReads = 4;
+    const sleeps: number[] = [];
+    const sleep = (ms: number): Promise<void> => {
+      sleeps.push(ms);
+      return Promise.resolve();
+    };
+    const collected = await createSandboxCopyRunner(deps({ sleep })).run(plan(), roots);
+    expect(collected.outcome).toBe("ran");
+    expect(sleeps).toEqual([2000, 2000, 2000, 2000]);
+    expect(sdk.instances.get(sdk.creates[0]?.name ?? "")?.status).toBe("stopped");
+    expect(await operationState(w, opId())).toBe("reconciled");
+  });
+
+  it("rejects as uncertain when the sandbox still answers stopping after five status reads, keeping the reservation and the slot held", async () => {
+    sdk.stoppingReads = 5;
+    const sleeps: number[] = [];
+    const sleep = (ms: number): Promise<void> => {
+      sleeps.push(ms);
+      return Promise.resolve();
+    };
+    await expect(createSandboxCopyRunner(deps({ sleep })).run(plan(), roots)).rejects.toThrow(SandboxCopyUncertain);
+    expect(sleeps).toEqual([2000, 2000, 2000, 2000]);
+    expect(sdk.instances.get(sdk.creates[0]?.name ?? "")?.status).toBe("stopping");
+    expect(await operationState(w, opId())).toBe("uncertain");
+    const released = await w.spend.releaseSlot({ slot_key: "factory", root_execution_id: record.root, actor_role: "factory-worker", evidence: null, reason: null });
+    expect(released.ok).toBe(false);
+    expect(await slotHolder(w)).toBe(record.root);
   });
 
   it("reports timed_out when the command passes its timeout, and still stops and settles the copy", async () => {

@@ -35,6 +35,7 @@ import {
   makeUncertain,
   needsReconciliationRaised,
   stopQuietly,
+  stoppedByStatus,
   validationOperation,
   validationAttentionKey,
   validationSandboxName,
@@ -55,8 +56,14 @@ export interface LostDeps {
   sandbox: WorkerSandboxSdk;
   rates: Rates;
   now: () => Date;
+  /** Waits between the status reads that confirm a stop (tests replace it). */
+  sleep?: (ms: number) => Promise<void>;
   log: (line: string) => void;
   profile?: FactoryProfile;
+}
+
+function sleepFor(ms: number): Promise<void> {
+  return new Promise<void>((resolve) => setTimeout(resolve, ms));
 }
 
 export type LostTarget = { request_id: string } | { validation_id: string };
@@ -170,18 +177,24 @@ async function finalizeRequest(deps: LostDeps, requestId: string): Promise<LostO
   return { kind: "finalized", slot_held: after.held };
 }
 
+/** Stops the sandbox unless it no longer runs, then confirms by status, within the runner's bound, that it stopped. */
 async function confirmedStopped(deps: LostDeps, name: string): Promise<boolean> {
+  const errorName = (error: unknown): string => (error instanceof Error ? error.name : "non-error");
   try {
-    let found = await deps.sandbox.get(name);
-    if (found !== null && !STOPPED_STATUSES.has(found.status)) {
-      await found.stop();
-      found = await deps.sandbox.get(name);
-    }
-    return found === null || STOPPED_STATUSES.has(found.status);
+    const found = await deps.sandbox.get(name);
+    if (found === null || STOPPED_STATUSES.has(found.status)) return true;
+    await found.stop();
   } catch (error) {
-    deps.log(`factory: ${name} could not be confirmed stopped (${error instanceof Error ? error.name : "non-error"})`);
+    deps.log(`factory: ${name} could not be confirmed stopped (${errorName(error)})`);
     return false;
   }
+  return stoppedByStatus(
+    () => deps.sandbox.get(name),
+    deps.sleep ?? sleepFor,
+    (error) => {
+      deps.log(`factory: a status read of ${name} failed (${errorName(error)})`);
+    },
+  );
 }
 
 async function finalizeValidation(deps: LostDeps, validationId: string): Promise<LostOutcome> {

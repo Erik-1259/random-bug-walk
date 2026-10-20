@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ValidationMatrix } from "@rbw/factory-contract";
 import { FACTORY_PROFILE } from "../../src/factory-profile.ts";
-import { busyReason, copyOperation, fullSettlement, validationOperation, validationSettlement, workerOperation } from "../../src/factory-ledger.ts";
+import { busyReason, copyOperation, fullSettlement, validationOperation, validationSandboxName, validationSettlement, workerOperation } from "../../src/factory-ledger.ts";
 import { startFactoryValidation, startFactoryWorker } from "../../src/factory-launch.ts";
 import type { FactoryLaunchDeps } from "../../src/factory-launch.ts";
 import { completeReconciliation, finalizeLostWorker } from "../../src/factory-lost.ts";
@@ -16,9 +16,12 @@ import type { FactoryWorld } from "./factory-fakes.ts";
 const MATRIX = (JSON.parse(readFileSync(new URL("../../../../docs/product/fixtures/bug-request-v1/validation-passed.json", import.meta.url), "utf8")) as { matrix: ValidationMatrix }).matrix;
 
 let w: FactoryWorld;
+/** The waits the lost-worker routine asked for; each one moves the clock. */
+let sleeps: number[];
 
 beforeEach(async () => {
   w = await factoryWorld();
+  sleeps = [];
 });
 
 afterEach(async () => {
@@ -30,7 +33,12 @@ function launchDeps(): FactoryLaunchDeps {
 }
 
 function lostDeps(): LostDeps {
-  return { ledger: w.ledger, records: w.records, identity: w.identity, events: w.events, sandbox: w.sandbox, rates: w.rates, now: w.clock.now, log: (line) => w.logs.push(line) };
+  const sleep = (ms: number): Promise<void> => {
+    sleeps.push(ms);
+    w.clock.advance(ms);
+    return Promise.resolve();
+  };
+  return { ledger: w.ledger, records: w.records, identity: w.identity, events: w.events, sandbox: w.sandbox, rates: w.rates, now: w.clock.now, sleep, log: (line) => w.logs.push(line) };
 }
 
 function workerId(record: FactoryRequestRecord): string {
@@ -316,6 +324,35 @@ describe("finalizeLostWorker for a validation run", () => {
     const finished = (await w.records.validationEvents(validationId)).find((event) => event.type === "finished");
     expect(finished?.data).toMatchObject({ result: "error", cost_microusd: null });
     expect((await w.records.events(record.request_id)).filter((event) => event.type === "attention").map((event) => event.data)).toEqual([{ code: "needs_reconciliation" }]);
+  });
+
+  it("confirms a sandbox whose stop passes through stopping within five status reads, two seconds apart, then settles and releases the slot", async () => {
+    const { validationId, operationId } = await runningValidation();
+    w.sandbox.stoppingReads = 4;
+    w.clock.advance(181_000);
+    const gets = w.sandbox.count("get");
+    expect(await finalizeLostWorker(lostDeps(), { validation_id: validationId })).toEqual({ kind: "finalized", slot_held: false });
+    // One read before the stop, then four that answer stopping and the fifth that answers stopped.
+    expect(w.sandbox.count("get") - gets).toBe(6);
+    expect(sleeps).toEqual([2000, 2000, 2000, 2000]);
+    const status = await w.spend.operationStatus({ operation_id: operationId });
+    expect(status.ok && [status.state, status.settled_microusd]).toEqual(["reconciled", BigInt(VALIDATION_3_MICROUSD)]);
+    expect(await slotHolder(w)).toBeNull();
+  });
+
+  it("keeps the reservation and the slot held when its sandbox still answers stopping after five status reads", async () => {
+    const { validationId, operationId } = await runningValidation();
+    w.sandbox.stoppingReads = 5;
+    w.clock.advance(181_000);
+    const gets = w.sandbox.count("get");
+    expect(await finalizeLostWorker(lostDeps(), { validation_id: validationId })).toEqual({ kind: "finalized", slot_held: true });
+    expect(w.sandbox.count("get") - gets).toBe(6);
+    expect(sleeps).toEqual([2000, 2000, 2000, 2000]);
+    expect(w.sandbox.sandboxes.get(validationSandboxName(w.identity.validationRoot(validationId)))?.status).toBe("stopping");
+    expect(await operationState(w, operationId)).toBe("uncertain");
+    expect(await slotHolder(w)).toBe(w.identity.validationRoot(validationId));
+    const finished = (await w.records.validationEvents(validationId)).find((event) => event.type === "finished");
+    expect(finished?.data).toMatchObject({ result: "error", cost_microusd: null });
   });
 
   it("releases the slot of a finished run whose worker settled but stopped before releasing it", async () => {

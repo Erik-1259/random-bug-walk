@@ -19,6 +19,7 @@ import { extract } from "tar-stream";
 import type { CollectedCopy, CopyPlan, CopyRoots, CopyRunner, FileDigest } from "@rbw/factory-contract";
 import type { SandboxInstance, SandboxSdk } from "@rbw/local-runner";
 import { sha256Hex } from "@rbw/schema";
+import { stoppedByStatus } from "./factory-ledger.ts";
 import type { CopyMeter, LaunchHooks, LaunchReport, RefusalReason } from "./factory-meter.ts";
 import { FACTORY_PROFILE } from "./factory-profile.ts";
 import type { FactoryProfile } from "./factory-profile.ts";
@@ -55,9 +56,6 @@ export const RESULTS_ARCHIVE = "/tmp/rbw-copy-results.tar";
 /** The most bytes of results read back. */
 export const RESULTS_LIMIT_BYTES = 64 * 1024 * 1024;
 const COPY_ENV = { PATH: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", HOME: "/root" };
-const STOPPED = new Set(["stopped", "failed", "aborted"]);
-const STATUS_CHECKS = 5;
-const STATUS_INTERVAL_MS = 2000;
 const GB_PER_VCPU_MB = 2048;
 
 function iso(ms: number): string {
@@ -206,16 +204,14 @@ async function stopAndConfirm(deps: SandboxRunnerDeps, sandbox: SandboxInstance)
   } catch (error) {
     deps.log(`factory: the stop of ${sandbox.name} failed (${errorName(error)}); checking its status`);
   }
-  for (let check = 0; check < STATUS_CHECKS; check += 1) {
-    if (check > 0) await deps.sleep(STATUS_INTERVAL_MS);
-    try {
-      const found = await deps.sdk.get(sandbox.name);
-      if (found === null || STOPPED.has(found.status)) return { confirmed: true, at: deps.now() };
-    } catch (error) {
+  const confirmed = await stoppedByStatus(
+    () => deps.sdk.get(sandbox.name),
+    deps.sleep,
+    (error) => {
       deps.log(`factory: a status read of ${sandbox.name} failed (${errorName(error)})`);
-    }
-  }
-  return { confirmed: false, at: deps.now() };
+    },
+  );
+  return { confirmed, at: deps.now() };
 }
 
 type Inside = { outcome: "ran"; exit_code: number; results_dir: string | null; results_sha256: string | null } | { outcome: "setup_failed" | "timed_out"; exit_code: number | null };

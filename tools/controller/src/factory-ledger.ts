@@ -455,6 +455,27 @@ export async function finishValidation(
 
 /** Sandbox statuses that mean it no longer runs. */
 export const STOPPED_STATUSES: ReadonlySet<string> = new Set(["stopped", "failed", "aborted"]);
+/** Status reads after a stop, and the wait between them: the local runner's bound, since a stop takes effect asynchronously (through stopping). */
+const STOP_STATUS_CHECKS = 5;
+const STOP_STATUS_INTERVAL_MS = 2000;
+
+/**
+ * Confirms a stop by status: reads it up to STOP_STATUS_CHECKS times, STOP_STATUS_INTERVAL_MS
+ * apart, and answers whether the sandbox reached a stopped status or is gone. A failed read is
+ * passed to `failed` and the next read runs.
+ */
+export async function stoppedByStatus(read: () => Promise<{ readonly status: string } | null>, sleep: (ms: number) => Promise<void>, failed: (error: unknown) => void): Promise<boolean> {
+  for (let check = 0; check < STOP_STATUS_CHECKS; check += 1) {
+    if (check > 0) await sleep(STOP_STATUS_INTERVAL_MS);
+    try {
+      const found = await read();
+      if (found === null || STOPPED_STATUSES.has(found.status)) return true;
+    } catch (error) {
+      failed(error);
+    }
+  }
+  return false;
+}
 
 /** Stops a sandbox by name on a best-effort basis: a failure is logged, never thrown. */
 export async function stopQuietly(sandbox: WorkerSandboxSdk, name: string, log: (line: string) => void): Promise<void> {
