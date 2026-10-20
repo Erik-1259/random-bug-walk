@@ -1,0 +1,11 @@
+{
+  "contract_version": "bug-request/1",
+  "error": {
+    "code": "busy",
+    "message": "Another factory request or validation run is active. Try again after it finishes.",
+    "retryable": true,
+    "details": {
+      "reason": "active"
+    }
+  }
+}

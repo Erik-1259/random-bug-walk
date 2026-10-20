@@ -1,0 +1,125 @@
+{
+  "contract_version": "bug-request/1",
+  "label": "Completed example",
+  "note": "This case was qualified and published earlier under bug-request/1. It is not the output of a live request, and live progress never appears here.",
+  "case": {
+    "case_id": "cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca",
+    "defect_id": "dadadadadadadadadadadadadadadadadadadadadadadadadadadadadadadada",
+    "title": "Overlapping task updates lose an acknowledged change",
+    "host_id": "task-report",
+    "host_label": "Task and report service",
+    "baseline_id": "task-report@ca4a71f",
+    "bug_type_id": "concurrency",
+    "item_key": null,
+    "criteria_met": [
+      {
+        "criterion_id": "concurrency.lost-acknowledged-change",
+        "version": "1",
+        "label": "An acknowledged change is lost when requests overlap"
+      }
+    ],
+    "summary": {
+      "observed_failure": "When two updates to the same task overlap, both receive a success response, but the stored task keeps only one of the two changes.",
+      "how_checked": "Separate verification checks ran on fresh clean, buggy and reference-fixed copies and detected the lost change only on the buggy copy. The unchanged original suite passed on all three."
+    },
+    "matrix": {
+      "original_suite": {
+        "suite_id": "synthetic-task-report-original-suite",
+        "suite_sha256": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+        "test_count": 48,
+        "clean": {
+          "expected": "pass",
+          "observed": "pass",
+          "runs_valid": 3,
+          "runs_total": 3,
+          "matches_expectation": true
+        },
+        "buggy": {
+          "expected": "pass",
+          "observed": "pass",
+          "runs_valid": 3,
+          "runs_total": 3,
+          "matches_expectation": true
+        },
+        "fixed": {
+          "expected": "pass",
+          "observed": "pass",
+          "runs_valid": 3,
+          "runs_total": 3,
+          "matches_expectation": true
+        }
+      },
+      "verification": {
+        "check_set_id": "synthetic-task-report-concurrency-checks",
+        "clean": {
+          "expected": "pass",
+          "observed": "pass",
+          "runs_valid": 5,
+          "runs_total": 5,
+          "matches_expectation": true
+        },
+        "buggy": {
+          "expected": "fail",
+          "observed": "fail",
+          "runs_valid": 5,
+          "runs_total": 5,
+          "matches_expectation": true
+        },
+        "fixed": {
+          "expected": "pass",
+          "observed": "pass",
+          "runs_valid": 5,
+          "runs_total": 5,
+          "matches_expectation": true
+        }
+      }
+    },
+    "repetition": {
+      "protocol_id": "synthetic-repetition-protocol",
+      "version": "1",
+      "summary": "Each copy ran the original suite 3 times and the verification checks 5 times. All runs were valid and agreed."
+    },
+    "difficulty": {
+      "status": "not_assessed",
+      "note": "No difficulty assessment ran. This case may be easy or hard to diagnose from source."
+    },
+    "qualification": {
+      "route_id": "behavioral-qualification",
+      "version": "1",
+      "verdict": "accepted",
+      "record_sha256": "7676767676767676767676767676767676767676767676767676767676767676",
+      "qualified_at": "2026-10-12T10:24:05.318Z"
+    },
+    "packages": {
+      "package_version": 1,
+      "pair_sha256": "a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6",
+      "bug_case": {
+        "kind": "bug_case",
+        "format": "rbw-bug-case/1",
+        "filename": "rbw-bug-case-cacacacacaca-v1.tar.gz",
+        "media_type": "application/gzip",
+        "size_bytes": 1843207,
+        "sha256": "b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6",
+        "ready": true,
+        "download_path": "https://example.invalid/factory-examples/cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca/rbw-bug-case-cacacacacaca-v1.tar.gz"
+      },
+      "validator": {
+        "kind": "validator",
+        "format": "rbw-validator/1",
+        "filename": "rbw-validator-cacacacacaca-v1.tar.gz",
+        "media_type": "application/gzip",
+        "size_bytes": 48213,
+        "sha256": "f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6",
+        "ready": true,
+        "download_path": "https://example.invalid/factory-examples/cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca/rbw-validator-cacacacacaca-v1.tar.gz"
+      }
+    },
+    "validation": null,
+    "provenance": {
+      "origin": "published_example",
+      "request_id": null,
+      "source_id": "synthetic-task-report-concurrency",
+      "entry_id": "synthetic-task-report-concurrency-01"
+    }
+  }
+}
