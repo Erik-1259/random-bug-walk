@@ -6,6 +6,8 @@ export function checkEvidence(evidence: TestEvidence, status: RequestStatus): vo
   assert.equal(evidence.request_id, status.request_id);
   const ids = evidence.operations.map(op => op.operation_id);
   assert.equal(new Set(ids).size, ids.length, "duplicate ledger operation");
+  const operationCalls = evidence.operations.map(op => op.call_name);
+  assert.equal(new Set(operationCalls).size, operationCalls.length, "duplicate operation call in deterministic scenario");
   assert.equal(evidence.operations.filter(op => op.kind === "worker").length, 1, "request must have one worker reservation");
   const creates = evidence.provider_calls.filter(call => call.action === "create");
   const calls = creates.map(call => call.call_name);

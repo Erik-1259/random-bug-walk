@@ -10,12 +10,12 @@
   },
   "self_tests": {
     "command": "pnpm --filter @rbw/product-acceptance test --reporter=json",
-    "passed": 168,
+    "passed": 194,
     "failed": 0,
     "skipped": 0,
     "exit_code": 0
   },
-  "test_floor": 168,
+  "test_floor": 194,
   "failing_first": [
     {
       "scope": "final-contract invariant regressions",
@@ -73,6 +73,18 @@
       "scope": "reconciliation response, settlement continuity, event history and released-slot evidence",
       "failed": 12,
       "passed": 50,
+      "exit_code": 1
+    },
+    {
+      "scope": "distinct ledger operations reusing one provider create",
+      "failed": 2,
+      "passed": 17,
+      "exit_code": 1
+    },
+    {
+      "scope": "post-validation status, accounting, slot, event history and ledger evidence",
+      "failed": 23,
+      "passed": 1,
       "exit_code": 1
     }
   ],
@@ -143,6 +155,14 @@
     {
       "finding": "Scenario reset could hide a factory slot retained after reconciliation.",
       "disposition": "Read typed evidence before any reset; verify ledger accounting and both slot holder fields are null."
+    },
+    {
+      "finding": "Distinct operation IDs could share one call name and double-count a single provider create.",
+      "disposition": "Require unique operation call names in the deterministic scenarios; regressions reject internally consistent doubled held and settled totals."
+    },
+    {
+      "finding": "Failed/error validation probes could finish without checking the request budget, ledger, events or slot after completion.",
+      "disposition": "Read typed status and evidence before reset; check the pinned known completion cost, settled accounting, free slot, retained results and evidence, and linked validation/budget events across pages. General uncertain-error null-cost semantics remain valid."
     }
   ]
 }

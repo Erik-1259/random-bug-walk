@@ -93,3 +93,22 @@ it.each(["unused-released", "unused-charged", "launched-discounted"])("checks de
   if (change === "unused-released") expect(() => { checkEvidence(evidence, status); }).not.toThrow();
   else expect(() => { checkEvidence(evidence, status); }).toThrow();
 });
+it.each(["held", "settled"])("rejects two operations sharing one provider call with consistent %s accounting", state => {
+  const { evidence, status } = sample();
+  const duplicate = structuredClone(first(evidence.operations.filter(op => op.kind === "candidate_copy")));
+  duplicate.operation_id = "ef".repeat(32);
+  evidence.operations.push(duplicate);
+  if (state === "settled") {
+    for (const op of evidence.operations) { op.state = "reconciled"; op.settled_microusd = op.reserved_microusd; }
+    evidence.slot.holder_request_id = null;
+    status.attention = null;
+  }
+  const total = evidence.operations.reduce((sum, op) => sum + op.reserved_microusd, 0);
+  status.budget.reserved_microusd = state === "held" ? total : 0;
+  status.budget.spent_microusd = state === "settled" ? total : 0;
+  status.budget.committed_microusd = total;
+  status.budget.remaining_microusd = status.budget.budget_microusd - total;
+  expect(new Set(evidence.operations.map(op => op.operation_id)).size).toBe(evidence.operations.length);
+  expect(evidence.provider_calls.filter(call => call.action === "create" && call.call_name === duplicate.call_name)).toHaveLength(1);
+  expect(() => { checkEvidence(evidence, status); }).toThrow("duplicate operation call in deterministic scenario");
+});

@@ -88,6 +88,12 @@ status reads must retain terminal data and event history and settle the previous
 held amount. The probe then reads ledger evidence and requires both slot holders
 to be clear before any subsequent scenario reset.
 
+The named failed/error validation probes also read request status and ledger
+evidence after completion. They check the pinned host cost, cleared reservations
+and slot, matching validation and budget events, and retention of earlier results
+and evidence. These named controls have known costs; the general validation
+shape still permits a finished error with uncertain spend to retain a null cost.
+
 The final contract permits zero-count rows for known unrequested types, and a
 202 Start response can already contain a recorded terminal failure. The runner
 accepts those shapes while still checking each scenario's expected outcome.
@@ -95,7 +101,9 @@ Criterion IDs must be nonempty and unique, and complete history must account for
 delivered cases. An operation retains its original reservation amount after
 settlement. Launched deterministic operations settle at that original worst
 case; unused reservations without a recorded create settle at zero. The worker
-reservation is pinned to the test-control amount. A finished validation error may retain a null completion cost; that
+reservation is pinned to the test-control amount. Operation call names and
+provider create call names are unique in the deterministic scenarios, so one
+create cannot justify duplicate charges. A finished validation error may retain a null completion cost; that
 is distinct from zero and need not change during reconciliation. Description
 limits count Unicode code points after trimming; the named inputs are already
 normalized and impose no conflicting UTF-16 length assertion.

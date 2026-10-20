@@ -4,6 +4,7 @@ import type { TestEvidence } from "@rbw/factory-contract";
 import { checkEvidence } from "./evidence.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { isDeepStrictEqual } from "node:util";
 import { checkCriteriaEvents, checkStatus, checkValidation, integer, object, objects, text } from "./invariants.ts";
 
 export const contractRevision = "66651d67fcb09c402b25d9688ea492c0e69e1c2b";
@@ -206,30 +207,113 @@ export async function runProbe(backend: IsolatedBackend, probe: Probe): Promise<
     observe(again);
     for (const field of ["outcome", "items", "cases"]) assert.deepEqual(again[field], state[field]);
   }
-  if (probe.evidence) await runEvidence(backend, state);
+  if (probe.evidence && !probe.validation) await runEvidence(backend, state);
   if (probe.downloads) await runDownloads(backend, state);
   if (probe.reconcile) await runReconciliation(backend, state, history);
-  if (probe.validation) {
-    const c = objects(state.cases)[0]; assert(c, "validation scenario delivered no case");
-    const validationId = randomUUID();
-    const validationPath = `${path}/cases/${text(c.case_id)}/validations`;
-    let validation = body(await call("POST", validationPath, { validation_id: validationId }), 202);
-    for (let polls = 0; polls < 1000; polls++) {
-      checkValidation(validation);
-      assert.equal(validation.validation_id, validationId);
-      assert.equal(validation.case_id, c.case_id);
-      assert.deepEqual(validation.package_sha256, {
-        bug_case: object(object(c.packages).bug_case).sha256,
-        validator: object(object(c.packages).validator).sha256,
-      });
-      if (validation.state === "finished") break;
-      const delay = integer(validation.poll_after_ms); assert(delay >= 0);
-      await backend.wait(delay);
-      validation = await read(backend, `${validationPath}/${validationId}`);
-    }
-    if (validation.state !== "finished") throw new Unavailable("Validation observation reached the runner poll limit.");
-    assert.equal(validation.result, probe.validation);
+  if (probe.validation) await runValidation(backend, state, probe.validation, history);
+}
+
+/** Exercise one named deterministic validation scenario after request completion. */
+export async function runValidation(backend: IsolatedBackend, state: Record<string, unknown>, expectedResult: "failed" | "error", history = objects(state.events)): Promise<void> {
+  await verify(backend);
+  assertContract("RequestStatus", state);
+  checkScenarioStatus(state);
+  assert.equal(state.state, "finished");
+  assert.equal(state.attention, null);
+  const previousBudget = object(state.budget);
+  assert.equal(previousBudget.reserved_microusd, 0);
+  const priorEvidence = structuredClone(await runEvidence(backend, state));
+  const path = `/api/factory/requests/${text(state.request_id)}`;
+  const c = objects(state.cases)[0]; assert(c, "validation scenario delivered no case");
+  // Section 15.1 fixes these named scenarios' costs independently of the service.
+  // General null-cost errors remain valid in checkValidation; these fake runs settle.
+  const cost = c.host_id === "task-report" ? 200_000 : c.host_id === "umami" ? 300_000 : undefined;
+  assert(cost !== undefined, "unknown validation host");
+  const validationId = randomUUID();
+  const validationPath = `${path}/cases/${text(c.case_id)}/validations`;
+  let validation = body(await backend.request("POST", validationPath, { validation_id: validationId }), 202);
+  for (let polls = 0; polls < 1000; polls++) {
+    assertContract("ValidationRun", validation);
+    checkValidation(validation);
+    assert.equal(validation.validation_id, validationId);
+    assert.equal(validation.case_id, c.case_id);
+    assert.deepEqual(validation.package_sha256, {
+      bug_case: object(object(c.packages).bug_case).sha256,
+      validator: object(object(c.packages).validator).sha256,
+    });
+    if (validation.state === "finished") break;
+    const delay = integer(validation.poll_after_ms); assert(delay >= 0);
+    await backend.wait(delay);
+    validation = await read(backend, `${validationPath}/${validationId}`);
   }
+  if (validation.state !== "finished") throw new Unavailable("Validation observation reached the runner poll limit.");
+  assert.equal(validation.result, expectedResult);
+  assert.equal(validation.cost_microusd, cost, "validation cost differs from pinned test worst case");
+  const withoutPoll = (value: Record<string, unknown>) => Object.fromEntries(Object.entries(value).filter(([key]) => key !== "poll_after_ms"));
+  const immutable = (value: Record<string, unknown>) => ({
+    ...Object.fromEntries(Object.entries(value).filter(([key]) => !["budget", "attention", "updated_at", "events", "next_after", "poll_after_ms", "cases"].includes(key))),
+    cases: objects(value.cases).map(delivered => delivered.case_id === c.case_id ? { ...delivered, validation: null } : delivered),
+  });
+  const spent = integer(previousBudget.spent_microusd);
+  const remaining = integer(previousBudget.remaining_microusd) - cost;
+  const observed = new Map(history.map(event => [integer(event.seq), event]));
+  const previousEnd = Math.max(integer(state.next_after), ...observed.keys());
+  const completedHistory: Record<string, unknown>[] = [];
+  let cursor = 0;
+  let after = await read(backend, path);
+  let complete = false;
+  for (let pages = 0; pages < 1000; pages++) {
+    assertContract("RequestStatus", after);
+    checkScenarioStatus(after);
+    assert.equal(after.attention, null, "settled validation left attention");
+    assert.equal(object(after.budget).reserved_microusd, 0, "completed validation left held spend");
+    assert.equal(object(after.budget).spent_microusd, spent + cost, "validation spend was not charged once");
+    assert.deepEqual(immutable(after), immutable(state), "validation changed completed request results");
+    const delivered: Record<string, unknown> | undefined = objects(after.cases).find(item => item.case_id === c.case_id); assert(delivered);
+    assert.deepEqual(withoutPoll(object(delivered.validation)), withoutPoll(validation), "case validation differs from completed run");
+    const events = objects(after.events);
+    for (const event of events) {
+      assert.equal(integer(event.seq), ++cursor, "validation history has an event gap or duplicate");
+      const previous = observed.get(cursor);
+      if (previous !== undefined) assert.deepEqual(event, previous, "validation changed prior event");
+      completedHistory.push(event);
+    }
+    assert.equal(after.next_after, cursor);
+    if (events.length === 0) { complete = true; break; }
+    await backend.wait(integer(after.poll_after_ms));
+    after = await read(backend, `${path}?after=${String(cursor)}`);
+  }
+  if (!complete) throw new Unavailable("Validation history reached the runner page limit.");
+  for (const [seq, event] of observed) assert.deepEqual(completedHistory[seq - 1], event, "validation lost prior event");
+  const added = completedHistory.filter(event => integer(event.seq) > previousEnd);
+  assert(added.every(event => ["validation_started", "validation_finished", "budget_updated"].includes(text(event.type))), "validation added unrelated request events");
+  const transition = (type: string) => {
+    const events = added.filter(event => event.type === type);
+    assert.equal(events.length, 1, `validation history needs one ${type}`);
+    const event = events[0]; assert(event);
+    assert.equal(object(event.data).validation_id, validationId);
+    assert.equal(event.case_id, c.case_id); assert.equal(event.item_key, c.item_key); assert.equal(event.host_id, c.host_id);
+    return event;
+  };
+  const started = transition("validation_started");
+  const finished = transition("validation_finished");
+  assert(integer(started.seq) < integer(finished.seq), "validation finished before it started");
+  assert.equal(object(finished.data).result, expectedResult);
+  const budgetEvents = added.filter(event => event.type === "budget_updated");
+  const reserved = budgetEvents.find(event => isDeepStrictEqual(event.data, { reserved_microusd: cost, spent_microusd: spent, remaining_microusd: remaining }));
+  const settled = budgetEvents.find(event => isDeepStrictEqual(event.data, { reserved_microusd: 0, spent_microusd: spent + cost, remaining_microusd: remaining }));
+  assert(reserved && settled, "validation reservation or settlement event is missing");
+  assert(integer(reserved.seq) < integer(settled.seq), "validation budget transitions are reversed");
+  const evidence = await runEvidence(backend, after);
+  assert.equal(evidence.slot.holder_request_id, null, "completed validation left the factory slot held");
+  assert.equal(evidence.slot.holder_validation_id, null, "completed validation left a validation slot holder");
+  for (const op of priorEvidence.operations) assert.deepEqual(evidence.operations.find(current => current.operation_id === op.operation_id), op, "validation changed prior ledger operation");
+  for (const call of priorEvidence.provider_calls) assert(evidence.provider_calls.some(current => isDeepStrictEqual(current, call)), "validation changed prior provider call");
+  const oldIds = new Set(priorEvidence.operations.map(op => op.operation_id));
+  const operations = evidence.operations.filter(op => !oldIds.has(op.operation_id));
+  assert(operations.length > 0 && operations.every(op => ["validation", "validation_copy"].includes(op.kind)), "validation evidence has missing or unrelated operations");
+  assert.equal(operations.reduce((sum, op) => sum + op.reserved_microusd, 0), cost, "validation reservation differs from pinned worst case");
+  assert.equal(operations.reduce((sum, op) => sum + (op.settled_microusd ?? 0), 0), cost, "validation settlement differs from completed cost");
 }
 /** Schema validation narrows transport data; independent assertions decide accounting correctness. */
 export async function runEvidence(backend: IsolatedBackend, status: unknown): Promise<TestEvidence> {
