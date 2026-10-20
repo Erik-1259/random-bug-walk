@@ -278,7 +278,7 @@ export async function runCommand(argv: readonly string[], deps: CommandDeps, io:
       // given explicitly are named on stderr so a screening invocation without --route is not silent.
       const ignored = SCREEN_ONLY_OPTIONS.filter((name) => tokens.some((token) => token.kind === "option" && token.name === name));
       if (ignored.length > 0) {
-        io.err(`candidates: note: ${ignored.map((name) => `--${name}`).join(", ")} apply only to --route ${STATIC_SCREEN_ROUTE}; the ${BEHAVIORAL_ROUTE} route runs no screen\n`);
+        io.err(`candidates: note: ${ignored.map((name) => `--${name}`).join(", ")} ${ignored.length === 1 ? "applies" : "apply"} only to --route ${STATIC_SCREEN_ROUTE}; the ${BEHAVIORAL_ROUTE} route runs no screen\n`);
       }
       return await runBehavioral({ deps, io, outPath, scratchBase, ruleId, rulePath, ruleText, host, hostCommit: hostCommit ?? null, maxCandidates: caps.maxCandidates });
     }

@@ -98,6 +98,17 @@ describe("the --route option", () => {
     expect(refused.code).toBe(2);
   });
 
+  it("names --dry-run as a static-screen option on the default route, which writes its own record and screens nothing", async () => {
+    const { screen, buildScreen } = spies();
+    const result = await run(["--dry-run"], { findSites: finder(threeSites()), screen, buildScreen });
+    expect(result.err).toBe("candidates: note: --dry-run applies only to --route static-screen/v1; the behavioral-qualification/v1 route runs no screen\n");
+    expect(result.code).toBe(0);
+    expect(readRecord(result.outFile)).toMatchObject({ record: "candidate_run", version: 2, route: { route_id: "behavioral-qualification", version: "1" } });
+    expect(readRecord(result.outFile)).not.toHaveProperty("dry_run");
+    expect(screen.calls).toHaveLength(0);
+    expect(buildScreen.built).toBe(0);
+  });
+
   it("keeps static-screen/v1 selectable with its record format unchanged (no route field)", async () => {
     const result = await run(["--route", STATIC_SCREEN_ROUTE, "--dry-run"], { findSites: finder(threeSites()) });
     expect(result.code).toBe(0);
