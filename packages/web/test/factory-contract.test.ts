@@ -21,7 +21,7 @@ function definition(name: string): DefName {
 describe("pinned revision-2 UI fixtures, not backend acceptance", () => {
   const names = readdirSync(fixtures).filter(name => name.endsWith(".json")).sort();
   it("pins the shared Git package and copies the complete published fixture set", () => {
-    expect(FACTORY_CONTRACT_REVISION).toBe("9b8f1c9f5c9acac0637b75f051ef0324e5f88988");
+    expect(FACTORY_CONTRACT_REVISION).toBe("572cb0ee069e453bf2eacccfbce74139e4e177be");
     expect(names).toEqual(readdirSync(upstream).filter(name => name.endsWith(".json")).sort());
   });
   it.each(names)("validates exact published bytes of %s with the shared server/test parser", name => {

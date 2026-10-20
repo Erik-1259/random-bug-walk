@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { DefName } from "../src/generated.ts";
-import { BUG_TYPE_ID_VALUES, HOST_ID_VALUES } from "../src/generated.ts";
+import { BUG_TYPE_ID_VALUES, DIFFICULTY_OPTION_ID_VALUES, HOST_ID_VALUES } from "../src/generated.ts";
 import { ContractError, assertContract, isDefName, parseContract, validateContract } from "../src/validate.ts";
 import type { JsonObject } from "./support.ts";
 import { asArray, asObject, at, contractFixture, internalFixture, variant } from "./support.ts";
@@ -58,40 +58,53 @@ const plan = () => internalFixture("copy-plan.json");
 const collected = () => internalFixture("collected-copy.json");
 const roots = () => ({ app_root: "/work/synthetic/pair/buggy", evaluator_root: "/work/synthetic/pair/evaluator" });
 
-type Pair = readonly [host: string, type: string];
+/** The fields that identify an entry of a capabilities list, such as `{ host_id: "umami" }`. */
+type EntryKey = Readonly<Record<string, string>>;
 
-/** Every (host, bug type) pair of the enumerations; capabilities list each exactly once (section 4.2). */
-const PAIRS: Pair[] = HOST_ID_VALUES.flatMap((host) => BUG_TYPE_ID_VALUES.map((type): Pair => [host, type]));
-const LISTED: Pair[] = asArray(capabilities().combinations, "combinations").map((item) => {
-  const { host_id: host, bug_type_id: type } = asObject(item, "combination");
-  if (typeof host !== "string" || typeof type !== "string") throw new Error("a combination without its host or bug type");
-  return [host, type];
-});
-const listedAt = ([host, type]: Pair): number => LISTED.findIndex(([h, t]) => h === host && t === type);
-
-/** The reports of the clause for `pair` when `list` fails it: the clause, and each listed pair's field that differs. */
-function pairClause(list: readonly Pair[], [host, type]: Pair): string[] {
-  return ["schema:/combinations:contains", ...list.flatMap(([listedHost, listedType], index) => [
-    ...(listedHost === host ? [] : [`schema:/combinations/${String(index)}/host_id:const`]),
-    ...(listedType === type ? [] : [`schema:/combinations/${String(index)}/bug_type_id:const`]),
-  ])];
+/**
+ * Refusals for a capabilities list that holds exactly one entry per key: for each key, a list that
+ * lacks it, and a list that holds it twice in place of the next key. The second copy goes last, so
+ * Ajv, which stops counting at the copy over the limit, checks every item.
+ */
+function onceEachCases(field: string, keys: readonly EntryKey[]): Case[] {
+  const names = Object.keys(keys[0] ?? {});
+  const listed = asArray(capabilities()[field], field).map((item): EntryKey => {
+    const entry = asObject(item, field);
+    return Object.fromEntries(names.map((name) => {
+      const value = entry[name];
+      if (typeof value !== "string") throw new Error(`an entry of ${field} without its ${name}`);
+      return [name, value];
+    }));
+  });
+  const label = (key: EntryKey): string => names.map((name) => key[name]).join(" x ");
+  const listedAt = (key: EntryKey): number => listed.findIndex((entry) => names.every((name) => entry[name] === key[name]));
+  /** The reports of the clause for `key` when `list` fails it: the clause, and each listed entry's field that differs. */
+  const clause = (list: readonly EntryKey[], key: EntryKey): string[] => [`schema:/${field}:contains`, ...list.flatMap((entry, index) =>
+    names.filter((name) => entry[name] !== key[name]).map((name) => `schema:/${field}/${String(index)}/${name}:const`))];
+  return keys.flatMap((key, n): Case[] => {
+    const index = listedAt(key);
+    if (index < 0) throw new Error(`capabilities.json does not list ${label(key)} in ${field}`);
+    const next = keys[(n + 1) % keys.length] ?? key;
+    const nextIndex = listedAt(next);
+    const twice = [...listed.filter((_, i) => i !== nextIndex), key];
+    return [
+      { name: `${field} without ${label(key)}`, def: "Capabilities", base: capabilities, edit: (c) => { asArray(c[field], field).splice(index, 1); }, expected: [`schema:/${field}:minItems`, ...clause(listed.filter((_, i) => i !== index), key)] },
+      { name: `${field} with ${label(key)} twice`, def: "Capabilities", base: capabilities, edit: (c) => { const list = asArray(c[field], field); const copy = structuredClone(list[index] ?? null); list.splice(nextIndex, 1); list.push(copy); }, expected: [...clause(twice, key), ...clause(twice, next)] },
+    ];
+  });
 }
 
 /**
- * For each pair: a list that lacks it, and a list that holds it twice in place of the next pair.
- * The second copy goes last, so Ajv, which stops counting at the copy over the limit, checks every item.
+ * Clients build the request form from capabilities and never hard-code hosts or types (section 4), so
+ * the lists hold exactly one entry per value of their enumeration: each host, each bug type, each
+ * (host, bug type) pair (section 4.2) and each difficulty option (section 4.4).
  */
-const PAIR_CASES: Case[] = PAIRS.flatMap((pair, n): Case[] => {
-  const index = listedAt(pair);
-  if (index < 0) throw new Error(`capabilities.json does not list ${pair.join(" x ")}`);
-  const next = PAIRS[(n + 1) % PAIRS.length] ?? pair;
-  const nextIndex = listedAt(next);
-  const twice = [...LISTED.filter((_, i) => i !== nextIndex), pair];
-  return [
-    { name: `combinations without ${pair.join(" x ")}`, def: "Capabilities", base: capabilities, edit: (c) => { asArray(c.combinations, "combinations").splice(index, 1); }, expected: ["schema:/combinations:minItems", ...pairClause(LISTED.filter((_, i) => i !== index), pair)] },
-    { name: `combinations with ${pair.join(" x ")} twice`, def: "Capabilities", base: capabilities, edit: (c) => { const list = asArray(c.combinations, "combinations"); const copy = structuredClone(list[index] ?? null); list.splice(nextIndex, 1); list.push(copy); }, expected: [...pairClause(twice, pair), ...pairClause(twice, next)] },
-  ];
-});
+const ONCE_EACH_CASES: Case[] = [
+  ...onceEachCases("hosts", HOST_ID_VALUES.map((id) => ({ host_id: id }))),
+  ...onceEachCases("bug_types", BUG_TYPE_ID_VALUES.map((id) => ({ bug_type_id: id }))),
+  ...onceEachCases("combinations", HOST_ID_VALUES.flatMap((host) => BUG_TYPE_ID_VALUES.map((type) => ({ host_id: host, bug_type_id: type })))),
+  ...onceEachCases("difficulty_options", DIFFICULTY_OPTION_ID_VALUES.map((id) => ({ option_id: id }))),
+];
 
 const SHAPE_CASES: Case[] = [
   // Unknown fields
@@ -198,7 +211,7 @@ const RULE_CASES: Case[] = [
   { name: "a supported pair without a source", def: "Capabilities", base: capabilities, edit: (c) => { at(c, ["combinations", 1]).source = null; }, expected: "schema:/combinations/1/source:type" },
   { name: "an unsupported pair without a reason", def: "Capabilities", base: capabilities, edit: (c) => { at(c, ["combinations", 0]).reason = null; }, expected: "schema:/combinations/0/reason:type" },
   { name: "a supported pair with a reason", def: "Capabilities", base: capabilities, edit: (c) => { at(c, ["combinations", 1]).reason = "x"; }, expected: "schema:/combinations/1/reason:type" },
-  ...PAIR_CASES,
+  ...ONCE_EACH_CASES,
   { name: "a negative remaining amount without an overrun", def: "RequestStatus", base: status("status-operational-error.json"), edit: (c) => { at(c, ["budget"]).remaining_microusd = -1; }, expected: "schema:/budget/remaining_microusd:minimum" },
   { name: "an overrun with money remaining", def: "RequestStatus", base: status("status-operational-error.json"), edit: (c) => { at(c, ["budget"]).overrun = true; }, expected: "schema:/budget/remaining_microusd:maximum" },
   { name: "a source with no entries", def: "Capabilities", base: capabilities, edit: (c) => { at(c, ["combinations", 1, "source"]).entries = 0; }, expected: "schema:/combinations/1/source/entries:minimum" },
@@ -331,6 +344,7 @@ describe.each([
 const ACCEPTED: Case[] = [
   { name: "an unsupported pair with a declared source", def: "Capabilities", base: capabilities, edit: (c) => { at(c, ["combinations", 0]).source = structuredClone(at(c, ["combinations", 1, "source"])); }, expected: [] },
   { name: "an unsupported pair whose declared source has no entries", def: "Capabilities", base: capabilities, edit: (c) => { at(c, ["combinations", 0]).source = { ...structuredClone(at(c, ["combinations", 1, "source"])), entries: 0 }; }, expected: [] },
+  { name: "capabilities that list their hosts, bug types, pairs and difficulty options in another order", def: "Capabilities", base: capabilities, edit: (c) => { for (const field of ["hosts", "bug_types", "combinations", "difficulty_options"]) asArray(c[field], field).reverse(); }, expected: [] },
   { name: "an untrimmed description in a start request", def: "StartRequest", base: start, edit: (c) => { at(c, ["input", "items", 0]).description = "  lost update\n"; }, expected: [] },
   { name: "an empty description in a start request", def: "StartRequest", base: start, edit: (c) => { at(c, ["input", "items", 0]).description = ""; }, expected: [] },
   { name: "a blank description in an interpretation request", def: "RequestInput", base: () => at(start(), ["input"]), edit: (c) => { at(c, ["items", 0]).description = " \t\n "; }, expected: [] },
