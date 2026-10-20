@@ -48,7 +48,7 @@ Test files are named without their directory: contract tests are in `packages/fa
 - Section 8.2: the factory core projection counts a selected candidate as explored before its checks start. Test mode counts it once checks start.
 - Section 8.5: when the worker settles a validation run above its worst case after the request finished, nothing sets `attention` to `needs_reconciliation`.
 - Section 11: the worker prices a validation reservation from the validator package's copy count, not from the frozen interpretation's `worst_case_per_validation_microusd`. Test mode uses its profile figure, which equals the fixtures'. Test mode reads a run's `cost_microusd` from its operation's settled amount, which a reconciliation would overwrite; its runs never have uncertain spend, so no scenario shows it.
-- Section 15.1: test mode reports `reserved_microusd: 0` for a settled operation instead of its original reservation.
+- Section 15.1: test mode reports `reserved_microusd: 0` for a settled or reconciled operation instead of its original reservation.
 - Section 15.1: the acceptance runner is pinned to an earlier contract revision, requires `type_totals` to list exactly the requested types, so it refuses an unrequested type listed with 0, never calls capabilities or the session, sends no out-of-limits body, and its `sources-exhausted` probe sends an input that matches no fixture.
 
 ## Known differences between the generated types and the schema
