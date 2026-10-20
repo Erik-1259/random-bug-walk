@@ -198,7 +198,8 @@ export function interpret(args: InterpretInput): Interpretation {
       });
     }
   }
-  const usedHosts = new Set(work.flatMap((entry) => entry.item.eligible_sources.map((source) => source.host_id)));
+  // Only a supported item is served (section 6.2), so a host that only unsupported items list is unused.
+  const usedHosts = new Set(work.filter((entry) => entry.item.status === "supported").flatMap((entry) => entry.item.eligible_sources.map((source) => source.host_id)));
   for (const host of input.hosts) {
     if (!usedHosts.has(host)) problems.push({ code: "host_unused", severity: "warning", message: `${HOST_PRESENTATION[host].label} serves none of the items.`, item_key: null });
   }

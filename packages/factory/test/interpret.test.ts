@@ -123,6 +123,25 @@ describe("interpretation", () => {
     expect(result.startable).toBe(true);
   });
 
+  it("warns host_unused for a selected host that only an unsupported item lists", () => {
+    const input: NormalizedRequestInput = {
+      hosts: ["umami", "task-report"],
+      items: [
+        { item_key: "d", bug_type_id: "date_time", quantity: 1, description: null, difficulty: "source_inferable_allowed" },
+        { item_key: "hard", bug_type_id: "concurrency", quantity: 1, description: null, difficulty: "source_only_difficulty_required" },
+      ],
+      budget_microusd: 2_000_000,
+    };
+    const result = run(input);
+    expect(validateContract("Interpretation", result)).toEqual([]);
+    expect(result.items[1]).toMatchObject({ status: "unsupported", eligible_sources: [{ host_id: "task-report" }] });
+    expect(result.problems).toEqual([{ code: "host_unused", severity: "warning", message: "Task and report service serves none of the items.", item_key: null }]);
+    expect(result.hosts).toEqual([
+      { host_id: "umami", used: true, reason: null },
+      { host_id: "task-report", used: false, reason: "No item of this request can use this host." },
+    ]);
+  });
+
   it("treats a description of filler phrases only as no description", () => {
     const input: NormalizedRequestInput = { hosts: ["task-report"], items: [{ item_key: "c", bug_type_id: "concurrency", quantity: 1, description: "I need a bug where", difficulty: "source_inferable_allowed" }], budget_microusd: 1_500_000 };
     const item = run(input).items[0];
