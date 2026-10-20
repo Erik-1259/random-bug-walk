@@ -12,12 +12,12 @@ function classify(paths: readonly string[]): { status: number | null; stdout: st
 describe("docs-only classifier", () => {
   it.each([
     ["root README.md", ["README.md"]],
-    ["README.md in a subfolder", ["packages/example/README.md"]],
+    ["README.md under docs/", ["docs/guide/README.md"]],
     [".md under docs/", ["docs/guide.md"]],
     [".mdx under docs/", ["docs/page.mdx"]],
     ["nested files under docs/", ["docs/a/b/c.md", "docs/a/b/d.mdx"]],
     ["the root LICENSE", ["LICENSE"]],
-    ["a mix of docs paths", ["README.md", "docs/guide.md", "LICENSE", "tools/example/README.md"]],
+    ["a mix of docs paths", ["README.md", "docs/guide.md", "LICENSE", "docs/guide/README.md"]],
   ])("prints true for %s", (_label, paths) => {
     expect(classify(paths)).toEqual({ status: 0, stdout: "true\n" });
   });
@@ -27,6 +27,8 @@ describe("docs-only classifier", () => {
     ["CLAUDE.md", ["CLAUDE.md"]],
     ["another root Markdown file", ["CONTRIBUTING.md"]],
     ["Markdown inside a code directory", ["tools/x/notes.md"]],
+    ["README.md inside a code directory, which its package's tests may read", ["packages/example/README.md"]],
+    ["a root README.md with a package README.md", ["README.md", "tools/example/README.md"]],
     ["readme.md in the wrong case", ["readme.md"]],
     ["a nested LICENSE", ["packages/example/LICENSE"]],
     ["a code file", ["packages/example/src/index.ts"]],

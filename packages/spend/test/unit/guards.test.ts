@@ -159,8 +159,10 @@ const DIRECT_INSERTS: Record<string, () => string> = {
     `INSERT INTO factory_evidence (request_id, case_id, sha256, evidence_json, recorded_at)
      VALUES ('${POPULATED.request}', '${hex(9013)}', '${createHash("sha256").update("{}").digest("hex")}', '{}', now())`,
   factory_validations: () =>
-    `INSERT INTO factory_validations (validation_id, request_id, case_id, root_execution_id, recorded_at)
-     VALUES ('00000000-0000-4000-8000-000000009014', '${POPULATED.request}', '${hex(9015)}', '00000000-0000-4000-8000-000000009016', now())`,
+    `INSERT INTO factory_validations (validation_id, request_id, case_id, root_execution_id, host_id, accepted_at,
+       bug_case_sha256, validator_sha256, harness_name, harness_version, copies, recorded_at)
+     VALUES ('00000000-0000-4000-8000-000000009014', '${POPULATED.request}', '${hex(9015)}', '00000000-0000-4000-8000-000000009016',
+       'task-report', now(), '${hex(9017)}', '${hex(9018)}', 'rbw-validate', '1', 3, now())`,
   factory_validation_events: () =>
     `INSERT INTO factory_validation_events (validation_id, seq, event_key, type, data, recorded_at)
      VALUES ('${POPULATED.validation}', 2, 'synthetic-direct', 'running', '{}', now())`,
