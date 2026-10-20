@@ -445,6 +445,23 @@ describe("controls", () => {
     }
   });
 
+  it("counts a description's length in Unicode code points after trimming (contract sections 4 and 5)", async () => {
+    const w = makeWorld();
+    const { input } = fixture("Interpretation", "interpretation-supported.json");
+    const limit = TEST_PROFILE.limits.max_description_chars;
+    const refusal = async (description: string): Promise<string> => {
+      const body = { ...input, items: input.items.map((item, index) => (index === 0 ? { ...item, description } : item)) };
+      const response = await postInterpretation(request("/api/factory/interpretations", { body, session: false }), w.server);
+      expect(response.status).toBe(400);
+      return (await contractBody("ErrorResponse", response)).error.message;
+    };
+    // An emoji is one code point and two UTF-16 code units: the limit's worth of them fits, one more does not.
+    const atLimit = `  ${"\u{1F600}".repeat(limit)}\n`;
+    expect(atLimit.trim().length).toBe(2 * limit);
+    expect(await refusal(atLimit)).toBe("Test mode interprets only the inputs of the contract fixtures.");
+    expect(await refusal("\u{1F600}".repeat(limit + 1))).toContain(`at most ${String(limit)} characters`);
+  });
+
   it("answers the stop of a request that finished with its status and records nothing", async () => {
     const w = makeWorld();
     await reset(w, "zero-result");

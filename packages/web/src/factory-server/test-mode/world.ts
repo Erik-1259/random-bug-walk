@@ -178,11 +178,19 @@ function normalize(input: RequestInput): RequestInput {
   };
 }
 
+/** A text's length in Unicode code points (contract sections 4 and 5), not in UTF-16 code units. */
+function codePoints(text: string): number {
+  let count = 0;
+  // A surrogate pair is one code point above U+FFFF; an unpaired surrogate counts as one.
+  for (let index = 0; index < text.length; index += (text.codePointAt(index) ?? 0) > 0xffff ? 2 : 1) count += 1;
+  return count;
+}
+
 function limitError(input: RequestInput, limits: Limits): string | null {
   if (input.items.length > limits.max_items) return `At most ${String(limits.max_items)} items.`;
   if (input.items.some((item) => item.quantity > limits.max_quantity_per_item)) return `Each quantity is at most ${String(limits.max_quantity_per_item)}.`;
   if (input.items.reduce((sum, item) => sum + item.quantity, 0) > limits.max_total_quantity) return `The quantities add up to at most ${String(limits.max_total_quantity)}.`;
-  if (input.items.some((item) => (item.description?.trim() ?? "").length > limits.max_description_chars)) return `Each description has at most ${String(limits.max_description_chars)} characters.`;
+  if (input.items.some((item) => codePoints(item.description?.trim() ?? "") > limits.max_description_chars)) return `Each description has at most ${String(limits.max_description_chars)} characters.`;
   if (input.budget_microusd < limits.min_budget_microusd || input.budget_microusd > limits.max_budget_microusd) return "The budget is outside the limits.";
   return null;
 }
