@@ -7,7 +7,7 @@ import { canonicalDigest, sha256Hex, taskRevision } from "@rbw/schema";
 import { UMAMI_COMMIT, parseClosureList } from "@rbw/umami-driver";
 import { DEFAULT_PHASE_LIMITS } from "@rbw/umami-driver/limits";
 import { describe, expect, it } from "vitest";
-import { COPY_LIMITS, COPY_SCRIPT } from "../src/copy-plans.ts";
+import { COPY_LIMITS, COPY_PREPARE, COPY_SCRIPT } from "../src/copy-plans.ts";
 import { isClosurePath } from "../src/closure.ts";
 import { RUNTIME_SETUP, fixtureVectors } from "../src/inputs.ts";
 import { frozenTaskIdentity, mutationIdOf } from "../src/job.ts";
@@ -65,8 +65,12 @@ describe("the fixture the image runs", () => {
 });
 
 describe("the copy", () => {
-  it("runs the local runner's copy script, byte for byte", () => {
-    expect(COPY_SCRIPT).toBe(RUNNER_COPY_SCRIPT);
+  it("runs the local runner's copy script, byte for byte, after it places the fixture and prepares the app tree", () => {
+    const runner = RUNNER_COPY_SCRIPT.split("\n");
+    const after = runner.indexOf('mkdir -p "$out" || exit 90') + 1;
+    expect(after).toBeGreaterThan(0);
+    expect(COPY_SCRIPT).toBe([...runner.slice(0, after), ...COPY_PREPARE, ...runner.slice(after)].join("\n"));
+    expect(COPY_PREPARE.join("\n")).toContain("/opt/rbw/bin/rbw-prepare-app");
   });
 
   it("names the local runner's copy profile and its outer limit (720 s), 4 vCPU, 8 GB and no network", () => {
@@ -75,9 +79,15 @@ describe("the copy", () => {
     expect(DEFAULT_PHASE_LIMITS.tests_ms).toBe(240_000);
   });
 
-  it("pins the kit image's architecture, amd64, which the runtime instructions name", () => {
-    expect(UMAMI_PINS.kit.architecture).toBe("amd64");
-    expect(RUNTIME_SETUP[0]).toContain(`linux/${UMAMI_PINS.kit.architecture} container of the kit image`);
+  it("pins the runtime image's architecture, amd64, which the runtime instructions name", () => {
+    expect(UMAMI_PINS.runtime.architecture).toBe("amd64");
+    expect(RUNTIME_SETUP[0]).toContain(`linux/${UMAMI_PINS.runtime.architecture} container of the runtime image`);
+  });
+
+  it("names the runtime image by a neutral reference; its amd64 build is not pushed yet, so its digest names no image", () => {
+    expect(UMAMI_PINS.runtime.image).toBe("random-bug-walk/umami-runtime");
+    expect(UMAMI_PINS.runtime.digest).toBe(`sha256:${"0".repeat(64)}`);
+    expect(UMAMI_PINS.runtime.digest).not.toBe(UMAMI_PINS.kit.digest);
   });
 
   it("is of the driver's pinned Umami commit", () => {
@@ -91,11 +101,18 @@ describe("the released case's identities", () => {
     expect(mutationIdOf(UMAMI_PINS.app_commit, [UMAMI_PINS.target])).toBe(RELEASED_CASE.mutation_id);
   });
 
-  it("gives the release's task revision under the release's policy: every content pin agrees with the release record", () => {
-    const identity = { ...frozenTaskIdentity(UMAMI_PINS), grading_policy_id: RELEASED_CASE.grading_policy_id };
+  it("gives the release's task revision under the release's policy and on the kit image: every other content pin agrees with the release record", () => {
+    const identity = { ...frozenTaskIdentity(UMAMI_PINS), image_digest: UMAMI_PINS.kit.digest, grading_policy_id: RELEASED_CASE.grading_policy_id };
     expect(taskRevision(identity).sha256).toBe(RELEASED_CASE.task_revision);
     expect(UMAMI_PINS.incident.sha256).toBe(RELEASED_CASE.issue_sha256);
     expect(UMAMI_PINS.kit.digest).toBe(RELEASED_CASE.kit_image_digest);
+  });
+
+  it("names the runtime image in the frozen job, with the kit manifest the runtime image carries unchanged", () => {
+    const identity = frozenTaskIdentity(UMAMI_PINS);
+    expect(identity.image_digest).toBe(UMAMI_PINS.runtime.digest);
+    expect(identity.kit_sha256).toBe(UMAMI_PINS.kit.kit_sha256);
+    expect(taskRevision({ ...identity, grading_policy_id: RELEASED_CASE.grading_policy_id }).sha256).not.toBe(RELEASED_CASE.task_revision);
   });
 
   it("pins the frozen suite's identity: 271 tests, hash 8162af64…, the sorted IDs' hash", () => {
