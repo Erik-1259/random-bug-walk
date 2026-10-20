@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { assertContract } from "@rbw/factory-contract/validate";
+import type { TestEvidence } from "@rbw/factory-contract";
 import { checkEvidence } from "./evidence.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -207,7 +208,7 @@ export async function runProbe(backend: IsolatedBackend, probe: Probe): Promise<
   }
   if (probe.evidence) await runEvidence(backend, state);
   if (probe.downloads) await runDownloads(backend, state);
-  if (probe.reconcile) await runReconciliation(backend, state);
+  if (probe.reconcile) await runReconciliation(backend, state, history);
   if (probe.validation) {
     const c = objects(state.cases)[0]; assert(c, "validation scenario delivered no case");
     const validationId = randomUUID();
@@ -231,11 +232,13 @@ export async function runProbe(backend: IsolatedBackend, probe: Probe): Promise<
   }
 }
 /** Schema validation narrows transport data; independent assertions decide accounting correctness. */
-export async function runEvidence(backend: IsolatedBackend, status: unknown): Promise<void> {
+export async function runEvidence(backend: IsolatedBackend, status: unknown): Promise<TestEvidence> {
   await verify(backend);
   const request = assertContract("RequestStatus", status);
   const evidence = await read(backend, `/api/factory/test/evidence?request_id=${request.request_id}`);
-  checkEvidence(assertContract("TestEvidence", evidence), request);
+  const checked = assertContract("TestEvidence", evidence);
+  checkEvidence(checked, request);
+  return checked;
 }
 
 export async function runDownloads(backend: IsolatedBackend, status: Record<string, unknown>): Promise<void> {
@@ -253,8 +256,9 @@ export async function runDownloads(backend: IsolatedBackend, status: Record<stri
   }
 }
 
-export async function runReconciliation(backend: IsolatedBackend, before: Record<string, unknown>): Promise<void> {
+export async function runReconciliation(backend: IsolatedBackend, before: Record<string, unknown>, history = objects(before.events)): Promise<void> {
   await verify(backend);
+  checkScenarioStatus(before);
   assert.equal(before.state, "finished");
   assert.equal(object(before.attention).code, "needs_reconciliation");
   const interpretation = object(before.interpretation);
@@ -265,17 +269,53 @@ export async function runReconciliation(backend: IsolatedBackend, before: Record
   const refusal = object(object(busy.body).error);
   assert.equal(refusal.retryable, false);
   assert.equal(object(refusal.details).reason, "needs_reconciliation");
-  const result = await backend.request("POST", "/api/factory/test/reconcile", { request_id: before.request_id });
-  assert(result.status >= 200 && result.status < 300, "reconciliation control failed");
-  const after = await read(backend, `/api/factory/requests/${text(before.request_id)}`);
-  checkScenarioStatus(after);
-  assert.equal(after.attention, null);
-  assert.equal(object(after.budget).reserved_microusd, 0);
-  // Section 8.5 changes accounting and attention, with update events and their
-  // timestamp. Reconciliation cannot change completed work or start candidates.
+  const result = body(await backend.request("POST", "/api/factory/test/reconcile", { request_id: before.request_id }), 200);
+  // Reconciliation changes accounting and attention, never completed work. Its
+  // deterministic control settles every held amount at the original worst case.
   const snapshot = (value: Record<string, unknown>) => Object.fromEntries(Object.entries(value)
     .filter(([field]) => !["budget", "attention", "updated_at", "events", "next_after", "poll_after_ms"].includes(field)));
-  assert.deepEqual(snapshot(after), snapshot(before), "reconciliation changed terminal result");
+  const previousBudget = object(before.budget);
+  const expectedSpent = integer(previousBudget.spent_microusd) + integer(previousBudget.reserved_microusd);
+  const checkReconciled = (value: Record<string, unknown>) => {
+    assertContract("RequestStatus", value);
+    checkScenarioStatus(value);
+    assert.equal(value.attention, null, "reconciliation did not clear attention");
+    assert.equal(object(value.budget).reserved_microusd, 0, "reconciliation left held spend");
+    assert.equal(object(value.budget).spent_microusd, expectedSpent, "reconciliation lost held spend");
+    assert.deepEqual(snapshot(value), snapshot(before), "reconciliation changed terminal result");
+  };
+  checkReconciled(result);
+  const witnessed = new Map(history.map(event => [integer(event.seq), event]));
+  const returned = objects(result.events);
+  assert(returned.length > 0, "reconciliation response lost history");
+  for (const [index, event] of returned.entries()) {
+    assert.equal(integer(event.seq), index + 1, "reconciliation response has an event gap or duplicate");
+    const previous = witnessed.get(integer(event.seq));
+    if (previous !== undefined) assert.deepEqual(event, previous, "reconciliation changed prior event");
+    witnessed.set(integer(event.seq), event);
+  }
+  assert.equal(result.next_after, returned.length);
+  const lastWitness = Math.max(...witnessed.keys());
+  let cursor = 0;
+  let after = await read(backend, `/api/factory/requests/${text(before.request_id)}`);
+  for (;;) {
+    checkReconciled(after);
+    const events = objects(after.events);
+    assert(events.length > 0, "reconciliation lost witnessed history");
+    for (const event of events) {
+      assert.equal(integer(event.seq), ++cursor, "reconciliation history has an event gap or duplicate");
+      const previous = witnessed.get(cursor);
+      if (previous !== undefined) assert.deepEqual(event, previous, "reconciliation changed prior event");
+    }
+    assert.equal(after.next_after, cursor);
+    if (cursor >= lastWitness) break;
+    await backend.wait(integer(after.poll_after_ms));
+    after = await read(backend, `/api/factory/requests/${text(before.request_id)}?after=${String(cursor)}`);
+  }
+  const evidence = await runEvidence(backend, after);
+  assert.equal(evidence.slot.holder_request_id, null, "reconciliation left the factory slot held");
+  assert.equal(evidence.slot.holder_validation_id, null, "reconciliation left a validation slot holder");
+
 }
 
 export async function runUnsupported(backend: IsolatedBackend): Promise<void> {

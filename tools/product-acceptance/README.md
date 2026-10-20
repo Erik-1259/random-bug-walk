@@ -83,6 +83,11 @@ Each obtains a fresh interpretation hash from the service. Synthetic fixture
 hashes are not sent as live interpretations. The runner honors polling hints and
 status backoff; reaching its observation limit reports unavailable.
 
+Reconciliation must return a `200 RequestStatus`. Both that response and later
+status reads must retain terminal data and event history and settle the previously
+held amount. The probe then reads ledger evidence and requires both slot holders
+to be clear before any subsequent scenario reset.
+
 The final contract permits zero-count rows for known unrequested types, and a
 202 Start response can already contain a recorded terminal failure. The runner
 accepts those shapes while still checking each scenario's expected outcome.

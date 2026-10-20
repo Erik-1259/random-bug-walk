@@ -196,30 +196,41 @@ it("rejects an earlier delivered case disappearing during a stop", async () => {
   };
   await expect(runProbe(backend, { ...probe, outcome: "stopped_at_limit", stopCode: "budget_exhausted" })).rejects.toThrow("delivered case disappeared");
 });
-it("checks reconciliation clears held spend without rewriting terminal delivery", async () => {
-  const { runReconciliation } = await import("../src/runner.ts");
+function reconciliationScenario() {
   const before = fixture("status-operational-error");
   const after = structuredClone(before);
   after.attention = null;
   const budget = object(after.budget);
   budget.spent_microusd = integer(budget.spent_microusd) + integer(budget.reserved_microusd);
   budget.reserved_microusd = 0;
+  const evidence = fixture("test-evidence");
+  for (const op of objects(evidence.operations)) { op.state = "reconciled"; op.settled_microusd = op.reserved_microusd; }
+  object(evidence.slot).holder_request_id = null;
   const { backend } = scripted();
-  backend.request = (_method, path) => Promise.resolve(path.endsWith("/requests")
+  const request = vi.fn((_method: "GET" | "POST", path: string): Promise<Reply> => Promise.resolve(path.endsWith("/requests")
     ? { status: 409, body: { contract_version: "bug-request/1", error: { code: "busy", retryable: false, details: { reason: "needs_reconciliation" } } } }
-    : path.endsWith("/reconcile") ? { status: 204, body: null } : { status: 200, body: after });
+    : { status: 200, body: path.includes("/test/evidence?") ? evidence : after }));
+  backend.request = request;
+  return { before, after, evidence, backend, request };
+}
+it("checks reconciliation settles held spend and reads released-slot evidence before any reset", async () => {
+  const { runReconciliation } = await import("../src/runner.ts");
+  const { before, after, backend, request } = reconciliationScenario();
   await expect(runReconciliation(backend, before)).resolves.toBeUndefined();
+  expect(request.mock.calls.map(([method, path]) => `${method} ${path}`)).toEqual([
+    "POST /api/factory/requests", "POST /api/factory/test/reconcile",
+    `GET /api/factory/requests/${text(before.request_id)}`,
+    `GET /api/factory/test/evidence?request_id=${text(before.request_id)}`,
+  ]);
   after.outcome = "sources_exhausted"; after.stop_reason = { code: "sources_exhausted", message: "synthetic changed outcome" };
+  for (const event of objects(after.events)) if (event.type === "request_finished") {
+    object(event.data).outcome = "sources_exhausted"; object(event.data).stop_code = "sources_exhausted";
+  }
   await expect(runReconciliation(backend, before)).rejects.toThrow("reconciliation changed terminal result");
 });
 it.each(["candidates", "funnel", "limits"])("rejects changed %s after reconciliation", async (field) => {
   const { runReconciliation } = await import("../src/runner.ts");
-  const before = fixture("status-operational-error");
-  const after = structuredClone(before);
-  after.attention = null;
-  const budget = object(after.budget);
-  budget.spent_microusd = integer(budget.spent_microusd) + integer(budget.reserved_microusd);
-  budget.reserved_microusd = 0;
+  const { before, after, backend } = reconciliationScenario();
   if (field === "candidates") {
     const candidates = objects(after.candidates);
     const candidate = candidates[0]; assert(candidate);
@@ -227,11 +238,67 @@ it.each(["candidates", "funnel", "limits"])("rejects changed %s after reconcilia
   } else if (field === "funnel") object(after.funnel).candidates_explored = 2;
   else object(after.limits).candidates_started = 2;
   checkStatus(after);
-  const { backend } = scripted();
-  backend.request = (_method, path) => Promise.resolve(path.endsWith("/requests")
-    ? { status: 409, body: { contract_version: "bug-request/1", error: { code: "busy", retryable: false, details: { reason: "needs_reconciliation" } } } }
-    : path.endsWith("/reconcile") ? { status: 204, body: null } : { status: 200, body: after });
   await expect(runReconciliation(backend, before)).rejects.toThrow("reconciliation changed terminal result");
+});
+it.each(["no-content", "null-body", "missing-field", "stale-attention"])("rejects a %s reconciliation POST even when the later GET is correct", async change => {
+  const { runReconciliation } = await import("../src/runner.ts");
+  const { before, after, backend, request } = reconciliationScenario();
+  const response = structuredClone(after);
+  if (change === "missing-field") delete response.created_at;
+  if (change === "stale-attention") response.attention = before.attention;
+  backend.request = (method, path) => path.endsWith("/reconcile")
+    ? Promise.resolve({ status: change === "no-content" ? 204 : 200, body: ["no-content", "null-body"].includes(change) ? null : response })
+    : request(method, path);
+  await expect(runReconciliation(backend, before)).rejects.toThrow();
+});
+it.each(["request", "validation"])("rejects a retained %s slot holder after reconciliation", async holder => {
+  const { runReconciliation } = await import("../src/runner.ts");
+  const { before, backend, evidence } = reconciliationScenario();
+  object(evidence.slot).holder_request_id = before.request_id;
+  if (holder === "validation") object(evidence.slot).holder_validation_id = "00000000-0000-4000-8000-000000000301";
+  await expect(runReconciliation(backend, before)).rejects.toThrow();
+});
+it.each(["post", "get"])("rejects disappearing held spend in the reconciliation %s response", async location => {
+  const { runReconciliation } = await import("../src/runner.ts");
+  const { before, after, backend, request, evidence } = reconciliationScenario();
+  const dropped = structuredClone(after);
+  const budget = object(dropped.budget);
+  budget.spent_microusd = 200000; budget.committed_microusd = 200000;
+  budget.remaining_microusd = integer(budget.budget_microusd) - 200000;
+  // Evidence and reported totals agree, but the candidate's previously held amount disappeared.
+  evidence.operations = objects(evidence.operations).filter(op => op.kind === "worker");
+  evidence.provider_calls = objects(evidence.provider_calls).filter(call => call.call_name === "worker");
+  checkStatus(dropped);
+  backend.request = (method, path) => (location === "post" ? path.endsWith("/reconcile") : method === "GET" && path.includes("/requests/"))
+    ? Promise.resolve({ status: 200, body: dropped }) : request(method, path);
+  await expect(runReconciliation(backend, before)).rejects.toThrow();
+});
+it.each(["post", "get"])("rejects rewritten event history in the reconciliation %s response", async location => {
+  const { runReconciliation } = await import("../src/runner.ts");
+  const { before, after, backend, request } = reconciliationScenario();
+  const rewritten = structuredClone(after);
+  const event = objects(rewritten.events)[0]; assert(event); event.message = "synthetic-rewritten-history";
+  backend.request = (method, path) => (location === "post" ? path.endsWith("/reconcile") : method === "GET" && path.includes("/requests/"))
+    ? Promise.resolve({ status: 200, body: rewritten }) : request(method, path);
+  await expect(runReconciliation(backend, before)).rejects.toThrow();
+});
+it("preserves witnessed reconciliation events across paginated status reads", async () => {
+  const { runReconciliation } = await import("../src/runner.ts");
+  const { before, after, backend, request } = reconciliationScenario();
+  const requests: string[] = [];
+  backend.request = (method, path) => {
+    if (method === "GET" && path.includes("/requests/")) {
+      requests.push(path);
+      const cursor = Number(path.split("?after=")[1] ?? 0);
+      const page = structuredClone(after);
+      page.events = objects(page.events).filter(event => integer(event.seq) > cursor).slice(0, 2);
+      page.next_after = cursor + objects(page.events).length;
+      return Promise.resolve({ status: 200, body: page });
+    }
+    return request(method, path);
+  };
+  await expect(runReconciliation(backend, before)).resolves.toBeUndefined();
+  expect(requests.length).toBeGreaterThan(1);
 });
 it("checks separate download paths and hashes without implementing package replay", async () => {
   const { createHash } = await import("node:crypto");

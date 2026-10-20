@@ -10,12 +10,12 @@
   },
   "self_tests": {
     "command": "pnpm --filter @rbw/product-acceptance test --reporter=json",
-    "passed": 157,
+    "passed": 168,
     "failed": 0,
     "skipped": 0,
     "exit_code": 0
   },
-  "test_floor": 157,
+  "test_floor": 168,
   "failing_first": [
     {
       "scope": "final-contract invariant regressions",
@@ -67,6 +67,12 @@
       "scope": "unused reservations released without a provider create",
       "failed": 2,
       "passed": 15,
+      "exit_code": 1
+    },
+    {
+      "scope": "reconciliation response, settlement continuity, event history and released-slot evidence",
+      "failed": 12,
+      "passed": 50,
       "exit_code": 1
     }
   ],
@@ -129,6 +135,14 @@
     {
       "finding": "A blanket worst-case settlement assertion rejected unused reservations in the real uncertain-provider HTTP scenario.",
       "disposition": "Corrected the runner to distinguish launched operations from reservations released at zero; no service change."
+    },
+    {
+      "finding": "The reconciliation POST accepted any successful status and ignored its body.",
+      "disposition": "Require exact 200 and typed RequestStatus; independently check returned and later status for settled amounts, terminal data and witnessed event continuity."
+    },
+    {
+      "finding": "Scenario reset could hide a factory slot retained after reconciliation.",
+      "disposition": "Read typed evidence before any reset; verify ledger accounting and both slot holder fields are null."
     }
   ]
 }
