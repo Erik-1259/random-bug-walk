@@ -390,6 +390,23 @@ describe("runFactoryValidation", () => {
     expect(outcome).toEqual({ kind: "finished", result: "passed", slot_released: true });
   });
 
+  it("finishes error, never passed, when the harness returns after the run's 1,800 s, still settling as measured and releasing the slot", async () => {
+    const { record, validationId } = await acceptedValidation();
+    const outcome = await runFactoryValidation(workerDeps(), {
+      validation_id: validationId,
+      validate: async (hooks) => {
+        await hooks.meter.run(plan(CASE_ID, "clean"), lives(90_000));
+        w.clock.ms = hooks.deadline.getTime() + 1;
+        return { result: "passed", matrix: MATRIX, message: "All six cells matched their expected outcomes." };
+      },
+    });
+    expect(outcome).toEqual({ kind: "finished", result: "error", slot_released: true });
+    const finished = (await w.records.validationEvents(validationId)).find((event) => event.type === "finished")?.data;
+    expect(finished).toMatchObject({ result: "error", matrix: null, message: "The validation run did not finish within 1,800 s." });
+    expect(typeof finished?.cost_microusd).toBe("number");
+    expect((await w.records.events(record.request_id)).find((event) => event.type === "validation_finished")?.data).toEqual({ validation_id: validationId, result: "error" });
+  });
+
   it("finishes error with its reservation and the slot held when a copy's stop cannot be confirmed", async () => {
     const { record, validationId, operationId } = await acceptedValidation();
     const outcome = await runFactoryValidation(workerDeps(), {

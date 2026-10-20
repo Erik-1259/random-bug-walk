@@ -354,9 +354,12 @@ export async function runFactoryValidation(deps: WorkerDeps, args: { validation_
       const finish = await finishValidation(deps, request, validation, { result: "error", matrix: result.matrix, message: "The run's spend could not be settled; it needs reconciliation.", cost_microusd: null });
       return finish.ours ? { kind: "finished", result: "error", slot_released: false } : { kind: "fenced" };
     }
-    const finish = await finishValidation(deps, request, validation, { ...result, cost_microusd: Number(settled.settled_microusd) });
+    // Contract section 11: a run still going after 1,800 s finishes error, so a harness, a settlement or
+    // a database that answered late cannot record a pass or a fail past the window.
+    const final: ValidationRunResult = deps.now().getTime() > deadline.getTime() ? { result: "error", matrix: result.matrix, message: "The validation run did not finish within 1,800 s." } : result;
+    const finish = await finishValidation(deps, request, validation, { ...final, cost_microusd: Number(settled.settled_microusd) });
     if (!finish.ours) return { kind: "fenced" };
-    return { kind: "finished", result: result.result, slot_released: await releaseSlot(deps, validation.root) };
+    return { kind: "finished", result: final.result, slot_released: await releaseSlot(deps, validation.root) };
   } finally {
     await heartbeat.stop();
   }
