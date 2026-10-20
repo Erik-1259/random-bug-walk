@@ -1,7 +1,7 @@
 // The prepare step over a fake Docker layer that serves `docker cp` archives built here; no
 // container is created or started for real.
 import { spawnSync } from "node:child_process";
-import { readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { sha256Hex } from "@rbw/schema";
@@ -213,6 +213,37 @@ describe("prepareStore", () => {
 });
 
 describe("prepare-cli", () => {
+  const cli = fileURLToPath(new URL("../src/prepare-cli.ts", import.meta.url));
+
+  /** Runs the CLI with a docker on PATH that only records its arguments, and a TMPDIR of its own. */
+  function runCli(args: string[]): { status: number | null; stderr: string; dockerRan: boolean; tempEntries: string[] } {
+    const bin = tempDir("rbw-host-umami-cli-bin-");
+    writeFileSync(join(bin, "docker"), ["#!/bin/sh", `echo "$*" >> '${bin}/commands.log'`, ""].join("\n"), { mode: 0o755 });
+    const temp = tempDir("rbw-host-umami-tmp-");
+    const run = spawnSync(process.execPath, [cli, ...args], { encoding: "utf8", env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}`, TMPDIR: temp } });
+    return { status: run.status, stderr: run.stderr, dockerRan: existsSync(join(bin, "commands.log")), tempEntries: readdirSync(temp) };
+  }
+
+  const usage = "usage: prepare-cli.ts --image <ref> --dest <dir> --original-suite <file> --incident <file>\n";
+
+  it("prints the usage and exits 2 for a missing option, before Docker or a work directory", () => {
+    expect(runCli(["--image", "synthetic-kit:local"])).toEqual({ status: 2, stderr: usage, dockerRan: false, tempEntries: [] });
+  });
+
+  it.each([
+    ["an unknown option", ["--image", "synthetic-kit:local", "--synthetic-unknown"], "--synthetic-unknown"],
+    ["a positional argument", ["--image", "synthetic-kit:local", "synthetic-positional"], "synthetic-positional"],
+    ["an option without its value", ["--image", "synthetic-kit:local", "--dest"], "--dest"],
+  ])("treats %s like a missing option: the parser's reason, the usage and exit 2, with no stack trace", (_case, args, named) => {
+    const run = runCli(args);
+    expect(run.status, run.stderr).toBe(2);
+    expect(run.stderr.slice(-usage.length)).toBe(usage);
+    expect(run.stderr.slice(0, -usage.length)).toContain(named);
+    expect(run.stderr).not.toMatch(/^\s+at /m);
+    expect(run.dockerRan).toBe(false);
+    expect(run.tempEntries).toEqual([]);
+  });
+
   it("removes its work directory when it refuses an input, after the export has filled it", async () => {
     const files = tempDir("rbw-host-umami-cli-");
     // A docker on PATH that serves the pinned digest, a one-file app tree and a manifest that is not the pinned one.
@@ -223,7 +254,6 @@ describe("prepare-cli", () => {
     const temp = tempDir("rbw-host-umami-tmp-");
     const world = kitWorld();
     const { suite, incident } = inputs(world);
-    const cli = fileURLToPath(new URL("../src/prepare-cli.ts", import.meta.url));
     const args = ["--image", "synthetic-kit:local", "--dest", join(files, "store"), "--original-suite", suite, "--incident", incident];
     const run = spawnSync(process.execPath, [cli, ...args], { encoding: "utf8", env: { ...process.env, PATH: `${files}:${process.env.PATH ?? ""}`, TMPDIR: temp } });
     expect(run.stderr).toBe("refused store_tree_mismatch: image manifest is not the pinned one\n");
