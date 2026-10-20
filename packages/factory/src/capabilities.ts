@@ -26,6 +26,9 @@ export const DIFFICULTY_OPTIONS: readonly DifficultyOption[] = [
 
 export const AVAILABLE_SERVICE: ServiceStatus = { state: "available", code: null, message: null };
 
+/** The pinned baselines (contract section 4.1), listed for a host whose adapter is not registered yet. */
+export const PINNED_BASELINE_ID: Readonly<Record<HostId, string>> = { umami: "umami@ec0ff503", "task-report": "task-report@ca4a71f" };
+
 function typeName(catalog: CriteriaCatalog, bugTypeId: BugTypeId): string {
   return bugTypeOf(catalog, bugTypeId).label.toLowerCase();
 }
@@ -67,9 +70,8 @@ export interface CapabilitiesInput {
 }
 
 /**
- * Every host, bug type, pair and difficulty option appears exactly once (contract section 4), so clients can
- * build the form from this response alone. A host without an adapter in the registry is still listed, with
- * its published baseline, and each of its pairs is unsupported with no source.
+ * Lists every host and every (host, bug type) pair, as the contract requires, also while the registry
+ * lacks a host's adapter: that host shows its pinned baseline and both of its pairs read unsupported.
  */
 export function buildCapabilities(input: CapabilitiesInput): Capabilities {
   const { registry, catalog, profile } = input;
@@ -77,11 +79,12 @@ export function buildCapabilities(input: CapabilitiesInput): Capabilities {
   return {
     contract_version: CONTRACT_VERSION,
     service: input.service ?? AVAILABLE_SERVICE,
-    hosts: HOST_ID_VALUES.map((host) => {
-      const presentation = HOST_PRESENTATION[host];
-      const baselineId = adapterFor(registry, host)?.baseline().baseline_id ?? presentation.baseline_id;
-      return { host_id: host, label: presentation.label, description: presentation.description, baseline_id: baselineId };
-    }),
+    hosts: HOST_ID_VALUES.map((host) => ({
+      host_id: host,
+      label: HOST_PRESENTATION[host].label,
+      description: HOST_PRESENTATION[host].description,
+      baseline_id: adapterFor(registry, host)?.baseline().baseline_id ?? PINNED_BASELINE_ID[host],
+    })),
     bug_types: BUG_TYPE_ID_VALUES.map((id) => structuredClone(bugTypeOf(catalog, id))),
     combinations: HOST_ID_VALUES.flatMap((host) => BUG_TYPE_ID_VALUES.map((type) => combinationOf(registry, catalog, window, host, type))),
     difficulty_options: DIFFICULTY_OPTIONS.map((option) => ({ ...option })),

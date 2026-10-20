@@ -5,25 +5,19 @@ import { bugTypeOf } from "./criteria.ts";
 import type { CriteriaCatalog } from "./criteria.ts";
 import { candidateId, defectId } from "./identity.ts";
 
-/**
- * Client-facing host text. `name` is the host as it reads inside a sentence. `baseline_id` is the pinned
- * revision the contract publishes for the host (section 4.1); capabilities show it only while the host has
- * no adapter in the registry, and otherwise take the adapter's own baseline.
- */
+/** Client-facing host text. `name` is the host as it reads inside a sentence. */
 export interface HostPresentation {
   label: string;
   description: string;
   name: string;
-  baseline_id: string;
 }
 
 export const HOST_PRESENTATION: Readonly<Record<HostId, HostPresentation>> = {
-  umami: { label: "Umami", description: "Umami web analytics at a pinned upstream revision.", name: "Umami", baseline_id: "umami@ec0ff503" },
+  umami: { label: "Umami", description: "Umami web analytics at a pinned upstream revision.", name: "Umami" },
   "task-report": {
     label: "Task and report service",
     description: "The custom task-and-report service at a pinned revision.",
     name: "the task-and-report service",
-    baseline_id: "task-report@ca4a71f",
   },
 };
 
