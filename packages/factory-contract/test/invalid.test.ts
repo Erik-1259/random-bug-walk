@@ -253,8 +253,8 @@ const PER_TYPE_CASES: Case[] = BUG_TYPE_ID_VALUES.flatMap((type): Case[] => {
 
 /**
  * Rules written once per host: eligible sources on the selected hosts, one per host (sections 4.2 and 6.1), host_unused in both
- * directions (section 6.2), one worst case per host and one for each host a supported item draws from (sections 6 and 11), and
- * work on the selected hosts only (section 1).
+ * directions (section 6.2), one worst case per host and, in a startable interpretation, one for each host a supported item draws
+ * from (sections 6 and 11), and work on the selected hosts only (section 1).
  */
 const PER_HOST_CASES: Case[] = HOST_ID_VALUES.flatMap((host): Case[] => {
   const other = host === FIRST_HOST ? SECOND_HOST : FIRST_HOST;
@@ -270,8 +270,8 @@ const PER_HOST_CASES: Case[] = HOST_ID_VALUES.flatMap((host): Case[] => {
   const entryTwice = (list: string) => (c: JsonObject) => { const entries = asArray(c[list], list); entries.push(structuredClone(entries[listIndex(entries, "host_id", host)] ?? null)); };
   const twiceReports = (list: string) => containsReportsAt(variant(budget(), entryTwice(list)), [list], "host_id", host);
   return [
-    // The supported item now draws from a host without a validation worst case too.
-    { name: `an eligible source on ${host}, which is not selected`, def: "Interpretation", base: elsewhere, edit: onHost, expected: ["schema:/items/4/eligible_sources:not", ...containsReportsAt(variant(elsewhere(), onHost), ["budget", "worst_case_per_validation_microusd"], "host_id", host)] },
+    // The interpretation is not startable, so the host the supported item now draws from needs no validation worst case.
+    { name: `an eligible source on ${host}, which is not selected`, def: "Interpretation", base: elsewhere, edit: onHost, expected: "schema:/items/4/eligible_sources:not" },
     { name: `two eligible sources on ${host} for one item`, def: "Interpretation", base: supported, edit: (c) => { const list = asArray(at(c, ["items", servedBy(c)]).eligible_sources, "eligible_sources"); list.push(structuredClone(list[0] ?? null)); }, expected: `schema:/items/${String(servedBy(supported()))}/eligible_sources:contains` },
     { name: `a selected host ${host} that serves no item without host_unused`, def: "Interpretation", base: both, edit: (c) => { at(c, ["items", 1]).eligible_sources = structuredClone(asArray(at(c, ["items", 0]).eligible_sources, "eligible_sources")); }, expected: ["schema:/:anyOf", "schema:/problems:contains", "schema:/items:contains", "schema:/items/0/problems:contains", "schema:/items/1/problems:contains"] },
     // Section 6.2: host_unused means a selected host serves none of the items, so a lone selected host that serves one never has it.
@@ -595,6 +595,8 @@ const ACCEPTED: Case[] = [
   { name: "an item-level host_unused for a selected host that serves no item", def: "Interpretation", base: supported, edit: (c) => { at(c, ["items", 1]).eligible_sources = structuredClone(asArray(at(c, ["items", 0]).eligible_sources, "eligible_sources")); at(c, ["items", 1]).problems = [problem("host_unused", "warning", "date-time-1")]; }, expected: [] },
   { name: "host_unused for a selected host that only unsupported items draw from", def: "Interpretation", base: unsupported, edit: (c) => { asArray(c.items, "items").splice(4, 1); asArray(c.problems, "problems").push(problem("host_unused", "warning", null)); }, expected: [] },
   { name: "worst cases without a selected host that serves no item", def: "Interpretation", base: supported, edit: (c) => { at(c, ["items", 1]).eligible_sources = structuredClone(asArray(at(c, ["items", 0]).eligible_sources, "eligible_sources")); c.problems = [problem("host_unused", "warning", null)]; for (const list of ["worst_case_per_candidate_microusd", "worst_case_per_validation_microusd"]) { const entries = asArray(at(c, ["budget"])[list], list); entries.splice(listIndex(entries, "host_id", FIRST_HOST), 1); } }, expected: [] },
+  // Section 11 reserves from the frozen interpretation, which is startable, and the document does not say which hosts the list covers otherwise.
+  ...HOST_ID_VALUES.map((host): Case => ({ name: `validation worst cases without ${host}, which a supported item draws from, in an interpretation that is not startable`, def: "Interpretation", base: asFor(host, SECOND_HOST, unsupported, hostsSwapped), edit: (c) => { const entries = asArray(at(c, ["budget"]).worst_case_per_validation_microusd, "worst_case_per_validation_microusd"); entries.splice(listIndex(entries, "host_id", host), 1); }, expected: [] })),
   { name: "a published example at a site-relative path outside the live routes", def: "ExampleResponse", base: () => contractFixture("example.json"), edit: (c) => { at(c, ["case", "packages", "bug_case"]).download_path = "/published/factory-examples/rbw-bug-case-cacacacacaca-v1.tar.gz"; at(c, ["case", "packages", "validator"]).download_path = "/published/factory-examples/rbw-validator-cacacacacaca-v1.tar.gz"; }, expected: [] },
   { name: "unmatched text with inner punctuation, letters outside ASCII and a single digit", def: "Interpretation", base: unsupported, edit: (c) => { at(c, ["items", 1]).unmatched_text = ["après une reprise, réseau", "2"]; }, expected: [] },
   { name: "a later page with no new events", def: "RequestStatus", base: fulfilled, edit: (c) => { c.events = []; }, expected: [] },

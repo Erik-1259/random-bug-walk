@@ -631,7 +631,7 @@ export interface InterpretationBudget {
   worker_worst_case_microusd: MicroUsd;
   /** At most one entry per host. */
   worst_case_per_candidate_microusd: HostAmount[];
-  /** At most one entry per host, and one for each host that a supported item draws from, since a validation run reserves the worst case of its case's host (contract section 11). */
+  /** At most one entry per host. A startable interpretation, the kind a request freezes, has one for each host that a supported item draws from, since a validation run reserves the worst case of its case's host from the frozen interpretation (contract section 11). */
   worst_case_per_validation_microusd: HostAmount[];
   estimate_note: string;
 }

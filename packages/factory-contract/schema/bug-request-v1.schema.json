@@ -2674,6 +2674,9 @@
           "if": {
             "type": "object",
             "properties": {
+              "startable": {
+                "const": true
+              },
               "items": {
                 "type": "array",
                 "contains": {
@@ -2705,6 +2708,7 @@
               }
             },
             "required": [
+              "startable",
               "items"
             ]
           },
@@ -2737,6 +2741,9 @@
           "if": {
             "type": "object",
             "properties": {
+              "startable": {
+                "const": true
+              },
               "items": {
                 "type": "array",
                 "contains": {
@@ -2768,6 +2775,7 @@
               }
             },
             "required": [
+              "startable",
               "items"
             ]
           },
@@ -3460,7 +3468,7 @@
           "items": {
             "$ref": "#/$defs/HostAmount"
           },
-          "description": "At most one entry per host, and one for each host that a supported item draws from, since a validation run reserves the worst case of its case's host (contract section 11)."
+          "description": "At most one entry per host. A startable interpretation, the kind a request freezes, has one for each host that a supported item draws from, since a validation run reserves the worst case of its case's host from the frozen interpretation (contract section 11)."
         },
         "estimate_note": {
           "type": "string"
