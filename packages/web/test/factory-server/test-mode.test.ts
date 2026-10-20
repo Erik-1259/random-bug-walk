@@ -186,7 +186,10 @@ describe("scenarios", () => {
       ["candidate_copy", "candidate-02-fixed", "terminal"],
     ]);
     expect(proof.operations.reduce((sum, op) => sum + (op.settled_microusd ?? 0), 0)).toBe(last?.budget.spent_microusd);
-    expect(proof.operations.reduce((sum, op) => sum + op.reserved_microusd, 0)).toBe(0);
+    // An operation's reserved_microusd is its original reservation in every state (contract section 15.1);
+    // none still holds it, so the request reserves nothing.
+    expect(proof.operations.map((op) => op.reserved_microusd)).toEqual([TEST_PROFILE.worker_microusd, 100_000, 100_000, 100_000, 200_000, 200_000, 200_000]);
+    expect(proof.operations.filter((op) => op.settled_microusd === null)).toEqual([]);
     expect(proof.slot).toEqual({ slot_key: "factory", holder_request_id: null, holder_validation_id: null });
     expect(proof.provider_calls.map((call) => [call.call_name, call.action])).toEqual(proof.operations.map((op) => [op.call_name, "create"]));
   });
@@ -265,7 +268,8 @@ describe("worker-lost and reconciliation", () => {
     });
     expect(strip(proof)).toEqual(strip(expected));
     expect(proof.slot.holder_request_id).toBe(REQUEST_ID);
-    expect(proof.operations.reduce((sum, op) => sum + op.reserved_microusd, 0)).toBe(last?.budget.reserved_microusd);
+    // The request's reserved amount sums only the operations still holding theirs: here all of them.
+    expect(proof.operations.filter((op) => op.settled_microusd === null).reduce((sum, op) => sum + op.reserved_microusd, 0)).toBe(last?.budget.reserved_microusd);
 
     const blocked = await start(w, "worker-lost", OTHER_REQUEST_ID);
     expect(blocked.status).toBe(409);
@@ -280,7 +284,13 @@ describe("worker-lost and reconciliation", () => {
     expect(after.budget).toMatchObject({ reserved_microusd: 0, spent_microusd: 500_000 });
     expect(after.events.slice(-2).map((event) => event.type)).toEqual(["budget_updated", "attention_cleared"]);
     const settled = await evidence(w);
-    expect(settled.operations.map((op) => op.state)).toEqual(["reconciled", "reconciled", "reconciled", "reconciled"]);
+    // Reconciled operations keep their original reservations and hold nothing.
+    expect(settled.operations.map((op) => [op.state, op.reserved_microusd, op.settled_microusd])).toEqual([
+      ["reconciled", TEST_PROFILE.worker_microusd, TEST_PROFILE.worker_microusd],
+      ["reconciled", 100_000, 100_000],
+      ["reconciled", 100_000, 100_000],
+      ["reconciled", 100_000, 100_000],
+    ]);
     expect(settled.slot.holder_request_id).toBeNull();
     expect((await start(w, "worker-lost", OTHER_REQUEST_ID)).status).toBe(202);
   });
@@ -325,11 +335,13 @@ describe("worker-lost and reconciliation", () => {
     expect(last?.candidates.map((candidate) => [candidate.stage, candidate.reason?.code])).toEqual([["incomplete", "incomplete_run"]]);
     const proof = await evidence(w);
     expect(proof.operations.map((op) => [op.kind, op.state, op.reserved_microusd, op.settled_microusd])).toEqual([
-      ["worker", "terminal", 0, TEST_PROFILE.worker_microusd],
+      ["worker", "terminal", TEST_PROFILE.worker_microusd, TEST_PROFILE.worker_microusd],
       ["candidate_copy", "uncertain", 100_000, null],
-      ["candidate_copy", "terminal", 0, 0],
-      ["candidate_copy", "terminal", 0, 0],
+      ["candidate_copy", "terminal", 100_000, 0],
+      ["candidate_copy", "terminal", 100_000, 0],
     ]);
+    // Only the uncertain copy still holds its reservation, so it alone makes up the request's reserved amount.
+    expect(proof.operations.filter((op) => op.settled_microusd === null).reduce((sum, op) => sum + op.reserved_microusd, 0)).toBe(last?.budget.reserved_microusd);
     expect(proof.provider_calls.map((call) => call.call_name)).toEqual(["worker", "candidate-01-clean"]);
     expect(proof.slot.holder_request_id).toBe(REQUEST_ID);
     expect(last?.budget).toMatchObject({ reserved_microusd: 100_000, spent_microusd: TEST_PROFILE.worker_microusd });

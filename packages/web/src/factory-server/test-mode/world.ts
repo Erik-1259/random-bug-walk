@@ -487,7 +487,8 @@ export class TestWorld implements FactoryServerPorts, FactoryTestControls {
           kind: op.kind,
           call_name: op.call_name,
           state: op.state,
-          reserved_microusd: op.settled === null ? op.reserved : 0,
+          // The original reservation in every state (contract section 15.1); budget() counts only the held ones.
+          reserved_microusd: op.reserved,
           settled_microusd: op.settled,
           attempt_ordinal: 1,
         })),
@@ -550,6 +551,7 @@ export class TestWorld implements FactoryServerPorts, FactoryTestControls {
     let spent = 0;
     for (const op of this.ops) {
       if (op.request_id !== req.request_id) continue;
+      // An operation holds its reservation until it is settled or reconciled.
       if (op.settled === null) reserved += op.reserved;
       else spent += op.settled;
     }
