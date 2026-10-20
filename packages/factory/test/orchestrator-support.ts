@@ -1,4 +1,4 @@
-import { canonicalDigest } from "@rbw/schema";
+import { canonicalDigest, sha256Hex } from "@rbw/schema";
 import type { CatalogEntry, NormalizedRequestInput, RequestStatus } from "@rbw/factory-contract";
 import { criteriaCatalogV1 } from "../src/criteria.ts";
 import type { CriteriaCatalog } from "../src/criteria.ts";
@@ -76,7 +76,9 @@ export function world(options: WorldOptions): World {
   const qualified: string[] = [];
   const stop = { requested: false };
   const plan = options.plan ?? ((entry: CatalogEntry): EntryPlan => ({ states: qualifyingPlan(declaredCodes(catalog, entry)) }));
-  const inner = fakeHarness({ plan, packages: (entry) => ({ bug_case: syntheticSha(`bug-case:${entry.entry_id}`), validator: syntheticSha(`validator-core:${entry.entry_id}`) }), now, ...(options.hooks === undefined ? {} : { hooks: options.hooks }) });
+  // The entry's exported archives: what the fake harness reports it ran on, and what the fake packaging stores.
+  const exported = (entry: CatalogEntry) => ({ bug_case: syntheticSha(`bug-case:${entry.entry_id}`), validator: syntheticSha(`validator-core:${entry.entry_id}`) });
+  const inner = fakeHarness({ plan, packages: exported, now, ...(options.hooks === undefined ? {} : { hooks: options.hooks }) });
   const tracked: QualifyHarness = async (input) => {
     qualified.push(input.entry.entry_id);
     return inner(input);
@@ -88,15 +90,18 @@ export function world(options: WorldOptions): World {
       await events.append(event);
     },
   };
+  // A faithful packaging: the final validator is the entry's core plus the record as its evidence member,
+  // and it reports what the stored validator holds, as the real one reads it back from the stored bytes.
   const packageCase = (input: { case_id: string; entry: CatalogEntry; record_json: Uint8Array }): Promise<CasePackages> => {
     log.push("package");
-    const validator = canonicalDigest({ core: syntheticSha(`validator-core:${input.entry.entry_id}`), record: Buffer.from(input.record_json).toString("hex") }).sha256;
-    const bugCase = syntheticSha(`bug-case:${input.entry.entry_id}`);
+    const parts = exported(input.entry);
+    const evidence = sha256Hex(input.record_json);
+    const validator = canonicalDigest({ core: parts.validator, evidence }).sha256;
     return Promise.resolve({
       package_version: 1,
-      pair_sha256: canonicalDigest({ bug_case: bugCase, validator, case_id: input.case_id }).sha256,
-      bug_case: { sha256: bugCase, size_bytes: 1000, filename: `rbw-bug-case-${input.case_id.slice(0, 12)}-v1.tar.gz` },
-      validator: { sha256: validator, size_bytes: 100, filename: `rbw-validator-${input.case_id.slice(0, 12)}-v1.tar.gz` },
+      pair_sha256: canonicalDigest({ bug_case_sha256: parts.bug_case, case_id: input.case_id, validator_sha256: validator }).sha256,
+      bug_case: { sha256: parts.bug_case, size_bytes: 1000, filename: `rbw-bug-case-${input.case_id.slice(0, 12)}-v1.tar.gz` },
+      validator: { sha256: validator, size_bytes: 100, filename: `rbw-validator-${input.case_id.slice(0, 12)}-v1.tar.gz`, core_sha256: parts.validator, evidence_sha256: evidence },
     });
   };
   // What the start route and the worker launch append before the loop runs.

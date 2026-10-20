@@ -1,7 +1,7 @@
 import { validateContract } from "@rbw/factory-contract/validate";
 import type { CopyRecord, Event, InterpretedCells } from "@rbw/factory-contract";
 import { describe, expect, it } from "vitest";
-import type { RequestLedger } from "../src/ports.ts";
+import type { RequestLedger, ValidatorPartInfo } from "../src/ports.ts";
 import { FakeHostAdapter, TEST_PROFILE, syntheticEntry, syntheticSha } from "../src/testing/catalog.ts";
 import { lostWorkerEvents } from "../src/projection.ts";
 import { UncertainOutcomeError, qualifyingPlan } from "../src/testing/harness.ts";
@@ -229,6 +229,57 @@ describe("runRequest: packaging and evidence", () => {
     const delivering = w.events.events.filter((event) => (event.type === "package_ready" || event.type === "case_delivered") && event.candidate_id === first?.candidate_id);
     expect(delivering).toEqual([]);
     expect(status.items[0]).toMatchObject({ delivered: 1, missing: 0 });
+  });
+
+  // The downloadable validator is assembled after export verification ran on the entry's validator core,
+  // so the stored archive must hold exactly that core and this candidate's qualification record.
+  const alteredValidators: [string, (validator: ValidatorPartInfo) => ValidatorPartInfo][] = [
+    ["was assembled from another core", (validator) => ({ ...validator, sha256: syntheticSha("final-from-another-core"), core_sha256: syntheticSha("another-validator-core") })],
+    ["omits the core", (validator) => ({ ...validator, sha256: syntheticSha("final-without-core"), core_sha256: null })],
+    ["omits the qualification record", (validator) => ({ ...validator, sha256: syntheticSha("core-alone"), evidence_sha256: null })],
+    ["holds another qualification record", (validator) => ({ ...validator, sha256: syntheticSha("final-with-another-record"), evidence_sha256: syntheticSha("another-record") })],
+  ];
+
+  it.each(alteredValidators)("rejects with export_mismatch and delivers nothing when the stored validator %s, leaving the unit for the next entry", async (_, alter) => {
+    const w = world({ input: concurrencyOnly(1), registry: twoEntries() });
+    const store = w.deps.packageCase;
+    w.deps.packageCase = async (input) => {
+      const packages = await store(input);
+      return input.entry.entry_id.endsWith("-01") ? { ...packages, validator: alter(packages.validator) } : packages;
+    };
+    const result = await w.run();
+    expect(result).toMatchObject({ stop_code: "fulfilled", delivered: 1 });
+    expect(ended(w.events.events)).toEqual([{ type: "candidate_rejected", reason: "export_mismatch" }]);
+    const status = w.status();
+    const [first, second] = status.candidates;
+    expect([first?.stage, second?.stage]).toEqual(["rejected", "qualified"]);
+    const delivering = w.events.events.filter((event) => (event.type === "package_ready" || event.type === "case_delivered") && event.candidate_id === first?.candidate_id);
+    expect(delivering).toEqual([]);
+    expect(status.cases.map((c) => c.provenance.entry_id)).toEqual([second?.entry_id]);
+    expect([...w.evidence.values()].map((evidence) => evidence.record.entry_id)).toEqual([second?.entry_id]);
+    expect(status.items[0]).toMatchObject({ delivered: 1, missing: 0 });
+  });
+
+  it("delivers the stored validator's own hash once it holds the tested core and this qualification record", async () => {
+    const w = world({ input: concurrencyOnly(1), registry: twoEntries() });
+    const store = w.deps.packageCase;
+    const stored: ValidatorPartInfo[] = [];
+    w.deps.packageCase = async (input) => {
+      const packages = await store(input);
+      stored.push(packages.validator);
+      return packages;
+    };
+    const result = await w.run();
+    expect(result).toMatchObject({ stop_code: "fulfilled", delivered: 1 });
+    const status = w.status();
+    const entryId = status.candidates[0]?.entry_id ?? "";
+    const [validator] = stored;
+    expect(stored).toHaveLength(1);
+    expect(validator?.core_sha256).toBe(syntheticSha(`validator-core:${entryId}`));
+    expect(validator?.sha256).not.toBe(validator?.core_sha256);
+    const ready = w.events.events.find((event) => event.type === "package_ready");
+    expect(ready?.data).toEqual({ bug_case_sha256: syntheticSha(`bug-case:${entryId}`), validator_sha256: validator?.sha256 });
+    expect(status.cases[0]?.packages.validator.sha256).toBe(validator?.sha256);
   });
 
   it("ends the candidate incomplete, settles it and finishes operational_error when its parts cannot be stored", async () => {

@@ -77,6 +77,7 @@ export interface HarnessResult {
   result: "passed" | "failed" | "error";
   /** True when a `beforeCopy` hook answered "stop". */
   stopped: boolean;
+  /** The archives export verification ran on: the entry's bug case and its validator core. */
   package_sha256: { bug_case: string; validator: string };
   harness: HarnessIdentity;
   /** Null when the harness could run no cell. */
@@ -115,16 +116,35 @@ export interface PackagePartInfo {
   filename: string;
 }
 
+/**
+ * The stored validator archive and what it holds, read back from the stored bytes (hashes and layout
+ * only, no copy runs), so the loop can check that the downloadable validator is the core export
+ * verification ran on plus this candidate's qualification record.
+ */
+export interface ValidatorPartInfo extends PackagePartInfo {
+  /**
+   * SHA-256 of the validator core the stored archive holds: the archive without its evidence member,
+   * packed as the package tooling packs a core. Null when the archive holds no validator core.
+   */
+  core_sha256: string | null;
+  /** SHA-256 of the stored archive's evidence member; null when it has none. */
+  evidence_sha256: string | null;
+}
+
 export interface CasePackages {
   package_version: number;
   pair_sha256: string;
   bug_case: PackagePartInfo;
-  validator: PackagePartInfo;
+  validator: ValidatorPartInfo;
 }
 
 /**
  * Builds and stores the case's final parts: the entry's bug case and the validator archive made from
- * the validator core plus this qualification record as evidence. Its hashes are those of the stored bytes.
+ * the validator core plus this qualification record (`record_json`, canonical JSON) as its evidence
+ * member. Every hash it reports is of the stored bytes. The loop delivers the case only when the bug
+ * case is the archive export verification ran on, `validator.core_sha256` is the core it ran on and
+ * `validator.evidence_sha256` is the SHA-256 of `record_json`; otherwise the candidate is rejected
+ * with `export_mismatch`.
  */
 export type PackageCase = (input: { request_id: string; case_id: string; entry: CatalogEntry; record_json: Uint8Array }) => Promise<CasePackages>;
 

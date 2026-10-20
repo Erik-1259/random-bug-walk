@@ -102,6 +102,15 @@ type CandidateOutcome = { kind: "done" } | { kind: "stop"; stop_code: StopCause 
 
 type Amounts = Pick<LedgerStatus, "budget_microusd" | "reserved_microusd" | "spent_microusd">;
 
+/**
+ * Whether the stored parts are the pair export verification ran on: the bug case is the archive it
+ * ran on, and the downloadable validator holds the validator core it ran on plus this qualification
+ * record, as read back from the stored validator.
+ */
+function storedAsVerified(packages: CasePackages, verified: HarnessResult["package_sha256"], record_sha256: string): boolean {
+  return packages.bug_case.sha256 === verified.bug_case && packages.validator.core_sha256 === verified.validator && packages.validator.evidence_sha256 === record_sha256;
+}
+
 function caseCell(cell: CellObservation, set: CheckSet, state: CopyState): Cell {
   const expected = EXPECTED[set][state];
   return { expected, observed: cell.observed, runs_valid: cell.runs_valid, runs_total: cell.runs_total, matches_expectation: cell.observed === expected };
@@ -503,8 +512,9 @@ class RequestRun {
       await this.append(candidateEnded(candidate, "incomplete_run", this.at(), "Incomplete: the case's package parts could not be stored. It is not delivered."));
       return { kind: "failed" };
     }
-    if (packages.bug_case.sha256 !== result.package_sha256.bug_case) {
-      // The stored bug case must be the exact archive that export verification ran on.
+    if (!storedAsVerified(packages, result.package_sha256, recordDigest.sha256)) {
+      // A stored part that is not what export verification ran on failed the integrity check of the
+      // exported parts (contract section 8.3): the candidate is rejected, never delivered.
       await this.append(candidateEnded(candidate, "export_mismatch", this.at()));
       return { kind: "done" };
     }

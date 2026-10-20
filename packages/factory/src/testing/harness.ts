@@ -49,7 +49,11 @@ export interface FakeHooks {
 
 export interface FakeHarnessOptions {
   plan(entry: CatalogEntry): EntryPlan;
-  /** The stored parts' hashes (in test mode, the hashes of the synthetic pair builder's bytes). */
+  /**
+   * The hashes of the archives export verification runs on: the entry's bug case and its validator core
+   * (in test mode, the hashes of the synthetic pair builder's bytes). Packaging must report the same
+   * bug case and core for the case to be delivered.
+   */
   packages(entry: CatalogEntry): { bug_case: string; validator: string };
   now(): Date;
   /** Runs per copy of the original suite; 3 by default. */

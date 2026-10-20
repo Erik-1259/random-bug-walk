@@ -57,6 +57,7 @@ export type {
   RequestLedger,
   RequestRecordInput,
   ReserveOutcome,
+  ValidatorPartInfo,
 } from "./ports.ts";
 export { candidateWorstCase, copyEnvelope, entryWorstCase, hostCandidateWorstCase, validationWorstCase } from "./profile.ts";
 export type { FactoryProfileInput } from "./profile.ts";
