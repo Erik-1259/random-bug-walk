@@ -11,14 +11,31 @@
 // definite failure: settled at zero, finished, slot released. Every other create or start failure
 // is uncertain: the operation goes to uncertain, the request or run finishes with
 // needs_reconciliation, the sandbox is stopped on a best-effort basis and the slot stays held.
+//
+// A start repeated with the same ID (contract section 7 answers a repeated request start with the
+// same body; section 11 has the client send the same validation ID again after a timeout) resumes
+// an earlier one that ended part-way from what that start recorded: the
+// request's or run's finish, the operation's state, whether the worker began (its first heartbeat
+// or its own first event) and what the provider holds under the deterministic sandbox name. A
+// prepared operation is launched. A launching one whose create left nothing by that name is created
+// under the same name (the name is the provider's replay key: it refuses a second sandbox on it),
+// and a sandbox found under the name is adopted while it runs. A running one whose worker has not
+// begun gets the worker command again, under the run-once guard. A sandbox that stopped before its
+// worker began, and an operation already uncertain, end the start uncertain: an uncertain operation
+// is never launched again. A refused create's end, its zero settlement, its finish and its release
+// are completed. Once the worker began, the worker and the routines after it own the operation. The
+// service runs starts of one ID one at a time; starts that overlap anyway still create one sandbox
+// and run one worker, and a start that loses a ledger step to another answers replay.
 // Web-safe: no runner, driver or PGlite.
 import type { Rates } from "@rbw/envelope";
-import { VALIDATION_RESULT_VALUES } from "@rbw/factory-contract";
+import { STOP_CODE_VALUES, VALIDATION_RESULT_VALUES } from "@rbw/factory-contract";
 import type { BusyReason, HarnessIdentity, HostId, PackageHashes, Protocol, ValidationMatrix, ValidationRun } from "@rbw/factory-contract";
 import { utcSeconds } from "@rbw/local-runner/shared";
+import type { OperationState } from "@rbw/spend";
 import {
   EVENT_KEYS,
   ROUTE_ACTOR,
+  STOPPED_STATUSES,
   appendBudgetUpdate,
   busyReason,
   finishLaunch,
@@ -33,7 +50,17 @@ import {
 import type { FactoryOperation } from "./factory-ledger.ts";
 import { FACTORY_PROFILE } from "./factory-profile.ts";
 import type { FactoryProfile } from "./factory-profile.ts";
-import type { FactoryIdentity, FactoryLedger, FactoryRecords, FactoryRequestRecord, FactoryValidationRecord, ValidationEventInput, WorkerSandboxInstance, WorkerSandboxSdk } from "./factory-ports.ts";
+import type {
+  FactoryIdentity,
+  FactoryLedger,
+  FactoryRecords,
+  FactoryRequestRecord,
+  FactoryValidationRecord,
+  StoredFactoryEvent,
+  ValidationEventInput,
+  WorkerSandboxInstance,
+  WorkerSandboxSdk,
+} from "./factory-ports.ts";
 import { runOnceCommand } from "./factory-run-once.ts";
 
 /** How the worker is launched: the image from RBW_FACTORY_WORKER_IMAGE and the credentials it reads. */
@@ -93,21 +120,71 @@ function httpStatus(error: unknown): number | null {
 /** 4xx answers that do not show the provider refused before creating anything. */
 const NOT_DEFINITE = new Set([408, 409, 425, 429]);
 
-type Launched = { kind: "launched"; sandbox: string } | { kind: "definite_failure"; detail: string } | { kind: "uncertain"; detail: string };
+type Launched = { kind: "launched"; sandbox: string } | { kind: "definite_failure"; detail: string } | { kind: "uncertain"; detail: string } | { kind: "replay" };
+
+/**
+ * The worker command's arguments for a sandbox this start creates, and for one an earlier start
+ * created, which ends no later than its timeout from that start (a request worker's deadline).
+ */
+interface WorkerArgs {
+  fresh: string[];
+  adopted: string[];
+}
+
+/** The sandbox under this name: null when there is none, undefined when the lookup failed. */
+async function lookup(deps: FactoryLaunchDeps, name: string): Promise<WorkerSandboxInstance | null | undefined> {
+  try {
+    return await deps.sandbox.get(name);
+  } catch (error) {
+    deps.log(`factory: the lookup of ${name} failed (${error instanceof Error ? error.name : "non-error"})`);
+    return undefined;
+  }
+}
+
+/**
+ * Whether the ledger recorded the operation running: its running transition records its sandbox as
+ * a child resource of the root's hold, which an open operation keeps held.
+ */
+async function recordedRunning(deps: FactoryLaunchDeps, op: FactoryOperation): Promise<boolean> {
+  const profile = deps.profile ?? FACTORY_PROFILE;
+  const slot = await deps.ledger.spend.slotStatus({ slot_key: profile.slot_key });
+  return slot.ok && slot.children.some((child) => child.operation_id === op.operation_id);
+}
+
+function live(found: WorkerSandboxInstance | null | undefined): found is WorkerSandboxInstance {
+  return found !== null && found !== undefined && !STOPPED_STATUSES.has(found.status);
+}
+
+/** Moves the operation to uncertain; replay when another call moved it first. */
+async function toUncertain(deps: FactoryLaunchDeps, op: FactoryOperation, from: "launching" | "running", uncertainty: "lost_response" | "unknown_status", detail: string): Promise<Launched> {
+  const moved = await deps.ledger.spend.transition({ operation_id: op.operation_id, from_state: from, to_state: "uncertain", actor_role: ROUTE_ACTOR, uncertainty });
+  if (!moved.ok && moved.code === "invalid_transition") return { kind: "replay" };
+  return { kind: "uncertain", detail };
+}
 
 /**
  * prepared → launching → create → running → the detached command. The operation must be prepared.
  * Returns what happened; every ledger step of a failure is taken here.
  */
-async function launchSandbox(deps: FactoryLaunchDeps, op: FactoryOperation, size: { vcpus: number; timeout_s: number }, args: string[]): Promise<Launched | { kind: "replay" }> {
+async function launchSandbox(deps: FactoryLaunchDeps, op: FactoryOperation, size: { vcpus: number; timeout_s: number }, args: WorkerArgs): Promise<Launched> {
   const profile = deps.profile ?? FACTORY_PROFILE;
-  const { spend } = deps.ledger;
-  const launching = await spend.transition({ operation_id: op.operation_id, from_state: "prepared", to_state: "launching", actor_role: ROUTE_ACTOR, slot_key: profile.slot_key });
+  const launching = await deps.ledger.spend.transition({ operation_id: op.operation_id, from_state: "prepared", to_state: "launching", actor_role: ROUTE_ACTOR, slot_key: profile.slot_key });
   if (!launching.ok) {
     // Another call moved it first: that call launches. Any other refusal leaves it prepared for reconciliation.
     if (launching.code === "invalid_transition") return { kind: "replay" };
     return { kind: "uncertain", detail: `the launch was refused (${launching.code})` };
   }
+  return createAndStart(deps, op, size, args, false);
+}
+
+/**
+ * create → running → the detached command, for an operation in launching. `resumed`: an earlier
+ * start moved it to launching and nothing was found under its name, so a create the provider
+ * refuses on the name (409) means that start's create took effect after the lookup, and the
+ * sandbox it made is adopted while it runs.
+ */
+async function createAndStart(deps: FactoryLaunchDeps, op: FactoryOperation, size: { vcpus: number; timeout_s: number }, args: WorkerArgs, resumed: boolean): Promise<Launched> {
+  const { spend } = deps.ledger;
   let instance: WorkerSandboxInstance;
   try {
     instance = await deps.sandbox.create({
@@ -121,13 +198,7 @@ async function launchSandbox(deps: FactoryLaunchDeps, op: FactoryOperation, size
     });
   } catch (error) {
     const status = httpStatus(error);
-    let found: WorkerSandboxInstance | null | undefined;
-    try {
-      found = await deps.sandbox.get(op.sandbox_name);
-    } catch (lookup) {
-      deps.log(`factory: the lookup of ${op.sandbox_name} failed (${lookup instanceof Error ? lookup.name : "non-error"})`);
-      found = undefined;
-    }
+    const found = await lookup(deps, op.sandbox_name);
     const definite = status !== null && status >= 400 && status < 500 && !NOT_DEFINITE.has(status) && found === null;
     if (definite) {
       const ended = await spend.transition({ operation_id: op.operation_id, from_state: "launching", to_state: "terminal", actor_role: ROUTE_ACTOR, terminal_status: "failed" });
@@ -135,30 +206,96 @@ async function launchSandbox(deps: FactoryLaunchDeps, op: FactoryOperation, size
       if (settled.ok) return { kind: "definite_failure", detail: `the create was refused (${String(status)})` };
       return { kind: "uncertain", detail: `the create was refused (${String(status)}) but the ledger refused its end (${settled.code})` };
     }
-    await spend.transition({ operation_id: op.operation_id, from_state: "launching", to_state: "uncertain", actor_role: ROUTE_ACTOR, uncertainty: "lost_response" });
+    if (resumed && status === 409 && live(found)) return startCommand(deps, op, found, args.adopted);
+    const moved = await spend.transition({ operation_id: op.operation_id, from_state: "launching", to_state: "uncertain", actor_role: ROUTE_ACTOR, uncertainty: "lost_response" });
+    // Another start adopted the sandbox under this name and runs its worker: nothing is stopped.
+    if (!moved.ok && moved.code === "invalid_transition" && moved.current_state === "running") return { kind: "replay" };
     if (found !== null && found !== undefined) await stopQuietly(deps.sandbox, op.sandbox_name, deps.log);
     return { kind: "uncertain", detail: `the create failed (${status === null ? (error instanceof Error ? error.name : "non-error") : String(status)})` };
   }
+  return startCommand(deps, op, instance, args.fresh);
+}
+
+/** launching → running for this sandbox, then the detached command. */
+async function startCommand(deps: FactoryLaunchDeps, op: FactoryOperation, instance: WorkerSandboxInstance, args: string[]): Promise<Launched> {
+  const { spend } = deps.ledger;
   const running = await spend.transition({ operation_id: op.operation_id, from_state: "launching", to_state: "running", actor_role: ROUTE_ACTOR, provider_resource_id: instance.name });
   if (!running.ok) {
+    // Another start recorded the same sandbox running and starts its worker.
+    if (running.code === "invalid_transition" && running.current_state === "running") return { kind: "replay" };
     await spend.transition({ operation_id: op.operation_id, from_state: "launching", to_state: "uncertain", actor_role: ROUTE_ACTOR, uncertainty: "unknown_status" });
     await stopQuietly(deps.sandbox, instance.name, deps.log);
     return { kind: "uncertain", detail: `the running transition was refused (${running.code})` };
   }
+  return runWorkerCommand(deps, op, instance, args);
+}
+
+/** The detached worker command in a running operation's sandbox. */
+async function runWorkerCommand(deps: FactoryLaunchDeps, op: FactoryOperation, instance: WorkerSandboxInstance, args: string[]): Promise<Launched> {
   try {
-    // Under the run-once guard, so a start the SDK replays runs no second worker.
+    // Under the run-once guard, so a start the SDK replays, or a resumed start sends again, runs no second worker.
     const guarded = runOnceCommand("rbw-worker", WORKER_RUN_ONCE_DIR, [NODE, ...args]);
     await instance.runCommand({ cmd: guarded.cmd, args: guarded.args, cwd: WORKER_REPOSITORY, detached: true });
   } catch (error) {
-    await spend.transition({ operation_id: op.operation_id, from_state: "running", to_state: "uncertain", actor_role: ROUTE_ACTOR, uncertainty: "unknown_status" });
+    await deps.ledger.spend.transition({ operation_id: op.operation_id, from_state: "running", to_state: "uncertain", actor_role: ROUTE_ACTOR, uncertainty: "unknown_status" });
     await stopQuietly(deps.sandbox, instance.name, deps.log);
     return { kind: "uncertain", detail: `the worker command could not be started (${error instanceof Error ? error.name : "non-error"})` };
   }
   return { kind: "launched", sandbox: instance.name };
 }
 
+/**
+ * Resumes the launch an earlier start left in `state`, which this start found on its reservation
+ * or its record. A lookup that fails leaves the operation as it is, for a later start or the
+ * lost-worker routine.
+ */
+async function resumeLaunch(deps: FactoryLaunchDeps, op: FactoryOperation, state: OperationState, size: { vcpus: number; timeout_s: number }, args: WorkerArgs, workerStarted: () => Promise<boolean>): Promise<Launched> {
+  if (state === "prepared") return launchSandbox(deps, op, size, args);
+  // Once the worker began, it and the routines after it (its settlement, the lost-worker routine) own the operation.
+  if (await workerStarted()) return { kind: "replay" };
+  switch (state) {
+    case "launching": {
+      const found = await lookup(deps, op.sandbox_name);
+      if (found === undefined) return { kind: "replay" };
+      if (found === null) return createAndStart(deps, op, size, args, true);
+      if (STOPPED_STATUSES.has(found.status)) return toUncertain(deps, op, "launching", "lost_response", `the sandbox an earlier start created is ${found.status}`);
+      return startCommand(deps, op, found, args.adopted);
+    }
+    case "running": {
+      const found = await lookup(deps, op.sandbox_name);
+      if (found === undefined) return { kind: "replay" };
+      if (live(found)) return runWorkerCommand(deps, op, found, args.adopted);
+      return toUncertain(deps, op, "running", "unknown_status", "the sandbox stopped before its worker started");
+    }
+    case "terminal": {
+      // A create refused before anything existed ends here, never recorded running and with nothing under its
+      // name; any other end (the lost-worker routine's) is the routine's that ended it, which settles it.
+      if (await recordedRunning(deps, op)) return { kind: "replay" };
+      const found = await lookup(deps, op.sandbox_name);
+      if (found !== null) return { kind: "replay" };
+      const settled = await deps.ledger.spend.settle(zeroSettlement(op.envelope, op.operation_id));
+      if (settled.ok) return { kind: "definite_failure", detail: "an earlier start's refused create was settled" };
+      return { kind: "uncertain", detail: `the ledger refused the refused create's settlement (${settled.code})` };
+    }
+    case "reconciled": {
+      const status = await deps.ledger.spend.operationStatus({ operation_id: op.operation_id });
+      if (status.ok && status.settled_microusd === 0n && !(await recordedRunning(deps, op))) return { kind: "definite_failure", detail: "an earlier start's refused create was settled" };
+      return { kind: "replay" };
+    }
+    case "uncertain":
+      // Never launched again: the start ends uncertain, with what may still run stopped.
+      await stopQuietly(deps.sandbox, op.sandbox_name, deps.log);
+      return { kind: "uncertain", detail: "an earlier start left the launch uncertain" };
+  }
+}
+
 // The request worker ----------------------------------------------------------------------------
 
+/**
+ * `replay`: this start launched nothing: an earlier or concurrent start launched the worker or
+ * left it uncertain and finished, the worker began, the request finished (the start's own finish is
+ * completed), or what the provider holds could not be read and is left for a later start.
+ */
 export type WorkerStart = { kind: "launched"; sandbox: string } | { kind: "replay" } | { kind: "refused"; code: string } | { kind: "create_failed" } | { kind: "uncertain"; detail: string };
 
 async function releaseSlot(deps: FactoryLaunchDeps, root: string): Promise<boolean> {
@@ -168,19 +305,44 @@ async function releaseSlot(deps: FactoryLaunchDeps, root: string): Promise<boole
   return released.ok;
 }
 
+/** Releases the slot when this root still holds it (an earlier start may have released it already). */
+async function releaseHeld(deps: FactoryLaunchDeps, root: string): Promise<void> {
+  const profile = deps.profile ?? FACTORY_PROFILE;
+  const slot = await deps.ledger.spend.slotStatus({ slot_key: profile.slot_key });
+  if (slot.ok && slot.holder === root) await releaseSlot(deps, root);
+}
+
+/**
+ * The rest of the start's own finish (a refused reservation, a refused create or an uncertain
+ * launch), which an earlier start recorded and may not have completed: the budget closed with its
+ * stop code and, unless its spend needs reconciliation, the slot released.
+ */
+async function completeLaunchFinish(deps: FactoryLaunchDeps, record: FactoryRequestRecord, finished: StoredFactoryEvent): Promise<void> {
+  const stop = STOP_CODE_VALUES.find((code) => code === finished.data.stop_code);
+  if (stop === undefined) return;
+  const closed = await deps.ledger.budgets.close(record.budget_key, stop);
+  if (!closed.ok) deps.log(`factory ${record.request_id} the budget close was refused (${closed.code}); the finish stands`);
+  if (stop !== "needs_reconciliation") await releaseHeld(deps, record.root);
+}
+
 /**
  * Reserves the worker and launches it once per request. A duplicate or concurrent start finds the
- * operation already reserved (replay) and launches nothing; only one caller can move a prepared
- * operation to launching, so a start retried after an earlier one stopped between its reservation
- * and its launch launches it. The request must be recorded first.
+ * operation already reserved and resumes the launch from its state (the file's header): only one
+ * caller can move a prepared operation to launching, so overlapping starts launch one worker. The
+ * request must be recorded first.
  */
 export async function startFactoryWorker(deps: FactoryLaunchDeps, requestId: string): Promise<WorkerStart> {
   checkImage(deps.launch.image);
   const profile = deps.profile ?? FACTORY_PROFILE;
   const record = await deps.records.request(requestId);
   if (record === null) throw new LaunchConfigError("the request is not recorded");
+  const events = await deps.records.events(requestId);
   // A finished request never gets a worker, whatever its operation's state.
-  if (finishedEvent(await deps.records.events(requestId)) !== null) return { kind: "replay" };
+  const finished = finishedEvent(events);
+  if (finished !== null) {
+    if (finished.event_key === EVENT_KEYS.launchFinish) await completeLaunchFinish(deps, record, finished);
+    return { kind: "replay" };
+  }
   const op = workerOperation({ identity: deps.identity, rates: deps.rates, profile }, record);
   const reserved = await deps.ledger.budgets.reserve(record.budget_key, "request", op.request);
   if (!reserved.ok) {
@@ -191,14 +353,19 @@ export async function startFactoryWorker(deps: FactoryLaunchDeps, requestId: str
     deps.log(`factory ${requestId} worker reservation refused ${reserved.code}; finished and released`);
     return { kind: "refused", code: reserved.code };
   }
-  if (reserved.replay && reserved.state !== "prepared") return { kind: "replay" };
-  await appendBudgetUpdate(deps, record, EVENT_KEYS.workerReserved, `Reserved ${usd(reserved.reserved_microusd)} for the worker's worst case.`);
-  const deadline = new Date(deps.now().getTime() + profile.worker.timeout_s * 1000);
-  const launched = await launchSandbox(deps, op, profile.worker, workerCommandArgs({ request_id: requestId, deadline_at: deadline }));
+  const timeoutMs = profile.worker.timeout_s * 1000;
+  const args: WorkerArgs = {
+    fresh: workerCommandArgs({ request_id: requestId, deadline_at: new Date(deps.now().getTime() + timeoutMs) }),
+    // The request was recorded before any create, so its time bounds an earlier start's sandbox's end.
+    adopted: workerCommandArgs({ request_id: requestId, deadline_at: new Date(Date.parse(record.created_at) + timeoutMs) }),
+  };
+  if (reserved.state === "prepared") await appendBudgetUpdate(deps, record, EVENT_KEYS.workerReserved, `Reserved ${usd(reserved.reserved_microusd)} for the worker's worst case.`);
+  const started = async (): Promise<boolean> => events.some((event) => event.type === "worker_started") || (await deps.records.lastHeartbeat({ request_id: requestId })) !== null;
+  const launched = await resumeLaunch(deps, op, reserved.state, profile.worker, args, started);
   return finishWorkerLaunch(deps, record, launched);
 }
 
-async function finishWorkerLaunch(deps: FactoryLaunchDeps, record: FactoryRequestRecord, launched: Launched | { kind: "replay" }): Promise<WorkerStart> {
+async function finishWorkerLaunch(deps: FactoryLaunchDeps, record: FactoryRequestRecord, launched: Launched): Promise<WorkerStart> {
   switch (launched.kind) {
     case "launched":
     case "replay":
@@ -283,12 +450,66 @@ export function validationRunView(record: Pick<FactoryValidationRecord, "validat
 
 const BUDGET_CODES = new Set(["budget_exhausted", "budget_closed", "insufficient_funds"]);
 
+/** The request's validation_started and the run's reservation's budget_updated, each keyed by the run. */
+async function appendValidationStarted(deps: FactoryLaunchDeps, request: FactoryRequestRecord, record: FactoryValidationRecord, reservedMicrousd: bigint): Promise<void> {
+  const id = record.validation_id;
+  await deps.records.appendEvent(
+    request.request_id,
+    { event_key: `validation:${id}:started`, type: "validation_started", host_id: record.host_id, candidate_id: null, item_key: null, case_id: record.case_id, message: "Validation run started.", data: { validation_id: id } },
+    deps.now(),
+  );
+  await appendBudgetUpdate(deps, request, `validation:${id}:reserved`, `Reserved ${usd(reservedMicrousd)} for a validation run's worst case.`);
+}
+
+/** A launch's end for a validation run: a refused create finishes it error at zero and releases the slot; an uncertain one finishes it error for reconciliation. */
+async function finishValidationLaunch(deps: FactoryLaunchDeps, request: FactoryRequestRecord, record: FactoryValidationRecord, launched: Launched): Promise<void> {
+  if (launched.kind === "definite_failure") {
+    await finishValidation(deps, request, record, { result: "error", matrix: null, message: "The validation run could not be started.", cost_microusd: 0 });
+    await releaseSlot(deps, record.root);
+  } else if (launched.kind === "uncertain") {
+    await finishValidation(deps, request, record, { result: "error", matrix: null, message: "The validation run's launch outcome is uncertain; its spend needs reconciliation.", cost_microusd: null });
+    deps.log(`factory validation ${record.validation_id} launch uncertain: ${launched.detail}; slot held`);
+  }
+}
+
+/**
+ * A repeated start of a recorded run. A finished run whose worker never began finished in its
+ * launch (or by the lost-worker routine before any worker): the request's events follow its
+ * recorded finish, and a settled one releases the slot. An unfinished run resumes its launch.
+ */
+async function resumeValidation(deps: FactoryLaunchDeps, request: FactoryRequestRecord, record: FactoryValidationRecord, harness: HarnessIdentity): Promise<ValidationStart> {
+  const profile = deps.profile ?? FACTORY_PROFILE;
+  const id = record.validation_id;
+  const runEvents = await deps.records.validationEvents(id);
+  const started = async (): Promise<boolean> => runEvents.some((event) => event.type === "running") || (await deps.records.lastHeartbeat({ validation_id: id })) !== null;
+  const finished = runEvents.find((event) => event.type === "finished");
+  if (finished !== undefined) {
+    const result = VALIDATION_RESULT_VALUES.find((value) => value === finished.data.result);
+    const cost = finished.data.cost_microusd;
+    if (result !== undefined && (cost === null || typeof cost === "number") && !(await started())) {
+      const matrix = isMatrix(finished.data.matrix) ? finished.data.matrix : null;
+      const finish = await finishValidation(deps, request, record, { result, matrix, message: text(finished.data.message), cost_microusd: cost });
+      if (finish.cost_microusd !== null) await releaseHeld(deps, record.root);
+    }
+  } else {
+    const op = validationOperation({ identity: deps.identity, rates: deps.rates, profile }, record);
+    const status = await deps.ledger.spend.operationStatus({ operation_id: op.operation_id });
+    if (!status.ok) return { kind: "unavailable", message: `The validation run's reservation could not be read (${status.code}).` };
+    if (status.state === "prepared") await appendValidationStarted(deps, request, record, status.reserved_microusd);
+    const args = workerCommandArgs({ validation_id: id });
+    const launched = await resumeLaunch(deps, op, status.state, profile.validation.worker, { fresh: args, adopted: args }, started);
+    await finishValidationLaunch(deps, request, record, launched);
+  }
+  return { kind: "accepted", run: validationRunView(record, await deps.records.validationEvents(id), harness) };
+}
+
 /**
  * Starts a validation run in the POST (contract section 11): the factory
  * slot under the validation root, then the run's worst case, priced for the copies its package's
  * protocol declares, reserved on the request budget with the validation role. Busy or a refused reservation records nothing (the slot taken
  * here is released). Then the run is recorded, validation_started and budget_updated are appended,
- * and its worker is launched.
+ * and its worker is launched. A repeated start of a recorded run resumes it (the file's header) and
+ * answers the run as recorded.
  */
 export async function startFactoryValidation(deps: FactoryLaunchDeps, args: ValidationStartArgs): Promise<ValidationStart> {
   checkImage(deps.launch.image);
@@ -300,7 +521,7 @@ export async function startFactoryValidation(deps: FactoryLaunchDeps, args: Vali
   const root = deps.identity.validationRoot(args.validation_id);
   const existing = await deps.records.validation(args.validation_id);
   if (existing !== null) {
-    if (existing.request_id === args.request_id && existing.case_id === args.case_id) return { kind: "accepted", run: validationRunView(existing, await deps.records.validationEvents(args.validation_id), args.harness) };
+    if (existing.request_id === args.request_id && existing.case_id === args.case_id) return resumeValidation(deps, request, existing, args.harness);
     return { kind: "unavailable", message: "The validation ID is already used." };
   }
 
@@ -337,20 +558,9 @@ export async function startFactoryValidation(deps: FactoryLaunchDeps, args: Vali
 
   const recorded = await deps.records.recordValidation(record);
   if (recorded === "conflict") throw new LaunchConfigError("the validation record conflicts with an existing one");
-  await deps.records.appendEvent(
-    args.request_id,
-    { event_key: `validation:${args.validation_id}:started`, type: "validation_started", host_id: args.host_id, candidate_id: null, item_key: null, case_id: args.case_id, message: "Validation run started.", data: { validation_id: args.validation_id } },
-    deps.now(),
-  );
-  await appendBudgetUpdate(deps, request, `validation:${args.validation_id}:reserved`, `Reserved ${usd(reserved.reserved_microusd)} for a validation run's worst case.`);
+  await appendValidationStarted(deps, request, record, reserved.reserved_microusd);
 
-  const launched = await launchSandbox(deps, op, profile.validation.worker, workerCommandArgs({ validation_id: args.validation_id }));
-  if (launched.kind === "definite_failure") {
-    await finishValidation(deps, request, record, { result: "error", matrix: null, message: "The validation run could not be started.", cost_microusd: 0 });
-    await releaseSlot(deps, root);
-  } else if (launched.kind === "uncertain") {
-    await finishValidation(deps, request, record, { result: "error", matrix: null, message: "The validation run's launch outcome is uncertain; its spend needs reconciliation.", cost_microusd: null });
-    deps.log(`factory validation ${args.validation_id} launch uncertain: ${launched.detail}; slot held`);
-  }
+  const commandArgs = workerCommandArgs({ validation_id: args.validation_id });
+  await finishValidationLaunch(deps, request, record, await launchSandbox(deps, op, profile.validation.worker, { fresh: commandArgs, adopted: commandArgs }));
   return { kind: "accepted", run: validationRunView(record, await deps.records.validationEvents(args.validation_id), args.harness) };
 }

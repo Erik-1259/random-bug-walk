@@ -11,7 +11,7 @@ import { RUN_ONCE_SCRIPT } from "../../src/factory-run-once.ts";
 import { runFactoryValidation } from "../../src/factory-worker.ts";
 import type { FactoryLaunchDeps, ValidationStartArgs } from "../../src/factory-launch.ts";
 import type { WorkerSandboxCreateParams } from "../../src/factory-ports.ts";
-import { CASE_ID, CREDENTIALS, PROTOCOL, SyntheticApiError, VALIDATION_3_MICROUSD, WORKER_IMAGE, acceptRequest, factoryWorld, operationState, slotHolder, syntheticUuid } from "./factory-fakes.ts";
+import { CASE_ID, CREDENTIALS, PROTOCOL, SyntheticApiError, VALIDATION_3_MICROUSD, WORKER_IMAGE, acceptRequest, factoryWorld, operationState, simulateWorkerStart, slotHolder, syntheticUuid } from "./factory-fakes.ts";
 import type { FactoryWorld } from "./factory-fakes.ts";
 
 let w: FactoryWorld;
@@ -95,6 +95,7 @@ describe("startFactoryWorker", () => {
 
   it("launches one worker for duplicate and concurrent starts of one request", async () => {
     const record = await acceptRequest(w);
+    simulateWorkerStart(w);
     let open: () => void = () => undefined;
     w.sandbox.gate = new Promise<void>((resolve) => {
       open = resolve;
@@ -103,8 +104,13 @@ describe("startFactoryWorker", () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
     open();
     const results = await Promise.all(pending);
+    const creates = w.sandbox.count("create");
     const again = await startFactoryWorker(deps(), record.request_id);
-    expect(w.sandbox.count("create")).toBe(1);
+    // A start that overlaps one still creating finds nothing under the name and creates under it too: the
+    // provider refuses that second create on the name, so one sandbox exists. A start after the worker began sends none.
+    expect(w.sandbox.sandboxes.size).toBe(1);
+    expect(w.sandbox.count("create")).toBe(creates);
+    expect(w.sandbox.count("stop")).toBe(0);
     expect(w.sandbox.count("run")).toBe(1);
     expect(results.filter((result) => result.kind === "launched")).toHaveLength(1);
     expect([...results, again].filter((result) => result.kind !== "launched").every((result) => result.kind === "replay")).toBe(true);
@@ -130,6 +136,7 @@ describe("startFactoryWorker", () => {
 
   it("never finishes a request over a conflicting or replayed worker operation, such as a start after a redeploy with another image", async () => {
     const record = await acceptRequest(w);
+    simulateWorkerStart(w);
     expect((await startFactoryWorker(deps(), record.request_id)).kind).toBe("launched");
     const other = `synthetic-team/synthetic-project/rbw-factory-worker@sha256:${"cd".repeat(32)}`;
     expect(await startFactoryWorker(deps({ launch: { image: other, env: CREDENTIALS } }), record.request_id)).toEqual({ kind: "replay" });

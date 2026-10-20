@@ -327,6 +327,7 @@ export class FakeInstance implements WorkerSandboxInstance {
     await roundTrip();
     this.sdk.calls.push({ action: "run", name: this.name, detail: params });
     if (this.sdk.failRun) throw new Error("synthetic: the command could not be started");
+    if (this.sdk.onRun !== null) await this.sdk.onRun(params);
     return { cmdId: "synthetic" };
   }
   async stop(): Promise<unknown> {
@@ -366,10 +367,14 @@ export class FakeWorkerSandbox implements WorkerSandboxSdk {
   stopAnswerLost = false;
   /** Held creates wait for this before answering. */
   gate: Promise<void> | null = null;
+  /** What a started command does first, such as the worker's first heartbeat (simulateWorkerStart). */
+  onRun: ((params: { cmd: string; args: string[] }) => Promise<void>) | null = null;
 
   async create(params: WorkerSandboxCreateParams): Promise<WorkerSandboxInstance> {
     this.calls.push({ action: "create", name: params.name, detail: params });
     if (this.gate !== null) await this.gate;
+    // The provider keeps a named sandbox, a stopped one included, and refuses a second create on its name.
+    if (this.sandboxes.has(params.name)) throw new SyntheticApiError(409);
     if (this.createError !== null) {
       if (this.createdAnyway) this.sandboxes.set(params.name, new FakeInstance(params.name, this));
       throw this.createError;
@@ -459,6 +464,23 @@ export async function acceptRequest(w: FactoryWorld, options: { budget?: number;
   w.records.requests.set(requestId, record);
   await w.records.appendEvent(requestId, { event_key: "request_accepted", type: "request_accepted", host_id: null, candidate_id: null, item_key: null, case_id: null, message: "Request accepted.", data: {} }, w.clock.now());
   return record;
+}
+
+/**
+ * Makes every started worker command write its first heartbeat, as the worker does as soon as it
+ * runs, for the request or validation run its arguments name.
+ */
+export function simulateWorkerStart(w: FactoryWorld): void {
+  w.sandbox.onRun = async (params) => {
+    const at = (flag: string): string | undefined => {
+      const index = params.args.indexOf(flag);
+      return index < 0 ? undefined : params.args[index + 1];
+    };
+    const requestId = at("--request-id");
+    const validationId = at("--validation-id");
+    if (requestId !== undefined) await w.records.recordHeartbeat({ request_id: requestId }, w.clock.now());
+    else if (validationId !== undefined) await w.records.recordHeartbeat({ validation_id: validationId }, w.clock.now());
+  };
 }
 
 export async function slotHolder(w: FactoryWorld): Promise<string | null> {
