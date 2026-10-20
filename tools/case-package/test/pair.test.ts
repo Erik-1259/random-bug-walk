@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { unpackArchive } from "../src/archive.ts";
 import { BUG_CASE_MANIFEST, packageFilename, pairSha256, VALIDATOR_MANIFEST } from "../src/format.ts";
 import { packPair, PackRefused, type PairInput } from "../src/pack.ts";
-import { buildMismatchedSyntheticPair, buildSyntheticPair, syntheticPairInput } from "../src/synthetic.ts";
+import { buildMismatchedSyntheticPair, buildSyntheticPair, SYNTHETIC_TARGET, syntheticPairInput } from "../src/synthetic.ts";
 
 const encoder = new TextEncoder();
 const sha = (bytes: Uint8Array): string => createHash("sha256").update(bytes).digest("hex");
@@ -197,6 +197,20 @@ describe("buildSyntheticPair", () => {
     const second = buildSyntheticPair({ host_id: "task-report", seed: "02", defect_seed: "shared" });
     expect(second.entry_id).not.toBe(first.entry_id);
     expect(second.defect_id).toBe(first.defect_id);
+  });
+
+  it("leaves no marker of the planted change in the bug case: the changed line carries no comment or seed", () => {
+    const pair = buildSyntheticPair({ seed: "01", defect_seed: "synthetic-probe-seed" });
+    const decoder = new TextDecoder();
+    const members = unpackArchive(pair.bug_case.bytes);
+    for (const member of members) {
+      const content = decoder.decode(member.bytes);
+      expect(content).not.toContain("synthetic-probe-seed");
+      expect(content).not.toContain("synthetic-defect");
+    }
+    const counter = members.find((member) => member.path === `source/${SYNTHETIC_TARGET}`);
+    if (counter === undefined) throw new Error("no planted target in the bug case");
+    expect(decoder.decode(counter.bytes).split("\n").filter((line) => line.includes("//"))).toEqual(["// Synthetic application for package tooling tests."]);
   });
 
   it("uses the identity functions it is given", () => {

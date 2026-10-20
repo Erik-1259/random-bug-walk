@@ -72,8 +72,14 @@ const CLEAN_COUNTER = [
 ].join("\n");
 const CLEAN_RETURN = "  return count;";
 
+/**
+ * The planted return for one defect seed. It undercounts from two acknowledged changes on, by an amount
+ * derived from the seed, so one defect seed gives one change and different seeds give different changes,
+ * with nothing in the exported source that labels the changed line.
+ */
 function buggyReturn(defectSeed: string): string {
-  return `  return count > 1 ? count - 1 : count; // synthetic-defect-${defectSeed}`;
+  const shortfall = 1 + Number.parseInt(sha(`synthetic-defect/${defectSeed}`).slice(0, 4), 16);
+  return `  return count > 1 ? count - ${String(shortfall)} : count;`;
 }
 
 function counterPatch(from: string, to: string): string {

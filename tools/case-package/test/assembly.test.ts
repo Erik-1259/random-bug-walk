@@ -57,6 +57,6 @@ describe("assembleFinalValidator", () => {
 
 // Recorded once from the synthetic builder; a change here means the archive bytes changed on this platform.
 const GOLDEN = {
-  core: "96e0abdd37a4de176c53910c5305729f412b899845a11990f2a6b9f765f167b4",
-  final: "9ed383fc855f71a47f2efb31aed53bb2eabd16b8bb1f165a6ec9dd96fdaf444e",
+  core: "db8981f0cab3c0b46751df31fbeb7043f6d8dd07cdcf63c1c8b3ca6a746907bb",
+  final: "91b64ff3919e6d60fc7c8d3d542697d3575e62a6858e5bb29b53cdf351b9464f",
 };
