@@ -1,14 +1,15 @@
 import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
+import { parseContract } from "@rbw/factory-contract/validate";
 import { FactoryProgress } from "../src/components/factory-progress.tsx";
 import type { RequestStatus, ValidationRun } from "../src/factory/client.ts";
 
-function fixture(name: string): unknown {
-  return JSON.parse(readFileSync(new URL(`./fixtures/factory-v1/${name}.json`, import.meta.url), "utf8"));
+function fixture(name: string): string {
+  return readFileSync(new URL(`./fixtures/factory-v1/${name}.json`, import.meta.url), "utf8");
 }
-const statusFixture = (name: string) => fixture(name) as RequestStatus;
-const validationFixture = (name: string) => fixture(name) as ValidationRun;
+const statusFixture = (name: string) => parseContract("RequestStatus", fixture(name));
+const validationFixture = (name: string) => parseContract("ValidationRun", fixture(name));
 function render(status: RequestStatus | null, validation: ValidationRun | null = null, busy = false) {
   return renderToStaticMarkup(<FactoryProgress status={status} busy={busy} onStop={() => undefined} onValidate={() => undefined} validation={validation} />);
 }
@@ -83,7 +84,7 @@ describe("factory contract progress", () => {
     expect(html).not.toContain("Download bug case");
   });
 
-  it("keeps downloads visibly separate and gates each on readiness and a path", () => {
+  it("defensively hides downloads and validation for an invalid case with unavailable parts", () => {
     const status = statusFixture("status-fulfilled");
     const item = status.cases[0];
     if (item === undefined) throw new Error("Missing fixture case");
@@ -95,6 +96,23 @@ describe("factory contract progress", () => {
     expect(html).toContain("Bug-case download is not ready");
     expect(html).toContain("Validator download is not ready");
     expect(validationButton(html)).toContain("disabled");
+  });
+
+  it.each(["bug_case", "validator"] as const)("defensively gates a missing %s path while retaining the other download", part => {
+    for (const path of [null, ""]) {
+      const status = statusFixture("status-fulfilled");
+      const item = status.cases[0];
+      if (item === undefined) throw new Error("Missing fixture case");
+      status.cases = [item];
+      // Mutate a validated fixture to exercise the fallback, not a valid service payload.
+      item.packages[part].download_path = path;
+      const other = part === "bug_case" ? "validator" : "bug_case";
+      const html = render(status);
+      expect(html).not.toContain('href=""');
+      expect(html).toContain(`href="${String(item.packages[other].download_path)}"`);
+      expect(html).toContain(part === "bug_case" ? "Bug-case download is not ready" : "Validator download is not ready");
+      expect(validationButton(html)).toContain("disabled");
+    }
   });
 
   it("enables validation only after finished request, with packages ready and sufficient budget", () => {

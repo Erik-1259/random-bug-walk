@@ -1,14 +1,22 @@
 # Factory UI integration status
 
-The `/factory` UI follows **bug-request/1 draft revision 2**, pinned to code commit [`572cb0ee069e453bf2eacccfbce74139e4e177be`](https://github.com/Erik-1259/random-bug-walk/blob/572cb0ee069e453bf2eacccfbce74139e4e177be/docs/product/bug-request-v1.md). Endpoints in that revision are planned. An unavailable service produces an explicit unavailable state; the production page never substitutes fixtures.
+The `/factory` UI follows **bug-request/1 revision 2**, pinned to code commit [`66651d67fcb09c402b25d9688ea492c0e69e1c2b`](https://github.com/Erik-1259/random-bug-walk/blob/66651d67fcb09c402b25d9688ea492c0e69e1c2b/docs/product/bug-request-v1.md). Endpoints in that revision are planned. An unavailable service produces an explicit unavailable state; the production page never substitutes fixtures.
+
+That contract revision was merged in [PR #121](https://github.com/Erik-1259/random-bug-walk/pull/121) at `6b2c8bae430d565d5df7b94bd77d1846da1bb2bd`. The shared package and published fixture bytes in this follow-up match that revision.
 
 ## Implemented UI behavior
 
 Capabilities supply host choices, bug types, combination explanations, difficulty availability and all numeric limits. Items retain independent keys, descriptions and quantities. The service interpretation is displayed before start, and editing invalidates it. The UI does not implement the interpreter or decide qualification.
 
+Description limits count Unicode code points after trimming surrounding whitespace, including separate combining marks. A browser UTF-16 `maxlength` does not restrict otherwise valid descriptions.
+
 The factory session is separate from the Umami replay session. The client persists the request identity and exact start body before sending a start. Duplicate clicks are locked. Uncertain responses, failed polls and reloads read the saved identity, never launch replacement work. A `busy` refusal is reconciled against status before a new identity is permitted. Explicit same-identity retry is available after an uncertain start is still not found. Definite input/interpretation/budget refusals require another interpretation.
 
 Status renders service events and counts without an invented percentage. Delivered cases remain visible for every outcome. Downloads keep debugging-agent and evaluator packages separate and require readiness. Validation stores its own identity before posting, resumes on reload and distinguishes behavioral failure from operational error. A click is never a completed validation result. No verification code or reference repairs are rendered in the page.
+
+Downloads also require a nonempty path for the specific package; validation requires both package paths. Defensive checks keep the other download available if a response is missing one path, and a corrected response restores validation. These malformed-response tests are separate from the valid shared fixtures.
+
+An accepted start can return a finished operational failure when worker launch failed after the request was recorded. Its identity remains available on reload and is not treated as a refused start. Finished validation cost can remain unknown (`null`) while subsequent request status reconciles the budget; the UI does not convert it to zero or repeat the validation.
 
 ## Shared contract handoff
 
