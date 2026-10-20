@@ -1,0 +1,5 @@
+# Environment for the app's own migration as the owner role, read by rbw-launch. The owner role
+# has no password; it can log in only through the Unix socket in /run/rbw-pg, which only root and
+# rbw-db can reach, so the migration runs as rbw-db.
+TZ=Asia/Tokyo
+MIGRATION_DATABASE_URL=postgresql://taskapp_owner@localhost/taskapp?host=/run/rbw-pg

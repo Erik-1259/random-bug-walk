@@ -1,13 +1,15 @@
 {
   "vitest": {
     ".": 21,
+    "kit/task-report": 8,
     "kit/umami": 57,
     "kit/umami-race": 97,
     "packages/admission": 130,
     "packages/envelope": 42,
-    "packages/factory-contract": 349,
+    "packages/factory-contract": 362,
     "packages/harvest": 139,
     "packages/harvest-review": 83,
+    "packages/host-task-report": 86,
     "packages/projection": 127,
     "packages/publisher": 196,
     "packages/schema": 952,
@@ -28,7 +30,7 @@
     "tools/controller": 186,
     "tools/local-runner": 212,
     "tools/neon-ci": 98,
-    "tools/publication": 166,
+    "tools/publication": 175,
     "tools/release": 78,
     "tools/solver-session": 99,
     "tools/uc1": 122

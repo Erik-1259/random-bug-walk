@@ -1,0 +1,155 @@
+{
+  "format": "rbw.task-report.check-data.v1",
+  "check": {
+    "id": "f3.acknowledged-completion-counted",
+    "version": 1,
+    "criterion": {
+      "id": "concurrency.lost-acknowledged-change",
+      "version": 1
+    },
+    "observable": "Every completion the service answers with 201 is counted by the daily report for its UTC date, while the database pool is full and a request for an unknown task waits beside it."
+  },
+  "environment": {
+    "db_pool_max": 10,
+    "app_role": "taskapp_app",
+    "gate_role": "taskapp_gate",
+    "report_time_zone": "UTC",
+    "fillers": 10
+  },
+  "gate": {
+    "lock_statement": "SELECT id FROM tasks WHERE id = ANY($1::uuid[]) ORDER BY id FOR UPDATE",
+    "lock_timeout_ms": 2000,
+    "idle_in_transaction_session_timeout_ms": 30000,
+    "l1_rows": 1,
+    "l2_rows": 9,
+    "lock_type": "transactionid"
+  },
+  "timing": {
+    "gap_send_ms": 150,
+    "post_d_ms": 150,
+    "poll_ms": 5,
+    "saturation_bound_ms": 3000,
+    "settle_bound_ms": 1500,
+    "patch_bound_ms": 3000,
+    "client_timeout_ms": 10000,
+    "idle_recheck_wait_ms": 12000,
+    "idle_recheck_poll_ms": 250,
+    "app_log_wait_ms": 3000,
+    "late_reread_wait_ms": 11000
+  },
+  "preconditions": {
+    "p1": {
+      "l1_blocked": 1,
+      "l2_blocked": 9,
+      "app_backends": 10,
+      "lock_waiting": 10
+    },
+    "p2": {
+      "blocked": 10,
+      "app_backends": 10,
+      "lock_waiting": 10,
+      "settled": 0
+    },
+    "p3": {
+      "l2_blocked_at_least": 9
+    }
+  },
+  "app_log": {
+    "event": "request",
+    "send_order_margin_ms": 100,
+    "freed_end_margin_ms": 100
+  },
+  "dates": {
+    "instant_time": "T12:00:00.000Z",
+    "first": {
+      "main": "2091-01-01",
+      "sequential": "2092-01-01",
+      "valid_partner": "2092-04-01",
+      "x_alone": "2092-07-01",
+      "dx_order": "2092-10-01"
+    },
+    "max_index": 60
+  },
+  "kinds": {
+    "main": {
+      "forced": true,
+      "sends": ["x", "unknown"],
+      "acknowledged": 1
+    },
+    "sequential": {
+      "forced": false,
+      "sends": ["x", "unknown"],
+      "acknowledged": 1
+    },
+    "valid_partner": {
+      "forced": true,
+      "sends": ["x", "partner"],
+      "acknowledged": 2
+    },
+    "x_alone": {
+      "forced": true,
+      "sends": ["x"],
+      "acknowledged": 1
+    },
+    "dx_order": {
+      "forced": true,
+      "sends": ["unknown", "x"],
+      "acknowledged": 1
+    }
+  },
+  "statuses": {
+    "x": 201,
+    "partner": 201,
+    "unknown": 404,
+    "unknown_error_code": "not_found",
+    "patch": 200,
+    "task_create": 201,
+    "report": 200
+  },
+  "outcome": {
+    "pass": "pass",
+    "failure_code": "acknowledged_completion_not_counted",
+    "invalid": "invalid"
+  },
+  "invalid_codes": [
+    "probe_error",
+    "idle_transaction_present",
+    "setup_failed",
+    "precount_not_zero",
+    "gate_failed",
+    "p1_not_saturated",
+    "p2_not_queued",
+    "p3_window_not_held",
+    "requests_not_settled",
+    "server_error",
+    "transport_error",
+    "unexpected_status",
+    "report_failed",
+    "app_log_missing",
+    "app_log_order",
+    "count_exceeds_acknowledged"
+  ],
+  "expected": {
+    "clean": {
+      "main": "pass",
+      "sequential": "pass",
+      "valid_partner": "pass",
+      "x_alone": "pass",
+      "dx_order": "pass"
+    },
+    "buggy": {
+      "main": "acknowledged_completion_not_counted",
+      "sequential": "pass",
+      "valid_partner": "pass",
+      "x_alone": "pass",
+      "dx_order": "pass"
+    },
+    "fixed": {
+      "main": "pass",
+      "sequential": "pass",
+      "valid_partner": "pass",
+      "x_alone": "pass",
+      "dx_order": "pass"
+    }
+  }
+}
