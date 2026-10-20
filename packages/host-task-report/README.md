@@ -167,19 +167,21 @@ a new pin changes the environment hash and with it the case ID.
   fixed the reference repair applied to it), every copy plan run through the local Docker runner,
   each copy collected and each state interpreted by the adapter. Copy IDs
   `f3q2-ffa914890d91cc15-buggy-1`, `-fixed-1` and `-clean-1`; check set SHA-256
-  `f19694529ecc51967ca81a77fe24275fe14ffe920b91a945b07aa3a335c079df`. Result: qualified, every
-  state met. The original suite passed 193 of 193 on all seven instances; on buggy all 60 valid
-  main trials reported `acknowledged_completion_not_counted`, on fixed and clean all 60 and 20
-  passed, every control trial passed, and no trial was invalid. A direct evaluation of the three
-  record sets gives the same verdict. An earlier run with the same check package on a previous
-  build of the image, whose setup files kept their comments and were readable by every user
-  (copy IDs `f3q2-8477824b6f78795f-*`), gave the same verdict and trial counts. A buggy copy
+  `f19694529ecc51967ca81a77fe24275fe14ffe920b91a945b07aa3a335c079df`, which `checkSetSha256`
+  (`adapter/check-package.ts`) computes from the committed check package files
+  (`test/adapter.test.ts` checks the entry's `verification.check_set_sha256` against it).
+  Result: qualified, every state met. A direct evaluation of the three record sets gives the same
+  verdict. An earlier run with the same check package on a previous build of the image, whose
+  setup files kept their comments and were readable by every user (copy IDs
+  `f3q2-8477824b6f78795f-*`), gave the same verdict. A buggy copy
   handed the clean tree stopped before its first instance and was collected as incomplete. These
   copies were collected before the local runner took the results archive hash, so their
   `results_sha256`, and the evidence hash of their copy records, is the tree hash of each results
   directory.
 
-The copies' record sets are evaluator material and are not committed.
+The copies' record sets are evaluator material and are not committed, so both verdicts are local
+results that cannot be rechecked from this repository, and this README gives no trial counts for
+them. The counts a qualification requires are the protocol files' declared values above.
 
 ## Commands
 
