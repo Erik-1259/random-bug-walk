@@ -3,6 +3,7 @@
 import { HOST_PRESENTATION } from "@rbw/factory";
 import type { HostAdapter, HostId } from "@rbw/factory-contract";
 import { taskReportAdapter } from "@rbw/host-task-report/adapter";
+import { createUmamiAdapter } from "@rbw/host-umami";
 
 export interface HostRegistration {
   host_id: HostId;
@@ -46,9 +47,9 @@ export function createHostRegistry(registrations: readonly HostRegistration[]): 
 
 /**
  * The real hosts, one line each (see docs/product/adding-a-host.md). The label and description are the
- * factory's presentation text, so capabilities and the registry cannot drift apart. The Umami line comes with
- * its own runtime image (planned); until then the harness answers `error` with `unsupported_host` for an
- * Umami package, and capabilities built from this registry report the host unsupported.
+ * factory's presentation text, so capabilities and the registry cannot drift apart. The Umami adapter runs
+ * the bug case and every copy on its runtime image (kit/umami-runtime), which holds no app source and no
+ * fixture.
  */
 const REGISTRATIONS: readonly HostRegistration[] = [
   {
@@ -57,6 +58,13 @@ const REGISTRATIONS: readonly HostRegistration[] = [
     description: HOST_PRESENTATION["task-report"].description,
     license: "MIT",
     adapter: taskReportAdapter,
+  },
+  {
+    host_id: "umami",
+    label: HOST_PRESENTATION.umami.label,
+    description: HOST_PRESENTATION.umami.description,
+    license: "MIT",
+    adapter: createUmamiAdapter(),
   },
 ];
 

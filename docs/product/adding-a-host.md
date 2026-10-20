@@ -1,6 +1,6 @@
 # Adding a host
 
-How a third host application is connected to the bug factory. Version 1 serves two hosts, `task-report` and `umami`; their adapters (section 3) are the references for every step. The host registry holds `task-report`; the `umami` line is planned, added with its own runtime image. Every step names the code it touches. Parts marked **planned** do not exist yet.
+How a third host application is connected to the bug factory. Version 1 serves two hosts, `task-report` and `umami`; their adapters (section 3) are the references for every step. The host registry holds both. Every step names the code it touches. Parts marked **planned** do not exist yet.
 
 ## 1. What a host provides
 
@@ -41,6 +41,6 @@ How a third host application is connected to the bug factory. Version 1 serves t
 | Criterion | `concurrency.lost-acknowledged-change` | `date_time.time-zone-grouping` |
 | Host package | `packages/host-task-report` (baseline, catalog, checks, protocol, copy driver and the adapter `@rbw/host-task-report/adapter`) | `packages/host-umami` (the adapter `createUmamiAdapter` and the store builder `@rbw/host-umami/prepare`) |
 | What `collect` reads | the copy driver's record set | the copy script's record set, imported with `@rbw/admission` |
-| Registry line | registered | planned, added with its own runtime image |
+| Registry line | registered | registered, on its runtime image |
 
 The synthetic host in `@rbw/case-package/synthetic` implements the whole adapter over a small synthetic application, a smaller working example than the two real hosts.
