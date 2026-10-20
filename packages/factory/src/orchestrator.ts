@@ -4,11 +4,23 @@
 //
 // For each candidate, in assignment order across the selected hosts: the ledger's halt and overrun
 // check, `candidate_selected`, the duplicate-defect skip, budget admission (`no_budget_for_candidate`),
-// the reservation, export verification through the harness (with the stop and time check before every
-// copy and `check_finished` after every copy state), the verdict, assignment, packaging and delivery,
-// and the candidate's settlement. The loop appends every request event except `request_accepted`,
-// `stop_requested`, the start reservation's `budget_updated`, `worker_started`, the validation events
-// and the lost-worker finish.
+// the reservation, export verification through the harness (with the stop, time and accounting check
+// before every copy and `check_finished` after every copy state), the verdict, assignment, packaging
+// and delivery, and the candidate's settlement. The loop appends every request event except
+// `request_accepted`, `stop_requested`, the start reservation's `budget_updated`, `worker_started`, the
+// validation events and the lost-worker finish.
+//
+// Accounting stops (contract sections 8.1 and 8.5), one rule set for the loop and its finish:
+// - A halted ledger, a halted pool or an overrun stops the work still to do: no further copy of the
+//   candidate in flight (it ends incomplete, `stopped`, and settles), no further candidate, and a
+//   reservation refused as halted ends its candidate the same way; the request finishes
+//   `operational_error`. At every boundary the user's stop and the deadline are checked first and keep
+//   their codes, unless the next rule applies.
+// - An overrun the ledger shows when the request finishes (read once the worker settled, so it covers
+//   every copy, candidate and the worker) finishes `operational_error`, ahead of a fill, a stop or a
+//   limit. A halt seen only once no work is left stopped nothing and keeps the outcome.
+// - An uncertain outcome (a rejected harness, reserve or settle call) finishes `needs_reconciliation`
+//   ahead of both; its reservation stays held and is never retried.
 import { canonicalDigest } from "@rbw/schema";
 import { CHECK_SET_VALUES } from "@rbw/factory-contract";
 import type { Case, CatalogEntry, Cell, CellObservation, CheckSet, CopyState, HostId, RequestOutcome, StopCode } from "@rbw/factory-contract";
@@ -78,7 +90,10 @@ export const DIFFICULTY_NOTE = "No difficulty assessment ran. This case may be e
 
 const ENDS_CANDIDATE: ReadonlySet<string> = new Set(["candidate_rejected", "candidate_invalid", "candidate_incomplete", "candidate_skipped"]);
 
-type CandidateOutcome = { kind: "done" } | { kind: "stop"; stop_code: "cancelled_by_user" | "time_limit" } | { kind: "uncertain" } | { kind: "failed" };
+/** Why the request stopped a candidate at a copy boundary. */
+type StopCause = "cancelled_by_user" | "time_limit" | "operational_error";
+
+type CandidateOutcome = { kind: "done" } | { kind: "stop"; stop_code: StopCause } | { kind: "uncertain" } | { kind: "failed" };
 
 interface Amounts {
   reserved_microusd: number;
@@ -291,7 +306,8 @@ class RequestRun {
         return this.finishUncertain();
       }
       if (reserved.kind === "refused" && reserved.reason === "halted") {
-        await this.append(candidateEnded(next, "no_budget_for_candidate", this.at(), "Skipped: the spend ledger is halted, so this candidate's worst case could not be reserved."));
+        // Not a budget or pool shortfall (contract section 8.3): the halt stops the request with this candidate selected.
+        await this.append(candidateEnded(next, "stopped", this.at(), "Incomplete: the spend ledger is halted, so this candidate's worst case could not be reserved and it was not run."));
         return this.finish("operational_error");
       }
       if (reserved.kind === "refused") {
@@ -344,8 +360,10 @@ class RequestRun {
     const { deps } = this;
     const { entry, adapter } = candidate;
     const protocol = adapter.protocol(entry);
-    const stop: { cause: "cancelled_by_user" | "time_limit" | null } = { cause: null };
+    const stop: { cause: StopCause | null } = { cause: null };
     let copies = 0;
+    /** A copy's ledger read found a halt or an overrun: no further copy runs (contract section 8.5). */
+    let accountingStop = false;
     const beforeCopy = async (plan: { limits: { timeout_s: number } }): Promise<"continue" | "stop"> => {
       if (this.hookError !== null) return "stop";
       try {
@@ -357,6 +375,10 @@ class RequestRun {
           stop.cause = "time_limit";
           return "stop";
         }
+        if (accountingStop) {
+          stop.cause = "operational_error";
+          return "stop";
+        }
         return "continue";
       } catch (error) {
         this.hookError = { error };
@@ -364,11 +386,13 @@ class RequestRun {
       }
     };
     // Per copy: the ledger read (settlement happens per copy inside the runner, or at the candidate's end).
+    // A halt or an overrun it finds ends the candidate at the next copy boundary, as a stop does.
     const onCopy = async (): Promise<void> => {
       if (this.hookError !== null) return;
       try {
         copies += 1;
-        await this.budgetChanged(`cand:${candidate.candidate_id}:copy-${String(copies)}:budget`, "a finished copy");
+        const status = await this.budgetChanged(`cand:${candidate.candidate_id}:copy-${String(copies)}:budget`, "a finished copy");
+        if (ledgerStop(status) !== null) accountingStop = true;
       } catch (error) {
         this.hookError = { error };
       }

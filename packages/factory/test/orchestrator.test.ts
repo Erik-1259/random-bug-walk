@@ -314,6 +314,37 @@ describe("runRequest: budget", () => {
     expect(w.status()).toMatchObject({ outcome: "operational_error", delivery: "complete", budget: { overrun: true } });
   });
 
+  it.each([
+    ["a halted ledger", (w: World): void => {
+      w.ledger.halted = true;
+    }],
+    ["a halted pool", (w: World): void => {
+      w.ledger.poolHalted = true;
+    }],
+    ["an overrun", (w: World): void => {
+      // A provider reported far more than the copy's worst case.
+      w.ledger.spent += 2_000_000;
+    }],
+  ])("runs no further copy once a copy's ledger read finds %s, ends the candidate stopped and finishes operational_error", async (_name, mutate) => {
+    const w = world({ input: concurrencyOnly(1) });
+    const inner = w.deps.qualify;
+    let copies = 0;
+    w.deps.qualify = (input) =>
+      inner({
+        ...input,
+        onCopy: async (record) => {
+          copies += 1;
+          if (copies === 1) mutate(w);
+          await input.onCopy(record);
+        },
+      });
+    const result = await w.run();
+    expect(copies).toBe(1);
+    expect(result).toMatchObject({ outcome: "operational_error", stop_code: "operational_error", needs_reconciliation: false, delivered: 0 });
+    expect(ended(w.events.events)).toEqual([{ type: "candidate_incomplete", reason: "stopped" }]);
+    expect(w.ledger.calls.map((call) => call.call)).toEqual(["reserveCandidate", "settleCandidate", "settleWorker"]);
+  });
+
   it("finishes operational_error, not fulfilled, when the worker's own settlement overruns the budget", async () => {
     // $1.50 budget: the candidate settles at its $0.30 worst case, then the worker reports $1.30 against its $0.20 reservation.
     const w = world({ input: concurrencyOnly(1, 1_500_000), ledger: { workerCost: 1_300_000 } });
@@ -589,7 +620,9 @@ describe("runRequest: internal failures and admission edges", () => {
     w.deps.ledger = { status: () => ledger.status(), reserveCandidate: () => Promise.resolve({ kind: "refused", reason: "halted" }), settleCandidate: (i) => ledger.settleCandidate(i), settleWorker: (i) => ledger.settleWorker(i) };
     const result = await w.run();
     expect(result).toMatchObject({ outcome: "operational_error", stop_code: "operational_error" });
-    expect(ended(w.events.events)).toEqual([{ type: "candidate_skipped", reason: "no_budget_for_candidate" }]);
+    // A halt is no budget or pool shortfall: the request stopped with the candidate selected.
+    expect(ended(w.events.events)).toEqual([{ type: "candidate_incomplete", reason: "stopped" }]);
+    expect(w.qualified).toEqual([]);
   });
 
   it("does not count a defect as tried when its first entry was skipped for budget", async () => {
