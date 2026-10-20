@@ -139,6 +139,59 @@ The hold: after two `not_reproduced` replays in a row (`incomplete` ones do not 
 
 The known condition: on the 2nd to the 5th of a month, when the only unexpected cells are the original suite's two upstream revenue tests, the replay is `verified` and the page says: "Two upstream revenue tests fail on the 2nd to the 5th of each month, a known date-dependent condition in Umami's own test data, not in this example. They are shown as failures and are not counted against this replay."
 
+## Factory service
+
+The bug-request routes of [`docs/product/bug-request-v1.md`](../../docs/product/bug-request-v1.md), revision 2, live under `/api/factory/`. Each route file in `app/api/factory/**` is a force-dynamic wrapper that calls one handler in `src/factory-server/handlers.ts` with a server from `src/factory-server/server.ts`. The handlers depend only on the ports in `src/factory-server/ports.ts` (the clock, the passcode, the factory profile, the interpreter, the request lock, the ledger, the slot, the request record and launch, the status projection, the worker attention, the stop record, the lost-worker finish, validation runs, package reads and the completed example), so tests and test mode supply fakes.
+
+**Status.** The routes, handlers, session and test mode exist. Live mode is not wired yet: `src/factory-server/integration.ts` lists the ports that still throw `FactoryNotWiredError`, and every endpoint that needs one answers `503 unavailable`. Only the session and the completed example (`404 not_found` while none is published) work in live mode. Live mode starts no work and spends nothing.
+
+| Route | Session | Handler |
+|---|---|---|
+| `GET /api/factory/capabilities` | public | `getCapabilities`: the limits must equal the factory profile's, or the answer is `unavailable`; a halted or unconfigured ledger shows in `service` |
+| `POST /api/factory/interpretations` | public | `postInterpretation`: free, nothing recorded |
+| `POST`, `GET /api/factory/session` | public | `postSession` (204 with the cookie, or `passcode_incorrect`), `getSession` (`signed_in`) |
+| `GET /api/factory/example` | public | `getExample` |
+| `POST /api/factory/requests` | required | `postStart`: contract section 7 in order; steps 2 to 7 under the request ID lock |
+| `GET /api/factory/requests/{request_id}?after={seq}` | required | `getRequestStatus` |
+| `POST /api/factory/requests/{request_id}/stop` | required | `postStop`: body `{}`, idempotent |
+| `GET /api/factory/requests/{request_id}/cases/{case_id}/packages/{bug-case,validator}` | required | `getPackage` |
+| `POST /api/factory/requests/{request_id}/cases/{case_id}/validations` | required | `postValidation` |
+| `GET /api/factory/requests/{request_id}/cases/{case_id}/validations/{validation_id}` | required | `getValidationRun` |
+| `GET /api/factory/test/evidence?request_id=`, `POST /api/factory/test/reconcile`, `POST /api/factory/test/reset` | none | test mode only; `404 not_found` otherwise |
+
+What the handlers do:
+
+- **Session.** The cookie `rbw_factory_session` holds an HMAC of the judges' passcode (`RBW_JUDGE_PASSCODE`) under its own label, with `Path=/api/factory`, `HttpOnly`, `Secure`, `SameSite=Strict` and the judge cookie's one-week lifetime. The judge cookie does not open a factory session, and the judge session code is unchanged. Without a passcode a sign-in answers `unavailable` and `GET` answers `signed_in: false` (contract section 13), so session-required endpoints answer `401`. Session-required endpoints check the cookie before any other call.
+- **Start.** The body is validated (`invalid_request`), then, under the request ID lock: an existing request with the same canonical body answers `200` with its status and nothing new; a different body is `idempotency_conflict`; the input is interpreted again (`interpretation_stale`, then `unsupported_request`, each with the current interpretation); a halted or unconfigured ledger is `unavailable`; a pool that cannot cover the whole budget is `budget_unavailable`; a held slot is `busy` with its reason, and nothing is recorded. Step 7 creates the budget, records the request and launches the worker. When it refuses, or fails before the request is recorded, the slot is released at once. A refusal at steps 3 to 5 also releases a slot that this ID's root holds from an earlier attempt that ended before recording anything.
+- **Lost workers.** The status and stop routes, and a replayed start, ask for the lost-worker finish when an active request's heartbeat (or, before the first one, its acceptance) is 180 s old, then answer the status after it. Before that, from 60 s, they ask for the `worker_unresponsive` attention event, and for its `attention_cleared` once a heartbeat comes back. They also ask for the finish of each case's validation run that is not finished, as the validation read and a replayed validation POST do; the finish decides whether that run is lost. A start or validation start that finds the slot held for an active holder asks for that holder's finish and tries once more, so a lost holder that nobody polls answers `busy` with `needs_reconciliation`, or frees the slot, instead of `active` without end.
+- **Downloads.** Only a delivered case of the request has parts (`404 not_found` otherwise). The whole archive is read and its size and SHA-256 are checked against the case's `PackagePart` before any byte is sent (`unavailable` on a mismatch; reading stops at the first chunk past the recorded size); it is sent with `Content-Disposition: attachment` and the part's filename, which must be a plain file name (a letter or digit, then letters, digits, `.`, `_` or `-`, at most 200 characters), or the answer is `unavailable`.
+- **Request bodies.** A JSON body larger than 64 KiB is `invalid_request`: refused unread when its `content-length` says so; otherwise reading stops at the first chunk past the limit.
+- **Validation runs.** Under the validation ID lock, the ID check comes first (same request and case: `200` with the run; elsewhere: `idempotency_conflict`), then the delivered case (`404 not_found`), then the start, which answers `202`, `busy`, `budget_unavailable` or `unavailable` with nothing recorded on a refusal.
+- **Payloads.** Every JSON body is checked against its definition in `@rbw/factory-contract` before it is sent. The definitions forbid unknown fields, so evaluator material cannot leave in an extra field; a body that does not match answers `unavailable`. This checks the shape only: keeping evaluator material out of the allowed text fields (event messages, candidate reasons, case text) is the status projection's job, and the test that runs a copy record's evaluator fields through the real projection waits for the live wiring. A port that throws answers `unavailable`, and the log names only the error's type.
+
+### Test mode
+
+`RBW_FACTORY_TEST_MODE=1` replaces every port with the deterministic fakes in `src/factory-server/test-mode/` (contract section 15.1). It is refused when `VERCEL_ENV=production`: every call that needs a port then answers `unavailable`, nobody can sign in (`GET /api/factory/session` answers `signed_in: false`, and session-required endpoints `401`), and the test endpoints answer `404 not_found`. Test mode needs no network service and keeps every record in the server's memory:
+
+- A fake ledger holds the `factory` slot, each request's budget and the operations, with a $40.00 pool. Every operation costs exactly its worst case from the test profile (`test-mode/profile.ts`): the worker $0.20; a candidate $0.60 on Umami and $0.30 on task-report, as three copies; a validation run $0.30 on Umami and $0.20 on task-report.
+- A fake worker runs the selected scenario. Its script is the events of the scenario's end-state fixture in `docs/product/fixtures/bug-request-v1/`, one step every 200 ms, advanced whenever a route reads the request. Budget events, the `no_budget_for_candidate` skip and the `budget_exhausted` stop reason carry the fake ledger's amounts, so in `partial-budget` they name $0.50 remaining where `status-partial-budget.json` names its illustrative $0.59; the other texts are the fixture's. `cancel-midway` pauses after the second candidate's first check until a stop or 60 s. In `worker-lost` the worker stops sending heartbeats and the fake clock moves 181 s ahead, so the next status read, or the next start that meets the held slot, finishes the request `worker_lost`. The `worker_unresponsive` attention and its clearing come only from the status route's `noteUnresponsive` and lost-worker ports, never from the status port alone; in live mode those ports are not wired yet. A start whose input is not the selected scenario's fixture input answers `unavailable` and releases the slot.
+- A stop during any other scenario ends the candidate in progress as `incomplete` (`stopped`) and finishes the request `cancelled`.
+- Interpretations come from the fixtures, looked up by their normalized input, after the test profile's limits are checked. Any other input answers `invalid_request`.
+- Fake storage serves a synthetic `.tar.gz` pair per case; the `package_ready` events and the cases carry those bytes' SHA-256. The validator part holds a sentinel string for evaluator material, and the tests check that no JSON response contains it. Test mode's fake operations hold no copy records or evaluator fields, and its status comes from the fixtures, so this check covers the archive bytes, not a projection.
+- Every start and every validation start is held for 2 s inside its ID lock. The evidence lists the request's operations, the slot holder and every fake sandbox create. Reconcile settles the request's uncertain operations at their worst case, clears the attention and releases the slot. Reset discards everything and selects the scenario.
+
+Start, reset and shut down (from the repository root, after `pnpm install`):
+
+```sh
+RBW_FACTORY_TEST_MODE=1 RBW_JUDGE_PASSCODE=synthetic-factory-passcode pnpm --filter @rbw/web dev --port 3000
+curl -s -X POST localhost:3000/api/factory/test/reset -H 'content-type: application/json' -d '{"scenario":"two-host-fulfilled"}'
+# Shut down: stop the server process. Nothing outside it is written, so nothing remains.
+```
+
+`RBW_FACTORY_TEST_FIXTURES` names another fixture directory (relative to this directory; the default is `../../docs/product/fixtures/bug-request-v1`).
+
+Tests (`test/factory-server/`, Vitest): `handlers.test.ts` runs every endpoint against stub ports, including every refusal code, the start order, replays, a concurrent pair of identical starts, the slot release after a refused budget creation, the lost-worker trigger under concurrent polls, the 60 s attention and its clearing, a lost slot holder met by another start, hash-checked downloads with the size and filename guards, the 64 KiB body limit, validation idempotency and a sentinel placed in fields outside the contract. `test-mode.test.ts` runs every scenario through the handlers to its fixture's end state and checks the evidence, the 2 s hold, reconcile, reset, validation runs and downloads. `server.test.ts` covers the modes, the refusal logged once, the held live ports and a check that no factory module names the judge or development ledger target, the judge-demo pool or the judge modules.
+
 ## Configuration
 
 `src/config.ts` is the one configuration loader. `RBW_RESULTS_DIR` names the results directory, relative to this directory or absolute. The default is `fixtures/development-2026-10-06`.
