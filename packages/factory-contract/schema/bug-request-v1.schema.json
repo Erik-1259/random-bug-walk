@@ -4778,10 +4778,12 @@
           ]
         },
         "criteria_met": {
+          "description": "Criteria the case demonstrated in export verification; at least one (contract section 6.3).",
           "type": "array",
           "items": {
             "$ref": "#/$defs/CriterionSummary"
-          }
+          },
+          "minItems": 1
         },
         "summary": {
           "$ref": "#/$defs/CaseSummary"
@@ -5211,7 +5213,7 @@
       }
     },
     "Packages": {
-      "description": "Both parts of a case are ready: a case appears only once it is qualified, after its parts are verified and stored (contract section 10).",
+      "description": "Both parts of a case are ready and have a download path: a case appears only once it is qualified, after its parts are verified and stored (contract sections 10 and 10.2).",
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -5265,6 +5267,9 @@
               "properties": {
                 "ready": {
                   "const": true
+                },
+                "download_path": {
+                  "type": "string"
                 }
               }
             },
@@ -5273,6 +5278,9 @@
               "properties": {
                 "ready": {
                   "const": true
+                },
+                "download_path": {
+                  "type": "string"
                 }
               }
             }

@@ -366,7 +366,7 @@ Case {
   title: string                         // short plain-language name of the observed failure
   host_id, host_label, baseline_id, bug_type_id
   item_key: string | null               // the request item it fills (every live case fills one); null for the completed example
-  criteria_met: { criterion_id, version, label }[]
+  criteria_met: { criterion_id, version, label }[]  // at least one (section 6.3)
   summary: { observed_failure: string, how_checked: string }
   matrix: {
     original_suite: { suite_id, suite_sha256, test_count, clean: Cell, buggy: Cell, fixed: Cell }

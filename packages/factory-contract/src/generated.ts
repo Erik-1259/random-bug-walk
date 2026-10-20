@@ -1016,6 +1016,7 @@ export interface Case {
   bug_type_id: BugTypeId;
   /** The request item it fills; null for the completed example. */
   item_key: ItemKey | null;
+  /** Criteria the case demonstrated in export verification; at least one (contract section 6.3). */
   criteria_met: CriterionSummary[];
   summary: CaseSummary;
   matrix: CaseMatrix;
@@ -1092,7 +1093,7 @@ export interface CaseQualification {
   qualified_at: UtcTime;
 }
 
-/** Both parts of a case are ready: a case appears only once it is qualified, after its parts are verified and stored (contract section 10). */
+/** Both parts of a case are ready and have a download path: a case appears only once it is qualified, after its parts are verified and stored (contract sections 10 and 10.2). */
 export interface Packages {
   package_version: PositiveInteger;
   /** Canonical hash of the two parts' SHA-256 values and the case ID. */
