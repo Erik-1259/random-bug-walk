@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { resultsSha256 } from "@rbw/case-package";
 import type { CopyPlan, CopyRoots } from "@rbw/factory-contract";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -82,6 +82,8 @@ interface FakeOptions {
   killFails?: boolean;
   results?: boolean | "fifo";
   createFails?: boolean;
+  placeFails?: boolean;
+  startFails?: boolean;
 }
 
 function fakeDocker(options: FakeOptions): FakeDocker {
@@ -98,8 +100,9 @@ function fakeDocker(options: FakeOptions): FakeDocker {
     if (verb === "create") return options.createFails === true ? { code: 125, stdout: "", stderr: "create failed" } : ok("container\n");
     if (verb === "cp" && args[1] === "-") {
       fake.placed = command.input ?? null;
-      return ok();
+      return options.placeFails === true ? { code: 1, stdout: "", stderr: "cp failed" } : ok();
     }
+    if (verb === "start" && options.startFails === true) return { code: 1, stdout: "", stderr: "start failed" };
     if (verb === "cp") {
       if (options.results === false) return { code: 1, stdout: "", stderr: "no results" };
       const target = args[2] ?? "";
@@ -277,6 +280,26 @@ describe("dockerRunner", () => {
     expect(collected.outcome).toBe("ran");
     expect(collected.results_dir).toBeNull();
     expect(collected.results_sha256).toBeNull();
+  });
+
+  it("removes the copy's fresh results directory whenever it brings back no usable results, and keeps it when it does", async () => {
+    const parent = join(dir, "results");
+    const failures: FakeOptions[] = [
+      { images: KIT, createFails: true },
+      { images: KIT, placeFails: true },
+      { images: KIT, startFails: true },
+      { images: KIT, results: false },
+      { images: KIT, results: "fifo" },
+    ];
+    for (const options of failures) {
+      const collected = await dockerRunner({ command: fakeDocker(options).command, resultsDir: parent }).run(plan(), roots);
+      expect(collected.results_dir).toBeNull();
+      expect(await readdir(parent)).toEqual([]);
+    }
+    const kept = await dockerRunner({ command: fakeDocker({ images: KIT }).command, resultsDir: parent }).run(plan(), roots);
+    const allocated = await readdir(parent);
+    expect(allocated).toHaveLength(1);
+    expect(dirname(kept.results_dir ?? "")).toBe(join(parent, allocated[0] ?? ""));
   });
 
   it("reports a non-zero exit as ran, and missing results as null", async () => {

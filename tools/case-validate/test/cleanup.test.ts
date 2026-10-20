@@ -1,13 +1,15 @@
 // Removing the fresh workspace, and the CLI's temporary results, is cleanup only: a failure to remove them
 // never replaces the run's outcome, neither a definite result nor a runner's rejection. Removal is made to
 // fail by a stand-in `rm` that refuses the harness's own directories while `removal.fail` is set; its
-// message names no path, so what the harness reports must name the directory itself.
+// message names no path, so what the harness reports must name the directory itself. The same holds for a
+// docker copy's fresh results directory that brought back no usable results.
 import * as fsPromises from "node:fs/promises";
-import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildSyntheticPair, syntheticAdapter } from "@rbw/case-package/synthetic";
 import type { CopyPlan } from "@rbw/factory-contract";
+import { dockerRunner, type DockerCommand } from "../src/docker.ts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EXIT_CODES, runValidateCli } from "../src/run-cli.ts";
 import { validatePair, type ValidatePairInput } from "../src/validate.ts";
@@ -126,5 +128,38 @@ describe("rbw-validate when its temporary results cannot be removed", () => {
     const results = removal.refused.find((path) => path.includes("rbw-validate-copies-"));
     expect(results).toBeDefined();
     expect(err.join("")).toContain(`rbw-validate: could not remove ${results ?? ""}: EBUSY: synthetic removal failure`);
+  });
+});
+
+describe("dockerRunner when a copy's unused results directory cannot be removed", () => {
+  it("keeps the copy's setup failure and reports the leftover directory as a process warning", async () => {
+    removal.fail = true;
+    const warnings: string[] = [];
+    vi.spyOn(process, "emitWarning").mockImplementation((warning: string | Error) => {
+      warnings.push(String(warning));
+    });
+    const image = `sha256:${"b".repeat(64)}`;
+    const docker: DockerCommand = (args) =>
+      Promise.resolve(
+        args[0] === "image" ? { code: 0, stdout: `${image} amd64 []\n`, stderr: "" } : args[0] === "create" ? { code: 125, stdout: "", stderr: "create failed" } : { code: 0, stdout: "", stderr: "" },
+      );
+    const plan: CopyPlan = {
+      copy_id: "synthetic-buggy-1",
+      host_id: "task-report",
+      state: "buggy",
+      image: { reference: "registry.invalid/synthetic/task-report-kit:1", digest: null },
+      files: [],
+      evaluator_files: [],
+      destinations: { app: "/rbw/app", evaluator: "/rbw/evaluator", results: "/rbw/results" },
+      command: ["node", "/rbw/evaluator/run-copy.js"],
+      limits: { timeout_s: 30, vcpus: 1, memory_mb: 512, network: "none" },
+    };
+    const resultsDir = join(parent, "rbw-validate-copies");
+    await mkdir(resultsDir);
+    const collected = await dockerRunner({ command: docker, resultsDir }).run(plan, { app_root: copies, evaluator_root: copies });
+    expect(collected.outcome).toBe("setup_failed");
+    expect(removal.refused).toHaveLength(1);
+    expect(removal.refused[0]).toMatch(/rbw-copy-results-/);
+    expect(warnings).toEqual([`the copy results directory ${removal.refused[0] ?? ""} could not be removed: EBUSY: synthetic removal failure`]);
   });
 });

@@ -4,9 +4,9 @@
 // a local docker run has no uncertain provider state, so this runner never rejects for a copy's failure.
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { lstat, mkdir, mkdtemp, readFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { packTar, ResultsTreeError, resultsSha256, type TarEntry } from "@rbw/case-package";
 import type { Architecture, CollectedCopy, CopyPlan, CopyRoots, CopyRunner, FileDigest } from "@rbw/factory-contract";
 import { sha256Hex } from "@rbw/schema";
@@ -228,6 +228,19 @@ async function freshResultsDir(parent: string): Promise<string | null> {
   }
 }
 
+/**
+ * Removes a copy's fresh results directory when the copy brings back no usable results: nobody else can find
+ * it. A failure to remove it is a process warning, never the copy's outcome.
+ */
+async function discardResultsDir(resultsDir: string): Promise<void> {
+  const allocated = dirname(resultsDir);
+  try {
+    await rm(allocated, { recursive: true, force: true });
+  } catch (error) {
+    process.emitWarning(`the copy results directory ${allocated} could not be removed: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
 async function runCopy(plan: CopyPlan, roots: CopyRoots, docker: DockerCommand, options: DockerRunnerOptions): Promise<CollectedCopy> {
   const now = options.now ?? (() => new Date());
   const startedAt = now().toISOString();
@@ -259,7 +272,11 @@ async function runCopy(plan: CopyPlan, roots: CopyRoots, docker: DockerCommand, 
     "--cpus", String(limits.vcpus), "--memory", `${String(limits.memory_mb)}m`, "--memory-swap", `${String(limits.memory_mb)}m`,
     image.name, ...plan.command,
   ], command);
-  if (created.code !== 0) return setupFailed(image);
+  if (created.code !== 0) {
+    await discardResultsDir(resultsDir);
+    return setupFailed(image);
+  }
+  let kept = false;
   try {
     // The results directory is created writable for any user, so a kit that runs unprivileged can write it.
     const tar = packTar([{ kind: "directory", path: inside(plan.destinations.results), mode: 0o777 }, ...app, ...evaluator]);
@@ -282,6 +299,7 @@ async function runCopy(plan: CopyPlan, roots: CopyRoots, docker: DockerCommand, 
     const exit = /^-?\d+$/.test(waited.stdout.trim()) ? Number(waited.stdout.trim()) : null;
     if (!timedOut && exit === null) return setupFailed(image);
     const results = await bringBack(docker, name, plan, resultsDir);
+    kept = results !== null;
     return {
       copy_id: plan.copy_id,
       outcome: timedOut ? "timed_out" : "ran",
@@ -296,13 +314,15 @@ async function runCopy(plan: CopyPlan, roots: CopyRoots, docker: DockerCommand, 
   } finally {
     // A container that cannot be removed is left for the operator; the copy's outcome is already definite.
     await docker(["rm", "--force", name], command);
+    if (!kept) await discardResultsDir(resultsDir);
   }
 }
 
 /**
  * A CopyRunner on the local docker daemon: checks and places every plan file at its destination, runs the
  * command with no network within the plan's CPU and memory limits, kills it at the time limit, and copies the
- * results directory back into a fresh local directory with its results_sha256.
+ * results directory back into a fresh local directory with its results_sha256. A copy that brings back no
+ * usable results leaves no directory behind.
  */
 export function dockerRunner(options: DockerRunnerOptions = {}): CopyRunner {
   const docker = options.command ?? spawnDocker(options.docker ?? "docker");
