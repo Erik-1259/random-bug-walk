@@ -204,11 +204,17 @@ async function resolveImage(docker: DockerCommand, plan: CopyPlan, choose: Docke
   return { name: tagged.id, digest: pin, architecture: tagged.architecture };
 }
 
-/** Copies the results directory back into `resultsDir` and hashes it; null when the copy left none or it cannot be read. */
+/**
+ * Copies the results directory back into `resultsDir` and hashes it; null when the copy left none, left a link
+ * or a file in its place, or it cannot be read.
+ */
 async function bringBack(docker: DockerCommand, name: string, plan: CopyPlan, resultsDir: string): Promise<{ dir: string; sha256: string } | null> {
   const copied = await docker(["cp", `${name}:${plan.destinations.results}`, resultsDir], { timeoutMs: COMMAND_TIMEOUT_MS });
   if (copied.code !== 0) return null;
   try {
+    // docker cp brings a link the copy's own code made back as a link, which the hash and the host's collect would
+    // follow out of the results: only a real directory (lstat, never followed) is a result.
+    if (!(await lstat(resultsDir)).isDirectory()) return null;
     return { dir: resultsDir, sha256: await resultsSha256(resultsDir) };
   } catch (error) {
     // A results tree with a pipe, a socket or an unreadable file is no usable result, not a runner fault.

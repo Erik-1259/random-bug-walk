@@ -9,10 +9,10 @@
 // with no network, the plan's vCPUs (at least enough for its memory at 2 GB each) and the plan's
 // timeout plus the shutdown allowance as its provider timeout; the files placed at their
 // destinations; the command run once within its timeout, under a run-once guard because the SDK
-// may start a command twice; destinations.results packed and read back into a fresh local
-// directory; the stop confirmed by status. It resolves for every definite outcome and rejects
-// (SandboxCopyUncertain) only when the provider's outcome is uncertain, which the caller turns
-// into needs_reconciliation.
+// may start a command twice; destinations.results, only when it is a real directory, packed and
+// read back into a fresh local directory; the stop confirmed by status. It resolves for every
+// definite outcome and rejects (SandboxCopyUncertain) only when the provider's outcome is
+// uncertain, which the caller turns into needs_reconciliation.
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { join, posix, resolve, sep } from "node:path";
 import { extract } from "tar-stream";
@@ -250,6 +250,10 @@ async function runInside(deps: SandboxRunnerDeps, plan: CopyPlan, files: Placed[
     return { outcome: "setup_failed", exit_code: null };
   }
   try {
+    // The copy's own code can turn its results directory into a link, which tar -C would follow, or a file:
+    // only a real directory (test -L never follows a link) is packed.
+    const real = await sandbox.runCommand({ cmd: "test", args: ["-d", results, "-a", "!", "-L", results], env: COPY_ENV, detached: true });
+    if ((await real.wait()).exitCode !== 0) return { outcome: "ran", exit_code: exitCode, results_dir: null, results_sha256: null };
     const pack = await sandbox.runCommand({ cmd: "tar", args: ["-C", results, "-cf", RESULTS_ARCHIVE, "."], env: COPY_ENV, detached: true });
     if ((await pack.wait()).exitCode !== 0) return { outcome: "ran", exit_code: exitCode, results_dir: null, results_sha256: null };
     const stream = await sandbox.readFile({ path: RESULTS_ARCHIVE });

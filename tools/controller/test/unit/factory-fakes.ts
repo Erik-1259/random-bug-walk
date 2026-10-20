@@ -529,6 +529,8 @@ export class FakeCopySandbox implements SandboxSdk {
   };
   /** Extra archive entries the results tar holds. */
   extraEntries: { name: string; type: "file" | "symlink" }[] = [];
+  /** What the copy left at its results path: a real directory, a link to another directory, or a regular file. */
+  resultsPath: { kind: "directory" } | { kind: "link"; target: string } | { kind: "file" } = { kind: "directory" };
 
   create(params: SandboxCreate): Promise<SandboxInstance> {
     this.creates.push(params);
@@ -549,7 +551,12 @@ export class FakeCopySandbox implements SandboxSdk {
         if (command.signal?.aborted === true) return Promise.reject(new Error("synthetic: aborted"));
         let exitCode = 0;
         if (command.cmd === "tar") {
-          this.archive.set(params.name, this.tarOf(fs, command.args[1] ?? ""));
+          // As GNU tar: -C enters a link to a directory and cannot enter a file.
+          if (this.resultsPath.kind === "file") exitCode = 2;
+          else this.archive.set(params.name, this.tarOf(fs, this.resultsPath.kind === "link" ? this.resultsPath.target : (command.args[1] ?? "")));
+        } else if (command.cmd === "test") {
+          // `test -d <path> -a ! -L <path>`: true only for a real directory.
+          exitCode = this.resultsPath.kind === "directory" ? 0 : 1;
         } else if (command.cmd !== "mkdir") {
           exitCode = this.copy(fs);
         }

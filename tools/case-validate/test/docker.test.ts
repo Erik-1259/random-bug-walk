@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { resultsSha256 } from "@rbw/case-package";
@@ -80,7 +80,8 @@ interface FakeOptions {
   exitedFirst?: boolean;
   /** The kill fails although the copy overran its limit. */
   killFails?: boolean;
-  results?: boolean | "fifo";
+  /** What docker cp brings back: a results directory, none, one holding a pipe, or, as it is, a link or a file the copy left in its place. */
+  results?: boolean | "fifo" | "file" | { link: string };
   createFails?: boolean;
   placeFails?: boolean;
   startFails?: boolean;
@@ -106,6 +107,14 @@ function fakeDocker(options: FakeOptions): FakeDocker {
     if (verb === "cp") {
       if (options.results === false) return { code: 1, stdout: "", stderr: "no results" };
       const target = args[2] ?? "";
+      if (typeof options.results === "object") {
+        await symlink(options.results.link, target);
+        return ok();
+      }
+      if (options.results === "file") {
+        await writeFile(target, "{}\n");
+        return ok();
+      }
       await mkdir(target, { recursive: true });
       await writeFile(join(target, "copy.json"), "{}\n");
       if (options.results === "fifo") {
@@ -280,6 +289,24 @@ describe("dockerRunner", () => {
     expect(collected.outcome).toBe("ran");
     expect(collected.results_dir).toBeNull();
     expect(collected.results_sha256).toBeNull();
+  });
+
+  it("answers no results, never following it, and removes the fresh directory when the copy turned its results directory into a link", async () => {
+    const outside = join(dir, "outside");
+    await mkdir(outside);
+    await writeFile(join(outside, "host.txt"), "host\n");
+    const parent = join(dir, "results");
+    const collected = await dockerRunner({ command: fakeDocker({ images: KIT, results: { link: outside } }).command, resultsDir: parent }).run(plan(), roots);
+    expect(collected).toMatchObject({ outcome: "ran", exit_code: 0, results_dir: null, results_sha256: null });
+    expect(await readdir(parent)).toEqual([]);
+    expect(await readdir(outside)).toEqual(["host.txt"]);
+  });
+
+  it("answers no results, and removes the fresh directory, when the copy left a regular file at its results path", async () => {
+    const parent = join(dir, "results");
+    const collected = await dockerRunner({ command: fakeDocker({ images: KIT, results: "file" }).command, resultsDir: parent }).run(plan(), roots);
+    expect(collected).toMatchObject({ outcome: "ran", exit_code: 0, results_dir: null, results_sha256: null });
+    expect(await readdir(parent)).toEqual([]);
   });
 
   it("removes the copy's fresh results directory whenever it brings back no usable results, and keeps it when it does", async () => {

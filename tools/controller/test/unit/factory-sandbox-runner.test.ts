@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdtempSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -249,6 +249,24 @@ describe("the sandbox copy runner", () => {
     sdk.extraEntries = [{ name: "./escape", type: "symlink" }];
     const collected = await createSandboxCopyRunner(deps()).run(plan({ state: "fixed" }), roots);
     expect(collected).toMatchObject({ outcome: "ran", results_dir: null, results_sha256: null });
+  });
+
+  it("brings back no results, packing nothing, when the copy turned its results directory into a link to a directory outside it", async () => {
+    sdk.resultsPath = { kind: "link", target: "/workspace/evaluator" };
+    const collected = await createSandboxCopyRunner(deps()).run(plan(), roots);
+    expect(collected).toMatchObject({ outcome: "ran", exit_code: 0, results_dir: null, results_sha256: null });
+    expect(sdk.commands.find((command) => command.cmd === "test")?.args).toEqual(["-d", "/workspace/results", "-a", "!", "-L", "/workspace/results"]);
+    expect(sdk.commands.some((command) => command.cmd === "tar")).toBe(false);
+    expect(existsSync(work) ? readdirSync(work) : []).toEqual([]);
+    expect(sdk.stops).toHaveLength(1);
+  });
+
+  it("brings back no results, packing nothing, when the copy left a regular file at its results path", async () => {
+    sdk.resultsPath = { kind: "file" };
+    const collected = await createSandboxCopyRunner(deps()).run(plan(), roots);
+    expect(collected).toMatchObject({ outcome: "ran", exit_code: 0, results_dir: null, results_sha256: null });
+    expect(sdk.commands.some((command) => command.cmd === "tar")).toBe(false);
+    expect(existsSync(work) ? readdirSync(work) : []).toEqual([]);
   });
 });
 
