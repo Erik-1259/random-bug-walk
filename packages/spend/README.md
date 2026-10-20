@@ -531,7 +531,7 @@ In `reconciliations`, `recorded_at` is the time given in the record, and `logged
   - I4: missing usage;
   - I5: forced-overlap slot acquisition;
   - forced-overlap reuse of one operation ID on two pools;
-  - request budgets: two forced-overlap budget reservations on one budget, a burst of eight, a reservation against a close in both orders, a budget reservation against a plain reservation on the same pool, and a `budgetStatus` read held between its totals and its operation list while a reservation commits (both parts answer from one snapshot);
+  - request budgets: two forced-overlap budget reservations on one budget, a burst of eight, a reservation against a close in both orders, a budget reservation against a plain reservation on the same pool, a `budgetStatus` read held between its totals and its operation list while a reservation commits (both parts answer from one snapshot), and a catalog check that the budget read functions are STABLE and that no function their SQL helpers call, directly or in turn, is VOLATILE;
   - concurrent event appends from eight connections, which get consecutive sequence numbers;
   - stops, evidence and validation events: two forced-overlap stops and two forced-overlap evidence records under one key (the second replays), two forced-overlap validation events and a burst from eight connections (consecutive sequence numbers);
   - start locks: two holders of one request ID run one at a time while a record call for that ID on another connection goes ahead, other IDs and the validation scope do not wait, and a holder whose `fn` throws frees the ID;

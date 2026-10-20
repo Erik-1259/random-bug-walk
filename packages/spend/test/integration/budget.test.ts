@@ -232,6 +232,47 @@ describe("request budgets against a real Postgres", () => {
       operations_open: after.operations.map((o) => o.open_microusd),
     }).toEqual({ open: 600_000n, committed: 600_000n, available: 400_000n, operations_open: [600_000n] });
   });
+
+  // The test above holds a status call at one point only, so it fails only when the operation list
+  // is VOLATILE. This one guards the rest: the two read helpers and the two read entry points are
+  // STABLE, and no function the helpers call, directly or through another SQL-standard body, is
+  // VOLATILE (each query a VOLATILE function runs takes a fresh snapshot). Postgres records the
+  // functions a SQL-standard body (BEGIN ATOMIC or RETURN) calls in pg_depend; the operation list's
+  // call to factory_time shows the walk sees them. It records nothing for a PL/pgSQL body, which is
+  // why the entry points are checked by their own volatility.
+  it("the budget read helpers and entry points are STABLE and call no VOLATILE function", async () => {
+    const volatility = await observer.query<{ name: string; volatility: string }>(
+      `SELECT p.proname AS name, p.provolatile AS volatility
+       FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+       WHERE n.nspname = $1 AND p.proname = ANY($2::text[])
+       ORDER BY p.proname`,
+      [database.schema, ["spend_budget_totals", "spend_budget_operation_list", "spend_budget_status", "spend_budget_operations"]],
+    );
+    expect(volatility.rows).toEqual([
+      { name: "spend_budget_operation_list", volatility: "s" },
+      { name: "spend_budget_operations", volatility: "s" },
+      { name: "spend_budget_status", volatility: "s" },
+      { name: "spend_budget_totals", volatility: "s" },
+    ]);
+    const called = await observer.query<{ name: string; volatility: string }>(
+      `WITH RECURSIVE called(oid) AS (
+         SELECT d.refobjid
+         FROM pg_depend d JOIN pg_proc p ON p.oid = d.objid JOIN pg_namespace n ON n.oid = p.pronamespace
+         WHERE d.classid = 'pg_proc'::regclass AND d.refclassid = 'pg_proc'::regclass
+           AND n.nspname = $1 AND p.proname = ANY($2::text[])
+         UNION
+         SELECT d.refobjid
+         FROM pg_depend d JOIN called c ON d.objid = c.oid
+         WHERE d.classid = 'pg_proc'::regclass AND d.refclassid = 'pg_proc'::regclass
+       )
+       SELECT p.proname AS name, p.provolatile AS volatility
+       FROM called c JOIN pg_proc p ON p.oid = c.oid
+       ORDER BY p.proname`,
+      [database.schema, ["spend_budget_totals", "spend_budget_operation_list"]],
+    );
+    expect(called.rows.map((r) => r.name)).toContain("factory_time");
+    expect(called.rows.filter((r) => r.volatility === "v")).toEqual([]);
+  });
 });
 
 describe("request events against a real Postgres", () => {
