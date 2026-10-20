@@ -5,6 +5,7 @@
 // request or a validation run, and the slot's busy reason. Web-safe: no runner, driver or PGlite.
 import { toReserveRequest } from "@rbw/envelope";
 import type { Rates } from "@rbw/envelope";
+import { VALIDATION_RESULT_VALUES } from "@rbw/factory-contract";
 import type { CopyState, HostId, RequestOutcome, StopCode, ValidationMatrix, ValidationResult } from "@rbw/factory-contract";
 import { callName, canonicalDigest, operationId, providerCallIdentity } from "@rbw/schema";
 import type { OperationState, ReserveRequest, Spend, UsageSettlement } from "@rbw/spend";
@@ -403,29 +404,53 @@ function errorMatrix(matrix: ValidationMatrix | null): ValidationMatrix | null {
 }
 
 /**
- * Finishes a validation run: its finished record, the request's attention when its spend is
- * uncertain, validation_finished and budget_updated. Every append is keyed by the validation ID.
+ * A validation run's finish as recorded: its result and settled cost (null while its spend needs
+ * reconciliation), and whether this call's finish is the one recorded or another writer's came first.
+ */
+export interface ValidationFinish {
+  result: ValidationResult;
+  cost_microusd: number | null;
+  ours: boolean;
+}
+
+/**
+ * Finishes a validation run: its finished record, then, from the finish that record holds (this
+ * call's, or the one another writer, such as the worker or an overlapping lost-worker call, recorded
+ * first), the request's attention when its spend is uncertain (no settled cost), validation_finished
+ * and budget_updated, so the request's history always says what the run's record says. Every append
+ * is keyed by the validation ID. Rejects when the finish is refused or no recorded finish can be read.
  */
 export async function finishValidation(
   deps: StepDeps,
   request: Pick<FactoryRequestRecord, "request_id" | "budget_key">,
   validation: Pick<FactoryValidationRecord, "validation_id" | "case_id" | "host_id">,
-  result: { result: ValidationResult; matrix: ValidationMatrix | null; message: string | null; cost_microusd: number | null; uncertain: boolean },
-): Promise<void> {
+  result: { result: ValidationResult; matrix: ValidationMatrix | null; message: string | null; cost_microusd: number | null },
+): Promise<ValidationFinish> {
   const id = validation.validation_id;
   const matrix = result.result === "error" ? errorMatrix(result.matrix) : result.matrix;
-  await deps.records.appendValidationEvent(
+  const appended = await deps.records.appendValidationEvent(
     id,
     { event_key: "finished", type: "finished", data: { result: result.result, matrix, message: result.message, cost_microusd: result.cost_microusd, finished_at: deps.now().toISOString() } },
     deps.now(),
   );
-  if (result.uncertain) await appendNeedsReconciliation(deps, request.request_id, VALIDATION_ATTENTION, validationAttentionKey(id));
+  if (appended.kind === "refused") throw new Error(`the validation run's finish was refused (${appended.reason})`);
+  let finish: ValidationFinish = { result: result.result, cost_microusd: result.cost_microusd, ours: true };
+  if (appended.kind === "conflict") {
+    const recorded = (await deps.records.validationEvents(id)).find((event) => event.type === "finished");
+    const recordedResult = VALIDATION_RESULT_VALUES.find((value) => value === recorded?.data.result);
+    const cost = recorded?.data.cost_microusd;
+    if (recordedResult === undefined || (cost !== null && typeof cost !== "number")) throw new Error("the validation run's finish conflicts with a record that cannot be read");
+    finish = { result: recordedResult, cost_microusd: cost, ours: false };
+  }
+  const uncertain = finish.cost_microusd === null;
+  if (uncertain) await appendNeedsReconciliation(deps, request.request_id, VALIDATION_ATTENTION, validationAttentionKey(id));
   await deps.records.appendEvent(
     request.request_id,
-    { event_key: `validation:${id}:finished`, type: "validation_finished", host_id: validation.host_id, candidate_id: null, item_key: null, case_id: validation.case_id, message: RESULT_MESSAGES[result.result], data: { validation_id: id, result: result.result } },
+    { event_key: `validation:${id}:finished`, type: "validation_finished", host_id: validation.host_id, candidate_id: null, item_key: null, case_id: validation.case_id, message: RESULT_MESSAGES[finish.result], data: { validation_id: id, result: finish.result } },
     deps.now(),
   );
-  await appendBudgetUpdate(deps, request, `validation:${id}:settled`, result.uncertain ? "A validation run's reservation stays held until reconciliation." : `A validation run settled at ${usd(result.cost_microusd ?? 0)}.`);
+  await appendBudgetUpdate(deps, request, `validation:${id}:settled`, uncertain ? "A validation run's reservation stays held until reconciliation." : `A validation run settled at ${usd(finish.cost_microusd ?? 0)}.`);
+  return finish;
 }
 
 /** Sandbox statuses that mean it no longer runs. */

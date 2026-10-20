@@ -332,10 +332,10 @@ export async function startFactoryValidation(deps: FactoryLaunchDeps, args: Vali
 
   const launched = await launchSandbox(deps, op, profile.validation.worker, workerCommandArgs({ validation_id: args.validation_id }));
   if (launched.kind === "definite_failure") {
-    await finishValidation(deps, request, record, { result: "error", matrix: null, message: "The validation run could not be started.", cost_microusd: 0, uncertain: false });
+    await finishValidation(deps, request, record, { result: "error", matrix: null, message: "The validation run could not be started.", cost_microusd: 0 });
     await releaseSlot(deps, root);
   } else if (launched.kind === "uncertain") {
-    await finishValidation(deps, request, record, { result: "error", matrix: null, message: "The validation run's launch outcome is uncertain; its spend needs reconciliation.", cost_microusd: null, uncertain: true });
+    await finishValidation(deps, request, record, { result: "error", matrix: null, message: "The validation run's launch outcome is uncertain; its spend needs reconciliation.", cost_microusd: null });
     deps.log(`factory validation ${args.validation_id} launch uncertain: ${launched.detail}; slot held`);
   }
   return { kind: "accepted", run: validationRunView(record, await deps.records.validationEvents(args.validation_id), args.harness) };

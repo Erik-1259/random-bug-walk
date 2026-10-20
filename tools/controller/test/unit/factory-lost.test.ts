@@ -1,4 +1,6 @@
+import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { ValidationMatrix } from "@rbw/factory-contract";
 import { FACTORY_PROFILE } from "../../src/factory-profile.ts";
 import { busyReason, copyOperation, fullSettlement, validationOperation, validationSettlement, workerOperation } from "../../src/factory-ledger.ts";
 import { startFactoryValidation, startFactoryWorker } from "../../src/factory-launch.ts";
@@ -10,6 +12,8 @@ import type { LaunchReport } from "../../src/factory-meter.ts";
 import type { FactoryRequestRecord } from "../../src/factory-ports.ts";
 import { CANDIDATE_A, CASE_ID, CREDENTIALS, FakeInstance, WORKER_IMAGE, acceptRequest, factoryWorld, operationState, slotHolder, syntheticUuid } from "./factory-fakes.ts";
 import type { FactoryWorld } from "./factory-fakes.ts";
+
+const MATRIX = (JSON.parse(readFileSync(new URL("../../../../docs/product/fixtures/bug-request-v1/validation-passed.json", import.meta.url), "utf8")) as { matrix: ValidationMatrix }).matrix;
 
 let w: FactoryWorld;
 
@@ -392,6 +396,34 @@ describe("finalizeLostWorker for a validation run", () => {
     expect(finished?.data).toMatchObject({ result: "error", cost_microusd: Number(settled.settled_microusd) });
     expect(w.records.types(record.request_id).filter((type) => type === "attention")).toEqual([]);
     expect(await slotHolder(w)).toBeNull();
+  });
+
+  it("writes the request's validation_finished from the finish recorded first when the worker finished the run during an overlapping call", async () => {
+    const { record, validationId, operationId } = await runningValidation();
+    const root = w.identity.validationRoot(validationId);
+    const op = validationOperation({ identity: w.identity, rates: w.rates }, { root, case_id: CASE_ID, host_id: "task-report" });
+    // The call has read the run as unfinished; while it stops the run's sandbox, the worker ends and settles
+    // the run as measured and records its finish, and is stopped before it appends the request's events.
+    const get = w.sandbox.get.bind(w.sandbox);
+    let landed = false;
+    w.sandbox.get = async (name) => {
+      if (!landed) {
+        landed = true;
+        await w.spend.transition({ operation_id: operationId, from_state: "running", to_state: "terminal", actor_role: "factory-worker", terminal_status: "completed" });
+        const settled = await w.spend.settle(validationSettlement(op.envelope, operationId, "task-report", [{ launched: true, lifetime_ms: 90_000 }]));
+        if (!settled.ok) throw new Error("synthetic: the settlement was refused");
+        await w.records.appendValidationEvent(validationId, { event_key: "finished", type: "finished", data: { result: "passed", matrix: MATRIX, message: "All six cells matched their expected outcomes.", cost_microusd: Number(settled.settled_microusd), finished_at: w.clock.now().toISOString() } }, w.clock.now());
+      }
+      return get(name);
+    };
+    w.clock.advance(1_800_001);
+    await w.records.recordHeartbeat({ validation_id: validationId }, w.clock.now());
+    expect(await finalizeLostWorker(lostDeps(), { validation_id: validationId })).toEqual({ kind: "finalized", slot_held: false });
+    const recorded = (await w.records.validationEvents(validationId)).filter((event) => event.type === "finished");
+    expect(recorded.map((event) => event.data.result)).toEqual(["passed"]);
+    const finished = (await w.records.events(record.request_id)).filter((event) => event.type === "validation_finished");
+    expect(finished.map((event) => event.data)).toEqual([{ validation_id: validationId, result: "passed" }]);
+    expect(w.records.types(record.request_id).filter((type) => type === "attention")).toEqual([]);
   });
 
   it("finishes a run still going after 1,800 s even with fresh heartbeats", async () => {

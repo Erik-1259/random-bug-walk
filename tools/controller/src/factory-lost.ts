@@ -225,13 +225,16 @@ async function finalizeValidation(deps: LostDeps, validationId: string): Promise
   const cost = await settledCost(spend, op, allStopped);
   const after = await rootBlockers(deps, validation.root);
   if (cost !== null && !after.blocked) {
-    // Settled, here, by a concurrent call or by the worker itself: the run finishes error with that cost.
-    await finishValidation(deps, request, validation, { result: "error", matrix: null, message, cost_microusd: Number(cost), uncertain: false });
+    // Settled, here, by a concurrent call or by the worker itself: the run finishes error with that cost,
+    // unless the worker recorded its own finish first, which stands; one that left its spend for
+    // reconciliation keeps the slot held.
+    const finish = await finishValidation(deps, request, validation, { result: "error", matrix: null, message, cost_microusd: Number(cost) });
+    if (finish.cost_microusd === null) return { kind: "finalized", slot_held: true };
     return { kind: "finalized", slot_held: after.held ? await release(deps, validation.root) : false };
   }
   // Not settled, or a sandbox of the run is still unconfirmed: its spend needs reconciliation.
   if (cost === null) await makeUncertain(spend, op.operation_id, ROUTE_ACTOR);
-  await finishValidation(deps, request, validation, { result: "error", matrix: null, message, cost_microusd: null, uncertain: true });
+  await finishValidation(deps, request, validation, { result: "error", matrix: null, message, cost_microusd: null });
   deps.log(`factory validation ${validationId} lost: finished error; slot held for reconciliation`);
   return { kind: "finalized", slot_held: true };
 }

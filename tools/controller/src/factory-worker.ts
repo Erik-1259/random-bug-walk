@@ -322,10 +322,11 @@ export async function runFactoryValidation(deps: WorkerDeps, args: { validation_
     if (await fenced()) return { kind: "fenced" };
 
     const { spend } = deps.ledger;
+    // A finish another writer recorded first (the lost-worker routine) stands: this worker then stops as fenced.
     if (meter.uncertain) {
       await makeUncertain(spend, op.operation_id, WORKER_ACTOR);
-      await finishValidation(deps, request, validation, { result: "error", matrix: result.matrix, message: "A copy's outcome is uncertain; the run's spend needs reconciliation.", cost_microusd: null, uncertain: true });
-      return { kind: "finished", result: "error", slot_released: false };
+      const finish = await finishValidation(deps, request, validation, { result: "error", matrix: result.matrix, message: "A copy's outcome is uncertain; the run's spend needs reconciliation.", cost_microusd: null });
+      return finish.ours ? { kind: "finished", result: "error", slot_released: false } : { kind: "fenced" };
     }
     const ended = await spend.transition({ operation_id: op.operation_id, from_state: "running", to_state: "terminal", actor_role: WORKER_ACTOR, terminal_status: result.result === "error" ? "failed" : "completed" });
     if (!ended.ok) {
@@ -335,10 +336,11 @@ export async function runFactoryValidation(deps: WorkerDeps, args: { validation_
     const settled = await spend.settle(validationSettlement(op.envelope, op.operation_id, validation.host_id, meter.usage, profile));
     if (!settled.ok) {
       deps.log(`factory validation ${id} the run's settlement was refused (${settled.code})`);
-      await finishValidation(deps, request, validation, { result: "error", matrix: result.matrix, message: "The run's spend could not be settled; it needs reconciliation.", cost_microusd: null, uncertain: true });
-      return { kind: "finished", result: "error", slot_released: false };
+      const finish = await finishValidation(deps, request, validation, { result: "error", matrix: result.matrix, message: "The run's spend could not be settled; it needs reconciliation.", cost_microusd: null });
+      return finish.ours ? { kind: "finished", result: "error", slot_released: false } : { kind: "fenced" };
     }
-    await finishValidation(deps, request, validation, { ...result, cost_microusd: Number(settled.settled_microusd), uncertain: false });
+    const finish = await finishValidation(deps, request, validation, { ...result, cost_microusd: Number(settled.settled_microusd) });
+    if (!finish.ours) return { kind: "fenced" };
     return { kind: "finished", result: result.result, slot_released: await releaseSlot(deps, validation.root) };
   } finally {
     await heartbeat.stop();
