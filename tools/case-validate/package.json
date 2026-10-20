@@ -24,7 +24,6 @@
   "dependencies": {
     "@rbw/case-package": "workspace:*",
     "@rbw/factory-contract": "workspace:*",
-    "@rbw/projection": "workspace:*",
     "@rbw/schema": "workspace:*"
   },
   "devDependencies": {
