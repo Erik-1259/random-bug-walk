@@ -566,7 +566,9 @@ export interface Interpretation {
   input: NormalizedRequestInput;
   /** True only when no problem has severity blocking. */
   startable: boolean;
+  /** Each input item interpreted, so at least one (contract section 6). */
   items: InterpretedItem[];
+  /** At most one total per bug type. A requested type's total is the sum of its items' quantities, so it is listed and at least 1; a type no item requests has 0 if it is listed (contract section 5). */
   type_totals: TypeQuantity[];
   hosts: InterpretationHost[];
   budget: InterpretationBudget;
@@ -584,12 +586,13 @@ export interface InterpretedItem {
   difficulty: ItemDifficulty;
   /** Empty when the item has no description (contract section 6.1). */
   criteria: InterpretedCriterion[];
-  /** The description's words that no criterion or filler phrase covers; empty when the item has no description. Any entry makes the item unsupported with unrecognized_description (contract section 6.1). */
+  /** Each maximal run of words that no criterion or filler phrase covers, from its first word to its last, so an entry starts and ends with a letter or digit; empty when the item has no description. Any entry makes the item unsupported with unrecognized_description, and that problem needs an entry (contract section 6.1). */
   unmatched_text: string[];
-  /** At least one when the item is supported: an item with no eligible source is unsupported, with unsupported_combination or no_matching_source (contract section 6.2). */
+  /** Sources on the selected hosts, at most one per host, and at least one when the item is supported. An item has none exactly when it carries unsupported_combination or no_matching_source (contract section 6.2). */
   eligible_sources: EligibleSource[];
   /** Unsupported exactly when the item has a blocking problem; an item that requires source-only difficulty or has unmatched text is unsupported. */
   status: SupportStatus;
+  /** The item's own problems, so each names an item; request-level problems belong to Interpretation.problems. */
   problems: Problem[];
 }
 
@@ -669,7 +672,7 @@ export interface RequestStatus {
   outcome: RequestOutcome | null;
   /** Set only in state finished; its code belongs to the outcome. */
   stop_reason: StopReason | null;
-  /** Derived from the counts; a fulfilled outcome always has complete. */
+  /** Derived from the counts: complete when nothing is missing, none when no case was delivered; a fulfilled outcome always has complete. */
   delivery: Delivery;
   attention: Attention | null;
   /** Frozen at start; always startable. */
@@ -677,14 +680,17 @@ export interface RequestStatus {
   budget: RequestBudget;
   limits: RequestLimits;
   funnel: Funnel;
+  /** Each request item, so at least one. */
   items: ItemProgress[];
+  /** At most one total per bug type. A requested type is listed with requested at least 1; a type no item requests has requested 0 if it is listed (contract section 5). */
   type_totals: TypeProgress[];
   candidates: Candidate[];
   /** Qualified cases of this request only; empty exactly when delivery is none. */
   cases: Case[];
-  /** Up to 200 events with seq greater than the after parameter. */
+  /** Up to 200 events with seq greater than the after parameter. Event 1 is request_accepted. A request_finished event, at most one, names the outcome and stop code and appears only in state finished; a stop_requested event, at most one, only in states stopping and finished; validation events only in state finished. */
   events: Event[];
-  next_after: NonNegativeInteger;
+  /** The seq of the last event returned, or the after parameter when none is; at least 1, since event 1 always exists. */
+  next_after: PositiveInteger;
   last_heartbeat_at: UtcTime | null;
   poll_after_ms: NonNegativeInteger;
 }
@@ -732,9 +738,11 @@ export interface ItemProgress {
   bug_type_id: BugTypeId;
   /** The normalized description of the item. */
   description: Description | null;
-  requested: NonNegativeInteger;
+  /** The item's quantity, so at least 1. */
+  requested: PositiveInteger;
   delivered: NonNegativeInteger;
   missing: NonNegativeInteger;
+  /** The delivered cases that fill the item, each listed once; empty exactly when delivered is 0. */
   case_ids: Sha256[];
 }
 
@@ -757,7 +765,7 @@ export interface Candidate {
   stage: CandidateStage;
   /** Set exactly for the stages rejected, invalid, incomplete and skipped, with a reason of that stage (contract section 8.3). */
   reason: CandidateReasonDetail | null;
-  /** Set at requested_criteria_passed, when the candidate is assigned to an item. */
+  /** Set at requested_criteria_passed, when the candidate is assigned to an item; null for a candidate that fits no item (wrong_failure) or is skipped before it runs (duplicate_defect, no_budget_for_candidate). */
   item_key: ItemKey | null;
   /** Set exactly in stage qualified: only a qualified candidate becomes a case (contract sections 10 and 10.5). */
   case_id: Sha256 | null;

@@ -236,7 +236,7 @@ RequestStatus {
   budget: { budget_microusd, reserved_microusd, spent_microusd, committed_microusd, remaining_microusd, overrun: boolean }  // section 8.5
   limits: { max_wall_clock_s, deadline_at, max_candidates, candidates_started }
   funnel: { candidates_explored, behavior_checks_passed, requested_criteria_passed, packages_ready }
-  items: { item_key, bug_type_id, description, requested, delivered, missing, case_ids: string[] }[]
+  items: { item_key, bug_type_id, description, requested, delivered, missing, case_ids: string[] }[]  // case_ids: the delivered cases that fill the item
   type_totals: { bug_type_id, requested, delivered, missing }[]
   candidates: Candidate[]
   cases: Case[]

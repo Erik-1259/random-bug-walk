@@ -18,7 +18,7 @@ import {
 } from "../src/index.ts";
 import { validateContract } from "../src/validate.ts";
 import type { JsonObject } from "./support.ts";
-import { CONTRACT_DOCUMENT, at, contractFixture, internalFixture, variant } from "./support.ts";
+import { CONTRACT_DOCUMENT, asArray, asObject, at, contractFixture, internalFixture, variant } from "./support.ts";
 
 const DOCUMENT = readFileSync(CONTRACT_DOCUMENT, "utf8").split("\n");
 
@@ -107,6 +107,22 @@ const OUTCOME_TABLE = rows(section("### 8.1 States and outcomes")).map((row) => 
 const REASON_TABLE = rows(section("### 8.3 Candidate reasons")).map((row) => [codes(row[0])[0] ?? "", row[1] ?? ""] as const);
 const ENDED_STAGES = ["rejected", "invalid", "incomplete", "skipped"];
 
+/** The index of a status's request_finished event. */
+function finishedEvent(status: JsonObject): number {
+  const index = asArray(status.events, "events").findIndex((event) => asObject(event, "event").type === "request_finished");
+  if (index < 0) throw new Error("no request_finished event");
+  return index;
+}
+
+/** A finished status with the outcome and stop code, in its stop reason and in its request_finished event. */
+function finishedAs(finished: JsonObject, outcome: string, stopCode: string): JsonObject {
+  return variant(finished, (copy) => {
+    copy.outcome = outcome;
+    at(copy, ["stop_reason"]).code = stopCode;
+    at(copy, ["events", finishedEvent(copy)]).data = { outcome, stop_code: stopCode };
+  });
+}
+
 describe("the schema applies the document's tables", () => {
   it.each(PROBLEM_TABLE)("problem %s has severity %s and no other", (code, severity, requestLevel) => {
     for (const other of PROBLEM_SEVERITY_VALUES) {
@@ -127,13 +143,25 @@ describe("the schema applies the document's tables", () => {
     for (const stopCode of STOP_CODE_VALUES) {
       const allowed = stopCodes.includes(stopCode);
       expect(validateContract("RequestFinishedData", { outcome, stop_code: stopCode }).length === 0).toBe(allowed);
-      const status = variant(finished, (copy) => {
-        copy.outcome = outcome;
-        at(copy, ["stop_reason"]).code = stopCode;
-      });
+      const status = finishedAs(finished, outcome, stopCode);
       expect(validateContract("RequestStatus", status).length === 0).toBe(allowed);
     }
   });
+
+  it.each(OUTCOME_TABLE.flatMap(([outcome, stopCodes]) => stopCodes.map((stopCode) => [outcome, stopCode] as const)))(
+    "a request finished as %s with %s has a request_finished event with the same stop code (section 8.4)",
+    (outcome, stopCode) => {
+      const status = finishedAs(contractFixture("status-fulfilled.json"), outcome, stopCode);
+      expect(validateContract("RequestStatus", status)).toEqual([]);
+      const index = finishedEvent(status);
+      for (const [otherOutcome, otherCodes] of OUTCOME_TABLE) {
+        for (const otherCode of otherCodes.filter((code) => code !== stopCode)) {
+          const mismatched = variant(status, (copy) => { at(copy, ["events", index]).data = { outcome: otherOutcome, stop_code: otherCode }; });
+          expect(validateContract("RequestStatus", mismatched)).toEqual([`schema:/events/${String(index)}/data/stop_code:const`, `schema:/events/${String(index)}:if`, "schema:/:if"]);
+        }
+      }
+    },
+  );
 
   it.each(REASON_TABLE)("reason %s belongs to stage %s only", (reason, stage) => {
     const rejected = at(contractFixture("status-zero-result.json"), ["candidates", 0]);
