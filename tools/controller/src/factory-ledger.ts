@@ -29,6 +29,11 @@ import type {
 
 export const FACTORY_KIND = { worker: "factory.worker", copy: "factory.copy", validation: "factory.validation" } as const;
 
+export const SANDBOX_PROVIDER = "vercel-sandbox";
+/** The ledger actor of the web service's calls and of the worker's. */
+export const ROUTE_ACTOR = "factory-route";
+export const WORKER_ACTOR = "factory-worker";
+
 // The factory core's modules ------------------------------------------------------------------
 
 /**
@@ -69,10 +74,6 @@ export const FACTORY_EVENTS: FactoryEventBuilders = Object.freeze({
   finished: (stop: StopCode, now: Date) => appended(requestFinished(stop, now.toISOString())),
   attention: (code: "needs_reconciliation", now: Date) => appended(attention(code, now.toISOString())),
 });
-export const SANDBOX_PROVIDER = "vercel-sandbox";
-/** The ledger actor of the web service's calls and of the worker's. */
-export const ROUTE_ACTOR = "factory-route";
-export const WORKER_ACTOR = "factory-worker";
 
 // Sandbox names: deterministic, and unique per operation, because Vercel keeps a stopped named
 // sandbox and refuses a second create on its name.
