@@ -18,7 +18,7 @@ export {
 export type { FakeAdapterOptions, SyntheticEntryOptions } from "./catalog.ts";
 export { FAKE_HARNESS, UncertainOutcomeError, fakeHarness, harnessResultOf, matrixOf, qualifyingPlan } from "./harness.ts";
 export type { EntryPlan, FakeHarnessOptions, FakeHooks, StatePlan } from "./harness.ts";
-export { EventConflictError, MemoryEventStore, MemoryLedger } from "./memory.ts";
+export { EventConflictError, EventNotAllowedError, MemoryEventStore, MemoryLedger } from "./memory.ts";
 export type { LedgerCall, MemoryLedgerOptions } from "./memory.ts";
 export { syntheticCopyRecord, syntheticObservation, unrunCopyRecord } from "./records.ts";
 export type { CellPlan, SyntheticRecordInput } from "./records.ts";

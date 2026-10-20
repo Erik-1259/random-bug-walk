@@ -1,6 +1,8 @@
 // In-memory event store and request ledger for tests. The event store applies the append rule of the
-// factory event table (the same key with the same content replays; different content conflicts) and
-// numbers events from 1 with no gaps. The ledger reserves and settles like the spend ledger's request
+// factory event table: the same key with the same content replays and different content conflicts,
+// where the content is everything but `at` (the table records its own time and compares the rest);
+// after `request_finished` only the event types of contract section 8.4 may follow; events are
+// numbered from 1 with no gaps. The ledger reserves and settles like the spend ledger's request
 // budget: every fake operation settles at exactly its worst case unless a test says otherwise.
 import { canonicalDigest } from "@rbw/schema";
 import type { Event, StopCode } from "@rbw/factory-contract";
@@ -13,6 +15,16 @@ export class EventConflictError extends Error {
   }
 }
 
+export class EventNotAllowedError extends Error {
+  constructor(type: string) {
+    super(`a ${type} event cannot follow request_finished`);
+    this.name = "EventNotAllowedError";
+  }
+}
+
+/** The only event types that may follow `request_finished` (contract section 8.4). */
+const AFTER_FINISH: ReadonlySet<string> = new Set(["budget_updated", "attention", "attention_cleared", "validation_started", "validation_finished"]);
+
 export class MemoryEventStore implements EventSink {
   readonly events: Event[] = [];
   readonly keys = new Map<string, string>();
@@ -20,13 +32,15 @@ export class MemoryEventStore implements EventSink {
 
   append(event: NewEvent): Promise<void> {
     const { event_key: key, ...content } = event;
-    const digest = canonicalDigest(content).sha256;
+    // A replay keeps the first append's time, as the table does.
+    const digest = canonicalDigest({ ...content, at: null }).sha256;
     const existing = this.keys.get(key);
     if (existing !== undefined) {
       if (existing !== digest) return Promise.reject(new EventConflictError(key));
       this.replays.push(key);
       return Promise.resolve();
     }
+    if (!AFTER_FINISH.has(content.type) && this.events.some((stored) => stored.type === "request_finished")) return Promise.reject(new EventNotAllowedError(content.type));
     this.keys.set(key, digest);
     this.events.push({ ...content, seq: this.events.length + 1 });
     return Promise.resolve();

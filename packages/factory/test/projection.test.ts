@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import { lostWorkerEvents, projectStatus, ProjectionError, workerAttentionEvent } from "../src/projection.ts";
 import type { CaseEvidence, ProjectionInput } from "../src/projection.ts";
 import type { CandidateInfo } from "../src/sources.ts";
-import { MemoryEventStore } from "../src/testing/memory.ts";
+import { EventConflictError, EventNotAllowedError, MemoryEventStore } from "../src/testing/memory.ts";
 import { REPO_ROOT, statusFixture } from "./support.ts";
 
 const RECORD = JSON.parse(readFileSync(join(REPO_ROOT, "packages", "factory-contract", "test", "fixtures", "qualification-record-accepted.json"), "utf8")) as QualificationRecord;
@@ -208,6 +208,17 @@ describe("the lost-worker finish", () => {
     expect(lostWorkerEvents({ events: store.events, now: new Date("2026-10-20T14:12:00.000Z") })).toEqual([]);
   });
 
+  it("replays a second finish built at another time over the same events, as concurrent finishes do", async () => {
+    const store = await storeOf(statusFixture("status-running.json").events);
+    const first = lostWorkerEvents({ events: store.events, now: new Date("2026-10-20T14:10:00.000Z") });
+    const second = lostWorkerEvents({ events: store.events, now: new Date("2026-10-20T14:10:07.000Z") });
+    for (const event of first) await store.append(event);
+    for (const event of second) await store.append(event);
+    expect(store.replays).toEqual(["lost:candidate-end", "lost:attention", "lost:finished"]);
+    expect(store.events.filter((event) => event.type === "request_finished")).toHaveLength(1);
+    expect(store.events.at(-1)?.at).toBe("2026-10-20T14:10:00.000Z");
+  });
+
   it("keeps a needs_reconciliation the worker raised before it was lost, without a second attention event", () => {
     const running = statusFixture("status-running.json");
     const raised: Event = { seq: 13, at: "2026-10-20T14:07:00.000Z", type: "attention", host_id: null, candidate_id: null, item_key: null, case_id: null, message: "x", data: { code: "needs_reconciliation" } };
@@ -263,5 +274,34 @@ describe("worker heartbeat attention under repeated and concurrent polls", () =>
     await finishedStore.append(afterA);
     await finishedStore.append(afterB);
     expect(finishedStore.replays).toEqual(["heartbeat:1:clear"]);
+  });
+});
+
+describe("the in-memory event store", () => {
+  const finished = statusFixture("status-fulfilled.json");
+  const event = (type: "budget_updated" | "candidate_selected", at: string): Event =>
+    type === "budget_updated"
+      ? { seq: 0, at, type, host_id: null, candidate_id: null, item_key: null, case_id: null, message: "Budget updated.", data: { reserved_microusd: 0, spent_microusd: 0, remaining_microusd: 0 } }
+      : { seq: 0, at, type, host_id: "task-report", candidate_id: "c".repeat(64), item_key: null, case_id: null, message: "Selected.", data: { source_id: "synthetic-source", entry_id: "synthetic-entry" } };
+
+  it("compares a replay on everything but its time, and refuses other content under the same key", async () => {
+    const store = await storeOf([]);
+    await store.append({ ...event("budget_updated", "2026-10-20T14:00:00.000Z"), event_key: "k" });
+    await store.append({ ...event("budget_updated", "2026-10-20T14:05:00.000Z"), event_key: "k" });
+    expect(store.replays).toEqual(["k"]);
+    expect(store.events.map((stored) => stored.at)).toEqual(["2026-10-20T14:00:00.000Z"]);
+    await expect(store.append({ ...event("budget_updated", "2026-10-20T14:00:00.000Z"), message: "Other.", event_key: "k" })).rejects.toBeInstanceOf(EventConflictError);
+  });
+
+  it("takes only budget, attention and validation events after request_finished, and still replays earlier ones", async () => {
+    const store = await storeOf(finished.events);
+    const at = "2026-10-21T00:00:00.000Z";
+    await expect(store.append({ ...event("candidate_selected", at), event_key: "late:selected" })).rejects.toBeInstanceOf(EventNotAllowedError);
+    await store.append({ ...event("budget_updated", at), event_key: "late:budget" });
+    const earlier = finished.events[0];
+    if (earlier === undefined) throw new Error("the fixture has no events");
+    await store.append({ ...earlier, event_key: "fixture:1" });
+    expect(store.replays).toEqual(["fixture:1"]);
+    expect(store.events.map((stored) => stored.type).slice(-2)).toEqual(["request_finished", "budget_updated"]);
   });
 });
