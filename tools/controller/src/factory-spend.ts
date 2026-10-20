@@ -159,9 +159,11 @@ function recordsPort(source: { client: SqlClient; schema: string; now: () => Dat
     },
 
     async appendEvent(requestId, event, time) {
-      // The port's event is the contract's (the store checks the type and the fields); its loose data type is narrowed here.
-      const appended = await at(time).appendEvent({ request_id: requestId, ...event } as AppendEvent);
-      return appendOutcome("the event append", appended);
+      // Only the input's own fields: the ledger refuses any other key, such as a stored event's seq
+      // and time. The port's event is the contract's (the store checks its type and fields); its
+      // loose data type is narrowed here.
+      const input = { request_id: requestId, event_key: event.event_key, type: event.type, host_id: event.host_id, candidate_id: event.candidate_id, item_key: event.item_key, case_id: event.case_id, message: event.message, data: event.data };
+      return appendOutcome("the event append", await at(time).appendEvent(input as AppendEvent));
     },
 
     async events(requestId) {

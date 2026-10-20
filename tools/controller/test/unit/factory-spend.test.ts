@@ -228,7 +228,11 @@ describe("the factory records port", () => {
     expect(await records.appendEvent(record.request_id, FACTORY_EVENTS.finished("fulfilled", at), at)).toEqual({ kind: "appended", seq: 3 });
     expect(await records.appendEvent(record.request_id, { event_key: "worker_started", type: "worker_started", ...NO_LINKS, message: "The worker started.", data: {} }, at)).toEqual({ kind: "refused", reason: "event_not_allowed" });
     expect(await records.appendEvent(record.request_id, { ...event, event_key: "synthetic:late" }, at)).toEqual({ kind: "appended", seq: 4 });
-    expect((await records.events(record.request_id)).find((stored) => stored.seq === 2)?.at).toBe(at.toISOString());
+    const stored = (await records.events(record.request_id)).find((found) => found.seq === 2);
+    expect(stored?.at).toBe(at.toISOString());
+    // A stored event appended again (its seq and time along) replays as its input.
+    if (stored === undefined) throw new Error("synthetic: the event is not stored");
+    expect(await records.appendEvent(record.request_id, stored, at)).toEqual({ kind: "replay", seq: 2 });
     await expect(records.appendEvent(randomUUID(), event, at)).rejects.toThrow("unknown_request");
     expect(await records.events(randomUUID())).toEqual([]);
   });
