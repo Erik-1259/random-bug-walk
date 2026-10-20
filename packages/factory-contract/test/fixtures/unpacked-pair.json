@@ -1,0 +1,69 @@
+{
+  "bug_case_sha256": "b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1",
+  "validator_sha256": "f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1",
+  "pair_sha256": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+  "states": {
+    "clean": {
+      "root": "/work/synthetic/pair/clean",
+      "files": [
+        {
+          "path": "src/synthetic/store.ts",
+          "sha256": "d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2"
+        }
+      ]
+    },
+    "buggy": {
+      "root": "/work/synthetic/pair/buggy",
+      "files": [
+        {
+          "path": "src/synthetic/store.ts",
+          "sha256": "d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3"
+        }
+      ]
+    },
+    "fixed": {
+      "root": "/work/synthetic/pair/fixed",
+      "files": [
+        {
+          "path": "src/synthetic/store.ts",
+          "sha256": "d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2"
+        }
+      ]
+    }
+  },
+  "evaluator": {
+    "root": "/work/synthetic/pair/evaluator",
+    "files": [
+      {
+        "path": "checks/synthetic-check.ts",
+        "sha256": "d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8"
+      }
+    ]
+  },
+  "protocol": {
+    "protocol_id": "synthetic-repetition-protocol",
+    "version": "1",
+    "sha256": "d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7",
+    "per_state": {
+      "clean": {
+        "copies": 1,
+        "rounds_per_copy": 5,
+        "min_valid_runs": 5
+      },
+      "buggy": {
+        "copies": 1,
+        "rounds_per_copy": 5,
+        "min_valid_runs": 5
+      },
+      "fixed": {
+        "copies": 1,
+        "rounds_per_copy": 5,
+        "min_valid_runs": 5
+      }
+    },
+    "valid_trial_rules": [
+      "synthetic-rule-exit-code",
+      "synthetic-rule-report-present"
+    ]
+  }
+}

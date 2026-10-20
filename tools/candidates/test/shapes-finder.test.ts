@@ -93,7 +93,7 @@ describe("a dry run end to end over the synthetic race tree", () => {
     let out = "";
     let err = "";
     const code = await runCommand(
-      ["--rule", RULE_FILE, "--host", host, "--out", outFile, "--dry-run", "--rule-id", "race.class"],
+      ["--rule", RULE_FILE, "--host", host, "--out", outFile, "--route", "static-screen/v1", "--dry-run", "--rule-id", "race.class"],
       {
         findSites: findClassSites,
         now: () => new Date("2026-10-13T12:00:00.000Z"),
@@ -128,5 +128,25 @@ describe("a dry run end to end over the synthetic race tree", () => {
     const confirmed = record.candidates.map((c) => c.planted_form_confirmed);
     expect(confirmed.includes(false)).toBe(true);
     expect(confirmed.indexOf(false)).toBeGreaterThan(confirmed.lastIndexOf(true));
+  });
+});
+
+describe("the default route end to end over the synthetic race tree", () => {
+  it("lists and plants real candidates for behavioral qualification without a screen", async () => {
+    const host = syntheticRaceTree();
+    const outFile = join(mkdtempSync(join(tmpdir(), "rbw-candidates-out-")), "record.json");
+    let err = "";
+    const code = await runCommand(
+      ["--rule", RULE_FILE, "--host", host, "--out", outFile, "--rule-id", "race.class"],
+      { findSites: findClassSites, now: () => new Date("2026-10-19T12:00:00.000Z"), runId: () => "44444444-4444-4444-8444-444444444444" },
+      { out: () => undefined, err: (t) => (err += t) },
+    );
+    expect(err).toBe("");
+    expect(code).toBe(0);
+    const record = parseCanonical(readFileSync(outFile)) as unknown as { version: number; route: unknown; totals: { planted: number }; candidates: { status: string }[] };
+    expect(record.version).toBe(2);
+    expect(record.route).toEqual({ route_id: "behavioral-qualification", version: "1" });
+    expect(record.totals.planted).toBeGreaterThan(0);
+    expect(record.candidates.filter((c) => c.status === "pending_qualification")).toHaveLength(record.totals.planted);
   });
 });

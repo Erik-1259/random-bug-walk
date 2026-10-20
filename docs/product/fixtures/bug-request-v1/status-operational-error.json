@@ -1,0 +1,347 @@
+{
+  "contract_version": "bug-request/1",
+  "request_id": "00000000-0000-4000-8000-000000000105",
+  "created_at": "2026-10-20T19:00:00.000Z",
+  "updated_at": "2026-10-20T19:07:11.599Z",
+  "state": "finished",
+  "outcome": "operational_error",
+  "stop_reason": {
+    "code": "worker_lost",
+    "message": "The worker stopped responding during a candidate's checks. No replacement work was started, and no case was delivered."
+  },
+  "delivery": "none",
+  "attention": {
+    "code": "needs_reconciliation",
+    "message": "The worker stopped responding while a sandbox run was in progress, so the spend of the worker and of that run is uncertain. Their $0.50 of reservations stays held until an operator reconciles it. No replacement work was started, and new factory work answers busy until then."
+  },
+  "interpretation": {
+    "contract_version": "bug-request/1",
+    "interpretation_sha256": "1414141414141414141414141414141414141414141414141414141414141414",
+    "interpreter": {
+      "interpreter_id": "criteria-match",
+      "version": "1",
+      "criteria_catalog_version": "1"
+    },
+    "qualification_route": {
+      "route_id": "behavioral-qualification",
+      "version": "1"
+    },
+    "input": {
+      "hosts": [
+        "task-report"
+      ],
+      "items": [
+        {
+          "item_key": "concurrency-1",
+          "bug_type_id": "concurrency",
+          "quantity": 1,
+          "description": null,
+          "difficulty": "source_inferable_allowed"
+        }
+      ],
+      "budget_microusd": 1000000
+    },
+    "startable": true,
+    "items": [
+      {
+        "item_key": "concurrency-1",
+        "bug_type_id": "concurrency",
+        "quantity": 1,
+        "description": null,
+        "difficulty": {
+          "requested": "source_inferable_allowed",
+          "status": "not_required"
+        },
+        "criteria": [],
+        "unmatched_text": [],
+        "eligible_sources": [
+          {
+            "host_id": "task-report",
+            "source_id": "synthetic-task-report-concurrency",
+            "entries": 1
+          }
+        ],
+        "status": "supported",
+        "problems": []
+      }
+    ],
+    "type_totals": [
+      {
+        "bug_type_id": "concurrency",
+        "quantity": 1
+      }
+    ],
+    "hosts": [
+      {
+        "host_id": "task-report",
+        "used": true,
+        "reason": null
+      }
+    ],
+    "budget": {
+      "budget_microusd": 1000000,
+      "worker_worst_case_microusd": 200000,
+      "worst_case_per_candidate_microusd": [
+        {
+          "host_id": "task-report",
+          "microusd": 300000
+        }
+      ],
+      "worst_case_per_validation_microusd": [
+        {
+          "host_id": "task-report",
+          "microusd": 200000
+        }
+      ],
+      "estimate_note": "The worker's worst case is reserved when the request starts, and each candidate's worst case before it starts; afterward the actual spend is settled and the rest is released. A validation run reserves its host's worst case the same way. These are limits, not predictions."
+    },
+    "limits": {
+      "max_wall_clock_s": 3600,
+      "max_candidates": 10
+    },
+    "problems": []
+  },
+  "budget": {
+    "budget_microusd": 1000000,
+    "reserved_microusd": 500000,
+    "spent_microusd": 0,
+    "committed_microusd": 500000,
+    "remaining_microusd": 500000,
+    "overrun": false
+  },
+  "limits": {
+    "max_wall_clock_s": 3600,
+    "deadline_at": "2026-10-20T20:00:00.000Z",
+    "max_candidates": 10,
+    "candidates_started": 1
+  },
+  "funnel": {
+    "candidates_explored": 1,
+    "behavior_checks_passed": 0,
+    "requested_criteria_passed": 0,
+    "packages_ready": 0
+  },
+  "items": [
+    {
+      "item_key": "concurrency-1",
+      "bug_type_id": "concurrency",
+      "description": null,
+      "requested": 1,
+      "delivered": 0,
+      "missing": 1,
+      "case_ids": []
+    }
+  ],
+  "type_totals": [
+    {
+      "bug_type_id": "concurrency",
+      "requested": 1,
+      "delivered": 0,
+      "missing": 1
+    }
+  ],
+  "candidates": [
+    {
+      "candidate_id": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1",
+      "defect_id": "dadadadadadadadadadadadadadadadadadadadadadadadadadadadadadadada",
+      "host_id": "task-report",
+      "bug_type_id": "concurrency",
+      "source_id": "synthetic-task-report-concurrency",
+      "entry_id": "synthetic-task-report-concurrency-01",
+      "stage": "incomplete",
+      "reason": {
+        "code": "incomplete_run",
+        "message": "Incomplete: the worker stopped responding before this candidate's checks finished. It is not reproduction and was not retried."
+      },
+      "item_key": null,
+      "case_id": null,
+      "started_at": "2026-10-20T19:01:13.186Z",
+      "finished_at": "2026-10-20T19:07:11.524Z"
+    }
+  ],
+  "cases": [],
+  "events": [
+    {
+      "seq": 1,
+      "at": "2026-10-20T19:00:00.000Z",
+      "type": "request_accepted",
+      "host_id": null,
+      "candidate_id": null,
+      "item_key": null,
+      "case_id": null,
+      "message": "Request accepted.",
+      "data": {}
+    },
+    {
+      "seq": 2,
+      "at": "2026-10-20T19:00:00.058Z",
+      "type": "budget_updated",
+      "host_id": null,
+      "candidate_id": null,
+      "item_key": null,
+      "case_id": null,
+      "message": "Reserved $0.20 for the worker's worst case.",
+      "data": {
+        "reserved_microusd": 200000,
+        "spent_microusd": 0,
+        "remaining_microusd": 800000
+      }
+    },
+    {
+      "seq": 3,
+      "at": "2026-10-20T19:00:06.412Z",
+      "type": "worker_started",
+      "host_id": null,
+      "candidate_id": null,
+      "item_key": null,
+      "case_id": null,
+      "message": "The worker started.",
+      "data": {}
+    },
+    {
+      "seq": 4,
+      "at": "2026-10-20T19:00:07.022Z",
+      "type": "host_preparing",
+      "host_id": "task-report",
+      "candidate_id": null,
+      "item_key": null,
+      "case_id": null,
+      "message": "Preparing the task-and-report service at its pinned baseline.",
+      "data": {
+        "baseline_id": "task-report@ca4a71f"
+      }
+    },
+    {
+      "seq": 5,
+      "at": "2026-10-20T19:01:12.899Z",
+      "type": "host_ready",
+      "host_id": "task-report",
+      "candidate_id": null,
+      "item_key": null,
+      "case_id": null,
+      "message": "The task-and-report service is ready.",
+      "data": {
+        "baseline_id": "task-report@ca4a71f"
+      }
+    },
+    {
+      "seq": 6,
+      "at": "2026-10-20T19:01:13.186Z",
+      "type": "candidate_selected",
+      "host_id": "task-report",
+      "candidate_id": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1",
+      "item_key": null,
+      "case_id": null,
+      "message": "Selected catalog entry synthetic-task-report-concurrency-01.",
+      "data": {
+        "source_id": "synthetic-task-report-concurrency",
+        "entry_id": "synthetic-task-report-concurrency-01"
+      }
+    },
+    {
+      "seq": 7,
+      "at": "2026-10-20T19:01:13.244Z",
+      "type": "budget_updated",
+      "host_id": null,
+      "candidate_id": null,
+      "item_key": null,
+      "case_id": null,
+      "message": "Reserved $0.30 for this candidate's worst case on the task-and-report service.",
+      "data": {
+        "reserved_microusd": 500000,
+        "spent_microusd": 0,
+        "remaining_microusd": 500000
+      }
+    },
+    {
+      "seq": 8,
+      "at": "2026-10-20T19:02:34.102Z",
+      "type": "check_finished",
+      "host_id": "task-report",
+      "candidate_id": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1",
+      "item_key": null,
+      "case_id": null,
+      "message": "Original suite on the clean copy: pass (3 of 3 runs valid).",
+      "data": {
+        "check_set": "original_suite",
+        "copy": "clean",
+        "outcome": "pass",
+        "runs_valid": 3,
+        "runs_total": 3
+      }
+    },
+    {
+      "seq": 9,
+      "at": "2026-10-20T19:03:52.524Z",
+      "type": "check_finished",
+      "host_id": "task-report",
+      "candidate_id": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1",
+      "item_key": null,
+      "case_id": null,
+      "message": "Original suite on the buggy copy: pass (3 of 3 runs valid).",
+      "data": {
+        "check_set": "original_suite",
+        "copy": "buggy",
+        "outcome": "pass",
+        "runs_valid": 3,
+        "runs_total": 3
+      }
+    },
+    {
+      "seq": 10,
+      "at": "2026-10-20T19:05:11.524Z",
+      "type": "attention",
+      "host_id": null,
+      "candidate_id": null,
+      "item_key": null,
+      "case_id": null,
+      "message": "No heartbeat from the worker for 60 s.",
+      "data": {
+        "code": "worker_unresponsive"
+      }
+    },
+    {
+      "seq": 11,
+      "at": "2026-10-20T19:07:11.524Z",
+      "type": "candidate_incomplete",
+      "host_id": "task-report",
+      "candidate_id": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1",
+      "item_key": null,
+      "case_id": null,
+      "message": "Incomplete: the worker stopped responding before this candidate's checks finished. It is not reproduction and was not retried.",
+      "data": {
+        "reason": "incomplete_run"
+      }
+    },
+    {
+      "seq": 12,
+      "at": "2026-10-20T19:07:11.559Z",
+      "type": "attention",
+      "host_id": null,
+      "candidate_id": null,
+      "item_key": null,
+      "case_id": null,
+      "message": "The worker's and a sandbox run's outcomes are uncertain; their spend needs reconciliation.",
+      "data": {
+        "code": "needs_reconciliation"
+      }
+    },
+    {
+      "seq": 13,
+      "at": "2026-10-20T19:07:11.599Z",
+      "type": "request_finished",
+      "host_id": null,
+      "candidate_id": null,
+      "item_key": null,
+      "case_id": null,
+      "message": "Request finished: operational error.",
+      "data": {
+        "outcome": "operational_error",
+        "stop_code": "worker_lost"
+      }
+    }
+  ],
+  "next_after": 13,
+  "last_heartbeat_at": "2026-10-20T19:04:11.524Z",
+  "poll_after_ms": 30000
+}

@@ -1,7 +1,7 @@
 // The site's one configuration loader. RBW_RESULTS_DIR names the results directory the pages are
 // prerendered from; a relative value is resolved against the app directory, where next runs. The
-// judge routes' server variables are read here too, in the route handlers only, so none of them
-// reaches the client bundle.
+// judge and factory routes' server variables are read here too, in the route handlers only, so none
+// of them reaches the client bundle.
 import { resolve } from "node:path";
 
 export const DEFAULT_RESULTS_DIR = "fixtures/development-2026-10-06";
@@ -98,4 +98,32 @@ export function allowedReleases(config: JudgeConfig): AllowedRelease[] {
 /** Whether the judge routes are configured for this release, so the page can offer the replay. */
 export function judgeEnabled(config: JudgeConfig, releaseId: string | null): boolean {
   return config.passcode !== null && releaseId !== null && allowedReleases(config).some((allowed) => allowed.releaseId === releaseId);
+}
+
+/**
+ * The factory routes' mode: `live` uses the wired dependencies, `test` the deterministic fakes of
+ * contract section 15.1, and `refused` answers every factory call `unavailable`, because test mode
+ * was asked for in a production deployment.
+ */
+export type FactoryMode = "live" | "test" | "refused";
+
+export interface FactoryConfig {
+  mode: FactoryMode;
+  /** RBW_JUDGE_PASSCODE: the factory session is an HMAC of the judges' passcode; null disables it. */
+  passcode: string | null;
+  /** RBW_FACTORY_TEST_FIXTURES: the contract fixtures test mode replays, resolved against the app directory. */
+  testFixturesDir: string;
+}
+
+export const DEFAULT_FACTORY_TEST_FIXTURES = "../../docs/product/fixtures/bug-request-v1";
+
+/** RBW_FACTORY_TEST_MODE=1 selects test mode, which is refused when VERCEL_ENV is production. */
+export function loadFactoryConfig(env: Env = process.env, cwd: string = process.cwd()): FactoryConfig {
+  const test = value(env, "RBW_FACTORY_TEST_MODE") === "1";
+  const production = value(env, "VERCEL_ENV") === "production";
+  return {
+    mode: test ? (production ? "refused" : "test") : "live",
+    passcode: value(env, "RBW_JUDGE_PASSCODE"),
+    testFixturesDir: resolve(cwd, value(env, "RBW_FACTORY_TEST_FIXTURES") ?? DEFAULT_FACTORY_TEST_FIXTURES),
+  };
 }

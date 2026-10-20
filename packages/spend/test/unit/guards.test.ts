@@ -1,5 +1,7 @@
+import { createHash } from "node:crypto";
 import type { PGlite } from "@electric-sql/pglite";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { POPULATED, populateFactoryTables } from "../factory-helpers.ts";
 import {
   expectOk,
   haltWithOverrun,
@@ -40,6 +42,7 @@ beforeAll(async () => {
   );
   prepared = reserveRequest(3).operation_id;
   expectOk(await h.spend.reserve(reserveRequest(3)));
+  await populateFactoryTables(h);
   // Leaves new work halted, so a resume row would pass its own trigger.
   await haltWithOverrun(h, 4);
 });
@@ -127,6 +130,40 @@ const DIRECT_INSERTS: Record<string, () => string> = {
      SELECT seq, 'completed', 'transition', 'workflow', now() FROM slot_children WHERE resource_id = 'synthetic-running'`,
   applied_migrations: () =>
     `INSERT INTO applied_migrations (file_name, checksum) VALUES ('9999_synthetic.sql', '${hex(8)}')`,
+  budgets: () =>
+    `INSERT INTO budgets (budget_key, root_execution_id, pool_key, cap_microusd, content, actor_role, recorded_at)
+     VALUES ('${hex(9010)}', '00000000-0000-4000-8000-000000009010', 'factory', 1, '{}', 'web', now())`,
+  // Charges an operation reserved outside every budget to the open budget, with no budget check.
+  budget_operations: () =>
+    `INSERT INTO budget_operations (operation_id, budget_key, role, root_execution_id, recorded_at)
+     VALUES ('${POPULATED.looseOperation}', '${POPULATED.openBudget}', 'request', '${POPULATED.openRoot}', now())`,
+  budget_closures: () =>
+    `INSERT INTO budget_closures (budget_key, cause, actor_role, recorded_at)
+     VALUES ('${POPULATED.openBudget}', 'fulfilled', 'worker', now())`,
+  budget_refusals: () =>
+    `INSERT INTO budget_refusals (budget_key, operation_id, role, code, requested_microusd, budget_available_microusd, recorded_at)
+     VALUES ('${POPULATED.openBudget}', '${hex(9011)}', 'request', 'budget_exhausted', 2, 1, now())`,
+  factory_requests: () =>
+    `INSERT INTO factory_requests (request_id, request_sha256, interpretation, interpretation_sha256, budget_key,
+       root_execution_id, factory_profile_sha256, recorded_at)
+     VALUES ('00000000-0000-4000-8000-000000009012', '${hex(1)}', '{"interpretation_sha256": "${hex(2)}"}', '${hex(2)}',
+       '${POPULATED.openBudget}', '${POPULATED.openRoot}', '${hex(3)}', now())`,
+  factory_events: () =>
+    `INSERT INTO factory_events (request_id, seq, event_key, type, host_id, candidate_id, item_key, case_id, message, data, recorded_at)
+     VALUES ('${POPULATED.quietRequest}', 2, 'synthetic-direct', 'worker_started', NULL, NULL, NULL, NULL, 'synthetic', '{}', now())`,
+  factory_heartbeats: () =>
+    `INSERT INTO factory_heartbeats (request_id, validation_id, recorded_at) VALUES ('${POPULATED.request}', NULL, now())`,
+  factory_stops: () =>
+    `INSERT INTO factory_stops (request_id, actor_role, recorded_at) VALUES ('${POPULATED.quietRequest}', 'web', now())`,
+  factory_evidence: () =>
+    `INSERT INTO factory_evidence (request_id, case_id, sha256, evidence_json, recorded_at)
+     VALUES ('${POPULATED.request}', '${hex(9013)}', '${createHash("sha256").update("{}").digest("hex")}', '{}', now())`,
+  factory_validations: () =>
+    `INSERT INTO factory_validations (validation_id, request_id, case_id, root_execution_id, recorded_at)
+     VALUES ('00000000-0000-4000-8000-000000009014', '${POPULATED.request}', '${hex(9015)}', '00000000-0000-4000-8000-000000009016', now())`,
+  factory_validation_events: () =>
+    `INSERT INTO factory_validation_events (validation_id, seq, event_key, type, data, recorded_at)
+     VALUES ('${POPULATED.validation}', 2, 'synthetic-direct', 'running', '{}', now())`,
 };
 
 describe("direct INSERT outside the spend functions", () => {

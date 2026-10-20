@@ -1,0 +1,26 @@
+{
+  "protocol_id": "synthetic-repetition-protocol",
+  "version": "1",
+  "sha256": "d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7",
+  "per_state": {
+    "clean": {
+      "copies": 1,
+      "rounds_per_copy": 5,
+      "min_valid_runs": 5
+    },
+    "buggy": {
+      "copies": 1,
+      "rounds_per_copy": 5,
+      "min_valid_runs": 5
+    },
+    "fixed": {
+      "copies": 1,
+      "rounds_per_copy": 5,
+      "min_valid_runs": 5
+    }
+  },
+  "valid_trial_rules": [
+    "synthetic-rule-exit-code",
+    "synthetic-rule-report-present"
+  ]
+}

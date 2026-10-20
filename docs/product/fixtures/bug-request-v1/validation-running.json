@@ -1,0 +1,21 @@
+{
+  "contract_version": "bug-request/1",
+  "validation_id": "00000000-0000-4000-8000-000000000201",
+  "case_id": "cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca",
+  "state": "running",
+  "result": null,
+  "matrix": null,
+  "package_sha256": {
+    "bug_case": "b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1",
+    "validator": "f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1"
+  },
+  "harness": {
+    "name": "rbw-validate",
+    "version": "1.0.0"
+  },
+  "message": "The harness is running the matrix in fresh workspaces.",
+  "started_at": "2026-10-20T14:40:02.511Z",
+  "finished_at": null,
+  "cost_microusd": null,
+  "poll_after_ms": 5000
+}

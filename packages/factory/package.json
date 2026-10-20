@@ -1,0 +1,31 @@
+{
+  "name": "@rbw/factory",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Factory core: criteria catalog, capabilities, request interpretation, identities, status projection, assignment, budget admission and the request loop with injected effects",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./testing": "./src/testing/index.ts",
+    "./criteria-catalog/v1.json": "./criteria-catalog/v1.json"
+  },
+  "engines": {
+    "node": ">=24.21 <25"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint . --max-warnings 0",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@rbw/factory-contract": "workspace:*",
+    "@rbw/schema": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.1",
+    "typescript": "6.0.3",
+    "vitest": "5.0.3"
+  }
+}

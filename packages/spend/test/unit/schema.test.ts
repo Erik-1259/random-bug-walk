@@ -1,6 +1,7 @@
 import type { PGlite } from "@electric-sql/pglite";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ENFORCED_BY, UNITS } from "../../src/types.ts";
+import { populateFactoryTables } from "../factory-helpers.ts";
 import {
   expectOk,
   haltWithOverrun,
@@ -20,8 +21,19 @@ let h: Harness;
 const INSERT_ONLY_TABLES = [
   "allocation_transfers",
   "applied_migrations",
+  "budget_closures",
+  "budget_operations",
+  "budget_refusals",
+  "budgets",
   "enforcement_methods",
   "execution_slot",
+  "factory_events",
+  "factory_evidence",
+  "factory_heartbeats",
+  "factory_requests",
+  "factory_stops",
+  "factory_validation_events",
+  "factory_validations",
   "halt_observations",
   "halt_resumes",
   "operation_events",
@@ -87,6 +99,7 @@ beforeAll(async () => {
     }),
   );
   expectOk(await h.spend.raiseCap({ pool_key: "development", new_cap_microusd: 1_000_000_001, actor_role: "owner", reason: "x" }));
+  await populateFactoryTables(h);
 });
 
 afterAll(async () => {

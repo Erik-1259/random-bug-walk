@@ -14,6 +14,8 @@
 //         [--family time-zone|race] [--race-latency-ms <0-10000>]
 //   run   --job-kind judge_verify --request-id <uuid> --prebuilt <local store dir | judge job index key>
 //         --release <release.json> --deadline-at <UTC time> [--backend sandbox] [--sandbox-image <kit image>] [--work <dir>]
+//   factory-worker (--request-id <uuid> --deadline-at <UTC time> | --validation-id <uuid>) [--backend sandbox|docker]
+//         (src/factory-cli.ts)
 //
 // --ledger defaults to the judge allocation and slot for judge_verify and the development pool and
 // slot otherwise; solver grades pass --ledger development so they never take the judge slot.
@@ -44,6 +46,7 @@ import { CanonicalError, RecordError, parseRecord } from "@rbw/schema";
 import { createTavilyClient } from "@rbw/search";
 import { KEY_VARIABLES, prepareAttempt, runAttempt } from "./attempt.ts";
 import { runJob } from "./controller.ts";
+import { FACTORY_WORKER_USAGE, factoryWorkerCommand } from "./factory-cli.ts";
 import type { Backend, ControllerDeps } from "./controller.ts";
 import { isRequestId } from "./judge.ts";
 import { NO_DOCKER, runJudgeReplay } from "./judge-run.ts";
@@ -67,7 +70,7 @@ const USAGE = `usage:
                           --sandbox-image <repository>@sha256:<digest> [--original-suite <file>] [--family time-zone|race] [--race-latency-ms <0-10000>]
   node src/cli.ts run --job-kind judge_verify --request-id <uuid> --prebuilt <local store dir|index key> --release <file> --deadline-at <UTC time>
                       [--backend sandbox] [--sandbox-image <kit image>] [--work <dir>]
-`;
+${FACTORY_WORKER_USAGE}`;
 
 /** The Tavily API the attempt's source searches, docs extract and phrase checks call. */
 const TAVILY_BASE_URL = "https://api.tavily.com";
@@ -218,6 +221,7 @@ async function main(argv: string[]): Promise<number> {
     if (command === "proof") return await proofCommand(rest);
     if (command === "create-slot-key") return await createSlotKeyCommand(rest);
     if (command === "attempt") return await attemptCommand(rest);
+    if (command === "factory-worker") return await factoryWorkerCommand(rest, { env: process.env, out: (line) => process.stdout.write(`${line}\n`), log, now: () => new Date() });
     throw new UsageError("unknown command");
   } catch (error) {
     if (KNOWN.some((kind) => error instanceof kind) || (error instanceof TypeError && "code" in error)) {

@@ -1,0 +1,9 @@
+{
+  "contract_version": "bug-request/1",
+  "error": {
+    "code": "invalid_request",
+    "message": "The request body does not match bug-request/1: items[0].quantity must be an integer from 1 to 3.",
+    "retryable": false,
+    "details": null
+  }
+}
