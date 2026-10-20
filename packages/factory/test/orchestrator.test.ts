@@ -296,6 +296,7 @@ describe("runRequest: budget", () => {
     const result = await w.run();
     expect(result).toMatchObject({ outcome: "operational_error", stop_code: "operational_error" });
     expect(types(w.events.events)).not.toContain("candidate_selected");
+    expect(w.ledger.closedWith).toBe("operational_error");
   });
 
   it("starts no new candidate after an overrun and finishes operational_error", async () => {
@@ -305,6 +306,7 @@ describe("runRequest: budget", () => {
     expect(result).toMatchObject({ outcome: "operational_error", stop_code: "operational_error", delivered: 1 });
     expect(w.qualified).toHaveLength(1);
     expect(w.status().budget.overrun).toBe(true);
+    expect(w.ledger.closedWith).toBe("operational_error");
   });
 
   it("finishes operational_error, not fulfilled, when the last candidate's settlement overruns the budget", async () => {
@@ -346,6 +348,7 @@ describe("runRequest: budget", () => {
     expect(result).toMatchObject({ outcome: "operational_error", stop_code: "operational_error", needs_reconciliation: false, delivered: 0 });
     expect(ended(w.events.events)).toEqual([{ type: "candidate_incomplete", reason: "stopped" }]);
     expect(w.ledger.calls.map((call) => call.call)).toEqual(["reserveCandidate", "settleCandidate", "settleWorker"]);
+    expect(w.ledger.closedWith).toBe("operational_error");
   });
 
   it("finishes operational_error, not fulfilled, when the worker's own settlement overruns the budget", async () => {
@@ -368,31 +371,44 @@ describe("runRequest: budget", () => {
     const result = await w.run();
     expect(result).toMatchObject({ outcome: "operational_error", stop_code: "operational_error", delivered: 1 });
     expect(w.status().budget.overrun).toBe(true);
+    // The loop finishes at the settlement, so the budget closes with the code request_finished names.
+    expect(w.ledger.closedWith).toBe("operational_error");
   });
 
-  it("keeps fulfilled when the ledger halts only after the last needed case settled: the halt stopped no work", async () => {
+  const lateHalts: [string, (w: World) => void][] = [
+    ["ledger", (w) => {
+      w.ledger.halted = true;
+    }],
+    ["pool", (w) => {
+      w.ledger.poolHalted = true;
+    }],
+  ];
+
+  it.each(lateHalts)("keeps fulfilled when the %s halts only after the last needed case settled: the halt stopped no work", async (_name, halt) => {
     const w = world({ input: concurrencyOnly(1) });
     ledgerWith(w, {
       settleCandidate: async (input) => {
         await w.ledger.settleCandidate(input);
-        w.ledger.halted = true;
+        halt(w);
       },
     });
     const result = await w.run();
     expect(result).toMatchObject({ outcome: "fulfilled", stop_code: "fulfilled", delivered: 1 });
+    expect(w.ledger.closedWith).toBe("fulfilled");
   });
 
-  it("keeps sources_exhausted when the ledger halts after the last candidate settled: the halt stopped no work", async () => {
+  it.each(lateHalts)("keeps sources_exhausted when the %s halts after the last candidate settled: the halt stopped no work", async (_name, halt) => {
     const w = world({ input: concurrencyOnly(1), plan: () => ({ states: { ...qualifyingPlan([LOST_CODE]), buggy: { original_suite: "fail", verification: "fail", failure_codes: [LOST_CODE] } } }) });
     ledgerWith(w, {
       settleCandidate: async (input) => {
         await w.ledger.settleCandidate(input);
-        w.ledger.halted = true;
+        halt(w);
       },
     });
     const result = await w.run();
     expect(result).toMatchObject({ outcome: "sources_exhausted", stop_code: "sources_exhausted", delivered: 0 });
     expect(ended(w.events.events)).toEqual([{ type: "candidate_rejected", reason: "original_suite_caught_bug" }]);
+    expect(w.ledger.closedWith).toBe("sources_exhausted");
   });
 
   it("still appends request_finished, operational_error, when the ledger read after the worker's settlement fails", async () => {
