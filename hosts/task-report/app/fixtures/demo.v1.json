@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "tasks": [
+    {
+      "title": "Water the plants",
+      "note": "Ferns in the hallway, herbs on the kitchen windowsill.",
+      "completions": ["2026-09-07T08:10:00-04:00", "2026-09-10T07:55:00-04:00", "2026-09-14T08:20:00-04:00", "2026-09-21T09:05:00-04:00"]
+    },
+    {
+      "title": "Take out the recycling",
+      "note": "Bins go to the curb Monday night.",
+      "completions": ["2026-09-07T21:30:00-04:00", "2026-09-14T21:15:00-04:00", "2026-09-21T21:40:00-04:00"]
+    },
+    {
+      "title": "Restock the office printer paper",
+      "note": "",
+      "completions": ["2026-09-09T10:00:00+01:00", "2026-09-23T11:30:00+01:00"]
+    },
+    {
+      "title": "Clean the coffee machine",
+      "note": "Descale once a month; rinse the drip tray weekly.",
+      "completions": ["2026-09-04T16:45:00Z", "2026-09-11T16:30:00Z", "2026-09-18T16:50:00Z", "2026-09-25T16:40:00Z"]
+    },
+    {
+      "title": "Review the weekly team calendar",
+      "note": "Check room bookings and upcoming holidays.",
+      "completions": ["2026-09-08T09:15:00+02:00", "2026-09-15T09:10:00+02:00", "2026-09-22T09:20:00+02:00"]
+    }
+  ]
+}

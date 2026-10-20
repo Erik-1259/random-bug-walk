@@ -27,6 +27,12 @@ export interface ScanRequest {
   texts?: readonly TextScanItem[];
 }
 
+/**
+ * A request for the public-source route: the same inputs and tool settings, but no pattern
+ * file and no repository URL exception, because that route runs no pattern check.
+ */
+export type PublicScanRequest = Omit<ScanRequest, "patternFile" | "repository">;
+
 export type ScanResult =
   | { outcome: "clean" }
   | { outcome: "blocked"; locations: string[] } // "<location>:<line>", sorted, unique
@@ -51,6 +57,17 @@ function validTextName(name: string): boolean {
 
 function validateRequest(request: unknown): ScanRequest {
   if (!isRecord(request) || typeof request.patternFile !== "string") throw new ScanUnavailable("usage");
+  validateInputs(request);
+  return request as unknown as ScanRequest;
+}
+
+function validatePublicRequest(request: unknown): PublicScanRequest {
+  if (!isRecord(request) || "patternFile" in request || "repository" in request) throw new ScanUnavailable("usage");
+  validateInputs(request);
+  return request;
+}
+
+function validateInputs(request: Record<string, unknown>): void {
   const { repository, gitleaksCommand, gitTimeoutMs, gitleaksTimeoutMs, git, files, texts } = request;
   if (repository !== undefined && (typeof repository !== "string" || !REPOSITORY.test(repository))) throw new ScanUnavailable("usage");
   if (gitleaksCommand !== undefined && typeof gitleaksCommand !== "string") throw new ScanUnavailable("usage");
@@ -78,7 +95,6 @@ function validateRequest(request: unknown): ScanRequest {
   }
   const textCount = Array.isArray(texts) ? texts.length : 0;
   if (git === undefined && files === undefined && textCount === 0) throw new ScanUnavailable("usage");
-  return request as unknown as ScanRequest;
 }
 
 function gitleaksPath(unit: ScanUnit): string {
@@ -92,10 +108,24 @@ function compareLocations(a: [string, number], b: [string, number]): number {
 }
 
 async function scanChecked(request: ScanRequest): Promise<ScanResult> {
-  const env = toolEnvironment(process.env);
   const terms = await loadTerms(request.patternFile);
   if (terms === null) throw new ScanUnavailable("pattern-file");
+  return scanUnits(request, terms, request.repository ?? null, false);
+}
 
+/**
+ * Collects the request's units, runs the content checks with `terms` (none on the public
+ * route, which leaves only the attribution check) and gitleaks, and maps every finding to
+ * a location. With `scanPathLists`, gitleaks also scans each path list as text, so a
+ * credential in a path is reported at its path-list position.
+ */
+async function scanUnits(
+  request: PublicScanRequest,
+  terms: readonly RegExp[],
+  repository: string | null,
+  scanPathLists: boolean,
+): Promise<ScanResult> {
+  const env = toolEnvironment(process.env);
   const collected: CollectedUnits = { units: [], trustedCopyright: null };
   const runner = { env, timeoutMs: request.gitTimeoutMs ?? DEFAULT_TIMEOUT_MS.git };
   if (request.git !== undefined) Object.assign(collected, await collectGitUnits(request.git, runner));
@@ -104,10 +134,10 @@ async function scanChecked(request: ScanRequest): Promise<ScanResult> {
     collected.units.push({ kind: "text", location: text.name, content: text.content, isLicense: false });
   }
   const { units, trustedCopyright } = collected;
-  const context = { terms, trustedCopyright, repository: request.repository ?? null };
+  const context = { terms, trustedCopyright, repository };
 
   const lines = units.map((unit) => contentViolations(unit, context));
-  const scanned = units.flatMap((unit, index) => (unit.kind === "paths" ? [] : [{ unit, index }]));
+  const scanned = units.flatMap((unit, index) => (unit.kind === "paths" && !scanPathLists ? [] : [{ unit, index }]));
   const blobs: GitleaksBlob[] = scanned.map(({ unit }) => ({ path: gitleaksPath(unit), content: unit.content }));
   const gitleaks = { env, timeoutMs: request.gitleaksTimeoutMs ?? DEFAULT_TIMEOUT_MS.gitleaks };
   for (const finding of await runGitleaks(request.gitleaksCommand ?? "gitleaks", blobs, gitleaks)) {
@@ -137,13 +167,27 @@ async function scanChecked(request: ScanRequest): Promise<ScanResult> {
   return { outcome: "blocked", locations };
 }
 
-/** Like scan(), and also returns a generic category for an unavailable result. */
-export async function scanDetailed(request: unknown): Promise<DetailedScanResult> {
+async function detailed(run: () => Promise<ScanResult>): Promise<DetailedScanResult> {
   try {
-    return { result: await scanChecked(validateRequest(request)) };
+    return { result: await run() };
   } catch (error) {
     return { result: { outcome: "unavailable" }, category: error instanceof ScanUnavailable ? error.category : "internal" };
   }
+}
+
+/** Like scan(), and also returns a generic category for an unavailable result. */
+export async function scanDetailed(request: unknown): Promise<DetailedScanResult> {
+  return detailed(() => scanChecked(validateRequest(request)));
+}
+
+/**
+ * The public-source route's check: gitleaks and the attribution check over the same inputs,
+ * without the private pattern list, and gitleaks over the path lists as well, so a
+ * credential in an added path blocks. A request that names a pattern file is a usage error.
+ * Its result says nothing about private patterns; required CI runs that check before merge.
+ */
+export async function scanPublicDetailed(request: unknown): Promise<DetailedScanResult> {
+  return detailed(() => scanUnits(validatePublicRequest(request), [], null, true));
 }
 
 /**

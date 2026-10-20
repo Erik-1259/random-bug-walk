@@ -1,0 +1,68 @@
+{
+  "contract_version": "bug-request/1",
+  "validation_id": "00000000-0000-4000-8000-000000000203",
+  "case_id": "cbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcb",
+  "state": "finished",
+  "result": "error",
+  "matrix": {
+    "original_suite": {
+      "clean": {
+        "expected": "pass",
+        "observed": "error",
+        "runs_valid": 0,
+        "runs_total": 3,
+        "matches_expectation": false
+      },
+      "buggy": {
+        "expected": "pass",
+        "observed": "pass",
+        "runs_valid": 3,
+        "runs_total": 3,
+        "matches_expectation": true
+      },
+      "fixed": {
+        "expected": "pass",
+        "observed": "pass",
+        "runs_valid": 3,
+        "runs_total": 3,
+        "matches_expectation": true
+      }
+    },
+    "verification": {
+      "clean": {
+        "expected": "pass",
+        "observed": "error",
+        "runs_valid": 0,
+        "runs_total": 3,
+        "matches_expectation": false
+      },
+      "buggy": {
+        "expected": "fail",
+        "observed": "fail",
+        "runs_valid": 3,
+        "runs_total": 3,
+        "matches_expectation": true
+      },
+      "fixed": {
+        "expected": "pass",
+        "observed": "pass",
+        "runs_valid": 3,
+        "runs_total": 3,
+        "matches_expectation": true
+      }
+    }
+  },
+  "package_sha256": {
+    "bug_case": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+    "validator": "f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2"
+  },
+  "harness": {
+    "name": "rbw-validate",
+    "version": "1.0.0"
+  },
+  "message": "The harness could not prepare the clean copy, so its 2 cells have no valid result. This is not a behavioral result.",
+  "started_at": "2026-10-20T15:25:00.734Z",
+  "finished_at": "2026-10-20T15:29:13.402Z",
+  "cost_microusd": 40000,
+  "poll_after_ms": 30000
+}
