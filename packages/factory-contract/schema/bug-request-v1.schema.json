@@ -5269,7 +5269,8 @@
                   "const": true
                 },
                 "download_path": {
-                  "type": "string"
+                  "type": "string",
+                  "minLength": 1
                 }
               }
             },
@@ -5280,7 +5281,8 @@
                   "const": true
                 },
                 "download_path": {
-                  "type": "string"
+                  "type": "string",
+                  "minLength": 1
                 }
               }
             }
