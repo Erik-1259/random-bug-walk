@@ -1885,7 +1885,7 @@
           "$ref": "#/$defs/Identifier"
         },
         "entries": {
-          "$ref": "#/$defs/NonNegativeInteger"
+          "$ref": "#/$defs/PositiveInteger"
         }
       }
     },
