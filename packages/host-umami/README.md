@@ -11,16 +11,16 @@ The Umami host adapter of the bug factory: it makes Umami a factory host through
 
 ## Baseline
 
-`umami@ec0ff503`: Umami at commit `ec0ff50388c264ed8ce46f00967e92f7e71476ae`, with the original API suite `umami-api@ec0ff503`, pinned in `src/pins.ts` as `test_count: 271` in 24 spec files with frozen-manifest SHA-256 `8162af64…` (the driver's `freeze` writes the manifest and every copy re-checks it; `test/real.test.ts` checks the pins against a real prepared store when one is given). `test_ids_sha256` is the canonical JSON hash of the sorted test IDs.
+`umami@ec0ff503`: Umami at commit `ec0ff50388c264ed8ce46f00967e92f7e71476ae`, with the original API suite `umami-api@ec0ff503`, pinned in `src/pins.ts` as `test_count: 271` with frozen-manifest SHA-256 `8162af64…` (the driver's `freeze` writes the manifest and every copy re-checks it). `test/pins.test.ts` checks the commit against the driver's pinned commit, and `test/real.test.ts` checks the suite's pins against a real prepared store when one is given. `test_ids_sha256` is the canonical JSON hash of the sorted test IDs.
 
 ## Catalog `umami-date-time`, version 1
 
-One entry, `umami-date-time-01`, for bug type `date_time` and criterion `date_time.time-zone-grouping` version 1. It is the time-zone defect that was released:
+One entry, `umami-date-time-01`, for bug type `date_time` and criterion `date_time.time-zone-grouping` version 1 (the catalog's, entry's, criterion's and check set's IDs and versions are constants in `src/catalog.ts`; `test/catalog.test.ts` checks them and that the catalog holds this one entry). It is the time-zone defect that was released:
 
-- **Planted change:** the probe set's mutation patch against the pinned source (`packages/shapes/probes/dt-1.tz-arg/mutation.patch`, byte for byte), with its one target and the target's hashes before and after.
+- **Planted change:** the probe set's mutation patch against the pinned source (`packages/shapes/probes/dt-1.tz-arg/mutation.patch`, byte for byte), with its one target (the pins' `target`) and the target's hashes before and after.
 - **Reference repair:** the reverse patch, kind `revert`, which restores the clean file. It is the local runner's fixed-state patch, the one the release's judge job grades. The local runner's alternative fix is kept as extra evaluator evidence in the validator, not as the reference repair.
 - **Incident:** the released `issue.json`, unchanged (named by its SHA-256; the bytes come from the prepared store).
-- **Verification:** check set `umami-date-time-checks` version 1, identified by the fixture package's added-suite hash (`42c50a8b…`, the fixture the pinned image runs), the canonical hash of the clean, buggy and fixed vectors, and the protocol's hash.
+- **Verification:** check set `umami-date-time-checks` version 1, identified by the fixture package's added-suite hash (the pins' `kit.added_suite_sha256`, `42c50a8b…`, the fixture the pinned image runs; `test/pins.test.ts` recomputes it from the repository's fixture package), the canonical hash of the clean, buggy and fixed vectors, and the protocol's hash.
 - **Environment:** the pinned amd64 kit image as a neutral reference (`random-bug-walk/umami-kit`) and its digest. The reference names no registry; a runner has to map it to the repository the image was pushed to and run by the digest (see "Not yet connected").
 - **Difficulty:** `not_assessed`.
 
@@ -30,7 +30,7 @@ The checks report `local_day_counts_mismatch`, which is the criterion's publishe
 
 ## Protocol `umami-time-zone-repeatability`, version 1
 
-The existing `judge_verify` trial profile of `@rbw/schema`: one copy per state (`clean-01`, `planted-01`, `fixed-01`), each running the original suite once and the four checks once; every run is required. `protocol(entry)` reads it from the catalog alone. A copy's tests phase is limited to 240 s (the driver's limit) and the whole copy to 720 s. A different count would need a schema change to the trial profiles.
+The existing `judge_verify` trial profile of `@rbw/schema`: one copy per state (`clean-01`, `planted-01`, `fixed-01`), each running the original suite once and the four checks once; every run is required. `protocol(entry)` reads it from the catalog alone. A copy's tests phase is limited to 240 s (the driver's `DEFAULT_PHASE_LIMITS.tests_ms`) and the whole copy to 720 s (`COPY_LIMITS.timeout_s` in `src/copy-plans.ts`). A different count would need a schema change to the trial profiles. `test/protocol.test.ts` checks the protocol's version, these trials, counts and limits; the four checks are the four entries per state of the pins' `vectors`, which `test/pins.test.ts` reads back from the fixture's data file.
 
 Its valid-trial rules:
 
@@ -39,20 +39,20 @@ Its valid-trial rules:
 | `umami.frozen-job` | A copy's record set must carry the validator's frozen job (its `request.json` hash). |
 | `umami.admission-import` | The record set is imported with `@rbw/admission`; its trial status and cells are the importer's. |
 | `umami.own-trial-only` | Only the copy's own trial is read. The job's other trials must show as `result_missing`; a record set holding another trial is invalid. |
-| `umami.original-suite-identity` | The original suite is the frozen 271-test suite; a missing or skipped test makes the copy incomplete. |
+| `umami.original-suite-identity` | The original suite is the frozen suite of the pinned `test_count` (271 tests); a missing or skipped test makes the copy incomplete. |
 | `umami.declared-failure-code` | On the buggy copy, `local_day_counts_mismatch` is reported only when every declared check failed with it and the UTC control passed. A failing UTC control, or a check that failed with another assertion code or did not set up, makes the copy invalid (an unrelated failure), even when another check rejects; it is never a fail or a detection. A declared check that passed is a valid fail without the code. |
 | `umami.min-valid-runs` | A cell is `error` when a copy's run of that cell is invalid, and `incomplete` with fewer valid runs than declared; a failure code counts only when every valid run reported it. The original suite's cell keeps the importer's own result, so a copy whose checks were invalid (by the importer or by the rule above) can still show its original suite's pass; the record's status (`invalid`) is what makes the candidate invalid. |
 
 ## Calendar window
 
-`availability(entry, from, until)` reports the combination unavailable when any instant from `from` to `until` falls on UTC day 2 to 5 of a month: on those days two of Umami's own revenue tests fail on an unmodified copy (the driver README's known limit), so no case could qualify.
+`availability(entry, from, until)` reports the combination unavailable when any instant from `from` to `until` falls on UTC day 2 to 5 of a month (`FIRST_BLOCKED_DAY` and `LAST_BLOCKED_DAY` in `src/availability.ts`; `test/availability.test.ts` checks the 1st, 2nd, 5th and 6th): on those days two of Umami's own revenue tests fail on an unmodified copy (the driver README's known limit, which `CALENDAR_REASON` in the same file states), so no case could qualify.
 
 ## Prepared store
 
-`bugCaseInputs` and `validatorInputs` read the pinned inputs from a prepared store, a directory kept by content hash: `objects/<sha256>` holds each distinct file once and `index.json` (canonical JSON, format `rbw-host-umami-store/1`) lists:
+`bugCaseInputs` and `validatorInputs` read the pinned inputs from a prepared store, a directory kept by content hash: `objects/<sha256>` holds each distinct file once and `index.json` (canonical JSON, format `rbw-host-umami-store/1`, the constant `STORE_FORMAT` in `src/store.ts`) lists:
 
 - the image's app source (`/workspace/app` without `node_modules`, `src/proxy.ts` and the empty build outputs, as the local runner exports it): pinned in `src/pins.ts` as `source_file_count: 2026` with tree hash `712ebd68…`;
-- the fixture package the image runs (`/opt/rbw/verifier/kit/umami-fixture`, without `node_modules` and `test-results`): tree hash `42c50a8b…`;
+- the fixture package the image runs (`/opt/rbw/verifier/kit/umami-fixture`, without `node_modules` and `test-results`): tree hash `42c50a8b…`, the pins' `kit.added_suite_sha256`;
 - the planted target file, the frozen original-suite manifest and the released incident.
 
 The adapter checks the index against the pins and every object's bytes against its name, never writes to the store, and writes each tree it hands out into a new directory. On a host with Docker:
@@ -73,7 +73,7 @@ Only the export reads the store. The exporter runs on a host with Docker before 
 
 ## Copy plans
 
-`copyPlans(state, unpacked, protocol)` maps the trees the harness built from the exported bug case onto the pinned kit image and applies no patch. The image already holds the clean source, so a plan lists only the files whose hash differs from the image's tree (the planted target on buggy, nothing on clean or on the reverted fixed copy); a missing or extra file, a change to the original suite's closure (the files the suite runs from its pristine copy, such as `src/lib/analytics-query.ts`, and every file under `tests/`), a clean reconstruction that is not the image's source, validator checks that are not the fixture the image runs, or a job that is not the frozen one is refused. The command is the local runner's copy script (`freeze`, then `run` of the state's trial), within 720 s, 4 vCPU, 8 GB and no network.
+`copyPlans(state, unpacked, protocol)` maps the trees the harness built from the exported bug case onto the pinned kit image and applies no patch. The image already holds the clean source, so a plan lists only the files whose hash differs from the image's tree (the planted target on buggy, nothing on clean or on the reverted fixed copy); a missing or extra file, a change to the original suite's closure (the files the suite runs from its pristine copy, such as `src/lib/analytics-query.ts`, and every file under `tests/`), a clean reconstruction that is not the image's source, validator checks that are not the fixture the image runs, or a job that is not the frozen one is refused. The command is the local runner's copy script (`freeze`, then `run` of the state's trial), within 720 s, 4 vCPU, 8 GB and no network (`COPY_LIMITS` in `src/copy-plans.ts`, with `memory_mb: 8192`; `test/pins.test.ts` checks it).
 
 Destinations: the app files go to `/workspace/app`, the validator's `job/` files under `/var/lib/rbw` (so the job is at `/var/lib/rbw/job`, where the copy script reads it), and the results directory is the copy script's output directory, `/var/lib/rbw/results/rbw-runner`.
 
@@ -83,7 +83,7 @@ Destinations: the app files go to `/workspace/app`, the validator's `job/` files
 
 ## Released-case mapping
 
-`releasedCaseMapping(pins, entry, { defectId, caseId }, criteriaCatalogVersion)` maps release `319f3100-9ecf-441d-b7af-a643af9ae4e5` (its record's SHA-256, family, mutation ID and task revision) to the entry, the criteria catalog version and the `defect_id` and `case_id` that the factory's identity functions, passed in, compute: `defectId(baseline, entry)`, then `caseId({ defect_id, entry, criteria_catalog_version })`. It refuses an entry with another planted change, incident or kit image, and changes nothing in the release.
+`releasedCaseMapping(pins, entry, { defectId, caseId }, criteriaCatalogVersion)` maps release `319f3100-9ecf-441d-b7af-a643af9ae4e5` (`RELEASED_CASE` in `src/mapping.ts`: its record's SHA-256, family, mutation ID and task revision, which `test/real.test.ts` checks against the release record when one is given) to the entry, the criteria catalog version and the `defect_id` and `case_id` that the factory's identity functions, passed in, compute: `defectId(baseline, entry)`, then `caseId({ defect_id, entry, criteria_catalog_version })`. It refuses an entry with another planted change, incident or kit image, and changes nothing in the release.
 
 ## Not yet connected
 
