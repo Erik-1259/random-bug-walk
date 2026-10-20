@@ -207,7 +207,7 @@ node packages/host-task-report/adapter/qualify.ts pin --registry <repository>@sh
 ```
 
 `build` builds the version 2 kit image for `linux/amd64`, the only platform hosted copies run. On
-an arm64 host Docker builds and runs that image under emulation, which is slower; whether the F3
+an arm64 host Docker builds and runs that image under emulation; whether a qualification's F3
 timing windows hold under emulation has not been measured.
 
 A version 2 qualification is of the pinned kit image, the one the entry's environment and case ID
