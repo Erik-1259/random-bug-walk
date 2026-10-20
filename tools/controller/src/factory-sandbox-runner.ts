@@ -21,6 +21,7 @@ import { sha256Hex } from "@rbw/schema";
 import type { CopyMeter, LaunchHooks, LaunchReport, RefusalReason } from "./factory-meter.ts";
 import { FACTORY_PROFILE } from "./factory-profile.ts";
 import type { FactoryProfile } from "./factory-profile.ts";
+import { runOnceCommand } from "./factory-run-once.ts";
 
 export interface SandboxRunnerDeps {
   sdk: SandboxSdk;
@@ -80,34 +81,14 @@ const REFUSED_OUTCOME: Readonly<Record<Exclude<RefusalReason, "uncertain">, "set
 /** Where the run-once guard keeps its lock and its exit-status marker inside the copy. */
 export const RUN_ONCE_DIR = "/tmp/rbw-copy-once";
 
-/**
- * Runs the copy's command at most once per sandbox: `sh -c RUN_ONCE_SCRIPT rbw-copy <dir> <command...>`.
- * The SDK retries a command whose response was lost, which can start it a second time; `mkdir` of
- * the lock lets only the first start run the command, which records its exit status, and any later
- * start waits for that marker and exits with the same status. 90 means the guard itself could not run.
- */
-export const RUN_ONCE_SCRIPT = [
-  "set -u",
-  'dir="$1"',
-  "shift",
-  'lock="$dir/lock"',
-  'marker="$dir/status"',
-  'mkdir -p "$dir" || exit 90',
-  'if ! mkdir "$lock" 2> /dev/null; then',
-  '  [ -d "$lock" ] || exit 90',
-  '  while [ ! -s "$marker" ]; do sleep 1; done',
-  '  read -r status < "$marker"',
-  '  exit "$status"',
-  "fi",
-  '"$@"',
-  "status=$?",
-  'echo "$status" > "$marker.tmp" && mv "$marker.tmp" "$marker"',
-  'exit "$status"',
-].join("\n");
+export { RUN_ONCE_SCRIPT } from "./factory-run-once.ts";
 
-/** The command the sandbox runs for a plan: its own command under the run-once guard. */
+/**
+ * The command the sandbox runs for a plan: its own command under the run-once guard
+ * (`sh -c RUN_ONCE_SCRIPT rbw-copy <dir> <command...>`), because the SDK may start a command twice.
+ */
 export function guardedCommand(command: readonly string[]): { cmd: string; args: string[] } {
-  return { cmd: "sh", args: ["-c", RUN_ONCE_SCRIPT, "rbw-copy", RUN_ONCE_DIR, ...command] };
+  return runOnceCommand("rbw-copy", RUN_ONCE_DIR, command);
 }
 
 /** The sandbox image: the plan's repository pinned by its digest. */

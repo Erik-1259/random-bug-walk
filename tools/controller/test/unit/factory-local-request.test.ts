@@ -103,7 +103,9 @@ class LocalLauncher implements WorkerSandboxSdk {
       name: params.name,
       status: "running",
       runCommand: (command) => {
-        const [, verb, ...rest] = command.args;
+        // The worker command under its run-once guard: sh -c <guard> rbw-worker <dir> node <cli> factory-worker ...
+        expect([command.cmd, command.args[2]]).toEqual(["sh", "rbw-worker"]);
+        const [, verb, ...rest] = command.args.slice(5);
         expect(verb).toBe("factory-worker");
         runs.push(factoryWorkerCommand([...rest, "--backend", "docker"], { env, out: (line) => out.push(line), log: (line) => w.logs.push(line), now: w.clock.now, load: () => Promise.resolve({ ok: true, wiring: wiring() }) }));
         return Promise.resolve({ detached: true });

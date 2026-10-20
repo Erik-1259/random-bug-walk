@@ -27,7 +27,7 @@ export {
   workerSandboxName,
 } from "./factory-ledger.ts";
 export type { CopyIdentity, CopyOperationContext, FactoryOperation, OperationContext, SandboxUsage } from "./factory-ledger.ts";
-export { LaunchConfigError, VALIDATION_POLL_MS, WORKER_REPOSITORY, startFactoryValidation, startFactoryWorker, workerCommandArgs } from "./factory-launch.ts";
+export { LaunchConfigError, VALIDATION_POLL_MS, WORKER_REPOSITORY, WORKER_RUN_ONCE_DIR, startFactoryValidation, startFactoryWorker, workerCommandArgs } from "./factory-launch.ts";
 export type { FactoryLaunchDeps, ValidationStart, ValidationStartArgs, WorkerLaunchConfig, WorkerStart } from "./factory-launch.ts";
 export { completeReconciliation, finalizeLostWorker } from "./factory-lost.ts";
 export type { LostDeps, LostOutcome, LostTarget, ReconciliationOutcome } from "./factory-lost.ts";

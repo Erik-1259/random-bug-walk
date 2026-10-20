@@ -32,7 +32,7 @@ describe("@rbw/controller/factory-web", () => {
   it("loads no runner, harness, driver, worker loop or PGlite, like judge-web", () => {
     const { files, packages } = graph();
     const names = [...files].map((file) => file.slice(SRC.length)).sort();
-    expect(names).toEqual(["factory-launch.ts", "factory-ledger.ts", "factory-lost.ts", "factory-ports.ts", "factory-profile.ts", "factory-web.ts"]);
+    expect(names).toEqual(["factory-launch.ts", "factory-ledger.ts", "factory-lost.ts", "factory-ports.ts", "factory-profile.ts", "factory-run-once.ts", "factory-web.ts"]);
     for (const forbidden of ["@electric-sql/pglite", "@rbw/local-runner", "@rbw/umami-driver", "@rbw/admission", "@rbw/publisher", "pg", "tar-stream", "@vercel/sandbox"]) expect(packages.has(forbidden)).toBe(false);
     expect([...packages].sort()).toEqual(["@rbw/envelope", "@rbw/factory-contract", "@rbw/local-runner/shared", "@rbw/schema", "@rbw/spend"]);
   });

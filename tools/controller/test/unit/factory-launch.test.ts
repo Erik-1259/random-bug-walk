@@ -1,7 +1,12 @@
+import { spawn } from "node:child_process";
+import { mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { FACTORY_PROFILE } from "../../src/factory-profile.ts";
 import { validationOperation, workerOperation, workerSandboxName } from "../../src/factory-ledger.ts";
-import { startFactoryValidation, startFactoryWorker } from "../../src/factory-launch.ts";
+import { WORKER_REPOSITORY, WORKER_RUN_ONCE_DIR, startFactoryValidation, startFactoryWorker } from "../../src/factory-launch.ts";
+import { RUN_ONCE_SCRIPT } from "../../src/factory-run-once.ts";
 import type { FactoryLaunchDeps, ValidationStartArgs } from "../../src/factory-launch.ts";
 import type { WorkerSandboxCreateParams } from "../../src/factory-ports.ts";
 import { CASE_ID, CREDENTIALS, SyntheticApiError, WORKER_IMAGE, acceptRequest, factoryWorld, operationState, slotHolder, syntheticUuid } from "./factory-fakes.ts";
@@ -56,7 +61,7 @@ describe("startFactoryWorker", () => {
     expect(params.env).toMatchObject(CREDENTIALS);
     const run = w.sandbox.calls.find((call) => call.action === "run")?.detail as { args: string[]; detached: boolean };
     expect(run.detached).toBe(true);
-    expect(run.args.slice(1, 4)).toEqual(["factory-worker", "--request-id", record.request_id]);
+    expect(run.args.slice(6, 9)).toEqual(["factory-worker", "--request-id", record.request_id]);
     expect(run.args).toContain("--deadline-at");
     // The credentials reach the sandbox as environment values, never as command arguments.
     expect(JSON.stringify(run.args)).not.toContain(CREDENTIALS.VERCEL_TOKEN);
@@ -64,6 +69,26 @@ describe("startFactoryWorker", () => {
     const events = await w.records.events(record.request_id);
     expect(events.map((event) => event.type)).toEqual(["request_accepted", "budget_updated"]);
     expect(events[1]?.data).toEqual({ reserved_microusd: FACTORY_PROFILE.prices.worker_worst_case_microusd, spent_microusd: 0, remaining_microusd: 1_500_000 - FACTORY_PROFILE.prices.worker_worst_case_microusd });
+  });
+
+  it("starts the worker command under the run-once guard, so a start the SDK replays runs one worker", { timeout: 20_000 }, async () => {
+    const record = await acceptRequest(w);
+    expect((await startFactoryWorker(deps(), record.request_id)).kind).toBe("launched");
+    const run = w.sandbox.calls.find((call) => call.action === "run")?.detail as { cmd: string; args: string[]; cwd: string };
+    expect([run.cmd, ...run.args.slice(0, 4)]).toEqual(["sh", "-c", RUN_ONCE_SCRIPT, "rbw-worker", WORKER_RUN_ONCE_DIR]);
+    expect(run.args.slice(4, 9)).toEqual(["/usr/local/bin/node", `${WORKER_REPOSITORY}/tools/controller/src/cli.ts`, "factory-worker", "--request-id", record.request_id]);
+    expect(run.cwd).toBe(WORKER_REPOSITORY);
+    // The started guard, started twice as a replayed start is (a local lock directory and a counting command in place of the worker): one run.
+    const base = mkdtempSync(join(tmpdir(), "rbw-worker-once-test-"));
+    const count = join(base, "count");
+    const start = (): Promise<number | null> =>
+      new Promise((resolve, reject) => {
+        const child = spawn(run.cmd, [...run.args.slice(0, 3), join(base, "once"), "sh", "-c", 'echo ran >> "$1"; sleep 1', "synthetic-worker", count], { stdio: "ignore" });
+        child.on("error", reject);
+        child.on("exit", resolve);
+      });
+    expect(await Promise.all([start(), start()])).toEqual([0, 0]);
+    expect(readFileSync(count, "utf8")).toBe("ran\n");
   });
 
   it("launches one worker for duplicate and concurrent starts of one request", async () => {
@@ -283,8 +308,9 @@ describe("startFactoryValidation", () => {
     const create = w.sandbox.calls.find((call) => call.action === "create")?.detail as WorkerSandboxCreateParams;
     expect(create.name).toBe(`rbw-fv-${root}`);
     expect(create.timeout).toBe(FACTORY_PROFILE.validation.worker.timeout_s * 1000);
-    const run = w.sandbox.calls.find((call) => call.action === "run")?.detail as { args: string[] };
-    expect(run.args.slice(1, 4)).toEqual(["factory-worker", "--validation-id", a.validation_id]);
+    const run = w.sandbox.calls.find((call) => call.action === "run")?.detail as { cmd: string; args: string[] };
+    expect([run.cmd, ...run.args.slice(0, 4)]).toEqual(["sh", "-c", RUN_ONCE_SCRIPT, "rbw-worker", WORKER_RUN_ONCE_DIR]);
+    expect(run.args.slice(6, 9)).toEqual(["factory-worker", "--validation-id", a.validation_id]);
     // A request-role reserve on the closed budget is still refused.
     const refused = await w.ledger.budgets.reserve(record.budget_key, "request", workerOp(record).request);
     expect(refused.ok).toBe(false);

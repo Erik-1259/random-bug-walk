@@ -2,7 +2,7 @@
 // startFactoryWorker runs after the service took the slot, created the budget and
 // recorded the request: it reserves the worker's worst case on the request budget, then creates
 // one worker sandbox (pinned image, deterministic name, credentials as create-time environment
-// values) and starts the worker command detached. startFactoryValidation runs synchronously in
+// values) and starts the worker command detached, under the run-once guard. startFactoryValidation runs synchronously in
 // the validation POST: slot, then reservation (any refusal records nothing), then the record,
 // the request's events and the launch.
 //
@@ -33,6 +33,7 @@ import type { FactoryOperation } from "./factory-ledger.ts";
 import { FACTORY_PROFILE } from "./factory-profile.ts";
 import type { FactoryProfile } from "./factory-profile.ts";
 import type { FactoryIdentity, FactoryLedger, FactoryRecords, FactoryRequestRecord, FactoryValidationRecord, WorkerSandboxInstance, WorkerSandboxSdk } from "./factory-ports.ts";
+import { runOnceCommand } from "./factory-run-once.ts";
 
 /** How the worker is launched: the image from RBW_FACTORY_WORKER_IMAGE and the credentials it reads. */
 export interface WorkerLaunchConfig {
@@ -57,6 +58,12 @@ export interface FactoryLaunchDeps {
 /** Where the worker image holds this repository (kit/factory-worker/Dockerfile). */
 export const WORKER_REPOSITORY = "/opt/rbw/repo";
 const NODE = "/usr/local/bin/node";
+/**
+ * Where the worker command's run-once guard keeps its lock and exit-status marker inside the worker
+ * sandbox: the SDK may start a command twice, and a second worker would run the request or the
+ * validation run again with a meter of its own.
+ */
+export const WORKER_RUN_ONCE_DIR = "/tmp/rbw-worker-once";
 /** The image's PATH, which the sandbox does not apply by itself. */
 const BASE_ENV = { PATH: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", HOME: "/root" };
 const PINNED = /^[^\s@]+@sha256:[0-9a-f]{64}$/;
@@ -69,7 +76,7 @@ function checkImage(image: string): void {
   if (!PINNED.test(image)) throw new LaunchConfigError("the factory worker image must be pinned by digest (<repository>@sha256:<digest>)");
 }
 
-/** The worker command a sandbox runs, detached: request mode with the worker's deadline, or validation mode (its deadline is in its record). */
+/** The worker command's arguments to node: request mode with the worker's deadline, or validation mode (its deadline is in its record). */
 export function workerCommandArgs(target: { request_id: string; deadline_at: Date } | { validation_id: string }): string[] {
   const mode = "request_id" in target ? ["--request-id", target.request_id, "--deadline-at", utcSeconds(target.deadline_at.getTime())] : ["--validation-id", target.validation_id];
   return [`${WORKER_REPOSITORY}/tools/controller/src/cli.ts`, "factory-worker", ...mode];
@@ -138,7 +145,9 @@ async function launchSandbox(deps: FactoryLaunchDeps, op: FactoryOperation, size
     return { kind: "uncertain", detail: `the running transition was refused (${running.code})` };
   }
   try {
-    await instance.runCommand({ cmd: NODE, args, cwd: WORKER_REPOSITORY, detached: true });
+    // Under the run-once guard, so a start the SDK replays runs no second worker.
+    const guarded = runOnceCommand("rbw-worker", WORKER_RUN_ONCE_DIR, [NODE, ...args]);
+    await instance.runCommand({ cmd: guarded.cmd, args: guarded.args, cwd: WORKER_REPOSITORY, detached: true });
   } catch (error) {
     await spend.transition({ operation_id: op.operation_id, from_state: "running", to_state: "uncertain", actor_role: ROUTE_ACTOR, uncertainty: "unknown_status" });
     await stopQuietly(deps.sandbox, instance.name, deps.log);
