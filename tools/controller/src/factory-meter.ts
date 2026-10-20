@@ -179,8 +179,9 @@ export class CopyMeter {
    * When a candidate ends: cancels each of its reserved copies that never launched through
    * launching and terminal to a settlement at zero, so nothing of it stays reserved. Rejects, and is
    * then uncertain, when a cancellation is refused or fails (that reservation stays held for
-   * reconciliation), and, cancelling nothing, once the request was finished elsewhere. Repeating it
-   * changes nothing.
+   * reconciliation), and, cancelling nothing, once the request was finished elsewhere. A repeat
+   * after a refused or failed cancellation cancels the copies that still never launched and skips
+   * the one that failed; once the candidate ended, repeating it changes nothing.
    */
   settleCandidate(input: { candidate_id: string }): Promise<CandidateSettlement> {
     return this.serial(() => this.settleOne(input.candidate_id));
