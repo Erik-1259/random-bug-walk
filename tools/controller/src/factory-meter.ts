@@ -1,21 +1,28 @@
-// The spend side of every factory copy, apart from how a runner places files and runs the copy, so
-// the hosted `sandbox` runner and a metered local runner share one ledger path. As the judge
-// controller does for its copies: refuse a copy whose limits exceed its host's copy limits or that
-// would not end before the deadline; check for a stop; reserve the copy's envelope on the request
-// budget; move it to launching under the factory slot; when the provider has created the sandbox,
-// record it as running (a slot child); after the run, confirm the stop and settle the measured
-// lifetime. A launch that rejects, or a stop that cannot be confirmed, is uncertain: it is never
-// retried, keeps its reservation and the slot held, and no later copy of this meter starts.
+// The spend side of every factory copy, apart from how a runner places files and runs the copy.
+// The hosted `sandbox` runner uses it; a local runner (the harness's docker runner) needs the same
+// glue at integration. As the judge controller does for its copies: refuse a copy whose limits
+// exceed its host's copy limits or that would not end before the deadline; check for a stop;
+// reserve the copy's envelope on the request budget; move it to launching under the factory slot;
+// when the provider has created the sandbox, record it as running (a slot child); after the run,
+// confirm the stop and settle the measured lifetime. A launch that rejects, a stop that cannot be
+// confirmed, or a ledger call that fails is uncertain: it is never retried, keeps its reservation
+// and the slot held, and no later copy of this meter starts.
+//
+// HELD: the request mode reserves one operation per copy at its launch. Contract section 8.5
+// counts each candidate's worst case as reserved from its selection until it settles; which way
+// conforms (the candidate's copies reserved at selection, or the contract amended to per-copy
+// reservation) is an open decision, so this mode's reservation unit is not final.
 //
 // A validation run reserves its copies with its own operation at its accepted POST, so in
 // `child_of` mode each copy is recorded and confirmed as a child resource of that operation and
 // its lifetime is kept for the run's settlement. Copies run one at a time: a second run() waits
-// until the first has settled.
+// until the first has settled. The meter appends no events: the factory core's loop appends the
+// request's budget_updated after each copy.
 import type { Rates } from "@rbw/envelope";
 import type { CopyState, HostId } from "@rbw/factory-contract";
 import { canonicalDigest } from "@rbw/schema";
 import type { Evidence } from "@rbw/spend";
-import { FACTORY_KIND, WORKER_ACTOR, copyExecutionId, copyOperation, copySandboxName, copySettlementFor, usd, zeroSettlement } from "./factory-ledger.ts";
+import { FACTORY_KIND, WORKER_ACTOR, copyExecution, copyOperation, copySandboxName, copySettlementFor, makeUncertain, zeroSettlement } from "./factory-ledger.ts";
 import type { FactoryOperation, SandboxUsage } from "./factory-ledger.ts";
 import { FACTORY_PROFILE } from "./factory-profile.ts";
 import type { FactoryProfile } from "./factory-profile.ts";
@@ -23,13 +30,13 @@ import type { BudgetRole, FactoryIdentity, FactoryLedger } from "./factory-ports
 
 export interface MeterContext {
   ledger: FactoryLedger;
-  identity: Pick<FactoryIdentity, "project_id">;
+  identity: Pick<FactoryIdentity, "project_id" | "copyExecutionId">;
   rates: Rates;
   now: () => Date;
   /** The request root or the validation root. */
   root: string;
-  /** That root's UUIDv5 namespace, for the copies' execution IDs. */
-  namespace: string;
+  /** Which of the two the root is, for the copies' execution IDs. */
+  kind: "request" | "validation";
   /** The request's interpretation_sha256, or the validation's case_id. */
   task_revision: string;
   budget_key: string;
@@ -41,8 +48,6 @@ export interface MeterContext {
   mode: { kind: "own_operation"; role: BudgetRole } | { kind: "child_of"; operation_id: string };
   /** Checked before each copy, before anything is reserved: false stops it. */
   beforeLaunch?: () => Promise<boolean>;
-  /** Told after a reservation or a settlement changed the budget (own_operation mode), with a deterministic event key. */
-  onBudgetChange?: (eventKey: string, message: string) => Promise<void>;
   log: (line: string) => void;
   profile?: FactoryProfile;
 }
@@ -96,6 +101,7 @@ export class CopyMeter {
   private halted = false;
   /** Child mode: copies created so far; a validation run's reservation is priced for its host's most copies. */
   private childLaunches = 0;
+  private refused: { reason: RefusalReason; detail: string } | null = null;
 
   constructor(ctx: MeterContext) {
     this.ctx = ctx;
@@ -110,6 +116,15 @@ export class CopyMeter {
   /** True while a copy is between its reservation and its settlement. */
   get active(): boolean {
     return this.running;
+  }
+
+  /**
+   * The most recent copy this meter did not start, and why, or null. A runner reports a refused
+   * copy as a copy result (setup_failed or timed_out), so a loop that must tell a budget refusal or
+   * a halt from a failed copy reads it here.
+   */
+  get lastRefusal(): { reason: RefusalReason; detail: string } | null {
+    return this.refused;
   }
 
   /** Runs one copy through `launch`, after every copy started earlier has settled. */
@@ -150,10 +165,15 @@ export class CopyMeter {
     return n;
   }
 
+  private refuse<R>(refusal: { reason: RefusalReason; detail: string }): MeteredOutcome<R> {
+    this.refused = refusal;
+    return { kind: "refused", ...refusal };
+  }
+
   private async runOne<R>(plan: MeteredCopyPlan, launch: (sandboxName: string, hooks: LaunchHooks) => Promise<LaunchReport<R>>): Promise<MeteredOutcome<R>> {
     const refused = this.refusal(plan);
-    if (refused !== null) return { kind: "refused", ...refused };
-    if (this.ctx.beforeLaunch !== undefined && !(await this.ctx.beforeLaunch())) return { kind: "refused", reason: "stopped", detail: "a stop was recorded or the run was finished elsewhere" };
+    if (refused !== null) return this.refuse(refused);
+    if (this.ctx.beforeLaunch !== undefined && !(await this.ctx.beforeLaunch())) return this.refuse({ reason: "stopped", detail: "a stop was recorded or the run was finished elsewhere" });
     this.running = true;
     try {
       const n = this.nextN(plan);
@@ -169,24 +189,46 @@ export class CopyMeter {
     return { kind: "uncertain", operation_id: operationId, execution_id: executionId, detail };
   }
 
+  /**
+   * A ledger call threw, so whether it took effect is unknown: the copy is uncertain, and its
+   * operation goes to uncertain where it is launching or running (best effort; a failure is logged).
+   */
+  private async ledgerFailed<R>(operationId: string | null, executionId: string, error: unknown): Promise<MeteredOutcome<R>> {
+    if (operationId !== null) {
+      try {
+        await makeUncertain(this.ctx.ledger.spend, operationId, WORKER_ACTOR);
+      } catch (moveError) {
+        this.ctx.log(`copy ${executionId}: its operation could not be moved to uncertain (${message(moveError)})`);
+      }
+    }
+    return this.uncertainOutcome(operationId, executionId, `a ledger call failed (${message(error)}); the copy needs reconciliation`);
+  }
+
   private stopEvidence(executionId: string, resource: string, lifetimeMs: number, status: string): Evidence {
     return { key: `factory/${this.ctx.root}/stops/${executionId}.json`, sha256: canonicalDigest({ execution_id: executionId, resource_id: resource, lifetime_ms: lifetimeMs, status }).sha256 };
   }
 
   private async ownOperation<R>(plan: MeteredCopyPlan, n: number, role: BudgetRole, launch: (sandboxName: string, hooks: LaunchHooks) => Promise<LaunchReport<R>>): Promise<MeteredOutcome<R>> {
-    const { ledger } = this.ctx;
     const op: FactoryOperation = copyOperation(
       { identity: this.ctx.identity, rates: this.ctx.rates, profile: this.profile },
-      { namespace: this.ctx.namespace, root: this.ctx.root, task_revision: this.ctx.task_revision, subject: plan.subject, state: plan.state, n, host: plan.host, provider: this.ctx.provider },
+      { kind: this.ctx.kind, root: this.ctx.root, task_revision: this.ctx.task_revision, subject: plan.subject, state: plan.state, n, host: plan.host, provider: this.ctx.provider },
     );
+    try {
+      return await this.ownSteps(plan, op, role, launch);
+    } catch (error) {
+      return this.ledgerFailed(op.operation_id, op.execution_id, error);
+    }
+  }
+
+  private async ownSteps<R>(plan: MeteredCopyPlan, op: FactoryOperation, role: BudgetRole, launch: (sandboxName: string, hooks: LaunchHooks) => Promise<LaunchReport<R>>): Promise<MeteredOutcome<R>> {
+    const { ledger } = this.ctx;
     const id = op.operation_id;
     const reserved = await ledger.budgets.reserve(this.ctx.budget_key, role, op.request);
     if (!reserved.ok) {
-      if (reserved.code === "pool_halted") return { kind: "refused", reason: "halted", detail: "the spend ledger is halted" };
-      return { kind: "refused", reason: "budget", detail: `the copy's reservation was refused (${reserved.code})` };
+      if (reserved.code === "pool_halted") return this.refuse({ reason: "halted", detail: "the spend ledger is halted" });
+      return this.refuse({ reason: "budget", detail: `the copy's reservation was refused (${reserved.code})` });
     }
     if (reserved.replay) return this.uncertainOutcome(id, op.execution_id, "the copy's operation already existed, so it was not launched again");
-    await this.ctx.onBudgetChange?.(`copy:${id}:reserved`, `Reserved ${usd(reserved.reserved_microusd)} for one ${plan.host} copy.`);
     const launching = await ledger.spend.transition({ operation_id: id, from_state: "prepared", to_state: "launching", actor_role: WORKER_ACTOR, slot_key: this.profile.slot_key });
     if (!launching.ok) return this.uncertainOutcome(id, op.execution_id, `the launch was refused (${launching.code}); the reservation needs reconciliation`);
 
@@ -214,7 +256,6 @@ export class CopyMeter {
       if (!ended.ok) return this.uncertainOutcome(id, op.execution_id, `the end was refused (${ended.code})`);
       const settled = await ledger.spend.settle(zeroSettlement(op.envelope, id));
       if (!settled.ok) return this.uncertainOutcome(id, op.execution_id, `the settlement was refused (${settled.code})`);
-      await this.ctx.onBudgetChange?.(`copy:${id}:settled`, `A ${plan.host} copy that never started settled at $0.00.`);
       return { kind: "ran", result: report.result, operation_id: id, execution_id: op.execution_id, settled_microusd: 0, over_envelope: false };
     }
     const resource = seen.resource;
@@ -228,13 +269,21 @@ export class CopyMeter {
     const settled = await ledger.spend.settle(copySettlementFor(op.envelope, id, plan.host, usage, evidence, this.profile));
     if (!settled.ok) return this.uncertainOutcome(id, op.execution_id, `the settlement was refused (${settled.code})`);
     if (settled.over_envelope) this.halted = true;
-    await this.ctx.onBudgetChange?.(`copy:${id}:settled`, `A ${plan.host} copy settled at ${usd(settled.settled_microusd)}.`);
     return { kind: "ran", result: report.result, operation_id: id, execution_id: op.execution_id, settled_microusd: Number(settled.settled_microusd), over_envelope: settled.over_envelope };
   }
 
   private async childOf<R>(plan: MeteredCopyPlan, n: number, parent: string, launch: (sandboxName: string, hooks: LaunchHooks) => Promise<LaunchReport<R>>): Promise<MeteredOutcome<R>> {
+    const execution = copyExecution(this.ctx.identity, { kind: this.ctx.kind, root: this.ctx.root, subject: plan.subject, state: plan.state, n });
+    try {
+      return await this.childSteps(plan, execution, parent, launch);
+    } catch (error) {
+      // The run's own operation is moved to uncertain by the validation worker, which reads `uncertain`.
+      return this.ledgerFailed(null, execution, error);
+    }
+  }
+
+  private async childSteps<R>(plan: MeteredCopyPlan, execution: string, parent: string, launch: (sandboxName: string, hooks: LaunchHooks) => Promise<LaunchReport<R>>): Promise<MeteredOutcome<R>> {
     const { spend } = this.ctx.ledger;
-    const execution = copyExecutionId({ namespace: this.ctx.namespace, root: this.ctx.root, subject: plan.subject, state: plan.state, n });
     const seen: { resource: string | null } = { resource: null };
     let report: LaunchReport<R>;
     try {

@@ -3,16 +3,14 @@ import { copyOperation, copySandboxName, validationOperation } from "../../src/f
 import { CopyMeter } from "../../src/factory-meter.ts";
 import type { LaunchReport, MeterContext, MeteredCopyPlan } from "../../src/factory-meter.ts";
 import type { FactoryRequestRecord } from "../../src/factory-ports.ts";
-import { CANDIDATE_A, CANDIDATE_B, CASE_ID, SYNTHETIC_REQUEST_NAMESPACE, SYNTHETIC_VALIDATION_NAMESPACE, acceptRequest, factoryWorld, operationState, syntheticUuid } from "./factory-fakes.ts";
+import { CANDIDATE_A, CANDIDATE_B, CASE_ID, acceptRequest, factoryWorld, operationState, syntheticUuid } from "./factory-fakes.ts";
 import type { FactoryWorld } from "./factory-fakes.ts";
 
 let w: FactoryWorld;
 let record: FactoryRequestRecord;
-let budgetEvents: string[];
 
 beforeEach(async () => {
   w = await factoryWorld();
-  budgetEvents = [];
 });
 
 afterEach(async () => {
@@ -33,24 +31,20 @@ async function requestMeter(overrides: Partial<MeterContext> = {}, budget = 1_50
     rates: w.rates,
     now: w.clock.now,
     root: record.root,
-    namespace: SYNTHETIC_REQUEST_NAMESPACE,
+    kind: "request",
     task_revision: record.interpretation_sha256,
     budget_key: record.budget_key,
     provider: "vercel-sandbox",
     deadline: new Date(w.clock.ms + 3_600_000),
     margin_s: 120,
     mode: { kind: "own_operation", role: "request" },
-    onBudgetChange: (key) => {
-      budgetEvents.push(key);
-      return Promise.resolve();
-    },
     log: (line) => w.logs.push(line),
     ...overrides,
   });
 }
 
 function op(subject: string, state: MeteredCopyPlan["state"], n = 1) {
-  return copyOperation({ identity: w.identity, rates: w.rates }, { namespace: SYNTHETIC_REQUEST_NAMESPACE, root: record.root, task_revision: record.interpretation_sha256, subject, state, n, host: "task-report", provider: "vercel-sandbox" });
+  return copyOperation({ identity: w.identity, rates: w.rates }, { kind: "request", root: record.root, task_revision: record.interpretation_sha256, subject, state, n, host: "task-report", provider: "vercel-sandbox" });
 }
 
 /** A launch that creates its sandbox, lives `ms` and is confirmed stopped. */
@@ -74,7 +68,8 @@ describe("CopyMeter (one operation per copy)", () => {
     expect(status.ok && [status.state, status.settled_microusd, status.open_microusd]).toEqual(["reconciled", 23_857n, 0n]);
     const slot = await w.spend.slotStatus({ slot_key: "factory" });
     expect(slot.ok && slot.children.map((child) => [child.resource_id, child.confirmed])).toEqual([[copySandboxName(expected.execution_id), true]]);
-    expect(budgetEvents).toEqual([`copy:${expected.operation_id}:reserved`, `copy:${expected.operation_id}:settled`]);
+    // The meter appends no request events: the factory core's loop appends budget_updated after each copy.
+    expect(w.records.types(record.request_id)).toEqual(["request_accepted"]);
   });
 
   it("runs copies one at a time: a second copy is not reserved or launched while one is active", async () => {
@@ -139,8 +134,63 @@ describe("CopyMeter (one operation per copy)", () => {
       return Promise.reject(new Error("must not launch"));
     });
     expect(outcome).toMatchObject({ kind: "refused", reason: "budget" });
+    expect(meter.lastRefusal).toMatchObject({ reason: "budget" });
     expect(called).toBe(false);
     expect(w.budgets.refusals.map((refusal) => refusal.code)).toEqual(["budget_exhausted"]);
+  });
+
+  it("makes a copy uncertain, never a rejection, when a ledger call throws after the reservation, and starts no later copy", async () => {
+    const meter = await requestMeter();
+    const transition = w.spend.transition.bind(w.spend);
+    w.ledger.spend = { ...w.spend, transition: (request) => (request.to_state === "terminal" ? Promise.reject(new Error("synthetic: the connection dropped")) : transition(request)) };
+    const outcome = await meter.run(plan(CANDIDATE_A, "clean"), lives(1000));
+    expect(outcome.kind).toBe("uncertain");
+    expect(meter.uncertain).toBe(true);
+    // It was running when the call failed: it is uncertain now, its reservation held for reconciliation.
+    expect(await operationState(w, op(CANDIDATE_A, "clean").operation_id)).toBe("uncertain");
+    expect(await meter.run(plan(CANDIDATE_A, "buggy"), lives(1000))).toMatchObject({ kind: "refused", reason: "uncertain" });
+  });
+
+  it("makes a copy uncertain when its reservation call throws, launching nothing", async () => {
+    const meter = await requestMeter();
+    let called = false;
+    w.ledger.budgets = { reserve: () => Promise.reject(new Error("synthetic: the connection dropped")), close: (key, cause) => w.budgets.close(key, cause), status: (key) => w.budgets.status(key) };
+    const outcome = await meter.run(plan(CANDIDATE_A, "clean"), () => {
+      called = true;
+      return Promise.reject(new Error("must not launch"));
+    });
+    expect(outcome.kind).toBe("uncertain");
+    expect(meter.uncertain).toBe(true);
+    expect(called).toBe(false);
+  });
+
+  it("never launches a copy whose operation already existed: it is uncertain and left as it was", async () => {
+    const meter = await requestMeter();
+    const existing = op(CANDIDATE_A, "clean");
+    expect((await w.ledger.budgets.reserve(record.budget_key, "request", existing.request)).ok).toBe(true);
+    let called = false;
+    const outcome = await meter.run(plan(CANDIDATE_A, "clean"), () => {
+      called = true;
+      return Promise.reject(new Error("must not launch"));
+    });
+    expect(outcome.kind).toBe("uncertain");
+    expect(called).toBe(false);
+    expect(await operationState(w, existing.operation_id)).toBe("prepared");
+  });
+
+  it("starts no copy after a settlement over its envelope, which halts new work", async () => {
+    const meter = await requestMeter();
+    const settle = w.spend.settle.bind(w.spend);
+    w.ledger.spend = {
+      ...w.spend,
+      settle: async (request) => {
+        const settled = await settle(request);
+        return settled.ok ? { ...settled, over_envelope: true } : settled;
+      },
+    };
+    expect((await meter.run(plan(CANDIDATE_A, "clean"), lives(1000))).kind).toBe("ran");
+    expect(await meter.run(plan(CANDIDATE_A, "buggy"), lives(1000))).toMatchObject({ kind: "refused", reason: "halted" });
+    expect(await operationState(w, op(CANDIDATE_A, "buggy").operation_id)).toBeNull();
   });
 
   it("checks for a stop before each copy and reserves nothing once stopped", async () => {
@@ -212,7 +262,7 @@ describe("CopyMeter (copies of a validation run)", () => {
       rates: w.rates,
       now: w.clock.now,
       root,
-      namespace: SYNTHETIC_VALIDATION_NAMESPACE,
+      kind: "validation",
       task_revision: CASE_ID,
       budget_key: record.budget_key,
       provider: "vercel-sandbox",
@@ -243,6 +293,17 @@ describe("CopyMeter (copies of a validation run)", () => {
     const umami = (state: MeteredCopyPlan["state"]): MeteredCopyPlan => ({ ...plan(CASE_ID, state), host: "umami" });
     for (const state of ["clean", "buggy", "fixed"] as const) expect((await meter.run(umami(state), lives(1000))).kind).toBe("ran");
     expect(await meter.run(umami("buggy"), lives(1000))).toMatchObject({ kind: "refused", reason: "limits_exceed_profile" });
+  });
+
+  it("counts only copies that created a sandbox against that limit", async () => {
+    const { meter } = await validationMeter();
+    const umami = (state: MeteredCopyPlan["state"]): MeteredCopyPlan => ({ ...plan(CASE_ID, state), host: "umami" });
+    // A copy that never created anything (a definite create refusal) does not use up one of the run's copies.
+    const nothing = () => Promise.resolve({ result: "setup_failed", created: false, lifetime_ms: 0, stop_confirmed: true, status: "failed" as const });
+    expect((await meter.run(umami("clean"), nothing)).kind).toBe("ran");
+    for (const state of ["clean", "buggy", "fixed"] as const) expect((await meter.run(umami(state), lives(1000))).kind).toBe("ran");
+    expect(meter.usage).toHaveLength(3);
+    expect(await meter.run(umami("fixed"), lives(1000))).toMatchObject({ kind: "refused", reason: "limits_exceed_profile" });
   });
 
   it("starts no validation copy whose timeout would pass the window", async () => {

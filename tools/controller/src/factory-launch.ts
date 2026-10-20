@@ -16,10 +16,11 @@ import type { Rates } from "@rbw/envelope";
 import type { BusyReason, HarnessIdentity, HostId, PackageHashes, ValidationRun } from "@rbw/factory-contract";
 import { utcSeconds } from "@rbw/local-runner/shared";
 import {
+  EVENT_KEYS,
   ROUTE_ACTOR,
   appendBudgetUpdate,
   busyReason,
-  finishRequest,
+  finishLaunch,
   finishValidation,
   finishedEvent,
   stopQuietly,
@@ -175,13 +176,13 @@ export async function startFactoryWorker(deps: FactoryLaunchDeps, requestId: str
   if (!reserved.ok) {
     // An operation with this identity exists: an earlier start of this request reserved it. Never finish the request over it.
     if (reserved.code === "operation_conflict") return { kind: "replay" };
-    await finishRequest(deps, record, "operational_error", { attention: null });
+    await finishLaunch(deps, record, "operational_error", { attention: null });
     await releaseSlot(deps, record.root);
     deps.log(`factory ${requestId} worker reservation refused ${reserved.code}; finished and released`);
     return { kind: "refused", code: reserved.code };
   }
   if (reserved.replay && reserved.state !== "prepared") return { kind: "replay" };
-  await appendBudgetUpdate(deps, record, "worker:reserved", `Reserved ${usd(reserved.reserved_microusd)} for the worker's worst case.`);
+  await appendBudgetUpdate(deps, record, EVENT_KEYS.workerReserved, `Reserved ${usd(reserved.reserved_microusd)} for the worker's worst case.`);
   const deadline = new Date(deps.now().getTime() + profile.worker.timeout_s * 1000);
   const launched = await launchSandbox(deps, op, profile.worker, workerCommandArgs({ request_id: requestId, deadline_at: deadline }));
   return finishWorkerLaunch(deps, record, launched);
@@ -193,13 +194,13 @@ async function finishWorkerLaunch(deps: FactoryLaunchDeps, record: FactoryReques
     case "replay":
       return launched;
     case "definite_failure":
-      await appendBudgetUpdate(deps, record, "worker:settled", "The worker never started; its reservation was released.");
-      await finishRequest(deps, record, "operational_error", { attention: null });
+      await appendBudgetUpdate(deps, record, EVENT_KEYS.workerReleased, "The worker never started; its reservation was released.");
+      await finishLaunch(deps, record, "operational_error", { attention: null });
       await releaseSlot(deps, record.root);
       deps.log(`factory ${record.request_id} worker create refused: ${launched.detail}; finished and released`);
       return { kind: "create_failed" };
     case "uncertain":
-      await finishRequest(deps, record, "needs_reconciliation", { attention: "The worker's launch outcome is uncertain; its spend needs reconciliation." });
+      await finishLaunch(deps, record, "needs_reconciliation", { attention: "The worker's launch outcome is uncertain; its spend needs reconciliation." });
       deps.log(`factory ${record.request_id} worker launch uncertain: ${launched.detail}; slot held`);
       return { kind: "uncertain", detail: launched.detail };
   }
@@ -264,7 +265,7 @@ export async function startFactoryValidation(deps: FactoryLaunchDeps, args: Vali
 
   const slot = await spend.acquireSlot({ slot_key: profile.slot_key, root_execution_id: root, actor_role: ROUTE_ACTOR });
   if (!slot.ok) {
-    if (slot.code === "slot_held") return { kind: "busy", reason: await busyReason(spend, profile.slot_key) };
+    if (slot.code === "slot_held") return { kind: "busy", reason: await busyReason({ spend, records: deps.records }, profile.slot_key) };
     return { kind: "unavailable", message: `The factory slot could not be taken (${slot.code}).` };
   }
   const record: FactoryValidationRecord = {

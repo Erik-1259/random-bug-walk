@@ -3,7 +3,6 @@
 // replay key, the reserve request priced from the factory profile, and the settlements. Also the
 // shared steps the launch, worker and lost-worker paths take: the budget_updated event, finishing a
 // request or a validation run, and the slot's busy reason. Web-safe: no runner, driver or PGlite.
-import { createHash } from "node:crypto";
 import { toReserveRequest } from "@rbw/envelope";
 import type { Rates } from "@rbw/envelope";
 import type { CopyState, HostId, RequestOutcome, StopCode, ValidationMatrix, ValidationResult } from "@rbw/factory-contract";
@@ -18,23 +17,6 @@ export const SANDBOX_PROVIDER = "vercel-sandbox";
 /** The ledger actor of the web service's calls and of the worker's. */
 export const ROUTE_ACTOR = "factory-route";
 export const WORKER_ACTOR = "factory-worker";
-
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-
-/** RFC 4122 version 5 UUID of `name` in `namespace`. */
-export function uuidV5(namespace: string, name: string): string {
-  if (!UUID.test(namespace)) throw new Error("the namespace is not a lowercase UUID");
-  const hash = createHash("sha1").update(Buffer.from(namespace.replaceAll("-", ""), "hex")).update(name, "utf8").digest();
-  const bytes = hash.subarray(0, 16);
-  bytes[6] = ((bytes[6] ?? 0) & 0x0f) | 0x50;
-  bytes[8] = ((bytes[8] ?? 0) & 0x3f) | 0x80;
-  const hex = bytes.toString("hex");
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-}
-
-export function isUuid(value: unknown): value is string {
-  return typeof value === "string" && UUID.test(value);
-}
 
 // Sandbox names: deterministic, and unique per operation, because Vercel keeps a stopped named
 // sandbox and refuses a second create on its name.
@@ -163,8 +145,8 @@ export function validationOperation(ctx: OperationContext, validation: Pick<Fact
 }
 
 export interface CopyIdentity {
-  /** The root's namespace: the request namespace for a candidate's copy, the validation namespace for a validation's. */
-  namespace: string;
+  /** Whose copy: a request candidate's (under the request root) or a validation run's (under the validation root). */
+  kind: "request" | "validation";
   root: string;
   task_revision: string;
   /** The candidate_id, or the case_id of a validation run. */
@@ -176,14 +158,19 @@ export interface CopyIdentity {
   provider: string;
 }
 
-/** A copy's execution: UUIDv5(the root's namespace, `<root>:<subject>:<state>-<n>`), its parent the root. */
-export function copyExecutionId(copy: Pick<CopyIdentity, "namespace" | "root" | "subject" | "state" | "n">): string {
-  return uuidV5(copy.namespace, `${copy.root}:${copy.subject}:${copy.state}-${String(copy.n)}`);
+/** What a copy's operation needs of the identity module: the project ID and the copy's execution ID. */
+export interface CopyOperationContext extends OperationContext {
+  identity: Pick<FactoryIdentity, "project_id" | "copyExecutionId">;
 }
 
-export function copyOperation(ctx: OperationContext, copy: CopyIdentity): FactoryOperation {
+/** A copy's execution ID, from the identity module; its parent is the root. */
+export function copyExecution(identity: Pick<FactoryIdentity, "copyExecutionId">, copy: Pick<CopyIdentity, "kind" | "root" | "subject" | "state" | "n">): string {
+  return identity.copyExecutionId({ kind: copy.kind, root: copy.root, subject_id: copy.subject, state: copy.state, n: copy.n });
+}
+
+export function copyOperation(ctx: CopyOperationContext, copy: CopyIdentity): FactoryOperation {
   const profile = ctx.profile ?? FACTORY_PROFILE;
-  const execution = copyExecutionId(copy);
+  const execution = copyExecution(ctx.identity, copy);
   return operation({
     identity: ctx.identity,
     profile,
@@ -287,6 +274,7 @@ export interface StepDeps {
   ledger: FactoryLedger;
   records: FactoryRecords;
   now: () => Date;
+  log: (line: string) => void;
 }
 
 /** Appends budget_updated with the budget's current totals, under the given event key. */
@@ -309,15 +297,19 @@ export async function appendBudgetUpdate(deps: StepDeps, request: Pick<FactoryRe
   );
 }
 
-/** The event keys of the events this code appends that other writers may also append; the same key means at most one. */
+/**
+ * The keys of the request events this code appends with its own content: worker_started, the start
+ * reservation's budget_updated, and the finish of a start whose worker never ran (a refused
+ * reservation, a refused create or an uncertain launch), for which the factory core's loop never
+ * runs. The lost-worker finish and every other request event take the core's keys and content
+ * (FactoryEventBuilders), so there is one key table.
+ */
 export const EVENT_KEYS = {
-  finish: "finish",
   workerStarted: "worker_started",
   workerReserved: "worker:reserved",
-  workerSettled: "worker:settled",
-  needsReconciliation: "attention:needs_reconciliation",
-  candidateEnd: (candidateId: string) => `cand:${candidateId}:end`,
-  unresponsive: (since: string) => `attention:worker_unresponsive:${since}`,
+  workerReleased: "worker:settled",
+  launchAttention: "attention:needs_reconciliation",
+  launchFinish: "finish",
 } as const;
 
 const FINISH_MESSAGES: Record<RequestOutcome, string> = {
@@ -348,26 +340,37 @@ export function outcomeOf(stop: StopCode): RequestOutcome {
   }
 }
 
-export async function appendNeedsReconciliation(deps: StepDeps, requestId: string, message: string, key: string = EVENT_KEYS.needsReconciliation): Promise<void> {
+export async function appendNeedsReconciliation(deps: StepDeps, requestId: string, message: string, key: string): Promise<void> {
   await deps.records.appendEvent(requestId, { event_key: key, type: "attention", host_id: null, candidate_id: null, item_key: null, case_id: null, message, data: { code: "needs_reconciliation" } }, deps.now());
 }
 
+/** Whether the request's attention is needs_reconciliation now: its last attention change raised that code. */
+export function needsReconciliationRaised(events: readonly StoredFactoryEvent[]): boolean {
+  let current: unknown = null;
+  for (const event of events) {
+    if (event.type === "attention") current = event.data.code;
+    else if (event.type === "attention_cleared" && event.data.code === current) current = null;
+  }
+  return current === "needs_reconciliation";
+}
+
 /**
- * Finishes a request: attention first when its spend needs reconciliation, then request_finished
- * (one per request: the shared key "finish"), then the budget closed with the stop code. Returns
- * false when another writer already finished the request with other content.
+ * Finishes a request whose worker never ran: attention first when its spend needs reconciliation,
+ * then request_finished, then the budget closed with the stop code. Returns false when another
+ * writer already finished the request with other content. A refused close (the budget is already
+ * closed with another cause) is logged: the finish stands, so the caller still releases the slot.
  */
-export async function finishRequest(deps: StepDeps, request: Pick<FactoryRequestRecord, "request_id" | "budget_key">, stop: StopCode, options: { attention: string | null }): Promise<boolean> {
-  if (options.attention !== null) await appendNeedsReconciliation(deps, request.request_id, options.attention);
+export async function finishLaunch(deps: StepDeps, request: Pick<FactoryRequestRecord, "request_id" | "budget_key">, stop: StopCode, options: { attention: string | null }): Promise<boolean> {
+  if (options.attention !== null) await appendNeedsReconciliation(deps, request.request_id, options.attention, EVENT_KEYS.launchAttention);
   const outcome = outcomeOf(stop);
   const finished = await deps.records.appendEvent(
     request.request_id,
-    { event_key: EVENT_KEYS.finish, type: "request_finished", host_id: null, candidate_id: null, item_key: null, case_id: null, message: FINISH_MESSAGES[outcome], data: { outcome, stop_code: stop } },
+    { event_key: EVENT_KEYS.launchFinish, type: "request_finished", host_id: null, candidate_id: null, item_key: null, case_id: null, message: FINISH_MESSAGES[outcome], data: { outcome, stop_code: stop } },
     deps.now(),
   );
   if (finished.kind === "conflict" || finished.kind === "refused") return false;
   const closed = await deps.ledger.budgets.close(request.budget_key, stop);
-  if (!closed.ok) throw new Error(`the budget close was refused (${closed.code})`);
+  if (!closed.ok) deps.log(`factory ${request.request_id} the budget close was refused (${closed.code}); the finish stands`);
   return true;
 }
 
@@ -375,11 +378,29 @@ export function finishedEvent(events: readonly StoredFactoryEvent[]): StoredFact
   return events.find((event) => event.type === "request_finished") ?? null;
 }
 
+/** The request's attention when a validation run's spend needs reconciliation, keyed by the run. */
+export const VALIDATION_ATTENTION = "A validation run's sandbox outcome is uncertain; its spend needs reconciliation.";
+
+export function validationAttentionKey(validationId: string): string {
+  return `validation:${validationId}:attention`;
+}
+
 const RESULT_MESSAGES: Record<ValidationResult, string> = {
   passed: "Validation run finished: passed.",
   failed: "Validation run finished: failed.",
   error: "Validation run finished: error.",
 };
+
+/**
+ * The matrix a run that finished `error` may carry (contract section 11, revision 2's ValidationRun
+ * rule): none, or one with a cell that observed error or incomplete. A complete pass and fail
+ * matrix, such as a passed harness's whose settlement then failed, is dropped.
+ */
+function errorMatrix(matrix: ValidationMatrix | null): ValidationMatrix | null {
+  if (matrix === null) return null;
+  const cells = [matrix.original_suite, matrix.verification].flatMap((set) => [set.clean, set.buggy, set.fixed]);
+  return cells.some((cell) => cell.observed === "error" || cell.observed === "incomplete") ? matrix : null;
+}
 
 /**
  * Finishes a validation run: its finished record, the request's attention when its spend is
@@ -392,14 +413,13 @@ export async function finishValidation(
   result: { result: ValidationResult; matrix: ValidationMatrix | null; message: string | null; cost_microusd: number | null; uncertain: boolean },
 ): Promise<void> {
   const id = validation.validation_id;
+  const matrix = result.result === "error" ? errorMatrix(result.matrix) : result.matrix;
   await deps.records.appendValidationEvent(
     id,
-    { event_key: "finished", type: "finished", data: { result: result.result, matrix: result.matrix, message: result.message, cost_microusd: result.cost_microusd, finished_at: deps.now().toISOString() } },
+    { event_key: "finished", type: "finished", data: { result: result.result, matrix, message: result.message, cost_microusd: result.cost_microusd, finished_at: deps.now().toISOString() } },
     deps.now(),
   );
-  if (result.uncertain) {
-    await appendNeedsReconciliation(deps, request.request_id, "A validation run's sandbox outcome is uncertain; its spend needs reconciliation.", `validation:${id}:attention`);
-  }
+  if (result.uncertain) await appendNeedsReconciliation(deps, request.request_id, VALIDATION_ATTENTION, validationAttentionKey(id));
   await deps.records.appendEvent(
     request.request_id,
     { event_key: `validation:${id}:finished`, type: "validation_finished", host_id: validation.host_id, candidate_id: null, item_key: null, case_id: validation.case_id, message: RESULT_MESSAGES[result.result], data: { validation_id: id, result: result.result } },
@@ -421,15 +441,40 @@ export async function stopQuietly(sandbox: WorkerSandboxSdk, name: string, log: 
   }
 }
 
-/** Why the factory slot is busy: needs_reconciliation when the holder's root has an uncertain operation. */
-export async function busyReason(spend: Spend, slotKey: string): Promise<"active" | "needs_reconciliation"> {
-  const slot = await spend.slotStatus({ slot_key: slotKey });
-  if (!slot.ok) return "active";
-  for (const id of slot.release_blockers.operation_ids) {
-    const status = await spend.operationStatus({ operation_id: id });
+/**
+ * Whether a root's request or validation run has finished, and whether it left its spend for
+ * reconciliation: the request's attention is needs_reconciliation, or the run finished with no cost.
+ */
+export async function rootFinish(records: Pick<FactoryRecords, "rootOwner" | "events" | "validationEvents">, root: string): Promise<{ finished: boolean; reconciliation: boolean }> {
+  const owner = await records.rootOwner(root);
+  if (owner === null) return { finished: false, reconciliation: false };
+  if (owner.validation_id !== null) {
+    const finished = (await records.validationEvents(owner.validation_id)).find((event) => event.type === "finished");
+    return { finished: finished !== undefined, reconciliation: finished?.data.cost_microusd === null };
+  }
+  const events = await records.events(owner.request_id);
+  return { finished: finishedEvent(events) !== null, reconciliation: needsReconciliationRaised(events) };
+}
+
+/**
+ * Why the factory slot is busy (contract section 8.5). needs_reconciliation, which a client must not
+ * retry, when the holder's root has an uncertain operation, or when its request or validation run
+ * has finished while the slot is still held and either something of the root is still open (an
+ * operation not settled, such as a reservation whose launch was refused while prepared, or an
+ * unconfirmed sandbox) or its spend was left for reconciliation. Otherwise active: the holder
+ * runs, or it finished cleanly and its worker, or the lost-worker routine, is about to release it.
+ */
+export async function busyReason(deps: { spend: Spend; records: Pick<FactoryRecords, "rootOwner" | "events" | "validationEvents"> }, slotKey: string): Promise<"active" | "needs_reconciliation"> {
+  const slot = await deps.spend.slotStatus({ slot_key: slotKey });
+  if (!slot.ok || slot.holder === null) return "active";
+  const blockers = slot.release_blockers;
+  for (const id of blockers.operation_ids) {
+    const status = await deps.spend.operationStatus({ operation_id: id });
     if (status.ok && status.state === "uncertain") return "needs_reconciliation";
   }
-  return "active";
+  const owner = await rootFinish(deps.records, slot.holder);
+  if (!owner.finished) return "active";
+  return owner.reconciliation || blockers.operation_ids.length > 0 || blockers.child_resources.length > 0 ? "needs_reconciliation" : "active";
 }
 
 /** Moves an operation to uncertain from launching or running; any other state is left as it is. Returns its state afterwards. */

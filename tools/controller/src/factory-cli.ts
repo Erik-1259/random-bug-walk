@@ -9,11 +9,12 @@
 // validation run's deadline is its accepted time plus 1,800 s, read from its record.
 //
 // Exit codes: 0 the request or run finished and the slot was released; 1 it finished with the slot
-// held (reconciliation needed) or was fenced; 2 a usage or input error, or no wiring in this build,
-// with nothing run.
+// held (reconciliation needed), was fenced, or the request loop ended without finishing the request
+// (the lost-worker routine finishes it); 2 a usage or input error, or no wiring in this build, with
+// nothing run.
 import { parseArgs } from "node:util";
 import { loadRateSheet } from "@rbw/envelope";
-import { isUuid, stopQuietly, validationSandboxName, workerSandboxName } from "./factory-ledger.ts";
+import { stopQuietly, validationSandboxName, workerSandboxName } from "./factory-ledger.ts";
 import { createWorkerSandboxSdk } from "./factory-web.ts";
 import type { WorkerSandboxSdk } from "./factory-ports.ts";
 import { loadFactoryWiring } from "./factory-wiring.ts";
@@ -63,7 +64,6 @@ async function command(args: string[], io: FactoryCommandIo): Promise<number> {
   const validationId = values["validation-id"];
   if ((requestId === undefined) === (validationId === undefined)) throw new UsageError("give exactly one of --request-id and --validation-id");
   const id = requestId ?? validationId ?? "";
-  if (!isUuid(id)) throw new UsageError("the ID must be a lowercase UUID");
   const backend = values.backend ?? "sandbox";
   if (backend !== "sandbox" && backend !== "docker") throw new UsageError("--backend must be sandbox or docker");
   let deadline: Date | null = null;
@@ -80,13 +80,14 @@ async function command(args: string[], io: FactoryCommandIo): Promise<number> {
   const wiring = await (io.load ?? loadFactoryWiring)();
   if (!wiring.ok) throw new UsageError(`factory-worker is not wired in this build; missing: ${wiring.missing.join("; ")}`);
   const { identity } = wiring.wiring;
+  if (!identity.isUuid(id)) throw new UsageError("the ID must be a lowercase UUID");
   const rates = await loadRateSheet(RATE_SHEET_PATH);
   const opened = await wiring.wiring.openLedger(databaseUrl, io.now);
   try {
     const deps = { ledger: opened.ledger, records: opened.records, identity, rates, now: io.now, log: io.log, provider: backend === "sandbox" ? ("vercel-sandbox" as const) : ("docker" as const), ...(sandbox === undefined ? {} : { sandbox }) };
     if (requestId !== undefined && deadline !== null) {
       const outcome = await runFactoryWorker(deps, { request_id: requestId, deadline, orchestrate: wiring.wiring.orchestrate(backend) });
-      io.out(outcome.kind === "fenced" ? `request=${requestId} fenced` : `request=${requestId} stop_code=${outcome.stop_code} slot_released=${String(outcome.slot_released)}`);
+      io.out(outcome.kind === "finished" ? `request=${requestId} stop_code=${outcome.stop_code} slot_released=${String(outcome.slot_released)}` : `request=${requestId} ${outcome.kind}`);
       // Last: stopping its own sandbox ends this process. The provider timeout ends it otherwise.
       if (sandbox !== undefined && backend === "sandbox") await stopQuietly(sandbox, workerSandboxName(identity.requestRoot(requestId)), io.log);
       return outcome.kind === "finished" && outcome.slot_released ? 0 : 1;

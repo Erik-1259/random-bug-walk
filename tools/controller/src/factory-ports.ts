@@ -3,7 +3,7 @@
 // and factory records of the spend ledger, the identity roots of the factory core, and the
 // Vercel Sandbox SDK with the credentials bound. The integration pass maps each port to the real
 // function once it is on the same base. Type-only, so web-safe.
-import type { EventType, HostId, PackageHashes, StopCode } from "@rbw/factory-contract";
+import type { CopyState, EventType, HostId, PackageHashes, StopCode } from "@rbw/factory-contract";
 import type { Reservation, ReserveRequest, Spend } from "@rbw/spend";
 
 // Request budgets ---------------------------------------------------------------------------
@@ -77,6 +77,13 @@ export interface FactoryRequestRecord {
   created_at: string;
 }
 
+/**
+ * A validation run's record. HELD: the spend ledger's validation record stores the IDs, the root
+ * and its own record time, but not `host_id`, `accepted_at` or `package_sha256`, which this code
+ * needs for the run's operation, its 1,800 s window and its harness input. Until one source for
+ * them is chosen (columns on that record, or this code's first keyed validation event), the
+ * integration cannot map this port; see HELD_INTERFACES in factory-wiring.ts.
+ */
 export interface FactoryValidationRecord {
   validation_id: string;
   request_id: string;
@@ -84,6 +91,7 @@ export interface FactoryValidationRecord {
   host_id: HostId;
   /** The validation root: the run's slot hold and operations use it. */
   root: string;
+  /** When the POST was accepted; the run's 1,800 s window counts from it. */
   accepted_at: string;
   package_sha256: PackageHashes;
 }
@@ -108,17 +116,40 @@ export interface FactoryRecords {
   validation(validationId: string): Promise<FactoryValidationRecord | null>;
   appendValidationEvent(validationId: string, event: ValidationEventInput, at: Date): Promise<AppendOutcome>;
   validationEvents(validationId: string): Promise<(ValidationEventInput & { seq: number; at: string })[]>;
+  /** The request, or the validation run and its request, whose root this is (such as the slot's holder); null for no factory root. */
+  rootOwner(root: string): Promise<{ request_id: string; validation_id: string | null } | null>;
 }
 
 // Identity ----------------------------------------------------------------------------------
 
-/** The factory core's identity module: the roots, their namespaces and the project ID. */
+/**
+ * The factory core's identity module, the only implementation of the factory's IDs: the roots,
+ * the copies' execution IDs and the project ID. This code computes none of them itself.
+ */
 export interface FactoryIdentity {
-  request_namespace: string;
-  validation_namespace: string;
   project_id: string;
+  isUuid(value: unknown): value is string;
   requestRoot(requestId: string): string;
   validationRoot(validationId: string): string;
+  /** UUIDv5 of `<root>:<subject_id>:<state>-<n>` in the root's namespace (the request's or the validation's). */
+  copyExecutionId(input: { kind: "request" | "validation"; root: string; subject_id: string; state: CopyState; n: number }): string;
+}
+
+// Event content -------------------------------------------------------------------------------
+
+/**
+ * The factory core's event module, for the request events this code appends on the core's terms:
+ * the core owns their keys and messages, so there is one key table, and this code only appends them.
+ */
+export interface FactoryEventBuilders {
+  /**
+   * The lost-worker finish of a request that has not finished, in order: the in-flight candidate's
+   * end (incomplete_run), attention needs_reconciliation and request_finished worker_lost. Empty
+   * once the request finished.
+   */
+  lostWorker(input: { events: readonly StoredFactoryEvent[]; now: Date }): FactoryEventInput[];
+  /** attention{code} under the core's key for the request's own attention. */
+  attention(code: "needs_reconciliation", now: Date): FactoryEventInput;
 }
 
 // Vercel Sandbox ----------------------------------------------------------------------------

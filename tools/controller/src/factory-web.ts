@@ -2,7 +2,7 @@
 // operation identities and sandbox names, the request and validation launches, the one lost-worker
 // routine and the end of a reconciliation. Like judge-web.ts it imports only small modules: no
 // runner, harness, driver or PGlite. The service injects the ledger, the factory records, the
-// identity module, the Sandbox SDK and the clock.
+// identity module, the factory core's event builders, the Sandbox SDK and the clock.
 import type { WorkerSandboxInstance, WorkerSandboxSdk } from "./factory-ports.ts";
 
 export { parseRateSheet } from "@rbw/envelope";
@@ -15,23 +15,21 @@ export {
   SANDBOX_PROVIDER,
   WORKER_ACTOR,
   busyReason,
-  copyExecutionId,
   copyOperation,
   copySandboxName,
   copySettlementFor,
   fullSettlement,
   outcomeOf,
-  uuidV5,
   validationOperation,
   validationSandboxName,
   validationSettlement,
   workerOperation,
   workerSandboxName,
 } from "./factory-ledger.ts";
-export type { CopyIdentity, FactoryOperation, OperationContext, SandboxUsage } from "./factory-ledger.ts";
+export type { CopyIdentity, CopyOperationContext, FactoryOperation, OperationContext, SandboxUsage } from "./factory-ledger.ts";
 export { LaunchConfigError, VALIDATION_POLL_MS, WORKER_REPOSITORY, startFactoryValidation, startFactoryWorker, workerCommandArgs } from "./factory-launch.ts";
 export type { FactoryLaunchDeps, ValidationStart, ValidationStartArgs, WorkerLaunchConfig, WorkerStart } from "./factory-launch.ts";
-export { completeReconciliation, finalizeLostWorker, noteWorkerUnresponsive } from "./factory-lost.ts";
+export { completeReconciliation, finalizeLostWorker } from "./factory-lost.ts";
 export type { LostDeps, LostOutcome, LostTarget, ReconciliationOutcome } from "./factory-lost.ts";
 export type * from "./factory-ports.ts";
 

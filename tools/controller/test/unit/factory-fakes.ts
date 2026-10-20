@@ -2,21 +2,30 @@
 // factory pool and slot key; an in-memory request-budget layer and factory record store with the
 // behavior the ledger's budget functions and records are specified to have (replay by operation or
 // event key, budget room over committed amounts, validation reserves after close, only the
-// contract's late event types after request_finished); synthetic identity namespaces; a fake
-// Sandbox SDK that records every call; and a settable clock.
+// contract's late event types after request_finished); stand-ins for the factory core's identity
+// and event modules over synthetic namespaces; fake Sandbox SDKs for worker and copy sandboxes
+// that record every call; and a settable clock.
+import { createHash } from "node:crypto";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { Readable } from "node:stream";
 import { PGlite } from "@electric-sql/pglite";
+import { pack } from "tar-stream";
 import { loadRateSheet } from "@rbw/envelope";
 import type { Rates } from "@rbw/envelope";
-import type { EventType, HostId, StopCode } from "@rbw/factory-contract";
+import type { CopyPlan, CopyRoots, EventType, HostId, StopCode } from "@rbw/factory-contract";
+import type { SandboxInstance, SandboxSdk } from "@rbw/local-runner";
+import { sha256Hex } from "@rbw/schema";
 import { createSpend, migrate } from "@rbw/spend";
 import type { Reservation, ReserveRequest, Spend } from "@rbw/spend";
-import { uuidV5 } from "../../src/factory-ledger.ts";
 import type {
   AppendOutcome,
   BudgetResult,
   BudgetRole,
   BudgetTotals,
   FactoryBudgets,
+  FactoryEventBuilders,
   FactoryEventInput,
   FactoryIdentity,
   FactoryLedger,
@@ -35,6 +44,17 @@ import { RATE_SHEET_PATH } from "../../src/rate-sheet.ts";
 
 export const SYNTHETIC_REQUEST_NAMESPACE = "5a0e6c1e-0000-5000-8000-0000000000a1";
 export const SYNTHETIC_VALIDATION_NAMESPACE = "5a0e6c1e-0000-5000-8000-0000000000b2";
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/** A test stand-in for the factory core's UUIDv5 (RFC 4122 version 5); the code under test computes no IDs itself. */
+export function syntheticUuidV5(namespace: string, name: string): string {
+  const hash = createHash("sha1").update(Buffer.from(namespace.replaceAll("-", ""), "hex")).update(name, "utf8").digest();
+  const bytes = hash.subarray(0, 16);
+  bytes[6] = ((bytes[6] ?? 0) & 0x0f) | 0x50;
+  bytes[8] = ((bytes[8] ?? 0) & 0x3f) | 0x80;
+  const hex = bytes.toString("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
 export const WORKER_IMAGE = `synthetic-team/synthetic-project/rbw-factory-worker@sha256:${"ab".repeat(32)}`;
 export const CREDENTIALS = { DATABASE_URL: "postgres://synthetic.invalid/db", VERCEL_TOKEN: "synthetic-token", VERCEL_TEAM_ID: "synthetic-team", VERCEL_PROJECT_ID: "synthetic-project" };
 export const INTERPRETATION_SHA256 = "1".repeat(64);
@@ -42,13 +62,40 @@ export const CASE_ID = "c".repeat(64);
 export const CANDIDATE_A = "a".repeat(64);
 export const CANDIDATE_B = "b".repeat(64);
 
+/** A stand-in for the factory core's identity module, over synthetic namespaces. */
 export function syntheticIdentity(): FactoryIdentity {
   return {
-    request_namespace: SYNTHETIC_REQUEST_NAMESPACE,
-    validation_namespace: SYNTHETIC_VALIDATION_NAMESPACE,
-    project_id: uuidV5(SYNTHETIC_REQUEST_NAMESPACE, "synthetic-project"),
-    requestRoot: (id) => uuidV5(SYNTHETIC_REQUEST_NAMESPACE, id),
-    validationRoot: (id) => uuidV5(SYNTHETIC_VALIDATION_NAMESPACE, id),
+    project_id: syntheticUuidV5(SYNTHETIC_REQUEST_NAMESPACE, "synthetic-project"),
+    isUuid: (value): value is string => typeof value === "string" && UUID.test(value),
+    requestRoot: (id) => syntheticUuidV5(SYNTHETIC_REQUEST_NAMESPACE, id),
+    validationRoot: (id) => syntheticUuidV5(SYNTHETIC_VALIDATION_NAMESPACE, id),
+    copyExecutionId: (input) => syntheticUuidV5(input.kind === "request" ? SYNTHETIC_REQUEST_NAMESPACE : SYNTHETIC_VALIDATION_NAMESPACE, `${input.root}:${input.subject_id}:${input.state}-${String(input.n)}`),
+  };
+}
+
+const NO_LINKS = { host_id: null, candidate_id: null, item_key: null, case_id: null };
+
+/**
+ * A stand-in for the factory core's event module, with its key scheme for the lost-worker finish
+ * (`lost:candidate-end`, `lost:attention`, `lost:finished`) and the run's attention
+ * (`run:attention:<code>`).
+ */
+export function syntheticEventBuilders(): FactoryEventBuilders {
+  const attention = (key: string): FactoryEventInput => ({ event_key: key, type: "attention", ...NO_LINKS, message: "Spend needs reconciliation.", data: { code: "needs_reconciliation" } });
+  return {
+    lostWorker({ events }) {
+      if (events.some((event) => event.type === "request_finished")) return [];
+      const ended = new Set(events.filter((event) => ["candidate_rejected", "candidate_invalid", "candidate_incomplete", "candidate_skipped", "case_delivered"].includes(event.type)).map((event) => event.candidate_id));
+      const inFlight = events.filter((event) => event.type === "candidate_selected" && !ended.has(event.candidate_id)).at(-1);
+      const out: FactoryEventInput[] = [];
+      if (inFlight !== undefined) {
+        out.push({ event_key: "lost:candidate-end", type: "candidate_incomplete", host_id: inFlight.host_id, candidate_id: inFlight.candidate_id, item_key: null, case_id: null, message: "Incomplete: the worker stopped responding.", data: { reason: "incomplete_run" } });
+      }
+      out.push(attention("lost:attention"));
+      out.push({ event_key: "lost:finished", type: "request_finished", ...NO_LINKS, message: "Request finished: operational error.", data: { outcome: "operational_error", stop_code: "worker_lost" } });
+      return out;
+    },
+    attention: (code) => attention(`run:attention:${code}`),
   };
 }
 
@@ -238,6 +285,13 @@ export class FakeRecords implements FactoryRecords {
     return [...(this.validationLog.get(validationId) ?? [])];
   }
 
+  async rootOwner(root: string): Promise<{ request_id: string; validation_id: string | null } | null> {
+    await roundTrip();
+    for (const request of this.requests.values()) if (request.root === root) return { request_id: request.request_id, validation_id: null };
+    for (const validation of this.validations.values()) if (validation.root === root) return { request_id: validation.request_id, validation_id: validation.validation_id };
+    return null;
+  }
+
   types(requestId: string): string[] {
     return (this.eventLog.get(requestId) ?? []).map((event) => event.type);
   }
@@ -317,6 +371,7 @@ export interface FactoryWorld {
   ledger: FactoryLedger;
   records: FakeRecords;
   identity: FactoryIdentity;
+  events: FactoryEventBuilders;
   sandbox: FakeWorkerSandbox;
   clock: Clock;
   rates: Rates;
@@ -342,6 +397,7 @@ export async function factoryWorld(): Promise<FactoryWorld> {
     ledger: { spend, budgets },
     records: new FakeRecords(),
     identity: syntheticIdentity(),
+    events: syntheticEventBuilders(),
     sandbox: new FakeWorkerSandbox(),
     clock,
     rates: await loadRateSheet(RATE_SHEET_PATH),
@@ -387,4 +443,124 @@ export async function operationState(w: FactoryWorld, operationId: string): Prom
 
 export function host(value: HostId): HostId {
   return value;
+}
+
+// Copy sandboxes ----------------------------------------------------------------------------------
+
+export const COPY_DIGEST = `sha256:${"e9".repeat(32)}`;
+export const COPY_APP = "export const synthetic = 1;\n";
+export const COPY_CHECK = "synthetic check\n";
+
+type SandboxCreate = Parameters<SandboxSdk["create"]>[0];
+type CommandParams = Parameters<SandboxInstance["runCommand"]>[0];
+
+/** A fake Sandbox for copies: an in-memory file system per sandbox; the copy's command (whatever runs other than mkdir and tar) is the test's. */
+export class FakeCopySandbox implements SandboxSdk {
+  readonly creates: SandboxCreate[] = [];
+  readonly files = new Map<string, Map<string, Buffer>>();
+  readonly commands: CommandParams[] = [];
+  readonly stops: string[] = [];
+  readonly instances = new Map<string, SandboxInstance & { status: string }>();
+  createError: Error | null = null;
+  reportedImage: string | null = null;
+  stopTakesEffect = true;
+  /** The copy's command: writes results into the sandbox's file system and returns its exit code. */
+  copy: (fs: Map<string, Buffer>) => number = (fs) => {
+    fs.set("/workspace/results/record.json", Buffer.from('{"synthetic":true}\n'));
+    return 0;
+  };
+  /** Extra archive entries the results tar holds. */
+  extraEntries: { name: string; type: "file" | "symlink" }[] = [];
+
+  create(params: SandboxCreate): Promise<SandboxInstance> {
+    this.creates.push(params);
+    if (this.createError !== null) return Promise.reject(this.createError);
+    const fs = new Map<string, Buffer>();
+    this.files.set(params.name, fs);
+    const instance = {
+      name: params.name,
+      status: "running",
+      image: this.reportedImage ?? params.image,
+      tags: params.tags,
+      writeFiles: (files: { path: string; content: Uint8Array }[]) => {
+        for (const file of files) fs.set(file.path, Buffer.from(file.content));
+        return Promise.resolve();
+      },
+      runCommand: (command: CommandParams) => {
+        this.commands.push(command);
+        if (command.signal?.aborted === true) return Promise.reject(new Error("synthetic: aborted"));
+        let exitCode = 0;
+        if (command.cmd === "tar") {
+          this.archive.set(params.name, this.tarOf(fs, command.args[1] ?? ""));
+        } else if (command.cmd !== "mkdir") {
+          exitCode = this.copy(fs);
+        }
+        return Promise.resolve({ wait: (options?: { signal?: AbortSignal }) => (options?.signal?.aborted === true ? Promise.reject(new Error("synthetic: aborted")) : Promise.resolve({ exitCode })) });
+      },
+      readFile: async () => {
+        const bytes = await this.archive.get(params.name);
+        return bytes === undefined ? null : Readable.from([bytes]);
+      },
+      stop: () => {
+        this.stops.push(params.name);
+        if (this.stopTakesEffect) instance.status = "stopped";
+        return Promise.resolve(undefined);
+      },
+    };
+    this.instances.set(params.name, instance as unknown as SandboxInstance & { status: string });
+    return Promise.resolve(instance as unknown as SandboxInstance);
+  }
+
+  get(name: string): Promise<SandboxInstance | null> {
+    return Promise.resolve(this.instances.get(name) ?? null);
+  }
+
+  readonly archive = new Map<string, Promise<Buffer>>();
+
+  tarOf(fs: Map<string, Buffer>, dir: string): Promise<Buffer> {
+    const archive = pack();
+    for (const [path, content] of fs) if (path.startsWith(`${dir}/`)) archive.entry({ name: `./${path.slice(dir.length + 1)}` }, content);
+    for (const entry of this.extraEntries) {
+      if (entry.type === "symlink") archive.entry({ name: entry.name, type: "symlink", linkname: "/etc/passwd" });
+      else archive.entry({ name: entry.name }, "x");
+    }
+    archive.finalize();
+    return new Promise((done, fail) => {
+      const chunks: Buffer[] = [];
+      archive.on("data", (chunk: unknown) => {
+        if (Buffer.isBuffer(chunk)) chunks.push(chunk);
+      });
+      archive.on("end", () => {
+        done(Buffer.concat(chunks));
+      });
+      archive.on("error", fail);
+    });
+  }
+}
+
+/** Fresh harness roots holding a copy plan's two files, and a fresh local work directory. */
+export function copyRoots(): { roots: CopyRoots; work: string } {
+  const base = mkdtempSync(join(tmpdir(), "rbw-factory-runner-test-"));
+  const roots = { app_root: join(base, "app"), evaluator_root: join(base, "evaluator") };
+  mkdirSync(join(roots.app_root, "src"), { recursive: true });
+  mkdirSync(join(roots.evaluator_root, "checks"), { recursive: true });
+  writeFileSync(join(roots.app_root, "src", "store.ts"), COPY_APP);
+  writeFileSync(join(roots.evaluator_root, "checks", "check.txt"), COPY_CHECK);
+  return { roots, work: join(base, "work") };
+}
+
+/** A synthetic task-report copy plan over the files of copyRoots(). */
+export function copyPlan(overrides: Partial<CopyPlan> = {}): CopyPlan {
+  return {
+    copy_id: "synthetic-copy-buggy-01",
+    host_id: "task-report",
+    state: "buggy",
+    image: { reference: "registry.invalid/synthetic/task-report-kit:1", digest: COPY_DIGEST },
+    files: [{ path: "src/store.ts", sha256: sha256Hex(Buffer.from(COPY_APP)) }],
+    evaluator_files: [{ path: "checks/check.txt", sha256: sha256Hex(Buffer.from(COPY_CHECK)) }],
+    destinations: { app: "/workspace/app", evaluator: "/workspace/evaluator", results: "/workspace/results" },
+    command: ["node", "/workspace/evaluator/run.ts", "--copy", "buggy"],
+    limits: { timeout_s: 600, vcpus: 4, memory_mb: 8192, network: "none" },
+    ...overrides,
+  };
 }

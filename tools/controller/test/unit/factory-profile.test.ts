@@ -38,6 +38,8 @@ describe("the factory profile", () => {
     const changed = { ...sheet, entries: sheet.entries.map((entry) => (entry.unit === "vcpu_second" ? { ...entry, price: { ...entry.price, microusd: entry.price.microusd + 1 } } : entry)) };
     const other = parseRateSheet(JSON.stringify(changed));
     expect(() => factoryEnvelope(other, { kind: "worker" })).toThrow(ProfileMismatch);
+    // A sheet that prices every line the same but is not the profile's sheet is refused by its hash alone.
+    expect(() => factoryEnvelope({ ...rates, rate_sheet_sha256: "f".repeat(64) }, { kind: "worker" })).toThrow(/not the factory profile's/);
     // The same sheet bytes with a profile whose frozen amount differs are refused too.
     const wrong = { ...FACTORY_PROFILE, prices: { ...FACTORY_PROFILE.prices, worker_worst_case_microusd: 1 } };
     expect(() => factoryEnvelope(rates, { kind: "worker" }, wrong)).toThrow(ProfileMismatch);

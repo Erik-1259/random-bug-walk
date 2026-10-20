@@ -196,6 +196,46 @@ describe("startFactoryWorker", () => {
     }
   });
 
+  it("treats a 409 or 429 create with nothing found by its name as uncertain, never definite: the slot stays held", async () => {
+    for (const code of [409, 429]) {
+      const world = await factoryWorld();
+      try {
+        const record = await acceptRequest(world);
+        world.sandbox.createError = new SyntheticApiError(code);
+        const started = await startFactoryWorker({ ...deps(), ledger: world.ledger, records: world.records, identity: world.identity, sandbox: world.sandbox, now: world.clock.now }, record.request_id);
+        expect(started.kind).toBe("uncertain");
+        expect(await operationState(world, workerOperation({ identity: world.identity, rates: world.rates }, record).operation_id)).toBe("uncertain");
+        const slot = await world.spend.slotStatus({ slot_key: "factory" });
+        expect(slot.ok && slot.holder).toBe(record.root);
+        expect((await world.records.events(record.request_id)).at(-1)?.data).toEqual({ outcome: "operational_error", stop_code: "needs_reconciliation" });
+      } finally {
+        await world.close();
+      }
+    }
+  });
+
+  it("answers busy needs_reconciliation after a worker launch whose launching transition was refused, which leaves its reservation prepared", async () => {
+    const record = await acceptRequest(w);
+    const transition = w.spend.transition.bind(w.spend);
+    w.ledger.spend = { ...w.spend, transition: (request) => (request.to_state === "launching" ? Promise.resolve({ ok: false as const, code: "pool_halted" as const }) : transition(request)) };
+    expect((await startFactoryWorker(deps(), record.request_id)).kind).toBe("uncertain");
+    w.ledger.spend = w.spend;
+    expect(await operationState(w, workerOp(record).operation_id)).toBe("prepared");
+    expect(w.sandbox.count("create")).toBe(0);
+    expect(await slotHolder(w)).toBe(record.root);
+    const validation = { request_id: record.request_id, case_id: CASE_ID, validation_id: syntheticUuid("7010"), host_id: "task-report" as const, package_sha256: { bug_case: "d".repeat(64), validator: "e".repeat(64) }, harness: { name: "rbw-validate" as const, version: "1" } };
+    expect(await startFactoryValidation(deps(), validation)).toEqual({ kind: "busy", reason: "needs_reconciliation" });
+  });
+
+  it("still releases the slot when the budget close is refused after a refused worker reservation", async () => {
+    const record = await acceptRequest(w, { budget: 100_000 });
+    w.ledger.budgets = { reserve: (key, role, request) => w.budgets.reserve(key, role, request), close: () => Promise.resolve({ ok: false as const, code: "idempotency_conflict" }), status: (key) => w.budgets.status(key) };
+    expect(await startFactoryWorker(deps(), record.request_id)).toEqual({ kind: "refused", code: "budget_exhausted" });
+    expect(await slotHolder(w)).toBeNull();
+    expect(w.records.types(record.request_id).at(-1)).toBe("request_finished");
+    expect(w.logs.some((line) => line.includes("idempotency_conflict"))).toBe(true);
+  });
+
   it("leaves the worker uncertain when its command cannot be started after the create", async () => {
     const record = await acceptRequest(w);
     w.sandbox.failRun = true;
@@ -249,6 +289,43 @@ describe("startFactoryValidation", () => {
     const refused = await w.ledger.budgets.reserve(record.budget_key, "request", workerOp(record).request);
     expect(refused.ok).toBe(false);
     expect(!refused.ok && refused.code).toBe("budget_closed");
+  });
+
+  it("answers a repeated start of one run with the existing run, reserving and launching nothing more, and refuses its ID on another case", async () => {
+    const record = await finishedRequest();
+    const a = args(record.request_id);
+    expect((await startFactoryValidation(deps(), a)).kind).toBe("accepted");
+    const again = await startFactoryValidation(deps(), a);
+    expect(again.kind === "accepted" && [again.run.validation_id, again.run.state]).toEqual([a.validation_id, "queued"]);
+    expect(w.sandbox.count("create")).toBe(1);
+    const budget = await w.ledger.budgets.status(record.budget_key);
+    expect(budget.ok && budget.open_microusd).toBe(BigInt(FACTORY_PROFILE.prices.validation_worst_case_microusd["task-report"]));
+    expect(w.records.types(record.request_id).filter((type) => type === "validation_started")).toHaveLength(1);
+    expect(await startFactoryValidation(deps(), { ...a, case_id: "f".repeat(64) })).toEqual({ kind: "unavailable", message: "The validation ID is already used." });
+  });
+
+  it("refuses a worker image that is not pinned by digest before taking the slot", async () => {
+    const record = await finishedRequest();
+    const a = args(record.request_id);
+    await expect(startFactoryValidation(deps({ launch: { image: "synthetic/rbw-factory-worker:latest", env: CREDENTIALS } }), a)).rejects.toThrow(/digest/);
+    expect(await slotHolder(w)).toBeNull();
+    expect(await w.records.validation(a.validation_id)).toBeNull();
+    expect(w.budgets.budgets.get(record.budget_key)?.operations).toEqual([]);
+  });
+
+  it("records and launches nothing over a run's reservation that an earlier start already moved past prepared", async () => {
+    const record = await finishedRequest();
+    const a = args(record.request_id);
+    const root = w.identity.validationRoot(a.validation_id);
+    const op = validationOperation({ identity: w.identity, rates: w.rates }, { root, case_id: CASE_ID, host_id: "task-report" });
+    // An earlier start took the slot, reserved and began the launch, and its record never landed.
+    expect((await w.spend.acquireSlot({ slot_key: "factory", root_execution_id: root, actor_role: "factory-route" })).ok).toBe(true);
+    expect((await w.ledger.budgets.reserve(record.budget_key, "validation", op.request)).ok).toBe(true);
+    expect((await w.spend.transition({ operation_id: op.operation_id, from_state: "prepared", to_state: "launching", actor_role: "factory-route", slot_key: "factory" })).ok).toBe(true);
+    expect(await startFactoryValidation(deps(), a)).toEqual({ kind: "unavailable", message: "An earlier start of this validation needs reconciliation." });
+    expect(await w.records.validation(a.validation_id)).toBeNull();
+    expect(w.records.types(record.request_id)).not.toContain("validation_started");
+    expect(w.sandbox.count("create")).toBe(0);
   });
 
   it("answers busy while the request holds the slot, recording and reserving nothing", async () => {

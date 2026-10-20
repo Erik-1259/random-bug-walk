@@ -7,17 +7,18 @@
 // records it under the run's operation). Inside: a sandbox from the plan's kit image pinned by
 // digest, named after the copy's execution, with no network, the plan's vCPUs (at least enough for
 // its memory at 2 GB each) and the plan's timeout plus the shutdown allowance as its provider
-// timeout; the files placed at their destinations; the command run once within its timeout;
-// destinations.results packed and read back into a fresh local directory; the stop confirmed by
-// status. It resolves for every definite outcome and rejects (SandboxCopyUncertain) only when the
-// provider's outcome is uncertain, which the caller turns into needs_reconciliation.
+// timeout; the files placed at their destinations; the command run once within its timeout, under
+// a run-once guard because the SDK may start a command twice; destinations.results packed and
+// read back into a fresh local directory; the stop confirmed by status. It resolves for every
+// definite outcome and rejects (SandboxCopyUncertain) only when the provider's outcome is
+// uncertain, which the caller turns into needs_reconciliation.
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { join, posix, resolve, sep } from "node:path";
 import { extract } from "tar-stream";
 import type { CollectedCopy, CopyPlan, CopyRoots, CopyRunner, FileDigest } from "@rbw/factory-contract";
 import type { SandboxInstance, SandboxSdk } from "@rbw/local-runner";
 import { sha256Hex } from "@rbw/schema";
-import type { CopyMeter, LaunchHooks, LaunchReport } from "./factory-meter.ts";
+import type { CopyMeter, LaunchHooks, LaunchReport, RefusalReason } from "./factory-meter.ts";
 import { FACTORY_PROFILE } from "./factory-profile.ts";
 import type { FactoryProfile } from "./factory-profile.ts";
 
@@ -59,6 +60,54 @@ const GB_PER_VCPU_MB = 2048;
 
 function iso(ms: number): string {
   return new Date(ms).toISOString();
+}
+
+/**
+ * What a copy the meter did not start becomes. Only limits above the profile mean the copy could
+ * not be prepared (setup_failed, an invalid record). A stop, the deadline, a refused reservation and
+ * a halted ledger end the copy early without a fault of the copy (timed_out, an incomplete record),
+ * never an invalid candidate; the loop reads meter.lastRefusal and the ledger's status for the
+ * request's stop code. An earlier uncertain copy makes every later one reject as uncertain.
+ */
+const REFUSED_OUTCOME: Readonly<Record<Exclude<RefusalReason, "uncertain">, "setup_failed" | "timed_out">> = {
+  limits_exceed_profile: "setup_failed",
+  no_time: "timed_out",
+  stopped: "timed_out",
+  budget: "timed_out",
+  halted: "timed_out",
+};
+
+/** Where the run-once guard keeps its lock and its exit-status marker inside the copy. */
+export const RUN_ONCE_DIR = "/tmp/rbw-copy-once";
+
+/**
+ * Runs the copy's command at most once per sandbox: `sh -c RUN_ONCE_SCRIPT rbw-copy <dir> <command...>`.
+ * The SDK retries a command whose response was lost, which can start it a second time; `mkdir` of
+ * the lock lets only the first start run the command, which records its exit status, and any later
+ * start waits for that marker and exits with the same status. 90 means the guard itself could not run.
+ */
+export const RUN_ONCE_SCRIPT = [
+  "set -u",
+  'dir="$1"',
+  "shift",
+  'lock="$dir/lock"',
+  'marker="$dir/status"',
+  'mkdir -p "$dir" || exit 90',
+  'if ! mkdir "$lock" 2> /dev/null; then',
+  '  [ -d "$lock" ] || exit 90',
+  '  while [ ! -s "$marker" ]; do sleep 1; done',
+  '  read -r status < "$marker"',
+  '  exit "$status"',
+  "fi",
+  '"$@"',
+  "status=$?",
+  'echo "$status" > "$marker.tmp" && mv "$marker.tmp" "$marker"',
+  'exit "$status"',
+].join("\n");
+
+/** The command the sandbox runs for a plan: its own command under the run-once guard. */
+export function guardedCommand(command: readonly string[]): { cmd: string; args: string[] } {
+  return { cmd: "sh", args: ["-c", RUN_ONCE_SCRIPT, "rbw-copy", RUN_ONCE_DIR, ...command] };
 }
 
 /** The sandbox image: the plan's repository pinned by its digest. */
@@ -208,8 +257,8 @@ async function runInside(deps: SandboxRunnerDeps, plan: CopyPlan, files: Placed[
     deps.log(`factory: copy ${plan.copy_id} could not be set up (${errorName(error)})`);
     return { outcome: "setup_failed", exit_code: null };
   }
-  const [cmd, ...args] = plan.command;
-  if (cmd === undefined) return { outcome: "setup_failed", exit_code: null };
+  if (plan.command.length === 0) return { outcome: "setup_failed", exit_code: null };
+  const { cmd, args } = guardedCommand(plan.command);
   let exitCode: number;
   const remainingMs = createdAt + plan.limits.timeout_s * 1000 - deps.now();
   if (remainingMs <= 0) return { outcome: "timed_out", exit_code: null };
@@ -309,7 +358,9 @@ export function createSandboxCopyRunner(deps: SandboxRunnerDeps): CopyRunner {
           return outcome.result;
         case "refused":
           deps.log(`factory: copy ${plan.copy_id} did not start (${outcome.reason}: ${outcome.detail})`);
-          return notRun(outcome.reason === "no_time" || outcome.reason === "stopped" ? "timed_out" : "setup_failed");
+          // Spend refusals are not copy failures; the loop tells them apart through meter.lastRefusal.
+          if (outcome.reason === "uncertain") throw new SandboxCopyUncertain(`copy ${plan.copy_id}: ${outcome.detail}`);
+          return notRun(REFUSED_OUTCOME[outcome.reason]);
         case "uncertain":
           throw new SandboxCopyUncertain(`copy ${plan.copy_id}: ${outcome.detail}`);
       }

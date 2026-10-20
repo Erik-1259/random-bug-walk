@@ -1,16 +1,20 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { StopCode, ValidationMatrix } from "@rbw/factory-contract";
+import type { CollectedCopy, StopCode, ValidationMatrix } from "@rbw/factory-contract";
+import { validateContract } from "@rbw/factory-contract/validate";
+import { sha256Hex } from "@rbw/schema";
 import { FACTORY_PROFILE } from "../../src/factory-profile.ts";
-import { copyOperation, validationOperation, workerOperation } from "../../src/factory-ledger.ts";
+import { copyOperation, outcomeOf, validationOperation, workerOperation } from "../../src/factory-ledger.ts";
 import { startFactoryValidation, startFactoryWorker } from "../../src/factory-launch.ts";
 import type { FactoryLaunchDeps } from "../../src/factory-launch.ts";
 import { finalizeLostWorker } from "../../src/factory-lost.ts";
+import type { LostDeps } from "../../src/factory-lost.ts";
 import type { LaunchReport, MeteredCopyPlan } from "../../src/factory-meter.ts";
-import type { FactoryRequestRecord } from "../../src/factory-ports.ts";
+import type { FactoryEventInput, FactoryRequestRecord } from "../../src/factory-ports.ts";
+import { createSandboxCopyRunner } from "../../src/factory-sandbox-runner.ts";
 import { runFactoryValidation, runFactoryWorker, startHeartbeat } from "../../src/factory-worker.ts";
 import type { Orchestrate, RequestHooks, WorkerDeps } from "../../src/factory-worker.ts";
-import { CANDIDATE_A, CASE_ID, CREDENTIALS, FakeRecords, SYNTHETIC_REQUEST_NAMESPACE, WORKER_IMAGE, acceptRequest, factoryWorld, operationState, slotHolder, syntheticUuid } from "./factory-fakes.ts";
+import { CANDIDATE_A, CASE_ID, CREDENTIALS, FakeCopySandbox, FakeRecords, WORKER_IMAGE, acceptRequest, copyPlan, copyRoots, factoryWorld, operationState, slotHolder, syntheticUuid } from "./factory-fakes.ts";
 import type { FactoryWorld } from "./factory-fakes.ts";
 
 const MATRIX = (JSON.parse(readFileSync(new URL("../../../../docs/product/fixtures/bug-request-v1/validation-passed.json", import.meta.url), "utf8")) as { matrix: ValidationMatrix }).matrix;
@@ -27,6 +31,10 @@ afterEach(async () => {
 
 function launchDeps(): FactoryLaunchDeps {
   return { ledger: w.ledger, records: w.records, identity: w.identity, sandbox: w.sandbox, rates: w.rates, now: w.clock.now, launch: { image: WORKER_IMAGE, env: CREDENTIALS }, log: (line) => w.logs.push(line) };
+}
+
+function lostDeps(): LostDeps {
+  return { ledger: w.ledger, records: w.records, identity: w.identity, events: w.events, sandbox: w.sandbox, rates: w.rates, now: w.clock.now, log: () => undefined };
 }
 
 function workerDeps(overrides: Partial<WorkerDeps> = {}): WorkerDeps {
@@ -56,21 +64,44 @@ function lives(ms: number, extra: Partial<LaunchReport<string>> = {}) {
 }
 
 function copyId(record: FactoryRequestRecord, state: MeteredCopyPlan["state"]): string {
-  return copyOperation({ identity: w.identity, rates: w.rates }, { namespace: SYNTHETIC_REQUEST_NAMESPACE, root: record.root, task_revision: record.interpretation_sha256, subject: CANDIDATE_A, state, n: 1, host: "task-report", provider: "vercel-sandbox" }).operation_id;
+  return copyOperation({ identity: w.identity, rates: w.rates }, { kind: "request", root: record.root, task_revision: record.interpretation_sha256, subject: CANDIDATE_A, state, n: 1, host: "task-report", provider: "vercel-sandbox" }).operation_id;
 }
 
-/** A synthetic stand-in for the factory core's request loop: one candidate, copies in order, a checkpoint before each. */
+const NO_LINKS = { host_id: null, candidate_id: null, item_key: null, case_id: null };
+
+/** The core's attention event, under its key. */
+const CORE_ATTENTION: FactoryEventInput = { event_key: "run:attention:needs_reconciliation", type: "attention", ...NO_LINKS, message: "Spend needs reconciliation.", data: { code: "needs_reconciliation" } };
+
+/** How the factory core's loop finishes a request: settleWorker, then its budget_updated, then request_finished. */
+async function finishAsCore(hooks: RequestHooks, stop: StopCode): Promise<void> {
+  await hooks.settleWorker(stop);
+  await hooks.append({ event_key: "run:worker-settled", type: "budget_updated", ...NO_LINKS, message: "Settled the worker.", data: { reserved_microusd: 0, spent_microusd: 0, remaining_microusd: 0 } });
+  await hooks.append({ event_key: "run:finished", type: "request_finished", ...NO_LINKS, message: "Request finished.", data: { outcome: outcomeOf(stop), stop_code: stop } });
+}
+
+/** A synthetic stand-in for the factory core's request loop: one candidate, copies in order, a checkpoint before each; it finishes the request itself. */
 function synthetic(states: MeteredCopyPlan["state"][], done: StopCode, launch = lives(60_000)): Orchestrate {
   return async (hooks: RequestHooks) => {
+    let stop = done;
     for (const state of states) {
       const checkpoint = await hooks.checkpoint();
-      if (checkpoint === "fenced") return { stop_code: "operational_error", finished: false };
-      if (checkpoint === "stop") return { stop_code: "cancelled_by_user", finished: false };
+      if (checkpoint === "fenced") return;
+      if (checkpoint === "stop") {
+        stop = "cancelled_by_user";
+        break;
+      }
       const outcome = await hooks.meter.run(plan(CANDIDATE_A, state), launch);
-      if (outcome.kind === "refused" && outcome.reason === "budget") return { stop_code: "budget_exhausted", finished: false };
-      if (outcome.kind === "uncertain") return { stop_code: "needs_reconciliation", finished: false };
+      if (outcome.kind === "refused" && outcome.reason === "budget") {
+        stop = "budget_exhausted";
+        break;
+      }
+      if (outcome.kind === "uncertain") {
+        await hooks.append(CORE_ATTENTION);
+        stop = "needs_reconciliation";
+        break;
+      }
     }
-    return { stop_code: done, finished: false };
+    await finishAsCore(hooks, stop);
   };
 }
 
@@ -99,22 +130,32 @@ describe("startHeartbeat", () => {
 });
 
 describe("runFactoryWorker", () => {
-  it("heartbeats, appends worker_started, runs the request loop, then finishes, settles itself in full, closes the budget and releases the slot", async () => {
+  it("heartbeats, appends worker_started, runs the loop, which settles the worker through settleWorker and finishes; then releases the slot, appending nothing else", async () => {
     const record = await launched();
     const outcome = await runFactoryWorker(workerDeps(), { request_id: record.request_id, deadline: deadline(), orchestrate: synthetic(["clean", "buggy"], "fulfilled") });
     expect(outcome).toEqual({ kind: "finished", stop_code: "fulfilled", slot_released: true });
     expect(w.records.heartbeats.filter((beat) => "request_id" in beat.target).length).toBeGreaterThanOrEqual(1);
-    const types = w.records.types(record.request_id);
-    expect(types[2]).toBe("worker_started");
-    expect(types.slice(-2)).toEqual(["request_finished", "budget_updated"]);
+    // The start's budget_updated and worker_started are this code's; the loop appends every other event.
+    const events = await w.records.events(record.request_id);
+    expect(events.map((event) => event.event_key)).toEqual(["request_accepted", "worker:reserved", "worker_started", "run:worker-settled", "run:finished"]);
     const worker = await w.spend.operationStatus({ operation_id: workerOperation({ identity: w.identity, rates: w.rates }, record).operation_id });
     expect(worker.ok && [worker.state, worker.settled_microusd]).toEqual(["reconciled", BigInt(FACTORY_PROFILE.prices.worker_worst_case_microusd)]);
     expect(await operationState(w, copyId(record, "clean"))).toBe("reconciled");
     expect(await operationState(w, copyId(record, "buggy"))).toBe("reconciled");
     expect(w.budgets.closes).toEqual([{ budget_key: record.budget_key, cause: "fulfilled" }]);
     expect(await slotHolder(w)).toBeNull();
-    // Each copy's reservation and settlement appended budget_updated.
-    expect(types.filter((type) => type === "budget_updated").length).toBe(1 + 2 * 2 + 1);
+  });
+
+  it("settles the worker once and closes the budget once when settleWorker is called again", async () => {
+    const record = await launched();
+    const orchestrate: Orchestrate = async (hooks) => {
+      await hooks.settleWorker("sources_exhausted");
+      await finishAsCore(hooks, "sources_exhausted");
+    };
+    expect(await runFactoryWorker(workerDeps(), { request_id: record.request_id, deadline: deadline(), orchestrate })).toEqual({ kind: "finished", stop_code: "sources_exhausted", slot_released: true });
+    expect(w.budgets.closes).toEqual([{ budget_key: record.budget_key, cause: "sources_exhausted" }]);
+    const status = await w.ledger.budgets.status(record.budget_key);
+    expect(status.ok && status.settled_microusd).toBe(BigInt(FACTORY_PROFILE.prices.worker_worst_case_microusd));
   });
 
   it("checks for a stop between copies: no copy starts after the stop is recorded", async () => {
@@ -132,7 +173,7 @@ describe("runFactoryWorker", () => {
     expect(finished?.data).toEqual({ outcome: "cancelled", stop_code: "cancelled_by_user" });
   });
 
-  it("ends budget_exhausted when the budget can no longer cover the next copy, launching nothing more", async () => {
+  it("lets the loop end budget_exhausted when the budget can no longer cover the next copy, launching nothing more", async () => {
     // The worker and one copy fit; after the first copy settles, the next copy's worst case does not.
     const record = await launched(500_000);
     const outcome = await runFactoryWorker(workerDeps(), { request_id: record.request_id, deadline: deadline(), orchestrate: synthetic(["clean", "buggy"], "fulfilled") });
@@ -143,7 +184,7 @@ describe("runFactoryWorker", () => {
     expect(status.ok && status.open_microusd).toBe(0n);
   });
 
-  it("finishes needs_reconciliation when a copy is uncertain, settles itself and keeps the slot held", async () => {
+  it("keeps the slot held when a copy is uncertain, adding no attention of its own to the loop's", async () => {
     const record = await launched();
     const rejecting = async (name: string, hooks: { created(id: string): Promise<void> }): Promise<LaunchReport<string>> => {
       await hooks.created(name);
@@ -154,19 +195,7 @@ describe("runFactoryWorker", () => {
     expect(await operationState(w, copyId(record, "clean"))).toBe("uncertain");
     expect(await slotHolder(w)).toBe(record.root);
     const tail = (await w.records.events(record.request_id)).filter((event) => event.type === "attention" || event.type === "request_finished");
-    expect(tail.map((event) => event.data)).toEqual([{ code: "needs_reconciliation" }, { outcome: "operational_error", stop_code: "needs_reconciliation" }]);
-  });
-
-  it("never reports a clean stop code while a copy is uncertain", async () => {
-    const record = await launched();
-    const orchestrate: Orchestrate = async (hooks) => {
-      await hooks.meter.run(plan(CANDIDATE_A, "clean"), async (name, h) => {
-        await h.created(name);
-        throw new Error("synthetic: lost response");
-      });
-      return { stop_code: "sources_exhausted", finished: false };
-    };
-    expect(await runFactoryWorker(workerDeps(), { request_id: record.request_id, deadline: deadline(), orchestrate })).toMatchObject({ stop_code: "needs_reconciliation" });
+    expect(tail.map((event) => event.event_key)).toEqual(["run:attention:needs_reconciliation", "run:finished"]);
   });
 
   it("stops at the next checkpoint without appending or settling anything once the request was finished as lost", async () => {
@@ -176,13 +205,13 @@ describe("runFactoryWorker", () => {
       await hooks.meter.run(plan(CANDIDATE_A, "clean"), lives(10_000));
       // The status route declares the worker lost (no heartbeat for 180 s on the request's clock).
       w.clock.advance(400_000);
-      expect((await finalizeLostWorker({ ledger: w.ledger, records: w.records, identity: w.identity, sandbox: w.sandbox, rates: w.rates, now: w.clock.now, log: () => undefined }, { request_id: record.request_id })).kind).toBe("finalized");
+      expect((await finalizeLostWorker(lostDeps(), { request_id: record.request_id })).kind).toBe("finalized");
       afterLost = w.records.types(record.request_id);
       expect(await hooks.checkpoint()).toBe("fenced");
       const late = await hooks.append({ event_key: "late", type: "check_finished", host_id: "task-report", candidate_id: CANDIDATE_A, item_key: null, case_id: null, message: "late", data: {} });
       expect(late.kind).toBe("refused");
       expect(await hooks.meter.run(plan(CANDIDATE_A, "buggy"), lives(10_000))).toMatchObject({ kind: "refused", reason: "stopped" });
-      return { stop_code: "operational_error", finished: false };
+      await expect(hooks.settleWorker("operational_error")).rejects.toThrow(/finished elsewhere/);
     };
     expect(await runFactoryWorker(workerDeps({ heartbeat_ms: 3_600_000 }), { request_id: record.request_id, deadline: deadline(), orchestrate })).toEqual({ kind: "fenced" });
     expect(w.records.types(record.request_id)).toEqual(afterLost);
@@ -191,39 +220,118 @@ describe("runFactoryWorker", () => {
     expect(await slotHolder(w)).toBe(record.root);
   });
 
-  it("finishes operational_error when the request loop throws", async () => {
+  it("leaves a request whose loop failed unfinished, settling and releasing nothing, for the lost-worker finish, which ends the candidate in flight", async () => {
     const record = await launched();
-    const outcome = await runFactoryWorker(workerDeps(), {
+    const outcome = await runFactoryWorker(workerDeps({ heartbeat_ms: 3_600_000 }), {
       request_id: record.request_id,
       deadline: deadline(),
-      orchestrate: () => Promise.reject(new Error("synthetic: the loop failed")),
+      orchestrate: async (hooks) => {
+        await hooks.append({ event_key: `cand:${CANDIDATE_A}:selected`, type: "candidate_selected", host_id: "task-report", candidate_id: CANDIDATE_A, item_key: null, case_id: null, message: "Selected catalog entry synthetic-task-report-01.", data: { source_id: "synthetic-task-report", entry_id: "synthetic-task-report-01" } });
+        throw new Error("synthetic: the loop failed");
+      },
     });
-    expect(outcome).toEqual({ kind: "finished", stop_code: "operational_error", slot_released: true });
+    expect(outcome).toEqual({ kind: "unfinished" });
     expect(w.logs.some((line) => line.includes("synthetic: the loop failed"))).toBe(true);
+    expect(w.records.types(record.request_id)).toEqual(["request_accepted", "budget_updated", "worker_started", "candidate_selected"]);
+    const workerId = workerOperation({ identity: w.identity, rates: w.rates }, record).operation_id;
+    expect(await operationState(w, workerId)).toBe("running");
+    expect(w.budgets.closes).toEqual([]);
+    expect(await slotHolder(w)).toBe(record.root);
+    // Contract 8.1: a worker that exited before finishing is lost; no candidate stays in progress in a finished request.
+    w.clock.advance(181_000);
+    expect(await finalizeLostWorker(lostDeps(), { request_id: record.request_id })).toEqual({ kind: "finalized", slot_held: true });
+    const tail = (await w.records.events(record.request_id)).slice(-3);
+    expect(tail.map((event) => [event.type, event.candidate_id, event.data])).toEqual([
+      ["candidate_incomplete", CANDIDATE_A, { reason: "incomplete_run" }],
+      ["attention", null, { code: "needs_reconciliation" }],
+      ["request_finished", null, { outcome: "operational_error", stop_code: "worker_lost" }],
+    ]);
   });
 
-  it("still sets needs_reconciliation when the loop finished the request itself while a copy was uncertain", async () => {
+  it("leaves the slot to the lost-worker routine when its release fails after the finish; that routine releases it once the worker is silent", async () => {
     const record = await launched();
+    const release = w.spend.releaseSlot.bind(w.spend);
+    let failing = true;
+    w.ledger.spend = { ...w.spend, releaseSlot: (request) => (failing ? Promise.reject(new Error("synthetic: the connection dropped")) : release(request)) };
+    const outcome = await runFactoryWorker(workerDeps(), { request_id: record.request_id, deadline: deadline(), orchestrate: synthetic(["clean"], "fulfilled") });
+    expect(outcome).toEqual({ kind: "finished", stop_code: "fulfilled", slot_released: false });
+    expect(w.logs.some((line) => line.includes("synthetic: the connection dropped"))).toBe(true);
+    expect(await slotHolder(w)).toBe(record.root);
+    failing = false;
+    w.clock.advance(181_000);
+    expect(await finalizeLostWorker(lostDeps(), { request_id: record.request_id })).toEqual({ kind: "finalized", slot_held: false });
+    expect(await slotHolder(w)).toBeNull();
+    expect(w.records.types(record.request_id).filter((type) => type === "attention")).toEqual([]);
+  });
+
+  it("keeps the slot held for reconciliation when the worker's settlement fails after its end, as the core's loop raises needs_reconciliation", async () => {
+    const record = await launched();
+    const workerId = workerOperation({ identity: w.identity, rates: w.rates }, record).operation_id;
+    const settle = w.spend.settle.bind(w.spend);
+    w.ledger.spend = { ...w.spend, settle: (request) => (request.operation_id === workerId ? Promise.reject(new Error("synthetic: the connection dropped")) : settle(request)) };
     const orchestrate: Orchestrate = async (hooks) => {
-      await hooks.meter.run(plan(CANDIDATE_A, "clean"), lives(5000, { stop_confirmed: false }));
-      await hooks.append({ event_key: "finish", type: "request_finished", host_id: null, candidate_id: null, item_key: null, case_id: null, message: "Request finished: sources exhausted.", data: { outcome: "sources_exhausted", stop_code: "sources_exhausted" } });
-      return { stop_code: "sources_exhausted", finished: true };
+      // As the core's finish does: a settleWorker that rejects raises needs_reconciliation, and the outcome stands.
+      try {
+        await hooks.settleWorker("fulfilled");
+      } catch {
+        await hooks.append(CORE_ATTENTION);
+      }
+      await hooks.append({ event_key: "run:worker-settled", type: "budget_updated", ...NO_LINKS, message: "Budget updated for the worker.", data: { reserved_microusd: 0, spent_microusd: 0, remaining_microusd: 0 } });
+      await hooks.append({ event_key: "run:finished", type: "request_finished", ...NO_LINKS, message: "Request finished.", data: { outcome: "fulfilled", stop_code: "fulfilled" } });
     };
-    expect(await runFactoryWorker(workerDeps(), { request_id: record.request_id, deadline: deadline(), orchestrate })).toMatchObject({ slot_released: false });
-    const attention = (await w.records.events(record.request_id)).filter((event) => event.type === "attention");
-    expect(attention.map((event) => event.data)).toEqual([{ code: "needs_reconciliation" }]);
+    expect(await runFactoryWorker(workerDeps(), { request_id: record.request_id, deadline: deadline(), orchestrate })).toEqual({ kind: "finished", stop_code: "fulfilled", slot_released: false });
+    expect(await operationState(w, workerId)).toBe("terminal");
+    expect(await slotHolder(w)).toBe(record.root);
+    w.ledger.spend = w.spend;
+    const validation = { request_id: record.request_id, case_id: CASE_ID, validation_id: syntheticUuid("7310"), host_id: "task-report" as const, package_sha256: { bug_case: "d".repeat(64), validator: "e".repeat(64) }, harness: { name: "rbw-validate" as const, version: "1" } };
+    expect(await startFactoryValidation(launchDeps(), validation)).toEqual({ kind: "busy", reason: "needs_reconciliation" });
+    // The lost-worker routine leaves it held too: only reconciliation releases it.
+    w.clock.advance(181_000);
+    expect(await finalizeLostWorker(lostDeps(), { request_id: record.request_id })).toEqual({ kind: "finished" });
     expect(await slotHolder(w)).toBe(record.root);
   });
 
-  it("does not append request_finished again when the request loop already did", async () => {
+  it("leaves a request unfinished when the loop returns without finishing it", async () => {
     const record = await launched();
+    const outcome = await runFactoryWorker(workerDeps(), { request_id: record.request_id, deadline: deadline(), orchestrate: () => Promise.resolve() });
+    expect(outcome).toEqual({ kind: "unfinished" });
+    expect(w.records.types(record.request_id).filter((type) => type === "request_finished")).toEqual([]);
+    expect(await slotHolder(w)).toBe(record.root);
+  });
+
+  it("runs the sandbox copy runner under the worker; a budget refusal comes back as an early-ended copy and the meter's refusal", async () => {
+    // The worker and one copy fit; after the first copy settles, the second's worst case does not.
+    const record = await launched(500_000);
+    const sdk = new FakeCopySandbox();
+    const { roots, work } = copyRoots();
+    const collected: CollectedCopy[] = [];
     const orchestrate: Orchestrate = async (hooks) => {
-      await hooks.append({ event_key: "finish", type: "request_finished", host_id: null, candidate_id: null, item_key: null, case_id: null, message: "Request finished: sources exhausted.", data: { outcome: "sources_exhausted", stop_code: "sources_exhausted" } });
-      return { stop_code: "sources_exhausted", finished: true };
+      const runner = createSandboxCopyRunner({
+        sdk,
+        meter: hooks.meter,
+        subject: CANDIDATE_A,
+        workDir: work,
+        resultsSha256: (dir) => Promise.resolve(sha256Hex(Buffer.from(readdirSync(dir).sort().join("\n")))),
+        // 30 s per reading: the first copy lives 60 s, so what it settles leaves too little room for the second.
+        now: () => {
+          w.clock.advance(30_000);
+          return w.clock.ms;
+        },
+        sleep: () => Promise.resolve(),
+        attempt: "synthetic-attempt",
+        log: (line) => w.logs.push(line),
+      });
+      collected.push(await runner.run(copyPlan({ state: "clean", copy_id: "synthetic-clean-01" }), roots));
+      collected.push(await runner.run(copyPlan({ state: "buggy", copy_id: "synthetic-buggy-01" }), roots));
+      await finishAsCore(hooks, hooks.meter.lastRefusal?.reason === "budget" ? "budget_exhausted" : "fulfilled");
     };
-    expect(await runFactoryWorker(workerDeps(), { request_id: record.request_id, deadline: deadline(), orchestrate })).toMatchObject({ stop_code: "sources_exhausted", slot_released: true });
-    expect(w.records.types(record.request_id).filter((type) => type === "request_finished")).toHaveLength(1);
-    expect(w.budgets.closes).toEqual([{ budget_key: record.budget_key, cause: "sources_exhausted" }]);
+    expect(await runFactoryWorker(workerDeps(), { request_id: record.request_id, deadline: deadline(), orchestrate })).toEqual({ kind: "finished", stop_code: "budget_exhausted", slot_released: true });
+    expect(collected.map((copy) => copy.outcome)).toEqual(["ran", "timed_out"]);
+    expect(sdk.creates).toHaveLength(1);
+    expect(await operationState(w, copyId(record, "clean"))).toBe("reconciled");
+    expect(await operationState(w, copyId(record, "buggy"))).toBeNull();
+    // The slot was released, which the ledger allows only once the copy's sandbox was confirmed stopped.
+    expect(await slotHolder(w)).toBeNull();
   });
 });
 
@@ -268,6 +376,20 @@ describe("runFactoryValidation", () => {
     expect(finished?.data).toEqual({ validation_id: validationId, result: "passed" });
   });
 
+  it("admits a copy that ends inside the run's 30 s finish margin though not inside the request's 120 s copy margin", async () => {
+    const { validationId } = await acceptedValidation();
+    const outcome = await runFactoryValidation(workerDeps(), {
+      validation_id: validationId,
+      validate: async (hooks) => {
+        // 950 s in: 720 s + 60 s + 30 s end 40 s before the window does; 120 s instead of 30 s would pass it.
+        w.clock.ms = Date.parse(hooks.validation.accepted_at) + 950_000;
+        expect(await hooks.meter.run(plan(CASE_ID, "clean"), lives(1000))).toMatchObject({ kind: "ran" });
+        return { result: "passed", matrix: MATRIX, message: null };
+      },
+    });
+    expect(outcome).toEqual({ kind: "finished", result: "passed", slot_released: true });
+  });
+
   it("finishes error with its reservation and the slot held when a copy's stop cannot be confirmed", async () => {
     const { record, validationId, operationId } = await acceptedValidation();
     const outcome = await runFactoryValidation(workerDeps(), {
@@ -288,5 +410,63 @@ describe("runFactoryValidation", () => {
     const { validationId } = await acceptedValidation();
     const outcome = await runFactoryValidation(workerDeps(), { validation_id: validationId, validate: () => Promise.reject(new Error("synthetic: harness failed")) });
     expect(outcome).toEqual({ kind: "finished", result: "error", slot_released: true });
+  });
+
+  it("finishes error with no matrix when the run's settlement is refused after the harness passed, so the run stays a valid ValidationRun", async () => {
+    const { validationId, operationId } = await acceptedValidation();
+    const settle = w.spend.settle.bind(w.spend);
+    w.ledger.spend = { ...w.spend, settle: (request) => (request.operation_id === operationId ? Promise.resolve({ ok: false as const, code: "already_settled" as const }) : settle(request)) };
+    const outcome = await runFactoryValidation(workerDeps(), { validation_id: validationId, validate: () => Promise.resolve({ result: "passed", matrix: MATRIX, message: "All six cells matched their expected outcomes." }) });
+    expect(outcome).toEqual({ kind: "finished", result: "error", slot_released: false });
+    const events = await w.records.validationEvents(validationId);
+    const started = events.find((event) => event.type === "running")?.data;
+    const finished = events.find((event) => event.type === "finished")?.data;
+    expect(finished).toMatchObject({ result: "error", matrix: null, cost_microusd: null });
+    // The run as the service serves it from these records.
+    const run = {
+      contract_version: "bug-request/1",
+      validation_id: validationId,
+      case_id: CASE_ID,
+      state: "finished",
+      result: finished?.result,
+      matrix: finished?.matrix,
+      package_sha256: { bug_case: "d".repeat(64), validator: "e".repeat(64) },
+      harness: { name: "rbw-validate", version: "1" },
+      message: finished?.message,
+      started_at: started?.started_at,
+      finished_at: finished?.finished_at,
+      cost_microusd: finished?.cost_microusd,
+      poll_after_ms: 0,
+    };
+    expect(validateContract("ValidationRun", run)).toEqual([]);
+  });
+
+  it("stops after a lost-worker finish of its run: no settlement, event or release of its own, even with a copy left uncertain", async () => {
+    const { record, validationId, operationId } = await acceptedValidation();
+    let afterLost: string[] = [];
+    let validationAfterLost = 0;
+    const outcome = await runFactoryValidation(workerDeps({ heartbeat_ms: 3_600_000 }), {
+      validation_id: validationId,
+      validate: async (hooks) => {
+        // The copy is in flight when the status route finds the run lost (no heartbeat for 180 s).
+        await hooks.meter.run(plan(CASE_ID, "clean"), async (name, launch) => {
+          await launch.created(name);
+          w.clock.advance(181_000);
+          expect(await finalizeLostWorker(lostDeps(), { validation_id: validationId })).toEqual({ kind: "finalized", slot_held: false });
+          afterLost = w.records.types(record.request_id);
+          validationAfterLost = (await w.records.validationEvents(validationId)).length;
+          return { result: name, created: true, lifetime_ms: 181_000, stop_confirmed: false, status: "completed" };
+        });
+        expect(hooks.meter.uncertain).toBe(true);
+        return { result: "error", matrix: null, message: "A copy could not be confirmed stopped." };
+      },
+    });
+    expect(outcome).toEqual({ kind: "fenced" });
+    expect(w.records.types(record.request_id)).toEqual(afterLost);
+    expect((await w.records.validationEvents(validationId)).length).toBe(validationAfterLost);
+    // Settled once, by the lost-worker finish, at the full worst case.
+    const status = await w.spend.operationStatus({ operation_id: operationId });
+    expect(status.ok && [status.state, status.settled_microusd]).toEqual(["reconciled", BigInt(FACTORY_PROFILE.prices.validation_worst_case_microusd["task-report"])]);
+    expect(await slotHolder(w)).toBeNull();
   });
 });

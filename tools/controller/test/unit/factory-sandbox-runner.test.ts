@@ -1,128 +1,30 @@
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { mkdtempSync, readFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Readable } from "node:stream";
-import { pack } from "tar-stream";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { CopyPlan, CopyRoots } from "@rbw/factory-contract";
-import type { SandboxInstance, SandboxSdk } from "@rbw/local-runner";
 import { sha256Hex } from "@rbw/schema";
 import { copyOperation } from "../../src/factory-ledger.ts";
 import { CopyMeter } from "../../src/factory-meter.ts";
+import type { MeterContext } from "../../src/factory-meter.ts";
 import type { FactoryRequestRecord } from "../../src/factory-ports.ts";
-import { NO_IMAGE_DIGEST, SandboxCopyUncertain, createSandboxCopyRunner, pinnedImage, sandboxVcpus } from "../../src/factory-sandbox-runner.ts";
+import { NO_IMAGE_DIGEST, RUN_ONCE_DIR, RUN_ONCE_SCRIPT, SandboxCopyUncertain, createSandboxCopyRunner, pinnedImage, sandboxVcpus } from "../../src/factory-sandbox-runner.ts";
 import type { SandboxRunnerDeps } from "../../src/factory-sandbox-runner.ts";
-import { CANDIDATE_A, SYNTHETIC_REQUEST_NAMESPACE, acceptRequest, factoryWorld, operationState } from "./factory-fakes.ts";
+import { CANDIDATE_A, COPY_APP as APP, COPY_CHECK as CHECK, COPY_DIGEST as DIGEST, FakeCopySandbox, acceptRequest, copyPlan, copyRoots, factoryWorld, operationState } from "./factory-fakes.ts";
 import type { FactoryWorld } from "./factory-fakes.ts";
-
-const DIGEST = `sha256:${"e9".repeat(32)}`;
-const APP = "export const synthetic = 1;\n";
-const CHECK = "synthetic check\n";
-
-type SandboxCreate = Parameters<SandboxSdk["create"]>[0];
-type CommandParams = Parameters<SandboxInstance["runCommand"]>[0];
-
-/** A fake Sandbox: an in-memory file system per sandbox; the copy's command is the test's. */
-class FakeSandbox implements SandboxSdk {
-  readonly creates: SandboxCreate[] = [];
-  readonly files = new Map<string, Map<string, Buffer>>();
-  readonly commands: CommandParams[] = [];
-  readonly stops: string[] = [];
-  readonly instances = new Map<string, SandboxInstance & { status: string }>();
-  createError: Error | null = null;
-  reportedImage: string | null = null;
-  stopTakesEffect = true;
-  /** The copy's command: writes results into the sandbox's file system and returns its exit code. */
-  copy: (fs: Map<string, Buffer>) => number = (fs) => {
-    fs.set("/workspace/results/record.json", Buffer.from('{"synthetic":true}\n'));
-    return 0;
-  };
-  /** Extra archive entries the results tar holds. */
-  extraEntries: { name: string; type: "file" | "symlink" }[] = [];
-
-  create(params: SandboxCreate): Promise<SandboxInstance> {
-    this.creates.push(params);
-    if (this.createError !== null) return Promise.reject(this.createError);
-    const fs = new Map<string, Buffer>();
-    this.files.set(params.name, fs);
-    const instance = {
-      name: params.name,
-      status: "running",
-      image: this.reportedImage ?? params.image,
-      tags: params.tags,
-      writeFiles: (files: { path: string; content: Uint8Array }[]) => {
-        for (const file of files) fs.set(file.path, Buffer.from(file.content));
-        return Promise.resolve();
-      },
-      runCommand: (command: CommandParams) => {
-        this.commands.push(command);
-        if (command.signal?.aborted === true) return Promise.reject(new Error("synthetic: aborted"));
-        let exitCode = 0;
-        if (command.cmd === "tar") {
-          this.archive.set(params.name, this.tarOf(fs, command.args[1] ?? ""));
-        } else if (command.cmd !== "mkdir") {
-          exitCode = this.copy(fs);
-        }
-        return Promise.resolve({ wait: (options?: { signal?: AbortSignal }) => (options?.signal?.aborted === true ? Promise.reject(new Error("synthetic: aborted")) : Promise.resolve({ exitCode })) });
-      },
-      readFile: async () => {
-        const bytes = await this.archive.get(params.name);
-        return bytes === undefined ? null : Readable.from([bytes]);
-      },
-      stop: () => {
-        this.stops.push(params.name);
-        if (this.stopTakesEffect) instance.status = "stopped";
-        return Promise.resolve(undefined);
-      },
-    };
-    this.instances.set(params.name, instance as unknown as SandboxInstance & { status: string });
-    return Promise.resolve(instance as unknown as SandboxInstance);
-  }
-
-  get(name: string): Promise<SandboxInstance | null> {
-    return Promise.resolve(this.instances.get(name) ?? null);
-  }
-
-  readonly archive = new Map<string, Promise<Buffer>>();
-
-  tarOf(fs: Map<string, Buffer>, dir: string): Promise<Buffer> {
-    const archive = pack();
-    for (const [path, content] of fs) if (path.startsWith(`${dir}/`)) archive.entry({ name: `./${path.slice(dir.length + 1)}` }, content);
-    for (const entry of this.extraEntries) {
-      if (entry.type === "symlink") archive.entry({ name: entry.name, type: "symlink", linkname: "/etc/passwd" });
-      else archive.entry({ name: entry.name }, "x");
-    }
-    archive.finalize();
-    return new Promise((done, fail) => {
-      const chunks: Buffer[] = [];
-      archive.on("data", (chunk: unknown) => {
-        if (Buffer.isBuffer(chunk)) chunks.push(chunk);
-      });
-      archive.on("end", () => {
-        done(Buffer.concat(chunks));
-      });
-      archive.on("error", fail);
-    });
-  }
-}
 
 let w: FactoryWorld;
 let record: FactoryRequestRecord;
-let sdk: FakeSandbox;
+let sdk: FakeCopySandbox;
 let roots: CopyRoots;
 let work: string;
 
 beforeEach(async () => {
   w = await factoryWorld();
   record = await acceptRequest(w);
-  sdk = new FakeSandbox();
-  const base = mkdtempSync(join(tmpdir(), "rbw-factory-runner-test-"));
-  roots = { app_root: join(base, "app"), evaluator_root: join(base, "evaluator") };
-  mkdirSync(join(roots.app_root, "src"), { recursive: true });
-  mkdirSync(join(roots.evaluator_root, "checks"), { recursive: true });
-  writeFileSync(join(roots.app_root, "src", "store.ts"), APP);
-  writeFileSync(join(roots.evaluator_root, "checks", "check.txt"), CHECK);
-  work = join(base, "work");
+  sdk = new FakeCopySandbox();
+  ({ roots, work } = copyRoots());
 });
 
 afterEach(async () => {
@@ -130,28 +32,17 @@ afterEach(async () => {
 });
 
 function plan(overrides: Partial<CopyPlan> = {}): CopyPlan {
-  return {
-    copy_id: "synthetic-copy-buggy-01",
-    host_id: "task-report",
-    state: "buggy",
-    image: { reference: "registry.invalid/synthetic/task-report-kit:1", digest: DIGEST },
-    files: [{ path: "src/store.ts", sha256: sha256Hex(Buffer.from(APP)) }],
-    evaluator_files: [{ path: "checks/check.txt", sha256: sha256Hex(Buffer.from(CHECK)) }],
-    destinations: { app: "/workspace/app", evaluator: "/workspace/evaluator", results: "/workspace/results" },
-    command: ["node", "/workspace/evaluator/run.ts", "--copy", "buggy"],
-    limits: { timeout_s: 600, vcpus: 4, memory_mb: 8192, network: "none" },
-    ...overrides,
-  };
+  return copyPlan(overrides);
 }
 
-function meter(): CopyMeter {
+function meter(overrides: Partial<MeterContext> = {}): CopyMeter {
   return new CopyMeter({
     ledger: w.ledger,
     identity: w.identity,
     rates: w.rates,
     now: w.clock.now,
     root: record.root,
-    namespace: SYNTHETIC_REQUEST_NAMESPACE,
+    kind: "request",
     task_revision: record.interpretation_sha256,
     budget_key: record.budget_key,
     provider: "vercel-sandbox",
@@ -159,6 +50,7 @@ function meter(): CopyMeter {
     margin_s: 120,
     mode: { kind: "own_operation", role: "request" },
     log: (line) => w.logs.push(line),
+    ...overrides,
   });
 }
 
@@ -181,7 +73,18 @@ function deps(overrides: Partial<SandboxRunnerDeps> = {}): SandboxRunnerDeps {
 }
 
 function opId(state: CopyPlan["state"] = "buggy"): string {
-  return copyOperation({ identity: w.identity, rates: w.rates }, { namespace: SYNTHETIC_REQUEST_NAMESPACE, root: record.root, task_revision: record.interpretation_sha256, subject: CANDIDATE_A, state, n: 1, host: "task-report", provider: "vercel-sandbox" }).operation_id;
+  return copyOperation({ identity: w.identity, rates: w.rates }, { kind: "request", root: record.root, task_revision: record.interpretation_sha256, subject: CANDIDATE_A, state, n: 1, host: "task-report", provider: "vercel-sandbox" }).operation_id;
+}
+
+/** Runs RUN_ONCE_SCRIPT with the system shell, as the sandbox does, and answers its exit code. */
+function runOnce(dir: string, command: string[]): Promise<number | null> {
+  return new Promise((resolve, reject) => {
+    const child = spawn("sh", ["-c", RUN_ONCE_SCRIPT, "rbw-copy", dir, ...command], { stdio: "ignore" });
+    child.on("error", reject);
+    child.on("exit", (code) => {
+      resolve(code);
+    });
+  });
 }
 
 describe("the sandbox copy runner", () => {
@@ -203,7 +106,7 @@ describe("the sandbox copy runner", () => {
     const fs = sdk.files.get(create?.name ?? "");
     expect(fs?.get("/workspace/app/src/store.ts")?.toString()).toBe(APP);
     expect(fs?.get("/workspace/evaluator/checks/check.txt")?.toString()).toBe(CHECK);
-    expect(sdk.commands.filter((command) => command.cmd === "node")).toHaveLength(1);
+    expect(sdk.commands.filter((command) => command.cmd === "sh")).toHaveLength(1);
     expect(sdk.stops).toEqual([create?.name]);
 
     const status = await w.spend.operationStatus({ operation_id: opId() });
@@ -312,5 +215,79 @@ describe("the sandbox copy runner", () => {
     sdk.extraEntries = [{ name: "./escape", type: "symlink" }];
     const collected = await createSandboxCopyRunner(deps()).run(plan({ state: "fixed" }), roots);
     expect(collected).toMatchObject({ outcome: "ran", results_dir: null, results_sha256: null });
+  });
+});
+
+describe("the sandbox copy runner's run-once guard", () => {
+  it("runs the plan's command under the run-once guard, from the app directory", async () => {
+    await createSandboxCopyRunner(deps()).run(plan(), roots);
+    const command = sdk.commands.find((params) => params.cmd === "sh");
+    expect(command?.args).toEqual(["-c", RUN_ONCE_SCRIPT, "rbw-copy", RUN_ONCE_DIR, ...plan().command]);
+    expect(command?.cwd).toBe("/workspace/app");
+  });
+
+  it("runs the command once when it is started twice: the second start waits and exits with the first one's status", { timeout: 20_000 }, async () => {
+    const base = mkdtempSync(join(tmpdir(), "rbw-run-once-test-"));
+    const count = join(base, "count");
+    const command = ["sh", "-c", 'echo ran >> "$1"; sleep 1; exit 3', "synthetic-copy", count];
+    const dir = join(base, "once");
+    expect(await Promise.all([runOnce(dir, command), runOnce(dir, command)])).toEqual([3, 3]);
+    expect(readFileSync(count, "utf8")).toBe("ran\n");
+    expect(await runOnce(dir, command)).toBe(3);
+    expect(readFileSync(count, "utf8")).toBe("ran\n");
+  });
+});
+
+describe("the sandbox copy runner's refused copies", () => {
+  it("reports a copy refused after a stop as timed_out, creating nothing", async () => {
+    const collected = await createSandboxCopyRunner(deps({ meter: meter({ beforeLaunch: () => Promise.resolve(false) }) })).run(plan(), roots);
+    expect(collected).toMatchObject({ outcome: "timed_out", results_dir: null, results_sha256: null });
+    expect(sdk.creates).toHaveLength(0);
+  });
+
+  it("reports a copy that would not end before the deadline as timed_out, creating nothing", async () => {
+    const collected = await createSandboxCopyRunner(deps({ meter: meter({ deadline: new Date(w.clock.ms + 60_000) }) })).run(plan(), roots);
+    expect(collected.outcome).toBe("timed_out");
+    expect(sdk.creates).toHaveLength(0);
+  });
+
+  it("reports a refused reservation as timed_out, never setup_failed, and the meter keeps the refusal", async () => {
+    w.budgets.create("synthetic-small-budget", record.root, 100_000);
+    const small = meter({ budget_key: "synthetic-small-budget" });
+    const collected = await createSandboxCopyRunner(deps({ meter: small })).run(plan(), roots);
+    expect(collected.outcome).toBe("timed_out");
+    expect(small.lastRefusal?.reason).toBe("budget");
+    expect(sdk.creates).toHaveLength(0);
+  });
+
+  it("reports a halted ledger as timed_out, never setup_failed, and the meter keeps the refusal", async () => {
+    const halted = meter({
+      ledger: {
+        spend: w.spend,
+        budgets: { reserve: () => Promise.resolve({ ok: false as const, code: "pool_halted" }), close: (key, cause) => w.budgets.close(key, cause), status: (key) => w.budgets.status(key) },
+      },
+    });
+    const collected = await createSandboxCopyRunner(deps({ meter: halted })).run(plan(), roots);
+    expect(collected.outcome).toBe("timed_out");
+    expect(halted.lastRefusal?.reason).toBe("halted");
+    expect(sdk.creates).toHaveLength(0);
+  });
+
+  it("rejects every later copy as uncertain once one copy was uncertain, creating nothing more", async () => {
+    sdk.createError = new Error("synthetic: the answer was lost");
+    const runner = createSandboxCopyRunner(deps());
+    await expect(runner.run(plan(), roots)).rejects.toThrow(SandboxCopyUncertain);
+    sdk.createError = null;
+    await expect(runner.run(plan({ state: "fixed" }), roots)).rejects.toThrow(SandboxCopyUncertain);
+    expect(sdk.creates).toHaveLength(1);
+    expect(await operationState(w, opId("fixed"))).toBeNull();
+  });
+
+  it("says in its uncertain rejection whether the stop of a sandbox the ledger could not record was confirmed", async () => {
+    const transition = w.spend.transition.bind(w.spend);
+    w.ledger.spend = { ...w.spend, transition: (request) => (request.to_state === "running" ? Promise.resolve({ ok: false as const, code: "invalid_transition" as const }) : transition(request)) };
+    await expect(createSandboxCopyRunner(deps()).run(plan(), roots)).rejects.toThrow(/stop confirmed/);
+    sdk.stopTakesEffect = false;
+    await expect(createSandboxCopyRunner(deps()).run(plan({ state: "fixed" }), roots)).rejects.toThrow(/stop not confirmed/);
   });
 });

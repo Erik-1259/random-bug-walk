@@ -2,12 +2,15 @@
 // the web service makes to the released slot. The worker sandbox is replaced by a local launcher
 // that runs the factory-worker command in this process on the docker backend; the factory core's
 // request loop, the harness and the host adapter are synthetic stand-ins with two candidates (one
-// per host) whose copies "run" for a fixed time. The ledger is PGlite with every spend migration;
+// per host) whose copies "run" for a fixed time, metered directly: no copy runner runs here (the
+// docker runner's metering is held until the harness lands; the sandbox runner runs under the
+// worker in factory-worker.test.ts). The ledger is PGlite with every spend migration;
 // the request budgets and factory records are the in-memory fakes. Nothing here is real host,
 // harness or Sandbox evidence.
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { CopyState, HostId } from "@rbw/factory-contract";
+import type { CopyState, HostId, StopCode } from "@rbw/factory-contract";
 import { FACTORY_PROFILE } from "../../src/factory-profile.ts";
+import { outcomeOf } from "../../src/factory-ledger.ts";
 import { factoryWorkerCommand } from "../../src/factory-cli.ts";
 import { startFactoryValidation, startFactoryWorker } from "../../src/factory-launch.ts";
 import type { FactoryLaunchDeps } from "../../src/factory-launch.ts";
@@ -34,7 +37,11 @@ afterEach(async () => {
 const STATES: readonly CopyState[] = ["clean", "buggy", "fixed"];
 const LIMITS = { timeout_s: 720, vcpus: 4, memory_mb: 8192 };
 
-/** The synthetic request loop: per candidate, select, run its copies in order with a checkpoint before each, deliver. */
+/**
+ * The synthetic request loop: per candidate, select, run its copies in order with a checkpoint
+ * before each, deliver; then finish as the factory core does: settleWorker, budget_updated,
+ * request_finished.
+ */
 const syntheticLoop: Orchestrate = async (hooks) => {
   const candidates: { id: string; host: HostId }[] = [
     { id: CANDIDATE_A, host: "task-report" },
@@ -42,21 +49,27 @@ const syntheticLoop: Orchestrate = async (hooks) => {
   ];
   const event = (key: string, type: "candidate_selected" | "check_finished" | "case_delivered", candidate: { id: string; host: HostId }, data: Record<string, unknown>) =>
     hooks.append({ event_key: key, type, host_id: candidate.host, candidate_id: candidate.id, item_key: null, case_id: null, message: `synthetic ${type}`, data });
-  for (const candidate of candidates) {
-    if ((await hooks.checkpoint()) !== "continue") return { stop_code: "cancelled_by_user", finished: false };
-    await event(`cand:${candidate.id}:selected`, "candidate_selected", candidate, { source_id: `synthetic-${candidate.host}`, entry_id: `synthetic-${candidate.host}-01` });
-    for (const state of STATES) {
-      const outcome = await hooks.meter.run({ subject: candidate.id, host: candidate.host, state, limits: LIMITS }, async (name, launch) => {
-        await launch.created(name);
-        hooks.now();
-        return { result: "pass", created: true, lifetime_ms: 95_000, stop_confirmed: true, status: "completed" as const };
-      });
-      if (outcome.kind !== "ran") return { stop_code: outcome.kind === "uncertain" ? "needs_reconciliation" : "operational_error", finished: false };
-      await event(`cand:${candidate.id}:check:${state}`, "check_finished", candidate, { check_set: "verification", copy: state, outcome: "pass", runs_valid: 1, runs_total: 1 });
+  const stop = await (async (): Promise<StopCode> => {
+    for (const candidate of candidates) {
+      if ((await hooks.checkpoint()) !== "continue") return "cancelled_by_user";
+      await event(`cand:${candidate.id}:selected`, "candidate_selected", candidate, { source_id: `synthetic-${candidate.host}`, entry_id: `synthetic-${candidate.host}-01` });
+      for (const state of STATES) {
+        const outcome = await hooks.meter.run({ subject: candidate.id, host: candidate.host, state, limits: LIMITS }, async (name, launch) => {
+          await launch.created(name);
+          hooks.now();
+          return { result: "pass", created: true, lifetime_ms: 95_000, stop_confirmed: true, status: "completed" as const };
+        });
+        if (outcome.kind !== "ran") return outcome.kind === "uncertain" ? "needs_reconciliation" : "operational_error";
+        await event(`cand:${candidate.id}:check:${state}`, "check_finished", candidate, { check_set: "verification", copy: state, outcome: "pass", runs_valid: 1, runs_total: 1 });
+      }
+      await event(`cand:${candidate.id}:end`, "case_delivered", candidate, {});
     }
-    await event(`cand:${candidate.id}:end`, "case_delivered", candidate, {});
-  }
-  return { stop_code: "fulfilled", finished: false };
+    return "fulfilled";
+  })();
+  const none = { host_id: null, candidate_id: null, item_key: null, case_id: null };
+  await hooks.settleWorker(stop);
+  await hooks.append({ event_key: "run:worker-settled", type: "budget_updated", ...none, message: "synthetic budget_updated", data: { reserved_microusd: 0, spent_microusd: 0, remaining_microusd: 0 } });
+  await hooks.append({ event_key: "run:finished", type: "request_finished", ...none, message: "synthetic request_finished", data: { outcome: outcomeOf(stop), stop_code: stop } });
 };
 
 const syntheticHarness: Validate = async (hooks) => {
@@ -120,7 +133,7 @@ describe("a full local request (synthetic integration proof)", () => {
     expect(types[0]).toBe("request_accepted");
     expect(types.filter((type) => type === "case_delivered")).toHaveLength(2);
     expect(types.filter((type) => type === "check_finished")).toHaveLength(6);
-    expect(types.slice(-2)).toEqual(["request_finished", "budget_updated"]);
+    expect(types.slice(-2)).toEqual(["budget_updated", "request_finished"]);
     expect(await slotHolder(w)).toBeNull();
     const budget = await w.ledger.budgets.status(record.budget_key);
     if (!budget.ok) throw new Error("synthetic: budget status refused");
@@ -159,6 +172,19 @@ describe("the factory-worker command", () => {
     const run = factoryWorkerCommand(["--request-id", id, "--deadline-at", "2026-10-20T20:00:00Z", "--backend", "docker"], { ...io(), load: undefined });
     await expect(run).rejects.toThrow(UsageError);
     await expect(factoryWorkerCommand(["--request-id", id, "--deadline-at", "2026-10-20T20:00:00Z", "--backend", "docker"], { ...io(), load: undefined })).rejects.toThrow(MISSING_MODULES[0] ?? "");
+  });
+
+  it("stops its own worker sandbox last on the sandbox backend, after the request finished", async () => {
+    const record = await acceptRequest(w, { budget: 3_000_000 });
+    // The fake worker SDK records the launch without running anything; the command runs here instead.
+    expect((await startFactoryWorker(launchDeps(w.sandbox), record.request_id)).kind).toBe("launched");
+    const name = `rbw-fw-${record.root}`;
+    const code = await factoryWorkerCommand(["--request-id", record.request_id, "--deadline-at", new Date(w.clock.ms + 3_600_000).toISOString()], { ...io(), sandbox: w.sandbox });
+    expect(code).toBe(0);
+    expect(out.at(-1)).toBe(`request=${record.request_id} stop_code=fulfilled slot_released=true`);
+    const calls = w.sandbox.calls.map((call) => `${call.action}:${call.name}`);
+    expect(calls.at(-1)).toBe(`stop:${name}`);
+    expect(w.sandbox.sandboxes.get(name)?.status).toBe("stopped");
   });
 
   it("refuses a request that is not recorded as an input error", async () => {

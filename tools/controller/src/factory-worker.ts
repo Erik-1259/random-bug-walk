@@ -1,10 +1,14 @@
 // The factory worker: what the `factory-worker` command runs inside its sandbox (or locally with
-// the docker runner). In request mode it heartbeats, appends worker_started, runs the factory
+// the docker runner). In request mode it heartbeats, appends worker_started and runs the factory
 // core's request loop (injected as `orchestrate`) with a copy meter for every copy, a checkpoint
-// for stops between copies and a fenced event appender, then finishes the request if the loop did
-// not, settles its own operation at its full worst case (it cannot measure its own sandbox's end),
-// closes the budget with the stop code and releases the slot (the ledger refuses while any
-// operation of the request is open or uncertain, which keeps the slot held for reconciliation).
+// for stops between copies, a fenced event appender and `settleWorker`. The loop appends every
+// other request event (contract order: the worker settled, its budget_updated, request_finished)
+// and settles the worker through `settleWorker`; afterwards this code only releases the slot (the
+// ledger refuses while any operation of the request is open or uncertain, and a finish whose
+// attention is needs_reconciliation keeps it held, both for reconciliation; a failed release is
+// left to the lost-worker routine). A loop that ends without finishing the request has exited before
+// finishing: nothing is settled, finished or released here, and the lost-worker routine finishes
+// it worker_lost once the heartbeat is old (contract section 8.1).
 // In validation mode it runs the standalone harness (injected as `validate`) on the case's two
 // parts with copies recorded under the run's own operation, inside 1,800 s of the accepted POST,
 // then settles the run (its worker in full, its copies as measured), finishes it and releases the
@@ -15,17 +19,15 @@
 // contract's late ones is appended, and nothing is settled or released.
 import type { Rates } from "@rbw/envelope";
 import type { EventType, StopCode, ValidationMatrix, ValidationResult } from "@rbw/factory-contract";
+import { STOP_CODE_VALUES } from "@rbw/factory-contract";
 import {
   EVENT_KEYS,
   WORKER_ACTOR,
-  appendBudgetUpdate,
-  appendNeedsReconciliation,
-  finishRequest,
   finishValidation,
   finishedEvent,
   fullSettlement,
   makeUncertain,
-  usd,
+  needsReconciliationRaised,
   validationOperation,
   validationSettlement,
   workerOperation,
@@ -100,17 +102,24 @@ export interface RequestHooks {
   checkpoint(): Promise<Checkpoint>;
   /** The fenced appender: refuses every event but the contract's late ones once the request was finished elsewhere. */
   append(event: FactoryEventInput): Promise<AppendOutcome>;
+  /**
+   * The core's `settleWorker` port: ends the worker's operation, settles it at its full worst case
+   * (it cannot measure its own sandbox's end) and closes the request budget with the stop code. It
+   * appends no event: the loop appends the budget_updated and request_finished that follow.
+   * Repeating it with the same stop code changes nothing. It rejects when the ledger refuses or
+   * fails, and then leaves the worker's operation uncertain where it was still running.
+   */
+  settleWorker(stop: StopCode): Promise<void>;
 }
 
-export interface RequestRun {
-  stop_code: StopCode;
-  /** True when the loop appended request_finished itself. */
-  finished: boolean;
-}
+/** The factory core's request loop: it finishes the request itself, through `append` and `settleWorker`. */
+export type Orchestrate = (hooks: RequestHooks) => Promise<void>;
 
-export type Orchestrate = (hooks: RequestHooks) => Promise<RequestRun>;
-
-export type WorkerOutcome = { kind: "finished"; stop_code: StopCode; slot_released: boolean } | { kind: "fenced" };
+/**
+ * finished: the loop finished the request; fenced: someone else finished it; unfinished: the loop
+ * ended without finishing it, which the lost-worker routine finishes worker_lost.
+ */
+export type WorkerOutcome = { kind: "finished"; stop_code: StopCode; slot_released: boolean } | { kind: "fenced" } | { kind: "unfinished" };
 
 /** Contract section 8.4: the only event types allowed after request_finished. */
 const LATE_TYPES: ReadonlySet<EventType> = new Set(["budget_updated", "attention", "attention_cleared", "validation_started", "validation_finished"]);
@@ -119,11 +128,54 @@ function errorText(error: unknown): string {
   return error instanceof Error ? `${error.name}: ${error.message}` : "non-error";
 }
 
+/**
+ * Releases the slot after the finish, on a best-effort basis: a refusal or a failed call is logged
+ * and the slot stays held, which the lost-worker routine releases once this worker is silent.
+ */
 async function releaseSlot(deps: WorkerDeps, root: string): Promise<boolean> {
   const profile = deps.profile ?? FACTORY_PROFILE;
-  const released = await deps.ledger.spend.releaseSlot({ slot_key: profile.slot_key, root_execution_id: root, actor_role: WORKER_ACTOR, evidence: null, reason: null });
-  if (!released.ok) deps.log(`factory: the slot stays held (${released.code})`);
-  return released.ok;
+  try {
+    const released = await deps.ledger.spend.releaseSlot({ slot_key: profile.slot_key, root_execution_id: root, actor_role: WORKER_ACTOR, evidence: null, reason: null });
+    if (!released.ok) deps.log(`factory: the slot stays held (${released.code})`);
+    return released.ok;
+  } catch (error) {
+    deps.log(`factory: the slot release failed (${errorText(error)}); the slot stays held`);
+    return false;
+  }
+}
+
+function stopCodeOf(value: unknown): StopCode | null {
+  return STOP_CODE_VALUES.find((code) => code === value) ?? null;
+}
+
+/** settleWorker: the worker's operation ended and settled in full, then the budget closed with the stop code. */
+async function settleWorkerOperation(deps: WorkerDeps, record: FactoryRequestRecord, stop: StopCode): Promise<void> {
+  const profile = deps.profile ?? FACTORY_PROFILE;
+  const { spend, budgets } = deps.ledger;
+  const op = workerOperation({ identity: deps.identity, rates: deps.rates, profile }, record);
+  try {
+    const status = await spend.operationStatus({ operation_id: op.operation_id });
+    if (!status.ok) throw new Error(`the worker's operation is unknown (${status.code})`);
+    if (status.state === "running") {
+      const ended = await spend.transition({ operation_id: op.operation_id, from_state: "running", to_state: "terminal", actor_role: WORKER_ACTOR, terminal_status: "completed" });
+      if (!ended.ok) throw new Error(`the worker's end was refused (${ended.code})`);
+    }
+    if (status.state === "running" || status.state === "terminal") {
+      const settled = await spend.settle(fullSettlement(op.envelope, op.operation_id));
+      if (!settled.ok) throw new Error(`the worker's settlement was refused (${settled.code})`);
+    } else if (status.state !== "reconciled") {
+      throw new Error(`the worker's operation is ${status.state}, so it was not settled`);
+    }
+    const closed = await budgets.close(record.budget_key, stop);
+    if (!closed.ok) throw new Error(`the budget close was refused (${closed.code})`);
+  } catch (error) {
+    try {
+      await makeUncertain(spend, op.operation_id, WORKER_ACTOR);
+    } catch (moveError) {
+      deps.log(`factory ${record.request_id} the worker's operation could not be moved to uncertain (${errorText(moveError)})`);
+    }
+    throw error;
+  }
 }
 
 /** Runs one request to its end. */
@@ -135,9 +187,10 @@ export async function runFactoryWorker(deps: WorkerDeps, args: { request_id: str
   const heartbeat = startHeartbeat(deps.records, { request_id: id }, deps.now, deps.heartbeat_ms ?? profile.heartbeat.interval_s * 1000, deps.log);
   try {
     let fence = false;
-    let ownFinish = false;
+    // Set by the appender once the loop recorded request_finished itself (a holder: the loop sets it inside a callback).
+    const own = { finished: false };
     const fenced = async (): Promise<boolean> => {
-      if (!fence && !ownFinish && finishedEvent(await deps.records.events(id)) !== null) fence = true;
+      if (!fence && !own.finished && finishedEvent(await deps.records.events(id)) !== null) fence = true;
       return fence;
     };
     if (await fenced()) return { kind: "fenced" };
@@ -150,8 +203,12 @@ export async function runFactoryWorker(deps: WorkerDeps, args: { request_id: str
     const append = async (event: FactoryEventInput): Promise<AppendOutcome> => {
       if (!LATE_TYPES.has(event.type) && (await fenced())) return { kind: "refused", reason: "the request was finished elsewhere" };
       const appended = await deps.records.appendEvent(id, event, deps.now());
-      if (event.type === "request_finished" && (appended.kind === "appended" || appended.kind === "replay")) ownFinish = true;
+      if (event.type === "request_finished" && (appended.kind === "appended" || appended.kind === "replay")) own.finished = true;
       return appended;
+    };
+    const settleWorker = async (stop: StopCode): Promise<void> => {
+      if (await fenced()) throw new Error("the request was finished elsewhere; its worker is left for reconciliation");
+      await settleWorkerOperation(deps, record, stop);
     };
     const meter = new CopyMeter({
       ledger: deps.ledger,
@@ -159,7 +216,7 @@ export async function runFactoryWorker(deps: WorkerDeps, args: { request_id: str
       rates: deps.rates,
       now: deps.now,
       root: record.root,
-      namespace: deps.identity.request_namespace,
+      kind: "request",
       task_revision: record.interpretation_sha256,
       budget_key: record.budget_key,
       provider: deps.provider,
@@ -167,40 +224,27 @@ export async function runFactoryWorker(deps: WorkerDeps, args: { request_id: str
       margin_s: profile.copy_launch_margin_s,
       mode: { kind: "own_operation", role: "request" },
       beforeLaunch: async () => (await checkpoint()) === "continue",
-      onBudgetChange: (key, message) => appendBudgetUpdate(deps, record, key, message),
       log: deps.log,
       profile,
     });
 
-    let run: RequestRun;
     try {
-      run = await args.orchestrate({ request: record, profile, deadline: args.deadline, now: deps.now, meter, checkpoint, append });
+      await args.orchestrate({ request: record, profile, deadline: args.deadline, now: deps.now, meter, checkpoint, append, settleWorker });
     } catch (error) {
       deps.log(`factory ${id} the request loop failed (${errorText(error)})`);
-      run = { stop_code: "operational_error", finished: false };
     }
     if (await fenced()) return { kind: "fenced" };
-
-    const finishedHere = run.finished || ownFinish;
-    const stop: StopCode = meter.uncertain && !finishedHere ? "needs_reconciliation" : run.stop_code;
-    if (finishedHere) {
-      // The loop finished the request itself; an uncertain copy still needs the reconciliation notice.
-      if (meter.uncertain) await appendNeedsReconciliation(deps, id, "A sandbox run's outcome is uncertain; its spend needs reconciliation.");
-      const closed = await deps.ledger.budgets.close(record.budget_key, stop);
-      if (!closed.ok) deps.log(`factory ${id} the budget close was refused (${closed.code})`);
-    } else {
-      const attention = stop === "needs_reconciliation" ? "A sandbox run's outcome is uncertain; its spend needs reconciliation." : null;
-      if (!(await finishRequest(deps, record, stop, { attention }))) return { kind: "fenced" };
+    const events = own.finished ? await deps.records.events(id) : [];
+    const finished = finishedEvent(events);
+    const stop = finished === null ? null : stopCodeOf(finished.data.stop_code);
+    if (stop === null) {
+      deps.log(`factory ${id} the request loop ended without finishing the request; it is left for the lost-worker finish`);
+      return { kind: "unfinished" };
     }
-
-    const op = workerOperation({ identity: deps.identity, rates: deps.rates, profile }, record);
-    const ended = await deps.ledger.spend.transition({ operation_id: op.operation_id, from_state: "running", to_state: "terminal", actor_role: WORKER_ACTOR, terminal_status: "completed" });
-    if (ended.ok) {
-      const settled = await deps.ledger.spend.settle(fullSettlement(op.envelope, op.operation_id));
-      if (settled.ok) await appendBudgetUpdate(deps, record, EVENT_KEYS.workerSettled, `The worker settled at ${usd(settled.settled_microusd)}.`);
-      else deps.log(`factory ${id} the worker's settlement was refused (${settled.code})`);
-    } else {
-      deps.log(`factory ${id} the worker's operation was not ended (${ended.code})`);
+    // Spend the loop left for reconciliation (contract section 8.5) keeps the slot held for the operator.
+    if (needsReconciliationRaised(events)) {
+      deps.log(`factory ${id} finished ${stop} with spend that needs reconciliation; slot held`);
+      return { kind: "finished", stop_code: stop, slot_released: false };
     }
     return { kind: "finished", stop_code: stop, slot_released: await releaseSlot(deps, record.root) };
   } finally {
@@ -255,7 +299,7 @@ export async function runFactoryValidation(deps: WorkerDeps, args: { validation_
       rates: deps.rates,
       now: deps.now,
       root: validation.root,
-      namespace: deps.identity.validation_namespace,
+      kind: "validation",
       task_revision: validation.case_id,
       budget_key: request.budget_key,
       provider: deps.provider,
