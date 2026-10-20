@@ -1,13 +1,16 @@
-// Test mode (contract section 15.1) through the handlers: each scenario reaches its fixture's end
+// Test mode (contract section 15.1, revision 3) through the handlers: each scenario reaches its fixture's end
 // state (outcomes, stop codes, delivery, attention, stages, counts and event order; amounts, also those
-// in texts, follow the test profile's worst cases), the evidence adds up to the status, the 2 s hold, reconcile and reset,
-// validation runs, hash-checked downloads, and no JSON response carries evaluator material.
+// in texts, follow the test profile's worst cases), the evidence adds up to the status and names the
+// ledger's executions and the copies' hosts, setup-failed, the pending-package window of
+// two-host-fulfilled, the 2 s hold, reconcile and reset, validation runs, hash-checked downloads, and no
+// JSON response carries evaluator material.
 import { cpSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { RequestInput, RequestStatus, TestEvidence, TestScenario, ValidationRun } from "@rbw/factory-contract";
+import { copyExecutionId, REASON_TEXT, requestRoot, validationRoot } from "@rbw/factory";
+import type { HostId, RequestInput, RequestStatus, TestEvidence, TestScenario, ValidationRun } from "@rbw/factory-contract";
 import { TEST_SCENARIO_VALUES } from "@rbw/factory-contract";
 import {
   getPackage,
@@ -25,7 +28,8 @@ import type { FactoryServer } from "../../src/factory-server/ports.ts";
 import { TEST_MODE_EVALUATOR_SENTINEL } from "../../src/factory-server/test-mode/archives.ts";
 import { loadTestFixtures, SCENARIO_FIXTURE } from "../../src/factory-server/test-mode/fixtures.ts";
 import { TEST_PROFILE } from "../../src/factory-server/test-mode/profile.ts";
-import { testRequestRoot, TestWorld, withItemKeys } from "../../src/factory-server/test-mode/world.ts";
+import { PENDING_PACKAGE_MS } from "../../src/factory-server/test-mode/scenarios.ts";
+import { TestWorld, withItemKeys } from "../../src/factory-server/test-mode/world.ts";
 import { contractBody, fixture, FIXTURES, OTHER_REQUEST_ID, PASSCODE, request, REQUEST_ID, sha256, START, VALIDATION_ID } from "./support.ts";
 
 const FIXTURE_SET = loadTestFixtures(FIXTURES);
@@ -43,7 +47,7 @@ interface World {
 function makeWorld(holdMs = 0, stepMs = STEP_MS): World {
   const clock = { ms: START };
   const world = new TestWorld({ fixtures: FIXTURE_SET, passcode: PASSCODE, clock: () => clock.ms, stepMs, holdMs });
-  return { world, clock, bodies: [], server: { ports: world, requestRoot: testRequestRoot, test: world, log: () => undefined } };
+  return { world, clock, bodies: [], server: { ports: world, requestRoot, test: world, log: () => undefined } };
 }
 
 async function keep(w: World, response: Response): Promise<Response> {
@@ -170,7 +174,30 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-const ENDING: TestScenario[] = TEST_SCENARIO_VALUES.filter((scenario) => scenario !== "uncertain-provider" && !scenario.startsWith("validation-"));
+/** The scenarios whose run ends as an end-state fixture shows (setup-failed and uncertain-provider have none). */
+const ENDING: TestScenario[] = TEST_SCENARIO_VALUES.filter((scenario) => scenario !== "uncertain-provider" && scenario !== "setup-failed" && !scenario.startsWith("validation-"));
+
+/**
+ * The evidence's ledger identities (contract revision 3): the worker runs under the request's root
+ * execution with no host, every other operation has an execution of its own and a host, and each
+ * provider call names the execution of the operation with its call name.
+ */
+function expectEvidenceIdentities(proof: TestEvidence, requestId: string): void {
+  expect(proof.root_execution_id).toBe(requestRoot(requestId));
+  const workers = proof.operations.filter((op) => op.kind === "worker");
+  expect(workers.map((op) => [op.execution_id, op.host_id])).toEqual([[proof.root_execution_id, null]]);
+  for (const op of proof.operations) if (op.kind !== "worker") expect(op.host_id, op.call_name).not.toBeNull();
+  expect(new Set(proof.operations.map((op) => op.execution_id)).size).toBe(proof.operations.length);
+  const executionOf = new Map(proof.operations.map((op) => [op.call_name, op.execution_id]));
+  for (const call of proof.provider_calls) expect(call.execution_id, call.call_name).toBe(executionOf.get(call.call_name));
+}
+
+/** What a candidate's copies reserve on each host, from the evidence. */
+function reservedByHost(proof: TestEvidence): Partial<Record<HostId, number>> {
+  const sums: Partial<Record<HostId, number>> = {};
+  for (const op of proof.operations) if (op.kind === "candidate_copy" && op.host_id !== null) sums[op.host_id] = (sums[op.host_id] ?? 0) + op.reserved_microusd;
+  return sums;
+}
 
 describe("scenarios", () => {
   it.each(ENDING)("%s reaches its fixture's end state, with events that only grow", async (scenario) => {
@@ -218,6 +245,16 @@ describe("scenarios", () => {
     expect(proof.operations.filter((op) => op.settled_microusd === null)).toEqual([]);
     expect(proof.slot).toEqual({ slot_key: "factory", holder_request_id: null, holder_validation_id: null });
     expect(proof.provider_calls.map((call) => [call.call_name, call.action])).toEqual(proof.operations.map((op) => [op.call_name, "create"]));
+    // Each copy runs on its candidate's host under the execution the shared identities give it.
+    expectEvidenceIdentities(proof, REQUEST_ID);
+    expect(reservedByHost(proof)).toEqual(TEST_PROFILE.candidate_microusd);
+    const [taskReport, umami] = last?.candidates ?? [];
+    expect([taskReport?.host_id, umami?.host_id]).toEqual(["task-report", "umami"]);
+    const copies = proof.operations.filter((op) => op.kind === "candidate_copy");
+    const expected = [taskReport, umami].flatMap((candidate) =>
+      (["clean", "buggy", "fixed"] as const).map((state) => [candidate?.host_id, copyExecutionId({ kind: "request", root: requestRoot(REQUEST_ID), subject_id: candidate?.candidate_id ?? "", state, n: 1 })]),
+    );
+    expect(copies.map((op) => [op.host_id, op.execution_id])).toEqual(expected);
   });
 
   it("partial-budget skips the Umami candidate on the profile's worst cases, and its texts name the fake ledger's amounts", async () => {
@@ -234,6 +271,11 @@ describe("scenarios", () => {
     expect(last.candidates[1]?.reason).toEqual({ code: "no_budget_for_candidate", message: skipText });
     const stopReason = { code: "budget_exhausted", message: "The remaining budget of $0.50 cannot cover another candidate's worst case. 1 of 2 requested cases was delivered." };
     expect(last.stop_reason).toEqual(stopReason);
+    // The skipped Umami candidate reserved nothing: every copy in the evidence is the task-report candidate's.
+    const proof = await evidence(w);
+    expectEvidenceIdentities(proof, REQUEST_ID);
+    expect(reservedByHost(proof)).toEqual({ "task-report": TEST_PROFILE.candidate_microusd["task-report"] });
+    expect(proof.operations.filter((op) => op.host_id === "umami")).toEqual([]);
     // A validation run after the finish spends from the same budget; the stop reason stays as it was.
     const caseId = last.cases[0]?.case_id ?? "";
     expect((await validate(w, caseId, "00000000-0000-4000-8000-0000000002f1")).status).toBe(202);
@@ -381,6 +423,141 @@ describe("item keys of the request form", () => {
   });
 });
 
+describe("setup-failed (contract section 15.1, revision 3)", () => {
+  it.each([
+    ["the fixture's item keys", false],
+    ["the request form's item keys", true],
+  ] as const)("with %s: the Umami clean copy cannot be prepared, the candidate is invalid, and only that copy was created", async (_keys, form) => {
+    const w = makeWorld();
+    await reset(w, "setup-failed");
+    // The scenario sends the input of status-zero-result.json.
+    const fixtureInput = endState("zero-result").interpretation.input;
+    const { input, map } = form ? keyed(fixtureInput) : { input: fixtureInput, map: new Map<string, string>() };
+    const started = await start(w, "setup-failed", REQUEST_ID, input);
+    expect(started.status).toBe(202);
+    const seen = await runToEnd(w, "setup-failed");
+    const last = seen.at(-1);
+    if (last === undefined) throw new Error("synthetic: no status");
+    for (const earlier of seen) {
+      expect(earlier.events).toEqual(last.events.slice(0, earlier.events.length));
+      expectBudgetArithmetic(earlier);
+      expectExploredByChecks(earlier);
+    }
+    expect([last.state, last.outcome, last.stop_reason?.code, last.delivery, last.attention]).toEqual(["finished", "sources_exhausted", "sources_exhausted", "none", null]);
+    expect(last.candidates.map((candidate) => [candidate.host_id, candidate.entry_id, candidate.stage, candidate.reason, candidate.item_key, candidate.case_id])).toEqual([
+      ["umami", "synthetic-umami-date-time-01", "invalid", { code: "setup_failed", message: REASON_TEXT.setup_failed }, null, null],
+    ]);
+    expect(last.funnel).toEqual({ candidates_explored: 1, behavior_checks_passed: 0, requested_criteria_passed: 0, packages_ready: 0 });
+    expect(last.cases).toEqual([]);
+    expect(last.items.map((item) => [item.item_key, item.delivered, item.missing])).toEqual(input.items.map((item) => [item.item_key, 0, item.quantity]));
+    expect(last.events.map((event) => event.type)).toEqual([
+      "request_accepted", "budget_updated", "worker_started", "host_preparing", "host_ready", "candidate_selected", "budget_updated",
+      "check_finished", "candidate_invalid", "budget_updated", "source_exhausted", "budget_updated", "request_finished",
+    ]);
+    expect(last.events.flatMap((event) => (event.type === "check_finished" ? [event.data] : []))).toEqual([{ check_set: "original_suite", copy: "clean", outcome: "error", runs_valid: 0, runs_total: 3 }]);
+
+    const proof = await evidence(w);
+    expectEvidenceIdentities(proof, REQUEST_ID);
+    const share = TEST_PROFILE.candidate_microusd.umami / 3;
+    expect(proof.operations.map((op) => [op.kind, op.call_name, op.host_id, op.state, op.reserved_microusd, op.settled_microusd])).toEqual([
+      ["worker", "worker", null, "terminal", TEST_PROFILE.worker_microusd, TEST_PROFILE.worker_microusd],
+      ["candidate_copy", "candidate-01-clean", "umami", "terminal", share, share],
+      ["candidate_copy", "candidate-01-buggy", "umami", "terminal", share, 0],
+      ["candidate_copy", "candidate-01-fixed", "umami", "terminal", share, 0],
+    ]);
+    expect(proof.provider_calls.map((call) => [call.call_name, call.action])).toEqual([["worker", "create"], ["candidate-01-clean", "create"]]);
+    expect(proof.slot).toEqual({ slot_key: "factory", holder_request_id: null, holder_validation_id: null });
+    expect(last.budget).toMatchObject({ reserved_microusd: 0, spent_microusd: TEST_PROFILE.worker_microusd + share, overrun: false });
+    for (const body of w.bodies) for (const key of map.keys()) expect(body, key).not.toMatch(wholeKey(key));
+  });
+});
+
+describe("the pending-package window of two-host-fulfilled (contract section 15.1, revision 3)", () => {
+  it("lists, counts, serves and validates the first case only once case_delivered follows its package_ready 5 s later", async () => {
+    const w = makeWorld();
+    await reset(w, "two-host-fulfilled");
+    await start(w, "two-host-fulfilled");
+    let current = await status(w);
+    for (let poll = 0; !current.events.some((event) => event.type === "package_ready"); poll += 1) {
+      if (poll > 100) throw new Error("synthetic: no package_ready");
+      w.clock.ms += STEP_MS;
+      current = await status(w);
+    }
+    const ready = current.events.find((event) => event.type === "package_ready");
+    if (ready?.type !== "package_ready" || ready.case_id === null) throw new Error("synthetic: no announced case");
+    const caseId = ready.case_id;
+    expect([ready.host_id, caseId]).toEqual(["task-report", "ca".repeat(32)]);
+    const readyMs = Date.parse(ready.at);
+    expect(PENDING_PACKAGE_MS).toBe(5000);
+    const part = (name: "bug-case" | "validator") => getPackage(request(`${STATUS_PATH}/cases/${caseId}/packages/${name}`), w.server, { request_id: REQUEST_ID, case_id: caseId, part: name });
+    const validationIds = ["00000000-0000-4000-8000-0000000002a1", "00000000-0000-4000-8000-0000000002a2", "00000000-0000-4000-8000-0000000002a3"];
+    // In the window, from the read that first returned package_ready up to 1 ms before its end.
+    const probes = [w.clock.ms, readyMs + 2500, readyMs + PENDING_PACKAGE_MS - 1];
+    for (const [index, at] of probes.entries()) {
+      w.clock.ms = at;
+      const pending = await status(w);
+      expect(pending.events.at(-1)?.type, String(at - readyMs)).toBe("package_ready");
+      expect(pending.cases).toEqual([]);
+      expect(pending.funnel.packages_ready).toBe(0);
+      expect(pending.candidates[0]?.stage).toBe("packaging");
+      expect((await part("bug-case")).status).toBe(404);
+      expect((await part("validator")).status).toBe(404);
+      const refused = await validate(w, caseId, validationIds[index] ?? "");
+      expect(await contractBody("ErrorResponse", refused)).toMatchObject({ error: { code: "not_found" } });
+      expect((await evidence(w)).operations.filter((op) => op.kind === "validation")).toEqual([]);
+    }
+    // At its end the case is delivered, and both parts are served with the SHA-256 that package_ready announced.
+    w.clock.ms = readyMs + PENDING_PACKAGE_MS;
+    const delivered = await status(w);
+    const event = delivered.events.find((item) => item.type === "case_delivered");
+    expect(event === undefined ? null : [event.case_id, Date.parse(event.at) - readyMs]).toEqual([caseId, PENDING_PACKAGE_MS]);
+    expect(delivered.cases.map((item) => item.case_id)).toEqual([caseId]);
+    expect(delivered.funnel.packages_ready).toBe(1);
+    const announced = ready.data;
+    for (const [name, sha] of [["bug-case", announced.bug_case_sha256], ["validator", announced.validator_sha256]] as const) {
+      const response = await part(name);
+      expect(response.status).toBe(200);
+      expect(sha256(new Uint8Array(await response.arrayBuffer()))).toBe(sha);
+    }
+    // The request still holds the slot, so a validation POST now passes the case check and meets busy.
+    expect(await contractBody("ErrorResponse", await validate(w, caseId, "00000000-0000-4000-8000-0000000002a4"))).toMatchObject({ error: { code: "busy" } });
+    const last = (await runToEnd(w, "two-host-fulfilled")).at(-1);
+    expect(shape(last ?? delivered)).toEqual(shape(endState("two-host-fulfilled")));
+    // Only the first case waits: the Umami case follows its package_ready one step later.
+    const umamiReady = last?.events.findLast((item) => item.type === "package_ready");
+    const umamiDelivered = last?.events.findLast((item) => item.type === "case_delivered");
+    expect(Date.parse(umamiDelivered?.at ?? "") - Date.parse(umamiReady?.at ?? "")).toBe(STEP_MS);
+  });
+
+  it("does not hold the other scenarios that replay status-fulfilled.json", async () => {
+    for (const scenario of ["validation-failed", "validation-error"] as const) {
+      const { last } = await finishedFulfilled(scenario);
+      const ready = last.events.find((item) => item.type === "package_ready");
+      const delivered = last.events.find((item) => item.type === "case_delivered");
+      expect(Date.parse(delivered?.at ?? "") - Date.parse(ready?.at ?? ""), scenario).toBe(STEP_MS);
+    }
+  });
+
+  it("ends the held candidate incomplete when a stop lands in the window, and delivers nothing", async () => {
+    const w = makeWorld();
+    await reset(w, "two-host-fulfilled");
+    await start(w, "two-host-fulfilled");
+    let current = await status(w);
+    while (!current.events.some((event) => event.type === "package_ready")) {
+      w.clock.ms += STEP_MS;
+      current = await status(w);
+    }
+    w.clock.ms += 2 * STEP_MS;
+    expect((await postStop(request(`${STATUS_PATH}/stop`, { body: {} }), w.server, { request_id: REQUEST_ID })).status).toBe(200);
+    const last = (await runToEnd(w, "two-host-fulfilled")).at(-1);
+    expect([last?.outcome, last?.stop_reason?.code, last?.delivery]).toEqual(["cancelled", "cancelled_by_user", "none"]);
+    expect(last?.candidates.map((candidate) => [candidate.stage, candidate.reason?.code])).toEqual([["incomplete", "stopped"]]);
+    expect(last?.events.some((event) => event.type === "case_delivered")).toBe(false);
+    expect(last?.budget.reserved_microusd).toBe(0);
+    expect((await evidence(w)).slot.holder_request_id).toBeNull();
+  });
+});
+
 describe("funnel (contract section 8.2)", () => {
   it("counts a candidate as explored from its first check_finished, so one reserved but unchecked, or selected and then skipped, never counts", async () => {
     const w = makeWorld();
@@ -455,12 +632,18 @@ describe("worker-lost and reconciliation", () => {
     expect(last?.attention?.message).toContain("Their $0.50 of reservations stays held");
     const proof = await evidence(w);
     const expected = fixture("TestEvidence", "test-evidence.json");
-    const strip = (item: TestEvidence) => ({
-      operations: item.operations.map((op) => [op.kind, op.call_name, op.state, op.reserved_microusd, op.settled_microusd, op.attempt_ordinal]),
-      slot: [item.slot.holder_request_id === null ? null : "held by the request", item.slot.holder_validation_id],
-      provider_calls: item.provider_calls.map((call) => [call.call_name, call.provider, call.action]),
-    });
+    // The identities differ (synthetic in the fixture, derived here); how they relate does not.
+    const strip = (item: TestEvidence) => {
+      const executionOf = new Map(item.operations.map((op) => [op.call_name, op.execution_id]));
+      return {
+        operations: item.operations.map((op) => [op.kind, op.call_name, op.host_id, op.execution_id === item.root_execution_id, op.state, op.reserved_microusd, op.settled_microusd, op.attempt_ordinal]),
+        executions: new Set(item.operations.map((op) => op.execution_id)).size,
+        slot: [item.slot.holder_request_id === null ? null : "held by the request", item.slot.holder_validation_id],
+        provider_calls: item.provider_calls.map((call) => [call.call_name, call.provider, call.action, call.execution_id === executionOf.get(call.call_name)]),
+      };
+    };
     expect(strip(proof)).toEqual(strip(expected));
+    expectEvidenceIdentities(proof, REQUEST_ID);
     expect(proof.slot.holder_request_id).toBe(REQUEST_ID);
     // The request's reserved amount sums only the operations still holding theirs: here all of them.
     expect(proof.operations.filter((op) => op.settled_microusd === null).reduce((sum, op) => sum + op.reserved_microusd, 0)).toBe(last?.budget.reserved_microusd);
@@ -596,6 +779,18 @@ describe("controls", () => {
     const proof = await evidence(w);
     expect(proof.provider_calls.filter((call) => call.call_name === "worker")).toHaveLength(1);
     expect(proof.operations.filter((op) => op.kind === "worker")).toHaveLength(1);
+    // One worker under the request's root execution, the same on every read; each create names its operation's execution.
+    expect(proof.root_execution_id).toBe(requestRoot(REQUEST_ID));
+    expect(proof.operations.find((op) => op.kind === "worker")?.execution_id).toBe(proof.root_execution_id);
+    w.clock.ms += 20 * STEP_MS;
+    const later = await evidence(w);
+    expect(later.operations.length).toBeGreaterThan(proof.operations.length);
+    expect(later.root_execution_id).toBe(proof.root_execution_id);
+    const identity = (op: TestEvidence["operations"][number]) => [op.operation_id, op.kind, op.call_name, op.execution_id, op.host_id];
+    expect(later.operations.slice(0, proof.operations.length).map(identity)).toEqual(proof.operations.map(identity));
+    const creates = later.provider_calls.filter((call) => call.action === "create");
+    expect(new Set(creates.map((call) => call.execution_id)).size).toBe(creates.length);
+    for (const call of creates) expect(later.operations.filter((op) => op.execution_id === call.execution_id).map((op) => op.call_name)).toEqual([call.call_name]);
   });
 
   it("refuses a start outside the limits or with a repeated item key with invalid_request before the ID lock, also for an existing request ID", async () => {
@@ -841,7 +1036,9 @@ describe("validation runs in test mode", () => {
     expect((await validate(w, caseRecord.case_id, VALIDATION)).status).toBe(200);
     const held = await evidence(w);
     expect(held.slot).toEqual({ slot_key: "factory", holder_request_id: REQUEST_ID, holder_validation_id: VALIDATION });
-    expect(held.operations.at(-1)).toMatchObject({ kind: "validation", call_name: "validation-01", state: "running", settled_microusd: null });
+    expect(held.operations.at(-1)).toMatchObject({ kind: "validation", call_name: "validation-01", execution_id: validationRoot(VALIDATION), host_id: caseRecord.host_id, state: "running", settled_microusd: null });
+    expect(held.provider_calls.at(-1)).toMatchObject({ call_name: "validation-01", execution_id: validationRoot(VALIDATION), action: "create" });
+    expectEvidenceIdentities(held, REQUEST_ID);
     const otherCase = last.cases[1]?.case_id ?? "";
     const busy = await validate(w, otherCase, SECOND);
     expect(await contractBody("ErrorResponse", busy)).toMatchObject({ error: { code: "busy", details: { reason: "active" } } });

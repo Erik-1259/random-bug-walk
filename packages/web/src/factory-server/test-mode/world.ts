@@ -5,12 +5,16 @@
 // storage serves synthetic archive pairs whose SHA-256 the scenario's package_ready events carry.
 // Every fake operation costs exactly its worst case. Starts and validation starts are held for 2 s
 // inside their ID lock. The state lives on globalThis, so every route bundle of one server shares it.
+// The fake ledger uses the factory core's identities (contract revision 3): a request's operations run
+// under requestRoot(request_id), the worker's execution is that root, each candidate copy's execution is
+// copyExecutionId of its candidate and state, and a validation run's is validationRoot(validation_id).
 // An input matches a fixture by its requirements, item by item in order; under other item keys, the
 // fixture's interpretation and its scenario's run carry the request's keys.
 //
 // These fakes stand in for the shared request loop's fake runner and scenarios, the worker's
 // in-process entry and the package tooling's synthetic pair builder until those are wired here.
 import { createHash } from "node:crypto";
+import { copyExecutionId, requestRoot, validationRoot } from "@rbw/factory";
 import type {
   AttentionCode,
   Candidate,
@@ -92,6 +96,10 @@ interface Op {
   operation_id: string;
   kind: TestOperationKind;
   call_name: string;
+  /** The ledger execution the operation pays for. */
+  execution_id: string;
+  /** The copy's or validation run's host; null for the worker. */
+  host_id: HostId | null;
   state: TestOperationState;
   reserved: number;
   settled: number | null;
@@ -102,12 +110,15 @@ interface Op {
 interface ProviderCall {
   request_id: string;
   call_name: string;
+  /** The execution whose job the call created or stopped. */
+  execution_id: string;
   action: TestProviderAction;
   at: string;
 }
 
 interface WorldRequest {
   request_id: string;
+  /** The request's root execution: requestRoot(request_id), which the handlers pass in. */
   root: string;
   sha256: string;
   interpretation: Interpretation;
@@ -167,10 +178,6 @@ function budgetStopText(remaining: number, delivered: number, requested: number)
 
 /** A ledger-shaped operation ID: 64 lowercase hex characters, fixed by the request and the call. */
 const operationId = (requestId: string, callName: string): string => createHash("sha256").update(`rbw-factory-test-operation:${requestId}:${callName}`).digest("hex");
-
-export function testRequestRoot(requestId: string): string {
-  return `test-request:${requestId}`;
-}
 
 function normalize(input: RequestInput): RequestInput {
   return {
@@ -400,7 +407,7 @@ export class TestWorld implements FactoryServerPorts, FactoryTestControls {
     };
     this.requests.set(req.request_id, req);
     this.append(req, accepted, now);
-    const worker = this.newOp({ kind: "worker", call_name: "worker", reserved: this.costs.worker_microusd, request_id: req.request_id });
+    const worker = this.newOp({ kind: "worker", call_name: "worker", execution_id: req.root, host_id: null, reserved: this.costs.worker_microusd, request_id: req.request_id });
     this.budgetEvent(req, `Reserved ${money(worker.reserved)} for the worker's worst case.`, now);
     this.create(req.request_id, worker, now, false);
     return Promise.resolve({ ok: true });
@@ -475,10 +482,10 @@ export class TestWorld implements FactoryServerPorts, FactoryTestControls {
     const budget = this.budget(req);
     if (budget.overrun || budget.remaining < worst || this.poolLeft() < worst) return Promise.resolve({ kind: "budget_unavailable" });
     const now = this.ms();
-    const root = `test-validation:${args.validation_id}`;
+    const root = validationRoot(args.validation_id);
     this.slot = root;
     const ordinal = [...this.validations.values()].filter((run) => run.request_id === req.request_id).length + 1;
-    const op = this.newOp({ kind: "validation", call_name: `validation-${pad(ordinal)}`, reserved: worst, request_id: req.request_id });
+    const op = this.newOp({ kind: "validation", call_name: `validation-${pad(ordinal)}`, execution_id: root, host_id: delivered.host_id, reserved: worst, request_id: req.request_id });
     const run: WorldValidation = {
       validation_id: args.validation_id,
       request_id: req.request_id,
@@ -524,16 +531,20 @@ export class TestWorld implements FactoryServerPorts, FactoryTestControls {
 
   evidence(id: string): Promise<TestEvidence | null> {
     this.advance();
-    if (!this.requests.has(id)) return Promise.resolve(null);
+    const req = this.requests.get(id);
+    if (req === undefined) return Promise.resolve(null);
     return Promise.resolve({
       contract_version: "bug-request/1",
       request_id: id,
+      root_execution_id: req.root,
       operations: this.ops
         .filter((op) => op.request_id === id)
         .map((op) => ({
           operation_id: op.operation_id,
           kind: op.kind,
           call_name: op.call_name,
+          execution_id: op.execution_id,
+          host_id: op.host_id,
           state: op.state,
           // The original reservation in every state (contract section 15.1); budget() counts only the held ones.
           reserved_microusd: op.reserved,
@@ -541,7 +552,9 @@ export class TestWorld implements FactoryServerPorts, FactoryTestControls {
           attempt_ordinal: 1,
         })),
       slot: { slot_key: "factory", holder_request_id: this.slotRequest(), holder_validation_id: this.slotValidation() },
-      provider_calls: this.providerCalls.filter((call) => call.request_id === id).map((call) => ({ call_name: call.call_name, provider: "sandbox", action: call.action, at: call.at })),
+      provider_calls: this.providerCalls
+        .filter((call) => call.request_id === id)
+        .map((call) => ({ call_name: call.call_name, execution_id: call.execution_id, provider: "sandbox", action: call.action, at: call.at })),
     });
   }
 
@@ -578,14 +591,14 @@ export class TestWorld implements FactoryServerPorts, FactoryTestControls {
 
   // The fake ledger.
 
-  private newOp(fields: Pick<Op, "kind" | "call_name" | "reserved" | "request_id"> & Partial<Pick<Op, "candidate_id">>): Op {
+  private newOp(fields: Pick<Op, "kind" | "call_name" | "execution_id" | "host_id" | "reserved" | "request_id"> & Partial<Pick<Op, "candidate_id">>): Op {
     const op: Op = { operation_id: operationId(fields.request_id, fields.call_name), state: "prepared", settled: null, candidate_id: null, ...fields };
     this.ops.push(op);
     return op;
   }
 
   private create(requestId: string, op: Op, atMs: number, uncertain: boolean): void {
-    this.providerCalls.push({ request_id: requestId, call_name: op.call_name, action: "create", at: iso(atMs) });
+    this.providerCalls.push({ request_id: requestId, call_name: op.call_name, execution_id: op.execution_id, action: "create", at: iso(atMs) });
     op.state = uncertain ? "uncertain" : "running";
   }
 
@@ -662,6 +675,9 @@ export class TestWorld implements FactoryServerPorts, FactoryTestControls {
       req.nextDueMs += this.stepMs;
       if (step.kind === "pause") {
         if (req.stopMs === null) req.pausedMs = at;
+      } else if (step.kind === "hold") {
+        // The step after the hold runs `ms` after the step before it, which was due one step before this one.
+        req.nextDueMs = at - this.stepMs + step.ms;
       } else if (step.kind === "stall") {
         req.stalled = true;
         this.skewMs += STALL_JUMP_MS;
@@ -742,7 +758,11 @@ export class TestWorld implements FactoryServerPorts, FactoryTestControls {
     return `Settled ${money(worker?.settled ?? 0)} for the worker and closed its reservation.`;
   }
 
-  /** Reserves the candidate's worst case as its three copies and creates their sandboxes. */
+  /**
+   * Reserves the candidate's worst case as its three copies on its host and creates their sandboxes. For
+   * the first candidate, uncertain-provider's first create is uncertain, and setup-failed's clean copy is
+   * created but cannot be prepared; in both the other two copies are never created.
+   */
   private reserveCandidate(req: WorldRequest, candidateId: string, atMs: number): string {
     const host = req.template.candidates.find((candidate) => candidate.candidate_id === candidateId)?.host_id;
     if (host === undefined) throw new Error("test mode: a scenario candidate is missing from its fixture");
@@ -754,14 +774,17 @@ export class TestWorld implements FactoryServerPorts, FactoryTestControls {
       this.newOp({
         kind: "candidate_copy",
         call_name: `candidate-${pad(ordinal)}-${state}`,
+        execution_id: copyExecutionId({ kind: "request", root: req.root, subject_id: candidateId, state, n: 1 }),
+        host_id: host,
         reserved: index === COPY_STATES.length - 1 ? worst - share * (COPY_STATES.length - 1) : share,
         request_id: req.request_id,
         candidate_id: candidateId,
       }),
     );
     const uncertainFirst = req.scenario === "uncertain-provider" && ordinal === 1;
+    const firstOnly = uncertainFirst || (req.scenario === "setup-failed" && ordinal === 1);
     for (const [index, op] of ops.entries()) {
-      if (uncertainFirst && index > 0) break;
+      if (firstOnly && index > 0) break;
       this.create(req.request_id, op, atMs + index, uncertainFirst);
     }
     return `Reserved ${money(worst)} for this candidate's worst case on ${HOST_TEXT[host]}.`;
@@ -1075,5 +1098,5 @@ export function testModeServer(config: FactoryConfig, log: (line: string) => voi
   const holder = globalThis as typeof globalThis & { [WORLD_KEY]?: TestWorld };
   holder[WORLD_KEY] ??= new TestWorld({ fixtures: loadTestFixtures(config.testFixturesDir), passcode: config.passcode });
   const world = holder[WORLD_KEY];
-  return { ports: world, requestRoot: testRequestRoot, test: world, log };
+  return { ports: world, requestRoot, test: world, log };
 }
