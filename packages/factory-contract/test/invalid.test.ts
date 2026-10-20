@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { DefName } from "../src/generated.ts";
-import { BUG_TYPE_ID_VALUES, DIFFICULTY_OPTION_ID_VALUES, HOST_ID_VALUES } from "../src/generated.ts";
+import { BUG_TYPE_ID_VALUES, DIFFICULTY_OPTION_ID_VALUES, HOST_ID_VALUES, TEST_OPERATION_STATE_VALUES } from "../src/generated.ts";
 import { ContractError, assertContract, isDefName, parseContract, validateContract } from "../src/validate.ts";
 import type { JsonObject } from "./support.ts";
 import { asArray, asObject, at, contractFixture, internalFixture, variant } from "./support.ts";
@@ -179,6 +179,14 @@ const SHAPE_CASES: Case[] = [
   { name: "check data on a host event", def: "RequestStatus", base: running, edit: (c) => { at(c, ["events", 3]).data = { check_set: "verification", copy: "clean", outcome: "pass", runs_valid: 1, runs_total: 1 }; }, expected: ["schema:/events/3/data:required:baseline_id", ...["check_set", "copy", "outcome", "runs_valid", "runs_total"].map((field) => `schema:/events/3/data:additionalProperties:${field}`)] },
 ];
 
+/** The ledger states of an operation that is neither settled nor reconciled, so it holds its reservation (section 15.1). */
+const UNSETTLED_STATES = TEST_OPERATION_STATE_VALUES.filter((state) => state !== "terminal" && state !== "reconciled");
+
+/** A settled amount belongs only to a terminal or reconciled operation: the others hold their reservation (section 15.1). */
+const UNSETTLED_CASES: Case[] = UNSETTLED_STATES.map((state): Case => ({
+  name: `a settled amount on an operation in state ${state}`, def: "TestEvidence", base: evidence, edit: (c) => { Object.assign(at(c, ["operations", 0]), { state, settled_microusd: 200000 }); }, expected: "schema:/operations/0/settled_microusd:type",
+}));
+
 const RULE_CASES: Case[] = [
   // Request status (contract section 8.1)
   { name: "an outcome before finished", def: "RequestStatus", base: running, edit: (c) => { c.outcome = "cancelled"; c.stop_reason = { code: "cancelled_by_user", message: "x" }; }, expected: ["schema:/outcome:type", "schema:/stop_reason:type"] },
@@ -243,7 +251,9 @@ const RULE_CASES: Case[] = [
   { name: "a buggy copy expected to pass the checks", def: "RequestStatus", base: fulfilled, edit: (c) => { Object.assign(at(c, ["cases", 1, "matrix", "verification", "buggy"]), { expected: "pass", observed: "pass" }); }, expected: "schema:/cases/1/matrix/verification/buggy/expected:const" },
   { name: "a validator part in the bug case slot", def: "RequestStatus", base: fulfilled, edit: (c) => { Object.assign(at(c, ["cases", 0, "packages", "bug_case"]), { kind: "validator", format: "rbw-validator/1" }); }, expected: "schema:/cases/0/packages/bug_case/kind:const" },
   { name: "a part with the other part's format", def: "RequestStatus", base: fulfilled, edit: (c) => { at(c, ["cases", 0, "packages", "validator"]).format = "rbw-bug-case/1"; }, expected: "schema:/cases/0/packages/validator/format:const" },
-  { name: "parts that are not ready together", def: "RequestStatus", base: fulfilled, edit: (c) => { at(c, ["cases", 0, "packages", "validator"]).ready = false; }, expected: "schema:/cases/0/packages/validator/ready:const" },
+  { name: "a case whose validator part is not ready", def: "RequestStatus", base: fulfilled, edit: (c) => { at(c, ["cases", 0, "packages", "validator"]).ready = false; }, expected: "schema:/cases/0/packages/validator/ready:const" },
+  { name: "a case whose two parts are both not ready", def: "RequestStatus", base: fulfilled, edit: (c) => { for (const part of ["bug_case", "validator"]) at(c, ["cases", 0, "packages", part]).ready = false; }, expected: ["schema:/cases/0/packages/bug_case/ready:const", "schema:/cases/0/packages/validator/ready:const"] },
+  { name: "a published example whose two parts are both not ready", def: "ExampleResponse", base: () => contractFixture("example.json"), edit: (c) => { for (const part of ["bug_case", "validator"]) at(c, ["case", "packages", part]).ready = false; }, expected: ["schema:/case/packages/bug_case/ready:const", "schema:/case/packages/validator/ready:const"] },
   { name: "a live case without an item", def: "RequestStatus", base: fulfilled, edit: (c) => { at(c, ["cases", 0]).item_key = null; }, expected: "schema:/cases/0/item_key:type" },
   { name: "a live case without a request", def: "RequestStatus", base: fulfilled, edit: (c) => { at(c, ["cases", 0, "provenance"]).request_id = null; }, expected: "schema:/cases/0/provenance/request_id:type" },
   { name: "a case with another verdict", def: "RequestStatus", base: fulfilled, edit: (c) => { at(c, ["cases", 0, "qualification"]).verdict = "rejected"; }, expected: "schema:/cases/0/qualification/verdict:const" },
@@ -263,6 +273,8 @@ const RULE_CASES: Case[] = [
   { name: "an error run with six valid cells", def: "ValidationRun", base: () => contractFixture("validation-failed.json"), edit: (c) => { c.result = "error"; }, expected: ["schema:/:anyOf", "schema:/matrix:type", ...["original_suite", "verification"].flatMap((set) => ["clean", "buggy", "fixed"].map((copy) => `schema:/matrix/${set}/${copy}/observed:enum`))] },
   // Test evidence (section 15.1)
   { name: "a validation run holding the slot without its request", def: "TestEvidence", base: evidence, edit: (c) => { Object.assign(at(c, ["slot"]), { holder_request_id: null, holder_validation_id: "00000000-0000-4000-8000-000000000201" }); }, expected: "schema:/slot/holder_request_id:type" },
+  ...UNSETTLED_CASES,
+  { name: "a reconciled operation without a settled amount", def: "TestEvidence", base: evidence, edit: (c) => { Object.assign(at(c, ["operations", 0]), { state: "reconciled", settled_microusd: null }); }, expected: "schema:/operations/0/settled_microusd:type" },
   // Errors (section 12)
   { name: "busy without details", def: "ErrorResponse", base: () => contractFixture("error-busy.json"), edit: (c) => { at(c, ["error"]).details = null; }, expected: "schema:/error/details:type" },
   { name: "an active busy that is not retryable", def: "ErrorResponse", base: () => contractFixture("error-busy.json"), edit: (c) => { at(c, ["error"]).retryable = false; }, expected: "schema:/error/retryable:const" },
@@ -355,6 +367,8 @@ const ACCEPTED: Case[] = [
   { name: "test evidence with a free slot and a reconciled operation", def: "TestEvidence", base: evidence, edit: (c) => { at(c, ["slot"]).holder_request_id = null; Object.assign(at(c, ["operations", 0]), { state: "reconciled", settled_microusd: 200000 }); }, expected: [] },
   { name: "a validation run holding the slot for its request", def: "TestEvidence", base: evidence, edit: (c) => { at(c, ["slot"]).holder_validation_id = "00000000-0000-4000-8000-000000000201"; }, expected: [] },
   { name: "a settled operation: terminal with a settled amount", def: "TestEvidence", base: evidence, edit: (c) => { Object.assign(at(c, ["operations", 0]), { state: "terminal", settled_microusd: 180000 }); }, expected: [] },
+  { name: "a terminal operation not yet settled", def: "TestEvidence", base: evidence, edit: (c) => { Object.assign(at(c, ["operations", 0]), { state: "terminal", settled_microusd: null }); }, expected: [] },
+  { name: "a reconciled operation settled at zero", def: "TestEvidence", base: evidence, edit: (c) => { Object.assign(at(c, ["operations", 0]), { state: "reconciled", settled_microusd: 0 }); }, expected: [] },
   { name: "a description with a line break", def: "StartRequest", base: start, edit: (c) => { at(c, ["input", "items", 0]).description = "lost update\nwhen two requests overlap"; }, expected: [] },
   { name: "a negative remaining amount on an overrun", def: "RequestStatus", base: status("status-operational-error.json"), edit: (c) => { Object.assign(at(c, ["budget"]), { spent_microusd: 1200000, committed_microusd: 1700000, remaining_microusd: -700000, overrun: true }); }, expected: [] },
   { name: "an error run without a matrix", def: "ValidationRun", base: () => contractFixture("validation-error.json"), edit: (c) => { c.matrix = null; }, expected: [] },
