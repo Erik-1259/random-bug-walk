@@ -5,7 +5,7 @@
 // check or a repair), the evaluator's inputs (the check package, the expected cells, the clean
 // reconstruction and the reference repair), copy plans that place the harness-built trees, the
 // evaluation of each copy's record set, and the combination of a state's copies.
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -103,6 +103,17 @@ function writeSet(root: string, files: Iterable<[string, Uint8Array]>): FileDige
 
 function treeOfListing(files: readonly FileDigest[]): string {
   return treeSha256(Object.fromEntries(files.map((file) => [file.path, file.sha256])));
+}
+
+/**
+ * What a copy's results tree holds at a record file's path, without following a link. The tree is the
+ * copy's, which ran untrusted application code, and the runners keep its links, so a record file is
+ * read only when it is a regular file: a link, a directory or anything else is never followed.
+ */
+export function recordFileKind(path: string): "file" | "absent" | "other" {
+  const entry = lstatSync(path, { throwIfNoEntry: false });
+  if (entry === undefined) return "absent";
+  return entry.isFile() ? "file" : "other";
 }
 
 /** Runs a synchronous step as a promise, so a refusal is a rejection, never a throw at the call. */
@@ -317,7 +328,9 @@ export function createTaskReportAdapter(options: TaskReportAdapterOptions = {}):
     if (collected.exit_code !== 0) return invalid(`the copy driver exited ${String(collected.exit_code)}`);
     if (collected.results_dir === null || collected.results_sha256 === null) return invalid("the copy's results were not collected");
     const file = join(collected.results_dir, COPY_V2_FILE);
-    if (!existsSync(file)) return invalid("the copy wrote no record set");
+    const kind = recordFileKind(file);
+    if (kind === "absent") return invalid("the copy wrote no record set");
+    if (kind === "other") return invalid("the copy's record set is not a regular file");
     let value: unknown;
     try {
       value = JSON.parse(readFileSync(file, "utf8"));

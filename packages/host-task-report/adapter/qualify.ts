@@ -168,7 +168,7 @@ async function run(dir: string, smoke: string | undefined): Promise<number> {
 }
 
 async function evaluate(dir: string): Promise<number> {
-  const { createTaskReportAdapter } = await import("./adapter.ts");
+  const { createTaskReportAdapter, recordFileKind } = await import("./adapter.ts");
   const { validateContract } = await import("@rbw/factory-contract/validate");
   const { evaluateProtocolV2, overallVerdict, stateVerdict, EXPECTED_CELLS } = await import("../v2/evaluate.ts");
   const { loadProtocolV2 } = await import("../v2/protocol.ts");
@@ -201,9 +201,16 @@ async function evaluate(dir: string): Promise<number> {
   const { RecordError } = await import("../v2/record.ts");
   const unreadable: string[] = [];
   const summaries = collected.flatMap((copy) => {
-    if (copy.results_dir === null || !existsSync(join(copy.results_dir, "copy.json"))) return [];
+    if (copy.results_dir === null) return [];
+    const file = join(copy.results_dir, "copy.json");
+    const kind = recordFileKind(file);
+    if (kind === "absent") return [];
+    if (kind === "other") {
+      unreadable.push(copy.copy_id);
+      return [];
+    }
     try {
-      return [parseCopySummaryV2(readJson(join(copy.results_dir, "copy.json")))];
+      return [parseCopySummaryV2(readJson(file))];
     } catch (error) {
       if (!(error instanceof RecordError) && !(error instanceof SyntaxError)) throw error;
       unreadable.push(copy.copy_id);

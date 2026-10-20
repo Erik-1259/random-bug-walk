@@ -144,7 +144,7 @@ kit image) implements the shared host adapter interface of `@rbw/factory-contrac
 | `bugCaseInputs(entry)` | the buggy app tree (40 files, with the unchanged `test/` tree, no version-control history), `incident.md`, `provenance.json` (host, baseline, commit, MIT license, tool versions) and the runtime: the kit image and setup steps |
 | `validatorInputs(entry)` | the check package (the version 2 copy driver with every module it imports, the data file, the protocol, the baseline manifest and catalog version 2), the expected cells, the clean reconstruction and the reference repair with its result hashes |
 | `copyPlans(state, pair, protocol)` | one plan per declared copy: the harness-built tree at `/workspace/app`, the check package at `/opt/rbw/evaluator/pkg`, results at `/var/lib/rbw/results/copy`, the command `rbw-copy-v2`, 4 vCPUs, 8192 MB, 720 s, no network; it applies no patch and refuses a check package, protocol or buggy tree it does not know |
-| `collect(plan, collected)` | the copy record: a setup failure is invalid, a timeout incomplete, otherwise the version 2 evaluation of the record set; the evidence hash is the collected results hash |
+| `collect(plan, collected)` | the copy record: a setup failure is invalid, a timeout incomplete, a `copy.json` that is a link, a directory or anything but a regular file invalid (a link is never followed), otherwise the version 2 evaluation of the record set; the evidence hash is the collected results hash |
 | `interpret(records, protocol)` | a state's two cells from its copy records under the declared counts |
 
 The bug case inputs never hold a check, the data file, an expected value, the planted patch or

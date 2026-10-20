@@ -1,4 +1,4 @@
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -380,6 +380,23 @@ describe("collect", () => {
     expect((await adapter.collect(plan, collected(plan, good, { copy_id: "f3q2-other" }))).status).toBe("invalid");
     expect((await adapter.collect(plan, collected(plan, good, { image_digest: `sha256:${"f".repeat(64)}` }))).status).toBe("invalid");
     expect((await adapter.collect(plan, collected(plan, good, { architecture: kit.architecture === "arm64" ? "amd64" : "arm64" }))).status).toBe("invalid");
+  });
+
+  it("reads only a regular record file: a link, even to a valid record set, or a directory is invalid and never followed", async () => {
+    const plan = planOf("fixed");
+    const notRegular = { status: "invalid", verification: { observed: "error", detail: "the copy's record set is not a regular file" } };
+    const outside = mkdtempSync(join(work, "outside-"));
+    writeFileSync(join(outside, "record.json"), `${JSON.stringify(summaryFor(plan, "pass"), null, 2)}\n`);
+    const linkedOut = resultsWith(null);
+    symlinkSync(join(outside, "record.json"), join(linkedOut, "copy.json"));
+    expect(await adapter.collect(plan, collected(plan, linkedOut))).toMatchObject(notRegular);
+    const linkedIn = resultsWith(null);
+    writeFileSync(join(linkedIn, "record.json"), `${JSON.stringify(summaryFor(plan, "pass"), null, 2)}\n`);
+    symlinkSync("record.json", join(linkedIn, "copy.json"));
+    expect(await adapter.collect(plan, collected(plan, linkedIn))).toMatchObject(notRegular);
+    const directory = resultsWith(null);
+    mkdirSync(join(directory, "copy.json"));
+    expect(await adapter.collect(plan, collected(plan, directory))).toMatchObject(notRegular);
   });
 
   it("is invalid for a plan that is not one of its own: other check files, another image or an unknown entry", async () => {
