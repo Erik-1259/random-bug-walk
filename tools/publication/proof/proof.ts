@@ -432,6 +432,14 @@ async function prove(root: string, gitleaks: string): Promise<number> {
   const afterDot = pick(3) + "8" + ["Q", "~"].join("") + pick(33);
   await checkPathPositions("a token after a dot whose rule needs a space before it is found", afterDot, { [`cfg/x.${afterDot}.md`]: attributed }, [2], [1]);
 
+  // Additional: the same rule's token with a "." inside it, right after a "." in a name, under a directory and at the
+  // top level, is found through the span form that starts after that ".": the form with "/" and "." as spaces splits
+  // the token at its own dot, and every other form keeps the "." before it. The sorted list is cfg, cfg/x.<token>.md
+  // and x.<token>.
+  const dottedAfterDot = pick(3) + "8" + ["Q", "~"].join("") + pick(16) + "." + pick(16);
+  const dottedTree = { [`cfg/x.${dottedAfterDot}.md`]: attributed, [`x.${dottedAfterDot}`]: attributed };
+  await checkPathPositions("a dotted token after a dot whose rule needs a space before it is found", dottedAfterDot, dottedTree, [2, 3], [1, 2]);
+
   // Additional: a first listed path that starts like an executable does not make gitleaks skip the path list. The sorted
   // list is MZ, MZ/readme.md, keys and keys/<token>.txt.
   const binaryTree = { "MZ/readme.md": "hello\n", [`keys/${token}.txt`]: attributed };

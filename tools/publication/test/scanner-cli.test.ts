@@ -651,7 +651,8 @@ describe("PUB-02 scanner CLI: gitleaks", () => {
     const stub = writeStubGitleaks(root, { leakPattern: boundedLeakPattern(STUB_LEAK_MARKER, "space") });
     const range = await runCli(["scan", "--patterns", patterns, "--gitleaks", stub.command, "--range", `${base}..HEAD`], { cwd: repo });
     // The sorted list is cfg, cfg/x.<marker>.md and z.txt. A "." comes before the marker in the
-    // path and in every prefix, so only "cfg x <marker> md" has a space before it.
+    // path and in every prefix, so only "cfg x <marker> md" and the span forms that start with the
+    // marker have a space or a line start before it.
     expect(outputLines(range)).toEqual(["blocked", `paths-${short(head)}:2`]);
     expect(range.code).toBe(1);
     const files = await scanFiles(tree, { stub });
@@ -659,6 +660,31 @@ describe("PUB-02 scanner CLI: gitleaks", () => {
     for (const result of [range, files.result]) {
       const all = result.stdout + result.stderr;
       expect(all).not.toContain(STUB_LEAK_MARKER);
+      expect(all).not.toContain(TERM);
+    }
+  });
+
+  it("finds a credential with dots inside it that needs a space before it right after a dot in a name", async () => {
+    const marker = STUB_LEAK_MARKER.replaceAll("-", ".");
+    const root = tempDir();
+    const repo = initRepo(join(root, "repo"));
+    const tree = { [`cfg/x.${marker}.md`]: `ok\n${forms.signedOff}: x\n${TERM}\n`, [`x.${marker}`]: `ok\n${forms.signedOff}: x\n`, "z.txt": "z\n" };
+    const base = commit(repo, { "a.txt": "base\n" }, "chore: base\n");
+    const head = commit(repo, tree, "feat: add\n");
+    const patterns = writePatterns(root, TERMS);
+    const stub = writeStubGitleaks(root, { leakPattern: boundedLeakPattern(marker, "space") });
+    const range = await runCli(["scan", "--patterns", patterns, "--gitleaks", stub.command, "--range", `${base}..HEAD`], { cwd: repo });
+    // The sorted list is cfg, cfg/x.<marker>.md, x.<marker> and z.txt. A "." comes before the
+    // marker in the path and in every prefix, and the form with "/" and "." as spaces splits the
+    // marker at its own dots, so only the span form that starts after that "." finds it.
+    const list = `paths-${short(head)}`;
+    expect(outputLines(range)).toEqual(["blocked", `${list}:2`, `${list}:3`]);
+    expect(range.code).toBe(1);
+    const files = await scanFiles(tree, { stub });
+    expectBlocked(files, ["paths:1", "paths:2"]);
+    for (const result of [range, files.result]) {
+      const all = result.stdout + result.stderr;
+      expect(all).not.toContain(marker);
       expect(all).not.toContain(TERM);
     }
   });

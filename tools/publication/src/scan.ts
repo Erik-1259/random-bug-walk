@@ -102,6 +102,30 @@ function gitleaksPath(unit: ScanUnit): string {
   return unit.kind === "message" ? "message.txt" : "text.txt";
 }
 
+/** The longest span form of a path, in characters. */
+const SPAN_LIMIT = 256;
+
+/**
+ * The span forms of a path: each part of it that starts at its start or right after a "/" or
+ * ".", ends at its end or right before a "/" or ".", is not empty and has at most SPAN_LIMIT
+ * characters. Written on its own line, each part has a line start before it and a line end
+ * after it, which a rule may need on both sides of the secret. The limit keeps their number and
+ * their total length linear in the path's length.
+ */
+function spanForms(path: string): string[] {
+  // Each "/" or "." ends one part and starts the next; -1 and the path's length mark its ends.
+  const cuts = [-1, ...[...path.matchAll(/[/.]/g)].map((separator) => separator.index), path.length];
+  const spans: string[] = [];
+  cuts.forEach((cut, from) => {
+    for (let to = from + 1; to < cuts.length; to += 1) {
+      const end = cuts[to];
+      if (end === undefined || end - cut - 1 > SPAN_LIMIT) break;
+      if (end > cut + 1) spans.push(path.slice(cut + 1, end));
+    }
+  });
+  return spans;
+}
+
 /**
  * The other forms of a path list's paths that gitleaks scans, with the 1-based path-list
  * position of each. Many gitleaks rules need a space, a quote or a line end after the secret,
@@ -109,7 +133,10 @@ function gitleaksPath(unit: ScanUnit): string {
  * and "." as spaces, and as each prefix that ends before a "/" or "." (each directory, and the
  * name without each extension), which keeps a credential with a "." or "/" inside it whole.
  * Each of those prefixes, and the path itself, is given again with "/" as spaces when it holds
- * a "/", for a rule that also needs a space before the secret.
+ * a "/", for a rule that also needs a space before the secret. Such a rule's credential with a
+ * "." inside it, right after a "." in a name, is split by the first form and keeps that "."
+ * before it in the others, so each path is also given as its span forms. Each distinct form of
+ * a path is given once.
  */
 function pathListForms(paths: readonly string[]): { entries: string[]; positions: number[] } {
   const entries: string[] = [];
@@ -117,8 +144,9 @@ function pathListForms(paths: readonly string[]): { entries: string[]; positions
   paths.forEach((path, index) => {
     const ends = [...path.matchAll(/[/.]/g)].map((separator) => separator.index).filter((end) => end > 0);
     const prefixes = ends.map((end) => path.slice(0, end));
-    const forms = [path.replace(/[/.]/g, " "), ...prefixes];
-    for (const prefix of [...prefixes, path]) if (prefix.includes("/")) forms.push(prefix.replaceAll("/", " "));
+    const forms = new Set([path.replace(/[/.]/g, " "), ...prefixes]);
+    for (const prefix of [...prefixes, path]) if (prefix.includes("/")) forms.add(prefix.replaceAll("/", " "));
+    for (const span of spanForms(path)) forms.add(span);
     for (const form of forms) {
       entries.push(form);
       positions.push(index + 1);
