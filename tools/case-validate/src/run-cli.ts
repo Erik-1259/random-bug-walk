@@ -40,6 +40,34 @@ function table(outcome: ValidatePairResult): string {
   return `${lines.join("\n")}\n`;
 }
 
+function reason(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/** Writes `validation.json` under `out`; answers why it could not, or null. */
+async function writeReport(out: string, outcome: ValidatePairResult): Promise<string | null> {
+  const path = join(out, "validation.json");
+  const report = {
+    harness: HARNESS_IDENTITY,
+    result: outcome.result,
+    error_code: outcome.error_code,
+    message: outcome.message,
+    diagnostic: outcome.diagnostic,
+    stopped: outcome.stopped,
+    package_sha256: outcome.package_sha256,
+    pair_sha256: outcome.pair_sha256,
+    matrix: outcome.matrix,
+    records: outcome.records,
+  };
+  try {
+    await mkdir(out, { recursive: true });
+    await writeFile(path, `${JSON.stringify(report, null, 2)}\n`);
+    return null;
+  } catch (error) {
+    return `cannot write ${path}: ${reason(error)}`;
+  }
+}
+
 export async function runValidateCli(argv: readonly string[], io: Io, deps: CliDependencies): Promise<number> {
   let paths: string[];
   let out: string | undefined;
@@ -63,8 +91,15 @@ export async function runValidateCli(argv: readonly string[], io: Io, deps: CliD
     }
   }
   const [bugCase = new Uint8Array(0), validator = new Uint8Array(0)] = parts;
-  // With --out, each copy's results are kept under <out>/copies; otherwise under a temporary directory.
-  const resultsDir = out === undefined ? await mkdtemp(join(deps.workdir ?? tmpdir(), "rbw-validate-copies-")) : join(out, "copies");
+  // With --out, each copy's results are kept under <out>/copies; otherwise under a temporary directory. A
+  // local file-system failure is definite, so it answers error (exit 2), never the exit code of failed.
+  let resultsDir: string;
+  try {
+    resultsDir = out === undefined ? await mkdtemp(join(deps.workdir ?? tmpdir(), "rbw-validate-copies-")) : join(out, "copies");
+  } catch (error) {
+    io.stderr(`rbw-validate: cannot create a temporary directory for the copies' results: ${reason(error)}\n`);
+    return EXIT_CODES.error;
+  }
   const runner: CopyRunner = { run: (plan, roots) => deps.runner(resultsDir).run(plan, roots) };
   // Removing the temporary results is cleanup: a failure is reported and never changes the result.
   const removeResults = async (): Promise<void> => {
@@ -92,29 +127,20 @@ export async function runValidateCli(argv: readonly string[], io: Io, deps: CliD
     return EXIT_CODES.error;
   }
   await removeResults();
+  // The report is written before the result is printed: a run whose requested report is missing answers error.
+  const reportFailure = out === undefined ? null : await writeReport(out, outcome);
   io.stdout(`harness   ${HARNESS_IDENTITY.name} ${HARNESS_IDENTITY.version}\n`);
   io.stdout(`bug case  ${outcome.package_sha256.bug_case}\n`);
   io.stdout(`validator ${outcome.package_sha256.validator}\n`);
   io.stdout(`pair      ${outcome.pair_sha256 ?? "none"}\n`);
   io.stdout(table(outcome));
+  if (reportFailure !== null) {
+    io.stderr(`rbw-validate: the run answered ${outcome.result}, but the report is missing: ${reportFailure}\n`);
+    io.stdout("result: error\n");
+    return EXIT_CODES.error;
+  }
   io.stdout(`result: ${outcome.result}\n`);
   if (outcome.message !== null) io.stdout(`message: ${outcome.message}\n`);
   if (outcome.diagnostic !== null) io.stdout(`detail: ${outcome.diagnostic}\n`);
-  if (out !== undefined) {
-    await mkdir(out, { recursive: true });
-    const report = {
-      harness: HARNESS_IDENTITY,
-      result: outcome.result,
-      error_code: outcome.error_code,
-      message: outcome.message,
-      diagnostic: outcome.diagnostic,
-      stopped: outcome.stopped,
-      package_sha256: outcome.package_sha256,
-      pair_sha256: outcome.pair_sha256,
-      matrix: outcome.matrix,
-      records: outcome.records,
-    };
-    await writeFile(join(out, "validation.json"), `${JSON.stringify(report, null, 2)}\n`);
-  }
   return EXIT_CODES[outcome.result];
 }

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { buildMismatchedSyntheticPair, buildSyntheticPair, syntheticAdapter } from "@rbw/case-package/synthetic";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { EXIT_CODES, runValidateCli, type CliDependencies } from "../src/run-cli.ts";
-import { forbiddenRunner } from "./support.ts";
+import { forbiddenRunner, localProcessRunner } from "./support.ts";
 
 let dir: string;
 beforeEach(async () => {
@@ -60,6 +60,34 @@ describe("runValidateCli", () => {
     const capture = io();
     expect(await runValidateCli([join(dir, "missing.tar.gz"), join(dir, "missing2.tar.gz")], capture.io, deps())).toBe(EXIT_CODES.error);
     expect(capture.err.join("")).toMatch(/cannot read/);
+  });
+
+  it("exits with the error code, and never rejects, when it cannot make the copies' temporary results directory", async () => {
+    const pair = buildSyntheticPair({ seed: "01" });
+    const capture = io();
+    const notADirectory = await write("not-a-directory", new Uint8Array([1]));
+    const code = await runValidateCli([await write("b.tar.gz", pair.bug_case.bytes), await write("v.tar.gz", pair.validator.bytes)], capture.io, deps({ workdir: notADirectory }));
+    expect(code).toBe(EXIT_CODES.error);
+    expect(capture.err.join("")).toMatch(/cannot create a temporary directory/);
+  });
+
+  it("exits with the error code, and never prints the run's result, when --out cannot be written", async () => {
+    const pair = buildSyntheticPair({ seed: "01" });
+    const args = [await write("b.tar.gz", pair.bug_case.bytes), await write("v.tar.gz", pair.validator.bytes)];
+    const copies = await mkdtemp(join(dir, "copies-"));
+    const passing = deps({ runner: () => localProcessRunner(copies) });
+    // The same run with a writable --out passes and writes its report.
+    const written = io();
+    expect(await runValidateCli([...args, "--out", join(dir, "report")], written.io, passing)).toBe(EXIT_CODES.passed);
+    expect(written.out.join("")).toMatch(/^result: passed$/m);
+    expect((JSON.parse(await readFile(join(dir, "report", "validation.json"), "utf8")) as Record<string, unknown>).result).toBe("passed");
+
+    const capture = io();
+    const blocked = join(await write("not-a-directory", new Uint8Array([1])), "report");
+    expect(await runValidateCli([...args, "--out", blocked], capture.io, passing)).toBe(EXIT_CODES.error);
+    expect(capture.out.join("")).toMatch(/^result: error$/m);
+    expect(capture.out.join("")).not.toMatch(/result: passed/);
+    expect(capture.err.join("")).toMatch(/cannot write .*validation\.json/);
   });
 
   it("writes the outcome to --out and keeps the exit codes distinct", async () => {

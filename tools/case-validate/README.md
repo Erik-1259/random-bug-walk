@@ -8,7 +8,7 @@ The standalone validation harness `rbw-validate`, its library entry point `valid
 node tools/case-validate/src/cli.ts <bug-case.tar.gz> <validator.tar.gz> [--out <dir>]
 ```
 
-The host comes from the manifests' `host_id` through the host registry, and copies run on the local Docker daemon. The command prints the package hashes, `pair_sha256`, the matrix and the result, and exits 0 for `passed`, 1 for `failed`, 2 for `error` and 64 for a usage error. With `--out`, it writes `validation.json` and keeps each copy's results under `<dir>/copies/`.
+The host comes from the manifests' `host_id` through the host registry, and copies run on the local Docker daemon. The command prints the package hashes, `pair_sha256`, the matrix and the result, and exits 0 for `passed`, 1 for `failed`, 2 for `error` and 64 for a usage error. With `--out`, it writes `validation.json` and keeps each copy's results under `<dir>/copies/`. A temporary results directory it cannot create, or a report it cannot write, answers `error` with exit 2, whatever the run answered.
 
 ## Entry points
 
