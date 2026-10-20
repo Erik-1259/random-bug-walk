@@ -100,7 +100,7 @@ export async function runProbe(backend: IsolatedBackend, probe: Probe): Promise<
   const observedEvents = new Map<number, Record<string, unknown>>();
   let terminal: Record<string, unknown> | undefined;
   const terminalSnapshot = (value: Record<string, unknown>) => Object.fromEntries(Object.entries(value)
-    .filter(([field]) => !["budget", "attention", "updated_at", "events", "next_after", "poll_after_ms"].includes(field)));
+    .filter(([field]) => !["updated_at", "events", "next_after", "poll_after_ms"].includes(field)));
   const observe = (value: Record<string, unknown>, concurrent = false) => {
     checkScenarioStatus(value);
     assert.equal(value.request_id, requestId);
@@ -370,6 +370,7 @@ export async function runReconciliation(backend: IsolatedBackend, before: Record
   };
   checkReconciled(result);
   const witnessed = new Map(history.map(event => [integer(event.seq), event]));
+  const previousEnd = Math.max(integer(before.next_after), ...witnessed.keys());
   const returned = objects(result.events);
   assert(returned.length > 0, "reconciliation response lost history");
   for (const [index, event] of returned.entries()) {
@@ -379,23 +380,49 @@ export async function runReconciliation(backend: IsolatedBackend, before: Record
     witnessed.set(integer(event.seq), event);
   }
   assert.equal(result.next_after, returned.length);
-  const lastWitness = Math.max(...witnessed.keys());
+  const completedHistory: Record<string, unknown>[] = [];
   let cursor = 0;
   let after = await read(backend, `/api/factory/requests/${text(before.request_id)}`);
-  for (;;) {
+  let complete = false;
+  for (let pages = 0; pages < 1000; pages++) {
     checkReconciled(after);
     const events = objects(after.events);
-    assert(events.length > 0, "reconciliation lost witnessed history");
     for (const event of events) {
       assert.equal(integer(event.seq), ++cursor, "reconciliation history has an event gap or duplicate");
       const previous = witnessed.get(cursor);
       if (previous !== undefined) assert.deepEqual(event, previous, "reconciliation changed prior event");
+      completedHistory.push(event);
     }
     assert.equal(after.next_after, cursor);
-    if (cursor >= lastWitness) break;
+    if (events.length === 0) { complete = true; break; }
     await backend.wait(integer(after.poll_after_ms));
     after = await read(backend, `/api/factory/requests/${text(before.request_id)}?after=${String(cursor)}`);
   }
+  if (!complete) throw new Unavailable("Reconciliation history reached the runner page limit.");
+  for (const [seq, event] of witnessed) assert.deepEqual(completedHistory[seq - 1], event, "reconciliation lost witnessed history");
+  let held = integer(previousBudget.reserved_microusd);
+  let updates = 0;
+  let cleared = false;
+  for (const event of completedHistory.filter(event => integer(event.seq) > previousEnd)) {
+    assert(!cleared, "reconciliation changed accounting after clearing attention");
+    if (event.type === "budget_updated") {
+      const data = object(event.data);
+      const remainingHeld = integer(data.reserved_microusd);
+      assert(remainingHeld >= 0 && remainingHeld <= held, "reconciliation event increased held spend");
+      assert.deepEqual(data, {
+        reserved_microusd: remainingHeld, spent_microusd: expectedSpent - remainingHeld,
+        remaining_microusd: previousBudget.remaining_microusd,
+      }, "reconciliation budget event lost held spend");
+      held = remainingHeld;
+      updates++;
+    } else {
+      assert.equal(event.type, "attention_cleared", "unexpected reconciliation transition");
+      assert(updates > 0 && held === 0, "reconciliation cleared attention before settling held spend");
+      assert.deepEqual(event.data, { code: object(before.attention).code }, "reconciliation cleared the wrong attention");
+      cleared = true;
+    }
+  }
+  assert(cleared, "reconciliation omitted new settlement or attention transitions");
   const evidence = await runEvidence(backend, after);
   assert.equal(evidence.slot.holder_request_id, null, "reconciliation left the factory slot held");
   assert.equal(evidence.slot.holder_validation_id, null, "reconciliation left a validation slot holder");

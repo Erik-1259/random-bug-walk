@@ -10,12 +10,12 @@
   },
   "self_tests": {
     "command": "pnpm --filter @rbw/product-acceptance test --reporter=json",
-    "passed": 194,
+    "passed": 208,
     "failed": 0,
     "skipped": 0,
     "exit_code": 0
   },
-  "test_floor": 194,
+  "test_floor": 208,
   "failing_first": [
     {
       "scope": "final-contract invariant regressions",
@@ -85,6 +85,12 @@
       "scope": "post-validation status, accounting, slot, event history and ledger evidence",
       "failed": 23,
       "passed": 1,
+      "exit_code": 1
+    },
+    {
+      "scope": "new reconciliation transitions and pre-action terminal budget/attention continuity",
+      "passed": 62,
+      "failed": 13,
       "exit_code": 1
     }
   ],
@@ -163,6 +169,14 @@
     {
       "finding": "Failed/error validation probes could finish without checking the request budget, ledger, events or slot after completion.",
       "disposition": "Read typed status and evidence before reset; check the pinned known completion cost, settled accounting, free slot, retained results and evidence, and linked validation/budget events across pages. General uncertain-error null-cost semantics remain valid."
+    },
+    {
+      "finding": "Reconciliation could return old history without recording new settlement and attention-clear transitions.",
+      "disposition": "Drain paged history and require new conserving budget updates followed by the matching attention clear beyond the prior history end; preserve earlier event witnesses."
+    },
+    {
+      "finding": "Terminal Start observations excluded budget and attention, allowing later responses to silently replace them before any post-completion action.",
+      "disposition": "Include budget and attention in every pre-action terminal continuity baseline, including accepted, concurrent replay and repeated Start responses."
     }
   ]
 }

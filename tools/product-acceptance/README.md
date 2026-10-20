@@ -85,8 +85,12 @@ status backoff; reaching its observation limit reports unavailable.
 
 Reconciliation must return a `200 RequestStatus`. Both that response and later
 status reads must retain terminal data and event history and settle the previously
-held amount. The probe then reads ledger evidence and requires both slot holders
-to be clear before any subsequent scenario reset.
+held amount. New budget events must account for that settlement before the new
+attention-cleared event, including when they fall beyond the first history page.
+The probe then reads ledger evidence and requires both slot holders to be clear
+before any subsequent scenario reset. Before an intentional reconciliation or
+validation, every terminal observation retains its budget and attention as well
+as its completed results, starting with the concurrent Start responses.
 
 The named failed/error validation probes also read request status and ledger
 evidence after completion. They check the pinned host cost, cleared reservations

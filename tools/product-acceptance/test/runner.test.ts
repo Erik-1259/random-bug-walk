@@ -203,13 +203,28 @@ function reconciliationScenario() {
   const budget = object(after.budget);
   budget.spent_microusd = integer(budget.spent_microusd) + integer(budget.reserved_microusd);
   budget.reserved_microusd = 0;
+  const previousEvents = objects(before.events);
+  const last = previousEvents.at(-1); assert(last);
+  after.events = [...objects(after.events),
+    { ...last, seq: previousEvents.length + 1, type: "budget_updated", message: "synthetic reconciled spend", data: {
+      reserved_microusd: 0, spent_microusd: budget.spent_microusd, remaining_microusd: budget.remaining_microusd,
+    } },
+    { ...last, seq: previousEvents.length + 2, type: "attention_cleared", message: "synthetic reconciliation complete", data: { code: "needs_reconciliation" } },
+  ];
+  after.next_after = previousEvents.length + 2;
   const evidence = fixture("test-evidence");
   for (const op of objects(evidence.operations)) { op.state = "reconciled"; op.settled_microusd = op.reserved_microusd; }
   object(evidence.slot).holder_request_id = null;
   const { backend } = scripted();
-  const request = vi.fn((_method: "GET" | "POST", path: string): Promise<Reply> => Promise.resolve(path.endsWith("/requests")
-    ? { status: 409, body: { contract_version: "bug-request/1", error: { code: "busy", retryable: false, details: { reason: "needs_reconciliation" } } } }
-    : { status: 200, body: path.includes("/test/evidence?") ? evidence : after }));
+  const request = vi.fn((method: "GET" | "POST", path: string): Promise<Reply> => {
+    if (path.endsWith("/requests")) return Promise.resolve({ status: 409, body: { contract_version: "bug-request/1", error: { code: "busy", retryable: false, details: { reason: "needs_reconciliation" } } } });
+    if (method === "GET" && path.includes("/requests/")) {
+      const cursor = Number(path.split("?after=")[1] ?? 0);
+      const events = objects(after.events).filter(event => integer(event.seq) > cursor);
+      return Promise.resolve({ status: 200, body: { ...after, events, next_after: events.at(-1)?.seq ?? cursor } });
+    }
+    return Promise.resolve({ status: 200, body: path.includes("/test/evidence?") ? evidence : after });
+  });
   backend.request = request;
   return { before, after, evidence, backend, request };
 }
@@ -220,6 +235,7 @@ it("checks reconciliation settles held spend and reads released-slot evidence be
   expect(request.mock.calls.map(([method, path]) => `${method} ${path}`)).toEqual([
     "POST /api/factory/requests", "POST /api/factory/test/reconcile",
     `GET /api/factory/requests/${text(before.request_id)}`,
+    `GET /api/factory/requests/${text(before.request_id)}?after=${String(after.next_after)}`,
     `GET /api/factory/test/evidence?request_id=${text(before.request_id)}`,
   ]);
   after.outcome = "sources_exhausted"; after.stop_reason = { code: "sources_exhausted", message: "synthetic changed outcome" };
@@ -299,6 +315,51 @@ it("preserves witnessed reconciliation events across paginated status reads", as
   };
   await expect(runReconciliation(backend, before)).resolves.toBeUndefined();
   expect(requests.length).toBeGreaterThan(1);
+});
+it.each(["missing-both", "missing-budget", "missing-clear", "wrong-budget", "wrong-clear-code", "reversed"])("rejects %s reconciliation transitions despite correct final status and evidence", async change => {
+  const { runReconciliation } = await import("../src/runner.ts");
+  const { before, after, backend } = reconciliationScenario();
+  const prior = objects(before.events);
+  let added = objects(after.events).slice(prior.length);
+  if (change === "missing-both") added = [];
+  if (change === "missing-budget") added = added.filter(event => event.type !== "budget_updated");
+  if (change === "missing-clear") added = added.filter(event => event.type !== "attention_cleared");
+  if (change === "wrong-budget") { const event = added[0]; assert(event); object(event.data).spent_microusd = 1; }
+  if (change === "wrong-clear-code") { const event = added[1]; assert(event); object(event.data).code = "worker_unresponsive"; }
+  if (change === "reversed") added.reverse();
+  after.events = [...structuredClone(prior), ...added].map((event, index) => ({ ...event, seq: index + 1 }));
+  after.next_after = objects(after.events).length;
+  await expect(runReconciliation(backend, before)).rejects.toThrow();
+});
+it("reads reconciliation transitions beyond a POST containing only old history", async () => {
+  const { runReconciliation } = await import("../src/runner.ts");
+  const { before, after, backend, request } = reconciliationScenario();
+  const previousEnd = integer(before.next_after);
+  const cursors: number[] = [];
+  backend.request = (method, path) => {
+    if (path.endsWith("/reconcile")) return Promise.resolve({ status: 200, body: { ...after, events: before.events, next_after: previousEnd } });
+    if (method === "GET" && path.includes("/requests/")) {
+      const cursor = Number(path.split("?after=")[1] ?? 0); cursors.push(cursor);
+      const events = objects(after.events).filter(event => integer(event.seq) > cursor).slice(0, previousEnd);
+      return Promise.resolve({ status: 200, body: { ...after, events, next_after: events.at(-1)?.seq ?? cursor } });
+    }
+    return request(method, path);
+  };
+  await expect(runReconciliation(backend, before)).resolves.toBeUndefined();
+  expect(cursors).toContain(previousEnd);
+});
+it("accepts reconciliation settling held operations in separate budget updates", async () => {
+  const { runReconciliation } = await import("../src/runner.ts");
+  const { before, after, backend } = reconciliationScenario();
+  const prior = objects(before.events);
+  const added = objects(after.events).slice(prior.length);
+  const settled = added[0]; assert(settled);
+  const held = integer(object(before.budget).reserved_microusd) / 2;
+  const partial = { ...settled, data: { ...object(settled.data), reserved_microusd: held,
+    spent_microusd: integer(object(settled.data).spent_microusd) - held } };
+  after.events = [...prior, partial, ...added].map((event, index) => ({ ...event, seq: index + 1 }));
+  after.next_after = objects(after.events).length;
+  await expect(runReconciliation(backend, before)).resolves.toBeUndefined();
 });
 it("checks separate download paths and hashes without implementing package replay", async () => {
   const { createHash } = await import("node:crypto");
@@ -404,7 +465,7 @@ it("rejects a consistent budget rewrite on reconnect", async () => {
     }
     return reply;
   };
-  await expect(runProbe(backend, probe)).rejects.toThrow("terminal result changed on reconnect");
+  await expect(runProbe(backend, probe)).rejects.toThrow("terminal result changed after completion");
 });
 for (const startOrdinal of [1, 2]) it(`rejects an overrun seen only in start response ${String(startOrdinal)}`, async () => {
   const { backend, request } = scripted(); let starts = 0;
@@ -451,6 +512,30 @@ it("collects concurrent snapshots without imposing response order", async () => 
     return reply;
   };
   await expect(runProbe(backend, probe)).resolves.toBeUndefined();
+});
+for (const ordinal of [1, 2, 4]) it.each(["budget", "attention"])(`preserves terminal %s observed in Start response ${String(ordinal)}`, async field => {
+  const { backend, request } = scripted(); let starts = 0;
+  backend.request = async (...args) => {
+    const reply = await request(...args);
+    if (args[0] === "POST" && args[1] === "/api/factory/requests" && reply.status !== 409) {
+      const current = ++starts;
+      const initial = fixture("status-fulfilled");
+      const value = object(JSON.parse(JSON.stringify(initial).replaceAll(text(initial.request_id), text(object(reply.body).request_id))) as unknown);
+      if (current === ordinal) {
+        if (field === "attention") value.attention = fixture("status-operational-error").attention;
+        else {
+          const budget = object(value.budget);
+          budget.spent_microusd = integer(budget.spent_microusd) + 1;
+          budget.committed_microusd = integer(budget.committed_microusd) + 1;
+          budget.remaining_microusd = integer(budget.remaining_microusd) - 1;
+        }
+      }
+      checkStatus(value);
+      return { ...reply, body: value };
+    }
+    return reply;
+  };
+  await expect(runProbe(backend, probe)).rejects.toThrow("terminal result changed after completion");
 });
 
 it("rejects source routing rewritten consistently across interpretation and status", async () => {
