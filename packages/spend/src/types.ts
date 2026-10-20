@@ -2,6 +2,8 @@
 // JSON that the SQL functions accept and return, so a caller in another language sends
 // and receives the same documents.
 
+import type { StopCode } from "@rbw/factory-contract";
+
 /** Units an envelope line may meter. The database holds the authoritative list (table `units`). */
 export const UNITS = [
   "input_token",
@@ -58,6 +60,15 @@ export const REFUSAL_CODES = [
   "unknown_slot",
   "transfer_refused",
   "cap_change_refused",
+  // Request budgets and factory records (migration 0006).
+  "budget_exhausted",
+  "budget_closed",
+  "unknown_budget",
+  "idempotency_conflict",
+  "unknown_request",
+  "unknown_validation",
+  "unknown_evidence",
+  "event_not_allowed",
 ] as const;
 export type RefusalCode = (typeof REFUSAL_CODES)[number];
 
@@ -93,6 +104,8 @@ export interface Refusal {
   holder?: string;
   blocking_child_resources?: ChildResourceRef[];
   blocking_operation_ids?: string[];
+  /** `budget_exhausted` and `budget_closed`: the budget's cap minus its committed amount; may be negative. */
+  budget_available_microusd?: bigint;
 }
 
 export type Result<T> = ({ ok: true } & T) | Refusal;
@@ -388,4 +401,92 @@ export interface SlotStatus {
     child_resources: ChildResourceRef[];
     operation_ids: string[];
   };
+}
+
+// Request budgets (migration 0006)
+
+/**
+ * How a budget reservation is charged. `request`: an operation of the request itself, under the
+ * budget's own root execution. `validation`: an operation of a validation run, under that run's own
+ * root, charged to the same budget and still admitted after the budget is closed.
+ */
+export const BUDGET_ROLES = ["request", "validation"] as const;
+export type BudgetRole = (typeof BUDGET_ROLES)[number];
+
+export interface CreateBudgetRequest {
+  budget_key: string;
+  root_execution_id: string;
+  pool_key: string;
+  cap_microusd: number;
+  /**
+   * The pool's available amount must cover this when the budget is first created (for a factory
+   * request, the worker's worst case). Creating a budget reserves and holds nothing in the pool.
+   */
+  pool_required_microusd: number;
+  actor_role: string;
+}
+
+export interface BudgetCreated {
+  replay: boolean;
+  budget_key: string;
+  created_at: string;
+}
+
+export interface BudgetReserveRequest {
+  budget_key: string;
+  role: BudgetRole;
+  reservation: ReserveRequest;
+}
+
+export interface CloseBudgetRequest {
+  budget_key: string;
+  cause: StopCode;
+  actor_role: string;
+}
+
+export interface BudgetClosed {
+  replay: boolean;
+  budget_key: string;
+  cause: StopCode;
+  closed_at: string;
+}
+
+/** One operation a budget admitted. */
+export interface BudgetOperation {
+  operation_id: string;
+  role: BudgetRole;
+  root_execution_id: string;
+  execution_id: string;
+  kind: string;
+  call_name: string;
+  attempt_ordinal: number;
+  state: OperationState;
+  reserved_microusd: bigint;
+  open_microusd: bigint;
+  /** Null until a settlement, or a reconciliation that settles, is recorded. */
+  settled_microusd: bigint | null;
+  reserved_at: string;
+}
+
+export interface BudgetStatus {
+  budget_key: string;
+  root_execution_id: string;
+  pool_key: string;
+  cap_microusd: bigint;
+  settled_microusd: bigint;
+  open_microusd: bigint;
+  committed_microusd: bigint;
+  /** The cap minus committed; negative after an overrun. */
+  available_microusd: bigint;
+  /** Committed is above the cap: a provider reported more than a reserved worst case. */
+  overrun: boolean;
+  closed: { cause: StopCode; closed_at: string } | null;
+  /** The budget's operations that are not reconciled yet, oldest first. */
+  operations: BudgetOperation[];
+}
+
+export interface BudgetOperations {
+  budget_key: string;
+  /** Every operation the budget admitted, whatever its state, oldest first. */
+  operations: BudgetOperation[];
 }
