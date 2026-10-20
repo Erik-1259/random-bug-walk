@@ -43,7 +43,7 @@ export function createHostRegistry(registrations: readonly HostRegistration[]): 
 }
 
 /**
- * The real hosts. Each host package adds one line here when it lands (task-report, then umami); see
+ * The real hosts. Each host adapter adds one line here when it lands (task-report, then umami); see
  * docs/product/adding-a-host.md. Until then the registry is empty and the harness answers `error` with
  * `unsupported_host` for every package.
  */

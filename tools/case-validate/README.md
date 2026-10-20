@@ -40,7 +40,7 @@ It resolves `{ result, stopped, package_sha256, pair_sha256, matrix, records, me
 
 ## Host registry
 
-`REGISTRATIONS` in `src/registry.ts` lists the real hosts as `{ host_id, label, description, license, adapter }`. It is empty until the host packages land; each adds one line (see [`docs/product/adding-a-host.md`](../../docs/product/adding-a-host.md)).
+`REGISTRATIONS` in `src/registry.ts` lists the real hosts as `{ host_id, label, description, license, adapter }`. It is empty until the host adapters land; each adds one line (see [`docs/product/adding-a-host.md`](../../docs/product/adding-a-host.md)).
 
 ## Tests
 

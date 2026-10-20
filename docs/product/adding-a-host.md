@@ -15,7 +15,7 @@ How a third host application is connected to the bug factory. Version 1 serves t
 
 ## 2. Steps
 
-1. **Contract revision (planned for any third host).** `HostId` is a closed enumeration in the [bug request contract](bug-request-v1.md) and its JSON Schema. A new host needs a contract revision that adds its `host_id`, regenerated shared types in `@rbw/factory-contract`, and capabilities fixtures that list it. Shapes change only through a revision (contract section 15).
+1. **Contract revision (planned for any third host).** `HostId` is a closed enumeration in the [bug request contract](bug-request-v1.md) and its JSON Schema. Capabilities list every host exactly once in `hosts` and every (host, bug type) pair exactly once in `combinations` (contract sections 4 and 4.2), and the schema enforces both with one clause for each host and one for each pair. A new host therefore needs a contract revision that adds its `host_id` to the enumeration and to those clauses, regenerated shared types in `@rbw/factory-contract`, and capabilities fixtures that list the host once and one combination for each bug type. Shapes change only through a revision (contract section 15).
 2. **Baseline.** Pin the application at one commit. `BaselineIdentity` names `baseline_id` (`<host>@<short commit>`), the full `app_commit`, and the original suite's identity: `suite_id`, the suite's `sha256`, `test_count` and `test_ids_sha256`. The suite is never changed to qualify a case.
 3. **Kit image.** An amd64 image, pinned by digest, with the runtime and tools the copy command needs. A copy has no network. The runner places the app tree at the plan's `destinations.app` and the evaluator files at `destinations.evaluator`, both owned by root and readable by every user, and creates `destinations.results` writable by every user. Files keep no executable bit, so the command names its interpreter. A kit that writes into the app tree as an unprivileged user copies the tree to a writable location first.
 4. **Catalog entries.** Each `CatalogEntry` declares its source and catalog version, its bug type and the criteria it targets (from the criteria catalog, whose failure codes are published per criterion; an entry never carries its own), the planted change (a patch and its targets with before and after hashes), the reference repair (a patch, the result hash of every changed path, `revert` or `independent`), the permitted incident description (plain language, no fix hints), the client-safe presentation text, the verification identity (check set, expected vectors, protocol ID and hash), the kit environment and `difficulty: not_assessed`. Patches follow [the package format's patch rules](bug-package-v1.md#5-patches): git-style, modify-only, paths relative to the exported source root.
@@ -39,8 +39,8 @@ How a third host application is connected to the bug factory. Version 1 serves t
 | Baseline | `task-report@ca4a71f` | `umami@ec0ff503` |
 | Bug type in version 1 | `concurrency` | `date_time` |
 | Criterion | `concurrency.lost-acknowledged-change` | `date_time.time-zone-grouping` |
-| Host package (planned) | `packages/host-task-report` | `packages/host-umami` |
+| Host package | `packages/host-task-report` (baseline, catalog, checks, protocol and copy driver; adapter planned) | `packages/host-umami` (planned) |
 | What `collect` reads (planned) | the copy driver's record set | the copy script's record set, imported with `@rbw/admission` |
-| Registry line | planned, added when the host package lands | planned, added when the host package lands |
+| Registry line | planned, added when the host adapter lands | planned, added when the host adapter lands |
 
 The synthetic host in `@rbw/case-package/synthetic` implements the whole adapter over a small synthetic application and is the working example until the real hosts land.
