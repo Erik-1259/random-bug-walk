@@ -259,6 +259,7 @@ export async function runProbe(backend: IsolatedBackend, probe: Probe): Promise<
   assert.equal(state.outcome, probe.outcome);
   assert.equal(object(state.stop_reason).code, probe.stopCode);
   assert.equal(state.attention === null ? null : object(state.attention).code, probe.expectedAttention ?? null, "attention differs from pinned scenario");
+  if (["worker-lost", "uncertain-provider"].includes(probe.scenario)) checkAttentionHistory(state, history);
   if (probe.expectedCandidates) checkScenarioCandidates(state, probe.expectedCandidates, history);
   await backend.reconnect();
   const reconnect = await read(backend, `${path}?after=0`);
@@ -307,12 +308,27 @@ export async function runProbe(backend: IsolatedBackend, probe: Probe): Promise<
   if (probe.validation) await runValidation(backend, state, probe.validation, history);
 }
 
+/** Section 8.1 records each attention change, including replacements and clears. */
+function checkAttentionHistory(state: Record<string, unknown>, history: Record<string, unknown>[]): void {
+  let active: string | null = null;
+  for (const event of history) {
+    if (event.type === "attention") active = text(object(event.data).code);
+    else if (event.type === "attention_cleared") {
+      assert.equal(object(event.data).code, active, "attention history cleared a different active code");
+      active = null;
+    }
+  }
+  assert.equal(active, state.attention === null ? null : object(state.attention).code, "attention history does not match current status");
+}
+
 /** Section 15.1 requires a candidate create, not just worker uncertainty. */
 function checkUncertainAttempt(state: Record<string, unknown>, history: Record<string, unknown>[], evidence: TestEvidence, expectedItems: Record<string, unknown>[]): void {
   const candidates = objects(state.candidates);
   assert.equal(candidates.length, 1, "uncertain-provider must attempt the first candidate only");
   const candidate = candidates[0]; assert(candidate);
-  assert.notEqual(candidate.stage, "skipped", "uncertain-provider skipped its candidate");
+  // The control supplies this partial outcome rule without a complete fixture.
+  // Reuse the linked event checks while leaving generated identities opaque.
+  checkScenarioCandidates(state, [{ ...candidate, stage: "incomplete", reason: { code: "incomplete_run" }, item_key: null, case_id: null }], history);
   assert(expectedItems.some(item => item.bug_type_id === candidate.bug_type_id && objects(item.eligible_sources)
     .some(source => source.host_id === candidate.host_id && source.source_id === candidate.source_id)),
   "uncertain-provider attempted a source outside the pinned input");
@@ -473,6 +489,7 @@ export async function runReconciliation(backend: IsolatedBackend, before: Record
   checkScenarioStatus(before);
   assert.equal(before.state, "finished");
   assert.equal(object(before.attention).code, "needs_reconciliation");
+  checkAttentionHistory(before, history);
   const priorEvidence = structuredClone(await runEvidence(backend, before));
   assert.equal(priorEvidence.slot.holder_validation_id, null, "request reconciliation has a validation holder");
   const interpretation = object(before.interpretation);

@@ -124,7 +124,9 @@ partial sequence requires one selected candidate from the pinned eligible source
 after worker start, and a matching candidate-copy create that remains uncertain.
 The pinned service profile settles the worker, retains all three copy originals,
 attempts only the first copy and releases the unused copies at zero. Worker-only
-uncertainty cannot satisfy this probe. Every named
+uncertainty cannot satisfy this probe. That candidate must end `incomplete` with
+`incomplete_run`, no item or case assignment, and exactly one matching
+`candidate_incomplete` event. Every named
 terminal checks its expected attention; ordinary completed requests must show
 no held spend and both slot holders cleared before any subsequent action or reset.
 
@@ -135,7 +137,11 @@ attention-cleared event, including when they fall beyond the first history page.
 Before request reconciliation, evidence must show that the request holds the
 slot and no validation holds it. This is specific to the request-failure probes;
 a separate completed validation with uncertain spend may legitimately retain its
-validation holder. The probe compares ledger evidence before and after reconciliation: operation
+validation holder. The worker-loss and uncertain-provider probes reconstruct the
+active attention from the complete history before reconciliation: replacements
+are allowed, clears must name the active code, and the result must match status.
+An old attention event followed by a clear is insufficient. Attention events may
+follow request completion, as the contract permits. The probe compares ledger evidence before and after reconciliation: operation
 identities, call metadata, original reservations and existing provider records
 remain intact. Each held row reconciles at its original worst case; previously
 settled rows stay unchanged, and reconciliation launches no new creates.

@@ -391,6 +391,17 @@ it("checks reconciliation settles held spend and reads released-slot evidence be
   restart();
   await expect(runReconciliation(backend, before)).rejects.toThrow("reconciliation changed terminal result");
 });
+it("does not reconcile unrecorded attention even when later transitions are consistent", async () => {
+  const { runReconciliation } = await import("../src/runner.ts");
+  const { before, after, backend, request } = reconciliationScenario();
+  for (const value of [before, after]) {
+    value.events = objects(value.events).filter(event => !(event.type === "attention" && object(event.data).code === "needs_reconciliation"))
+      .map((event, index) => ({ ...event, seq: index + 1 }));
+    value.next_after = objects(value.events).length;
+  }
+  await expect(runReconciliation(backend, before)).rejects.toThrow("attention history");
+  expect(request).not.toHaveBeenCalled();
+});
 it.each(["rekeyed", "collapsed", "redistributed", "rewritten-provider"])("rejects %s reconciliation evidence despite conserved totals", async change => {
   const { runReconciliation } = await import("../src/runner.ts");
   const { before, evidence, backend } = reconciliationScenario();

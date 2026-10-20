@@ -37,7 +37,7 @@ function terminalScenario(name: string) {
         if (first) {
           body.state = objects(body.events).some(event => event.type === "stop_requested") ? "stopping" : "running";
           body.outcome = null; body.stop_reason = null;
-          body.events = objects(body.events).filter(event => event.type !== "request_finished");
+          body.events = objects(body.events).slice(0, objects(body.events).findIndex(event => event.type === "request_finished"));
           const last = objects(body.events).at(-1); assert(last);
           body.next_after = last.seq; body.updated_at = last.at;
         }
@@ -252,4 +252,45 @@ it.each(["worker-only", "uncertain-worker", "missing-selection", "wrong-selectio
   }
   s.normalize();
   await expect(runProbe(s.backend, s.probe)).rejects.toThrow("uncertain-provider");
+});
+for (const scenario of ["worker-lost", "uncertain-provider"]) {
+  it.each(["missing", "wrong-code", "already-cleared", "wrong-clear"])(`rejects ${scenario} %s attention history before reconciliation`, async change => {
+    const s = scenario === "worker-lost" ? terminalScenario("operational-error") : uncertainControl();
+    const history = objects(s.state.events);
+    const attention = history.find(event => event.type === "attention" && object(event.data).code === "needs_reconciliation"); assert(attention);
+    if (change === "missing") s.state.events = history.filter(event => event !== attention);
+    if (change === "wrong-code") object(attention.data).code = "worker_unresponsive";
+    if (change === "already-cleared") s.state.events = [...history, { ...attention, type: "attention_cleared" }];
+    if (change === "wrong-clear") {
+      const clear = { ...attention, type: "attention_cleared", data: { code: "worker_unresponsive" } };
+      s.state.events = [...history, clear, { ...attention }];
+    }
+    s.state.events = objects(s.state.events).map((event, index) => ({ ...event, seq: index + 1 }));
+    s.state.next_after = objects(s.state.events).length;
+    await expect(runProbe(s.backend, s.probe)).rejects.toThrow("attention history");
+  });
+  it(`accepts ${scenario} attention recorded after completion before reconciliation`, async () => {
+    const s = scenario === "worker-lost" ? terminalScenario("operational-error") : uncertainControl();
+    const history = objects(s.state.events);
+    const attention = history.find(event => event.type === "attention" && object(event.data).code === "needs_reconciliation"); assert(attention);
+    s.state.events = [...history.filter(event => event !== attention), attention].map((event, index) => ({ ...event, seq: index + 1 }));
+    s.state.next_after = objects(s.state.events).length;
+    await expect(runProbe(s.backend, s.probe)).resolves.toBeUndefined();
+  });
+}
+it.each(["rejected", "invalid", "stopped", "missing-event", "wrong-event-candidate", "wrong-event-host", "wrong-event-reason", "duplicate-event"])("rejects uncertain candidate %s correspondence", async change => {
+  const s = uncertainControl(); const candidate = objects(s.state.candidates)[0]; assert(candidate);
+  const event = objects(s.state.events).find(event => event.type === "candidate_incomplete"); assert(event);
+  if (["rejected", "invalid", "stopped"].includes(change)) {
+    const code = change === "rejected" ? "wrong_failure" : change === "invalid" ? "setup_failed" : "stopped";
+    candidate.stage = change === "stopped" ? "incomplete" : change;
+    object(candidate.reason).code = code; event.type = `candidate_${text(candidate.stage)}`; object(event.data).reason = code;
+  }
+  if (change === "missing-event") s.state.events = objects(s.state.events).filter(current => current !== event);
+  if (change === "wrong-event-candidate") event.candidate_id = "ef".repeat(32);
+  if (change === "wrong-event-host") event.host_id = "umami";
+  if (change === "wrong-event-reason") object(event.data).reason = "stopped";
+  if (change === "duplicate-event") s.state.events = objects(s.state.events).flatMap(current => current === event ? [event, structuredClone(event)] : [current]);
+  s.normalize();
+  await expect(runProbe(s.backend, s.probe)).rejects.toThrow();
 });

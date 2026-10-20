@@ -10,12 +10,12 @@
   },
   "self_tests": {
     "command": "pnpm --filter @rbw/product-acceptance test --reporter=json",
-    "passed": 379,
+    "passed": 398,
     "failed": 0,
     "skipped": 0,
     "exit_code": 0
   },
-  "test_floor": 379,
+  "test_floor": 398,
   "failing_first": [
     {
       "scope": "final-contract invariant regressions",
@@ -234,6 +234,20 @@
       "failed": 2,
       "skipped": 117,
       "exit_code": 1
+    },
+    {
+      "scope": "matching active attention history for worker-lost and uncertain-provider, and partial uncertain candidate outcome/event correspondence",
+      "passed": 4,
+      "failed": 15,
+      "skipped": 72,
+      "exit_code": 1
+    },
+    {
+      "scope": "direct reconciliation must reject unrecorded attention before any API call",
+      "passed": 0,
+      "failed": 1,
+      "skipped": 119,
+      "exit_code": 1
     }
   ],
   "local_checks": [
@@ -295,6 +309,12 @@
       "command": "pnpm --filter @rbw/product-acceptance test --reporter=json",
       "meaning": "independent focused review reran the full suite after candidate-attempt and reconnect-history fixes",
       "passed": 379,
+      "exit_code": 0
+    },
+    {
+      "command": "pnpm --filter @rbw/product-acceptance test --reporter=json",
+      "meaning": "independent focused review reran the full suite after uncertainty state/event correspondence fixes",
+      "passed": 398,
       "exit_code": 0
     }
   ],
@@ -399,6 +419,14 @@
     {
       "finding": "The reconnect comparison accepted a correct old-history prefix while ignoring newly appended terminal events.",
       "disposition": "Compare the full reconnect history and require an empty trailing page before intentional reconciliation or validation. Negative regressions reject an extra budget event on the same page or beyond the witnessed cursor."
+    },
+    {
+      "finding": "Pre-reconciliation status could name needs_reconciliation without the matching recorded attention transition.",
+      "disposition": "Reconstruct active attention from complete history for both uncertainty probes and direct reconciliation before any action. Replacements are allowed, a clear must name the active code, and final attention must match status. Preserve attention events after request completion."
+    },
+    {
+      "finding": "The uncertain-provider candidate could be rejected or invalid despite its uncertain first create.",
+      "disposition": "Require the documented partial outcome incomplete/incomplete_run with no item or case assignment and exactly one linked candidate_incomplete event. Reuse existing candidate-event identity/reason checks without introducing a complete end-state fixture."
     }
   ],
   "http_regression_evidence": {
