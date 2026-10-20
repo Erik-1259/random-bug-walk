@@ -30,7 +30,7 @@ The checks report `local_day_counts_mismatch`, which is the criterion's publishe
 
 ## Protocol `umami-time-zone-repeatability`, version 1
 
-The existing `judge_verify` trial profile of `@rbw/schema`: one copy per state (`clean-01`, `planted-01`, `fixed-01`), each running the original suite once and the four checks once; every run is required. `protocol(entry)` reads it from the catalog alone. The three published judge replays of the released case ran this profile on Sandbox amd64 with tests phases of 76.7 to 99.3 s (limit 240 s) and copy run times of 172.7 to 206.0 s (limit 720 s). A different count would need a schema change to the trial profiles.
+The existing `judge_verify` trial profile of `@rbw/schema`: one copy per state (`clean-01`, `planted-01`, `fixed-01`), each running the original suite once and the four checks once; every run is required. `protocol(entry)` reads it from the catalog alone. A copy's tests phase is limited to 240 s (the driver's limit) and the whole copy to 720 s. A different count would need a schema change to the trial profiles.
 
 Its valid-trial rules:
 

@@ -28,15 +28,10 @@ describe("the protocol umami-time-zone-repeatability, version 1", () => {
     expect(isUmamiProtocol({ ...UMAMI_PROTOCOL, per_state: { ...UMAMI_PROTOCOL.per_state, buggy: { copies: 2, rounds_per_copy: 1, min_valid_runs: 2 } } })).toBe(false);
   });
 
-  it("fits the 240 s tests phase and the 720 s copy limit with the headroom the published judge replays measured", () => {
-    // The three published judge replays of the released case (runs dd28e4f2, 9a403b66 and
-    // dd8a971d) ran this exact profile on Sandbox amd64: tests phases 76.7 to 99.3 s, and copy run
-    // times 172.7 to 206.0 s.
-    const measured = { tests_phase_ms: [87_689, 87_792, 80_373, 88_704, 99_027, 87_935, 91_230, 99_274, 76_736], copy_run_ms: [179_515, 175_295, 174_595, 177_620, 205_969, 172_715, 199_761, 204_232, 173_040] };
-    const testsLimit = DEFAULT_PHASE_LIMITS.tests_ms;
-    const copyLimit = COPY_LIMITS.timeout_s * 1000;
-    expect(Math.max(...measured.tests_phase_ms)).toBeLessThan(testsLimit / 2);
-    expect(Math.max(...measured.copy_run_ms)).toBeLessThan(copyLimit / 3);
+  it("declares the 240 s tests phase within the 720 s copy limit, with one round of the checks per copy", () => {
+    expect(DEFAULT_PHASE_LIMITS.tests_ms).toBe(240_000);
+    expect(COPY_LIMITS.timeout_s).toBe(720);
+    expect(DEFAULT_PHASE_LIMITS.tests_ms).toBeLessThan(COPY_LIMITS.timeout_s * 1000);
     expect(UMAMI_PROTOCOL.per_state.buggy.rounds_per_copy).toBe(1);
   });
 });
