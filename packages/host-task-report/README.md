@@ -79,7 +79,7 @@ counted trial: records made under another data file or protocol are not counted.
 
 Version 1 stays the evaluator of the recorded version 1 qualification: its data file, protocol,
 check code, catalog and kit files are unchanged, and `test/v1-frozen.test.ts` recomputes their
-frozen hashes. The package manifest gained the adapter export and its two workspace dependencies;
+frozen hashes. The package manifest gained the adapter export and its three workspace dependencies;
 the test pins the version 1 manifest's hash, so the rest of the version 1 evaluator tree still
 reproduces its frozen value.
 
@@ -174,7 +174,10 @@ a new pin changes the environment hash and with it the case ID.
   record sets gives the same verdict. An earlier run with the same check package on a previous
   build of the image, whose setup files kept their comments and were readable by every user
   (copy IDs `f3q2-8477824b6f78795f-*`), gave the same verdict and trial counts. A buggy copy
-  handed the clean tree stopped before its first instance and was collected as incomplete.
+  handed the clean tree stopped before its first instance and was collected as incomplete. These
+  copies were collected before the local runner took the results archive hash, so their
+  `results_sha256`, and the evidence hash of their copy records, is the tree hash of each results
+  directory.
 
 The copies' record sets are evaluator material and are not committed.
 
@@ -204,6 +207,8 @@ image its copies ran. Without `pin`, the copies run the image pinned before, or 
 is absent. A new pin changes the environment hash and with it the case ID, so it is committed with
 the qualification that ran on it.
 
-`prepare` and `evaluate` need this package's dependencies installed; `build`, `pin` and `run` use
-Node's built-ins only, so they run where Docker is. `run --smoke f3q2-smoke-<name>` runs one
+`prepare`, `run` and `evaluate` need this package's dependencies installed; `build` and `pin` use
+Node's built-ins only, so they run where Docker is. The local runner reports each copy's
+`results_sha256` as the shared runners do: the SHA-256 of the deterministic results archive from
+`@rbw/case-package`, over every entry of the results directory. `run --smoke f3q2-smoke-<name>` runs one
 reduced clean copy, which the evaluation never counts.

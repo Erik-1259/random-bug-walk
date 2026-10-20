@@ -9,9 +9,10 @@
 // The qualification is of the pinned image, the one the catalog entry's environment and case ID
 // name: prepare and evaluate read the kit image from the pin, and the runner refuses an image with
 // another ID, so the image a qualification records is the image its copies ran. Without pin, the
-// copies run the image pinned before, or fail setup where it is absent. prepare and evaluate need
-// this package's dependencies; build, pin and run use Node's built-ins only, so they run on a host
-// where Docker is and the package is not installed.
+// copies run the image pinned before, or fail setup where it is absent. prepare, run and evaluate
+// need this package's dependencies (run hashes each copy's results with the shared results archive);
+// build and pin use Node's built-ins only, so they run on a host where Docker is and the package is
+// not installed.
 //
 // prepare builds the states the way the package harness will (see local-harness.ts) and asks the
 // adapter for the copy plans; run passes each plan with its roots to the local Docker runner
@@ -24,9 +25,8 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import type { CollectedCopy, CopyPlan, CopyRecord, CopyState, UnpackedPair } from "./contract.ts";
-import { KIT_IMAGE_FILE, KIT_IMAGE_FORMAT, parseKitImage } from "./kit.ts";
+import { IMAGE_INSPECT_FORMAT, KIT_IMAGE_FILE, KIT_IMAGE_FORMAT, parseKitImage } from "./kit.ts";
 import type { KitImagePin } from "./kit.ts";
-import { IMAGE_INSPECT_FORMAT, createLocalDockerRunner } from "./local-runner.ts";
 
 export const PACKAGE_DIR = fileURLToPath(new URL("..", import.meta.url));
 export const REPO_ROOT = resolve(PACKAGE_DIR, "../..");
@@ -139,6 +139,7 @@ function rootsFor(pair: UnpackedPair, plan: CopyPlan): { app_root: string; evalu
 }
 
 async function run(dir: string, smoke: string | undefined): Promise<number> {
+  const { createLocalDockerRunner } = await import("./local-runner.ts");
   const pair = readJson(join(dir, "pair.json")) as UnpackedPair;
   const { plans } = readJson(join(dir, "plans.json")) as { plans: CopyPlan[] };
   const log = (message: string): void => {

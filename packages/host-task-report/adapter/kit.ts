@@ -19,6 +19,9 @@ export const COPY_DESTINATIONS: CopyDestinations = {
 /** The command a version 2 copy starts with, before its arguments. */
 export const COPY_COMMAND = "/opt/rbw/bin/rbw-copy-v2";
 
+/** How the local runner, and qualify.ts pin, read a local image: its image ID and architecture. */
+export const IMAGE_INSPECT_FORMAT = "{{.Id}} {{.Architecture}}";
+
 /** One copy: at most 4 vCPUs, 8 GB and 720 s, with no network. */
 export const COPY_LIMITS = { timeout_s: 720, vcpus: 4, memory_mb: 8192, network: "none" } as const;
 

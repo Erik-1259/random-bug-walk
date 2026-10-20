@@ -144,6 +144,9 @@ importers:
 
   packages/host-task-report:
     dependencies:
+      '@rbw/case-package':
+        specifier: workspace:*
+        version: link:../../tools/case-package
       '@rbw/factory-contract':
         specifier: workspace:*
         version: link:../factory-contract

@@ -20,6 +20,7 @@
     "runner": "node src/local/cli.ts"
   },
   "dependencies": {
+    "@rbw/case-package": "workspace:*",
     "@rbw/factory-contract": "workspace:*",
     "@rbw/schema": "workspace:*",
     "diff": "9.0.0",

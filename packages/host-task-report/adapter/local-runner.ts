@@ -5,23 +5,26 @@
 // outcome: setup_failed when the image, a file or a Docker step is wrong before the start,
 // timed_out after the plan's time limit, otherwise ran with the container's exit code. The shared
 // runners are the package harness's docker runner and the hosted sandbox runner; this one exists so
-// the package can qualify its own entry locally. Imports only node: built-ins, so it runs on a host
-// where the package's dependencies are not installed.
+// the package can qualify its own entry locally. Its results_sha256 is the shared runners' own: the
+// SHA-256 of the deterministic results archive from @rbw/case-package, so it needs this package's
+// dependencies installed.
 import { spawn } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { HashError, hashTree, sha256Hex } from "../src/hash.ts";
+import { ResultsTreeError, resultsSha256 } from "@rbw/case-package";
+import { sha256Hex } from "../src/hash.ts";
+import { IMAGE_INSPECT_FORMAT } from "./kit.ts";
 import type { CollectedCopy, CopyPlan, CopyRoots, CopyRunner } from "./contract.ts";
 
 export const KILL_GRACE_S = 10;
-/** How the runner, and qualify.ts pin, read a local image: its image ID and architecture. */
-export const IMAGE_INSPECT_FORMAT = "{{.Id}} {{.Architecture}}";
 const UNKNOWN_DIGEST = `sha256:${"0".repeat(64)}`;
 
 export interface LocalRunnerOptions {
   /** Each copy writes its staging files, console log, results and collected.json under <outDir>/<copy_id>. */
   outDir: string;
   log?: (message: string) => void;
+  /** The docker CLI; defaults to "docker". */
+  docker?: string;
 }
 
 interface Exec {
@@ -30,9 +33,9 @@ interface Exec {
   timed_out: boolean;
 }
 
-function exec(args: readonly string[], timeoutMs: number, consoleFile?: string): Promise<Exec> {
+function exec(docker: string, args: readonly string[], timeoutMs: number, consoleFile?: string): Promise<Exec> {
   return new Promise((resolvePromise) => {
-    const child = spawn("docker", args, { stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(docker, args, { stdio: ["ignore", "pipe", "pipe"] });
     const chunks: Buffer[] = [];
     child.stdout.on("data", (chunk: Buffer) => chunks.push(chunk));
     child.stderr.on("data", (chunk: Buffer) => chunks.push(chunk));
@@ -54,6 +57,10 @@ function exec(args: readonly string[], timeoutMs: number, consoleFile?: string):
   });
 }
 
+function isFileSystemError(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && typeof (error as NodeJS.ErrnoException).code === "string";
+}
+
 /** Copies a plan's files from a root into a staging directory, checking each SHA-256. */
 function stage(root: string, files: CopyPlan["files"], into: string): string | null {
   for (const file of files) {
@@ -68,6 +75,7 @@ function stage(root: string, files: CopyPlan["files"], into: string): string | n
 
 export function createLocalDockerRunner(options: LocalRunnerOptions): CopyRunner {
   const log = options.log ?? ((): void => undefined);
+  const docker = options.docker ?? "docker";
   return {
     async run(plan: CopyPlan, roots: CopyRoots): Promise<CollectedCopy> {
       const dir = join(options.outDir, plan.copy_id);
@@ -87,7 +95,7 @@ export function createLocalDockerRunner(options: LocalRunnerOptions): CopyRunner
       const failed = (detail: string): CollectedCopy =>
         finish({ copy_id: plan.copy_id, outcome: "setup_failed", exit_code: null, results_dir: null, image_digest: imageDigest, architecture, started_at: startedAt, finished_at: new Date().toISOString(), results_sha256: null }, detail);
 
-      const inspect = await exec(["image", "inspect", "--format", IMAGE_INSPECT_FORMAT, plan.image.reference], 60_000);
+      const inspect = await exec(docker, ["image", "inspect", "--format", IMAGE_INSPECT_FORMAT, plan.image.reference], 60_000);
       const [id, arch] = inspect.stdout.trim().split(/\s+/);
       if (inspect.code !== 0 || id === undefined || !/^sha256:[0-9a-f]{64}$/.test(id)) return failed(`image ${plan.image.reference} is not available`);
       imageDigest = id;
@@ -108,39 +116,40 @@ export function createLocalDockerRunner(options: LocalRunnerOptions): CopyRunner
       let exitCode: number | null;
       let resultsDir: string | null = null;
       try {
-        const created = await exec(["create", "--name", container, ...limits, plan.image.reference, ...plan.command], 120_000);
+        const created = await exec(docker, ["create", "--name", container, ...limits, plan.image.reference, ...plan.command], 120_000);
         steps.create = created.code;
         if (created.code !== 0) return failed("docker create failed");
-        const app = await exec(["cp", `${appStage}/.`, `${container}:${plan.destinations.app}`], 300_000);
+        const app = await exec(docker, ["cp", `${appStage}/.`, `${container}:${plan.destinations.app}`], 300_000);
         steps.copy_app = app.code;
-        const evaluator = await exec(["cp", `${evaluatorStage}/.`, `${container}:${plan.destinations.evaluator}`], 300_000);
+        const evaluator = await exec(docker, ["cp", `${evaluatorStage}/.`, `${container}:${plan.destinations.evaluator}`], 300_000);
         steps.copy_evaluator = evaluator.code;
         if (app.code !== 0 || evaluator.code !== 0) return failed("docker cp into the copy failed");
         const began = performance.now();
-        const ran = await exec(["start", "--attach", container], plan.limits.timeout_s * 1000, join(dir, "console.log"));
+        const ran = await exec(docker, ["start", "--attach", container], plan.limits.timeout_s * 1000, join(dir, "console.log"));
         record.duration_ms = Math.round(performance.now() - began);
         steps.start = ran.code;
         if (ran.timed_out) {
           outcome = "timed_out";
-          steps.stop = (await exec(["stop", "--time", String(KILL_GRACE_S), container], 60_000)).code;
+          steps.stop = (await exec(docker, ["stop", "--time", String(KILL_GRACE_S), container], 60_000)).code;
         }
-        const state = await exec(["inspect", "--format", "{{.State.ExitCode}}", container], 60_000);
+        const state = await exec(docker, ["inspect", "--format", "{{.State.ExitCode}}", container], 60_000);
         exitCode = outcome === "ran" && state.code === 0 ? Number(state.stdout.trim()) : null;
         const results = join(dir, "results");
-        const copied = await exec(["cp", `${container}:${plan.destinations.results}`, results], 300_000);
+        const copied = await exec(docker, ["cp", `${container}:${plan.destinations.results}`, results], 300_000);
         steps.copy_out = copied.code;
         if (copied.code === 0 && existsSync(results)) resultsDir = results;
       } finally {
-        steps.remove = (await exec(["rm", "--force", container], 120_000)).code;
+        steps.remove = (await exec(docker, ["rm", "--force", container], 120_000)).code;
       }
       let resultsSha: string | null = null;
       let note: string | null = null;
       if (resultsDir !== null) {
         try {
-          resultsSha = hashTree(resultsDir).tree_sha256;
-          note = "results_sha256 is the tree hash of the results directory";
+          resultsSha = await resultsSha256(resultsDir);
+          note = "results_sha256 is the SHA-256 of the results archive";
         } catch (error) {
-          if (!(error instanceof HashError)) throw error;
+          // A results tree with a pipe, a socket or an unreadable file is no usable result, as for the shared runners.
+          if (!(error instanceof ResultsTreeError) && !isFileSystemError(error)) throw error;
           note = `the results could not be hashed: ${error.message}`;
           resultsDir = null;
         }
