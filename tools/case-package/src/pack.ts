@@ -94,6 +94,11 @@ const HASH = /^[0-9a-f]{64}$/;
 const VERSION_CONTROL = new Set([".git", ".hg", ".svn"]);
 /** Top-level source directories that name evaluator locations; the bug case never has them. */
 const EVALUATOR_ROOTS = new Set(["evaluator", "validator", ".rbw"]);
+/**
+ * The shortest validator file that is also looked for inside larger bug case files. A shorter one (a tiny
+ * fixture such as `[]`) would match ordinary source text, so it is refused only as a whole-file copy.
+ */
+const EMBEDDED_VALIDATOR_FILE_FLOOR = 32;
 
 function digests(members: readonly ArchiveMember[]): FileDigest[] {
   return members.map((member) => ({ path: member.path, sha256: sha256Hex(member.bytes) })).sort((a, b) => compareUtf8(a.path, b.path));
@@ -127,7 +132,7 @@ function patchNeedles(patch: string): Uint8Array[] {
 export interface SeparationInput {
   /** Bug case members with their archive paths (source/..., incident/...). */
   bug_case: readonly ArchiveMember[];
-  /** Validator files whose copies must not appear in the bug case. */
+  /** Validator files that must not appear in the bug case, whole or (from the floor's size on) inside another file. */
   validator_files: readonly ArchiveMember[];
   /** Patch texts (plant, clean reconstruction, reference repair) that must not appear verbatim. */
   patches: readonly string[];
@@ -137,12 +142,14 @@ export interface SeparationInput {
 
 /**
  * Lists every reason a bug case would carry evaluator material: version-control history, an evaluator
- * location, a byte copy of a validator file, a pristine or repaired copy of a changed file, or verbatim patch
- * text (a whole patch or one of its hunks). Empty files are never treated as copies.
+ * location, a byte copy of a validator file or a validator file's bytes inside a larger file (a check, a
+ * fixture or the expected vectors), a pristine or repaired copy of a changed file, or verbatim patch text (a
+ * whole patch or one of its hunks). Empty files are never treated as copies.
  */
 export function separationProblems(input: SeparationInput): string[] {
   const problems: string[] = [];
   const validatorHashes = new Set(input.validator_files.filter((file) => file.bytes.length > 0).map((file) => sha256Hex(file.bytes)));
+  const validatorTexts = input.validator_files.filter((file) => file.bytes.length >= EMBEDDED_VALIDATOR_FILE_FLOOR).map((file) => file.bytes);
   const pristine = new Set(input.pristine_sha256);
   const needles = input.patches.flatMap(patchNeedles);
   for (const member of input.bug_case) {
@@ -151,9 +158,10 @@ export function separationProblems(input: SeparationInput): string[] {
     if (member.path.startsWith(SOURCE_DIRECTORY) && EVALUATOR_ROOTS.has(segments[1] ?? "")) problems.push(`evaluator_location: ${member.path}`);
     if (member.bytes.length === 0) continue;
     const hash = sha256Hex(member.bytes);
-    if (validatorHashes.has(hash)) problems.push(`validator_file_copy: ${member.path}`);
-    if (pristine.has(hash)) problems.push(`pristine_copy: ${member.path}`);
     const bytes = Buffer.from(member.bytes.buffer, member.bytes.byteOffset, member.bytes.byteLength);
+    if (validatorHashes.has(hash)) problems.push(`validator_file_copy: ${member.path}`);
+    else if (validatorTexts.some((text) => bytes.indexOf(text) >= 0)) problems.push(`validator_file_text: ${member.path}`);
+    if (pristine.has(hash)) problems.push(`pristine_copy: ${member.path}`);
     if (needles.some((needle) => bytes.indexOf(needle) >= 0)) problems.push(`patch_text: ${member.path}`);
   }
   return problems;

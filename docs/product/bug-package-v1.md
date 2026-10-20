@@ -46,7 +46,9 @@ incident/<path>        the permitted plain-language incident description
 | `provenance` | Neutral provenance: `license` (the host application's license, an SPDX identifier) and `tools` (`[{ name, version }]`, the exporter `rbw-case-package` and its version). |
 | `files` | Every other member as `{ path, sha256 }`, in path order. |
 
-The bug case never contains: a verification check, fixture or expected value; the clean reconstruction, the reference repair or the planted change as a patch, whole or as a hunk; a byte copy of any validator file; a file whose content equals the original or repaired content of a changed file; version-control history (`.git`, `.hg`, `.svn` anywhere); evaluator locations (`evaluator/`, `validator/` or `.rbw/` at the top of the source tree); generation history; credentials, private operational identifiers, the requesting user or other requests' data.
+The bug case never contains: a verification check, fixture or expected value; the clean reconstruction, the reference repair or the planted change as a patch, whole or as a hunk; a byte copy of any validator file, or the bytes of a validator file of 32 bytes or more inside a larger file; a file whose content equals the original or repaired content of a changed file; version-control history (`.git`, `.hg`, `.svn` anywhere); evaluator locations (`evaluator/`, `validator/` or `.rbw/` at the top of the source tree); generation history; credentials, private operational identifiers, the requesting user or other requests' data.
+
+The exporter's separation checks (section 6) find checks, fixtures and expected values as validator files: a whole-file copy, or the unchanged bytes of one inside a larger file. A reworded or reformatted copy is outside what they detect, so a host's inputs must not hold one.
 
 ## 3. Validator package: `rbw-validator/1`
 

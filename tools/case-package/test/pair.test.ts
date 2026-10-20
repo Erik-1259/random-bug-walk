@@ -104,6 +104,18 @@ describe("packPair", () => {
     }
   });
 
+  it("refuses a check file or the expected vectors embedded in a larger bug case file", () => {
+    for (const name of ["verify.js", "expected.json", "run-copy.js"]) {
+      for (const [before, after] of [["", "// helper copy\n"], ["// helper copy\n", ""]]) {
+        const input = syntheticPairInput();
+        const check = input.validator.checks.find((member) => member.path === name);
+        if (check === undefined) throw new Error(`no ${name}`);
+        input.bug_case.source.push({ path: "test/helpers.js", bytes: Buffer.concat([encoder.encode(before), check.bytes, encoder.encode(after)]) });
+        expect(refusal(input).problems, `${name} ${JSON.stringify(before)}`).toEqual(["validator_file_text: source/test/helpers.js"]);
+      }
+    }
+  });
+
   it("refuses a source tree that could not be unpacked on every file system", () => {
     const folded = syntheticPairInput();
     folded.bug_case.source.push({ path: "readme.md", bytes: encoder.encode("lower case\n") });
