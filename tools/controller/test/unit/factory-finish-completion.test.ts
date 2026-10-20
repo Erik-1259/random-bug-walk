@@ -413,3 +413,33 @@ describe("a recorded finish that cannot be read", () => {
     expect(w.logs.some((line) => line.includes("no stop code that can be read"))).toBe(true);
   });
 });
+
+describe("a request whose worker closed its budget and ended before its finish", () => {
+  it("is finished by the lost-worker routine with the budget's stop code, its slot released once, and a repeated call replays", async () => {
+    const record = await acceptRequest(w);
+    const releases = countReleases(record.root);
+    expect((await startFactoryWorker(launchDeps(), record.request_id)).kind).toBe("launched");
+    // The core's loop settled the worker, which closed the budget fulfilled; the worker ended before request_finished.
+    const cut = cutAt({ event: (event) => event.type === "request_finished" });
+    const deadline = new Date(w.clock.ms + FACTORY_PROFILE.worker.timeout_s * 1000);
+    await runWriter(cut, () => runFactoryWorker({ ...workerDeps(), ledger: cut.ledger, records: cut.records }, { request_id: record.request_id, deadline, orchestrate: (hooks) => finishAsCore(hooks, "fulfilled") }));
+    expect(w.records.types(record.request_id).filter((type) => type === "request_finished")).toEqual([]);
+    expect(w.budgets.closes.map((close) => close.cause)).toEqual(["fulfilled"]);
+
+    w.clock.advance(181_000);
+    expect(await finalizeLostWorker(lostDeps(), { request_id: record.request_id })).toEqual({ kind: "finalized", slot_held: false });
+    // The finish the loop decided, under the core's key, so the budget's closure and request_finished agree; no lost-worker events.
+    const events = w.records.eventLog.get(record.request_id) ?? [];
+    expect(events.filter((event) => event.type === "request_finished").map((event) => [event.event_key, event.data])).toEqual([["run:finished", { outcome: "fulfilled", stop_code: "fulfilled" }]]);
+    expect(events.filter((event) => event.type === "attention" || event.type === "candidate_incomplete")).toEqual([]);
+    expect(w.budgets.closes.map((close) => close.cause)).toEqual(["fulfilled"]);
+    expect(await slotHolder(w)).toBeNull();
+    expect(releases()).toBe(1);
+
+    const before = await w.records.events(record.request_id);
+    expect(await finalizeLostWorker(lostDeps(), { request_id: record.request_id })).toEqual({ kind: "finished" });
+    expect(await w.records.events(record.request_id)).toEqual(before);
+    expect(w.budgets.closes.map((close) => close.cause)).toEqual(["fulfilled"]);
+    expect(releases()).toBe(1);
+  });
+});

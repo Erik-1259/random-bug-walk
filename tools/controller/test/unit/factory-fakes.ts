@@ -19,6 +19,7 @@ import type { SandboxInstance, SandboxSdk } from "@rbw/local-runner";
 import { sha256Hex } from "@rbw/schema";
 import { createSpend, migrate } from "@rbw/spend";
 import type { Reservation, ReserveRequest, Spend } from "@rbw/spend";
+import { outcomeOf } from "../../src/factory-ledger.ts";
 import type {
   AppendOutcome,
   BudgetResult,
@@ -93,8 +94,8 @@ const NO_LINKS = { host_id: null, candidate_id: null, item_key: null, case_id: n
 
 /**
  * A stand-in for the factory core's event module, with its key scheme for the lost-worker finish
- * (`lost:candidate-end`, `lost:attention`, `lost:finished`) and the run's attention
- * (`run:attention:<code>`).
+ * (`lost:candidate-end`, `lost:attention`, `lost:finished`), the loop's own finish (`run:finished`)
+ * and the run's attention (`run:attention:<code>`).
  */
 export function syntheticEventBuilders(): FactoryEventBuilders {
   const attention = (key: string): FactoryEventInput => ({ event_key: key, type: "attention", ...NO_LINKS, message: "Spend needs reconciliation.", data: { code: "needs_reconciliation" } });
@@ -111,6 +112,7 @@ export function syntheticEventBuilders(): FactoryEventBuilders {
       out.push({ event_key: "lost:finished", type: "request_finished", ...NO_LINKS, message: "Request finished: operational error.", data: { outcome: "operational_error", stop_code: "worker_lost" } });
       return out;
     },
+    finished: (stop) => ({ event_key: "run:finished", type: "request_finished", ...NO_LINKS, message: `Request finished: ${outcomeOf(stop)}.`, data: { outcome: outcomeOf(stop), stop_code: stop } }),
     attention: (code) => attention(`run:attention:${code}`),
   };
 }
@@ -205,7 +207,7 @@ export class FakeBudgets implements FactoryBudgets {
     const budget = this.budgets.get(budgetKey);
     if (budget === undefined) return { ok: false, code: "unknown_budget" };
     const { settled, open } = await this.committed(budget);
-    return { ok: true, budget_microusd: budget.cap, settled_microusd: settled, open_microusd: open, committed_microusd: settled + open, available_microusd: budget.cap - settled - open, closed: budget.closed !== null };
+    return { ok: true, budget_microusd: budget.cap, settled_microusd: settled, open_microusd: open, committed_microusd: settled + open, available_microusd: budget.cap - settled - open, closed: budget.closed === null ? null : { cause: budget.closed } };
   }
 }
 

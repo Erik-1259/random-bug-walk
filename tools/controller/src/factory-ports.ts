@@ -28,7 +28,8 @@ export interface BudgetTotals {
   committed_microusd: bigint;
   /** budget_microusd - committed_microusd; negative only after an overrun. */
   available_microusd: bigint;
-  closed: boolean;
+  /** The budget's closure, with the stop code it was closed with; null while it is open. */
+  closed: { cause: StopCode } | null;
 }
 
 /** The spend ledger's request-budget functions (budget reserve, close and status). */
@@ -159,6 +160,8 @@ export interface FactoryEventBuilders {
    * once the request finished.
    */
   lostWorker(input: { events: readonly StoredFactoryEvent[]; now: Date }): FactoryEventInput[];
+  /** request_finished with a stop code and its outcome, under the core's key for the request loop's own finish. */
+  finished(stop: StopCode, now: Date): FactoryEventInput;
   /** attention{code} under the core's key for the request's own attention. */
   attention(code: "needs_reconciliation", now: Date): FactoryEventInput;
 }

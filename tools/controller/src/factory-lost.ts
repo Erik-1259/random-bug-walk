@@ -9,7 +9,11 @@
 // needs_reconciliation, the request finishes operational_error / worker_lost); the budget closes
 // worker_lost; the sandboxes are stopped on a best-effort basis; and the slot stays held: only
 // reconciliation releases it. The worker_unresponsive attention after 60 s, and its clearing, are
-// the core's, appended from the status side; this routine appends neither.
+// the core's, appended from the status side; this routine appends neither. A request whose budget
+// is closed while no finish is recorded (its worker settled and closed it with the loop's stop
+// code, then ended before request_finished) is finished with that stop code instead, through the
+// core's finish event, so the closure and the finish agree; that finish is then completed like any
+// recorded one.
 // Validation run: it finishes error; when every one of its sandboxes is confirmed stopped, its
 // operation settles at the full worst case (or keeps the cost it was already settled at, by the
 // worker or an overlapping call) and the slot is released; otherwise its operation is uncertain,
@@ -57,7 +61,7 @@ export interface LostDeps {
   ledger: FactoryLedger;
   records: FactoryRecords;
   identity: FactoryIdentity;
-  /** The factory core's event module: the lost-worker finish and the attention event, with its keys. */
+  /** The factory core's event module: the lost-worker finish, the loop's finish and the attention event, with its keys. */
   events: FactoryEventBuilders;
   sandbox: WorkerSandboxSdk;
   rates: Rates;
@@ -155,16 +159,32 @@ async function finalizeRequest(deps: LostDeps, requestId: string): Promise<LostO
   const finished = finishedEvent(events);
   const ours = finished !== null && finished.data.stop_code === "worker_lost";
   const silent = deps.now().getTime() - (await silentSince(deps, request)).getTime() >= profile.heartbeat.lost_after_s * 1000;
-  if (finished !== null && !ours) {
-    // The writes that follow the finish, which its writer may have ended before; then a silent worker's hold.
-    if ((await completeRequestFinish(deps, request, events)) === "released") return { kind: "finalized", slot_held: false };
+  // The writes that follow a recorded finish, which its writer may have ended before; then a silent worker's hold.
+  const completeFinish = async (recorded: readonly StoredFactoryEvent[]): Promise<LostOutcome> => {
+    if ((await completeRequestFinish(deps, request, recorded)) === "released") return { kind: "finalized", slot_held: false };
     if (!silent) return { kind: "finished" };
-    return strandedHold(deps, request.root, [workerSandboxName(request.root)], needsReconciliationRaised(events), async () => {
+    return strandedHold(deps, request.root, [workerSandboxName(request.root)], needsReconciliationRaised(recorded), async () => {
       if (needsReconciliationRaised(await deps.records.events(requestId))) return false;
       return (await deps.records.appendEvent(requestId, deps.events.attention("needs_reconciliation", deps.now()), deps.now())).kind === "appended";
     });
-  }
+  };
+  if (finished !== null && !ours) return completeFinish(events);
   if (!ours && !silent) return { kind: "alive" };
+
+  // A budget closed while no finish is recorded: the worker settled and closed it with the loop's
+  // stop code, then ended before the loop's request_finished. That code finishes the request, so a
+  // worker_lost finish never contradicts the closure, and the finish is completed as recorded.
+  if (finished === null) {
+    const budget = await deps.ledger.budgets.status(request.budget_key);
+    if (!budget.ok) throw new Error(`the budget status was refused (${budget.code})`);
+    const cause = budget.closed?.cause;
+    if (cause !== undefined && cause !== "worker_lost") {
+      await deps.records.appendEvent(requestId, deps.events.finished(cause, deps.now()), deps.now());
+      const recorded = await deps.records.events(requestId);
+      if (finishedEvent(recorded) === null) throw new Error("the finish of a request whose budget is closed was refused");
+      return completeFinish(recorded);
+    }
+  }
 
   // The ledger first: the worker's and any in-flight copy's operation become uncertain, never settled.
   const workerId = workerOperation({ identity: deps.identity, rates: deps.rates, profile }, request).operation_id;
