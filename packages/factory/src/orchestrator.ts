@@ -144,12 +144,16 @@ class RequestRun {
     if (current !== null && event.candidate_id === current.candidate.candidate_id && (ENDS_CANDIDATE.has(event.type) || event.type === "case_delivered")) current.ended = true;
   }
 
-  /** Appends `budget_updated` when the ledger's amounts changed since the last one this run saw. */
-  private async budgetChanged(key: string, subject: string): Promise<LedgerStatus> {
+  /**
+   * Appends `budget_updated` when the ledger's amounts changed since the last one this run saw, or
+   * always with `always`: a candidate's reservation is recorded even when a ledger that reserves per
+   * copy changed nothing yet, because the status counts a candidate as started from that event.
+   */
+  private async budgetChanged(key: string, subject: string, always = false): Promise<LedgerStatus> {
     const status = await this.deps.ledger.status();
     const amounts = { reserved_microusd: status.reserved_microusd, spent_microusd: status.spent_microusd };
     const before = this.lastAmounts;
-    if (before !== null && before.reserved_microusd === amounts.reserved_microusd && before.spent_microusd === amounts.spent_microusd) return status;
+    if (!always && before !== null && before.reserved_microusd === amounts.reserved_microusd && before.spent_microusd === amounts.spent_microusd) return status;
     await this.append(budgetUpdated(key, status, budgetMessage(before ?? amounts, amounts, subject), this.at()));
     this.lastAmounts = amounts;
     return status;
@@ -317,7 +321,7 @@ class RequestRun {
       this.current.reserved = true;
       defects.set(next.defect_id, next.entry_id);
       started += 1;
-      await this.budgetChanged(`cand:${next.candidate_id}:reserved`, `this candidate's worst case on ${host}`);
+      await this.budgetChanged(`cand:${next.candidate_id}:reserved`, `this candidate's worst case on ${host}`, true);
       const outcome = await this.runCandidate(next);
       if (outcome.kind === "uncertain") {
         await this.append(candidateEnded(next, "incomplete_run", this.at(), "Incomplete: a sandbox run's outcome is uncertain, so this candidate was stopped and is not retried."));

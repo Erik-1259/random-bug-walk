@@ -1,6 +1,13 @@
 // RequestStatus (contract section 8) projected from the request record, its events, the per-case
 // evidence, the latest validation run of each case, the heartbeat and the ledger's budget status, with
 // an injected clock. Counts come from events only and count distinct candidates.
+//
+// A candidate counts as started (`started_at`, `limits.candidates_started`, `candidates_explored`) from
+// its selection while it is in flight, and keeps that once something after its selection shows it
+// started: a `budget_updated` before its end (its reservation or a copy's settlement; one candidate
+// runs at a time, the start reservation comes before any selection and validation runs only follow
+// the finish) or one of its own progress events. A candidate that ends skipped, or ends with nothing
+// of the kind recorded (for example after an uncertain reservation), never started.
 import type { Attention, AttentionCode, Candidate, CandidateReasonDetail, CandidateStage, Case, Event, HostId, QualificationRecord, RequestState, RequestStatus, StopCode, ValidationRun } from "@rbw/factory-contract";
 import { ATTENTION_TEXT, attention as attentionEvent, attentionCleared, candidateEnded, requestFinished } from "./events.ts";
 import { budgetRoom } from "./budget.ts";
@@ -58,6 +65,8 @@ interface CandidateFold {
   finished_at: string | null;
   /** Its `package_ready` event was seen; it counts in `packages_ready` only once it qualified. */
   packaged: boolean;
+  /** Something after its selection shows that it started (see the module comment). */
+  begun: boolean;
 }
 
 interface Fold {
@@ -98,6 +107,8 @@ function fold(events: readonly Event[]): Fold {
   const advance = (entry: CandidateFold, stage: CandidateStage): void => {
     if (IN_PROGRESS.has(entry.stage)) entry.stage = stage;
   };
+  /** The candidate selected last, until its end or delivery. */
+  let inFlight: CandidateFold | null = null;
   for (const event of events) {
     switch (event.type) {
       case "worker_started":
@@ -105,21 +116,31 @@ function fold(events: readonly Event[]): Fold {
         break;
       case "candidate_selected": {
         if (event.candidate_id === null) throw new ProjectionError(`event ${String(event.seq)} selects no candidate`);
-        state.candidates.set(event.candidate_id, { candidate_id: event.candidate_id, host_id: event.host_id, stage: "selected", reason: null, item_key: null, case_id: null, started_at: event.at, finished_at: null, packaged: false });
+        const selected: CandidateFold = { candidate_id: event.candidate_id, host_id: event.host_id, stage: "selected", reason: null, item_key: null, case_id: null, started_at: event.at, finished_at: null, packaged: false, begun: false };
+        state.candidates.set(event.candidate_id, selected);
         state.explored.add(event.candidate_id);
+        inFlight = selected;
         break;
       }
-      case "check_finished":
-        advance(candidate(event), "checking");
+      case "budget_updated":
+        if (inFlight !== null) inFlight.begun = true;
         break;
+      case "check_finished": {
+        const entry = candidate(event);
+        entry.begun = true;
+        advance(entry, "checking");
+        break;
+      }
       case "behavior_checks_passed": {
         const entry = candidate(event);
+        entry.begun = true;
         advance(entry, "behavior_checks_passed");
         state.behaviorPassed.add(entry.candidate_id);
         break;
       }
       case "requested_criteria_passed": {
         const entry = candidate(event);
+        entry.begun = true;
         advance(entry, "requested_criteria_passed");
         entry.item_key = event.item_key;
         state.criteriaPassed.add(entry.candidate_id);
@@ -130,6 +151,7 @@ function fold(events: readonly Event[]): Fold {
         // and only a qualified case counts as a ready package (a worker lost before case_delivered
         // leaves the candidate incomplete).
         const entry = candidate(event);
+        entry.begun = true;
         advance(entry, "packaging");
         entry.packaged = true;
         break;
@@ -143,6 +165,7 @@ function fold(events: readonly Event[]): Fold {
         entry.finished_at = event.at;
         state.delivered.push({ item_key: event.item_key, case_id: event.case_id });
         if (entry.packaged) state.packagesReady.add(entry.candidate_id);
+        if (inFlight === entry) inFlight = null;
         break;
       }
       case "candidate_rejected":
@@ -155,10 +178,11 @@ function fold(events: readonly Event[]): Fold {
         entry.item_key = null;
         entry.case_id = null;
         entry.finished_at = event.at;
-        if (event.type === "candidate_skipped") {
+        if (event.type === "candidate_skipped" || !entry.begun) {
           entry.started_at = null;
           state.explored.delete(entry.candidate_id);
         }
+        if (inFlight === entry) inFlight = null;
         break;
       }
       case "stop_requested":

@@ -3,6 +3,7 @@ import type { CopyRecord, Event, InterpretedCells } from "@rbw/factory-contract"
 import { describe, expect, it } from "vitest";
 import type { RequestLedger } from "../src/ports.ts";
 import { FakeHostAdapter, TEST_PROFILE, syntheticEntry, syntheticSha } from "../src/testing/catalog.ts";
+import { lostWorkerEvents } from "../src/projection.ts";
 import { UncertainOutcomeError, qualifyingPlan } from "../src/testing/harness.ts";
 import { fixtureInput, world } from "./orchestrator-support.ts";
 import type { World } from "./orchestrator-support.ts";
@@ -495,6 +496,45 @@ describe("runRequest: uncertain outcomes", () => {
     expect(w.status().attention?.code).toBe("needs_reconciliation");
   });
 
+  it("never counts a candidate whose reservation had an uncertain outcome as started or explored", async () => {
+    const w = world({ input: concurrencyOnly(1) });
+    ledgerWith(w, { reserveCandidate: () => Promise.reject(new Error("timeout")) });
+    const result = await w.run();
+    expect(result).toMatchObject({ outcome: "operational_error", stop_code: "needs_reconciliation", needs_reconciliation: true });
+    expect(w.qualified).toEqual([]);
+    const status = w.status();
+    expect(validateContract("RequestStatus", status)).toEqual([]);
+    expect(status.candidates.map((c) => [c.stage, c.reason?.code, c.started_at, c.finished_at !== null])).toEqual([["incomplete", "incomplete_run", null, true]]);
+    expect(status.funnel.candidates_explored).toBe(0);
+    expect(status.limits.candidates_started).toBe(0);
+  });
+
+  it("counts a candidate as started from its reservation even when a ledger that reserves per copy changed nothing yet", async () => {
+    // The worker is lost while the candidate's first copy runs, before any copy settles or any cell finishes.
+    let paused: () => void = () => undefined;
+    const pausedSignal = new Promise<void>((resolve) => {
+      paused = resolve;
+    });
+    const w = world({
+      input: concurrencyOnly(1),
+      plan: () => ({ states: qualifyingPlan([LOST_CODE]), pause_at_copy: 1 }),
+      hooks: {
+        pause: () => {
+          paused();
+          return new Promise<void>(() => undefined);
+        },
+      },
+    });
+    ledgerWith(w, { reserveCandidate: () => Promise.resolve({ kind: "reserved" }) });
+    void w.run();
+    await pausedSignal;
+    expect(w.events.events.at(-1)).toMatchObject({ type: "budget_updated", data: { reserved_microusd: 200_000 } });
+    for (const event of lostWorkerEvents({ events: w.events.events, now: new Date(w.clock.now + 180_000) })) await w.events.append(event);
+    const status = w.status();
+    expect(status.candidates.map((c) => [c.stage, c.started_at !== null])).toEqual([["incomplete", true]]);
+    expect([status.funnel.candidates_explored, status.limits.candidates_started]).toEqual([1, 1]);
+  });
+
   it("finishes needs_reconciliation after an uncertain reservation even when the attention's first append fails", async () => {
     const w = world({ input: concurrencyOnly(1) });
     ledgerWith(w, { reserveCandidate: () => Promise.reject(new Error("timeout")) });
@@ -623,6 +663,9 @@ describe("runRequest: internal failures and admission edges", () => {
     // A halt is no budget or pool shortfall: the request stopped with the candidate selected.
     expect(ended(w.events.events)).toEqual([{ type: "candidate_incomplete", reason: "stopped" }]);
     expect(w.qualified).toEqual([]);
+    const status = w.status();
+    expect(status.candidates.map((c) => [c.stage, c.started_at])).toEqual([["incomplete", null]]);
+    expect([status.funnel.candidates_explored, status.limits.candidates_started]).toEqual([0, 0]);
   });
 
   it("does not count a defect as tried when its first entry was skipped for budget", async () => {

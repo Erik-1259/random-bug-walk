@@ -142,6 +142,20 @@ describe("status projection", () => {
     expect(projected).toMatchObject({ outcome: "operational_error", delivery: "partial" });
   });
 
+  it("counts a selected candidate as started while in flight, and as never started when it ends with nothing recorded after its selection", () => {
+    const status = statusFixture("status-running.json");
+    const selection = status.events.filter((event) => event.seq <= 8);
+    const inFlight = projectStatus(inputsOf(status, { events: selection }));
+    expect(inFlight.candidates.map((c) => [c.stage, c.started_at])).toEqual([["selected", "2026-10-20T14:02:41.812Z"]]);
+    expect([inFlight.funnel.candidates_explored, inFlight.limits.candidates_started]).toEqual([1, 1]);
+    const candidateId = inFlight.candidates[0]?.candidate_id ?? null;
+    const end: Event = { seq: 9, at: "2026-10-20T14:02:41.900Z", type: "candidate_incomplete", host_id: "task-report", candidate_id: candidateId, item_key: null, case_id: null, message: "Incomplete.", data: { reason: "incomplete_run" } };
+    const ended = projectStatus(inputsOf(status, { events: [...selection, end] }));
+    expect(ended.candidates.map((c) => [c.stage, c.started_at, c.finished_at])).toEqual([["incomplete", null, "2026-10-20T14:02:41.900Z"]]);
+    expect([ended.funnel.candidates_explored, ended.limits.candidates_started]).toEqual([0, 0]);
+    expect(validateContract("RequestStatus", ended)).toEqual([]);
+  });
+
   it("refuses a delivered case without its evidence", () => {
     const status = statusFixture("status-fulfilled.json");
     expect(() => projectStatus(inputsOf(status, { evidence: [] }))).toThrow(ProjectionError);
