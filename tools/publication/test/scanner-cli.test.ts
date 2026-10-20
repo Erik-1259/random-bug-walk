@@ -13,6 +13,7 @@ import {
   initRepo,
   outputLines,
   cliPath,
+  readJsonLines,
   run,
   runCli,
   tempDir,
@@ -25,6 +26,19 @@ import {
 
 const TERM = "synthetic-forbidden-term";
 const TERMS = `# synthetic test list\n${TERM}\n`;
+
+/** Every printable ASCII character that is not a letter or a digit. */
+const NEIGHBORS = Array.from({ length: 95 }, (_unused, index) => String.fromCharCode(32 + index)).filter((character) => !/[A-Za-z0-9]/.test(character));
+
+/** The path list of a range scan that adds these paths: each path and each of its directories, sorted. */
+function rangeList(paths: readonly string[]): string[] {
+  const listed = new Set<string>();
+  for (const path of paths) {
+    const parts = path.split("/");
+    parts.forEach((_part, index) => listed.add(parts.slice(0, index + 1).join("/")));
+  }
+  return [...listed].sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)));
+}
 
 interface ScanOutcome {
   result: RunResult;
@@ -689,6 +703,68 @@ describe("PUB-02 scanner CLI: gitleaks", () => {
     }
   });
 
+  it.each([
+    ["a line start before it", `^${STUB_LEAK_MARKER}`],
+    ["a line end after it", `${STUB_LEAK_MARKER}$`],
+    ["a line start before it and a line end after it", `^${STUB_LEAK_MARKER}$`],
+    ["no boundary", STUB_LEAK_MARKER],
+  ])("finds a credential whose rule needs %s next to every character that is not a letter or digit", async (_label, leakPattern) => {
+    // Each such character is on both sides of the marker in one path, and on its left with the next
+    // one on its right in another, so each is a left and a right neighbor with itself and another.
+    const paths = NEIGHBORS.flatMap((left, index) => {
+      const right = NEIGHBORS[(index + 1) % NEIGHBORS.length] ?? left;
+      const tag = String(index).padStart(2, "0");
+      return [`a${tag}${left}${STUB_LEAK_MARKER}${left}y`, `b${tag}${left}${STUB_LEAK_MARKER}${right}y`];
+    });
+    const tree = Object.fromEntries(paths.map((path) => [path, `ok\n${forms.signedOff}: x\n${TERM}\n`]));
+    const root = tempDir();
+    const repo = initRepo(join(root, "repo"));
+    const base = commit(repo, { "base.txt": "base\n" }, "chore: base\n");
+    const head = commit(repo, tree, "feat: add\n");
+    const patterns = writePatterns(root, TERMS);
+    const stub = writeStubGitleaks(root, { leakPattern });
+    const range = await runCli(["scan", "--patterns", patterns, "--gitleaks", stub.command, "--range", `${base}..HEAD`], { cwd: repo });
+    // Every listed path that holds the marker, each added file and the directories that "/" makes.
+    const list = `paths-${short(head)}`;
+    const holding = rangeList(paths).flatMap((path, index) => (path.includes(STUB_LEAK_MARKER) ? [`${list}:${String(index + 1)}`] : []));
+    expect(outputLines(range)).toEqual(["blocked", ...holding]);
+    expect(range.code).toBe(1);
+    const files = await scanFiles(tree, { stub });
+    expectBlocked(
+      files,
+      paths.map((_path, index) => `paths:${String(index + 1)}`),
+    );
+    for (const result of [range, files.result]) {
+      const all = result.stdout + result.stderr;
+      expect(all).not.toContain(STUB_LEAK_MARKER);
+      expect(all).not.toContain(TERM);
+    }
+  });
+
+  it("writes a large path list's forms as several files of at most 32 MiB and maps a later file's lines", async () => {
+    // Each name has 127 letters, each before one of 31 separators other than "/" and ".", so each
+    // has about 8,000 distinct span forms of about 700 KB with their empty lines; 60 of them need
+    // more than one forms file. Only the last name holds the marker, as a span form of its own.
+    const separators = NEIGHBORS.filter((character) => character !== "/" && character !== ".");
+    const letters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    const dense = (seed: number): string =>
+      Array.from({ length: 127 }, (_unused, index) => `${letters[(seed * 7 + index * 13) % letters.length] ?? "a"}${separators[(seed + index) % separators.length] ?? "-"}`)
+        .join("")
+        .concat("z");
+    const names = Array.from({ length: 60 }, (_unused, index) => dense(index));
+    names[59] = `${STUB_LEAK_MARKER}~${dense(59).slice(STUB_LEAK_MARKER.length + 1)}`;
+    const tree = Object.fromEntries(names.map((name, index) => [name, index === 59 ? `ok\n${forms.signedOff}: x\n${TERM}\n` : "x\n"]));
+    const stub = writeStubGitleaks(tempDir(), { leakPattern: `^${STUB_LEAK_MARKER}$` });
+    const outcome = await scanFiles(tree, { stub });
+    expectBlocked(outcome, ["paths:60"]);
+    expect(outcome.result.stdout + outcome.result.stderr).not.toContain(STUB_LEAK_MARKER);
+    const read = readJsonLines(stub.filesLog) as { path: string; size: number; pathList: boolean }[];
+    // The first copy of each path-list file: the path list itself, then each file of its forms.
+    const pathLists = read.filter((file) => file.pathList && file.path.endsWith("text.txt"));
+    expect(pathLists.length).toBeGreaterThanOrEqual(3);
+    for (const file of pathLists) expect(file.size).toBeLessThanOrEqual(32 * 1024 * 1024);
+  });
+
   it("finds a credential in a path when the first listed path starts like a binary file type", async () => {
     const root = tempDir();
     const repo = initRepo(join(root, "repo"));
@@ -779,7 +855,7 @@ describe("PUB-02 scanner CLI: gitleaks", () => {
 
   it("is unavailable when gitleaks cannot start", async () => {
     const root = tempDir();
-    const stub: StubGitleaks = { command: join(root, "missing-gitleaks"), violationMarker: "", callsLog: "" };
+    const stub: StubGitleaks = { command: join(root, "missing-gitleaks"), violationMarker: "", callsLog: "", filesLog: "" };
     expectUnavailable((await scanFiles({ "a.txt": "x\n" }, { stub })).result);
   });
 

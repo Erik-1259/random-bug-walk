@@ -106,53 +106,52 @@ function gitleaksPath(unit: ScanUnit): string {
 const SPAN_LIMIT = 256;
 
 /**
- * The span forms of a path: each part of it that starts at its start or right after a "/" or
- * ".", ends at its end or right before a "/" or ".", is not empty and has at most SPAN_LIMIT
- * characters. Written on its own line, each part has a line start before it and a line end
- * after it, which a rule may need on both sides of the secret. The limit keeps their number and
- * their total length linear in the path's length.
+ * The span forms of a path: each part of it that starts at its start or right after any
+ * character other than an ASCII letter or digit, ends at its end or right before such a
+ * character, is not empty and has at most SPAN_LIMIT characters. Written on its own line, each
+ * part has a line start before it and a line end after it, which give it every boundary a rule
+ * may need on either side of the secret. A character outside the BMP counts as one character,
+ * so no part starts or ends inside it. The limit keeps their number linear in the path's length.
  */
 function spanForms(path: string): string[] {
-  // Each "/" or "." ends one part and starts the next; -1 and the path's length mark its ends.
-  const cuts = [-1, ...[...path.matchAll(/[/.]/g)].map((separator) => separator.index), path.length];
+  // Each such character ends one part and starts the next; 0 and the path's length are its ends.
+  const starts = [0];
+  const ends: number[] = [];
+  for (const separator of path.matchAll(/[^A-Za-z0-9]/gu)) {
+    ends.push(separator.index);
+    starts.push(separator.index + separator[0].length);
+  }
+  ends.push(path.length);
   const spans: string[] = [];
-  cuts.forEach((cut, from) => {
-    for (let to = from + 1; to < cuts.length; to += 1) {
-      const end = cuts[to];
-      if (end === undefined || end - cut - 1 > SPAN_LIMIT) break;
-      if (end > cut + 1) spans.push(path.slice(cut + 1, end));
+  let first = 0;
+  for (const start of starts) {
+    while ((ends[first] ?? Infinity) <= start) first += 1;
+    for (let next = first; next < ends.length; next += 1) {
+      const end = ends[next] ?? Infinity;
+      if (end - start > SPAN_LIMIT) break;
+      spans.push(path.slice(start, end));
     }
-  });
+  }
   return spans;
 }
 
 /**
- * The other forms of a path list's paths that gitleaks scans, with the 1-based path-list
- * position of each. Many gitleaks rules need a space, a quote or a line end after the secret,
- * so a credential followed by "/" or "." in a path would pass. Each path is also given with "/"
- * and "." as spaces, and as each prefix that ends before a "/" or "." (each directory, and the
- * name without each extension), which keeps a credential with a "." or "/" inside it whole.
- * Each of those prefixes, and the path itself, is given again with "/" as spaces when it holds
- * a "/", for a rule that also needs a space before the secret. Such a rule's credential with a
- * "." inside it, right after a "." in a name, is split by the first form and keeps that "."
- * before it in the others, so each path is also given as its span forms. Each distinct form of
- * a path is given once.
+ * The other forms of a path that gitleaks scans, each distinct form once. Many gitleaks rules
+ * need a space, a quote or a line end after the secret, so a credential followed by "/" or "."
+ * in a path would pass. The path is also given with "/" and "." as spaces, and as each prefix
+ * that ends before a "/" or "." (each directory, and the name without each extension), which
+ * keeps a credential with a "." or "/" inside it whole. Each of those prefixes, and the path
+ * itself, is given again with "/" as spaces when it holds a "/", for a rule that also needs a
+ * space before the secret. A rule's boundary can also fail on any other character next to the
+ * credential, such as the "-" in cfg/x-<secret>.md, so the path is also given as its span forms.
  */
-function pathListForms(paths: readonly string[]): { entries: string[]; positions: number[] } {
-  const entries: string[] = [];
-  const positions: number[] = [];
-  paths.forEach((path, index) => {
-    const ends = [...path.matchAll(/[/.]/g)].map((separator) => separator.index).filter((end) => end > 0);
-    const prefixes = ends.map((end) => path.slice(0, end));
-    const forms = new Set([path.replace(/[/.]/g, " "), ...prefixes]);
-    for (const prefix of [...prefixes, path]) if (prefix.includes("/")) forms.add(prefix.replaceAll("/", " "));
-    for (const span of spanForms(path)) forms.add(span);
-    for (const form of forms) {
-      entries.push(form);
-      positions.push(index + 1);
-    }
-  });
-  return { entries, positions };
+export function pathForms(path: string): Set<string> {
+  const ends = [...path.matchAll(/[/.]/g)].map((separator) => separator.index).filter((end) => end > 0);
+  const prefixes = ends.map((end) => path.slice(0, end));
+  const forms = new Set([path.replace(/[/.]/g, " "), ...prefixes]);
+  for (const prefix of [...prefixes, path]) if (prefix.includes("/")) forms.add(prefix.replaceAll("/", " "));
+  for (const span of spanForms(path)) forms.add(span);
+  return forms;
 }
 
 /**
@@ -162,23 +161,88 @@ function pathListForms(paths: readonly string[]): { entries: string[]; positions
  * then never matched that next entry on its own. Six line breaks keep each match of that rule
  * inside one entry.
  */
-const ENTRY_GAP = ["", "", "", "", ""];
+const ENTRY_GAP = 5;
+
+/** The fixed first line and the empty line before the first entry. */
+const FIRST_LINES = "path list\n\n";
+
+/** The largest gitleaks input file of a path list's forms, in bytes, unless one path's forms alone are larger. */
+export const FORMS_FILE_LIMIT = 32 * 1024 * 1024;
+
+/** One gitleaks input file of path-list entries, and the path-list position of each entry, in order. */
+export interface EntryFile {
+  content: Uint8Array;
+  positions: number[];
+}
+
+/** The text of an EntryFile, built in chunks so that no one string grows with the file. */
+class EntryFileText {
+  private readonly chunks: Buffer[] = [Buffer.from(FIRST_LINES)];
+  private pending: string[] = [];
+  private pendingLength = 0;
+  size = Buffer.byteLength(FIRST_LINES);
+  readonly positions: number[] = [];
+
+  add(entry: string, position: number): void {
+    const text = entry + "\n".repeat(ENTRY_GAP + 1);
+    this.pending.push(text);
+    this.pendingLength += text.length;
+    this.size += Buffer.byteLength(text);
+    this.positions.push(position);
+    if (this.pendingLength >= 1 << 20) this.flush();
+  }
+
+  private flush(): void {
+    this.chunks.push(Buffer.from(this.pending.join("")));
+    this.pending = [];
+    this.pendingLength = 0;
+  }
+
+  /** The text ends with the last entry's empty lines, without a line break after the last one. */
+  finish(): EntryFile {
+    this.flush();
+    const content = Buffer.concat(this.chunks);
+    return { content: content.subarray(0, content.length - 1), positions: this.positions };
+  }
+}
 
 /**
- * The text gitleaks scans for path-list entries, with each line's path-list position (none for
- * the other lines). gitleaks skips a file whose first bytes look like a binary type, such as an
- * executable or a database, so a fixed line comes before the first path. It reads a large file
- * in chunks and ends a chunk early only at an empty line, so the empty lines after each entry
- * also keep a chunk from splitting one.
+ * gitleaks input files for blocks of path-list entries, where each block holds the entries of
+ * one path with that path's position. Each file is a fixed first line and an empty line, then
+ * each entry followed by ENTRY_GAP empty lines. gitleaks skips a file whose first bytes look
+ * like a binary type, such as an executable or a database, so the fixed line comes before the
+ * first path in every file. It reads a large file in chunks and ends a chunk early only at an
+ * empty line, so the empty lines after each entry also keep a chunk from splitting one. A file
+ * holds whole blocks and ends before the block that would take it past `limit` bytes, so no file
+ * grows with the path list; a single block larger than the limit gets a file of its own.
  */
-function pathText(entries: readonly string[], positions: readonly number[]): { content: Uint8Array; positions: (number | undefined)[] } {
-  const lines = ["path list", ""];
-  const linePositions: (number | undefined)[] = [undefined, undefined];
-  entries.forEach((entry, index) => {
-    lines.push(entry, ...ENTRY_GAP);
-    linePositions.push(positions[index], ...ENTRY_GAP.map(() => undefined));
-  });
-  return { content: Buffer.from(lines.join("\n")), positions: linePositions };
+export function entryFiles(blocks: Iterable<{ entries: Iterable<string>; position: number }>, limit: number): EntryFile[] {
+  const files: EntryFile[] = [];
+  let current = new EntryFileText();
+  for (const { entries, position } of blocks) {
+    const block = [...entries];
+    const size = block.reduce((total, entry) => total + Buffer.byteLength(entry) + ENTRY_GAP + 1, 0);
+    if (current.positions.length > 0 && current.size + size > limit) {
+      files.push(current.finish());
+      current = new EntryFileText();
+    }
+    for (const entry of block) current.add(entry, position);
+  }
+  files.push(current.finish());
+  return files;
+}
+
+/** The path-list position of an entry line of `file` (1-based line), or undefined for any other line. */
+export function entryPosition(file: EntryFile, line: number): number | undefined {
+  // The first entry is on the line after the first lines.
+  const offset = line - 1 - (FIRST_LINES.split("\n").length - 1);
+  if (offset < 0 || offset % (ENTRY_GAP + 1) !== 0) return undefined;
+  return file.positions[offset / (ENTRY_GAP + 1)];
+}
+
+/** Each path's forms with its path-list position, one path at a time, so that no more than one path's forms are held. */
+function* formBlocks(paths: readonly string[]): Generator<{ entries: Set<string>; position: number }> {
+  for (const [index, path] of paths.entries()) yield { entries: pathForms(path), position: index + 1 };
 }
 
 function compareLocations(a: [string, number], b: [string, number]): number {
@@ -212,23 +276,27 @@ async function scanUnits(request: PublicScanRequest, terms: readonly RegExp[], r
 
   const lines = units.map((unit) => contentViolations(unit, context));
   const blobs: GitleaksBlob[] = units.map((unit) => ({ path: gitleaksPath(unit), content: unit.content }));
-  // Each blob's unit, and for a path list and its other forms the path-list position of each line.
-  const targets: { unit: number; positions?: readonly (number | undefined)[] }[] = units.map((_unit, index) => ({ unit: index }));
+  // Each blob's unit, and for a path list and each file of its other forms the entries' positions.
+  const targets: { unit: number; entries?: EntryFile }[] = units.map((_unit, index) => ({ unit: index }));
   units.forEach((unit, index) => {
     if (unit.kind !== "paths") return;
     const paths = Buffer.from(unit.content).toString("utf8").split("\n");
-    const listed = pathText(paths, paths.map((_path, position) => position + 1));
-    const forms = pathListForms(paths);
-    const other = pathText(forms.entries, forms.positions);
+    const [listed] = entryFiles(
+      paths.map((path, position) => ({ entries: [path], position: position + 1 })),
+      Infinity,
+    );
+    if (listed === undefined) throw new ScanUnavailable("internal");
     blobs[index] = { path: gitleaksPath(unit), content: listed.content };
-    targets[index] = { unit: index, positions: listed.positions };
-    blobs.push({ path: gitleaksPath(unit), content: other.content });
-    targets.push({ unit: index, positions: other.positions });
+    targets[index] = { unit: index, entries: listed };
+    for (const forms of entryFiles(formBlocks(paths), FORMS_FILE_LIMIT)) {
+      blobs.push({ path: gitleaksPath(unit), content: forms.content });
+      targets.push({ unit: index, entries: forms });
+    }
   });
   const gitleaks = { env, timeoutMs: request.gitleaksTimeoutMs ?? DEFAULT_TIMEOUT_MS.gitleaks };
   for (const finding of await runGitleaks(request.gitleaksCommand ?? "gitleaks", blobs, gitleaks)) {
     const target = targets[finding.blob];
-    const line = target?.positions === undefined ? finding.line : target.positions[finding.line - 1];
+    const line = target?.entries === undefined ? finding.line : entryPosition(target.entries, finding.line);
     if (target === undefined || line === undefined) throw new ScanUnavailable("gitleaks-report");
     lines[target.unit]?.add(line);
   }

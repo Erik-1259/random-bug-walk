@@ -440,6 +440,40 @@ async function prove(root: string, gitleaks: string): Promise<number> {
   const dottedTree = { [`cfg/x.${dottedAfterDot}.md`]: attributed, [`x.${dottedAfterDot}`]: attributed };
   await checkPathPositions("a dotted token after a dot whose rule needs a space before it is found", dottedAfterDot, dottedTree, [2, 3], [1, 2]);
 
+  // Additional: a rule's boundary can fail on any character next to a token, not only on "/" and ".". The dotted
+  // azure-ad-client-secret token, whose rule needs a line start or one of a few characters before it and a line end or
+  // one of a few characters after it, is found right after each of these neighbors with a "." after it, as in
+  // cfg/x-<token>.md, and right before each with a "." before it. The sorted list is cfg, then the l and r names.
+  const neighbors = ["-", "_", "~", "+", "@", "=", ",", "(", " "];
+  const azureNext = pick(3) + "8" + ["Q", "~"].join("") + pick(16) + "." + pick(16);
+  const azureTree = Object.fromEntries(
+    neighbors.flatMap((neighbor, index): [string, string][] => [
+      [`cfg/l${String(index)}x${neighbor}${azureNext}.md`, attributed],
+      [`cfg/r${String(index)}x.${azureNext}${neighbor}y.md`, attributed],
+    ]),
+  );
+  const azurePositions = Array.from({ length: 2 * neighbors.length }, (_entry, index) => index + 1);
+  await checkPathPositions(
+    "a dotted token whose rule needs a boundary on both sides is found next to - _ ~ + @ = , ( and a space",
+    azureNext,
+    azureTree,
+    azurePositions.map((position) => position + 1),
+    azurePositions,
+  );
+
+  // Additional: the same for a dotted sendgrid token, whose rule needs a word boundary before it and a space, a quote,
+  // a ";" or a line end after it, with each neighbor on both sides. The sorted list is cfg, then the names.
+  const sendgridNext = ["S", "G"].join("") + "." + pick(22) + "." + pick(43);
+  const sendgridTree = Object.fromEntries(neighbors.map((neighbor, index): [string, string] => [`cfg/s${String(index)}x${neighbor}${sendgridNext}${neighbor}y.md`, attributed]));
+  const sendgridPositions = neighbors.map((_neighbor, index) => index + 1);
+  await checkPathPositions(
+    "a dotted token whose rule needs a boundary after it is found between two of - _ ~ + @ = , ( or spaces",
+    sendgridNext,
+    sendgridTree,
+    sendgridPositions.map((position) => position + 1),
+    sendgridPositions,
+  );
+
   // Additional: a first listed path that starts like an executable does not make gitleaks skip the path list. The sorted
   // list is MZ, MZ/readme.md, keys and keys/<token>.txt.
   const binaryTree = { "MZ/readme.md": "hello\n", [`keys/${token}.txt`]: attributed };

@@ -201,6 +201,8 @@ export interface StubGitleaks {
   command: string;
   violationMarker: string;
   callsLog: string;
+  /** One JSON line per file a `dir` scan reads: its path inside the scanned directory, its size and whether it starts like a path list. */
+  filesLog: string;
 }
 
 /**
@@ -213,6 +215,7 @@ export function writeStubGitleaks(dir: string, options: StubGitleaksOptions = {}
   const scriptPath = join(dir, "stub-gitleaks.mjs");
   const violationMarker = join(dir, "stub-gitleaks-violation");
   const callsLog = join(dir, "stub-gitleaks-calls.jsonl");
+  const filesLog = join(dir, "stub-gitleaks-files.jsonl");
   const settings = {
     version: options.version ?? PINNED_GITLEAKS_VERSION,
     exitStatus: options.exitStatus ?? null,
@@ -229,11 +232,12 @@ export function writeStubGitleaks(dir: string, options: StubGitleaksOptions = {}
     chunk: options.chunk ?? null,
     violationMarker,
     callsLog,
+    filesLog,
     leakMarker: STUB_LEAK_MARKER,
   };
   const script = `
 import { appendFileSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync, lstatSync } from "node:fs";
-import { join, resolve, isAbsolute } from "node:path";
+import { join, relative, resolve, isAbsolute } from "node:path";
 const settings = ${JSON.stringify(settings)};
 const args = process.argv.slice(2);
 appendFileSync(settings.callsLog, JSON.stringify(args) + "\\n");
@@ -285,6 +289,7 @@ const walk = (d) => {
     if (st.isDirectory()) walk(p);
     else if (st.isFile() && !(settings.skipPaths !== null && new RegExp(settings.skipPaths).test(p))) {
       const text = readFileSync(p, "latin1");
+      appendFileSync(settings.filesLog, JSON.stringify({ path: relative(target, p), size: st.size, pathList: text.startsWith("path list\\n\\n") }) + "\\n");
       if (settings.binaryPrefixes.some((prefix) => text.startsWith(prefix))) continue;
       let first = 1;
       for (const part of chunks(text)) {
@@ -312,7 +317,7 @@ process.exit(findings.length > 0 ? Number(flagValue("--exit-code")) : 0);
 `;
   writeFile(scriptPath, script);
   const mount = settings.mountArgument ? " --stub-mount {dir}:{dir}" : "";
-  return { command: `${process.execPath} ${scriptPath} --stub-dir {dir}${mount}`, violationMarker, callsLog };
+  return { command: `${process.execPath} ${scriptPath} --stub-dir {dir}${mount}`, violationMarker, callsLog, filesLog };
 }
 
 export function readJsonLines(path: string): unknown[] {
