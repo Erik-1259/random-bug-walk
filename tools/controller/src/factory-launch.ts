@@ -19,7 +19,8 @@
 // or its own first event) and what the provider holds under the deterministic sandbox name. A
 // prepared operation is launched. A launching one whose create left nothing by that name is created
 // under the same name (the name is the provider's replay key: it refuses a second sandbox on it),
-// and a sandbox found under the name is adopted while it runs. A running one whose worker has not
+// and a sandbox found under the name (also after any start's create was refused on the name: the
+// name is the operation's own) is adopted while it runs. A running one whose worker has not
 // begun gets the worker command again, under the run-once guard. A sandbox that stopped before its
 // worker began, and an operation already uncertain, end the start uncertain: an uncertain operation
 // is never launched again. A refused create's end, its zero settlement, its finish and its release
@@ -174,16 +175,15 @@ async function launchSandbox(deps: FactoryLaunchDeps, op: FactoryOperation, size
     if (launching.code === "invalid_transition") return { kind: "replay" };
     return { kind: "uncertain", detail: `the launch was refused (${launching.code})` };
   }
-  return createAndStart(deps, op, size, args, false);
+  return createAndStart(deps, op, size, args);
 }
 
 /**
- * create → running → the detached command, for an operation in launching. `resumed`: an earlier
- * start moved it to launching and nothing was found under its name, so a create the provider
- * refuses on the name (409) means that start's create took effect after the lookup, and the
- * sandbox it made is adopted while it runs.
+ * create → running → the detached command, for an operation in launching. A create the provider
+ * refuses on the name (409) means another start's create under the operation's name took effect
+ * first, and the sandbox it made is adopted while it runs, whichever start sent its create first.
  */
-async function createAndStart(deps: FactoryLaunchDeps, op: FactoryOperation, size: { vcpus: number; timeout_s: number }, args: WorkerArgs, resumed: boolean): Promise<Launched> {
+async function createAndStart(deps: FactoryLaunchDeps, op: FactoryOperation, size: { vcpus: number; timeout_s: number }, args: WorkerArgs): Promise<Launched> {
   const { spend } = deps.ledger;
   let instance: WorkerSandboxInstance;
   try {
@@ -206,7 +206,7 @@ async function createAndStart(deps: FactoryLaunchDeps, op: FactoryOperation, siz
       if (settled.ok) return { kind: "definite_failure", detail: `the create was refused (${String(status)})` };
       return { kind: "uncertain", detail: `the create was refused (${String(status)}) but the ledger refused its end (${settled.code})` };
     }
-    if (resumed && status === 409 && live(found)) return startCommand(deps, op, found, args.adopted);
+    if (status === 409 && live(found)) return startCommand(deps, op, found, args.adopted);
     const moved = await spend.transition({ operation_id: op.operation_id, from_state: "launching", to_state: "uncertain", actor_role: ROUTE_ACTOR, uncertainty: "lost_response" });
     // Another start adopted the sandbox under this name and runs its worker: nothing is stopped.
     if (!moved.ok && moved.code === "invalid_transition" && moved.current_state === "running") return { kind: "replay" };
@@ -257,7 +257,7 @@ async function resumeLaunch(deps: FactoryLaunchDeps, op: FactoryOperation, state
     case "launching": {
       const found = await lookup(deps, op.sandbox_name);
       if (found === undefined) return { kind: "replay" };
-      if (found === null) return createAndStart(deps, op, size, args, true);
+      if (found === null) return createAndStart(deps, op, size, args);
       if (STOPPED_STATUSES.has(found.status)) return toUncertain(deps, op, "launching", "lost_response", `the sandbox an earlier start created is ${found.status}`);
       return startCommand(deps, op, found, args.adopted);
     }

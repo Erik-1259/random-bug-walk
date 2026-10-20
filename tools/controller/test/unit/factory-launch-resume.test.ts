@@ -5,12 +5,16 @@
 // answers, as a stopped process leaves it; the retry runs with the same records, ledger and provider.
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { StopCode } from "@rbw/factory-contract";
+import { utcSeconds } from "@rbw/local-runner/shared";
 import type { OperationState, Spend } from "@rbw/spend";
 import { validationOperation, validationSandboxName, workerOperation, workerSandboxName } from "../../src/factory-ledger.ts";
 import { LaunchConfigError, WORKER_RUN_ONCE_DIR, startFactoryValidation, startFactoryWorker } from "../../src/factory-launch.ts";
 import type { FactoryLaunchDeps, ValidationStartArgs, WorkerStart } from "../../src/factory-launch.ts";
+import { finalizeLostWorker } from "../../src/factory-lost.ts";
+import type { LostDeps } from "../../src/factory-lost.ts";
+import { FACTORY_PROFILE } from "../../src/factory-profile.ts";
 import type { FactoryBudgets, FactoryRecords, FactoryRequestRecord, HeartbeatTarget, WorkerSandboxInstance, WorkerSandboxSdk } from "../../src/factory-ports.ts";
-import { CASE_ID, CREDENTIALS, PROTOCOL, SyntheticApiError, WORKER_IMAGE, acceptRequest, factoryWorld, slotHolder, syntheticUuid } from "./factory-fakes.ts";
+import { CASE_ID, CREDENTIALS, FakeInstance, PROTOCOL, SyntheticApiError, WORKER_IMAGE, acceptRequest, factoryWorld, slotHolder, syntheticUuid } from "./factory-fakes.ts";
 import type { FactoryWorld } from "./factory-fakes.ts";
 
 let w: FactoryWorld;
@@ -27,6 +31,10 @@ function deps(): FactoryLaunchDeps {
   return { ledger: w.ledger, records: w.records, identity: w.identity, sandbox: w.sandbox, rates: w.rates, now: w.clock.now, launch: { image: WORKER_IMAGE, env: CREDENTIALS }, log: (line) => w.logs.push(line) };
 }
 
+function lostDeps(): LostDeps {
+  return { ledger: w.ledger, records: w.records, identity: w.identity, events: w.events, sandbox: w.sandbox, rates: w.rates, now: w.clock.now, sleep: () => Promise.resolve(), log: (line) => w.logs.push(line) };
+}
+
 /**
  * Where the earlier start ended. `create_lost`: the create was sent and never took effect (nothing by
  * its name); `create_stopped` and `running_gone`: the sandbox it created stopped before any worker
@@ -34,8 +42,10 @@ function deps(): FactoryLaunchDeps {
  * took effect and the worker has not yet written a heartbeat; `worker_started`: the worker wrote its
  * first heartbeat. The `definite_`, `refused_` and `uncertain_` points end the start's failure paths
  * (a create refused before anything existed, a refused worker reservation, a create whose outcome is
- * unknown) after the named step. `launching_refused`: not an interruption; the earlier start finished
- * after the ledger refused the launching transition.
+ * unknown) after the named step; `definite_before_release` ends it after the finish's last write (a
+ * request's budget close, a run's request events), before the slot release is sent.
+ * `launching_refused`: not an interruption; the earlier start finished after the ledger refused the
+ * launching transition.
  */
 const POINTS = [
   "after_slot",
@@ -55,6 +65,7 @@ const POINTS = [
   "definite_after_terminal",
   "definite_after_settle",
   "definite_after_finish",
+  "definite_before_release",
   "refused_after_finish",
   "uncertain_after_transition",
   "uncertain_after_finish",
@@ -121,6 +132,7 @@ function interrupted(point: Point, target: HeartbeatTarget, sandboxName: string)
       return spend.transition(request);
     },
     settle: (request) => (point === "definite_after_settle" ? after(spend.settle(request)) : spend.settle(request)),
+    releaseSlot: (request) => (point === "definite_before_release" ? end() : spend.releaseSlot(request)),
   };
   const ledgerBudgets: FactoryBudgets = {
     reserve: (key, role, request) => (point === "after_reservation" ? after(budgets.reserve(key, role, request)) : budgets.reserve(key, role, request)),
@@ -250,6 +262,7 @@ const REQUEST_ROWS: RequestRow[] = [
   { point: "definite_after_terminal", result: "create_failed", op: "reconciled", slot: "released", stop: "operational_error", closed: "operational_error", creates: 1, worker: "none" },
   { point: "definite_after_settle", result: "create_failed", op: "reconciled", slot: "released", stop: "operational_error", closed: "operational_error", creates: 1, worker: "none" },
   { point: "definite_after_finish", result: "replay", op: "reconciled", slot: "released", stop: "operational_error", closed: "operational_error", creates: 1, worker: "none" },
+  { point: "definite_before_release", result: "replay", op: "reconciled", slot: "released", stop: "operational_error", closed: "operational_error", creates: 1, worker: "none" },
   { point: "refused_after_finish", result: "replay", op: null, slot: "released", stop: "operational_error", closed: "operational_error", creates: 0, worker: "none" },
   { point: "uncertain_after_transition", result: "uncertain", op: "uncertain", slot: "held", stop: "needs_reconciliation", closed: "needs_reconciliation", creates: 1, worker: "none" },
   { point: "uncertain_after_finish", result: "replay", op: "uncertain", slot: "held", stop: "needs_reconciliation", closed: "needs_reconciliation", creates: 1, worker: "none" },
@@ -337,6 +350,7 @@ const VALIDATION_ROWS: ValidationRow[] = [
   { point: "definite_after_terminal", state: "finished", cost: 0, op: "reconciled", slot: "released", creates: 1, worker: "none" },
   { point: "definite_after_settle", state: "finished", cost: 0, op: "reconciled", slot: "released", creates: 1, worker: "none" },
   { point: "definite_after_finish", state: "finished", cost: 0, op: "reconciled", slot: "released", creates: 1, worker: "none" },
+  { point: "definite_before_release", state: "finished", cost: 0, op: "reconciled", slot: "released", creates: 1, worker: "none" },
   { point: "uncertain_after_transition", state: "finished", cost: null, op: "uncertain", slot: "held", creates: 1, worker: "none" },
   { point: "uncertain_after_finish", state: "finished", cost: null, op: "uncertain", slot: "held", creates: 1, worker: "none" },
   { point: "launching_refused", state: "finished", cost: null, op: "prepared", slot: "held", creates: 0, worker: "none" },
@@ -411,6 +425,107 @@ describe("a start repeated after another routine ended the operation", () => {
     expect(await slotHolder(w)).toBe(root);
     expect(w.sandbox.count("create")).toBe(1);
   });
+
+  it("creates nothing for a request the lost-worker routine finished while its launch was left launching", async () => {
+    const record = await acceptRequest(w);
+    await runEarlier("after_launching", (earlier) => startFactoryWorker(earlier, record.request_id), { request_id: record.request_id }, workerSandboxName(record.root));
+    w.clock.advance(181_000);
+    expect((await finalizeLostWorker(lostDeps(), { request_id: record.request_id })).kind).toBe("finalized");
+
+    expect((await startFactoryWorker(deps(), record.request_id)).kind).toBe("replay");
+    expect((await opStatus(workerOperation({ identity: w.identity, rates: w.rates }, record).operation_id))?.state).toBe("uncertain");
+    const finishes = (w.records.eventLog.get(record.request_id) ?? []).filter((event) => event.type === "request_finished");
+    expect(finishes.map((event) => event.data.stop_code)).toEqual(["worker_lost"]);
+    expect(await slotHolder(w)).toBe(record.root);
+    expect(providerCalls()).toEqual({ creates: 0, sandboxes: 0, runs: 0 });
+  });
+
+  it("creates nothing for a run the lost-worker routine finished after its start ended at its record", async () => {
+    const request = await acceptRequest(w);
+    expect((await w.spend.releaseSlot({ slot_key: "factory", root_execution_id: request.root, actor_role: "factory-worker", evidence: null, reason: null })).ok).toBe(true);
+    const validationId = syntheticUuid("7400");
+    const root = w.identity.validationRoot(validationId);
+    const args: ValidationStartArgs = { request_id: request.request_id, case_id: CASE_ID, validation_id: validationId, host_id: "task-report", package_sha256: { bug_case: "d".repeat(64), validator: "e".repeat(64) }, harness: { name: "rbw-validate", version: "1" }, protocol: PROTOCOL };
+    await runEarlier("after_record", (earlier) => startFactoryValidation(earlier, args), { validation_id: validationId }, validationSandboxName(root));
+    w.clock.advance(181_000);
+    expect((await finalizeLostWorker(lostDeps(), { validation_id: validationId })).kind).toBe("finalized");
+
+    const retried = await startFactoryValidation(deps(), args);
+    if (retried.kind !== "accepted") throw new Error(`synthetic: the retried start answered ${retried.kind}`);
+    expect([retried.run.state, retried.run.result]).toEqual(["finished", "error"]);
+    const op = validationOperation({ identity: w.identity, rates: w.rates }, { root, case_id: CASE_ID, host_id: "task-report", copies: 3 });
+    expect((await opStatus(op.operation_id))?.state).toBe("prepared");
+    expect(await slotHolder(w)).toBe(root);
+    expect(providerCalls()).toEqual({ creates: 0, sandboxes: 0, runs: 0 });
+  });
+});
+
+describe("a start repeated after a failed create", () => {
+  it("settles nothing as a refused create while a sandbox is under the name", async () => {
+    const record = await acceptRequest(w);
+    w.sandbox.createError = new SyntheticApiError(400);
+    await runEarlier("definite_after_terminal", (earlier) => startFactoryWorker(earlier, record.request_id), { request_id: record.request_id }, workerSandboxName(record.root));
+    w.sandbox.createError = null;
+    // An overlapping start's create took effect after the refusal: the provider holds a sandbox under the name.
+    const name = workerSandboxName(record.root);
+    w.sandbox.sandboxes.set(name, new FakeInstance(name, w.sandbox));
+
+    expect((await startFactoryWorker(deps(), record.request_id)).kind).toBe("replay");
+    expect(await opStatus(workerOperation({ identity: w.identity, rates: w.rates }, record).operation_id)).toEqual({ state: "terminal", settled: 0n });
+    expect(w.records.types(record.request_id)).not.toContain("request_finished");
+    expect(w.budgets.closes).toEqual([]);
+    expect(await slotHolder(w)).toBe(record.root);
+  });
+
+  it("stops the sandbox an uncertain launch left running and launches nothing", async () => {
+    const record = await acceptRequest(w);
+    const name = workerSandboxName(record.root);
+    // The create's answer was lost after it took effect; the earlier start ended once it recorded the operation uncertain.
+    w.sandbox.createError = new SyntheticApiError(503);
+    w.sandbox.createdAnyway = true;
+    await runEarlier("uncertain_after_transition", (earlier) => startFactoryWorker(earlier, record.request_id), { request_id: record.request_id }, name);
+    w.sandbox.createError = null;
+    w.sandbox.createdAnyway = false;
+    expect(w.sandbox.sandboxes.get(name)?.status).toBe("running");
+
+    expect((await startFactoryWorker(deps(), record.request_id)).kind).toBe("uncertain");
+    expect(w.sandbox.sandboxes.get(name)?.status).toBe("stopped");
+    expect(w.sandbox.count("run")).toBe(0);
+    expect((await opStatus(workerOperation({ identity: w.identity, rates: w.rates }, record).operation_id))?.state).toBe("uncertain");
+    expect(await slotHolder(w)).toBe(record.root);
+  });
+});
+
+describe("a resumed start whose lookup of the sandbox's name fails", () => {
+  const unreadable = (): WorkerSandboxSdk => ({ create: (params) => w.sandbox.create(params), get: () => Promise.reject(new Error("synthetic: the lookup failed")) });
+
+  it.each([
+    { point: "after_launching", state: "launching", creates: 0 },
+    { point: "after_running", state: "running", creates: 1 },
+  ] as const)("leaves an operation in $state as it is", async ({ point, state, creates }) => {
+    const record = await acceptRequest(w);
+    await runEarlier(point, (earlier) => startFactoryWorker(earlier, record.request_id), { request_id: record.request_id }, workerSandboxName(record.root));
+
+    expect((await startFactoryWorker({ ...deps(), sandbox: unreadable() }, record.request_id)).kind).toBe("replay");
+    expect((await opStatus(workerOperation({ identity: w.identity, rates: w.rates }, record).operation_id))?.state).toBe(state);
+    expect(w.records.types(record.request_id)).not.toContain("request_finished");
+    expect(await slotHolder(w)).toBe(record.root);
+    expect([w.sandbox.count("create"), w.sandbox.count("run"), w.sandbox.count("stop")]).toEqual([creates, 0, 0]);
+  });
+});
+
+describe("a resumed start that adopts the earlier start's sandbox", () => {
+  it("gives the request worker the request's record time plus the worker timeout as its deadline", async () => {
+    const record = await acceptRequest(w);
+    await runEarlier("create_live", (earlier) => startFactoryWorker(earlier, record.request_id), { request_id: record.request_id }, workerSandboxName(record.root));
+    w.clock.advance(600_000);
+
+    expect((await startFactoryWorker(deps(), record.request_id)).kind).toBe("launched");
+    const runs = w.sandbox.calls.filter((call) => call.action === "run").map((call) => (call.detail as { args: string[] }).args);
+    expect(runs).toHaveLength(1);
+    const args = runs[0] ?? [];
+    expect(args[args.indexOf("--deadline-at") + 1]).toBe(utcSeconds(Date.parse(record.created_at) + FACTORY_PROFILE.worker.timeout_s * 1000));
+  });
 });
 
 // Starts that overlap -------------------------------------------------------------------------
@@ -421,6 +536,25 @@ async function until(condition: () => boolean | Promise<boolean>): Promise<boole
     await new Promise((resolve) => setImmediate(resolve));
   }
   return false;
+}
+
+function gate(): { wait: Promise<void>; open: () => void } {
+  let open: () => void = () => undefined;
+  const wait = new Promise<void>((resolve) => {
+    open = resolve;
+  });
+  return { wait, open };
+}
+
+/** One launched worker and nothing stopped or finished: what overlapping starts of one request leave. */
+async function expectOneWorker(record: FactoryRequestRecord): Promise<void> {
+  expect((await opStatus(workerOperation({ identity: w.identity, rates: w.rates }, record).operation_id))?.state).toBe("running");
+  const calls = providerCalls();
+  expect([calls.sandboxes, calls.runs]).toEqual([1, 1]);
+  expect(w.sandbox.calls.filter((call) => call.action === "stop")).toEqual([]);
+  expect(w.sandbox.sandboxes.get(workerSandboxName(record.root))?.status).toBe("running");
+  expect(w.records.types(record.request_id)).not.toContain("request_finished");
+  expect(await slotHolder(w)).toBe(record.root);
 }
 
 describe("a resumed start that overlaps the earlier one", () => {
@@ -448,5 +582,111 @@ describe("a resumed start that overlaps the earlier one", () => {
     expect(w.sandbox.calls.filter((call) => call.action === "stop")).toEqual([]);
     expect(w.records.types(record.request_id)).not.toContain("request_finished");
     expect(await slotHolder(w)).toBe(record.root);
+  });
+
+  it("creates one sandbox and runs one worker when the resumed start's create reaches the provider first", async () => {
+    const record = await acceptRequest(w);
+    const op = workerOperation({ identity: w.identity, rates: w.rates }, record);
+    const earlierCreate = gate();
+    const resumedAnswer = gate();
+    let resumedCreated = false;
+    const earlierProvider: WorkerSandboxSdk = {
+      create: async (params) => {
+        await earlierCreate.wait;
+        return w.sandbox.create(params);
+      },
+      get: (name) => w.sandbox.get(name),
+    };
+    const resumedProvider: WorkerSandboxSdk = {
+      create: async (params) => {
+        const created = await w.sandbox.create(params);
+        resumedCreated = true;
+        await resumedAnswer.wait;
+        return created;
+      },
+      get: (name) => w.sandbox.get(name),
+    };
+    const first = startFactoryWorker({ ...deps(), sandbox: earlierProvider }, record.request_id);
+    expect(await until(async () => (await opStatus(op.operation_id))?.state === "launching")).toBe(true);
+    const second = startFactoryWorker({ ...deps(), sandbox: resumedProvider }, record.request_id);
+    expect(await until(() => resumedCreated)).toBe(true);
+    // The earlier start's create arrives second and is refused on the name, before the resumed start records running.
+    earlierCreate.open();
+    const earlier = await first;
+    resumedAnswer.open();
+    const resumed = await second;
+
+    expect([earlier.kind, resumed.kind]).toEqual(["launched", "replay"]);
+    await expectOneWorker(record);
+  });
+
+  it("adopts the earlier start's sandbox when the resumed start's create is refused on the name", async () => {
+    const record = await acceptRequest(w);
+    const op = workerOperation({ identity: w.identity, rates: w.rates }, record);
+    const earlierCreate = gate();
+    const earlierAnswer = gate();
+    const resumedCreate = gate();
+    let earlierCreated = false;
+    let resumedLooked = false;
+    const earlierProvider: WorkerSandboxSdk = {
+      create: async (params) => {
+        await earlierCreate.wait;
+        const created = await w.sandbox.create(params);
+        earlierCreated = true;
+        await earlierAnswer.wait;
+        return created;
+      },
+      get: (name) => w.sandbox.get(name),
+    };
+    const resumedProvider: WorkerSandboxSdk = {
+      create: async (params) => {
+        await resumedCreate.wait;
+        return w.sandbox.create(params);
+      },
+      get: async (name) => {
+        const found = await w.sandbox.get(name);
+        resumedLooked = true;
+        return found;
+      },
+    };
+    const first = startFactoryWorker({ ...deps(), sandbox: earlierProvider }, record.request_id);
+    expect(await until(async () => (await opStatus(op.operation_id))?.state === "launching")).toBe(true);
+    // The resumed start finds nothing under the name, then the earlier start's create takes effect.
+    const second = startFactoryWorker({ ...deps(), sandbox: resumedProvider }, record.request_id);
+    expect(await until(() => resumedLooked)).toBe(true);
+    earlierCreate.open();
+    expect(await until(() => earlierCreated)).toBe(true);
+    resumedCreate.open();
+    const resumed = await second;
+    earlierAnswer.open();
+    const earlier = await first;
+
+    expect([earlier.kind, resumed.kind]).toEqual(["replay", "launched"]);
+    await expectOneWorker(record);
+  });
+
+  it("stops nothing when the earlier start's create fails after the resumed start adopted its sandbox", async () => {
+    const record = await acceptRequest(w);
+    const earlierAnswer = gate();
+    let earlierCreated = false;
+    // The earlier start's create takes effect, and its answer is a failure that shows nothing definite.
+    const earlierProvider: WorkerSandboxSdk = {
+      create: async (params) => {
+        await w.sandbox.create(params);
+        earlierCreated = true;
+        await earlierAnswer.wait;
+        throw new SyntheticApiError(503);
+      },
+      get: (name) => w.sandbox.get(name),
+    };
+    const first = startFactoryWorker({ ...deps(), sandbox: earlierProvider }, record.request_id);
+    expect(await until(() => earlierCreated)).toBe(true);
+    // The resumed start finds the sandbox under the name, records it running and starts the worker.
+    const resumed = await startFactoryWorker(deps(), record.request_id);
+    earlierAnswer.open();
+    const earlier = await first;
+
+    expect([earlier.kind, resumed.kind]).toEqual(["replay", "launched"]);
+    await expectOneWorker(record);
   });
 });
