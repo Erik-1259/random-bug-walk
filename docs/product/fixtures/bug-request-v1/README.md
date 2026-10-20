@@ -2,7 +2,7 @@
 
 These are representative bodies for the contract in [`../../bug-request-v1.md`](../../bug-request-v1.md). Each JSON file is one response body, except `start-request.json`, which is a request body. The endpoints are planned. The fixtures show shapes and states, not measured results. They follow revision 2 of the contract.
 
-All values are synthetic. Request IDs follow the pattern `00000000-0000-4000-8000-0000000001nn`, validation IDs follow `00000000-0000-4000-8000-0000000002nn`, and test-mode ledger operation IDs follow `00000000-0000-4000-8000-0000000003nn`. Hashes are a repeated two-character pattern, catalog and suite IDs start with `synthetic-`, and amounts are invented. Message text is illustrative, because clients branch on codes and never on messages.
+All values are synthetic. Request IDs follow the pattern `00000000-0000-4000-8000-0000000001nn`, and validation IDs follow `00000000-0000-4000-8000-0000000002nn`. Hashes and test-mode ledger operation IDs, which are 64 lowercase hex characters (section 15.1 of the contract), are a repeated two-character pattern (operation IDs `3a3a…`, `3b3b…` and so on), catalog and suite IDs start with `synthetic-`, and amounts are invented. Message text is illustrative, because clients branch on codes and never on messages.
 
 How the files relate:
 
