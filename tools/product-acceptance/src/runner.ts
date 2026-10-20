@@ -261,38 +261,36 @@ export async function runProbe(backend: IsolatedBackend, probe: Probe): Promise<
   assert.equal(state.attention === null ? null : object(state.attention).code, probe.expectedAttention ?? null, "attention differs from pinned scenario");
   if (["worker-lost", "uncertain-provider"].includes(probe.scenario)) checkAttentionHistory(state, history);
   if (probe.expectedCandidates) checkScenarioCandidates(state, probe.expectedCandidates, history);
-  await backend.reconnect();
-  const reconnect = await read(backend, `${path}?after=0`);
-  let page = reconnect;
-  observe(page);
-  let checked = 0;
-  for (;;) {
-    const events = objects(page.events);
-    if (events.length === 0) {
-      assert.equal(checked, history.length, "previous events disappeared");
-      assert.equal(page.next_after, checked, "terminal history changed on reconnect");
-      break;
-    }
-    for (const event of events) {
-      assert(checked < history.length, "terminal history changed on reconnect");
-      assert.deepEqual(event, history[checked++], "previous event changed");
-    }
-    assert.equal(page.next_after, checked, "terminal history changed on reconnect");
-    // Read the trailing page too: an exact old-history page can hide new events.
-    await backend.wait(integer(page.poll_after_ms));
-    page = await read(backend, `${path}?after=${String(checked)}`);
-    observe(page);
-  }
-  checkScenarioStatus(reconnect);
   // No validation or reconciliation runs between these reads. Only paging and
   // polling hints may differ; accounting and the stored terminal record may not.
   const snapshot = (value: Record<string, unknown>) => Object.fromEntries(Object.entries(value)
     .filter(([field]) => !["events", "next_after", "poll_after_ms"].includes(field)));
-  assert.deepEqual(snapshot(reconnect), snapshot(state), "terminal result changed on reconnect");
+  const checkTerminalRead = async (page: Record<string, unknown>, phase: "reconnect" | "repeated stop") => {
+    let checked = 0;
+    for (;;) {
+      observe(page);
+      assert.deepEqual(snapshot(page), snapshot(state), `terminal result changed on ${phase}`);
+      const events = objects(page.events);
+      if (events.length === 0) {
+        assert.equal(checked, history.length, "previous events disappeared");
+        assert.equal(page.next_after, checked, `terminal history changed on ${phase}`);
+        break;
+      }
+      for (const event of events) {
+        assert(checked < history.length, `terminal history changed on ${phase}`);
+        assert.deepEqual(event, history[checked++], "previous event changed");
+      }
+      assert.equal(page.next_after, checked, `terminal history changed on ${phase}`);
+      // Read the trailing page too: an exact old-history page can hide new events.
+      await backend.wait(integer(page.poll_after_ms));
+      page = await read(backend, `${path}?after=${String(checked)}`);
+    }
+  };
+  await backend.reconnect();
+  await checkTerminalRead(await read(backend, `${path}?after=0`), "reconnect");
   if (probe.cancel) {
     const again = body(await call("POST", `${path}/stop`, {}), 200);
-    observe(again);
-    for (const field of ["outcome", "items", "cases"]) assert.deepEqual(again[field], state[field]);
+    await checkTerminalRead(again, "repeated stop");
   }
   if (probe.evidence) {
     const evidence = await runEvidence(backend, state);
@@ -429,7 +427,9 @@ export async function runValidation(backend: IsolatedBackend, state: Record<stri
   if (!complete) throw new Unavailable("Validation history reached the runner page limit.");
   for (const [seq, event] of observed) assert.deepEqual(completedHistory[seq - 1], event, "validation lost prior event");
   const added = completedHistory.filter(event => integer(event.seq) > previousEnd);
-  assert(added.every(event => ["validation_started", "validation_finished", "budget_updated"].includes(text(event.type))), "validation added unrelated request events");
+  // The named settled controls reserve once, run once, then settle once.
+  assert.deepEqual(added.map(event => event.type), ["budget_updated", "validation_started", "validation_finished", "budget_updated"],
+    "validation transition sequence differs from pinned control");
   const transition = (type: string) => {
     const events = added.filter(event => event.type === type);
     assert.equal(events.length, 1, `validation history needs one ${type}`);
@@ -442,11 +442,9 @@ export async function runValidation(backend: IsolatedBackend, state: Record<stri
   const finished = transition("validation_finished");
   assert(integer(started.seq) < integer(finished.seq), "validation finished before it started");
   assert.equal(object(finished.data).result, expectedResult);
-  const budgetEvents = added.filter(event => event.type === "budget_updated");
-  const reserved = budgetEvents.find(event => isDeepStrictEqual(event.data, { reserved_microusd: cost, spent_microusd: spent, remaining_microusd: remaining }));
-  const settled = budgetEvents.find(event => isDeepStrictEqual(event.data, { reserved_microusd: 0, spent_microusd: spent + cost, remaining_microusd: remaining }));
-  assert(reserved && settled, "validation reservation or settlement event is missing");
-  assert(integer(reserved.seq) < integer(settled.seq), "validation budget transitions are reversed");
+  const reserved = added[0]; const settled = added[3]; assert(reserved && settled);
+  assert.deepEqual(reserved.data, { reserved_microusd: cost, spent_microusd: spent, remaining_microusd: remaining }, "validation reservation event differs from pinned amount");
+  assert.deepEqual(settled.data, { reserved_microusd: 0, spent_microusd: spent + cost, remaining_microusd: remaining }, "validation settlement event differs from pinned amount");
   const evidence = await runEvidence(backend, after);
   assert.equal(evidence.slot.holder_request_id, null, "completed validation left the factory slot held");
   assert.equal(evidence.slot.holder_validation_id, null, "completed validation left a validation slot holder");

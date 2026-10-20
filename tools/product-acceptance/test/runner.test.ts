@@ -274,7 +274,7 @@ it("rejects an earlier delivered case disappearing during a stop", async () => {
   };
   await expect(runProbe(backend, { ...probe, outcome: "stopped_at_limit", stopCode: "budget_exhausted" })).rejects.toThrow("delivered case disappeared");
 });
-it("waits for the named second-candidate check before cancelling", async () => {
+function cancellationScenario(repeat?: (response: Record<string, unknown>, stored: Record<string, unknown>) => void) {
   const expected = fixture("status-cancelled");
   const second = objects(expected.candidates)[1]; assert(second);
   const events = objects(expected.events);
@@ -304,19 +304,50 @@ it("waits for the named second-candidate check before cancelling", async () => {
         return Promise.resolve({ status: ++starts === 1 ? 202 : 200, body: beforePause });
       }
       if (path.endsWith("/stop")) {
-        if (stopped) return Promise.resolve({ status: 200, body: replyState(expected, path, events.length) });
+        if (stopped) {
+          const response = replyState(expected, path, objects(expected.events).length);
+          repeat?.(response, expected);
+          return Promise.resolve({ status: 200, body: response });
+        }
         assert(paused, "stop arrived before the named check checkpoint"); stopped = true;
         return Promise.resolve({ status: 200, body: replyState({ ...active, state: "stopping" }, path, checkpoint + 1) });
       }
       if (!stopped) { paused = true; return Promise.resolve({ status: 200, body: replyState(active, path, checkpoint + 1) }); }
-      return Promise.resolve({ status: 200, body: replyState(expected, path, events.length) });
+      return Promise.resolve({ status: 200, body: replyState(expected, path, objects(expected.events).length) });
     },
   };
-  await expect(runProbe(backend, { scenario: "cancel-midway", input: object(object(expected.interpretation).input),
+  const probe = { scenario: "cancel-midway", input: object(object(expected.interpretation).input),
     outcome: "cancelled", stopCode: "cancelled_by_user", expectedDelivery: "partial", expectedItems: objects(object(expected.interpretation).items),
     expectedCounts: objects(expected.items), expectedFunnel: object(expected.funnel), cancel: true,
-  })).resolves.toBeUndefined();
-  expect(stopped).toBe(true);
+  };
+  return { backend, probe, wasStopped: () => stopped };
+}
+it("waits for the named second-candidate check before cancelling", async () => {
+  const s = cancellationScenario();
+  await expect(runProbe(s.backend, s.probe)).resolves.toBeUndefined();
+  expect(s.wasStopped()).toBe(true);
+});
+it.each(["updated-at", "extra-event", "paged-extra-event", "hidden-tail"])("rejects repeated stop with %s despite unchanged counts", async change => {
+  const s = cancellationScenario((response, stored) => {
+    if (change === "updated-at") response.updated_at = new Date(Date.parse(text(response.updated_at)) + 1000).toISOString();
+    else {
+      const history = objects(stored.events); const last = history.at(-1); assert(last);
+      const budget = history.findLast(event => event.type === "budget_updated"); assert(budget);
+      const added = { ...structuredClone(budget), seq: integer(last.seq) + 1, at: last.at };
+      stored.events = [...history, added]; stored.next_after = integer(added.seq);
+      if (change !== "hidden-tail") {
+        response.events = [...objects(response.events), added]; response.next_after = added.seq;
+      }
+      if (change === "paged-extra-event") { response.events = objects(response.events).slice(0, 2); response.next_after = 2; }
+    }
+  });
+  await expect(runProbe(s.backend, s.probe)).rejects.toThrow(change === "updated-at" ? "terminal result changed on repeated stop" : "terminal history changed on repeated stop");
+});
+it("allows repeated stop to return an unchanged terminal result with different paging hints", async () => {
+  const s = cancellationScenario(response => {
+    response.poll_after_ms = 1; response.events = objects(response.events).slice(0, 2); response.next_after = 2;
+  });
+  await expect(runProbe(s.backend, s.probe)).resolves.toBeUndefined();
 });
 function reconciliationScenario() {
   const before = fixture("status-operational-error");

@@ -151,11 +151,16 @@ validation, every terminal observation retains its budget and attention as well
 as its completed results, starting with the concurrent Start responses.
 Reconnect must return exactly the witnessed terminal history, including an empty
 trailing page; no new event may appear before those intentional operations.
+Repeated stop must also preserve every terminal field, including `updated_at`,
+and the complete event tail. Only paging and polling hints may differ; every
+returned page is checked against the stored terminal response.
 
 The named failed/error validation probes also read request status and ledger
 evidence after completion. They check the pinned host cost, cleared reservations
 and slot, matching validation and budget events, and retention of earlier results
-and evidence. These named controls have known costs; the general validation
+and evidence. Their history must contain exactly one reservation, validation
+start, validation finish and settlement, in that order, with the pinned amounts
+and no additional budget events. These named controls have known costs; the general validation
 shape still permits a finished error with uncertain spend to retain a null cost.
 
 The final contract permits zero-count rows for known unrequested types, and a

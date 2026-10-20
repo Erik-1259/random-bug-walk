@@ -105,6 +105,24 @@ it.each(["prior-event", "validation-started", "validation-finished", "reservatio
   await expect(runValidation(s.backend, s.before, "failed")).rejects.toThrow();
 });
 
+for (const result of ["failed", "error"] as const) {
+  it.each(["start-before-reserve", "settle-before-start", "settle-before-finish", "extra-budget", "duplicate-settlement"])(`rejects ${result} validation transition %s despite correct final accounting`, async change => {
+    const s = scenario(result);
+    let transitions: Record<string, unknown>[] = [s.reserve, s.started, s.finished, s.settled];
+    if (change === "start-before-reserve") transitions = [s.started, s.reserve, s.finished, s.settled];
+    if (change === "settle-before-start") transitions = [s.reserve, s.settled, s.started, s.finished];
+    if (change === "settle-before-finish") transitions = [s.reserve, s.started, s.settled, s.finished];
+    if (change === "extra-budget") {
+      const bogus = { ...s.reserve, data: { ...s.reserve.data, reserved_microusd: s.cost + 1, remaining_microusd: 900_000 - s.cost - 1 } };
+      transitions = [s.reserve, s.started, bogus, s.finished, s.settled];
+    }
+    if (change === "duplicate-settlement") transitions.push(structuredClone(s.settled));
+    s.after.events = [...objects(s.before.events), ...transitions].map((event, index) => ({ ...event, seq: index + 1 }));
+    s.after.next_after = objects(s.after.events).length;
+    await expect(runValidation(s.backend, s.before, result)).rejects.toThrow();
+  });
+}
+
 it.each(["changed-prior", "missing-validation", "wrong-operation-kind"])("rejects %s ledger evidence after validation", async change => {
   const s = scenario();
   if (change === "changed-prior") first(objects(s.evidence.operations)).operation_id = "ce".repeat(32);
