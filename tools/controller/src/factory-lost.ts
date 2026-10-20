@@ -224,8 +224,10 @@ async function finalizeValidation(deps: LostDeps, validationId: string): Promise
   const message = silentMs >= profile.heartbeat.lost_after_s * 1000 ? "The validation run stopped sending heartbeats." : "The validation run did not finish within 1,800 s.";
   const cost = await settledCost(spend, op, allStopped);
   const after = await rootBlockers(deps, validation.root);
-  if (cost !== null && !after.blocked) {
-    // Settled, here, by a concurrent call or by the worker itself: the run finishes error with that cost,
+  if (cost !== null && allStopped && !after.blocked) {
+    // Settled, here, by a concurrent call or by the worker itself, and every sandbox of the run confirmed
+    // stopped (a run the worker settled has no blocker left in the ledger, so only the stop confirmation
+    // shows it ended): the run finishes error with that cost,
     // unless the worker recorded its own finish first, which stands; one that left its spend for
     // reconciliation keeps the slot held.
     const finish = await finishValidation(deps, request, validation, { result: "error", matrix: null, message, cost_microusd: Number(cost) });

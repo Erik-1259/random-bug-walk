@@ -426,6 +426,21 @@ describe("finalizeLostWorker for a validation run", () => {
     expect(w.records.types(record.request_id).filter((type) => type === "attention")).toEqual([]);
   });
 
+  it("keeps the slot held for reconciliation when a run its worker settled but never finished cannot be confirmed stopped", async () => {
+    const { record, validationId, operationId } = await runningValidation();
+    const root = w.identity.validationRoot(validationId);
+    const op = validationOperation({ identity: w.identity, rates: w.rates }, { root, case_id: CASE_ID, host_id: "task-report" });
+    await w.spend.transition({ operation_id: operationId, from_state: "running", to_state: "terminal", actor_role: "factory-worker", terminal_status: "completed" });
+    expect((await w.spend.settle(validationSettlement(op.envelope, operationId, "task-report", [{ launched: true, lifetime_ms: 90_000 }]))).ok).toBe(true);
+    w.sandbox.stopTakesEffect = false;
+    w.clock.advance(181_000);
+    expect(await finalizeLostWorker(lostDeps(), { validation_id: validationId })).toEqual({ kind: "finalized", slot_held: true });
+    expect(await slotHolder(w)).toBe(root);
+    expect((await w.records.validationEvents(validationId)).find((event) => event.type === "finished")?.data).toMatchObject({ result: "error", cost_microusd: null });
+    expect((await w.records.events(record.request_id)).filter((event) => event.type === "attention").map((event) => event.data)).toEqual([{ code: "needs_reconciliation" }]);
+    expect(await busyReason({ spend: w.spend, records: w.records }, "factory")).toBe("needs_reconciliation");
+  });
+
   it("finishes a run still going after 1,800 s even with fresh heartbeats", async () => {
     const { validationId } = await runningValidation();
     w.clock.advance(1_000_000);
