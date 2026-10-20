@@ -4,10 +4,11 @@ import { readFileSync } from "node:fs";
 import { isEntryPoint, runMain } from "./main.ts";
 
 /**
- * Markdown under docs/ that a test or check reads. `docs/uc1-preregistration/power.py --check`
- * compares its generated block with this file, so an edit to it alone must still run the tests.
+ * Markdown under docs/ that a test or check reads, so an edit to it alone must still run the tests.
+ * `docs/uc1-preregistration/power.py --check` compares its generated block with the pre-registration,
+ * and the `@rbw/factory-contract` tests read the bug request contract's code tables.
  */
-export const CHECKED_DOCS: readonly string[] = ["docs/uc1-preregistration.md"];
+export const CHECKED_DOCS: readonly string[] = ["docs/uc1-preregistration.md", "docs/product/bug-request-v1.md"];
 
 /**
  * The single docs-path rule. A file that a test or check reads must never match it, which is
