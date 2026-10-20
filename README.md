@@ -62,6 +62,7 @@ The issue writer’s model runs on Nebius Token Factory. Vercel hosts the site, 
 | [`docs/bug-generation-pipeline.md`](docs/bug-generation-pipeline.md) | What each pipeline step does today, which package does it, and what is still manual |
 | [`docs/product/bug-package-v1.md`](docs/product/bug-package-v1.md) | The package format of a case's two parts (`rbw-bug-case/1`, `rbw-validator/1`) |
 | [`docs/product/adding-a-host.md`](docs/product/adding-a-host.md) | How a third host application is connected to the bug factory |
+| [`docs/bug-discovery-and-evaluation.md`](docs/bug-discovery-and-evaluation.md) | Research note separating candidate discovery, test-suite blind spots and developer-tool evaluation; existing rules remain unchanged |
 | `container/` | The development container for coding agents (`Dockerfile`, `run-agent.sh`, `check-isolation.sh`) |
 | `scripts/checks/` | Repository checks: prose, admission rule IDs, test-count floors, dependency audit, docs-only classification |
 | `.github/workflows/` | CI, the Postgres integration tests and Neon branch cleanup |

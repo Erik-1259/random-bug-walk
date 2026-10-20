@@ -16,6 +16,7 @@
     "operator": "node src/operator-cli.ts"
   },
   "dependencies": {
+    "@rbw/factory-contract": "workspace:*",
     "pg": "8.23.1"
   },
   "devDependencies": {

@@ -1,0 +1,27 @@
+{
+  "request_id": "00000000-0000-4000-8000-000000000101",
+  "input": {
+    "hosts": [
+      "umami",
+      "task-report"
+    ],
+    "items": [
+      {
+        "item_key": "concurrency-1",
+        "bug_type_id": "concurrency",
+        "quantity": 1,
+        "description": "I want a bug where an acknowledged change is lost when requests overlap",
+        "difficulty": "source_inferable_allowed"
+      },
+      {
+        "item_key": "date-time-1",
+        "bug_type_id": "date_time",
+        "quantity": 1,
+        "description": null,
+        "difficulty": "source_inferable_allowed"
+      }
+    ],
+    "budget_microusd": 2000000
+  },
+  "interpretation_sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+}
