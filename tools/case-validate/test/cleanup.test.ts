@@ -1,13 +1,15 @@
-// Removing the fresh workspace is cleanup only: a failure to remove it never replaces the run's outcome,
-// neither a definite result nor a runner's rejection. Removal is made to fail by a stand-in `rm` that
-// refuses the workspace directory while `failRemoval` is set.
+// Removing the fresh workspace, and the CLI's temporary results, is cleanup only: a failure to remove them
+// never replaces the run's outcome, neither a definite result nor a runner's rejection. Removal is made to
+// fail by a stand-in `rm` that refuses the harness's own directories while `removal.fail` is set; its
+// message names no path, so what the harness reports must name the directory itself.
 import * as fsPromises from "node:fs/promises";
-import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildSyntheticPair, syntheticAdapter } from "@rbw/case-package/synthetic";
 import type { CopyPlan } from "@rbw/factory-contract";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { EXIT_CODES, runValidateCli } from "../src/run-cli.ts";
 import { validatePair, type ValidatePairInput } from "../src/validate.ts";
 import { scriptedRunner, type ScriptedCopy } from "./support.ts";
 
@@ -19,7 +21,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
     const [path] = args;
     if (removal.fail && typeof path === "string" && path.includes("rbw-validate-")) {
       removal.refused.push(path);
-      return Promise.reject(Object.assign(new Error(`EBUSY: synthetic removal failure, rm '${path}'`), { code: "EBUSY" }));
+      return Promise.reject(Object.assign(new Error("EBUSY: synthetic removal failure"), { code: "EBUSY" }));
     }
     return original.rm(...args);
   };
@@ -36,6 +38,7 @@ beforeEach(async () => {
 });
 afterEach(async () => {
   removal.fail = false;
+  vi.restoreAllMocks();
   await rm(parent, { recursive: true, force: true });
   await rm(copies, { recursive: true, force: true });
 });
@@ -56,7 +59,7 @@ function input(runner: ValidatePairInput["runner"]): ValidatePairInput {
 }
 
 describe("validatePair when its workspace cannot be removed", () => {
-  it("keeps a passed result and reports the leftover workspace in the diagnostic", async () => {
+  it("keeps a passed result and names the leftover workspace in the diagnostic", async () => {
     removal.fail = true;
     const runner = scriptedRunner(copies, qualifying);
     const outcome = await validatePair(input(runner));
@@ -65,9 +68,9 @@ describe("validatePair when its workspace cannot be removed", () => {
     expect(outcome.error_code).toBeNull();
     expect(outcome.message).toBeNull();
     expect(outcome.records).toHaveLength(3);
-    expect(outcome.diagnostic).toContain("the workspace could not be removed");
-    expect(outcome.diagnostic).toContain("EBUSY");
-    expect(await readdir(parent)).toHaveLength(1);
+    const left = await readdir(parent);
+    expect(left).toHaveLength(1);
+    expect(outcome.diagnostic).toBe(`the workspace ${join(parent, left[0] ?? "")} could not be removed: EBUSY: synthetic removal failure`);
   });
 
   it("keeps an error result and its own diagnostic, and adds the leftover workspace to it", async () => {
@@ -78,15 +81,20 @@ describe("validatePair when its workspace cannot be removed", () => {
     expect(outcome.result).toBe("error");
     expect(outcome.error_code).toBe("runner_error");
     expect(outcome.diagnostic).toContain("the runner returned an invalid collected copy");
-    expect(outcome.diagnostic).toContain("the workspace could not be removed");
+    expect(outcome.diagnostic).toContain("could not be removed");
   });
 
-  it("passes a runner's rejection through unchanged", async () => {
+  it("passes a runner's rejection through unchanged and reports the leftover workspace as a process warning", async () => {
     removal.fail = true;
+    const warnings: string[] = [];
+    vi.spyOn(process, "emitWarning").mockImplementation((warning: string | Error) => {
+      warnings.push(String(warning));
+    });
     const uncertain = new Error("synthetic uncertain provider outcome");
     const runner = scriptedRunner(copies, (plan) => (plan.state === "buggy" ? { outcome: "reject", error: uncertain } : qualifying(plan)));
     await expect(validatePair(input(runner))).rejects.toBe(uncertain);
     expect(removal.refused).toHaveLength(1);
+    expect(warnings).toEqual([`the workspace ${removal.refused[0] ?? ""} could not be removed: EBUSY: synthetic removal failure`]);
   });
 
   it("removes the workspace and reports nothing when removal works", async () => {
@@ -95,5 +103,28 @@ describe("validatePair when its workspace cannot be removed", () => {
     expect(outcome.result).toBe("passed");
     expect(outcome.diagnostic).toBeNull();
     expect(await readdir(parent)).toEqual([]);
+  });
+});
+
+describe("rbw-validate when its temporary results cannot be removed", () => {
+  it("still prints the matrix and the result and exits with the result's code", async () => {
+    removal.fail = true;
+    const bugCase = join(copies, pair.bug_case.filename);
+    const validator = join(copies, pair.validator.filename);
+    await writeFile(bugCase, pair.bug_case.bytes);
+    await writeFile(validator, pair.validator.bytes);
+    const out: string[] = [];
+    const err: string[] = [];
+    const code = await runValidateCli([bugCase, validator], { stdout: (text) => out.push(text), stderr: (text) => err.push(text) }, {
+      adapters: input(scriptedRunner(copies, qualifying)).adapters,
+      runner: () => scriptedRunner(copies, qualifying),
+      now: () => NOW,
+      workdir: parent,
+    });
+    expect(code).toBe(EXIT_CODES.passed);
+    expect(out.join("")).toMatch(/^result: passed$/m);
+    const results = removal.refused.find((path) => path.includes("rbw-validate-copies-"));
+    expect(results).toBeDefined();
+    expect(err.join("")).toContain(`rbw-validate: could not remove ${results ?? ""}: EBUSY: synthetic removal failure`);
   });
 });

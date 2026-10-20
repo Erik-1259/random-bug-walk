@@ -66,6 +66,15 @@ export async function runValidateCli(argv: readonly string[], io: Io, deps: CliD
   // With --out, each copy's results are kept under <out>/copies; otherwise under a temporary directory.
   const resultsDir = out === undefined ? await mkdtemp(join(deps.workdir ?? tmpdir(), "rbw-validate-copies-")) : join(out, "copies");
   const runner: CopyRunner = { run: (plan, roots) => deps.runner(resultsDir).run(plan, roots) };
+  // Removing the temporary results is cleanup: a failure is reported and never changes the result.
+  const removeResults = async (): Promise<void> => {
+    if (out !== undefined) return;
+    try {
+      await rm(resultsDir, { recursive: true, force: true });
+    } catch (error) {
+      io.stderr(`rbw-validate: could not remove ${resultsDir}: ${error instanceof Error ? error.message : String(error)}\n`);
+    }
+  };
   let outcome: ValidatePairResult;
   try {
     outcome = await validatePair({
@@ -79,10 +88,10 @@ export async function runValidateCli(argv: readonly string[], io: Io, deps: CliD
   } catch (error) {
     io.stderr(`rbw-validate: ${error instanceof Error ? error.message : String(error)}\n`);
     io.stdout("result: error\n");
+    await removeResults();
     return EXIT_CODES.error;
-  } finally {
-    if (out === undefined) await rm(resultsDir, { recursive: true, force: true });
   }
+  await removeResults();
   io.stdout(`harness   ${HARNESS_IDENTITY.name} ${HARNESS_IDENTITY.version}\n`);
   io.stdout(`bug case  ${outcome.package_sha256.bug_case}\n`);
   io.stdout(`validator ${outcome.package_sha256.validator}\n`);

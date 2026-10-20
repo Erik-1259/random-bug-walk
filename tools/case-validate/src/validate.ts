@@ -218,8 +218,8 @@ function beforeCopies<T>(name: string, call: () => T): T {
 
 /**
  * Asks the adapter for every state's plans and holds them to the harness-built trees and to the bug case's
- * pinned runtime: every copy runs `kit_image` at `kit_image_digest`, the environment the case was packaged
- * and identified with, never the adapter's current kit when that has moved on.
+ * pinned runtime image: every copy runs `kit_image` at `kit_image_digest`, the environment the case was
+ * packaged and identified with, never the adapter's current kit when that has moved on.
  */
 function planCopies(adapter: HostAdapter, unpacked: UnpackedPair, protocol: Protocol, runtime: BugCaseRuntime): Record<CopyState, CopyPlan[]> {
   const plans = {} as Record<CopyState, CopyPlan[]>;
@@ -265,8 +265,8 @@ function entryOf(adapter: HostAdapter, entryId: string): CatalogEntry | null {
  * `error` (contract section 11); every refusal, every adapter fault and every invalid or incomplete copy or cell is
  * `error`. Rejects only when the runner rejects (an uncertain provider outcome) or one of the caller's own
  * callbacks throws: the records collected before it have been passed to onCopy, no further copy runs, and
- * the error is rethrown unchanged. A workspace that cannot be removed afterwards changes neither: the result
- * stands, with the leftover named in `diagnostic`.
+ * the error is rethrown unchanged. A workspace that cannot be removed afterwards changes neither: a result
+ * names the leftover in `diagnostic`, and a rejection reports it as a process warning.
  */
 export async function validatePair(input: ValidatePairInput): Promise<ValidatePairResult> {
   const packageSha256: PackageHashes = { bug_case: sha256Hex(input.bug_case), validator: sha256Hex(input.validator) };
@@ -368,8 +368,9 @@ export async function validatePair(input: ValidatePairInput): Promise<ValidatePa
     outcome = await run();
   } catch (rejection) {
     // The rejection is what the caller acts on (an uncertain provider outcome or its own callback's
-    // failure); a workspace left behind is only cleanup and never replaces it.
-    await removeWorkspace(workspace);
+    // failure) and is rethrown unchanged; a workspace left behind is reported as a process warning.
+    const left = await removeWorkspace(workspace);
+    if (left !== null) process.emitWarning(left);
     throw rejection;
   }
   const leftover = await removeWorkspace(workspace);
@@ -386,6 +387,6 @@ async function removeWorkspace(workspace: Workspace): Promise<string | null> {
     await workspace.dispose();
     return null;
   } catch (failure) {
-    return `the workspace could not be removed: ${failure instanceof Error ? failure.message : String(failure)}`;
+    return `the workspace ${workspace.root} could not be removed: ${failure instanceof Error ? failure.message : String(failure)}`;
   }
 }
