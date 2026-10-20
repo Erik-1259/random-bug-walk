@@ -609,7 +609,7 @@ export interface InterpretedCriterion {
 export interface EligibleSource {
   host_id: HostId;
   source_id: Identifier;
-  entries: NonNegativeInteger;
+  entries: PositiveInteger;
 }
 
 export interface TypeQuantity {
@@ -1092,7 +1092,7 @@ export interface CaseQualification {
   qualified_at: UtcTime;
 }
 
-/** The two parts become ready together. */
+/** Both parts of a case are ready: a case appears only once it is qualified, after its parts are verified and stored (contract section 10). */
 export interface Packages {
   package_version: PositiveInteger;
   /** Canonical hash of the two parts' SHA-256 values and the case ID. */
@@ -1234,6 +1234,7 @@ export interface TestOperation {
   state: TestOperationState;
   /** Held until the operation is settled or reconciled. */
   reserved_microusd: MicroUsd;
+  /** Set only in state terminal, once settled, and in state reconciled, which always records it. */
   settled_microusd: MicroUsd | null;
   attempt_ordinal: PositiveInteger;
 }

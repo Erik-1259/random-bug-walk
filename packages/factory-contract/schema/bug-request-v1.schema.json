@@ -1885,7 +1885,7 @@
           "$ref": "#/$defs/Identifier"
         },
         "entries": {
-          "$ref": "#/$defs/NonNegativeInteger"
+          "$ref": "#/$defs/PositiveInteger"
         }
       }
     },
@@ -5211,7 +5211,7 @@
       }
     },
     "Packages": {
-      "description": "The two parts become ready together.",
+      "description": "Both parts of a case are ready: a case appears only once it is qualified, after its parts are verified and stored (contract section 10).",
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -5258,47 +5258,21 @@
           }
         },
         {
-          "if": {
-            "type": "object",
-            "properties": {
-              "bug_case": {
-                "type": "object",
-                "properties": {
-                  "ready": {
-                    "const": true
-                  }
-                },
-                "required": [
-                  "ready"
-                ]
-              }
-            },
-            "required": [
-              "bug_case"
-            ]
-          },
-          "then": {
-            "type": "object",
-            "properties": {
-              "validator": {
-                "type": "object",
-                "properties": {
-                  "ready": {
-                    "const": true
-                  }
+          "type": "object",
+          "properties": {
+            "bug_case": {
+              "type": "object",
+              "properties": {
+                "ready": {
+                  "const": true
                 }
               }
-            }
-          },
-          "else": {
-            "type": "object",
-            "properties": {
-              "validator": {
-                "type": "object",
-                "properties": {
-                  "ready": {
-                    "const": false
-                  }
+            },
+            "validator": {
+              "type": "object",
+              "properties": {
+                "ready": {
+                  "const": true
                 }
               }
             }
@@ -6690,6 +6664,7 @@
           "$ref": "#/$defs/MicroUsd"
         },
         "settled_microusd": {
+          "description": "Set only in state terminal, once settled, and in state reconciled, which always records it.",
           "anyOf": [
             {
               "$ref": "#/$defs/MicroUsd"
@@ -6702,7 +6677,56 @@
         "attempt_ordinal": {
           "$ref": "#/$defs/PositiveInteger"
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "state": {
+                "enum": [
+                  "prepared",
+                  "launching",
+                  "running",
+                  "uncertain"
+                ]
+              }
+            },
+            "required": [
+              "state"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "settled_microusd": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "state": {
+                "const": "reconciled"
+              }
+            },
+            "required": [
+              "state"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "settled_microusd": {
+                "type": "integer"
+              }
+            }
+          }
+        }
+      ]
     },
     "TestSlot": {
       "description": "The factory slot and what holds it, if anything.",
