@@ -5,6 +5,8 @@
 // storage serves synthetic archive pairs whose SHA-256 the scenario's package_ready events carry.
 // Every fake operation costs exactly its worst case. Starts and validation starts are held for 2 s
 // inside their ID lock. The state lives on globalThis, so every route bundle of one server shares it.
+// An input matches a fixture by its requirements, item by item in order; under other item keys, the
+// fixture's interpretation and its scenario's run carry the request's keys.
 //
 // These fakes stand in for the shared request loop's fake runner and scenarios, the worker's
 // in-process entry and the package tooling's synthetic pair builder until those are wired here.
@@ -19,6 +21,7 @@ import type {
   HostId,
   Interpretation,
   Limits,
+  NormalizedRequestInput,
   RequestFinishedData,
   RequestInput,
   RequestState,
@@ -47,7 +50,7 @@ import type {
   StartValidationResult,
 } from "../ports.ts";
 import { syntheticPair, type ArchivePair } from "./archives.ts";
-import { inputKey, loadTestFixtures, SCENARIO_FIXTURE, type TestFixtures } from "./fixtures.ts";
+import { loadTestFixtures, requirementsKey, SCENARIO_FIXTURE, type TestFixtures } from "./fixtures.ts";
 import { profileSha256, TEST_PROFILE, type TestProfile } from "./profile.ts";
 import { draft, scriptFor, type Draft, type Step } from "./scenarios.ts";
 
@@ -201,6 +204,31 @@ function limitError(input: RequestInput, limits: Limits): string | null {
   return null;
 }
 
+/**
+ * A fixture value under other item keys (`map`: fixture key to request key): every `item_key` field, and
+ * every fixture key as a whole key inside a `message` text, all at once, so two swapped keys stay
+ * swapped. Other fields, and keys the map does not name, are copied unchanged.
+ */
+export function withItemKeys<T>(value: T, map: ReadonlyMap<string, string>): T {
+  const keys = [...map.keys()].map((key) => key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  const pattern = keys.length === 0 ? null : new RegExp(`(?<![\\w-])(?:${keys.join("|")})(?![\\w-])`, "g");
+  const rewrite = (node: unknown, field: string | null): unknown => {
+    if (Array.isArray(node)) return node.map((entry: unknown) => rewrite(entry, null));
+    if (typeof node === "object" && node !== null) return Object.fromEntries(Object.entries(node).map(([name, entry]) => [name, rewrite(entry, name)]));
+    if (typeof node !== "string") return node;
+    if (field === "item_key") return map.get(node) ?? node;
+    if (field === "message" && pattern !== null) return node.replace(pattern, (key) => map.get(key) ?? key);
+    return node;
+  };
+  return rewrite(value, null) as T;
+}
+
+/** The fixture-to-request item key map by position, for inputs with the same requirements; null when every key is the fixture's. */
+function itemKeyMap(fixture: NormalizedRequestInput, request: RequestInput): Map<string, string> | null {
+  const pairs = fixture.items.map((item, index) => [item.item_key, request.items[index]?.item_key ?? item.item_key] as const);
+  return pairs.every(([from, to]) => from === to) ? null : new Map(pairs);
+}
+
 async function* once(bytes: Uint8Array): AsyncIterable<Uint8Array> {
   await Promise.resolve();
   yield bytes;
@@ -257,9 +285,14 @@ export class TestWorld implements FactoryServerPorts, FactoryTestControls {
     const value = input as RequestInput;
     const outside = limitError(value, this.profile.limits);
     if (outside !== null) return { ok: false, message: outside };
-    const found = this.fixtures.interpretations.get(inputKey(normalize(value)));
+    const normalized = normalize(value);
+    const found = this.fixtures.interpretations.get(requirementsKey(normalized));
     if (found === undefined) return { ok: false, message: "Test mode interprets only the inputs of the contract fixtures." };
-    return { ok: true, interpretation: structuredClone(found) };
+    const map = itemKeyMap(found.input, normalized);
+    // The fixture's own keys keep the fixture's hash; other keys get a hash of their own, fixed by them.
+    if (map === null) return { ok: true, interpretation: structuredClone(found) };
+    const sha256 = canonicalDigest({ fixture: found.interpretation_sha256, item_keys: normalized.items.map((item) => item.item_key) }).sha256;
+    return { ok: true, interpretation: { ...withItemKeys(found, map), interpretation_sha256: sha256 } };
   }
 
   canonicalStart(body: unknown): { ok: true; start: StartRequest; sha256: string } | { ok: false; message: string } {
@@ -331,10 +364,14 @@ export class TestWorld implements FactoryServerPorts, FactoryTestControls {
 
   createRecordLaunch(args: { start: StartRequest; sha256: string; interpretation: Interpretation; root: string }): Promise<CreateRecordLaunchResult> {
     this.advance();
-    const template = this.endState(this.scenario);
-    if (args.interpretation.interpretation_sha256 !== template.interpretation.interpretation_sha256) {
+    const end = this.endState(this.scenario);
+    const { input } = args.interpretation;
+    if (requirementsKey(input) !== requirementsKey(end.interpretation.input)) {
       return Promise.resolve({ ok: false, code: "unavailable", message: `Test mode runs the ${this.scenario} scenario on the input of ${SCENARIO_FIXTURE[this.scenario]}.` });
     }
+    // The run under the request's item keys: its events, texts, candidates and cases.
+    const map = itemKeyMap(end.interpretation.input, input);
+    const template = map === null ? end : withItemKeys(end, map);
     if (this.poolLeft() < this.costs.worker_microusd) return Promise.resolve({ ok: false, code: "budget_unavailable", message: "The test pool cannot cover the worker's worst case." });
     const now = this.ms();
     const accepted = template.events[0];
