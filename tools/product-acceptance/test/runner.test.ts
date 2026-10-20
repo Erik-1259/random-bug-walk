@@ -334,6 +334,25 @@ function reconciliationScenario() {
   backend.request = request;
   return { before, after, evidence, backend, request, restart: () => { reconciled = false; } };
 }
+it.each(["worker_lost", "needs_reconciliation"])("rejects a validation holder before reconciling request failure %s", async code => {
+  const { runReconciliation } = await import("../src/runner.ts");
+  const { before, after, backend, request } = reconciliationScenario();
+  for (const value of [before, after]) {
+    object(value.stop_reason).code = code;
+    for (const event of objects(value.events)) if (event.type === "request_finished") object(event.data).stop_code = code;
+  }
+  let readEvidence = false;
+  backend.request = async (...args) => {
+    const reply = await request(args[0], args[1]);
+    if (args[1].includes("/test/evidence?") && !readEvidence) {
+      readEvidence = true;
+      object(object(reply.body).slot).holder_validation_id = "00000000-0000-4000-8000-000000000301";
+    }
+    return reply;
+  };
+  await expect(runReconciliation(backend, before)).rejects.toThrow("request reconciliation has a validation holder");
+  expect(request.mock.calls.some(call => call[1].endsWith("/reconcile"))).toBe(false);
+});
 it("checks reconciliation settles held spend and reads released-slot evidence before any reset", async () => {
   const { runReconciliation } = await import("../src/runner.ts");
   const { before, after, backend, request, restart } = reconciliationScenario();
@@ -676,7 +695,7 @@ for (const ordinal of [1, 2, 4]) it.each(["budget", "attention"])(`preserves ter
     const reply = await request(...args);
     if (args[0] === "POST" && args[1] === "/api/factory/requests" && reply.status !== 409) {
       const current = ++starts;
-      const initial = fixture("status-fulfilled");
+      const initial = recordedLaunchFailure();
       const value = object(JSON.parse(JSON.stringify(initial).replaceAll(text(initial.request_id), text(object(reply.body).request_id))) as unknown);
       value.outcome = "operational_error";
       value.stop_reason = { code: "operational_error", message: "synthetic failure" };
@@ -685,9 +704,9 @@ for (const ordinal of [1, 2, 4]) it.each(["budget", "attention"])(`preserves ter
         if (field === "attention") value.attention = fixture("status-operational-error").attention;
         else {
           const budget = object(value.budget);
-          budget.spent_microusd = integer(budget.spent_microusd) + 1;
-          budget.committed_microusd = integer(budget.committed_microusd) + 1;
-          budget.remaining_microusd = integer(budget.remaining_microusd) - 1;
+          budget.spent_microusd = integer(budget.spent_microusd) - 1;
+          budget.committed_microusd = integer(budget.committed_microusd) - 1;
+          budget.remaining_microusd = integer(budget.remaining_microusd) + 1;
         }
       }
       checkStatus(value);
@@ -844,8 +863,7 @@ it("rejects a successful terminal result in the fresh 202 response", async () =>
   };
   await expect(runProbe(backend, probe)).rejects.toThrow("finished fresh Start is not an operational failure");
 });
-it("accepts a recorded launch failure already finished in the 202 response", async () => {
-  const { backend, request } = scripted();
+function recordedLaunchFailure() {
   const expected = fixture("status-queued");
   expected.state = "finished"; expected.outcome = "operational_error";
   expected.stop_reason = { code: "operational_error", message: "synthetic launch failure" };
@@ -854,13 +872,49 @@ it("accepts a recorded launch failure already finished in the 202 response", asy
   const events = objects(expected.events); const last = events.at(-1); assert(last);
   expected.events = [...events, { ...last, seq: 3, type: "request_finished", message: "synthetic launch failure", data: { outcome: "operational_error", stop_code: "operational_error" } }];
   expected.next_after = 3;
+  return expected;
+}
+async function runRecordedFailure(expected: Record<string, unknown>, paged = false) {
+  const { backend, request } = scripted();
   backend.request = async (...args) => {
     const reply = await request(...args);
     if (reply.status === 202 || (reply.status === 200 && args[1].includes("/requests"))) {
-      const value: unknown = JSON.parse(JSON.stringify(expected).replaceAll(text(expected.request_id), text(object(reply.body).request_id)));
+      const value = object(JSON.parse(JSON.stringify(expected).replaceAll(text(expected.request_id), text(object(reply.body).request_id))) as unknown);
+      if (paged && reply.status === 202) { value.events = objects(value.events).slice(0, 2); value.next_after = 2; }
       return { ...reply, body: value };
     }
     return reply;
   };
-  await expect(runProbe(backend, { ...probe, outcome: "operational_error", stopCode: "operational_error", expectedDelivery: "none", expectedCounts: objects(expected.items) })).resolves.toBeUndefined();
+  await runProbe(backend, { ...probe, outcome: "operational_error", stopCode: text(object(expected.stop_reason).code),
+    expectedDelivery: text(expected.delivery), expectedCounts: objects(expected.items),
+    expectedAttention: expected.attention === null ? null : text(object(expected.attention).code) });
+}
+it.each([false, true])("accepts a recorded launch failure already finished in the 202 response with uncertain spend=%s", uncertain => {
+  const expected = recordedLaunchFailure();
+  if (uncertain) {
+    expected.attention = fixture("status-operational-error").attention;
+    const budget = object(expected.budget); budget.reserved_microusd = budget.committed_microusd; budget.spent_microusd = 0;
+  }
+  return expect(runRecordedFailure(expected)).resolves.toBeUndefined();
+});
+it.each(["worker_lost", "needs_reconciliation"])("rejects post-launch stop code %s in a fresh terminal202", code => {
+  const expected = recordedLaunchFailure(); object(expected.stop_reason).code = code;
+  for (const event of objects(expected.events)) if (event.type === "request_finished") object(event.data).stop_code = code;
+  return expect(runRecordedFailure(expected)).rejects.toThrow("fresh terminal Start");
+});
+it.each(["heartbeat", "candidate-count", "candidate-row", "candidate-spend", "worker-started", "paged-worker-started"])("rejects %s progress after a fresh terminal202", change => {
+  const expected = recordedLaunchFailure();
+  if (change === "heartbeat") expected.last_heartbeat_at = expected.created_at;
+  if (change === "candidate-count") object(expected.limits).candidates_started = 1;
+  if (change === "candidate-row") expected.candidates = fixture("status-operational-error").candidates;
+  if (change === "candidate-spend") {
+    const budget = object(expected.budget); budget.spent_microusd = integer(budget.spent_microusd) + 1;
+    budget.committed_microusd = budget.spent_microusd; budget.remaining_microusd = integer(budget.remaining_microusd) - 1;
+  }
+  if (change.endsWith("worker-started")) {
+    const events = objects(expected.events); const first = events[0]; assert(first);
+    events.splice(2, 0, { ...first, type: "worker_started" });
+    expected.events = events.map((event, index) => ({ ...event, seq: index + 1 })); expected.next_after = events.length;
+  }
+  return expect(runRecordedFailure(expected, change === "paged-worker-started")).rejects.toThrow("fresh terminal Start");
 });

@@ -43,6 +43,19 @@ function checkScenarioStatus(value: unknown): void {
   assert.equal(object(object(value).budget).overrun, false, "deterministic scenario exceeded budget");
   assertContract("RequestStatus", value);
 }
+function checkLaunchFailure(value: Record<string, unknown>): void {
+  assert.equal(value.state, "finished", "terminal result changed after completion");
+  assert.equal(object(value.stop_reason).code, "operational_error", "fresh terminal Start has a post-launch stop code");
+  assert.equal(value.last_heartbeat_at, null, "fresh terminal Start has a worker heartbeat");
+  assert.equal(objects(value.candidates).length, 0, "fresh terminal Start has candidate progress");
+  assert.equal(objects(value.cases).length, 0, "fresh terminal Start has delivered results");
+  assert.equal(object(value.limits).candidates_started, 0, "fresh terminal Start started a candidate");
+  assert(Object.values(object(value.funnel)).every(count => count === 0), "fresh terminal Start has funnel progress");
+  const workerWorst = integer(object(object(value.interpretation).budget).worker_worst_case_microusd);
+  assert(integer(object(value.budget).committed_microusd) <= workerWorst, "fresh terminal Start charged more than the worker worst case");
+  assert(objects(value.events).every(event => ["request_accepted", "budget_updated", "attention", "attention_cleared", "request_finished"].includes(text(event.type))),
+    "fresh terminal Start has post-launch history");
+}
 function body(reply: Reply, status: number): Record<string, unknown> {
   assert.equal(reply.status, status, `unexpected HTTP status: received ${String(reply.status)}, expected ${String(status)}`);
   const result = object(reply.body);
@@ -141,6 +154,7 @@ export async function runProbe(backend: IsolatedBackend, probe: Probe): Promise<
   const funnelProgress = new Map<string, number>();
   let requestTimes: { created_at: unknown; deadline_at: unknown } | undefined;
   let terminal: Record<string, unknown> | undefined;
+  let launchFailure = false;
   const terminalSnapshot = (value: Record<string, unknown>) => Object.fromEntries(Object.entries(value)
     .filter(([field]) => !["updated_at", "events", "next_after", "poll_after_ms"].includes(field)));
   const observe = (value: Record<string, unknown>, concurrent = false) => {
@@ -182,6 +196,7 @@ export async function runProbe(backend: IsolatedBackend, probe: Probe): Promise<
       assert.deepEqual(terminalSnapshot(value), terminal, "terminal result changed after completion");
     }
     if (value.state === "finished" && terminal === undefined) terminal = structuredClone(terminalSnapshot(value));
+    if (launchFailure) checkLaunchFailure(value);
   };
   for (const reply of replies) {
     assert([200, 202].includes(reply.status));
@@ -189,8 +204,12 @@ export async function runProbe(backend: IsolatedBackend, probe: Probe): Promise<
     observe(initial, true);
     if (reply.status === 202 && initial.state === "finished") {
       assert.equal(initial.outcome, "operational_error", "finished fresh Start is not an operational failure");
+      launchFailure = true;
     }
   }
+  // Concurrent replies may arrive out of order, and later pages may expose
+  // earlier progress. A recorded startup failure must contradict neither.
+  if (launchFailure) for (const reply of replies) checkLaunchFailure(object(reply.body));
   const path = `/api/factory/requests/${requestId}`;
   const repeated = body(await call("POST", "/api/factory/requests", start), 200);
   assert.equal(repeated.request_id, requestId);
@@ -417,6 +436,7 @@ export async function runReconciliation(backend: IsolatedBackend, before: Record
   assert.equal(before.state, "finished");
   assert.equal(object(before.attention).code, "needs_reconciliation");
   const priorEvidence = structuredClone(await runEvidence(backend, before));
+  assert.equal(priorEvidence.slot.holder_validation_id, null, "request reconciliation has a validation holder");
   const interpretation = object(before.interpretation);
   const busy = await backend.request("POST", "/api/factory/requests", {
     request_id: randomUUID(), input: interpretation.input, interpretation_sha256: interpretation.interpretation_sha256,

@@ -10,12 +10,12 @@
   },
   "self_tests": {
     "command": "pnpm --filter @rbw/product-acceptance test --reporter=json",
-    "passed": 357,
+    "passed": 369,
     "failed": 0,
     "skipped": 0,
     "exit_code": 0
   },
-  "test_floor": 357,
+  "test_floor": 369,
   "failing_first": [
     {
       "scope": "final-contract invariant regressions",
@@ -207,6 +207,13 @@
       "failed": 9,
       "skipped": 0,
       "exit_code": 1
+    },
+    {
+      "scope": "post-launch stop codes or progress in fresh terminal202, including later history pages, and a validation holder before request reconciliation",
+      "passed": 2,
+      "failed": 10,
+      "skipped": 105,
+      "exit_code": 1
     }
   ],
   "local_checks": [
@@ -256,6 +263,12 @@
       "command": "pnpm --filter @rbw/product-acceptance test -t \"reconciliation evidence despite conserved totals\"",
       "meaning": "independent review verified the corrected earlier-rejection assertion after finding the stale test expectation",
       "passed": 4,
+      "exit_code": 0
+    },
+    {
+      "command": "pnpm --filter @rbw/product-acceptance test --reporter=json",
+      "meaning": "independent focused review reran the full suite after launch-failure and request-holder fixes",
+      "passed": 369,
       "exit_code": 0
     }
   ],
@@ -344,6 +357,14 @@
     {
       "finding": "One candidate-copy row with the full worst case could replace three distinct reservations and still satisfy aggregate amounts and launch bounds.",
       "disposition": "Require the pinned test-mode profile cardinality of three distinct copy operations per non-skipped candidate in aggregate; keep unique IDs/calls and full originals before and after uncertain-provider reconciliation. The exception only affects launches and settlements. Regressions preserve totals while collapsing or splitting rows; update the existing collapsed reconciliation test to expect its earlier rejection."
+    },
+    {
+      "finding": "A fresh terminal202 could contain an entire post-launch operational-failure scenario.",
+      "disposition": "Require a recorded reservation/launch-failure shape with operational_error stop code and no heartbeat, candidates, delivery, started count, funnel progress or post-launch events. Retain this restriction across concurrent snapshots and later history pages; deterministic commitment stays within the worker worst case. Uncertain launch attention and held spend remain valid."
+    },
+    {
+      "finding": "A request awaiting reconciliation could also report a validation holder, then hide it by clearing both fields during reconciliation.",
+      "disposition": "Require the pre-reconciliation validation holder to be null before issuing the control. Negative tests keep post-reconciliation evidence clear and verify no reconcile POST occurs. A positive generic-evidence regression preserves legitimate uncertain-validation holders."
     }
   ],
   "http_regression_evidence": {

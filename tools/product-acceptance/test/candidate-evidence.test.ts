@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import type { RequestStatus, TestEvidence, TestOperation } from "@rbw/factory-contract";
+import type { RequestStatus, TestEvidence, TestOperation, ValidationRun } from "@rbw/factory-contract";
+import { assertContract } from "@rbw/factory-contract/validate";
 import { expect, it } from "vitest";
 import { checkEvidence } from "../src/evidence.ts";
 
@@ -115,6 +116,22 @@ it("rejects an unselected candidate host with matching higher reservations", () 
   for (const op of evidence.operations.filter(op => op.kind === "candidate_copy")) op.reserved_microusd *= 2;
   account(evidence, status);
   expect(() => { checkEvidence(evidence, status); }).toThrow(/unselected candidate host/);
+});
+it("allows a finished uncertain validation to retain its own slot holder", () => {
+  const { evidence, status } = scenario("fulfilled");
+  const delivered = status.cases[0]; assert(delivered);
+  const validation = JSON.parse(readFileSync(new URL("../fixtures/validation-error.json", import.meta.url), "utf8")) as ValidationRun;
+  validation.case_id = delivered.case_id; validation.cost_microusd = null;
+  validation.package_sha256 = { bug_case: delivered.packages.bug_case.sha256, validator: delivered.packages.validator.sha256 };
+  delivered.validation = validation;
+  status.attention = { code: "needs_reconciliation", message: "synthetic uncertain validation" };
+  evidence.operations.push({ operation_id: "ac".repeat(32), kind: "validation", call_name: "synthetic-uncertain-validation",
+    state: "uncertain", reserved_microusd: 200_000, settled_microusd: null, attempt_ordinal: 1 });
+  evidence.provider_calls.push({ call_name: "synthetic-uncertain-validation", provider: "sandbox", action: "create", at: status.created_at });
+  evidence.slot.holder_request_id = status.request_id; evidence.slot.holder_validation_id = validation.validation_id;
+  account(evidence, status);
+  assertContract("RequestStatus", status); assertContract("TestEvidence", evidence);
+  expect(() => { checkEvidence(evidence, status); }).not.toThrow();
 });
 
 it.each(["fulfilled", "zero-result", "duplicate-defect", "partial-budget", "cancelled", "operational-error"])("rejects collapsed copy identities in %s with unchanged original totals", name => {

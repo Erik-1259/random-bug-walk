@@ -80,7 +80,12 @@ self-tests and local checks separately. `readiness.json` is the no-backend repor
 Reset must return the typed `200` response naming the selected scenario, and
 refusals use the typed error envelope. Unsupported Start must retain the
 interpretation just returned for that input. A fresh `202` may be finished only
-with an operational failure; successful terminal replays remain valid `200`
+with a recorded reservation/launch failure: `operational_error` without worker
+heartbeats, candidate/delivery progress or post-launch history. Subsequent
+snapshots and history pages preserve that pre-execution state until an intentional
+post-completion action. In these deterministic controls, its commitment cannot
+exceed the worker worst case. Uncertain launch spend may remain held with
+`needs_reconciliation` attention; successful terminal replays remain valid `200`
 responses. Downloaded archive bytes must match both advertised hash and size.
 
 Interpretations are compared with the complete pinned semantic profile: versions,
@@ -122,7 +127,10 @@ Reconciliation must return a `200 RequestStatus`. Both that response and later
 status reads must retain terminal data and event history and settle the previously
 held amount. New budget events must account for that settlement before the new
 attention-cleared event, including when they fall beyond the first history page.
-The probe compares ledger evidence before and after reconciliation: operation
+Before request reconciliation, evidence must show that the request holds the
+slot and no validation holds it. This is specific to the request-failure probes;
+a separate completed validation with uncertain spend may legitimately retain its
+validation holder. The probe compares ledger evidence before and after reconciliation: operation
 identities, call metadata, original reservations and existing provider records
 remain intact. Each held row reconciles at its original worst case; previously
 settled rows stay unchanged, and reconciliation launches no new creates.
