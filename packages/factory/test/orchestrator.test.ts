@@ -558,6 +558,54 @@ describe("runRequest: stops and limits", () => {
     expect(w.ledger.calls.filter((call) => call.call === "settleCandidate")).toHaveLength(2);
   });
 
+  it("ends a candidate incomplete (stopped), never delivered, and finishes cancelled when the stop is recorded while its last copy runs", async () => {
+    // One copy per state: the stop arrives during the third and last copy, after that copy's stop check.
+    const w = world({ input: concurrencyOnly(1), plan: () => ({ states: qualifyingPlan([LOST_CODE]), pause_at_copy: 3 }), hooks: { pause: () => { w.stop.requested = true; return Promise.resolve(); } } });
+    const result = await w.run();
+    expect(result).toMatchObject({ outcome: "cancelled", stop_code: "cancelled_by_user", needs_reconciliation: false, delivered: 0 });
+    expect(types(w.events.events).filter((type) => type === "check_finished")).toHaveLength(6);
+    expect(ended(w.events.events)).toEqual([{ type: "candidate_incomplete", reason: "stopped" }]);
+    for (const type of ["behavior_checks_passed", "requested_criteria_passed", "package_ready", "case_delivered"]) expect(types(w.events.events)).not.toContain(type);
+    expect(w.log).not.toContain("package");
+    expect(w.log).not.toContain("evidence");
+    expect(w.ledger.calls.map((call) => call.call)).toEqual(["reserveCandidate", "settleCandidate", "settleWorker"]);
+    expect(w.events.events.filter((event) => event.type === "request_finished").map((event) => event.data)).toEqual([{ outcome: "cancelled", stop_code: "cancelled_by_user" }]);
+    expect(w.ledger.closedWith).toBe("cancelled_by_user");
+    const status = w.status();
+    expect(validateContract("RequestStatus", status)).toEqual([]);
+    expect(status).toMatchObject({ outcome: "cancelled", delivery: "none" });
+    expect(status.candidates.map((c) => [c.stage, c.reason?.code])).toEqual([["incomplete", "stopped"]]);
+  });
+
+  it("keeps a complete rejection when the stop is recorded while the candidate's last copy runs, and finishes cancelled", async () => {
+    const plan = qualifyingPlan([LOST_CODE]);
+    const w = world({ input: concurrencyOnly(1), plan: () => ({ states: { ...plan, fixed: { original_suite: "pass", verification: "fail" } }, pause_at_copy: 3 }), hooks: { pause: () => { w.stop.requested = true; return Promise.resolve(); } } });
+    const result = await w.run();
+    expect(result).toMatchObject({ outcome: "cancelled", stop_code: "cancelled_by_user", delivered: 0 });
+    expect(ended(w.events.events)).toEqual([{ type: "candidate_rejected", reason: "checks_failed_fixed" }]);
+    expect(w.ledger.calls.map((call) => call.call)).toEqual(["reserveCandidate", "settleCandidate", "settleWorker"]);
+  });
+
+  it("keeps the case delivered and finishes cancelled, not fulfilled, when the stop is recorded while the last needed case is packaged", async () => {
+    const w = world({ input: concurrencyOnly(1) });
+    const inner = w.deps.packageCase;
+    w.deps.packageCase = (input) => {
+      w.stop.requested = true;
+      return inner(input);
+    };
+    const result = await w.run();
+    expect(result).toMatchObject({ outcome: "cancelled", stop_code: "cancelled_by_user", needs_reconciliation: false, delivered: 1 });
+    expect(types(w.events.events).filter((type) => type === "case_delivered")).toHaveLength(1);
+    expect(ended(w.events.events)).toEqual([]);
+    expect(w.ledger.calls.map((call) => call.call)).toEqual(["reserveCandidate", "settleCandidate", "settleWorker"]);
+    expect(w.events.events.filter((event) => event.type === "request_finished").map((event) => event.data)).toEqual([{ outcome: "cancelled", stop_code: "cancelled_by_user" }]);
+    expect(w.ledger.closedWith).toBe("cancelled_by_user");
+    const status = w.status();
+    expect(validateContract("RequestStatus", status)).toEqual([]);
+    expect(status).toMatchObject({ outcome: "cancelled", delivery: "complete" });
+    expect(status.candidates.map((c) => c.stage)).toEqual(["qualified"]);
+  });
+
   it("stops time_limit at the deadline before selecting another candidate", async () => {
     const profile = { ...TEST_PROFILE, limits: { ...TEST_PROFILE.limits, max_wall_clock_s: 1 } };
     const w = world({ input: fixtureInput("status-fulfilled.json"), profile, tick: 200 });
@@ -790,6 +838,23 @@ describe("runRequest: internal failures and admission edges", () => {
     expect(result).toMatchObject({ outcome: "operational_error", stop_code: "operational_error", needs_reconciliation: false });
     expect(result.notes).toEqual([expect.stringContaining("connection reset")]);
     expect(ended(w.events.events)).toEqual([{ type: "candidate_incomplete", reason: "incomplete_run" }]);
+    expect(w.ledger.calls.map((call) => call.call)).toEqual(["reserveCandidate", "settleCandidate", "settleWorker"]);
+    expect(validateContract("RequestStatus", w.status())).toEqual([]);
+  });
+
+  it("ends the candidate incomplete, settles it and finishes operational_error when the stop check after its last copy fails", async () => {
+    const w = world({ input: concurrencyOnly(1) });
+    let calls = 0;
+    // The loop's check and one before each of the three copies answer; the check once the copies ran fails.
+    w.deps.stopRequested = () => {
+      calls += 1;
+      return calls >= 5 ? Promise.reject(new Error("connection reset")) : Promise.resolve(false);
+    };
+    const result = await w.run();
+    expect(result).toMatchObject({ outcome: "operational_error", stop_code: "operational_error", needs_reconciliation: false, delivered: 0 });
+    expect(result.notes).toEqual([expect.stringContaining("connection reset")]);
+    expect(ended(w.events.events)).toEqual([{ type: "candidate_incomplete", reason: "incomplete_run" }]);
+    expect(types(w.events.events)).not.toContain("case_delivered");
     expect(w.ledger.calls.map((call) => call.call)).toEqual(["reserveCandidate", "settleCandidate", "settleWorker"]);
     expect(validateContract("RequestStatus", w.status())).toEqual([]);
   });

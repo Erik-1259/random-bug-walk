@@ -2,14 +2,14 @@
 // injected: the event store, the ledger, the stop check, the export-verification harness, packaging,
 // evidence storage and the clock. One candidate runs at a time; an uncertain operation is never retried.
 //
-// For each candidate, in assignment order across the selected hosts: the fill, stop, deadline, sources
+// For each candidate, in assignment order across the selected hosts: the stop, fill, deadline, sources
 // and candidate-limit checks, then the ledger's halt and overrun check, `candidate_selected`, the
 // duplicate-defect skip, budget admission (`no_budget_for_candidate`), the reservation, export
 // verification through the harness (with the stop, time and accounting check before every copy and
-// `check_finished` after every copy state), the verdict, assignment, packaging and delivery, and the
-// candidate's settlement. The loop appends every request event except
-// `request_accepted`, `stop_requested`, the start reservation's `budget_updated`, `worker_started`, the
-// validation events and the lost-worker finish.
+// `check_finished` after every copy state), the verdict, a stop check before a matched candidate's
+// qualification, assignment, packaging and delivery, and the candidate's settlement. The loop appends
+// every request event except `request_accepted`, `stop_requested`, the start reservation's
+// `budget_updated`, `worker_started`, the validation events and the lost-worker finish.
 //
 // Accounting stops (contract sections 8.1 and 8.5), one rule set for the loop and its finish:
 // - A halted ledger, a halted pool or an overrun stops the work still to do: no further copy of the
@@ -323,8 +323,10 @@ class RequestRun {
     let started = 0;
     for (;;) {
       this.current = null;
-      if (this.items.every((item) => unfilledUnits(item) === 0)) return this.finish("fulfilled");
+      // A stop recorded before the finish makes the outcome cancelled, even once every item is filled
+      // (contract section 9).
       if (await deps.stopRequested()) return this.finish("cancelled_by_user");
+      if (this.items.every((item) => unfilledUnits(item) === 0)) return this.finish("fulfilled");
       if (deps.now().getTime() >= this.deadlineMs) return this.finish("time_limit");
       const next = nextCandidate(this.items, planned, tried);
       if (next === null) return this.exhausted(planned, tried, budgetSkipped);
@@ -476,11 +478,22 @@ class RequestRun {
       this.note(`export verification of candidate ${candidate.candidate_id}`, error);
       return { kind: "uncertain" };
     }
+    const verdict = cellVerdict({ matrix: result.matrix, records: result.records, stopped: result.stopped, integrity: result.integrity });
+    // The harness's return is the candidate's last check boundary: a stop recorded while its last copy ran,
+    // after that copy's check, ends a candidate that would go on to qualification (contract section 9).
+    if (verdict.kind === "matched" && stop.cause === null && this.hookError === null) {
+      try {
+        if (await deps.stopRequested()) stop.cause = "cancelled_by_user";
+      } catch (error) {
+        this.hookError = { error };
+      }
+    }
     if (this.hookError !== null) {
-      // A read between copies failed, so the harness stopped; every copy it ran has a definite outcome,
-      // so the candidate ends incomplete and settles, and the request finishes operational_error.
-      this.note(`a check between copies of candidate ${candidate.candidate_id}`, this.hookError.error);
-      await this.append(candidateEnded(candidate, "incomplete_run", this.at(), "Incomplete: an internal check between copies failed, so this candidate was stopped. It is not reproduction and was not retried."));
+      // A read between copies failed, so the harness stopped, or the stop check once the copies ran failed;
+      // every copy that ran has a definite outcome, so the candidate ends incomplete and settles, and the
+      // request finishes operational_error.
+      this.note(`a check between or after the copies of candidate ${candidate.candidate_id}`, this.hookError.error);
+      await this.append(candidateEnded(candidate, "incomplete_run", this.at(), "Incomplete: an internal check between or after this candidate's copies failed, so it was stopped. It is not reproduction and was not retried."));
       return { kind: "failed" };
     }
     const { matrix } = result;
@@ -488,12 +501,16 @@ class RequestRun {
     const demonstrated = demonstratedCriteria(deps.catalog, entry.bug_type_id, matrix?.verification.buggy.failure_codes ?? []);
     const demonstratedIds = demonstrated.map((criterion) => criterion.criterion_id);
     const criteria = bugTypeOf(deps.catalog, entry.bug_type_id).criteria.map((criterion) => ({ criterion_id: criterion.criterion_id, matched: demonstratedIds.includes(criterion.criterion_id) }));
-    const verdict = cellVerdict({ matrix, records: result.records, stopped: result.stopped, integrity: result.integrity });
     if (verdict.kind === "ended") {
       const cause = stop.cause;
       const reason = verdict.reason === "stopped" && cause === null ? "incomplete_run" : verdict.reason;
       await this.append(candidateEnded(candidate, reason, this.at()));
       return verdict.reason === "stopped" && cause !== null ? { kind: "stop", stop_code: cause } : { kind: "done" };
+    }
+    const stoppedBy = stop.cause;
+    if (stoppedBy !== null) {
+      await this.append(candidateEnded(candidate, "stopped", this.at()));
+      return { kind: "stop", stop_code: stoppedBy };
     }
     await this.append(behaviorChecksPassed(candidate, this.at()));
     const item = assignItem(this.items, entry.bug_type_id, demonstratedIds);
