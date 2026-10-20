@@ -66,20 +66,24 @@ export interface CapabilitiesInput {
   service?: ServiceStatus;
 }
 
+/**
+ * Every host, bug type, pair and difficulty option appears exactly once (contract section 4), so clients can
+ * build the form from this response alone. A host without an adapter in the registry is still listed, with
+ * its published baseline, and each of its pairs is unsupported with no source.
+ */
 export function buildCapabilities(input: CapabilitiesInput): Capabilities {
   const { registry, catalog, profile } = input;
   const window = plannedWindow(input.now, profile.limits.max_wall_clock_s);
-  const hosts = HOST_ID_VALUES.filter((host) => adapterFor(registry, host) !== null);
   return {
     contract_version: CONTRACT_VERSION,
     service: input.service ?? AVAILABLE_SERVICE,
-    hosts: hosts.map((host) => {
-      const adapter = adapterFor(registry, host);
-      if (adapter === null) throw new Error(`no adapter for ${host}`);
-      return { host_id: host, label: HOST_PRESENTATION[host].label, description: HOST_PRESENTATION[host].description, baseline_id: adapter.baseline().baseline_id };
+    hosts: HOST_ID_VALUES.map((host) => {
+      const presentation = HOST_PRESENTATION[host];
+      const baselineId = adapterFor(registry, host)?.baseline().baseline_id ?? presentation.baseline_id;
+      return { host_id: host, label: presentation.label, description: presentation.description, baseline_id: baselineId };
     }),
     bug_types: BUG_TYPE_ID_VALUES.map((id) => structuredClone(bugTypeOf(catalog, id))),
-    combinations: hosts.flatMap((host) => BUG_TYPE_ID_VALUES.map((type) => combinationOf(registry, catalog, window, host, type))),
+    combinations: HOST_ID_VALUES.flatMap((host) => BUG_TYPE_ID_VALUES.map((type) => combinationOf(registry, catalog, window, host, type))),
     difficulty_options: DIFFICULTY_OPTIONS.map((option) => ({ ...option })),
     limits: structuredClone(profile.limits),
     interpreter: { ...INTERPRETER, criteria_catalog_version: catalog.criteria_catalog_version, filler_phrases: [...catalog.filler_phrases] },

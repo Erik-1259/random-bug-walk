@@ -1,5 +1,5 @@
 import { assertContract, validateContract } from "@rbw/factory-contract/validate";
-import type { Capabilities, Interpretation, NormalizedRequestInput } from "@rbw/factory-contract";
+import type { BaselineIdentity, Capabilities, Interpretation, NormalizedRequestInput } from "@rbw/factory-contract";
 import { describe, expect, it } from "vitest";
 import { buildCapabilities } from "../src/capabilities.ts";
 import { criteriaCatalogV1 } from "../src/criteria.ts";
@@ -165,11 +165,33 @@ describe("capabilities", () => {
     assertContract("Capabilities", late);
   });
 
-  it("lists only hosts with an adapter", () => {
+  it("lists every host and pair once when a host has no adapter, with that host's pairs unsupported", () => {
     const registry = fixtureRegistry().slice(0, 1);
+    expect(registry.map((adapter) => adapter.host_id)).toEqual(["task-report"]);
     const capabilities = buildCapabilities({ registry, catalog: fixtureCatalog(), profile: TEST_PROFILE, now: NOW });
-    expect(capabilities.hosts.map((host) => host.host_id)).toEqual(["task-report"]);
-    expect(capabilities.combinations).toHaveLength(2);
+    expect(validateContract("Capabilities", capabilities)).toEqual([]);
+    const full = fixture("capabilities.json") as Capabilities;
+    expect(capabilities.hosts).toEqual(full.hosts);
+    expect(capabilities.combinations.map((c) => [c.host_id, c.bug_type_id])).toEqual(full.combinations.map((c) => [c.host_id, c.bug_type_id]));
+    const umami = capabilities.combinations.filter((c) => c.host_id === "umami");
+    expect(umami).toHaveLength(2);
+    for (const combination of umami) {
+      expect(combination).toMatchObject({ status: "unsupported", source: null });
+      expect(combination.reason).toMatch(/ is declared for Umami yet\.$/);
+    }
+    expect(capabilities.combinations.filter((c) => c.host_id === "task-report")).toEqual(full.combinations.filter((c) => c.host_id === "task-report"));
+  });
+
+  it("takes a listed host's baseline from its adapter", () => {
+    class MovedBaseline extends FakeHostAdapter {
+      override baseline(): BaselineIdentity {
+        return { ...super.baseline(), baseline_id: "umami@0000000" };
+      }
+    }
+    const registry = fixtureRegistry().map((adapter) => (adapter.host_id === "umami" ? new MovedBaseline({ host_id: "umami", entries: adapter.entries }) : adapter));
+    const capabilities = buildCapabilities({ registry, catalog: fixtureCatalog(), profile: TEST_PROFILE, now: NOW });
+    expect(capabilities.hosts.find((host) => host.host_id === "umami")?.baseline_id).toBe("umami@0000000");
+    assertContract("Capabilities", capabilities);
   });
 });
 
