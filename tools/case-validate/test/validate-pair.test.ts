@@ -76,6 +76,21 @@ describe("validatePair before any copy runs", () => {
     expect(outcome.error_code).toBe("unsupported_host");
   });
 
+  it("answers error, and never rejects, when the workspace cannot be created, and runs no copy", async () => {
+    const pair = buildSyntheticPair();
+    const runner = forbiddenRunner();
+    const outcome = await validatePair({
+      bug_case: pair.bug_case.bytes, validator: pair.validator.bytes,
+      adapters: { "task-report": syntheticAdapter({ workdir: parent }) }, runner, now: () => NOW, workdir: join(parent, "synthetic-missing"),
+    });
+    expect(outcome.result).toBe("error");
+    expect(outcome.error_code).toBe("workspace_error");
+    expect(outcome.pair_sha256).toBe(pair.pair_sha256);
+    expect(outcome.message).toBe("the harness could not prepare its workspace");
+    expect(outcome.diagnostic).toContain("ENOENT");
+    expect(runner.calls).toBe(0);
+  });
+
   it("runs no copy when the adapter reports the combination unavailable for the planned span, and says why", async () => {
     const pair = buildSyntheticPair({ seed: "01" });
     const windows: { from: string; until: string }[] = [];

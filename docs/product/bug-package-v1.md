@@ -135,10 +135,10 @@ The harness reads nothing outside the two archives except the host adapter code 
 |---|---|---|
 | `passed` | Every cell observed a valid pass or fail equal to its expectation. | 0 |
 | `failed` | Every cell observed a valid pass or fail, and at least one differs from its expectation. | 1 |
-| `error` | The pair was refused, no adapter serves the host, the host is unavailable, a copy was not set up, timed out or ran too few valid runs, or a cell is `error` or `incomplete`. | 2 |
+| `error` | The pair was refused, no adapter serves the host, the host is unavailable, the workspace could not be written, a copy was not set up, timed out or ran too few valid runs, or a cell is `error` or `incomplete`. | 2 |
 | usage | Wrong arguments. | 64 |
 
-A copy that could not be set up or passed its time limit is never a pass, a fail or a detection. The library entry point `validatePair` returns the same result with an `error_code` (`export_mismatch`, `unsupported_host`, `host_unavailable`, `adapter_error`, `runner_error`, `cells_invalid`, `stopped`), a client-safe `message` and an evaluator-only `diagnostic`. It rejects only when the runner rejects (an uncertain provider outcome) or a caller's callback throws; the records collected before that have reached the caller's `onCopy`, and no further copy runs.
+A copy that could not be set up or passed its time limit is never a pass, a fail or a detection. The library entry point `validatePair` returns the same result with an `error_code` (`export_mismatch`, `unsupported_host`, `host_unavailable`, `adapter_error`, `runner_error`, `workspace_error`, `cells_invalid`, `stopped`), a client-safe `message` and an evaluator-only `diagnostic`; `workspace_error` means the harness could not write its own workspace, before any copy ran. Its `pair_sha256` covers the validator bytes it was given, so it is the binding of section 4 only for the final archive; a run on the validator core gives another value. It rejects only when the runner rejects (an uncertain provider outcome) or a caller's callback throws; the records collected before that have reached the caller's `onCopy`, and no further copy runs.
 
 ## 9. Synthetic packages
 

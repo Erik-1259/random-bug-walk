@@ -47,15 +47,21 @@ export interface ValidatePairInput {
 /**
  * Why a run answered `error`. `export_mismatch` covers every refusal of the pair itself (unreadable or
  * tampered archives, a mismatched or swapped pair, a patch that does not apply or does not reproduce its
- * recorded result); qualification maps it to the candidate reason `export_mismatch`.
+ * recorded result); qualification maps it to the candidate reason `export_mismatch`. `workspace_error` means
+ * the harness could not write its own fresh workspace (for example a full disk), before any copy ran.
  */
-export type ValidatePairErrorCode = "export_mismatch" | "unsupported_host" | "host_unavailable" | "adapter_error" | "runner_error" | "cells_invalid" | "stopped";
+export type ValidatePairErrorCode = "export_mismatch" | "unsupported_host" | "host_unavailable" | "adapter_error" | "runner_error" | "workspace_error" | "cells_invalid" | "stopped";
 
 export interface ValidatePairResult {
   result: ValidationResult;
   stopped: boolean;
   package_sha256: PackageHashes;
-  /** Null when the pair was refused before it was bound. */
+  /**
+   * pairSha256 over the bug case and the validator bytes this run was given; null when the pair was refused
+   * before it was bound. It is the contract's pair_sha256 only when the validator is the final archive: a
+   * run on the validator core (qualification) gives another value, so the delivered binding is computed with
+   * pairSha256 after assembleFinalValidator.
+   */
   pair_sha256: string | null;
   matrix: CellMatrix | null;
   records: CopyRecord[];
@@ -284,7 +290,9 @@ export async function validatePair(input: ValidatePairInput): Promise<ValidatePa
     workspace = await buildWorkspace(verified, input.workdir);
   } catch (refusal) {
     if (refusal instanceof PairRefused) return error("export_mismatch", refusal.message, refusal.diagnostic, verified.pair_sha256);
-    throw refusal;
+    // A local file-system failure is definite and no copy has run, so it is never an uncertain rejection.
+    const reason = refusal instanceof Error ? refusal.message : String(refusal);
+    return error("workspace_error", "the harness could not prepare its workspace", reason, verified.pair_sha256);
   }
   try {
     const protocol = manifest.protocol;
