@@ -186,3 +186,43 @@ it.each(["wrong-type", "unknown", "unknown-version"])("rejects internally consis
   object(event.data).criterion_ids = [criterion.criterion_id];
   expect(() => { checkStatus(value); }).toThrow("demonstrated criterion is not in the pinned bug type catalog");
 });
+
+it.each(["host_id", "bug_type_id", "source_id", "entry_id"])("binds delivered case %s to its qualified candidate", field => {
+  const value = object(fixture("status-fulfilled"));
+  const c = at(value.cases);
+  const candidate = objects(value.candidates).find(candidate => candidate.case_id === c.case_id); assert(candidate);
+  // Keep the case eligible for its unchanged interpretation; only its linked
+  // candidate's identity disagrees. Entry identity has no eligibility shortcut.
+  if (field === "host_id") candidate.host_id = "umami";
+  if (field === "bug_type_id") candidate.bug_type_id = "date_time";
+  if (field === "source_id") candidate.source_id = "synthetic-other-source";
+  if (field === "entry_id") object(c.provenance).entry_id = "synthetic-other-entry";
+  expect(() => { checkStatus(value); }).toThrow("qualified candidate");
+});
+it.each(["before", "after"])("rejects a second qualified candidate for one delivered case when listed %s it", order => {
+  const value = object(fixture("status-fulfilled"));
+  const duplicate = structuredClone(at(value.candidates));
+  duplicate.candidate_id = "07".repeat(32);
+  duplicate.entry_id = "synthetic-another-entry";
+  value.candidates = order === "before" ? [duplicate, ...objects(value.candidates)] : [...objects(value.candidates), duplicate];
+  expect(() => { checkStatus(value); }).toThrow("multiple qualified candidates");
+});
+it("rejects a qualified candidate whose case is absent while other delivered cases remain", () => {
+  const value = object(fixture("status-fulfilled"));
+  const orphan = structuredClone(at(value.candidates));
+  orphan.candidate_id = "07".repeat(32); orphan.defect_id = "08".repeat(32); orphan.case_id = "09".repeat(32);
+  orphan.entry_id = "synthetic-other-entry";
+  value.candidates = [...objects(value.candidates), orphan];
+  expect(() => { checkStatus(value); }).toThrow("qualified candidate has no delivered case");
+});
+it("preserves opaque case and candidate identities when their relationships agree", () => {
+  const value = object(fixture("status-fulfilled"));
+  const candidate = at(value.candidates);
+  const replacements = [[candidate.candidate_id, "07".repeat(32)], [candidate.defect_id, "08".repeat(32)], [candidate.case_id, "09".repeat(32)]];
+  let serialized = JSON.stringify(value);
+  for (const [prior, next] of replacements) {
+    assert(typeof prior === "string" && typeof next === "string");
+    serialized = serialized.replaceAll(prior, next);
+  }
+  expect(() => { checkStatus(JSON.parse(serialized) as unknown); }).not.toThrow();
+});

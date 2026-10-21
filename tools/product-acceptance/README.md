@@ -124,7 +124,10 @@ Candidate expectations come from each scenario's pinned end-state fixture and
 compare catalog entries, stages, reason codes and linked outcome events without
 fixing generated IDs, timestamps or message text. The duplicate scenario also
 checks that the skipped entry shares the earlier candidate's defect. The
-named fixtures also pin candidate-local check signatures and order, behavior and
+response checks require one qualified candidate per delivered case and a delivered
+case for every qualified candidate. Host, bug type, defect, item and provenance
+source/entry must agree across that link, including in Start responses.
+The named fixtures also pin candidate-local check signatures and order, behavior and
 criterion transitions, package/delivery events and source exhaustion. Package
 events must match the returned package digests. Host preparation may interleave,
 but readiness precedes candidate selection. Budget events occupy the named
@@ -160,8 +163,9 @@ remain intact. Each held row reconciles at its original worst case; previously
 settled rows stay unchanged, and reconciliation launches no new creates.
 Both slot holders must be clear before any subsequent scenario reset.
 Before an intentional reconciliation or
-validation, every terminal observation retains its budget and attention as well
-as its completed results, starting with the concurrent Start responses.
+validation, every terminal observation retains all nonpaging fields, including
+`updated_at`, budget and attention, from the first finished Start, Stop or status
+response. Concurrent nonfinished replies may still arrive out of order.
 Reconnect must return exactly the witnessed terminal history, including an empty
 trailing page; no new event may appear before those intentional operations.
 Complete terminal history is drained through an empty page before requiring exactly

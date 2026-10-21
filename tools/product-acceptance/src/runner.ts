@@ -157,8 +157,8 @@ export async function runProbe(backend: IsolatedBackend, probe: Probe): Promise<
   let requestTimes: { created_at: unknown; deadline_at: unknown } | undefined;
   let terminal: Record<string, unknown> | undefined;
   let launchFailure = false;
-  const terminalSnapshot = (value: Record<string, unknown>) => Object.fromEntries(Object.entries(value)
-    .filter(([field]) => !["updated_at", "events", "next_after", "poll_after_ms"].includes(field)));
+  const snapshot = (value: Record<string, unknown>) => Object.fromEntries(Object.entries(value)
+    .filter(([field]) => !["events", "next_after", "poll_after_ms"].includes(field)));
   const observe = (value: Record<string, unknown>, concurrent = false) => {
     checkScenarioStatus(value);
     checkFreshRequest(value, objects(value.events));
@@ -196,9 +196,9 @@ export async function runProbe(backend: IsolatedBackend, probe: Probe): Promise<
     // Concurrent replies need not arrive in state order. Once all have returned,
     // sequential observations must preserve any completed request already seen.
     if (terminal !== undefined && (!concurrent || value.state === "finished")) {
-      assert.deepEqual(terminalSnapshot(value), terminal, "terminal result changed after completion");
+      assert.deepEqual(snapshot(value), terminal, "terminal result changed after completion");
     }
-    if (value.state === "finished" && terminal === undefined) terminal = structuredClone(terminalSnapshot(value));
+    if (value.state === "finished" && terminal === undefined) terminal = structuredClone(snapshot(value));
     if (launchFailure) checkLaunchFailure(value);
   };
   for (const reply of replies) {
@@ -224,8 +224,6 @@ export async function runProbe(backend: IsolatedBackend, probe: Probe): Promise<
   }
   let cursor = 0;
   let stopped = false;
-  const snapshot = (value: Record<string, unknown>) => Object.fromEntries(Object.entries(value)
-    .filter(([field]) => !["events", "next_after", "poll_after_ms"].includes(field)));
   let finishedSnapshot: Record<string, unknown> | undefined;
   let completeHistory = false;
   let state = repeated;

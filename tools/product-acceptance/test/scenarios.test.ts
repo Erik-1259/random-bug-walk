@@ -393,7 +393,7 @@ it("rejects updated_at changing while draining terminal history", async () => {
     }
     return request(...args);
   };
-  await expect(runProbe(s.backend, s.probe)).rejects.toThrow("terminal result changed while reading history");
+  await expect(runProbe(s.backend, s.probe)).rejects.toThrow("terminal result changed after completion");
 });
 
 it.each(["first-case", "other-case", "started", "finished"])("rejects pre-existing validation %s in a fresh paged request", async change => {

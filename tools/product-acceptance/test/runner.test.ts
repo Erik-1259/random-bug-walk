@@ -337,6 +337,21 @@ it("waits for the named second-candidate check before cancelling", async () => {
   await expect(runProbe(s.backend, s.probe)).resolves.toBeUndefined();
   expect(s.wasStopped()).toBe(true);
 });
+it.each([false, true])("preserves a terminal Stop response timestamp before status reads with drift=%s", async drift => {
+  const s = cancellationScenario(); const request = s.backend.request.bind(s.backend); let stops = 0;
+  s.backend.request = async (...args) => {
+    const reply = await request(...args);
+    if (args[0] === "POST" && args[1].endsWith("/stop") && ++stops === 1) {
+      const terminal = fixture("status-cancelled");
+      const value = object(JSON.parse(JSON.stringify(terminal).replaceAll(text(terminal.request_id), text(object(reply.body).request_id))) as unknown);
+      if (drift) value.updated_at = new Date(Date.parse(text(value.updated_at)) - 1000).toISOString();
+      return { ...reply, body: value };
+    }
+    return reply;
+  };
+  if (drift) await expect(runProbe(s.backend, s.probe)).rejects.toThrow("terminal result changed after completion");
+  else await expect(runProbe(s.backend, s.probe)).resolves.toBeUndefined();
+});
 it.each(["missing", "before-checkpoint", "after-in-flight-check", "after-incomplete", "duplicate-paged"])("rejects %s stop_requested in cancellation history", async change => {
   const s = cancellationScenario(undefined, events => {
     const stop = events.find(event => event.type === "stop_requested"); assert(stop);
@@ -369,7 +384,7 @@ it.each(["updated-at", "extra-event", "paged-extra-event", "hidden-tail"])("reje
       if (change === "paged-extra-event") { response.events = objects(response.events).slice(0, 2); response.next_after = 2; }
     }
   });
-  await expect(runProbe(s.backend, s.probe)).rejects.toThrow(change === "updated-at" ? "terminal result changed on repeated stop" : "terminal history changed on repeated stop");
+  await expect(runProbe(s.backend, s.probe)).rejects.toThrow(change === "updated-at" ? "terminal result changed after completion" : "terminal history changed on repeated stop");
 });
 it("allows repeated stop to return an unchanged terminal result with different paging hints", async () => {
   const s = cancellationScenario(response => {
@@ -969,7 +984,8 @@ function recordedLaunchFailure() {
   expected.next_after = 3;
   return expected;
 }
-async function runRecordedFailure(expected: Record<string, unknown>, paged = false) {
+async function runRecordedFailure(expected: Record<string, unknown>, paged = false,
+  changeReply?: (value: Record<string, unknown>, method: "GET" | "POST", path: string) => void) {
   const { backend, request } = scripted();
   backend.request = async (...args) => {
     const reply = await request(...args);
@@ -981,6 +997,7 @@ async function runRecordedFailure(expected: Record<string, unknown>, paged = fal
         value.events = objects(value.events).filter(event => integer(event.seq) > cursor);
         value.next_after = objects(value.events).at(-1)?.seq ?? cursor;
       }
+      changeReply?.(value, args[0], args[1]);
       return { ...reply, body: value };
     }
     return reply;
@@ -989,6 +1006,21 @@ async function runRecordedFailure(expected: Record<string, unknown>, paged = fal
     expectedDelivery: text(expected.delivery), expectedCounts: objects(expected.items),
     expectedAttention: expected.attention === null ? null : text(object(expected.attention).code) });
 }
+it.each(["concurrent replies", "sequential replay"])("preserves a terminal Start timestamp across %s", async phase => {
+  const expected = recordedLaunchFailure(); let starts = 0;
+  const changedAt = new Date(Date.parse(text(expected.updated_at)) + 1000).toISOString();
+  await expect(runRecordedFailure(expected, false, (value, method, path) => {
+    if (method === "POST" && path.endsWith("/requests")) starts++;
+    if (starts >= (phase === "concurrent replies" ? 2 : 4)) value.updated_at = changedAt;
+  })).rejects.toThrow("terminal result changed after completion");
+});
+it("allows terminal Start replay to change paging and polling hints", async () => {
+  await expect(runRecordedFailure(recordedLaunchFailure(), false, (value, method) => {
+    if (method === "POST") {
+      value.events = objects(value.events).slice(0, 1); value.next_after = 1; value.poll_after_ms = 1;
+    }
+  })).resolves.toBeUndefined();
+});
 it.each([false, true])("accepts a recorded launch failure already finished in the 202 response with uncertain spend=%s", uncertain => {
   const expected = recordedLaunchFailure();
   if (uncertain) {

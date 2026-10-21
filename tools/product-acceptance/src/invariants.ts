@@ -206,13 +206,22 @@ export function checkStatus(value: unknown): void {
   }
   for (const c of cases) {
     assert(items.some(i => i.item_key === c.item_key), "case assigned to unknown item");
-    const candidate = candidates.find(candidate => candidate.case_id === c.case_id && candidate.stage === "qualified");
+    const matching = candidates.filter(candidate => candidate.case_id === c.case_id && candidate.stage === "qualified");
+    assert(matching.length <= 1, "case has multiple qualified candidates");
+    const candidate = matching[0];
     assert(candidate, "case without qualified candidate");
-    assert.equal(candidate.defect_id, c.defect_id);
-    assert.equal(candidate.item_key, c.item_key);
+    for (const field of ["defect_id", "item_key", "host_id", "bug_type_id"]) {
+      assert.equal(candidate[field], c[field], "case identity differs from qualified candidate");
+    }
+    for (const field of ["source_id", "entry_id"]) {
+      assert.equal(candidate[field], object(c.provenance)[field], "case provenance differs from qualified candidate");
+    }
     checkCase(c, s.request_id);
   }
   for (const candidate of candidates) {
+    if (candidate.stage === "qualified") {
+      assert(cases.some(c => c.case_id === candidate.case_id), "qualified candidate has no delivered case");
+    }
     if (["rejected", "invalid", "incomplete", "skipped"].includes(text(candidate.stage))) {
       assert(!cases.some(c => c.case_id === candidate.case_id), "unsuccessful candidate delivered");
     }

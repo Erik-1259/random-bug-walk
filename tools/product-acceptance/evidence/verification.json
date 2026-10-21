@@ -10,12 +10,12 @@
   },
   "self_tests": {
     "command": "pnpm --filter @rbw/product-acceptance test --reporter=json",
-    "passed": 494,
+    "passed": 507,
     "failed": 0,
     "skipped": 0,
     "exit_code": 0
   },
-  "test_floor": 494,
+  "test_floor": 507,
   "failing_first": [
     {
       "scope": "final-contract invariant regressions",
@@ -346,6 +346,20 @@
       "failed": 1,
       "skipped": 153,
       "exit_code": 1
+    },
+    {
+      "scope": "updated_at drift from first terminal concurrent Start, sequential Start replay or Stop response",
+      "passed": 2,
+      "failed": 3,
+      "skipped": 132,
+      "exit_code": 1
+    },
+    {
+      "scope": "case/candidate host, type and provenance mismatch, duplicate qualified mapping and orphan qualified candidate",
+      "passed": 76,
+      "failed": 7,
+      "skipped": 0,
+      "exit_code": 1
     }
   ],
   "local_checks": [
@@ -437,6 +451,12 @@
       "command": "pnpm --filter @rbw/product-acceptance test --reporter=json",
       "meaning": "independent focused review reran the full suite after complete named transition, budget and attention-history checks",
       "passed": 494,
+      "exit_code": 0
+    },
+    {
+      "command": "pnpm --filter @rbw/product-acceptance test --reporter=json",
+      "meaning": "independent focused review reran the full suite after first-terminal snapshot and case/candidate provenance fixes",
+      "passed": 507,
       "exit_code": 0
     }
   ],
@@ -585,6 +605,14 @@
     {
       "finding": "An ordinary terminal could report null attention while its history still held reconciliation attention.",
       "disposition": "Replay attention for every probe, retaining valid warning-and-clear recovery. The positive recorded-launch-failure fixture now includes its matching attention event."
+    },
+    {
+      "finding": "First terminal Start and Stop observations could lose updated_at before later continuity checks established their baseline.",
+      "disposition": "Use one complete nonpaging snapshot from the first terminal response, including updated_at, across concurrent Starts, replay, Stop and reads. Keep event history separate and permit paging/poll hints and out-of-order concurrent nonfinished responses."
+    },
+    {
+      "finding": "Delivered case host and provenance could disagree with its qualified candidate, and the link could be duplicated or absent in the reverse direction.",
+      "disposition": "Require exactly one qualified candidate per delivered case and a delivered case for every qualified candidate, binding host, bug type, defect, item, source and entry. Keep generated opaque identities and nonqualified stages unchanged."
     }
   ],
   "http_regression_evidence": {
