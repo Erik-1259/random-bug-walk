@@ -368,3 +368,34 @@ it("rejects updated_at changing while draining terminal history", async () => {
   };
   await expect(runProbe(s.backend, s.probe)).rejects.toThrow("terminal result changed while reading history");
 });
+
+it.each(["first-case", "other-case", "started", "finished"])("rejects pre-existing validation %s in a fresh paged request", async change => {
+  const s = terminalScenario("fulfilled");
+  const c = objects(s.state.cases)[change === "other-case" ? 1 : 0]; assert(c);
+  const run = fixture("validation-failed"); run.case_id = c.case_id;
+  run.package_sha256 = { bug_case: object(object(c.packages).bug_case).sha256, validator: object(object(c.packages).validator).sha256 };
+  if (change.endsWith("case")) c.validation = run;
+  else {
+    const history = objects(s.state.events); const last = history.at(-1); assert(last);
+    s.state.events = [...history, { ...last, seq: history.length + 1, type: `validation_${change}`,
+      candidate_id: null, host_id: c.host_id, case_id: c.case_id, item_key: c.item_key,
+      data: change === "started" ? { validation_id: run.validation_id } : { validation_id: run.validation_id, result: "failed" } }];
+    s.state.next_after = history.length + 1;
+  }
+  // Start from an empty queued snapshot so a phantom validation first appears
+  // with the completed case, without an unrelated case-retention violation.
+  const request = s.backend.request.bind(s.backend);
+  s.backend.request = async (...args) => {
+    const reply = await request(...args);
+    if (reply.status === 202) {
+      const value = object(reply.body);
+      const queued = fixture("status-queued");
+      const replaced = object(JSON.parse(JSON.stringify(queued).replaceAll(text(queued.request_id), text(value.request_id))) as unknown);
+      replaced.interpretation = value.interpretation;
+      return { ...reply, body: replaced };
+    }
+    return reply;
+  };
+  pageScenario(s, 7);
+  await expect(runProbe(s.backend, s.probe)).rejects.toThrow("before validation");
+});

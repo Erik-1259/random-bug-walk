@@ -10,12 +10,12 @@
   },
   "self_tests": {
     "command": "pnpm --filter @rbw/product-acceptance test --reporter=json",
-    "passed": 427,
+    "passed": 441,
     "failed": 0,
     "skipped": 0,
     "exit_code": 0
   },
-  "test_floor": 427,
+  "test_floor": 441,
   "failing_first": [
     {
       "scope": "final-contract invariant regressions",
@@ -283,6 +283,27 @@
       "failed": 1,
       "skipped": 426,
       "exit_code": 1
+    },
+    {
+      "scope": "phantom case validation and validation events in fresh paged request history without validation ledger rows",
+      "passed": 0,
+      "failed": 4,
+      "skipped": 435,
+      "exit_code": 1
+    },
+    {
+      "scope": "prior validation on either case or old validation events, including beyond an initial page, must reject before the first validation POST",
+      "passed": 0,
+      "failed": 8,
+      "skipped": 36,
+      "exit_code": 1
+    },
+    {
+      "scope": "prior validation events must reject before request reconciliation",
+      "passed": 0,
+      "failed": 2,
+      "skipped": 439,
+      "exit_code": 1
     }
   ],
   "local_checks": [
@@ -362,6 +383,12 @@
       "command": "pnpm --filter @rbw/product-acceptance test --reporter=json",
       "meaning": "independent focused review reran the full suite after request-phase evidence and complete terminal-history fixes",
       "passed": 427,
+      "exit_code": 0
+    },
+    {
+      "command": "pnpm --filter @rbw/product-acceptance test --reporter=json",
+      "meaning": "independent focused review reran the full suite after complete fresh-validation baseline checks",
+      "passed": 441,
       "exit_code": 0
     }
   ],
@@ -469,7 +496,7 @@
     },
     {
       "finding": "Pre-reconciliation status could name needs_reconciliation without the matching recorded attention transition.",
-      "disposition": "Reconstruct active attention from complete history for both uncertainty probes and direct reconciliation before any action. Replacements are allowed, a clear must name the active code, and final attention must match status. Preserve attention events after request completion."
+      "disposition": "Reconstruct active attention from complete history for both uncertainty probes and direct reconciliation before any write. Replacements are allowed, a clear must name the active code, and final attention must match status. Preserve attention events after request completion."
     },
     {
       "finding": "The uncertain-provider candidate could be rejected or invalid despite its uncertain first create.",
@@ -490,6 +517,10 @@
     {
       "finding": "Complete terminal history could omit request_finished while final outcome and counts remained correct.",
       "disposition": "Drain all terminal pages before requiring exactly one matching completion event and only contract-permitted subsequent events. Apply the same complete-history assertion after validation and reconciliation. Preserve the first finished snapshot including updated_at across the drain."
+    },
+    {
+      "finding": "Fresh baselines could expose existing case validation or validation events despite having no validation ledger rows.",
+      "disposition": "Require null validation on every case and no validation start/finish events across observed responses and complete baseline history. Standalone validation and request-reconciliation helpers drain stable baseline pages before any POST when no complete history was supplied. Keep general and post-validation checks unchanged."
     }
   ],
   "http_regression_evidence": {

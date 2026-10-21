@@ -159,6 +159,7 @@ export async function runProbe(backend: IsolatedBackend, probe: Probe): Promise<
     .filter(([field]) => !["updated_at", "events", "next_after", "poll_after_ms"].includes(field)));
   const observe = (value: Record<string, unknown>, concurrent = false) => {
     checkScenarioStatus(value);
+    checkFreshRequest(value, objects(value.events));
     assert.equal(value.request_id, requestId);
     assert.deepEqual(value.interpretation, interpretation, "frozen interpretation changed");
     const limits = object(value.limits);
@@ -256,6 +257,7 @@ export async function runProbe(backend: IsolatedBackend, probe: Probe): Promise<
   if (!completeHistory) throw new Unavailable("Request observation reached the runner poll limit.");
   for (const [seq, event] of observedEvents) assert.deepEqual(history[seq - 1], event, "previous event disappeared from history");
   checkFinishedHistory(state, history);
+  checkFreshRequest(state, history);
   checkCriteriaEvents(state, history, true);
   checkFunnelHistory(state, history);
   if (probe.expectedFunnel) assert.deepEqual(state.funnel, probe.expectedFunnel, "funnel differs from pinned scenario");
@@ -373,7 +375,7 @@ function checkUncertainAttempt(state: Record<string, unknown>, history: Record<s
 }
 
 /** Exercise one named deterministic validation scenario after request completion. */
-export async function runValidation(backend: IsolatedBackend, state: Record<string, unknown>, expectedResult: "failed" | "error", history = objects(state.events)): Promise<void> {
+export async function runValidation(backend: IsolatedBackend, state: Record<string, unknown>, expectedResult: "failed" | "error", history?: Record<string, unknown>[]): Promise<void> {
   await verify(backend);
   assertContract("RequestStatus", state);
   checkScenarioStatus(state);
@@ -381,6 +383,7 @@ export async function runValidation(backend: IsolatedBackend, state: Record<stri
   assert.equal(state.attention, null);
   const previousBudget = object(state.budget);
   assert.equal(previousBudget.reserved_microusd, 0);
+  history = await readFreshHistory(backend, state, history);
   const priorEvidence = structuredClone(await runRequestEvidence(backend, state));
   const path = `/api/factory/requests/${text(state.request_id)}`;
   const c = objects(state.cases)[0]; assert(c, "validation scenario delivered no case");
@@ -475,6 +478,47 @@ export async function runValidation(backend: IsolatedBackend, state: Record<stri
   assert.equal(operations.reduce((sum, op) => sum + op.reserved_microusd, 0), cost, "validation reservation differs from pinned worst case");
   assert.equal(operations.reduce((sum, op) => sum + (op.settled_microusd ?? 0), 0), cost, "validation settlement differs from completed cost");
 }
+/** Case validation and its events exist only after a user-started validation. */
+function checkFreshRequest(state: Record<string, unknown>, history: Record<string, unknown>[]): void {
+  assert(objects(state.cases).every(c => c.validation === null), "case validation exists before validation POST");
+  assert(history.every(event => event.type !== "validation_started" && event.type !== "validation_finished"),
+    "validation history exists before validation POST");
+}
+
+/** Reuse the probe's complete history, or read it before a standalone action. */
+async function readFreshHistory(backend: IsolatedBackend, state: Record<string, unknown>, completeHistory?: Record<string, unknown>[]): Promise<Record<string, unknown>[]> {
+  checkFreshRequest(state, objects(state.events));
+  if (completeHistory !== undefined) {
+    checkFreshRequest(state, completeHistory);
+    checkFinishedHistory(state, completeHistory);
+    return completeHistory;
+  }
+  const snapshot = (value: Record<string, unknown>) => Object.fromEntries(Object.entries(value)
+    .filter(([field]) => !["events", "next_after", "poll_after_ms"].includes(field)));
+  const witnessed = new Map(objects(state.events).map(event => [integer(event.seq), event]));
+  const history: Record<string, unknown>[] = [];
+  let cursor = 0;
+  for (let pages = 0; pages < 1000; pages++) {
+    const page = await read(backend, `/api/factory/requests/${text(state.request_id)}?after=${String(cursor)}`);
+    checkScenarioStatus(page);
+    checkFreshRequest(page, objects(page.events));
+    assert.deepEqual(snapshot(page), snapshot(state), "request baseline changed before validation or reconciliation");
+    const events = objects(page.events);
+    for (const event of events) {
+      assert.equal(integer(event.seq), ++cursor, "baseline history has an event gap or duplicate");
+      history.push(event);
+    }
+    assert.equal(page.next_after, cursor);
+    if (events.length === 0) {
+      for (const [seq, event] of witnessed) assert.deepEqual(history[seq - 1], event, "baseline history lost witnessed event");
+      checkFinishedHistory(state, history);
+      return history;
+    }
+    await backend.wait(integer(page.poll_after_ms));
+  }
+  throw new Unavailable("Request baseline history reached the runner page limit.");
+}
+
 /** Fresh named scenarios have not requested validation before this boundary. */
 async function runRequestEvidence(backend: IsolatedBackend, status: unknown): Promise<TestEvidence> {
   const evidence = await runEvidence(backend, status);
@@ -509,11 +553,12 @@ export async function runDownloads(backend: IsolatedBackend, status: Record<stri
   }
 }
 
-export async function runReconciliation(backend: IsolatedBackend, before: Record<string, unknown>, history = objects(before.events)): Promise<void> {
+export async function runReconciliation(backend: IsolatedBackend, before: Record<string, unknown>, history?: Record<string, unknown>[]): Promise<void> {
   await verify(backend);
   checkScenarioStatus(before);
   assert.equal(before.state, "finished");
   assert.equal(object(before.attention).code, "needs_reconciliation");
+  history = await readFreshHistory(backend, before, history);
   checkAttentionHistory(before, history);
   const priorEvidence = structuredClone(await runRequestEvidence(backend, before));
   assert.equal(priorEvidence.slot.holder_validation_id, null, "request reconciliation has a validation holder");

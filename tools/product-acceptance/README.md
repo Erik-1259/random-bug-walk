@@ -159,11 +159,14 @@ Repeated stop must also preserve every terminal field, including `updated_at`,
 and the complete event tail. Only paging and polling hints may differ; every
 returned page is checked against the stored terminal response.
 
-Before any validation, named request probes allow only worker and candidate-copy
-ledger operations. The same rule applies before the first validation POST and
-before request reconciliation; matching status totals cannot justify an extra
-validation reservation. General evidence checks still support real validation
-operations, and post-validation checks constrain the newly added rows.
+Before any validation, named request probes require null validation on every
+case, no validation-started or validation-finished events in complete history,
+and only worker and candidate-copy ledger operations. The same rule applies
+before the first validation POST and before request reconciliation; consistent
+status totals cannot justify an extra validation reservation or prior result.
+Standalone action helpers read stable baseline pages through an empty page when
+no complete history was supplied. General evidence checks still support real
+validation operations, and post-validation checks constrain the newly added rows.
 
 The named failed/error validation probes also read request status and ledger
 evidence after completion. They check the pinned host cost, cleared reservations

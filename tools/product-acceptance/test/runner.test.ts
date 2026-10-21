@@ -380,8 +380,9 @@ function reconciliationScenario() {
     if (path.endsWith("/requests")) return Promise.resolve({ status: 409, body: { contract_version: "bug-request/1", error: { code: "busy", message: "synthetic busy", retryable: false, details: { reason: "needs_reconciliation" } } } });
     if (method === "GET" && path.includes("/requests/")) {
       const cursor = Number(path.split("?after=")[1] ?? 0);
-      const events = objects(after.events).filter(event => integer(event.seq) > cursor);
-      return Promise.resolve({ status: 200, body: { ...after, events, next_after: events.at(-1)?.seq ?? cursor } });
+      const state = reconciled ? after : before;
+      const events = objects(state.events).filter(event => integer(event.seq) > cursor);
+      return Promise.resolve({ status: 200, body: { ...state, events, next_after: events.at(-1)?.seq ?? cursor } });
     }
     return Promise.resolve({ status: 200, body: path.includes("/test/evidence?") ? evidence : after });
   });
@@ -412,6 +413,8 @@ it("checks reconciliation settles held spend and reads released-slot evidence be
   const { before, after, backend, request, restart } = reconciliationScenario();
   await expect(runReconciliation(backend, before)).resolves.toBeUndefined();
   expect(request.mock.calls.map(([method, path]) => `${method} ${path}`)).toEqual([
+    `GET /api/factory/requests/${text(before.request_id)}?after=0`,
+    `GET /api/factory/requests/${text(before.request_id)}?after=${String(before.next_after)}`,
     `GET /api/factory/test/evidence?request_id=${text(before.request_id)}`,
     "POST /api/factory/requests", "POST /api/factory/test/reconcile",
     `GET /api/factory/requests/${text(before.request_id)}`,
@@ -434,7 +437,7 @@ it("does not reconcile unrecorded attention even when later transitions are cons
     value.next_after = objects(value.events).length;
   }
   await expect(runReconciliation(backend, before)).rejects.toThrow("attention history");
-  expect(request).not.toHaveBeenCalled();
+  expect(request.mock.calls.every(([method]) => method === "GET")).toBe(true);
 });
 it.each(["rekeyed", "collapsed", "redistributed", "rewritten-provider"])("rejects %s reconciliation evidence despite conserved totals", async change => {
   const { runReconciliation } = await import("../src/runner.ts");
@@ -500,7 +503,7 @@ it.each(["post", "get"])("rejects disappearing held spend in the reconciliation 
   checkStatus(dropped);
   backend.request = (method, path) => (location === "post" ? path.endsWith("/reconcile") : method === "GET" && path.includes("/requests/"))
     ? Promise.resolve({ status: 200, body: dropped }) : request(method, path);
-  await expect(runReconciliation(backend, before)).rejects.toThrow();
+  await expect(runReconciliation(backend, before, objects(before.events))).rejects.toThrow();
 });
 it.each(["post", "get"])("rejects rewritten event history in the reconciliation %s response", async location => {
   const { runReconciliation } = await import("../src/runner.ts");
@@ -509,7 +512,7 @@ it.each(["post", "get"])("rejects rewritten event history in the reconciliation 
   const event = objects(rewritten.events)[0]; assert(event); event.message = "synthetic-rewritten-history";
   backend.request = (method, path) => (location === "post" ? path.endsWith("/reconcile") : method === "GET" && path.includes("/requests/"))
     ? Promise.resolve({ status: 200, body: rewritten }) : request(method, path);
-  await expect(runReconciliation(backend, before)).rejects.toThrow();
+  await expect(runReconciliation(backend, before, objects(before.events))).rejects.toThrow();
 });
 it("preserves witnessed reconciliation events across paginated status reads", async () => {
   const { runReconciliation } = await import("../src/runner.ts");
@@ -526,7 +529,7 @@ it("preserves witnessed reconciliation events across paginated status reads", as
     }
     return request(method, path);
   };
-  await expect(runReconciliation(backend, before)).resolves.toBeUndefined();
+  await expect(runReconciliation(backend, before, objects(before.events))).resolves.toBeUndefined();
   expect(requests.length).toBeGreaterThan(1);
 });
 it.each(["missing-both", "missing-budget", "missing-clear", "wrong-budget", "wrong-clear-code", "reversed"])("rejects %s reconciliation transitions despite correct final status and evidence", async change => {
@@ -558,7 +561,7 @@ it("reads reconciliation transitions beyond a POST containing only old history",
     }
     return request(method, path);
   };
-  await expect(runReconciliation(backend, before)).resolves.toBeUndefined();
+  await expect(runReconciliation(backend, before, objects(before.events))).resolves.toBeUndefined();
   expect(cursors).toContain(previousEnd);
 });
 it("accepts reconciliation settling held operations in separate budget updates", async () => {
@@ -989,4 +992,20 @@ it.each(["heartbeat", "candidate-count", "candidate-row", "candidate-spend", "wo
     expected.events = events.map((event, index) => ({ ...event, seq: index + 1 })); expected.next_after = events.length;
   }
   return expect(runRecordedFailure(expected, change === "paged-worker-started")).rejects.toThrow("fresh terminal Start");
+});
+
+it.each(["validation_started", "validation_finished"])("rejects prior %s before request reconciliation", async type => {
+  const { runReconciliation } = await import("../src/runner.ts");
+  const s = reconciliationScenario();
+  const history = objects(s.before.events); const last = history.at(-1); assert(last);
+  const prior = { ...last, type, seq: history.length + 1, candidate_id: null, case_id: "bc".repeat(32), host_id: "task-report",
+    item_key: objects(s.before.items)[0]?.item_key,
+    data: type === "validation_started" ? { validation_id: "00000000-0000-4000-8000-000000000301" }
+      : { validation_id: "00000000-0000-4000-8000-000000000301", result: "failed" } };
+  s.before.events = [...history, prior]; s.before.next_after = history.length + 1;
+  s.after.events = [...objects(s.before.events), ...objects(s.after.events).slice(history.length)]
+    .map((event, index) => ({ ...event, seq: index + 1 }));
+  s.after.next_after = objects(s.after.events).length;
+  await expect(runReconciliation(s.backend, s.before)).rejects.toThrow("before validation");
+  expect(s.request.mock.calls.some(([method]) => method === "POST")).toBe(false);
 });

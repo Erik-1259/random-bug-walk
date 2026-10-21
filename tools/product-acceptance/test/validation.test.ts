@@ -55,8 +55,9 @@ function scenario(result: "failed" | "error" = "failed") {
     if (target.includes("/test/evidence?")) return Promise.resolve({ status: 200, body: accepted ? evidence : prior });
     assert(target.startsWith(path));
     const cursor = Number(target.split("?after=")[1] ?? 0);
-    const page = structuredClone(after);
-    page.events = objects(after.events).filter(e => integer(e.seq) > cursor).slice(0, 7);
+    const source = accepted ? after : before;
+    const page = structuredClone(source);
+    page.events = objects(source.events).filter(e => integer(e.seq) > cursor).slice(0, 7);
     page.next_after = objects(page.events).at(-1)?.seq ?? cursor;
     return Promise.resolve({ status: 200, body: page });
   });
@@ -93,6 +94,41 @@ it.each(["validation", "validation_copy"])("rejects phantom %s evidence before t
   await expect(runValidation(s.backend, s.before, "failed")).rejects.toThrow();
   expect(s.request.mock.calls.some(([method]) => method === "POST")).toBe(false);
 });
+
+it.each(["target", "other"])("rejects an existing validation on the %s case before a fresh validation POST", async location => {
+  const s = scenario();
+  const index = location === "target" ? 0 : 1;
+  const delivered = objects(s.before.cases)[index]; assert(delivered);
+  const prior = structuredClone(s.run);
+  prior.validation_id = "00000000-0000-4000-8000-000000000707";
+  prior.case_id = delivered.case_id;
+  prior.package_sha256 = { bug_case: object(object(delivered.packages).bug_case).sha256, validator: object(object(delivered.packages).validator).sha256 };
+  delivered.validation = prior;
+  if (location === "other") {
+    const afterCase = objects(s.after.cases)[index]; assert(afterCase);
+    afterCase.validation = structuredClone(prior);
+  }
+  await expect(runValidation(s.backend, s.before, "failed")).rejects.toThrow();
+  expect(s.request.mock.calls.some(([method]) => method === "POST")).toBe(false);
+});
+
+for (const type of ["validation_started", "validation_finished"]) {
+  it.each(["default-complete", "supplied-complete", "default-paged"])(`rejects baseline ${type} with %s history before a fresh validation POST`, async mode => {
+    const s = scenario();
+    const prior = structuredClone(type === "validation_started" ? s.started : s.finished);
+    prior.data.validation_id = "00000000-0000-4000-8000-000000000707";
+    prior.seq = objects(s.before.events).length + 1;
+    s.before.events = [...objects(s.before.events), prior];
+    s.before.next_after = objects(s.before.events).length;
+    s.after.events = [...structuredClone(objects(s.before.events)), s.reserve, s.started, s.finished, s.settled]
+      .map((event, index) => ({ ...event, seq: index + 1 }));
+    s.after.next_after = objects(s.after.events).length;
+    const initial = mode === "default-complete" ? s.before : { ...s.before, events: objects(s.before.events).slice(0, 7), next_after: 7 };
+    const history = mode === "supplied-complete" ? objects(s.before.events) : undefined;
+    await expect(runValidation(s.backend, initial, "failed", history)).rejects.toThrow();
+    expect(s.request.mock.calls.some(([method]) => method === "POST")).toBe(false);
+  });
+}
 
 it.each(["missing-field", "null-cost", "discounted-cost"])("rejects %s on the completed named validation", async change => {
   const s = scenario("error");
