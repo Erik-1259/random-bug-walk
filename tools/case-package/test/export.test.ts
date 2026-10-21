@@ -48,6 +48,45 @@ describe("exportCase", () => {
     expect(exported.scanned).toBe(true);
   });
 
+  it("refuses an entry that is not the adapter's own catalog entry with the same entry ID", async () => {
+    const adapter = syntheticAdapter({ seeds: ["01"], workdir });
+    const entry = only(adapter);
+    // Inputs that ignore the entry they are handed, so only the exporter's own check stands between an
+    // edited entry and a case ID computed from it.
+    const lenient: HostAdapter = {
+      ...adapter,
+      bugCaseInputs: () => adapter.bugCaseInputs(entry),
+      validatorInputs: () => adapter.validatorInputs(entry),
+    };
+    const edited: [string, CatalogEntry][] = [
+      ["another check set hash", { ...entry, verification: { ...entry.verification, check_set_sha256: "e".repeat(64) } }],
+      ["another expected vectors hash", { ...entry, verification: { ...entry.verification, expected_vectors_sha256: "e".repeat(64) } }],
+      ["another environment hash", { ...entry, environment: { ...entry.environment, environment_sha256: "e".repeat(64) } }],
+      ["other presentation text", { ...entry, presentation: { ...entry.presentation, title: "Synthetic: an edited title" } }],
+    ];
+    for (const [name, changed] of edited) {
+      for (const candidate of [adapter, lenient]) {
+        const error = await refusalOf(exportCase({ adapter: candidate, entry: changed, identity: syntheticIdentity, license: SYNTHETIC_LICENSE, scan: null }));
+        expect(error.code, name).toBe("inconsistent_inputs");
+        expect(error.problems, name).toEqual(["the entry differs from the adapter's catalog entry with the same entry ID"]);
+      }
+    }
+    const unknown = await refusalOf(exportCase({ adapter: lenient, entry: { ...entry, entry_id: "synthetic-task-report-99" }, identity: syntheticIdentity, license: SYNTHETIC_LICENSE, scan: null }));
+    expect(unknown.code).toBe("inconsistent_inputs");
+    expect(unknown.problems).toEqual(["the adapter's catalog has no entry synthetic-task-report-99"]);
+  });
+
+  it("exports the catalog entry read back with its keys reordered to the same bytes as the entry itself", async () => {
+    const adapter = syntheticAdapter({ host_id: "umami", seeds: ["07"], workdir });
+    const entry = only(adapter);
+    const reordered = JSON.parse(JSON.stringify(Object.fromEntries(Object.entries(entry).reverse()))) as CatalogEntry;
+    const exported = await exportCase({ adapter, entry: reordered, identity: syntheticIdentity, license: SYNTHETIC_LICENSE, scan: null });
+    const built = buildSyntheticPair({ host_id: "umami", seed: "07", evidence: null });
+    expect(Buffer.from(exported.bug_case.bytes).equals(Buffer.from(built.bug_case.bytes))).toBe(true);
+    expect(Buffer.from(exported.validator_core.bytes).equals(Buffer.from(built.validator_core.bytes))).toBe(true);
+    expect(exported.case_id).toBe(built.case_id);
+  });
+
   it("gives the same bytes on a second export into a fresh directory", async () => {
     const first = syntheticAdapter({ seeds: ["01"], workdir: join(workdir, "a") });
     const second = syntheticAdapter({ seeds: ["01"], workdir: join(workdir, "b") });
@@ -101,9 +140,11 @@ describe("exportCase", () => {
       ...entry,
       reference_repair: { ...entry.reference_repair, result_sha256: entry.reference_repair.result_sha256.map((item) => ({ ...item, sha256: "0".repeat(64) })) },
     };
+    // An adapter whose own catalog holds the wrong result hashes, so only the dry run can catch them.
     const lying: HostAdapter = {
       ...adapter,
       catalog: () => [wrong],
+      bugCaseInputs: () => adapter.bugCaseInputs(entry),
       validatorInputs: async () => ({ ...(await adapter.validatorInputs(entry)), reference_repair: wrong.reference_repair }),
     };
     const error = await refusalOf(exportCase({ adapter: lying, entry: wrong, identity: syntheticIdentity, license: SYNTHETIC_LICENSE, scan: null }));
@@ -116,7 +157,13 @@ describe("exportCase", () => {
     const target = entry.plant.targets[0];
     if (target === undefined) throw new Error("no target");
     const wrong = { ...entry, plant: { ...entry.plant, targets: [{ ...target, before_sha256: "0".repeat(64) }] } };
-    const error = await refusalOf(exportCase({ adapter: { ...adapter, catalog: () => [wrong] }, entry: wrong, identity: syntheticIdentity, license: SYNTHETIC_LICENSE, scan: null }));
+    const lying: HostAdapter = {
+      ...adapter,
+      catalog: () => [wrong],
+      bugCaseInputs: () => adapter.bugCaseInputs(entry),
+      validatorInputs: () => adapter.validatorInputs(entry),
+    };
+    const error = await refusalOf(exportCase({ adapter: lying, entry: wrong, identity: syntheticIdentity, license: SYNTHETIC_LICENSE, scan: null }));
     expect(error.code).toBe("repair_mismatch");
   });
 

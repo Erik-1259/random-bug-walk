@@ -27,7 +27,7 @@ import type {
 import { canonicalDigest, sha256Hex } from "@rbw/schema";
 import { compareUtf8, type ArchiveMember } from "./archive.ts";
 import { assembleFinalValidator } from "./assembly.ts";
-import { formatOf, packageFilename, pairSha256, QUALIFICATION_EXPECTED, type CaseIdentity } from "./format.ts";
+import { canonicalEqual, formatOf, packageFilename, pairSha256, QUALIFICATION_EXPECTED, type CaseIdentity } from "./format.ts";
 import { packPair, type PairInput } from "./pack.ts";
 
 export const SYNTHETIC_LICENSE = "MIT";
@@ -510,9 +510,11 @@ export function syntheticAdapter(options: SyntheticAdapterOptions): HostAdapter 
       return [item.entry.entry_id, item] as const;
     }),
   );
+  /** The adapter's own material for an entry it is handed, refused when any field of the entry differs. */
   const find = (entry: CatalogEntry): Material => {
     const item = materials.get(entry.entry_id);
     if (item === undefined) throw new Error(`synthetic adapter: unknown entry ${entry.entry_id}`);
+    if (!canonicalEqual(item.entry, entry)) throw new Error(`synthetic adapter: ${entry.entry_id} differs from the synthetic catalog's entry`);
     return item;
   };
   const kit = syntheticKit(hostId);
