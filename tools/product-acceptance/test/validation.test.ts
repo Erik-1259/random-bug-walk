@@ -8,7 +8,7 @@ const fixture = (name: string) => object(JSON.parse(readFileSync(new URL(`../fix
 function first<T>(values: T[]): T { const value = values[0]; assert(value); return value; }
 
 // Synthetic transport responses test the runner's rejection behavior, not a backend.
-function scenario(result: "failed" | "error" = "failed") {
+function scenario(result: "failed" | "error" = "failed", finishedOnPost = false) {
   const before = fixture("status-fulfilled");
   const budget = object(before.budget);
   budget.spent_microusd = 1_100_000; budget.committed_microusd = 1_100_000; budget.remaining_microusd = 900_000;
@@ -49,7 +49,8 @@ function scenario(result: "failed" | "error" = "failed") {
       accepted = true;
       run.validation_id = object(payload).validation_id;
       started.data.validation_id = run.validation_id; finished.data.validation_id = run.validation_id;
-      return Promise.resolve({ status: 202, body: { ...run, state: "running", result: null, matrix: null, cost_microusd: null, finished_at: null } });
+      return Promise.resolve({ status: 202, body: finishedOnPost ? run
+        : { ...run, state: "running", result: null, matrix: null, cost_microusd: null, finished_at: null } });
     }
     if (target.includes("/validations/")) return Promise.resolve({ status: 200, body: run });
     if (target.includes("/test/evidence?")) return Promise.resolve({ status: 200, body: accepted ? evidence : prior });
@@ -71,6 +72,39 @@ it.each(["failed", "error"] as const)("checks completed %s validation accounting
   expect(s.request.mock.calls.filter(([, path]) => path.includes("/test/evidence?"))).toHaveLength(2);
   expect(s.request.mock.calls.some(([method, path]) => method === "GET" && path.includes("?after="))).toBe(true);
 });
+
+for (const finishedOnPost of [false, true]) {
+  const completion = finishedOnPost ? "finished-202" : "polled";
+  for (const result of ["failed", "error"] as const) {
+    const changes = result === "failed" ? ["wrong-cell", "trial-counts"]
+      : ["wrong-cell", "valid-count", "total-count", "incomplete", "null-matrix"];
+    it.each(changes)(`rejects ${completion} ${result} validation %s despite its expected aggregate result`, async change => {
+      const s = scenario(result, finishedOnPost);
+      const original = object(object(s.run.matrix).original_suite);
+      const verification = object(object(s.run.matrix).verification);
+      if (change === "wrong-cell") {
+        if (result === "failed") {
+          Object.assign(object(verification.buggy), { observed: "fail", matches_expectation: true });
+          Object.assign(object(original.fixed), { observed: "fail", matches_expectation: false });
+        } else [original.clean, original.fixed] = [original.fixed, original.clean];
+      }
+      if (change === "trial-counts") Object.assign(object(original.fixed), { runs_valid: 4, runs_total: 4 });
+      if (change === "valid-count") object(original.clean).runs_valid = 1;
+      if (change === "total-count") object(original.clean).runs_total = 4;
+      if (change === "incomplete") object(original.clean).observed = "incomplete";
+      if (change === "null-matrix") s.run.matrix = null;
+      await expect(runValidation(s.backend, s.before, result)).rejects.toThrow();
+    });
+    it(`allows ${completion} ${result} validation timestamps and message prose to differ from the fixture`, async () => {
+      const s = scenario(result, finishedOnPost);
+      Object.assign(s.run, { started_at: "2026-10-21T10:00:00.000Z", finished_at: "2026-10-21T10:01:00.000Z",
+        message: "synthetic validation completion details", poll_after_ms: 1 });
+      await expect(runValidation(s.backend, s.before, result)).resolves.toBeUndefined();
+      expect(s.run.validation_id).not.toBe(fixture(`validation-${result}`).validation_id);
+      expect(s.request.mock.calls.some(([method, path]) => method === "GET" && path.includes("/validations/"))).toBe(!finishedOnPost);
+    });
+  }
+}
 
 it.each(["validation", "validation_copy"])("rejects phantom %s evidence before the first validation POST", async kind => {
   const s = scenario();

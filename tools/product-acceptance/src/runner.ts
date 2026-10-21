@@ -455,6 +455,8 @@ export async function runValidation(backend: IsolatedBackend, state: Record<stri
   }
   if (validation.state !== "finished") throw new Unavailable("Validation observation reached the runner poll limit.");
   assert.equal(validation.result, expectedResult);
+  assert.deepEqual(validation.matrix, fixtureDocument(`validation-${expectedResult}`).matrix,
+    "validation matrix differs from pinned scenario");
   assert.equal(validation.cost_microusd, cost, "validation cost differs from pinned test worst case");
   const withoutPoll = (value: Record<string, unknown>) => Object.fromEntries(Object.entries(value).filter(([key]) => key !== "poll_after_ms"));
   const immutable = (value: Record<string, unknown>) => ({
@@ -714,7 +716,7 @@ export async function runUnsupported(backend: IsolatedBackend): Promise<void> {
   for (const invalid of [invalidHost, invalidType]) error(await call("POST", "/api/factory/interpretations", invalid), 400, "invalid_request");
 }
 
-function fixtureStatus(name: string): Record<string, unknown> {
+function fixtureDocument(name: string): Record<string, unknown> {
   const value: unknown = JSON.parse(readFileSync(new URL(`../fixtures/${name}.json`, import.meta.url), "utf8"));
   return object(value);
 }
@@ -733,7 +735,7 @@ function probes(): { groups: ScenarioId[]; probe: Probe }[] {
     ["validation-error", "fulfilled", "fulfilled", "fulfilled", ["downloads"]],
   ];
   return plans.map(([scenario, fixture, outcome, stopCode, groups]) => {
-    const expected = fixtureStatus(`status-${fixture}`);
+    const expected = fixtureDocument(`status-${fixture}`);
     const interpretation = object(expected.interpretation);
     const input = object(interpretation.input);
     return { groups, probe: {

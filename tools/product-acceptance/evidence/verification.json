@@ -10,12 +10,12 @@
   },
   "self_tests": {
     "command": "pnpm --filter @rbw/product-acceptance test --reporter=json",
-    "passed": 507,
+    "passed": 525,
     "failed": 0,
     "skipped": 0,
     "exit_code": 0
   },
-  "test_floor": 507,
+  "test_floor": 525,
   "failing_first": [
     {
       "scope": "final-contract invariant regressions",
@@ -360,6 +360,13 @@
       "failed": 7,
       "skipped": 0,
       "exit_code": 1
+    },
+    {
+      "scope": "named validation matrices with the correct aggregate result but wrong cells, trial counts, incomplete errors or a null matrix, through polled and finished-202 completion",
+      "passed": 4,
+      "failed": 14,
+      "skipped": 44,
+      "exit_code": 1
     }
   ],
   "local_checks": [
@@ -457,6 +464,12 @@
       "command": "pnpm --filter @rbw/product-acceptance test --reporter=json",
       "meaning": "independent focused review reran the full suite after first-terminal snapshot and case/candidate provenance fixes",
       "passed": 507,
+      "exit_code": 0
+    },
+    {
+      "command": "pnpm --filter @rbw/product-acceptance test --reporter=json",
+      "meaning": "independent focused review reran the full suite after exact named validation matrix checks",
+      "passed": 525,
       "exit_code": 0
     }
   ],
@@ -613,6 +626,10 @@
     {
       "finding": "Delivered case host and provenance could disagree with its qualified candidate, and the link could be duplicated or absent in the reverse direction.",
       "disposition": "Require exactly one qualified candidate per delivered case and a delivered case for every qualified candidate, binding host, bug type, defect, item, source and entry. Keep generated opaque identities and nonqualified stages unchanged."
+    },
+    {
+      "finding": "Named failed/error validation probes could accept a different failing cell or trial profile with the expected aggregate result.",
+      "disposition": "Compare the completed six-cell matrix with its named fixture, including expected/observed outcomes, valid/total counts and cell verdicts. Keep generated identities, linked hashes, times, prose, polling and harness version outside fixture equality; generic null-matrix and uncertain null-cost errors remain valid."
     }
   ],
   "http_regression_evidence": {

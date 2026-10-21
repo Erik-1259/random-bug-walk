@@ -188,10 +188,14 @@ validation operations, and post-validation checks constrain the newly added rows
 The named failed/error validation probes also read request status and ledger
 evidence after completion. They check the pinned host cost, cleared reservations
 and slot, matching validation and budget events, and retention of earlier results
-and evidence. Their history must contain exactly one reservation, validation
+and evidence. Each completed matrix must match its named fixture's six cells,
+including expected/observed outcomes, valid/total trial counts and cell verdicts.
+Generated identities, linked package hashes, timestamps, message wording, polling
+hints and harness version are not compared with fixture literals.
+Their history must contain exactly one reservation, validation
 start, validation finish and settlement, in that order, with the pinned amounts
 and no additional budget events. These named controls have known costs; the general validation
-shape still permits a finished error with uncertain spend to retain a null cost.
+shape still permits a finished error with a null matrix or uncertain null cost.
 
 The final contract permits zero-count rows for known unrequested types, and a
 202 Start response can already contain a recorded terminal failure. The runner
