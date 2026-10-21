@@ -50,14 +50,28 @@ describe("bugCaseInputs", () => {
     expect(out.dirs).toEqual([inputs.source.root, inputs.incident.root]);
   });
 
-  it("gives the pinned kit image and the setup steps, with no answer material", async () => {
+  it("gives the pinned runtime image, not the kit image, and the setup steps, with no answer material", async () => {
     const { world, adapter, entry } = await setup();
     const inputs = await adapter.bugCaseInputs(entry);
-    expect(inputs.runtime.kit_image).toBe(world.pins.kit.image);
-    expect(inputs.runtime.kit_image_digest).toBe(world.pins.kit.digest);
+    expect(inputs.runtime.kit_image).toBe(world.pins.runtime.image);
+    expect(inputs.runtime.kit_image_digest).toBe(world.pins.runtime.digest);
+    expect(inputs.runtime.kit_image_digest).not.toBe(world.pins.kit.digest);
     const setupText = inputs.runtime.setup.join("\n");
-    expect(setupText).toContain("/opt/rbw/bin/rbw-build-app");
-    for (const term of ["tzarg", "getPageviewStats", "getDateSQL", "pageviews", "planted", "clean source", "fixture"]) expect(setupText).not.toContain(term);
+    expect(setupText).toContain("linux/amd64 container of the runtime image");
+    // The tree is prepared once before the cold build, and the build and start commands follow.
+    expect(setupText.indexOf("/opt/rbw/bin/rbw-prepare-app")).toBeGreaterThan(-1);
+    expect(setupText.indexOf("/opt/rbw/bin/rbw-prepare-app")).toBeLessThan(setupText.indexOf("/opt/rbw/bin/rbw-build-app"));
+    for (const term of ["tzarg", "getPageviewStats", "getDateSQL", "pageviews", "planted", "clean source", "fixture", "kit image"]) expect(setupText).not.toContain(term);
+  });
+
+  it("names the runtime pin's architecture in the setup steps", async () => {
+    const world = syntheticWorld({ runtime: { image: "synthetic/umami-runtime-arm64", digest: `sha256:${"d".repeat(64)}`, architecture: "arm64" } });
+    const adapter = buildUmamiAdapter(world.pins, { store: await writeSyntheticStore(world), newDir: recordingNewDir().newDir });
+    const [entry] = adapter.catalog();
+    if (entry === undefined) throw new Error("the catalog is empty");
+    const inputs = await adapter.bugCaseInputs(entry);
+    expect(inputs.runtime).toMatchObject({ kit_image: "synthetic/umami-runtime-arm64", kit_image_digest: `sha256:${"d".repeat(64)}` });
+    expect(inputs.runtime.setup[0]).toContain("linux/arm64 container of the runtime image");
   });
 
   it("refuses without a store, with a store of other pins, and with an object whose bytes changed", async () => {
@@ -98,7 +112,7 @@ describe("validatorInputs", () => {
     );
   });
 
-  it("writes a judge_verify job the driver reads: placeholder identities, the pinned suite, added suite, image, patches and vectors", async () => {
+  it("writes a judge_verify job the driver reads: placeholder identities, the pinned suite, added suite, runtime image, patches and vectors", async () => {
     const { world, adapter, entry } = await setup();
     const inputs = await adapter.validatorInputs(entry);
     const requestBytes = readFileSync(join(inputs.checks.root, REQUEST_FILE));
@@ -109,7 +123,7 @@ describe("validatorInputs", () => {
       project_id: FROZEN_JOB_IDS.project_id,
       execution_id: FROZEN_JOB_IDS.execution_id,
       release_id: FROZEN_JOB_IDS.release_id,
-      image_digest: world.pins.kit.digest,
+      image_digest: world.pins.runtime.digest,
       runtime_profile_sha256: world.pins.kit.profile_sha256,
       expected_trials_key: `jobs/${FROZEN_JOB_IDS.execution_id}/expected-trials.json`,
     });

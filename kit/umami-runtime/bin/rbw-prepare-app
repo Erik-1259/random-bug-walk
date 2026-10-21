@@ -1,0 +1,76 @@
+#!/bin/sh
+# Readies the source tree placed at /workspace/app for the kit's cold build, the way the kit image
+# (kit/umami) ships its own tree. Run it as root once, after the tree is placed and before
+# /opt/rbw/bin/rbw-build-app:
+#
+#   rbw-prepare-app
+#
+# 1. It refuses a tree without package.json or docker/proxy.ts, or one that holds a link.
+# 2. It makes every file and directory of the tree outside the locked dependencies (the image's
+#    node_modules, which it leaves as they are) root-owned and read-only to rbw-app, as
+#    `chmod -R u=rwX,go=rX /workspace` leaves the kit's tree.
+# 3. When the tree has no src/proxy.ts, it copies docker/proxy.ts there, as the kit's and Umami's
+#    own image builds do (the Next proxy, which Umami calls its middleware).
+# 4. It creates each build output listed in /opt/rbw/etc/build-outputs.txt and gives it to
+#    rbw-app, as the kit's image build does: empty directories and files, sticky directories and
+#    tracked files that the build regenerates.
+#
+# Exits 0 when the tree is ready, 1 when it refuses the tree (the reason is on standard error) and
+# 2 when it is not run as root.
+set -eu
+APP=/workspace/app
+OUTPUTS=/opt/rbw/etc/build-outputs.txt
+
+fail() {
+  echo "rbw-prepare-app: $1" >&2
+  exit 1
+}
+
+# Every path of the tree except the locked dependencies; the extra arguments are find's tests and actions.
+in_tree() {
+  find "$APP" \( -path "$APP/node_modules" -o -path "$APP/packages/*/node_modules" \) -prune -o "$@"
+}
+
+[ "$(id -u)" = 0 ] || { echo "rbw-prepare-app: must run as root" >&2; exit 2; }
+[ -f "$APP/package.json" ] || fail "no source tree at $APP: package.json is missing"
+[ -f "$APP/docker/proxy.ts" ] || fail "the source tree has no docker/proxy.ts"
+links=$(in_tree -type l -print | head -n 5)
+[ -z "$links" ] || fail "the source tree holds links: $(echo "$links" | tr '\n' ' ')"
+
+in_tree -exec chown root:root {} +
+in_tree -exec chmod u=rwX,go=rX {} +
+
+[ -e "$APP/src/proxy.ts" ] || install -o root -g root -m 0644 "$APP/docker/proxy.ts" "$APP/src/proxy.ts"
+
+while read -r kind path; do
+  case $kind in
+    '' | '#'*) continue ;;
+  esac
+  target=$APP/$path
+  case $kind in
+    dir)
+      [ -e "$target" ] || mkdir "$target"
+      [ -d "$target" ] || fail "build output $path is not a directory"
+      chown rbw-app:rbw-app "$target"
+      chmod 0755 "$target"
+      ;;
+    file)
+      [ -e "$target" ] || : > "$target"
+      [ -f "$target" ] || fail "build output $path is not a file"
+      chown rbw-app:rbw-app "$target"
+      chmod 0644 "$target"
+      ;;
+    sticky)
+      [ -d "$target" ] || fail "the source tree has no directory $path"
+      chown root:rbw-app "$target"
+      chmod 1775 "$target"
+      ;;
+    tracked)
+      [ -f "$target" ] || fail "the source tree has no file $path"
+      chown rbw-app:rbw-app "$target"
+      ;;
+    *) fail "unknown build output kind: $kind" ;;
+  esac
+done < "$OUTPUTS"
+
+echo "prepared $APP: $(in_tree ! -type d -print | wc -l | tr -d ' ') files outside node_modules"
