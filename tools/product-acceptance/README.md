@@ -107,6 +107,12 @@ status backoff; reaching its observation limit reports unavailable.
 The cancellation probe waits for the second candidate's first completed check,
 as the named control specifies, before sending stop. Stopping at the first
 delivery is too early to exercise the fixture's cancellation outcome.
+Its complete history must contain exactly one stop after that checkpoint and
+before the in-flight check completes and the candidate becomes incomplete.
+The stalled worker-loss control must record `worker_unresponsive` after the
+missed-heartbeat threshold, then interruption and `needs_reconciliation` after
+the lost-worker threshold. Generic early worker exits are not assigned this
+stalled-control history.
 
 The runnable multi-item fixtures request 1/1. Their separate outcomes exercise
 item ownership and count reconciliation, but do not test unequal requested
@@ -118,7 +124,13 @@ Candidate expectations come from each scenario's pinned end-state fixture and
 compare catalog entries, stages, reason codes and linked outcome events without
 fixing generated IDs, timestamps or message text. The duplicate scenario also
 checks that the skipped entry shares the earlier candidate's defect. The
-uncertain-provider scenario has no published candidate end-state fixture, so it
+named fixtures also pin candidate-local check signatures and order, behavior and
+criterion transitions, package/delivery events and source exhaustion. Package
+events must match the returned package digests. Host preparation may interleave,
+but readiness precedes candidate selection. Budget events occupy the named
+reservation/settlement positions and use the deterministic worker and host costs,
+not the fixtures' illustrative settlement amounts.
+The uncertain-provider scenario has no published candidate end-state fixture, so it
 does not borrow the worker-lost scenario's candidate expectations. Instead, its
 partial sequence requires one selected candidate from the pinned eligible source,
 after worker start, and a matching candidate-copy create that remains uncertain.
@@ -126,7 +138,8 @@ The pinned service profile settles the worker, retains all three copy originals,
 attempts only the first copy and releases the unused copies at zero. Worker-only
 uncertainty cannot satisfy this probe. That candidate must end `incomplete` with
 `incomplete_run`, no item or case assignment, and exactly one matching
-`candidate_incomplete` event. Every named
+`candidate_incomplete` event. Its uncertain first create cannot report completed
+checks or explored candidates. Every named
 terminal checks its expected attention; ordinary completed requests must show
 no held spend and both slot holders cleared before any subsequent action or reset.
 
@@ -137,9 +150,9 @@ attention-cleared event, including when they fall beyond the first history page.
 Before request reconciliation, evidence must show that the request holds the
 slot and no validation holds it. This is specific to the request-failure probes;
 a separate completed validation with uncertain spend may legitimately retain its
-validation holder. The worker-loss and uncertain-provider probes reconstruct the
-active attention from the complete history before reconciliation: replacements
-are allowed, clears must name the active code, and the result must match status.
+validation holder. Every probe reconstructs active attention from complete
+history: replacements are allowed, clears must name the active code, and the
+result must match status, including null attention after recovery.
 An old attention event followed by a clear is insufficient. Attention events may
 follow request completion, as the contract permits. The probe compares ledger evidence before and after reconciliation: operation
 identities, call metadata, original reservations and existing provider records

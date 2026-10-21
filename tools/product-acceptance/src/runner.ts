@@ -6,6 +6,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { isDeepStrictEqual } from "node:util";
 import { checkCriteriaEvents, checkFunnelHistory, checkScenarioCandidates, checkStatus, checkValidation, integer, object, objects, text } from "./invariants.ts";
+import { checkScenarioTransitions } from "./transitions.ts";
 
 export const contractRevision = "66651d67fcb09c402b25d9688ea492c0e69e1c2b";
 export const scenarioIds = ["identity", "quantities", "shared-budget", "qualification", "unsupported", "stops", "continuity", "downloads"] as const;
@@ -29,6 +30,7 @@ export interface Probe {
   expectedFunnel?: Record<string, unknown>;
   expectedCounts: Record<string, unknown>[];
   expectedCandidates?: Record<string, unknown>[];
+  expectedEvents?: Record<string, unknown>[];
   expectedAttention?: string | null;
   concurrent?: boolean;
   cancel?: boolean;
@@ -270,8 +272,11 @@ export async function runProbe(backend: IsolatedBackend, probe: Probe): Promise<
   assert.equal(state.outcome, probe.outcome);
   assert.equal(object(state.stop_reason).code, probe.stopCode);
   assert.equal(state.attention === null ? null : object(state.attention).code, probe.expectedAttention ?? null, "attention differs from pinned scenario");
-  if (["worker-lost", "uncertain-provider"].includes(probe.scenario)) checkAttentionHistory(state, history);
+  checkAttentionHistory(state, history);
   if (probe.expectedCandidates) checkScenarioCandidates(state, probe.expectedCandidates, history);
+  if (probe.expectedCandidates && probe.expectedEvents) checkScenarioTransitions(state, probe.expectedCandidates, probe.expectedEvents, history);
+  if (probe.scenario === "cancel-midway") checkCancellationHistory(state, history);
+  if (probe.scenario === "worker-lost") checkWorkerLossHistory(state, history);
   // No validation or reconciliation runs between these reads. Only paging and
   // polling hints may differ; accounting and the stored terminal record may not.
   const checkTerminalRead = async (page: Record<string, unknown>, phase: "reconnect" | "repeated stop") => {
@@ -326,6 +331,46 @@ function checkFinishedHistory(state: Record<string, unknown>, history: Record<st
     "request progress after request_finished");
 }
 
+/** The named cancellation records stop after its pause and before interruption. */
+function checkCancellationHistory(state: Record<string, unknown>, history: Record<string, unknown>[]): void {
+  const stops = history.filter(event => event.type === "stop_requested");
+  assert.equal(stops.length, 1, "cancel-midway needs exactly one stop_requested");
+  const stop = stops[0]; assert(stop);
+  const interrupted = objects(state.candidates).filter(candidate => candidate.reason !== null && object(candidate.reason).code === "stopped");
+  assert.equal(interrupted.length, 1, "cancel-midway must interrupt one candidate");
+  const candidate = interrupted[0]; assert(candidate);
+  const checks = history.filter(event => event.type === "check_finished" && event.candidate_id === candidate.candidate_id);
+  const checkpoint = checks[0]; assert(checkpoint, "cancel-midway stop_requested has no check checkpoint");
+  const incomplete = history.filter(event => event.type === "candidate_incomplete" && event.candidate_id === candidate.candidate_id
+    && object(event.data).reason === "stopped");
+  assert.equal(incomplete.length, 1, "cancel-midway stop_requested has no unique interrupted outcome");
+  const end = incomplete[0]; assert(end);
+  assert(integer(checkpoint.seq) < integer(stop.seq) && integer(stop.seq) < integer(end.seq),
+    "cancel-midway stop_requested must follow the checkpoint and precede interruption");
+  // The named control resumes its already-in-flight check only after stop.
+  for (const check of checks.slice(1)) {
+    assert(integer(stop.seq) < integer(check.seq), "cancel-midway stop_requested must precede the in-flight check completion");
+  }
+}
+
+/** This named control stalls; generic early worker exits need no warning phase. */
+function checkWorkerLossHistory(state: Record<string, unknown>, history: Record<string, unknown>[]): void {
+  const changes = history.filter(event => event.type === "attention" || event.type === "attention_cleared");
+  assert.deepEqual(changes.map(event => [event.type, object(event.data).code]),
+    [["attention", "worker_unresponsive"], ["attention", "needs_reconciliation"]], "worker-lost attention timeline differs from the stalled control");
+  const warning = changes[0]; const lost = changes[1]; assert(warning && lost);
+  const incomplete = history.filter(event => event.type === "candidate_incomplete");
+  assert.equal(incomplete.length, 1, "worker-lost must interrupt its first candidate");
+  const end = incomplete[0]; assert(end);
+  const checks = history.filter(event => event.type === "check_finished" && event.candidate_id === end.candidate_id);
+  const lastCheck = checks.at(-1); assert(lastCheck, "worker-lost has no check before heartbeat loss");
+  assert(integer(lastCheck.seq) < integer(warning.seq) && integer(warning.seq) < integer(end.seq)
+    && integer(end.seq) < integer(lost.seq), "worker-lost warning must precede interruption and reconciliation attention");
+  const heartbeat = Date.parse(text(state.last_heartbeat_at));
+  assert(Date.parse(text(warning.at)) - heartbeat >= 60_000, "worker-lost warning precedes the missed-heartbeat threshold");
+  assert(Date.parse(text(lost.at)) - heartbeat >= 180_000, "worker-lost reconciliation precedes the lost-worker threshold");
+}
+
 /** Section 8.1 records each attention change, including replacements and clears. */
 function checkAttentionHistory(state: Record<string, unknown>, history: Record<string, unknown>[]): void {
   let active: string | null = null;
@@ -342,6 +387,8 @@ function checkAttentionHistory(state: Record<string, unknown>, history: Record<s
 /** Section 15.1 requires a candidate create, not just worker uncertainty. */
 function checkUncertainAttempt(state: Record<string, unknown>, history: Record<string, unknown>[], evidence: TestEvidence, expectedItems: Record<string, unknown>[]): void {
   const candidates = objects(state.candidates);
+  assert.equal(object(state.funnel).candidates_explored, 0, "uncertain-provider cannot complete candidate checks");
+  assert(!history.some(event => event.type === "check_finished"), "uncertain-provider has check progress after an uncertain create");
   assert.equal(candidates.length, 1, "uncertain-provider must attempt the first candidate only");
   const candidate = candidates[0]; assert(candidate);
   // The control supplies this partial outcome rule without a complete fixture.
@@ -696,7 +743,7 @@ function probes(): { groups: ScenarioId[]; probe: Probe }[] {
     expectedInterpretation: interpretation,
     expectedAttention: expected.attention === null ? null : text(object(expected.attention).code),
     // The uncertain-provider control specifies no candidate end-state fixture.
-    ...(scenario === "uncertain-provider" ? {} : { expectedCandidates: objects(expected.candidates), expectedFunnel: object(expected.funnel) }),
+    ...(scenario === "uncertain-provider" ? {} : { expectedCandidates: objects(expected.candidates), expectedFunnel: object(expected.funnel), expectedEvents: objects(expected.events) }),
     concurrent: scenario === "two-host-fulfilled", cancel: scenario === "cancel-midway",
     reconcile: scenario === "worker-lost" || scenario === "uncertain-provider",
     downloads: scenario === "two-host-fulfilled", evidence: true,

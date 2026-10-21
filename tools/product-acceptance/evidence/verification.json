@@ -10,12 +10,12 @@
   },
   "self_tests": {
     "command": "pnpm --filter @rbw/product-acceptance test --reporter=json",
-    "passed": 441,
+    "passed": 494,
     "failed": 0,
     "skipped": 0,
     "exit_code": 0
   },
-  "test_floor": 441,
+  "test_floor": 494,
   "failing_first": [
     {
       "scope": "final-contract invariant regressions",
@@ -304,6 +304,48 @@
       "failed": 2,
       "skipped": 439,
       "exit_code": 1
+    },
+    {
+      "scope": "missing, duplicate/paged, early or late cancellation stop history",
+      "passed": 0,
+      "failed": 4,
+      "skipped": 127,
+      "exit_code": 1
+    },
+    {
+      "scope": "stalled-worker warning sequence and uncertain-create completed-check progress",
+      "passed": 0,
+      "failed": 7,
+      "skipped": 445,
+      "exit_code": 1
+    },
+    {
+      "scope": "cancellation stop recorded after its resumed in-flight check",
+      "passed": 0,
+      "failed": 1,
+      "skipped": 131,
+      "exit_code": 1
+    },
+    {
+      "scope": "complete named candidate, check, package, source, worker, host and budget transition histories",
+      "passed": 115,
+      "failed": 33,
+      "skipped": 0,
+      "exit_code": 1
+    },
+    {
+      "scope": "intermediate reservation and settlement amounts despite correct final accounting",
+      "passed": 148,
+      "failed": 5,
+      "skipped": 0,
+      "exit_code": 1
+    },
+    {
+      "scope": "ordinary terminal null attention contradicting unclosed history",
+      "passed": 1,
+      "failed": 1,
+      "skipped": 153,
+      "exit_code": 1
     }
   ],
   "local_checks": [
@@ -389,6 +431,12 @@
       "command": "pnpm --filter @rbw/product-acceptance test --reporter=json",
       "meaning": "independent focused review reran the full suite after complete fresh-validation baseline checks",
       "passed": 441,
+      "exit_code": 0
+    },
+    {
+      "command": "pnpm --filter @rbw/product-acceptance test --reporter=json",
+      "meaning": "independent focused review reran the full suite after complete named transition, budget and attention-history checks",
+      "passed": 494,
       "exit_code": 0
     }
   ],
@@ -521,6 +569,22 @@
     {
       "finding": "Fresh baselines could expose existing case validation or validation events despite having no validation ledger rows.",
       "disposition": "Require null validation on every case and no validation start/finish events across observed responses and complete baseline history. Standalone validation and request-reconciliation helpers drain stable baseline pages before any POST when no complete history was supplied. Keep general and post-validation checks unchanged."
+    },
+    {
+      "finding": "Cancellation could omit or misorder its recorded stop while retaining the expected terminal result.",
+      "disposition": "Require exactly one stop after the documented first-check checkpoint and before the resumed in-flight check and interrupted outcome; retain valid post-stop in-flight completion and paged history."
+    },
+    {
+      "finding": "The named stalled worker-loss scenario could omit its unresponsive warning or replace it at the wrong time.",
+      "disposition": "Require warning, interruption and replacement by reconciliation attention in order at the documented heartbeat thresholds. Generic early worker exits remain distinct; attention after request completion is permitted."
+    },
+    {
+      "finding": "Correct final states and ledger totals could hide missing or wrong named transition events.",
+      "disposition": "Compare pinned candidate-local check and outcome signatures, package digests, worker start, host readiness, source exhaustion and budget marker positions. Derive each budget row from deterministic costs, preserving generated identities and host-preparation interleaving. Uncertain-provider retains a partial rule and cannot show completed checks after its uncertain create."
+    },
+    {
+      "finding": "An ordinary terminal could report null attention while its history still held reconciliation attention.",
+      "disposition": "Replay attention for every probe, retaining valid warning-and-clear recovery. The positive recorded-launch-failure fixture now includes its matching attention event."
     }
   ],
   "http_regression_evidence": {

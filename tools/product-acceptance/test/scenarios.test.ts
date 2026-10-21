@@ -21,6 +21,25 @@ function terminalScenario(name: string) {
   const total = amounts.reduce((sum, amount) => sum + amount, 0);
   Object.assign(object(state.budget), { reserved_microusd: held ? total : 0, spent_microusd: held ? 0 : total,
     committed_microusd: total, remaining_microusd: integer(object(state.budget).budget_microusd) - total });
+  // Independently assign each event its held/settled intervals. End-state fixture
+  // costs are illustrative; the named test profile charges every original fully.
+  const events = objects(state.events);
+  const budgetIndexes = events.flatMap((event, index) => event.type === "budget_updated" ? [index] : []);
+  const workerEnd = held ? Infinity : budgetIndexes.at(-1); assert(workerEnd !== undefined);
+  const intervals = objects(state.candidates).filter(candidate => candidate.stage !== "skipped").map(candidate => {
+    const selected = events.findIndex(event => event.type === "candidate_selected" && event.candidate_id === candidate.candidate_id);
+    const ended = events.findIndex(event => ["case_delivered", "candidate_rejected", "candidate_invalid", "candidate_incomplete"].includes(text(event.type))
+      && event.candidate_id === candidate.candidate_id);
+    const start = budgetIndexes.find(index => index > selected); assert(start !== undefined);
+    const end = budgetIndexes.find(index => index > ended) ?? Infinity;
+    return { start, end, cost: candidate.host_id === "task-report" ? 300000 : 600000 };
+  });
+  for (const index of budgetIndexes) {
+    const event = events[index]; assert(event);
+    const reserved = (index < workerEnd ? 200000 : 0) + intervals.filter(range => range.start <= index && index < range.end).reduce((sum, range) => sum + range.cost, 0);
+    const spent = (index >= workerEnd ? 200000 : 0) + intervals.filter(range => range.end <= index).reduce((sum, range) => sum + range.cost, 0);
+    event.data = { reserved_microusd: reserved, spent_microusd: spent, remaining_microusd: integer(object(state.budget).budget_microusd) - reserved - spent };
+  }
   object(evidence.slot).holder_request_id = held ? expected.request_id : null;
   let id = text(expected.request_id); let starts = 0;
   const replaceId = (value: unknown) => object(JSON.parse(JSON.stringify(value).replaceAll(text(expected.request_id), id)) as unknown);
@@ -55,7 +74,7 @@ function terminalScenario(name: string) {
     stopCode: text(object(expected.stop_reason).code), expectedDelivery: text(expected.delivery),
     expectedItems: objects(object(expected.interpretation).items), expectedCounts: objects(expected.items),
     expectedInterpretation: object(expected.interpretation), expectedFunnel: object(expected.funnel),
-    expectedCandidates: objects(expected.candidates), expectedAttention: expected.attention === null ? null : text(object(expected.attention).code), evidence: true };
+    expectedCandidates: objects(expected.candidates), expectedEvents: objects(expected.events), expectedAttention: expected.attention === null ? null : text(object(expected.attention).code), evidence: true };
   return { state, interpretation, evidence, backend, probe };
 }
 for (const name of ["fulfilled", "exhausted", "cancelled"]) it.each(["request", "validation"])(`rejects a retained %s slot after ${name}`, async holder => {
@@ -75,7 +94,11 @@ it("rejects held spend after ordinary completion even when status and ledger agr
   const worker = objects(s.evidence.operations).find(op => op.kind === "worker"); assert(worker);
   worker.state = "uncertain"; worker.settled_microusd = null;
   Object.assign(object(s.state.budget), { reserved_microusd: 200000, spent_microusd: integer(object(s.state.budget).committed_microusd) - 200000 });
-  await expect(runProbe(s.backend, s.probe)).rejects.toThrow("terminal request left held spend");
+  const finalBudget = objects(s.state.events).findLast(event => event.type === "budget_updated"); assert(finalBudget);
+  finalBudget.data = Object.fromEntries(["reserved_microusd", "spent_microusd", "remaining_microusd"].map(field => [field, object(s.state.budget)[field]]));
+  // Isolate the final ledger guard from the separate named history profile.
+  const probe: Probe = { ...s.probe }; delete probe.expectedEvents;
+  await expect(runProbe(s.backend, probe)).rejects.toThrow("terminal request left held spend");
 });
 for (const name of ["wrong-failure", "zero-result", "duplicate-defect", "partial-budget", "cancelled", "operational-error"]) {
   it(`accepts the pinned ${name} candidate outcome and linked event`, async () => {
@@ -196,7 +219,7 @@ it("rejects a missing behavior event despite correct pinned funnel counts", asyn
 function uncertainControl() {
   const s = terminalScenario("operational-error");
   const probe: Probe = { ...s.probe, scenario: "uncertain-provider", stopCode: "needs_reconciliation" };
-  delete probe.expectedCandidates; delete probe.expectedFunnel;
+  delete probe.expectedCandidates; delete probe.expectedFunnel; delete probe.expectedEvents;
   object(s.state.stop_reason).code = "needs_reconciliation";
   s.state.funnel = { candidates_explored: 0, behavior_checks_passed: 0, requested_criteria_passed: 0, packages_ready: 0 };
   s.state.events = objects(s.state.events).filter(event => event.type !== "check_finished"
@@ -341,7 +364,11 @@ for (const name of ["fulfilled", "operational-error"]) {
     budget.spent_microusd = integer(budget.spent_microusd) + 1000;
     budget.committed_microusd = integer(budget.committed_microusd) + 1000;
     budget.remaining_microusd = integer(budget.remaining_microusd) - 1000;
-    await expect(runProbe(s.backend, s.probe)).rejects.toThrow("before validation");
+    const finalBudget = objects(s.state.events).findLast(event => event.type === "budget_updated"); assert(finalBudget);
+    finalBudget.data = Object.fromEntries(["reserved_microusd", "spent_microusd", "remaining_microusd"].map(field => [field, budget[field]]));
+    // Keep this independently consistent ledger defect focused on its own guard.
+    const probe: Probe = { ...s.probe }; delete probe.expectedEvents;
+    await expect(runProbe(s.backend, probe)).rejects.toThrow("before validation");
   });
 }
 
@@ -398,4 +425,149 @@ it.each(["first-case", "other-case", "started", "finished"])("rejects pre-existi
   };
   pageScenario(s, 7);
   await expect(runProbe(s.backend, s.probe)).rejects.toThrow("before validation");
+});
+
+it.each(["missing-warning", "cleared-warning", "duplicate-warning", "late-warning", "early-warning", "early-loss"])("rejects worker-loss %s transition history", async change => {
+  const s = terminalScenario("operational-error");
+  const history = objects(s.state.events);
+  const warning = history.find(event => event.type === "attention" && object(event.data).code === "worker_unresponsive"); assert(warning);
+  const lost = history.find(event => event.type === "attention" && object(event.data).code === "needs_reconciliation"); assert(lost);
+  const incomplete = history.find(event => event.type === "candidate_incomplete"); assert(incomplete);
+  if (change === "missing-warning") s.state.events = history.filter(event => event !== warning);
+  if (change === "cleared-warning") s.state.events = history.flatMap(event => event === warning ? [event, { ...event, type: "attention_cleared" }] : [event]);
+  if (change === "duplicate-warning") s.state.events = history.flatMap(event => event === warning ? [event, structuredClone(event)] : [event]);
+  if (change === "late-warning") s.state.events = history.filter(event => event !== warning).flatMap(event => event === incomplete ? [event, warning] : [event]);
+  if (change === "early-warning") warning.at = new Date(Date.parse(text(s.state.last_heartbeat_at)) + 59_000).toISOString();
+  if (change === "early-loss") lost.at = new Date(Date.parse(text(s.state.last_heartbeat_at)) + 179_000).toISOString();
+  s.state.events = objects(s.state.events).map((event, index) => ({ ...event, seq: index + 1 })); s.state.next_after = objects(s.state.events).length;
+  await expect(runProbe(s.backend, s.probe)).rejects.toThrow("worker-lost");
+});
+it("rejects completed check progress after an uncertain first create", async () => {
+  const s = uncertainControl();
+  const check = objects(fixture("status-operational-error").events).find(event => event.type === "check_finished"); assert(check);
+  s.state.events = objects(s.state.events).flatMap(event => event.type === "candidate_incomplete" ? [check, event] : [event]);
+  object(s.state.funnel).candidates_explored = 1;
+  s.normalize();
+  await expect(runProbe(s.backend, s.probe)).rejects.toThrow("uncertain-provider");
+});
+
+function replaceHistory(s: ReturnType<typeof terminalScenario>, events: Record<string, unknown>[]): void {
+  s.state.events = events.map((event, index) => ({ ...event, seq: index + 1 }));
+  s.state.next_after = events.length;
+}
+it.each(["worker_started", "host_preparing", "host_ready", "candidate_selected", "check_finished", "package_ready", "case_delivered"])(
+  "rejects missing %s history despite a correct fulfilled result and ledger", async type => {
+    const s = terminalScenario("fulfilled");
+    replaceHistory(s, objects(s.state.events).filter(event => event.type !== type));
+    await expect(runProbe(s.backend, s.probe)).rejects.toThrow("transition");
+  });
+it.each(["zero-result", "wrong-failure", "cancelled", "operational-error"])("rejects missing checks behind the pinned %s outcome", async name => {
+  const s = terminalScenario(name);
+  const check = objects(s.state.events).find(event => event.type === "check_finished"); assert(check);
+  replaceHistory(s, objects(s.state.events).filter(event => event !== check));
+  await expect(runProbe(s.backend, s.probe)).rejects.toThrow("transition");
+});
+it.each(["exhausted", "duplicate-defect", "zero-result", "wrong-failure"])("rejects missing source exhaustion in %s", async name => {
+  const s = terminalScenario(name);
+  replaceHistory(s, objects(s.state.events).filter(event => event.type !== "source_exhausted"));
+  await expect(runProbe(s.backend, s.probe)).rejects.toThrow("transition");
+});
+it.each(["copy", "outcome", "runs_valid", "runs_total"])("rejects an incorrect pinned check %s despite a qualified case", async field => {
+  const s = terminalScenario("fulfilled");
+  const event = objects(s.state.events).find(event => event.type === "check_finished"); assert(event);
+  object(event.data)[field] = field === "copy" ? "buggy" : field === "outcome" ? "fail" : 2;
+  await expect(runProbe(s.backend, s.probe)).rejects.toThrow("transition");
+});
+it.each(["source_id", "entry_id"])("rejects a candidate selection with the wrong %s", async field => {
+  const s = terminalScenario("fulfilled");
+  const event = objects(s.state.events).find(event => event.type === "candidate_selected"); assert(event);
+  object(event.data)[field] = "synthetic-unrelated-entry";
+  await expect(runProbe(s.backend, s.probe)).rejects.toThrow("transition");
+});
+it("rejects source exhaustion for an unrelated source", async () => {
+  const s = terminalScenario("exhausted");
+  const event = objects(s.state.events).find(event => event.type === "source_exhausted"); assert(event);
+  object(event.data).source_id = "synthetic-unrelated-source";
+  await expect(runProbe(s.backend, s.probe)).rejects.toThrow("transition");
+});
+it.each(["bug_case_sha256", "validator_sha256"])("rejects package_ready with an unrelated %s", async field => {
+  const s = terminalScenario("fulfilled");
+  const event = objects(s.state.events).find(event => event.type === "package_ready"); assert(event);
+  object(event.data)[field] = "ab".repeat(32);
+  await expect(runProbe(s.backend, s.probe)).rejects.toThrow("transition");
+});
+it.each(["checks", "behavior", "host-ready", "source-exhausted"])("rejects reordered %s transitions", async change => {
+  const s = terminalScenario(change === "source-exhausted" ? "exhausted" : "fulfilled");
+  const history = objects(s.state.events);
+  const firstType = change === "checks" ? "check_finished" : change === "behavior" ? "behavior_checks_passed"
+    : change === "host-ready" ? "host_ready" : "source_exhausted";
+  const lastType = change === "checks" ? "check_finished" : change === "behavior" ? "check_finished" : "candidate_selected";
+  const first = history.find(event => event.type === firstType); assert(first);
+  const last = history.find(event => event.type === lastType && event !== first); assert(last);
+  replaceHistory(s, history.map(event => event === first ? last : event === last ? first : event));
+  await expect(runProbe(s.backend, s.probe)).rejects.toThrow("transition");
+});
+it("rejects duplicated selection events for one candidate", async () => {
+  const s = terminalScenario("duplicate-defect");
+  replaceHistory(s, objects(s.state.events).flatMap(event => event.type === "candidate_selected" ? [event, structuredClone(event)] : [event]));
+  await expect(runProbe(s.backend, s.probe)).rejects.toThrow("transition");
+});
+it("accepts independent host preparation interleaving and generated package hashes", async () => {
+  const s = terminalScenario("fulfilled");
+  const history = objects(s.state.events);
+  const preparing = history.filter(event => event.type === "host_preparing");
+  const ready = history.filter(event => event.type === "host_ready");
+  const first = preparing[0]; assert(first);
+  const reordered = [...preparing, ...ready].sort((a, b) => text(a.host_id).localeCompare(text(b.host_id)));
+  replaceHistory(s, history.flatMap(event => event === first ? reordered : [...preparing, ...ready].includes(event) ? [] : [event]));
+  for (const c of objects(s.state.cases)) {
+    const event = objects(s.state.events).find(event => event.type === "package_ready" && event.case_id === c.case_id); assert(event);
+    object(object(c.packages).bug_case).sha256 = "ab".repeat(32);
+    object(event.data).bug_case_sha256 = "ab".repeat(32);
+  }
+  await expect(runProbe(s.backend, s.probe)).resolves.toBeUndefined();
+});
+it.each(["missing", "late", "unbalanced", "wrong-final"])("rejects %s budget transitions despite a correct terminal ledger", async change => {
+  const s = terminalScenario("fulfilled");
+  const history = objects(s.state.events);
+  const first = history.find(event => event.type === "budget_updated"); assert(first);
+  const last = history.findLast(event => event.type === "budget_updated"); assert(last);
+  if (change === "missing") replaceHistory(s, history.filter(event => event !== first));
+  if (change === "late") {
+    const selected = history.find(event => event.type === "candidate_selected"); assert(selected);
+    replaceHistory(s, history.filter(event => event !== first).flatMap(event => event === selected ? [event, first] : [event]));
+  }
+  if (change === "unbalanced") object(first.data).remaining_microusd = 1;
+  if (change === "wrong-final") {
+    object(last.data).spent_microusd = integer(object(last.data).spent_microusd) - 1;
+    object(last.data).remaining_microusd = integer(object(last.data).remaining_microusd) + 1;
+  }
+  await expect(runProbe(s.backend, s.probe)).rejects.toThrow("transition");
+});
+it.each(["omitted-reservation", "discounted-reservation", "omitted-settlement", "discounted-settlement", "premature-worker-settlement"])(
+  "rejects %s in an intermediate budget event despite correct final totals", async change => {
+    const s = terminalScenario("fulfilled");
+    const budgets = objects(s.state.events).filter(event => event.type === "budget_updated");
+    const event = budgets[change.endsWith("settlement") && change !== "premature-worker-settlement" ? 2 : 1]; assert(event);
+    const data = object(event.data);
+    if (change === "omitted-reservation") data.reserved_microusd = 200000;
+    if (change === "discounted-reservation") data.reserved_microusd = 499999;
+    if (change === "omitted-settlement") { data.reserved_microusd = 500000; data.spent_microusd = 0; }
+    if (change === "discounted-settlement") data.spent_microusd = 299999;
+    if (change === "premature-worker-settlement") { data.reserved_microusd = 300000; data.spent_microusd = 200000; }
+    data.remaining_microusd = integer(object(s.state.budget).budget_microusd) - integer(data.reserved_microusd) - integer(data.spent_microusd);
+    await expect(runProbe(s.backend, s.probe)).rejects.toThrow("transition");
+  });
+it("rejects ordinary attention history that disagrees with the terminal null attention", async () => {
+  const s = terminalScenario("fulfilled");
+  const history = objects(s.state.events); const last = history.at(-1); assert(last);
+  replaceHistory(s, [...history, { ...last, type: "attention", data: { code: "needs_reconciliation" } }]);
+  await expect(runProbe(s.backend, s.probe)).rejects.toThrow("attention history");
+});
+it("accepts ordinary attention history with a matching warning and recovery", async () => {
+  const s = terminalScenario("fulfilled");
+  const history = objects(s.state.events); const last = history.at(-1); assert(last);
+  replaceHistory(s, [...history, { ...last, type: "attention", data: { code: "worker_unresponsive" } },
+    { ...last, type: "attention_cleared", data: { code: "worker_unresponsive" } }]);
+  await expect(runProbe(s.backend, s.probe)).resolves.toBeUndefined();
 });

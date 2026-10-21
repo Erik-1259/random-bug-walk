@@ -277,8 +277,13 @@ it("rejects an earlier delivered case disappearing during a stop", async () => {
   };
   await expect(runProbe(backend, { ...probe, outcome: "stopped_at_limit", stopCode: "budget_exhausted" })).rejects.toThrow("delivered case disappeared");
 });
-function cancellationScenario(repeat?: (response: Record<string, unknown>, stored: Record<string, unknown>) => void) {
+function cancellationScenario(repeat?: (response: Record<string, unknown>, stored: Record<string, unknown>) => void,
+  changeHistory?: (events: Record<string, unknown>[]) => Record<string, unknown>[], pageSize = 200) {
   const expected = fixture("status-cancelled");
+  if (changeHistory) {
+    expected.events = changeHistory(objects(expected.events)).map((event, index) => ({ ...event, seq: index + 1 }));
+    expected.next_after = objects(expected.events).length;
+  }
   const second = objects(expected.candidates)[1]; assert(second);
   const events = objects(expected.events);
   const checkpoint = events.findIndex(event => event.type === "check_finished" && event.candidate_id === second.candidate_id);
@@ -291,7 +296,9 @@ function cancellationScenario(repeat?: (response: Record<string, unknown>, store
   const replyState = (value: Record<string, unknown>, path: string, end: number) => {
     const response = object(JSON.parse(JSON.stringify(value).replaceAll(text(expected.request_id), id)) as unknown);
     const cursor = Number(path.split("?after=")[1] ?? 0);
-    response.events = objects(response.events).slice(0, end).filter(event => integer(event.seq) > cursor);
+    const history = objects(response.events).slice(0, end);
+    if (response.state === "running" && history.some(event => event.type === "stop_requested")) response.state = "stopping";
+    response.events = history.filter(event => integer(event.seq) > cursor).slice(0, pageSize);
     response.next_after = objects(response.events).at(-1)?.seq ?? cursor;
     return response;
   };
@@ -329,6 +336,24 @@ it("waits for the named second-candidate check before cancelling", async () => {
   const s = cancellationScenario();
   await expect(runProbe(s.backend, s.probe)).resolves.toBeUndefined();
   expect(s.wasStopped()).toBe(true);
+});
+it.each(["missing", "before-checkpoint", "after-in-flight-check", "after-incomplete", "duplicate-paged"])("rejects %s stop_requested in cancellation history", async change => {
+  const s = cancellationScenario(undefined, events => {
+    const stop = events.find(event => event.type === "stop_requested"); assert(stop);
+    if (change === "duplicate-paged") {
+      const at = events.indexOf(stop);
+      return [...events.slice(0, at + 1), structuredClone(stop), ...events.slice(at + 1)];
+    }
+    const history = events.filter(event => event !== stop);
+    if (change === "missing") return history;
+    const incomplete = history.find(event => event.type === "candidate_incomplete"); assert(incomplete);
+    const at = change === "before-checkpoint"
+      ? history.findIndex(event => event.type === "check_finished" && event.candidate_id === incomplete.candidate_id)
+      : history.indexOf(incomplete) + (change === "after-incomplete" ? 1 : 0);
+    assert(at > 0);
+    return [...history.slice(0, at), stop, ...history.slice(at)];
+  }, change === "duplicate-paged" ? 1 : 200);
+  await expect(runProbe(s.backend, s.probe)).rejects.toThrow();
 });
 it.each(["updated-at", "extra-event", "paged-extra-event", "hidden-tail"])("rejects repeated stop with %s despite unchanged counts", async change => {
   const s = cancellationScenario((response, stored) => {
@@ -969,6 +994,9 @@ it.each([false, true])("accepts a recorded launch failure already finished in th
   if (uncertain) {
     expected.attention = fixture("status-operational-error").attention;
     const budget = object(expected.budget); budget.reserved_microusd = budget.committed_microusd; budget.spent_microusd = 0;
+    const events = objects(expected.events); const last = events.at(-1); assert(last);
+    expected.events = [...events, { ...last, seq: 4, type: "attention", data: { code: "needs_reconciliation" } }];
+    expected.next_after = 4;
   }
   return expect(runRecordedFailure(expected)).resolves.toBeUndefined();
 });
