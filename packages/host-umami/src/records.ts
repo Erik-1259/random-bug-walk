@@ -1,5 +1,6 @@
-// Collecting one copy: the copy script writes its exit statuses and the driver's record set
-// (`out/`) under the results directory, which the runner brings back. The record set holds the
+// Collecting one copy: the copy script writes its exit statuses (the fixture placement and app
+// preparation, the freeze and the driver's run) and the driver's record set (`out/`) under the
+// results directory, which the runner brings back. The record set holds the
 // frozen job and this copy's one trial; it is imported with @rbw/admission, whose other two
 // trials then show as result_missing, and only this copy's own trial is read.
 import { lstatSync, readFileSync } from "node:fs";
@@ -173,11 +174,14 @@ export function readCopyResults(pins: UmamiPins, input: CopyResultsInput): CopyO
   // whatever it left behind: neither is ever a pass, a fail or a detection.
   if (outcome === "setup_failed") return unread(pins, state, "invalid", "the copy could not be prepared or started", false);
   if (outcome === "timed_out") return unread(pins, state, "incomplete", "the copy reached its time limit");
+  const prepareExit = resultsDir === null ? null : readExit(resultsDir, "prepare.exit");
   const freezeExit = resultsDir === null ? null : readExit(resultsDir, "freeze.exit");
   const driverExit = resultsDir === null ? null : readExit(resultsDir, "run.exit");
   // The driver's records count only when it finished: exit 0, or 3 for its own internal error.
   if (resultsDir === null || (driverExit !== 0 && driverExit !== 3)) {
     if (resultsDir === null) return unread(pins, state, "invalid", "nothing was collected from the copy");
+    // The copy script writes prepare.exit before anything else runs; a failure stops the copy there.
+    if (prepareExit !== null && prepareExit !== 0) return unread(pins, state, "invalid", "the copy could not place the validator's fixture or prepare the app tree");
     if (freezeExit !== 0) return unread(pins, state, "invalid", "the in-copy freeze of the original suite failed");
     if (driverExit === 2) return unread(pins, state, "invalid", "the driver refused the job for this image");
     return unread(pins, state, "invalid", driverExit === null ? "the driver did not finish" : `the driver exited ${String(driverExit)}`);
@@ -200,12 +204,13 @@ export function readCopyResults(pins: UmamiPins, input: CopyResultsInput): CopyO
 
 /**
  * Why a copy that ran is not evidence for the plan, or null: it ran another image than the plan's,
- * or on another architecture than the pinned one. A pinned digest can name a multi-architecture
- * index, so a matching digest alone does not show that the copy ran the pinned amd64 image.
+ * or on another architecture than the runtime image's pinned one. A pinned digest can name a
+ * multi-architecture index, so a matching digest alone does not show that the copy ran the pinned
+ * architecture's image.
  */
 function otherEnvironment(pins: UmamiPins, plan: CopyPlan, collected: CollectedCopy): string | null {
   if (plan.image.digest !== null && collected.image_digest !== plan.image.digest) return "the copy ran another image than the plan's";
-  if (collected.architecture !== pins.kit.architecture) return `the copy ran on ${collected.architecture}, not the pinned ${pins.kit.architecture}`;
+  if (collected.architecture !== pins.runtime.architecture) return `the copy ran on ${collected.architecture}, not the pinned ${pins.runtime.architecture}`;
   return null;
 }
 

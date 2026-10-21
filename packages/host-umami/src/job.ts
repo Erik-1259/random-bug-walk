@@ -1,9 +1,9 @@
 // The frozen judge_verify job the validator carries: the request and its expected trials, built
-// only with @rbw/schema's builders. Every copy runs one of its three trials with the kit's copy
-// script, so the in-copy driver checks the frozen suite hash and test IDs and the fixture's
-// added-suite hash against this job before it runs anything. Its identities are factory
-// placeholders; the content identities (suite, added suite, image, profile, patches, vectors) are
-// the pinned ones.
+// only with @rbw/schema's builders. Every copy runs one of its three trials with the copy script,
+// so the in-copy driver checks the frozen suite hash and test IDs and the fixture's added-suite
+// hash against this job before it runs anything. Its identities are factory placeholders; the
+// content identities (suite, added suite, runtime image, profile, patches, vectors) are the pinned
+// ones.
 import { buildExpectedTrials, buildJobRequest, canonicalDigest, mutationId, taskRevision } from "@rbw/schema";
 import type { ExpectedTrials, JobRequest, TaskRevisionIdentity } from "@rbw/schema";
 import type { PlantTarget } from "@rbw/factory-contract";
@@ -55,13 +55,17 @@ export function mutationIdOf(appCommit: string, targets: readonly PlantTarget[])
   return mutationId({ host_commit: appCommit, changes }, { allowedPaths: targets.map((target) => target.path) }).sha256;
 }
 
-/** The task identity of the frozen job: the released case's content identity under the factory's policy ID. */
+/**
+ * The task identity of the frozen job: the released case's content identity under the factory's
+ * policy ID, on the runtime image the copies run. The runtime image carries the kit image's
+ * manifest unchanged, so `kit_sha256` stays the kit's.
+ */
 export function frozenTaskIdentity(pins: UmamiPins): TaskRevisionIdentity {
   return {
     schema_version: 1,
     revision_kind: "complete",
     host_commit: pins.app_commit,
-    image_digest: pins.kit.digest,
+    image_digest: pins.runtime.digest,
     kit_sha256: pins.kit.kit_sha256,
     fixture_sha256: pins.kit.fixture_sha256,
     original_suite_sha256: pins.original_suite.sha256,
@@ -112,7 +116,7 @@ export function buildFrozenJob(pins: UmamiPins, testIds: readonly string[]): Fro
     task_revision: revision,
     policy_id: ids.policy_id,
     runtime_profile_sha256: pins.kit.profile_sha256,
-    image_digest: pins.kit.digest,
+    image_digest: pins.runtime.digest,
     expected_trials_key: `jobs/${ids.execution_id}/expected-trials.json`,
     expected_trials_sha256: expected.sha256,
     baseline_evidence_key: null,

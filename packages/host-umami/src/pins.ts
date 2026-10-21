@@ -1,7 +1,8 @@
-// Every value the Umami adapter pins: the baseline, the kit image and what it holds, the one
-// catalog entry's planted change and reference repair, and the released incident. Each value was
-// read once from the pinned image, the repository's probe files or the released case's record;
-// the tests check each against its source where the source is in the repository.
+// Every value the Umami adapter pins: the baseline, the kit image and what it holds, the runtime
+// image the bug case and every copy run in, the one catalog entry's planted change and reference
+// repair, and the released incident. Each value was read once from the pinned image, the
+// repository's probe files or the released case's record; the tests check each against its source
+// where the source is in the repository.
 import type { Architecture, PatchText, PlantTarget } from "@rbw/factory-contract";
 import type { ExpectedCheck } from "@rbw/schema";
 
@@ -10,6 +11,24 @@ export interface ExpectedVectors {
   clean: readonly ExpectedCheck[];
   buggy: readonly ExpectedCheck[];
   fixed: readonly ExpectedCheck[];
+}
+
+/**
+ * A runtime image (kit/umami-runtime): the kit image without the app source, the fixture and the
+ * hash list of the app's files. The bug case names it and every copy runs it.
+ */
+export interface UmamiRuntimePin {
+  /**
+   * A neutral reference that names no registry. A runner has to map it to the repository the image
+   * was pushed to and run by digest; no runner does that yet (see the README's "Not yet connected").
+   */
+  image: string;
+  digest: string;
+  /**
+   * The architecture the image is pinned for. A digest can name a multi-architecture index, so
+   * the digest alone does not fix it; collect makes a copy that ran on another one invalid.
+   */
+  architecture: Architecture;
 }
 
 /**
@@ -28,19 +47,21 @@ export interface UmamiPins {
     /** canonicalDigest of the sorted test IDs. */
     test_ids_sha256: string;
   };
+  /**
+   * The kit image (kit/umami): the released case ran in it, the prepared store is read from it and
+   * the runtime image is made from it. No copy and no debugging runtime runs it, because it holds
+   * the clean source and the fixture.
+   */
   kit: {
-    /**
-     * A neutral reference that names no registry. A runner has to map it to the repository the image
-     * was pushed to and run by digest; no runner does that yet (see the README's "Not yet connected").
-     */
+    /** A neutral reference that names no registry, as the runtime's does. */
     image: string;
     digest: string;
-    /**
-     * The architecture the image is pinned for. A digest can name a multi-architecture index, so
-     * the digest alone does not fix it; collect makes a copy that ran on another one invalid.
-     */
+    /** The architecture the kit image is pinned for. */
     architecture: Architecture;
-    /** SHA-256 of the image manifest (/opt/rbw/verifier/image-manifest.json). */
+    /**
+     * SHA-256 of the image manifest (/opt/rbw/verifier/image-manifest.json), which the runtime
+     * image made from this kit image carries unchanged.
+     */
     kit_sha256: string;
     /** treeSha256 of the image's app source (/workspace/app without the kit's non-source paths). */
     source_tree_sha256: string;
@@ -52,6 +73,8 @@ export interface UmamiPins {
     /** The copy profile's hash (resources, network, limits), the jobs' runtime profile. */
     profile_sha256: string;
   };
+  /** The runtime image made from the kit image, which the bug case names and every copy runs. */
+  runtime: UmamiRuntimePin;
   /** The released incident (issue.json), the permitted plain-language description. */
   incident: { path: string; sha256: string };
   /** The planted change's one target file. */
@@ -66,7 +89,11 @@ export interface UmamiPins {
    */
   alternative_repair: PatchText & { result_sha256: string };
   vectors: ExpectedVectors;
-  /** The frozen judge_verify job in the validator, as built by `frozenJob` from these pins and the frozen suite. */
+  /**
+   * The frozen judge_verify job in the validator, as `buildFrozenJob` builds it from these pins and
+   * the frozen suite. It names the runtime image's digest, so its hashes change with the runtime pin
+   * (`src/pin-cli.ts` derives them from a prepared store).
+   */
   job: { request_sha256: string; expected_trials_sha256: string };
 }
 
@@ -158,6 +185,11 @@ export const UMAMI_PINS: UmamiPins = {
     fixture_sha256: "787bd7722d86d585de86193c145b70884a075b4cc1e2fd6f08ff38c710528bdf",
     profile_sha256: "a22992701032b6ea704fb3165e65ded659fc3006bcfce11366eb088373929f91",
   },
+  // The amd64 build of kit/umami-runtime from the pinned kit image is not pushed yet, so the digest
+  // names no image and no copy or debugging runtime on these pins can start. It is replaced by the
+  // pushed image's digest, and the frozen job's hashes below with the ones src/pin-cli.ts derives
+  // for it, once the image is pushed.
+  runtime: { image: "random-bug-walk/umami-runtime", digest: `sha256:${"0".repeat(64)}`, architecture: "amd64" },
   incident: { path: "issue.json", sha256: "1a1d227377b5de18db1be03ddbb8aaf6d77ae7a5746cde37081922c3afc993c5" },
   target: {
     path: TARGET_PATH,
@@ -172,5 +204,5 @@ export const UMAMI_PINS: UmamiPins = {
     result_sha256: "49a8fba295573cce4577a4667c02781691f72057132f3554094d6a4f8e32e649",
   },
   vectors: TIME_ZONE_VECTORS,
-  job: { request_sha256: "89db318ca3898483a419057501992e2c5c9d21bf5b7a1205b0ee4bb65ebfceac", expected_trials_sha256: "f14185dc7dd0c71b59e1ee72a0cc16fa4caf68dfc73505696f09832f5a4cd10c" },
+  job: { request_sha256: "a94bf899d0882218e0e60426b778373fe08f544c61ca1c9e9424619a94e91aaf", expected_trials_sha256: "2b162a87d4b1942911f2c87aabbb4c80732b5fcf3e09064214c6b168bd7f1706" },
 };

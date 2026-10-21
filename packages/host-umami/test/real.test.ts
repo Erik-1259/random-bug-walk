@@ -15,6 +15,7 @@ import { TRIAL_OF_STATE, UMAMI_PROTOCOL } from "../src/protocol.ts";
 import { COPY_LIMITS, UMAMI_COPY_DESTINATIONS } from "../src/copy-plans.ts";
 import { collectCopy, readCopyResults } from "../src/records.ts";
 import { openStore } from "../src/store.ts";
+import { filesOf } from "../src/tree.ts";
 import type { UnpackedPair } from "@rbw/factory-contract";
 import { cleanupTemp, hashTree, recordingNewDir, tempDir } from "./support.ts";
 
@@ -95,7 +96,9 @@ describe.skipIf(STORE === undefined)("the real prepared store", () => {
     };
     for (const state of STATES) {
       const [plan] = adapter.copyPlans(state, pair, UMAMI_PROTOCOL);
-      expect(plan?.files).toEqual(state === "buggy" ? [{ path: UMAMI_PINS.target.path, sha256: UMAMI_PINS.target.after_sha256 }] : []);
+      // The whole state tree, because the runtime image holds no app source.
+      expect(plan?.files).toEqual(filesOf(state === "buggy" ? buggy : opened.index.source.files));
+      expect(plan?.evaluator_files.every((file) => file.path.startsWith("fixture/") || file.path.startsWith("job/"))).toBe(true);
     }
     expect(hashTree(store)).toEqual(before);
   });

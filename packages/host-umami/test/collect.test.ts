@@ -51,7 +51,7 @@ describe("collect", () => {
       status: "complete",
       original_suite: { observed: "pass", executed: 3, expected: 3 },
       verification: { observed: "fail", failure_codes: [CODE] },
-      image_digest: world.pins.kit.digest,
+      image_digest: world.pins.runtime.digest,
       architecture: "amd64",
       started_at: "2026-10-19T12:00:00.000Z",
       finished_at: "2026-10-19T12:03:10.000Z",
@@ -108,7 +108,27 @@ describe("collect", () => {
     expect(record).toMatchObject({ status: "invalid", verification: { observed: "error", failure_codes: [] } });
   });
 
-  it("makes a copy that ran on another architecture than the pinned amd64 invalid, as for another image", async () => {
+  it("makes a copy whose fixture placement or app preparation failed invalid, with that reason", async () => {
+    const { world, adapter, plan } = setup();
+    const clean = plan("clean");
+    const draft = { ...copyDraft(world.job, "clean"), prepareExit: 1, freezeExit: null, runExit: null };
+    const record = await adapter.collect(clean, collected(clean, writeCopyResults(world.job, draft), { exit_code: 92 }));
+    expect(validateContract("CopyRecord", record)).toEqual([]);
+    expect(record).toMatchObject({ status: "invalid", original_suite: { observed: "error" }, verification: { observed: "error", failure_codes: [] } });
+    expect(record.verification.detail).toBe("the copy could not place the validator's fixture or prepare the app tree");
+  });
+
+  it("checks the architecture against the runtime pin: an arm64 runtime pin takes arm64 copies", async () => {
+    const world = syntheticWorld({ runtime: { image: "synthetic/umami-runtime-arm64", digest: `sha256:${"d".repeat(64)}`, architecture: "arm64" } });
+    const adapter = buildUmamiAdapter(world.pins);
+    const [buggy] = adapter.copyPlans("buggy", unpackedPair(world, evaluatorTree(world)), UMAMI_PROTOCOL);
+    if (buggy === undefined) throw new Error("no plan");
+    const results = writeCopyResults(world.job, copyDraft(world.job, "buggy"));
+    expect(await adapter.collect(buggy, collected(buggy, results, { architecture: "arm64" }))).toMatchObject({ status: "complete", verification: { failure_codes: [CODE] } });
+    expect(await adapter.collect(buggy, collected(buggy, results, { architecture: "amd64" }))).toMatchObject({ status: "invalid" });
+  });
+
+  it("makes a copy that ran on another architecture than the pinned runtime's amd64 invalid, as for another image", async () => {
     const { world, adapter, plan } = setup();
     const states: CopyState[] = ["clean", "buggy", "fixed"];
     for (const state of states) {

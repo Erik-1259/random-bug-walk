@@ -14,6 +14,7 @@ import type {
   HostId,
   Interpretation,
   InterpretedCells,
+  Protocol,
   StopCode,
 } from "@rbw/factory-contract";
 
@@ -53,7 +54,11 @@ export type ReserveOutcome = { kind: "reserved" } | { kind: "refused"; reason: "
  */
 export interface RequestLedger {
   status(): Promise<LedgerStatus>;
-  reserveCandidate(input: { candidate_id: string; host_id: HostId; worst_case_microusd: number }): Promise<ReserveOutcome>;
+  /**
+   * `protocol` is the candidate's protocol from its host adapter, so a ledger can reserve one operation
+   * per declared copy; `worst_case_microusd` is those copies at the host's copy envelope.
+   */
+  reserveCandidate(input: { candidate_id: string; host_id: HostId; worst_case_microusd: number; protocol: Protocol }): Promise<ReserveOutcome>;
   /** Settles what the candidate's copies used and releases the rest of its reservation. */
   settleCandidate(input: { candidate_id: string }): Promise<void>;
   /**
@@ -70,8 +75,9 @@ export type CellMatrix = Record<CheckSet, Record<CopyState, CellObservation>>;
  * What the export-verification harness reports for one entry. It mirrors the result of the package
  * tool's `validatePair`, plus the harness identity and whether the archives passed their integrity
  * checks (hashes and pairing), which the qualification record and the `export_mismatch` reason need.
- * The `validatePair` result, as its interface is specified today, carries neither field, so the wiring
- * that adapts the real harness to this port is held until it does (see the README's "Held" section).
+ * The worker's wiring (planned) adapts `validatePair` to this port: `harness` is the package tool's
+ * `HARNESS_IDENTITY`, and `integrity` is "failed" exactly when its `error_code` is `export_mismatch`
+ * (every refusal of the pair itself). See the README's "Wiring the real harness" section.
  */
 export interface HarnessResult {
   result: "passed" | "failed" | "error";

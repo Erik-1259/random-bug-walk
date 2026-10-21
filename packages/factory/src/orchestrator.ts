@@ -403,9 +403,11 @@ class RequestRun {
         await skip();
         continue;
       }
+      // Outside the try: an adapter that throws here is an internal error, not an uncertain reservation.
+      const protocol = next.adapter.protocol(next.entry);
       let reserved: ReserveOutcome;
       try {
-        reserved = await deps.ledger.reserveCandidate({ candidate_id: next.candidate_id, host_id: next.host_id, worst_case_microusd: next.worst_case_microusd });
+        reserved = await deps.ledger.reserveCandidate({ candidate_id: next.candidate_id, host_id: next.host_id, worst_case_microusd: next.worst_case_microusd, protocol });
       } catch (error) {
         this.note(`reserving candidate ${next.candidate_id}`, error);
         await this.append(candidateEnded(next, "incomplete_run", this.at(), "Incomplete: reserving this candidate's worst case had an uncertain outcome, so it was not run or retried."));

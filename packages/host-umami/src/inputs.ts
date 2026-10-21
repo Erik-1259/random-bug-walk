@@ -10,6 +10,7 @@ import type { ExpectedCheck } from "@rbw/schema";
 import { baselineIdentity, expectedVectorsSha256 } from "./catalog.ts";
 import { UmamiRefusal } from "./errors.ts";
 import { buildFrozenJob } from "./job.ts";
+import { UMAMI_PINS } from "./pins.ts";
 import type { ExpectedVectors, UmamiPins } from "./pins.ts";
 import { UMAMI_PROTOCOL } from "./protocol.ts";
 import { materialize, openStore } from "./store.ts";
@@ -25,7 +26,7 @@ export interface InputOptions {
 
 /** Where the validator's checks put each part. */
 export const CHECKS_LAYOUT = {
-  /** The fixture package the kit image runs, file for file. */
+  /** The fixture package the pinned kit image ran, file for file; a copy moves it where the driver reads it. */
   fixture: "fixture/",
   /** The canonical clean, buggy and fixed vectors; its SHA-256 is the entry's expected_vectors_sha256. */
   vectors: "expected-vectors.json",
@@ -34,13 +35,21 @@ export const CHECKS_LAYOUT = {
   alternativeRecord: "evidence/alternative-repair.json",
 } as const;
 
-/** How a debugging agent runs the source: the kit image and its own commands. */
-export const RUNTIME_SETUP: readonly string[] = [
-  "Run in a linux/amd64 container of the kit image (kit_image at kit_image_digest). It holds Umami's locked dependencies, Node and PostgreSQL 15 with a migrated database.",
-  "Copy the source tree over /workspace/app in that container.",
-  "As root, build with /opt/rbw/bin/rbw-build-app, then start PostgreSQL and Umami on 127.0.0.1:3000 with /opt/rbw/bin/rbw-start. /opt/rbw/bin/rbw-stop stops both.",
-  "The original API test suite is tests/api with playwright.api.config.ts, unchanged.",
-];
+/**
+ * How a debugging agent runs the source: the runtime image and the kit's own commands. The runtime
+ * image holds no app source, so the agent copies the source tree in and prepares it once.
+ */
+export function runtimeSetup(pins: Pick<UmamiPins, "runtime">): string[] {
+  return [
+    `Run in a linux/${pins.runtime.architecture} container of the runtime image (kit_image at kit_image_digest). It holds Umami's locked dependencies under /workspace/app/node_modules, Node and PostgreSQL 15 with a migrated database, and no application source.`,
+    "Copy the source tree to /workspace/app in that container, then, as root, run /opt/rbw/bin/rbw-prepare-app once: it adds src/proxy.ts from docker/proxy.ts, makes the tree read-only to the app user and creates the paths the build writes.",
+    "As root, build with /opt/rbw/bin/rbw-build-app, then start PostgreSQL and Umami on 127.0.0.1:3000 with /opt/rbw/bin/rbw-start. /opt/rbw/bin/rbw-stop stops both.",
+    "The original API test suite is tests/api with playwright.api.config.ts, unchanged.",
+  ];
+}
+
+/** The setup steps for the real pins' runtime image. */
+export const RUNTIME_SETUP: readonly string[] = runtimeSetup(UMAMI_PINS);
 
 /** The qualification table of contract section 1. */
 export const EXPECTED_MATRIX: ExpectedMatrix = {
@@ -59,7 +68,7 @@ async function writeNew(root: string, path: string, bytes: Uint8Array): Promise<
   await writeFile(target, bytes, { flag: "wx", mode: 0o644 });
 }
 
-/** The buggy tree: the image's source with each planted target's resulting hash. */
+/** The buggy tree: the pinned source with each planted target's resulting hash. */
 export function buggyTree(sourceFiles: Readonly<Record<string, string>>, entry: CatalogEntry): Record<string, string> {
   const tree = { ...sourceFiles };
   for (const target of entry.plant.targets) {
@@ -82,7 +91,7 @@ export async function bugCaseInputs(pins: UmamiPins, entry: CatalogEntry, option
     baseline: baselineIdentity(pins),
     source: { root: sourceRoot, files: filesOf(buggy) },
     incident: { root: incidentRoot, files: [{ path: entry.incident.path, sha256: entry.incident.sha256 }] },
-    runtime: { kit_image: entry.environment.kit_image, kit_image_digest: entry.environment.kit_image_digest, setup: [...RUNTIME_SETUP] },
+    runtime: { kit_image: entry.environment.kit_image, kit_image_digest: entry.environment.kit_image_digest, setup: runtimeSetup(pins) },
   };
 }
 
