@@ -1,6 +1,6 @@
 // The factory's identities: the only implementation of the defect, case and candidate IDs, the two
-// UUIDv5 namespaces and the request and validation roots. The web routes, the hosted worker and the
-// package tools import these; none derives its own.
+// UUIDv5 namespaces, the request and validation roots and the request's budget key. The web routes,
+// the hosted worker and the package tools import these; none derives its own.
 import { createHash } from "node:crypto";
 import { canonicalDigest } from "@rbw/schema";
 import type { BaselineIdentity, CatalogEntry, CopyState, HostId } from "@rbw/factory-contract";
@@ -31,6 +31,15 @@ export function uuidV5(namespace: string, name: string): string {
 export function requestRoot(requestId: string): string {
   if (!isUuid(requestId)) throw new Error("the request ID is not a lowercase UUID");
   return uuidV5(FACTORY_REQUEST_NAMESPACE, requestId);
+}
+
+/**
+ * The spend ledger's budget key of a request: the SHA-256 of the canonical JSON of
+ * `{ schema_version: 1, kind: "factory.request_budget", request_id }`, as 64 lowercase hex digits.
+ */
+export function budgetKey(requestId: string): string {
+  if (!isUuid(requestId)) throw new Error("the request ID is not a lowercase UUID");
+  return canonicalDigest({ schema_version: 1, kind: "factory.request_budget", request_id: requestId }).sha256;
 }
 
 /** A validation run holds the factory slot and runs its operations under this root. */
