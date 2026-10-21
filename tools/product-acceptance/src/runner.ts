@@ -221,11 +221,19 @@ export async function runProbe(backend: IsolatedBackend, probe: Probe): Promise<
   }
   let cursor = 0;
   let stopped = false;
+  const snapshot = (value: Record<string, unknown>) => Object.fromEntries(Object.entries(value)
+    .filter(([field]) => !["events", "next_after", "poll_after_ms"].includes(field)));
+  let finishedSnapshot: Record<string, unknown> | undefined;
+  let completeHistory = false;
   let state = repeated;
   const history: Record<string, unknown>[] = [];
   // Bound a stalled service; do not poll faster than its declared interval.
   for (let polls = 0; polls < 1000; polls++) {
     observe(state);
+    if (state.state === "finished") {
+      if (finishedSnapshot === undefined) finishedSnapshot = structuredClone(snapshot(state));
+      else assert.deepEqual(snapshot(state), finishedSnapshot, "terminal result changed while reading history");
+    }
     for (const event of objects(state.events)) {
       assert.equal(integer(event.seq), ++cursor, "event gap or duplicate");
       history.push(structuredClone(event));
@@ -238,15 +246,16 @@ export async function runProbe(backend: IsolatedBackend, probe: Probe): Promise<
       observe(stopping);
       stopped = true;
     }
-    if (state.state === "finished") break;
+    if (state.state === "finished" && objects(state.events).length === 0) { completeHistory = true; break; }
     const delay = integer(state.poll_after_ms);
     assert(delay >= 0, "unsupported polling interval");
     await backend.wait(delay);
     state = await read(backend, `${path}?after=${String(cursor)}`);
   }
   if (probe.cancel && !stopped) throw new Unavailable("cancel-midway requires its observable pause after the second candidate's first check");
-  if (state.state !== "finished") throw new Unavailable("Request observation reached the runner poll limit.");
+  if (!completeHistory) throw new Unavailable("Request observation reached the runner poll limit.");
   for (const [seq, event] of observedEvents) assert.deepEqual(history[seq - 1], event, "previous event disappeared from history");
+  checkFinishedHistory(state, history);
   checkCriteriaEvents(state, history, true);
   checkFunnelHistory(state, history);
   if (probe.expectedFunnel) assert.deepEqual(state.funnel, probe.expectedFunnel, "funnel differs from pinned scenario");
@@ -263,8 +272,6 @@ export async function runProbe(backend: IsolatedBackend, probe: Probe): Promise<
   if (probe.expectedCandidates) checkScenarioCandidates(state, probe.expectedCandidates, history);
   // No validation or reconciliation runs between these reads. Only paging and
   // polling hints may differ; accounting and the stored terminal record may not.
-  const snapshot = (value: Record<string, unknown>) => Object.fromEntries(Object.entries(value)
-    .filter(([field]) => !["events", "next_after", "poll_after_ms"].includes(field)));
   const checkTerminalRead = async (page: Record<string, unknown>, phase: "reconnect" | "repeated stop") => {
     let checked = 0;
     for (;;) {
@@ -293,7 +300,7 @@ export async function runProbe(backend: IsolatedBackend, probe: Probe): Promise<
     await checkTerminalRead(again, "repeated stop");
   }
   if (probe.evidence) {
-    const evidence = await runEvidence(backend, state);
+    const evidence = await runRequestEvidence(backend, state);
     if (probe.scenario === "uncertain-provider") checkUncertainAttempt(state, history, evidence, probe.expectedItems);
     if (state.attention === null) {
       assert.equal(object(state.budget).reserved_microusd, 0, "terminal request left held spend");
@@ -304,6 +311,17 @@ export async function runProbe(backend: IsolatedBackend, probe: Probe): Promise<
   if (probe.downloads) await runDownloads(backend, state);
   if (probe.reconcile) await runReconciliation(backend, state, history);
   if (probe.validation) await runValidation(backend, state, probe.validation, history);
+}
+
+/** Section 8.4 applies to the complete history, not each cursor page. */
+function checkFinishedHistory(state: Record<string, unknown>, history: Record<string, unknown>[]): void {
+  const finished = history.filter(event => event.type === "request_finished");
+  assert.equal(finished.length, 1, "complete history needs exactly one request_finished");
+  const event = finished[0]; assert(event);
+  assert.deepEqual(event.data, { outcome: state.outcome, stop_code: object(state.stop_reason).code }, "request_finished differs from terminal result");
+  const permitted = ["budget_updated", "attention", "attention_cleared", "validation_started", "validation_finished"];
+  assert(history.filter(current => integer(current.seq) > integer(event.seq)).every(current => permitted.includes(text(current.type))),
+    "request progress after request_finished");
 }
 
 /** Section 8.1 records each attention change, including replacements and clears. */
@@ -363,7 +381,7 @@ export async function runValidation(backend: IsolatedBackend, state: Record<stri
   assert.equal(state.attention, null);
   const previousBudget = object(state.budget);
   assert.equal(previousBudget.reserved_microusd, 0);
-  const priorEvidence = structuredClone(await runEvidence(backend, state));
+  const priorEvidence = structuredClone(await runRequestEvidence(backend, state));
   const path = `/api/factory/requests/${text(state.request_id)}`;
   const c = objects(state.cases)[0]; assert(c, "validation scenario delivered no case");
   // Section 15.1 fixes these named scenarios' costs independently of the service.
@@ -425,6 +443,7 @@ export async function runValidation(backend: IsolatedBackend, state: Record<stri
     after = await read(backend, `${path}?after=${String(cursor)}`);
   }
   if (!complete) throw new Unavailable("Validation history reached the runner page limit.");
+  checkFinishedHistory(after, completedHistory);
   for (const [seq, event] of observed) assert.deepEqual(completedHistory[seq - 1], event, "validation lost prior event");
   const added = completedHistory.filter(event => integer(event.seq) > previousEnd);
   // The named settled controls reserve once, run once, then settle once.
@@ -456,6 +475,14 @@ export async function runValidation(backend: IsolatedBackend, state: Record<stri
   assert.equal(operations.reduce((sum, op) => sum + op.reserved_microusd, 0), cost, "validation reservation differs from pinned worst case");
   assert.equal(operations.reduce((sum, op) => sum + (op.settled_microusd ?? 0), 0), cost, "validation settlement differs from completed cost");
 }
+/** Fresh named scenarios have not requested validation before this boundary. */
+async function runRequestEvidence(backend: IsolatedBackend, status: unknown): Promise<TestEvidence> {
+  const evidence = await runEvidence(backend, status);
+  assert(evidence.operations.every(op => op.kind === "worker" || op.kind === "candidate_copy"),
+    "unexpected ledger operation before validation");
+  return evidence;
+}
+
 /** Schema validation narrows transport data; independent assertions decide accounting correctness. */
 export async function runEvidence(backend: IsolatedBackend, status: unknown): Promise<TestEvidence> {
   await verify(backend);
@@ -488,7 +515,7 @@ export async function runReconciliation(backend: IsolatedBackend, before: Record
   assert.equal(before.state, "finished");
   assert.equal(object(before.attention).code, "needs_reconciliation");
   checkAttentionHistory(before, history);
-  const priorEvidence = structuredClone(await runEvidence(backend, before));
+  const priorEvidence = structuredClone(await runRequestEvidence(backend, before));
   assert.equal(priorEvidence.slot.holder_validation_id, null, "request reconciliation has a validation holder");
   const interpretation = object(before.interpretation);
   const busy = await backend.request("POST", "/api/factory/requests", {
@@ -544,6 +571,7 @@ export async function runReconciliation(backend: IsolatedBackend, before: Record
     after = await read(backend, `/api/factory/requests/${text(before.request_id)}?after=${String(cursor)}`);
   }
   if (!complete) throw new Unavailable("Reconciliation history reached the runner page limit.");
+  checkFinishedHistory(after, completedHistory);
   for (const [seq, event] of witnessed) assert.deepEqual(completedHistory[seq - 1], event, "reconciliation lost witnessed history");
   let held = integer(previousBudget.reserved_microusd);
   let updates = 0;

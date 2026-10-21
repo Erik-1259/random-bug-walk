@@ -71,6 +71,29 @@ it.each(["failed", "error"] as const)("checks completed %s validation accounting
   expect(s.request.mock.calls.some(([method, path]) => method === "GET" && path.includes("?after="))).toBe(true);
 });
 
+it.each(["validation", "validation_copy"])("rejects phantom %s evidence before the first validation POST", async kind => {
+  const s = scenario();
+  const phantom = { operation_id: "cd".repeat(32), kind, call_name: "synthetic-phantom-validation", state: "terminal",
+    reserved_microusd: s.cost, settled_microusd: s.cost, attempt_ordinal: 1 };
+  const create = { call_name: phantom.call_name, provider: "sandbox", action: "create", at: s.before.created_at };
+  s.prior.operations.push(phantom); s.prior.provider_calls.push(create);
+  s.evidence.operations = [...objects(s.evidence.operations), structuredClone(phantom)];
+  s.evidence.provider_calls = [...objects(s.evidence.provider_calls), structuredClone(create)];
+  for (const status of [s.before, s.after]) {
+    const budget = object(status.budget);
+    budget.spent_microusd = integer(budget.spent_microusd) + s.cost;
+    budget.committed_microusd = integer(budget.committed_microusd) + s.cost;
+    budget.remaining_microusd = integer(budget.remaining_microusd) - s.cost;
+    for (const event of objects(status.events).filter(event => event.type === "budget_updated")) {
+      const data = object(event.data);
+      data.spent_microusd = integer(data.spent_microusd) + s.cost;
+      data.remaining_microusd = integer(data.remaining_microusd) - s.cost;
+    }
+  }
+  await expect(runValidation(s.backend, s.before, "failed")).rejects.toThrow();
+  expect(s.request.mock.calls.some(([method]) => method === "POST")).toBe(false);
+});
+
 it.each(["missing-field", "null-cost", "discounted-cost"])("rejects %s on the completed named validation", async change => {
   const s = scenario("error");
   if (change === "missing-field") delete s.run.finished_at;

@@ -294,3 +294,77 @@ it.each(["rejected", "invalid", "stopped", "missing-event", "wrong-event-candida
   s.normalize();
   await expect(runProbe(s.backend, s.probe)).rejects.toThrow();
 });
+
+for (const name of ["fulfilled", "exhausted", "cancelled", "operational-error"]) {
+  it(`rejects missing request_finished in complete ${name} history`, async () => {
+    const s = terminalScenario(name);
+    s.state.events = objects(s.state.events).filter(event => event.type !== "request_finished")
+      .map((event, index) => ({ ...event, seq: index + 1 }));
+    s.state.next_after = objects(s.state.events).length;
+    await expect(runProbe(s.backend, s.probe)).rejects.toThrow("request_finished");
+  });
+}
+function pageScenario(s: ReturnType<typeof terminalScenario>, size: number): void {
+  const request = s.backend.request.bind(s.backend);
+  s.backend.request = async (...args) => {
+    const reply = await request(...args);
+    const value = object(reply.body);
+    if ("events" in value) {
+      value.events = objects(value.events).slice(0, size);
+      value.next_after = objects(value.events).at(-1)?.seq ?? value.next_after;
+    }
+    return reply;
+  };
+}
+it("drains terminal history before requiring request_finished on a later page", async () => {
+  const s = terminalScenario("fulfilled"); pageScenario(s, 7);
+  await expect(runProbe(s.backend, s.probe)).resolves.toBeUndefined();
+});
+it("rejects duplicate request_finished events on separate terminal pages", async () => {
+  const s = terminalScenario("fulfilled");
+  const finished = objects(s.state.events).find(event => event.type === "request_finished"); assert(finished);
+  s.state.events = [...objects(s.state.events), { ...finished, seq: objects(s.state.events).length + 1 }];
+  s.state.next_after = objects(s.state.events).length;
+  pageScenario(s, 1);
+  await expect(runProbe(s.backend, s.probe)).rejects.toThrow("request_finished");
+});
+for (const name of ["fulfilled", "operational-error"]) {
+  it.each(["validation", "validation_copy"])(`rejects phantom %s evidence before any validation in ${name}`, async kind => {
+    const s = terminalScenario(name);
+    const operation = { operation_id: "ef".repeat(32), kind, call_name: "synthetic-phantom-validation", state: "reconciled",
+      reserved_microusd: 1000, settled_microusd: 1000, attempt_ordinal: 1 };
+    s.evidence.operations = [...objects(s.evidence.operations), operation];
+    s.evidence.provider_calls = [...objects(s.evidence.provider_calls), {
+      call_name: operation.call_name, provider: "sandbox", action: "create", at: s.state.created_at,
+    }];
+    const budget = object(s.state.budget);
+    budget.spent_microusd = integer(budget.spent_microusd) + 1000;
+    budget.committed_microusd = integer(budget.committed_microusd) + 1000;
+    budget.remaining_microusd = integer(budget.remaining_microusd) - 1000;
+    await expect(runProbe(s.backend, s.probe)).rejects.toThrow("before validation");
+  });
+}
+
+it("rejects request progress after request_finished in complete history", async () => {
+  const s = terminalScenario("fulfilled");
+  const history = objects(s.state.events);
+  const finished = history.find(event => event.type === "request_finished"); assert(finished);
+  const progress = history.findLast(event => event.type === "case_delivered"); assert(progress);
+  s.state.events = history.filter(event => event !== finished).flatMap(event => event === progress ? [finished, event] : [event])
+    .map((event, index) => ({ ...event, seq: index + 1 }));
+  await expect(runProbe(s.backend, s.probe)).rejects.toThrow("after request_finished");
+});
+
+it("rejects updated_at changing while draining terminal history", async () => {
+  const s = terminalScenario("fulfilled");
+  const request = s.backend.request.bind(s.backend);
+  let changed = false;
+  s.backend.request = async (...args) => {
+    if (!changed && args[0] === "GET" && args[1].includes("?after=")) {
+      changed = true;
+      s.state.updated_at = new Date(Date.parse(text(s.state.updated_at)) + 1000).toISOString();
+    }
+    return request(...args);
+  };
+  await expect(runProbe(s.backend, s.probe)).rejects.toThrow("terminal result changed while reading history");
+});

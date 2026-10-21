@@ -103,9 +103,12 @@ it("rejects delivery when the complete history omits criterion evidence", async 
     if (args[0] === "GET") {
       const value = object(reply.body);
       const after = Number(args[1].split("?after=")[1] ?? 0);
-      value.events = objects(value.events).filter(event => event.type !== "requested_criteria_passed")
-        .map((event, index) => ({ ...event, seq: after + index + 1 }));
-      value.next_after = after + objects(value.events).length;
+      const original = fixture("status-fulfilled");
+      const history = objects(object(JSON.parse(JSON.stringify(original).replaceAll(text(original.request_id), text(value.request_id))) as unknown).events)
+        .filter(event => event.type !== "requested_criteria_passed")
+        .map((event, index) => ({ ...event, seq: index + 1 }));
+      value.events = history.filter(event => event.seq > after);
+      value.next_after = history.at(-1)?.seq;
     }
     return reply;
   };
@@ -678,7 +681,9 @@ it("rejects assigning the exhausted scenario's case to the less specific item", 
       }
       return Promise.resolve({ status: first ? 202 : 200, body: value });
     }
-    return Promise.resolve({ status: 200, body: wrong });
+    const cursor = Number(path.split("?after=")[1] ?? 0);
+    const events = objects(wrong.events).filter(event => integer(event.seq) > cursor);
+    return Promise.resolve({ status: 200, body: { ...wrong, events, next_after: events.at(-1)?.seq ?? cursor } });
   };
   await expect(runProbe(backend, { scenario: "sources-exhausted", input: object(object(expected.interpretation).input),
     outcome: "sources_exhausted", stopCode: "sources_exhausted", expectedDelivery: "partial",

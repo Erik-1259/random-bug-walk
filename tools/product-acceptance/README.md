@@ -151,9 +151,19 @@ validation, every terminal observation retains its budget and attention as well
 as its completed results, starting with the concurrent Start responses.
 Reconnect must return exactly the witnessed terminal history, including an empty
 trailing page; no new event may appear before those intentional operations.
+Complete terminal history is drained through an empty page before requiring exactly
+one `request_finished` event matching the outcome and stop code. Only the
+contract-permitted accounting, attention and validation events may follow it.
+Every terminal page retains the first finished snapshot, including `updated_at`.
 Repeated stop must also preserve every terminal field, including `updated_at`,
 and the complete event tail. Only paging and polling hints may differ; every
 returned page is checked against the stored terminal response.
+
+Before any validation, named request probes allow only worker and candidate-copy
+ledger operations. The same rule applies before the first validation POST and
+before request reconciliation; matching status totals cannot justify an extra
+validation reservation. General evidence checks still support real validation
+operations, and post-validation checks constrain the newly added rows.
 
 The named failed/error validation probes also read request status and ledger
 evidence after completion. They check the pinned host cost, cleared reservations

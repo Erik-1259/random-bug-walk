@@ -10,12 +10,12 @@
   },
   "self_tests": {
     "command": "pnpm --filter @rbw/product-acceptance test --reporter=json",
-    "passed": 413,
+    "passed": 427,
     "failed": 0,
     "skipped": 0,
     "exit_code": 0
   },
-  "test_floor": 413,
+  "test_floor": 427,
   "failing_first": [
     {
       "scope": "final-contract invariant regressions",
@@ -262,6 +262,27 @@
       "failed": 10,
       "skipped": 24,
       "exit_code": 1
+    },
+    {
+      "scope": "missing completion event and phantom pre-validation operations with internally consistent accounting; paged terminal history",
+      "passed": 0,
+      "failed": 12,
+      "skipped": 413,
+      "exit_code": 1
+    },
+    {
+      "scope": "request progress after request_finished despite correct terminal totals",
+      "passed": 0,
+      "failed": 1,
+      "skipped": 425,
+      "exit_code": 1
+    },
+    {
+      "scope": "updated_at changed on a terminal history tail page and then remained stable",
+      "passed": 0,
+      "failed": 1,
+      "skipped": 426,
+      "exit_code": 1
     }
   ],
   "local_checks": [
@@ -335,6 +356,12 @@
       "command": "pnpm --filter @rbw/product-acceptance test --reporter=json",
       "meaning": "independent focused review reran the full suite after stop-idempotency and exact validation-sequence fixes",
       "passed": 413,
+      "exit_code": 0
+    },
+    {
+      "command": "pnpm --filter @rbw/product-acceptance test --reporter=json",
+      "meaning": "independent focused review reran the full suite after request-phase evidence and complete terminal-history fixes",
+      "passed": 427,
       "exit_code": 0
     }
   ],
@@ -455,6 +482,14 @@
     {
       "finding": "Validation history could settle before execution or contain extra budget events while required event pairs still existed.",
       "disposition": "Require the named settled controls to emit exactly reserve, start, finish and settle in that order. Bind expected amounts to the first and last events and retain linked validation identities and results."
+    },
+    {
+      "finding": "Fresh request-phase evidence could contain phantom validation reservations with matching creates and status totals.",
+      "disposition": "Allow only worker and candidate_copy before deliberate post-completion validation, including the first-validation and request-reconciliation baselines. Keep generic validation evidence checks valid; existing post-action checks constrain new operations and preserve prior rows."
+    },
+    {
+      "finding": "Complete terminal history could omit request_finished while final outcome and counts remained correct.",
+      "disposition": "Drain all terminal pages before requiring exactly one matching completion event and only contract-permitted subsequent events. Apply the same complete-history assertion after validation and reconciliation. Preserve the first finished snapshot including updated_at across the drain."
     }
   ],
   "http_regression_evidence": {
