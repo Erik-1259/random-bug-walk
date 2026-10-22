@@ -226,3 +226,21 @@ it("preserves opaque case and candidate identities when their relationships agre
   }
   expect(() => { checkStatus(JSON.parse(serialized) as unknown); }).not.toThrow();
 });
+
+for (const [host, baseline, otherBaseline] of [
+  ["task-report", "task-report@ca4a71f", "umami@ec0ff503"],
+  ["umami", "umami@ec0ff503", "task-report@ca4a71f"],
+] as const) {
+  it.each(["other-host", "unknown"])(`rejects %s baseline metadata on a delivered ${host} case`, change => {
+    const value = object(fixture("status-fulfilled"));
+    const c = objects(value.cases).find(c => c.host_id === host); assert(c);
+    c.baseline_id = change === "other-host" ? otherBaseline : "synthetic-baseline@0000000";
+    expect(() => { checkStatus(value); }).toThrow("case baseline differs from pinned host");
+  });
+  it(`accepts the pinned baseline on a delivered ${host} case`, () => {
+    const value = object(fixture("status-fulfilled"));
+    const c = objects(value.cases).find(c => c.host_id === host); assert(c);
+    expect(c.baseline_id).toBe(baseline);
+    expect(() => { checkStatus(value); }).not.toThrow();
+  });
+}

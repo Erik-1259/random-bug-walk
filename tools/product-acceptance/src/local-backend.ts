@@ -1,4 +1,4 @@
-import { execFile, spawn } from "node:child_process";
+import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { readdir, realpath } from "node:fs/promises";
 import { Agent, createServer, request as httpRequest } from "node:http";
 import { createRequire } from "node:module";
@@ -147,8 +147,56 @@ function isSession(reply: Reply, signedIn: boolean): boolean {
   return value.contract_version === "bug-request/1" && value.signed_in === signedIn;
 }
 
+/** Lifecycle for a detached process group spawned and owned by this runner. */
+export function ownLocalProcess(child: ChildProcess, release: () => void): { close: () => Promise<void>; interrupted: () => boolean } {
+  const exited = new Promise<void>(resolve => {
+    child.once("exit", () => { resolve(); });
+    child.once("error", () => { resolve(); });
+  });
+  const closed = new Promise<void>(resolve => { child.once("close", () => { resolve(); }); });
+  const signal = (value: NodeJS.Signals | 0): boolean => {
+    if (child.pid === undefined) return false;
+    try { process.kill(-child.pid, value); return true; }
+    catch (error) {
+      if (code(error) === "ESRCH") return false;
+      throw new Error(`Owned backend process cleanup failed (${code(error)})`, { cause: error });
+    }
+  };
+  const awaitExit = (completion: Promise<void>) => new Promise<boolean>(resolve => {
+    const timer = setTimeout(() => { resolve(false); }, 3000);
+    void completion.then(() => { clearTimeout(timer); resolve(true); });
+  });
+  let closing: Promise<void> | undefined;
+  let interrupted = false;
+  const close = (): Promise<void> => closing ??= (async () => {
+    try {
+      release();
+      if (!signal("SIGTERM")) return;
+      await awaitExit(exited);
+      if (signal(0)) signal("SIGKILL");
+      if (!await awaitExit(closed)) throw new Error("Owned backend process cleanup timed out");
+    } finally {
+      process.off("SIGINT", onInterrupt);
+      process.off("SIGTERM", onTerminate);
+    }
+  })();
+  const interrupt = (exitCode: number) => {
+    if (interrupted) return;
+    interrupted = true;
+    void close().then(() => { process.exit(exitCode); }, (error: unknown) => {
+      process.stderr.write(`Owned backend interruption cleanup failed (${code(error)})\n`);
+      process.exit(2);
+    });
+  };
+  const onInterrupt = () => { interrupt(130); };
+  const onTerminate = () => { interrupt(143); };
+  process.on("SIGINT", onInterrupt);
+  process.on("SIGTERM", onTerminate);
+  return { close, interrupted: () => interrupted };
+}
+
 /** Launch only the pinned, existing Next service in its documented disposable test mode. */
-export async function startLocalBackend(backendDirectory: string): Promise<{ backend: IsolatedBackend; close: () => Promise<void> }> {
+export async function startLocalBackend(backendDirectory: string): Promise<{ backend: IsolatedBackend; close: () => Promise<void>; interrupted: () => boolean }> {
   const checkout = await inspectLocalBackend(backendDirectory);
   if (process.platform === "win32") throw new Error("Owned process-group cleanup requires the cloud Unix runtime");
   const port = await unusedLoopbackPort();
@@ -159,6 +207,7 @@ export async function startLocalBackend(backendDirectory: string): Promise<{ bac
     stdio: ["ignore", "pipe", "pipe"],
     env: { ...commandEnv, NODE_ENV: "development", VERCEL_ENV: "development", RBW_FACTORY_TEST_MODE: "1", RBW_JUDGE_PASSCODE: PASSCODE, NEXT_TELEMETRY_DISABLED: "1", CI: "1", NO_COLOR: "1" },
   });
+  const owned = ownLocalProcess(child, () => { client.close(); });
   const startup = { ready: false };
   let spawnError: string | null = null;
   let output = "";
@@ -171,31 +220,13 @@ export async function startLocalBackend(backendDirectory: string): Promise<{ bac
     const known = /\b(?:EADDRINUSE|ENOENT|ERR_MODULE_NOT_FOUND|MODULE_NOT_FOUND)\b/.exec(chunk.toString("utf8"));
     if (known !== null) diagnostic = known[0];
   });
-  const exited = new Promise<void>(resolve => {
-    child.once("exit", () => { resolve(); });
-    child.once("error", error => { spawnError = code(error); resolve(); });
-  });
+  child.once("error", error => { spawnError = code(error); });
   const assertOwned = () => {
     if (spawnError !== null || child.pid === undefined || child.exitCode !== null || child.signalCode !== null) {
       throw new Error(`Owned local backend exited (code ${String(child.exitCode)}, diagnostic ${spawnError ?? diagnostic})`);
     }
   };
-  const signal = (value: NodeJS.Signals | 0): boolean => {
-    if (child.pid === undefined) return false;
-    try { process.kill(-child.pid, value); return true; }
-    catch (error) {
-      if (code(error) === "ESRCH") return false;
-      throw new Error(`Owned backend process cleanup failed (${code(error)})`, { cause: error });
-    }
-  };
-  let closing: Promise<void> | undefined;
-  const close = (): Promise<void> => closing ??= (async () => {
-    client.close();
-    if (!signal("SIGTERM")) return;
-    await Promise.race([exited, wait(3000)]);
-    if (signal(0)) signal("SIGKILL");
-    await Promise.race([exited, wait(3000)]);
-  })();
+  const { close, interrupted } = owned;
   try {
     const deadline = Date.now() + 120_000;
     while (!startup.ready && Date.now() < deadline) { assertOwned(); await wait(100); }
@@ -221,6 +252,7 @@ export async function startLocalBackend(backendDirectory: string): Promise<{ bac
         wait,
       },
       close,
+      interrupted,
     };
   } catch (error) {
     try { await close(); }

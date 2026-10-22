@@ -20,6 +20,7 @@ export function text(value: unknown): string {
 }
 const pinnedCapabilities: unknown = JSON.parse(readFileSync(new URL("../fixtures/capabilities.json", import.meta.url), "utf8"));
 const pinnedBugTypes = objects(object(pinnedCapabilities).bug_types);
+const pinnedHosts = objects(object(pinnedCapabilities).hosts);
 
 function nonnegative(value: unknown): number {
   const n = integer(value); assert(n >= 0, "negative count or amount"); return n;
@@ -67,6 +68,9 @@ const caseFields = new Set([
 ]);
 function checkCase(c: Record<string, unknown>, requestId: unknown): void {
   assert(Object.keys(c).every(key => caseFields.has(key)), "unexpected case field");
+  const host = pinnedHosts.find(host => host.host_id === c.host_id);
+  assert(host, "case host is not in the pinned catalog");
+  assert.equal(c.baseline_id, host.baseline_id, "case baseline differs from pinned host");
   assert.equal(object(c.qualification).verdict, "accepted");
   assert.equal(object(c.difficulty).status, "not_assessed");
   assert(cells(c.matrix).every(cell => cell.matches_expectation === true), "unqualified matrix");

@@ -49,7 +49,10 @@ provider credentials. Before probing, it verifies the owned process, test reset,
 and signed-in session. Later isolation checks preserve request state. Reconnect
 uses a new HTTP connection and retains the session cookie. Requests have timeouts;
 redirects and paths outside `/api/factory/` are refused. Cleanup stops the owned
-process group, discarding the service's in-memory state.
+process group, discarding the service's in-memory state. SIGINT and SIGTERM also
+await that cleanup during startup or probing, then exit 130 or 143 without a
+completed report. Repeated signals share the same cleanup; a cleanup failure
+exits 2 with a sanitized diagnostic.
 
 The adapter uses the public test-mode controls described in
 `packages/web/README.md` and contract section 15.1. It starts the existing service,
@@ -127,6 +130,8 @@ checks that the skipped entry shares the earlier candidate's defect. The
 response checks require one qualified candidate per delivered case and a delivered
 case for every qualified candidate. Host, bug type, defect, item and provenance
 source/entry must agree across that link, including in Start responses.
+Delivered cases also carry the baseline pinned for their host in capabilities;
+another host's baseline or an unknown baseline cannot pass through unchanged.
 The named fixtures also pin candidate-local check signatures and order, behavior and
 criterion transitions, package/delivery events and source exhaustion. Package
 events must match the returned package digests. Host preparation may interleave,

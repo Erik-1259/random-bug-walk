@@ -10,12 +10,12 @@
   },
   "self_tests": {
     "command": "pnpm --filter @rbw/product-acceptance test --reporter=json",
-    "passed": 525,
+    "passed": 541,
     "failed": 0,
     "skipped": 0,
     "exit_code": 0
   },
-  "test_floor": 525,
+  "test_floor": 541,
   "failing_first": [
     {
       "scope": "final-contract invariant regressions",
@@ -367,6 +367,20 @@
       "failed": 14,
       "skipped": 44,
       "exit_code": 1
+    },
+    {
+      "scope": "delivered case baseline from the other host or an unknown baseline, on both pinned hosts",
+      "passed": 85,
+      "failed": 4,
+      "skipped": 0,
+      "exit_code": 1
+    },
+    {
+      "scope": "SIGINT and SIGTERM during owned backend startup or polling and an interruption during normal cleanup",
+      "passed": 2,
+      "failed": 5,
+      "skipped": 0,
+      "exit_code": 1
     }
   ],
   "local_checks": [
@@ -470,6 +484,12 @@
       "command": "pnpm --filter @rbw/product-acceptance test --reporter=json",
       "meaning": "independent focused review reran the full suite after exact named validation matrix checks",
       "passed": 525,
+      "exit_code": 0
+    },
+    {
+      "command": "pnpm --filter @rbw/product-acceptance test --reporter=json",
+      "meaning": "independent focused review reran the full suite after pinned case baselines and owned-process interruption cleanup",
+      "passed": 541,
       "exit_code": 0
     }
   ],
@@ -630,6 +650,14 @@
     {
       "finding": "Named failed/error validation probes could accept a different failing cell or trial profile with the expected aggregate result.",
       "disposition": "Compare the completed six-cell matrix with its named fixture, including expected/observed outcomes, valid/total counts and cell verdicts. Keep generated identities, linked hashes, times, prose, polling and harness version outside fixture equality; generic null-matrix and uncertain null-cost errors remain valid."
+    },
+    {
+      "finding": "A delivered case could carry a baseline unrelated to its host while preserving the qualified-candidate link.",
+      "disposition": "Bind baseline_id to the host entry in pinned capabilities on every case check. Negative regressions cover swapped and unknown baselines for both hosts; both pinned baselines remain accepted."
+    },
+    {
+      "finding": "Interrupting the CLI could leave its detached local backend process group running.",
+      "disposition": "Install handlers immediately after spawn, share idempotent group cleanup with normal close, close active HTTP connections and await process closure before exiting 130 or 143. Suppress completed reports after interruption, retain handlers through repeated signals and remove them after cleanup. Subprocess regressions cover both signals during startup, polling and HTTP, normal-close races and TERM-resistant children or descendants."
     }
   ],
   "http_regression_evidence": {
@@ -641,5 +669,32 @@
     },
     "exit_code": 1,
     "meaning": "The new funnel assertion exposed early cancellation in the runner; regression and fix wait at the documented test-control checkpoint."
+  },
+  "local_backend_interruptions": {
+    "backend_revision": "f803962dcaf3b51b8881a7c4db99aeded33c7e1d",
+    "results": [
+      {
+        "phase": "startup",
+        "signal": "SIGINT",
+        "exit_code": 130,
+        "expected_exit_code": 130,
+        "no_owned_processes": true,
+        "port_closed": true,
+        "stdout_empty": true,
+        "stderr_empty": true
+      },
+      {
+        "phase": "loopback-listening",
+        "signal": "SIGTERM",
+        "exit_code": 143,
+        "expected_exit_code": 143,
+        "no_owned_processes": true,
+        "port_closed": true,
+        "stdout_empty": true,
+        "stderr_empty": true
+      }
+    ],
+    "command": "node tools/product-acceptance/src/cli.ts --local-backend ../rbw-api-test-backend",
+    "meaning": "The actual CLI received each signal after its owned backend spawned; SIGTERM followed loopback listener availability. This verifies process cleanup, not API acceptance."
   }
 }
