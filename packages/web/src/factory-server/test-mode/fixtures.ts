@@ -1,6 +1,7 @@
 // The contract fixtures that test mode replays (contract section 15.1): each scenario runs the events
-// of its end-state fixture, and interpretations are looked up by their normalized input. Every file is
-// checked against its contract definition when it loads.
+// of its end-state fixture, and interpretations are looked up by the requirements of their normalized
+// input, whatever item keys the client chose. Every file is checked against its contract definition
+// when it loads.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Capabilities, Case, DefName, DefTypes, Interpretation, NormalizedRequestInput, RequestStatus, TestScenario, ValidationRun } from "@rbw/factory-contract";
@@ -29,13 +30,17 @@ export interface TestFixtures {
   capabilities: Capabilities;
   example: Case;
   statuses: ReadonlyMap<string, RequestStatus>;
-  /** By the canonical SHA-256 of the normalized input. */
+  /** By the requirements of the normalized input (requirementsKey). */
   interpretations: ReadonlyMap<string, Interpretation>;
   runs: { running: ValidationRun; passed: ValidationRun; failed: ValidationRun; error: ValidationRun };
 }
 
-export function inputKey(input: NormalizedRequestInput): string {
-  return canonicalDigest(input).sha256;
+/**
+ * What test mode matches an input on: the canonical SHA-256 of the normalized input with every item's
+ * key left out. Items stay positional and keep their order, so only the keys do not count.
+ */
+export function requirementsKey(input: NormalizedRequestInput): string {
+  return canonicalDigest({ ...input, items: input.items.map((item) => ({ ...item, item_key: null })) }).sha256;
 }
 
 export function loadTestFixtures(dir: string): TestFixtures {
@@ -44,7 +49,7 @@ export function loadTestFixtures(dir: string): TestFixtures {
   const interpretations = new Map<string, Interpretation>();
   const all = [...INTERPRETATION_FILES.map((file) => read("Interpretation", file)), ...[...statuses.values()].map((status) => status.interpretation)];
   for (const interpretation of all) {
-    const key = inputKey(interpretation.input);
+    const key = requirementsKey(interpretation.input);
     const known = interpretations.get(key);
     if (known !== undefined && known.interpretation_sha256 !== interpretation.interpretation_sha256) {
       throw new Error("test mode: two fixtures interpret one input differently");

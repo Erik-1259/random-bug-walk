@@ -103,7 +103,7 @@ export function judgeEnabled(config: JudgeConfig, releaseId: string | null): boo
 /**
  * The factory routes' mode: `live` uses the wired dependencies, `test` the deterministic fakes of
  * contract section 15.1, and `refused` answers every factory call `unavailable`, because test mode
- * was asked for in a production deployment.
+ * was asked for on a Vercel deployment.
  */
 export type FactoryMode = "live" | "test" | "refused";
 
@@ -117,12 +117,17 @@ export interface FactoryConfig {
 
 export const DEFAULT_FACTORY_TEST_FIXTURES = "../../docs/product/fixtures/bug-request-v1";
 
-/** RBW_FACTORY_TEST_MODE=1 selects test mode, which is refused when VERCEL_ENV is production. */
+/**
+ * RBW_FACTORY_TEST_MODE=1 selects test mode, which keeps its records in one server process's memory. It
+ * is refused on any Vercel deployment (VERCEL_ENV preview or production), where instances do not share
+ * that memory; a local `next dev` or `vercel dev` (VERCEL_ENV unset or development) keeps it.
+ */
 export function loadFactoryConfig(env: Env = process.env, cwd: string = process.cwd()): FactoryConfig {
   const test = value(env, "RBW_FACTORY_TEST_MODE") === "1";
-  const production = value(env, "VERCEL_ENV") === "production";
+  const environment = value(env, "VERCEL_ENV");
+  const deployed = environment === "preview" || environment === "production";
   return {
-    mode: test ? (production ? "refused" : "test") : "live",
+    mode: test ? (deployed ? "refused" : "test") : "live",
     passcode: value(env, "RBW_JUDGE_PASSCODE"),
     testFixturesDir: resolve(cwd, value(env, "RBW_FACTORY_TEST_FIXTURES") ?? DEFAULT_FACTORY_TEST_FIXTURES),
   };

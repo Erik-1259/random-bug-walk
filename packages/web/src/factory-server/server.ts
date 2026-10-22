@@ -1,6 +1,7 @@
 // The factory routes' server: test mode's deterministic fakes (RBW_FACTORY_TEST_MODE=1, loaded only
-// then), or the live wiring (integration.ts). Test mode asked for in a production deployment is
-// refused: every port answers `unavailable`, nobody can sign in, and the test endpoints answer not_found.
+// then), or the live wiring (integration.ts). Test mode asked for on a Vercel deployment (preview or
+// production) is refused: every port answers `unavailable`, nobody can sign in, and the test endpoints
+// answer not_found.
 import { loadFactoryConfig, type FactoryConfig } from "../config.ts";
 import { refuse } from "./http.ts";
 import { liveServer } from "./integration.ts";
@@ -8,7 +9,7 @@ import type { FactoryServer, FactoryServerPorts } from "./ports.ts";
 
 export class FactoryRefusedError extends Error {
   constructor() {
-    super("factory test mode is refused in a production deployment");
+    super("factory test mode is refused on a Vercel deployment");
     this.name = "FactoryRefusedError";
   }
 }
@@ -61,7 +62,7 @@ export async function factoryServer(config: FactoryConfig = loadFactoryConfig())
       return testModeServer(config, log);
     }
     case "refused":
-      if (!refusalLogged) log("factory: RBW_FACTORY_TEST_MODE is refused when VERCEL_ENV is production; every factory port answers unavailable and nobody can sign in");
+      if (!refusalLogged) log("factory: RBW_FACTORY_TEST_MODE is refused on a Vercel deployment (VERCEL_ENV preview or production); every factory port answers unavailable and nobody can sign in");
       refusalLogged = true;
       return refusedServer();
     case "live":
