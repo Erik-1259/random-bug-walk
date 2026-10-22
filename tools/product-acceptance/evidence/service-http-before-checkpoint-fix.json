@@ -1,0 +1,107 @@
+{
+  "schema_version": 1,
+  "suite": "service-test-mode-http",
+  "contract_revision": "66651d67fcb09c402b25d9688ea492c0e69e1c2b",
+  "backend_revision": "f803962dcaf3b51b8881a7c4db99aeded33c7e1d",
+  "isolated_target_verified": true,
+  "acceptance_executed": false,
+  "summary": {
+    "passed": 2,
+    "failed": 1,
+    "unavailable": 5
+  },
+  "scenarios": [
+    {
+      "id": "identity",
+      "status": "unavailable",
+      "checks": [
+        "two-host-fulfilled"
+      ],
+      "dependencies": [
+        "Durable request/job identities are not exposed by TestEvidence; worker reservations alone do not prove durable job uniqueness."
+      ]
+    },
+    {
+      "id": "quantities",
+      "status": "unavailable",
+      "checks": [
+        "sources-exhausted"
+      ],
+      "dependencies": [
+        "A published startable scenario with unequal requested quantities and pinned per-item delivered/missing counts is unavailable; named multi-item inputs request 1/1."
+      ]
+    },
+    {
+      "id": "shared-budget",
+      "status": "unavailable",
+      "checks": [
+        "two-host-fulfilled",
+        "partial-budget"
+      ],
+      "dependencies": [
+        "TestEvidence does not associate copy operations with hosts; cross-host reservation attribution remains unavailable."
+      ]
+    },
+    {
+      "id": "qualification",
+      "status": "unavailable",
+      "checks": [
+        "duplicate-defect",
+        "wrong-failure",
+        "zero-result"
+      ],
+      "dependencies": [
+        "A deterministic setup_failed candidate control is not named in revision 2."
+      ]
+    },
+    {
+      "id": "unsupported",
+      "status": "passed",
+      "checks": [
+        "unsupported-interpretation-and-start"
+      ],
+      "dependencies": []
+    },
+    {
+      "id": "stops",
+      "status": "failed",
+      "checks": [
+        "partial-budget",
+        "sources-exhausted",
+        "zero-result",
+        "worker-lost",
+        "uncertain-provider",
+        "cancel-midway: funnel differs from pinned scenario"
+      ],
+      "dependencies": []
+    },
+    {
+      "id": "continuity",
+      "status": "passed",
+      "checks": [
+        "two-host-fulfilled",
+        "worker-lost",
+        "uncertain-provider"
+      ],
+      "dependencies": []
+    },
+    {
+      "id": "downloads",
+      "status": "unavailable",
+      "checks": [
+        "two-host-fulfilled",
+        "validation-failed",
+        "validation-error"
+      ],
+      "dependencies": [
+        "Pending-package access needs a documented deterministic window and case ID. Synthetic test-mode archives do not establish real package privacy or replay."
+      ]
+    }
+  ],
+  "exit_code": 1,
+  "service_http_executed": true,
+  "limitations": [
+    "The service uses an in-memory ledger and fixture-driven worker; durable database, factory core and controller-worker acceptance remain unavailable.",
+    "Deterministic HTTP results do not prove real provider execution, host qualification, package privacy or replay."
+  ]
+}

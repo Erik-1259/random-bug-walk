@@ -1,0 +1,796 @@
+{
+  "schema_version": 1,
+  "scope": "runner-self-tests-and-local-service-http",
+  "contract_revision": "66651d67fcb09c402b25d9688ea492c0e69e1c2b",
+  "backend_revision": "f803962dcaf3b51b8881a7c4db99aeded33c7e1d",
+  "runner_dependency": "04e926b9b2ff89078be124d905ad73dd57c24d90",
+  "runtime": {
+    "node": "24.21.0",
+    "pnpm": "10.33.2"
+  },
+  "self_tests": {
+    "command": "pnpm --filter @rbw/product-acceptance test --reporter=json",
+    "passed": 661,
+    "failed": 0,
+    "skipped": 0,
+    "exit_code": 0
+  },
+  "test_floor": 661,
+  "failing_first": [
+    {
+      "scope": "final-contract invariant regressions",
+      "passed": 51,
+      "failed": 19,
+      "exit_code": 1
+    },
+    {
+      "scope": "empty criterion identities",
+      "passed": 70,
+      "failed": 2,
+      "exit_code": 1
+    },
+    {
+      "scope": "missing complete-history criterion evidence",
+      "failed": 1,
+      "exit_code": 1
+    },
+    {
+      "scope": "local HTTP adapter",
+      "failure": "module absent before implementation",
+      "exit_code": 1
+    },
+    {
+      "scope": "initial Start interpretation, events, terminal state and delivered-case witnesses",
+      "failed": 8,
+      "passed": 41,
+      "exit_code": 1
+    },
+    {
+      "scope": "duplicate event in accepted Start",
+      "failed": 1,
+      "passed": 50,
+      "exit_code": 1
+    },
+    {
+      "scope": "original reservation and deterministic settlement amounts",
+      "failed": 3,
+      "passed": 9,
+      "exit_code": 1
+    },
+    {
+      "scope": "pinned criterion membership and positive candidate reservations",
+      "failed": 5,
+      "passed": 84,
+      "exit_code": 1
+    },
+    {
+      "scope": "unused reservations released without a provider create",
+      "failed": 2,
+      "passed": 15,
+      "exit_code": 1
+    },
+    {
+      "scope": "reconciliation response, settlement continuity, event history and released-slot evidence",
+      "failed": 12,
+      "passed": 50,
+      "exit_code": 1
+    },
+    {
+      "scope": "distinct ledger operations reusing one provider create",
+      "failed": 2,
+      "passed": 17,
+      "exit_code": 1
+    },
+    {
+      "scope": "post-validation status, accounting, slot, event history and ledger evidence",
+      "failed": 23,
+      "passed": 1,
+      "exit_code": 1
+    },
+    {
+      "scope": "new reconciliation transitions and pre-action terminal budget/attention continuity",
+      "passed": 62,
+      "failed": 13,
+      "exit_code": 1
+    },
+    {
+      "scope": "ordinary terminal slot release, pinned candidate outcomes/events and truthful unequal-quantity availability",
+      "passed": 7,
+      "failed": 33,
+      "exit_code": 1
+    },
+    {
+      "scope": "ordinary terminal retains open spend with consistent ledger totals and a free slot",
+      "failed": 1,
+      "passed": 0,
+      "skipped": 40,
+      "exit_code": 1
+    },
+    {
+      "scope": "complete pinned profile, terminal funnel counters and behavior history",
+      "passed": 43,
+      "failed": 20,
+      "exit_code": 1
+    },
+    {
+      "scope": "reconciliation evidence continuity helper absent",
+      "passed": 0,
+      "failed": 22,
+      "exit_code": 1
+    },
+    {
+      "scope": "reconciliation continuity assertions temporarily omitted",
+      "passed": 3,
+      "failed": 19,
+      "exit_code": 1
+    },
+    {
+      "scope": "reconciliation wiring with re-keyed or redistributed ledger evidence and conserved totals",
+      "passed": 0,
+      "failed": 4,
+      "skipped": 76,
+      "exit_code": 1
+    },
+    {
+      "scope": "creation/deadline and funnel progress from active concurrent Start responses",
+      "passed": 0,
+      "failed": 6,
+      "skipped": 80,
+      "exit_code": 1
+    },
+    {
+      "scope": "deadline contradicting the interpreted execution window",
+      "passed": 0,
+      "failed": 1,
+      "skipped": 64,
+      "exit_code": 1
+    },
+    {
+      "scope": "cancel-midway stopped after first delivery rather than the named second-candidate check checkpoint",
+      "failed": 1,
+      "passed": 0,
+      "skipped": 86,
+      "exit_code": 1
+    },
+    {
+      "scope": "candidate execution reservations and creates despite internally consistent omitted evidence",
+      "passed": 9,
+      "failed": 10,
+      "skipped": 0,
+      "exit_code": 1
+    },
+    {
+      "scope": "candidate evidence for an unselected host",
+      "passed": 20,
+      "failed": 1,
+      "skipped": 0,
+      "exit_code": 1
+    },
+    {
+      "scope": "typed initial/concurrent/replayed status, reset and error boundaries",
+      "passed": 0,
+      "failed": 16,
+      "skipped": 87,
+      "exit_code": 1
+    },
+    {
+      "scope": "unsupported refusal changes the returned interpretation",
+      "passed": 0,
+      "failed": 1,
+      "skipped": 103,
+      "exit_code": 1
+    },
+    {
+      "scope": "download size disagrees with bytes despite a matching digest",
+      "passed": 0,
+      "failed": 1,
+      "skipped": 344,
+      "exit_code": 1
+    },
+    {
+      "scope": "successful terminal result in a fresh202 response",
+      "passed": 0,
+      "failed": 1,
+      "skipped": 345,
+      "exit_code": 1
+    },
+    {
+      "scope": "provider stop without a matching reservation",
+      "passed": 19,
+      "failed": 1,
+      "skipped": 0,
+      "exit_code": 1
+    },
+    {
+      "scope": "collapsed or split candidate-copy identities with conserved original amounts, including uncertain-provider before and after reconciliation",
+      "passed": 23,
+      "failed": 9,
+      "skipped": 0,
+      "exit_code": 1
+    },
+    {
+      "scope": "post-launch stop codes or progress in fresh terminal202, including later history pages, and a validation holder before request reconciliation",
+      "passed": 2,
+      "failed": 10,
+      "skipped": 105,
+      "exit_code": 1
+    },
+    {
+      "scope": "uncertain-provider first candidate/create evidence and ordered selection instead of worker-only uncertainty",
+      "passed": 1,
+      "failed": 6,
+      "skipped": 65,
+      "exit_code": 1
+    },
+    {
+      "scope": "uncertain-provider selected source outside the independently pinned input",
+      "passed": 0,
+      "failed": 1,
+      "exit_code": 1
+    },
+    {
+      "scope": "terminal events appended on the same or following reconnect page with the old comparison restored",
+      "passed": 0,
+      "failed": 2,
+      "skipped": 117,
+      "exit_code": 1
+    },
+    {
+      "scope": "matching active attention history for worker-lost and uncertain-provider, and partial uncertain candidate outcome/event correspondence",
+      "passed": 4,
+      "failed": 15,
+      "skipped": 72,
+      "exit_code": 1
+    },
+    {
+      "scope": "direct reconciliation must reject unrecorded attention before any API call",
+      "passed": 0,
+      "failed": 1,
+      "skipped": 119,
+      "exit_code": 1
+    },
+    {
+      "scope": "repeated stop mutates updated_at or appends events in the response or a hidden later page",
+      "passed": 2,
+      "failed": 4,
+      "skipped": 119,
+      "exit_code": 1
+    },
+    {
+      "scope": "named failed/error validation reorders reserve/start/finish/settle or adds budget events despite correct final accounting",
+      "passed": 0,
+      "failed": 10,
+      "skipped": 24,
+      "exit_code": 1
+    },
+    {
+      "scope": "missing completion event and phantom pre-validation operations with internally consistent accounting; paged terminal history",
+      "passed": 0,
+      "failed": 12,
+      "skipped": 413,
+      "exit_code": 1
+    },
+    {
+      "scope": "request progress after request_finished despite correct terminal totals",
+      "passed": 0,
+      "failed": 1,
+      "skipped": 425,
+      "exit_code": 1
+    },
+    {
+      "scope": "updated_at changed on a terminal history tail page and then remained stable",
+      "passed": 0,
+      "failed": 1,
+      "skipped": 426,
+      "exit_code": 1
+    },
+    {
+      "scope": "phantom case validation and validation events in fresh paged request history without validation ledger rows",
+      "passed": 0,
+      "failed": 4,
+      "skipped": 435,
+      "exit_code": 1
+    },
+    {
+      "scope": "prior validation on either case or old validation events, including beyond an initial page, must reject before the first validation POST",
+      "passed": 0,
+      "failed": 8,
+      "skipped": 36,
+      "exit_code": 1
+    },
+    {
+      "scope": "prior validation events must reject before request reconciliation",
+      "passed": 0,
+      "failed": 2,
+      "skipped": 439,
+      "exit_code": 1
+    },
+    {
+      "scope": "missing, duplicate/paged, early or late cancellation stop history",
+      "passed": 0,
+      "failed": 4,
+      "skipped": 127,
+      "exit_code": 1
+    },
+    {
+      "scope": "stalled-worker warning sequence and uncertain-create completed-check progress",
+      "passed": 0,
+      "failed": 7,
+      "skipped": 445,
+      "exit_code": 1
+    },
+    {
+      "scope": "cancellation stop recorded after its resumed in-flight check",
+      "passed": 0,
+      "failed": 1,
+      "skipped": 131,
+      "exit_code": 1
+    },
+    {
+      "scope": "complete named candidate, check, package, source, worker, host and budget transition histories",
+      "passed": 115,
+      "failed": 33,
+      "skipped": 0,
+      "exit_code": 1
+    },
+    {
+      "scope": "intermediate reservation and settlement amounts despite correct final accounting",
+      "passed": 148,
+      "failed": 5,
+      "skipped": 0,
+      "exit_code": 1
+    },
+    {
+      "scope": "ordinary terminal null attention contradicting unclosed history",
+      "passed": 1,
+      "failed": 1,
+      "skipped": 153,
+      "exit_code": 1
+    },
+    {
+      "scope": "updated_at drift from first terminal concurrent Start, sequential Start replay or Stop response",
+      "passed": 2,
+      "failed": 3,
+      "skipped": 132,
+      "exit_code": 1
+    },
+    {
+      "scope": "case/candidate host, type and provenance mismatch, duplicate qualified mapping and orphan qualified candidate",
+      "passed": 76,
+      "failed": 7,
+      "skipped": 0,
+      "exit_code": 1
+    },
+    {
+      "scope": "named validation matrices with the correct aggregate result but wrong cells, trial counts, incomplete errors or a null matrix, through polled and finished-202 completion",
+      "passed": 4,
+      "failed": 14,
+      "skipped": 44,
+      "exit_code": 1
+    },
+    {
+      "scope": "delivered case baseline from the other host or an unknown baseline, on both pinned hosts",
+      "passed": 85,
+      "failed": 4,
+      "skipped": 0,
+      "exit_code": 1
+    },
+    {
+      "scope": "SIGINT and SIGTERM during owned backend startup or polling and an interruption during normal cleanup",
+      "passed": 2,
+      "failed": 5,
+      "skipped": 0,
+      "exit_code": 1
+    },
+    {
+      "scope": "missing, discounted, duplicated or misordered uncertain-provider pre-reconciliation budget snapshots despite correct terminal status and ledger, including paged history",
+      "passed": 3,
+      "failed": 18,
+      "skipped": 541,
+      "exit_code": 1
+    },
+    {
+      "scope": "no-change reconciliation budget events before settlement, repeated partial settlements and repeated zero-held updates, in single and paged history",
+      "passed": 2,
+      "failed": 6,
+      "skipped": 561,
+      "exit_code": 1
+    },
+    {
+      "scope": "sequential request lifecycle regressions between polls, from every concurrent Start position to replay, and from the Stop response to the next poll; legitimate skipped, repeated and unordered concurrent states remain valid",
+      "passed": 6,
+      "failed": 12,
+      "skipped": 569,
+      "exit_code": 1
+    },
+    {
+      "scope": "successful Stop response still running instead of recording stopping or completion",
+      "passed": 0,
+      "failed": 1,
+      "skipped": 587,
+      "exit_code": 1
+    },
+    {
+      "scope": "unsolicited stop history in unstopped ordinary and uncertain probes; delivered qualification matrix run-count drift across both hosts and all six cells, with incomplete qualification evidence and paged history",
+      "passed": 3,
+      "failed": 45,
+      "skipped": 588,
+      "exit_code": 1
+    },
+    {
+      "scope": "event suffixes and inconsistent next_after cursors in each initial/concurrent Start and in stopping or finished one-off Stop replies; valid short, repeated and unordered prefixes remain supported",
+      "passed": 5,
+      "failed": 20,
+      "skipped": 636,
+      "exit_code": 1
+    }
+  ],
+  "local_checks": [
+    {
+      "command": "pnpm install --frozen-lockfile --offline",
+      "exit_code": 0
+    },
+    {
+      "command": "pnpm --filter @rbw/product-acceptance typecheck",
+      "exit_code": 0
+    },
+    {
+      "command": "pnpm --filter @rbw/product-acceptance lint",
+      "exit_code": 0
+    },
+    {
+      "command": "pnpm --filter @rbw/product-acceptance build",
+      "exit_code": 0
+    },
+    {
+      "command": "node tools/product-acceptance/src/cli.ts",
+      "exit_code": 2,
+      "meaning": "no backend selected; eight groups unavailable"
+    },
+    {
+      "command": "pnpm exec vitest run packages/web/test/factory-server/server.test.ts",
+      "checkout": "pinned backend",
+      "passed": 10,
+      "exit_code": 0
+    },
+    {
+      "command": "node tools/product-acceptance/src/cli.ts --local-backend ../rbw-api-test-backend",
+      "exit_code": 2,
+      "report": "service-http.json"
+    },
+    {
+      "command": "node scripts/checks/prose.ts",
+      "exit_code": 0
+    },
+    {
+      "command": "pnpm --filter @rbw/product-acceptance test --reporter=json",
+      "meaning": "independent focused review reran the full runner suite",
+      "passed": 346,
+      "exit_code": 0
+    },
+    {
+      "command": "pnpm --filter @rbw/product-acceptance test -t \"reconciliation evidence despite conserved totals\"",
+      "meaning": "independent review verified the corrected earlier-rejection assertion after finding the stale test expectation",
+      "passed": 4,
+      "exit_code": 0
+    },
+    {
+      "command": "pnpm --filter @rbw/product-acceptance test --reporter=json",
+      "meaning": "independent focused review reran the full suite after launch-failure and request-holder fixes",
+      "passed": 369,
+      "exit_code": 0
+    },
+    {
+      "command": "pnpm --filter @rbw/product-acceptance test --reporter=json",
+      "meaning": "independent focused review reran the full suite after candidate-attempt and reconnect-history fixes",
+      "passed": 379,
+      "exit_code": 0
+    },
+    {
+      "command": "pnpm --filter @rbw/product-acceptance test --reporter=json",
+      "meaning": "independent focused review reran the full suite after uncertainty state/event correspondence fixes",
+      "passed": 398,
+      "exit_code": 0
+    },
+    {
+      "command": "pnpm --filter @rbw/product-acceptance test --reporter=json",
+      "meaning": "independent focused review reran the full suite after stop-idempotency and exact validation-sequence fixes",
+      "passed": 413,
+      "exit_code": 0
+    },
+    {
+      "command": "pnpm --filter @rbw/product-acceptance test --reporter=json",
+      "meaning": "independent focused review reran the full suite after request-phase evidence and complete terminal-history fixes",
+      "passed": 427,
+      "exit_code": 0
+    },
+    {
+      "command": "pnpm --filter @rbw/product-acceptance test --reporter=json",
+      "meaning": "independent focused review reran the full suite after complete fresh-validation baseline checks",
+      "passed": 441,
+      "exit_code": 0
+    },
+    {
+      "command": "pnpm --filter @rbw/product-acceptance test --reporter=json",
+      "meaning": "independent focused review reran the full suite after complete named transition, budget and attention-history checks",
+      "passed": 494,
+      "exit_code": 0
+    },
+    {
+      "command": "pnpm --filter @rbw/product-acceptance test --reporter=json",
+      "meaning": "independent focused review reran the full suite after first-terminal snapshot and case/candidate provenance fixes",
+      "passed": 507,
+      "exit_code": 0
+    },
+    {
+      "command": "pnpm --filter @rbw/product-acceptance test --reporter=json",
+      "meaning": "independent focused review reran the full suite after exact named validation matrix checks",
+      "passed": 525,
+      "exit_code": 0
+    },
+    {
+      "command": "pnpm --filter @rbw/product-acceptance test --reporter=json",
+      "meaning": "independent focused review reran the full suite after pinned case baselines and owned-process interruption cleanup",
+      "passed": 541,
+      "exit_code": 0
+    },
+    {
+      "command": "pnpm --filter @rbw/product-acceptance test --reporter=json",
+      "meaning": "independent focused review reran the full suite after uncertain-provider pre-reconciliation budget history checks",
+      "passed": 562,
+      "exit_code": 0
+    },
+    {
+      "command": "pnpm --filter @rbw/product-acceptance test --reporter=json",
+      "meaning": "independent focused review reran the full suite after rejecting unchanged reconciliation budget events",
+      "passed": 569,
+      "exit_code": 0
+    },
+    {
+      "command": "pnpm --filter @rbw/product-acceptance test --reporter=json",
+      "meaning": "independent focused review reran the full suite after request lifecycle and Stop-response continuity checks",
+      "passed": 588,
+      "exit_code": 0
+    },
+    {
+      "command": "pnpm --filter @rbw/product-acceptance test --reporter=json",
+      "meaning": "independent focused review reran the full suite after unsolicited-stop and qualification-matrix evidence checks",
+      "passed": 636,
+      "exit_code": 0
+    },
+    {
+      "command": "pnpm --filter @rbw/product-acceptance test --reporter=json",
+      "meaning": "independent focused review reran the full suite after cursor checks at every observed response boundary",
+      "passed": 661,
+      "exit_code": 0
+    }
+  ],
+  "limitations": [
+    "Self-tests are not backend acceptance.",
+    "Service HTTP uses the existing in-memory test mode and fixture-driven worker, not durable storage or the factory core/controller worker.",
+    "No real provider execution, host qualification, package privacy or package replay is established."
+  ],
+  "review_dispositions": [
+    {
+      "finding": "Initial Start snapshots could lose interpretation, events, terminal data or delivered-case content before polling.",
+      "disposition": "Fixed with observation witnesses across every response, preserving unordered concurrent snapshots and legitimate finished 202 failures."
+    },
+    {
+      "finding": "Internally consistent evidence could hide changed original reservations or discounted deterministic settlements.",
+      "disposition": "Fixed with the pinned worker reservation, positive candidate originals and provider-create-aware settlement checks."
+    },
+    {
+      "finding": "An undescribed item could deliver a criterion outside its bug type.",
+      "disposition": "Fixed with independent membership in the pinned public capabilities fixture."
+    },
+    {
+      "finding": "A blanket worst-case settlement assertion rejected unused reservations in the real uncertain-provider HTTP scenario.",
+      "disposition": "Corrected the runner to distinguish launched operations from reservations released at zero; no service change."
+    },
+    {
+      "finding": "The reconciliation POST accepted any successful status and ignored its body.",
+      "disposition": "Require exact 200 and typed RequestStatus; independently check returned and later status for settled amounts, terminal data and witnessed event continuity."
+    },
+    {
+      "finding": "Scenario reset could hide a factory slot retained after reconciliation.",
+      "disposition": "Read typed evidence before any reset; verify ledger accounting and both slot holder fields are null."
+    },
+    {
+      "finding": "Distinct operation IDs could share one call name and double-count a single provider create.",
+      "disposition": "Require unique operation call names in the deterministic scenarios; regressions reject internally consistent doubled held and settled totals."
+    },
+    {
+      "finding": "Failed/error validation probes could finish without checking the request budget, ledger, events or slot after completion.",
+      "disposition": "Read typed status and evidence before reset; check the pinned known completion cost, settled accounting, free slot, retained results and evidence, and linked validation/budget events across pages. General uncertain-error null-cost semantics remain valid."
+    },
+    {
+      "finding": "Reconciliation could return old history without recording new settlement and attention-clear transitions.",
+      "disposition": "Drain paged history and require new conserving budget updates followed by the matching attention clear beyond the prior history end; preserve earlier event witnesses."
+    },
+    {
+      "finding": "Terminal Start observations excluded budget and attention, allowing later responses to silently replace them before any post-completion action.",
+      "disposition": "Include budget and attention in every pre-action terminal continuity baseline, including accepted, concurrent replay and repeated Start responses."
+    },
+    {
+      "finding": "Ordinary terminal probes could retain a factory slot until the next reset without failing.",
+      "disposition": "Compare expected terminal attention and require zero held spend and both slot holders cleared in read-only evidence before any follow-up action or reset."
+    },
+    {
+      "finding": "Wrong-failure and related negative candidate paths could report correct counts while omitting or relabeling the candidate outcome.",
+      "disposition": "Compare pinned catalog entries, stages, reason codes, item/case ownership and defect relationships, plus linked rejection/skip/incomplete events; leave uncertain-provider candidate details unpinned because its end state is not specified."
+    },
+    {
+      "finding": "The quantities group claimed unequal requested quantities although runnable multi-item fixtures request 1/1.",
+      "disposition": "Mark that coverage unavailable and document the exact missing startable unequal-quantity control; retain existing separate-item count checks without inventing inputs."
+    },
+    {
+      "finding": "Reconciliation could delete or rewrite held ledger rows while retaining correct aggregate totals.",
+      "disposition": "Compare validated evidence before and after: preserve operation identities, call metadata, original reservations and provider records; reconcile each held row individually without new creates."
+    },
+    {
+      "finding": "Funnel explored, behavior and criterion counters could be false while delivery counts remained correct.",
+      "disposition": "Pin named terminal funnel counts, enforce stage bounds, compare complete-history distinct candidate events, and retain progress witnessed in concurrent Starts through later sequential reads."
+    },
+    {
+      "finding": "A consistently incorrect interpretation profile could remain frozen and escape the item-only expectations.",
+      "disposition": "Independently compare the complete semantic profile, including versions, route, prices, host use, quantities, limits and request problems; allow generated hashes, descriptive wording and permitted zero-count rows. Preserve request creation/deadline and the interpreted execution window."
+    },
+    {
+      "finding": "Exact funnel comparison exposed an early runner stop in the actual cancel-midway HTTP scenario.",
+      "disposition": "Wait for the second candidate first check_finished after the first delivery, as the named control specifies. Preserve the initial failed HTTP report separately; no backend change."
+    },
+    {
+      "finding": "Candidate ledger and provider evidence could be omitted together while reported budget totals were reduced to match.",
+      "disposition": "Require pinned original totals for non-skipped candidates, matching worker and candidate creates, and reservations for every provider record. Preserve unused uncertain-provider zero settlements. Structured per-copy attribution remains unavailable."
+    },
+    {
+      "finding": "Initial, concurrent and replayed RequestStatus bodies were not fully schema-checked.",
+      "disposition": "Schema-check every observed status at the boundary in addition to independent invariants. Also validate reset and error envelopes, retain unsupported interpretation details, require fresh finished202 outcomes to be operational failures, and compare archive sizes to downloaded bytes."
+    },
+    {
+      "finding": "One candidate-copy row with the full worst case could replace three distinct reservations and still satisfy aggregate amounts and launch bounds.",
+      "disposition": "Require the pinned test-mode profile cardinality of three distinct copy operations per non-skipped candidate in aggregate; keep unique IDs/calls and full originals before and after uncertain-provider reconciliation. The exception only affects launches and settlements. Regressions preserve totals while collapsing or splitting rows; update the existing collapsed reconciliation test to expect its earlier rejection."
+    },
+    {
+      "finding": "A fresh terminal202 could contain an entire post-launch operational-failure scenario.",
+      "disposition": "Require a recorded reservation/launch-failure shape with operational_error stop code and no heartbeat, candidates, delivery, started count, funnel progress or post-launch events. Retain this restriction across concurrent snapshots and later history pages; deterministic commitment stays within the worker worst case. Uncertain launch attention and held spend remain valid."
+    },
+    {
+      "finding": "A request awaiting reconciliation could also report a validation holder, then hide it by clearing both fields during reconciliation.",
+      "disposition": "Require the pre-reconciliation validation holder to be null before issuing the control. Negative tests keep post-reconciliation evidence clear and verify no reconcile POST occurs. A positive generic-evidence regression preserves legitimate uncertain-validation holders."
+    },
+    {
+      "finding": "Uncertain-provider could pass with only an uncertain worker and no candidate attempt.",
+      "disposition": "Require the documented first candidate selection after worker start, its independently pinned eligible source, and the pinned service profile of one uncertain copy create with a settled worker. Retain all originals and unused zero settlements; no complete end-state fixture is invented."
+    },
+    {
+      "finding": "The reconnect comparison accepted a correct old-history prefix while ignoring newly appended terminal events.",
+      "disposition": "Compare the full reconnect history and require an empty trailing page before intentional reconciliation or validation. Negative regressions reject an extra budget event on the same page or beyond the witnessed cursor."
+    },
+    {
+      "finding": "Pre-reconciliation status could name needs_reconciliation without the matching recorded attention transition.",
+      "disposition": "Reconstruct active attention from complete history for both uncertainty probes and direct reconciliation before any write. Replacements are allowed, a clear must name the active code, and final attention must match status. Preserve attention events after request completion."
+    },
+    {
+      "finding": "The uncertain-provider candidate could be rejected or invalid despite its uncertain first create.",
+      "disposition": "Require the documented partial outcome incomplete/incomplete_run with no item or case assignment and exactly one linked candidate_incomplete event. Reuse existing candidate-event identity/reason checks without introducing a complete end-state fixture."
+    },
+    {
+      "finding": "Repeated stop could change updated_at or append terminal events while preserving outcome and counts.",
+      "disposition": "Reuse the complete terminal-read check for reconnect and repeated stop. Compare every nonpaging field on each page and drain the exact witnessed history through an empty trailing page. Preserve valid paging and polling differences."
+    },
+    {
+      "finding": "Validation history could settle before execution or contain extra budget events while required event pairs still existed.",
+      "disposition": "Require the named settled controls to emit exactly reserve, start, finish and settle in that order. Bind expected amounts to the first and last events and retain linked validation identities and results."
+    },
+    {
+      "finding": "Fresh request-phase evidence could contain phantom validation reservations with matching creates and status totals.",
+      "disposition": "Allow only worker and candidate_copy before deliberate post-completion validation, including the first-validation and request-reconciliation baselines. Keep generic validation evidence checks valid; existing post-action checks constrain new operations and preserve prior rows."
+    },
+    {
+      "finding": "Complete terminal history could omit request_finished while final outcome and counts remained correct.",
+      "disposition": "Drain all terminal pages before requiring exactly one matching completion event and only contract-permitted subsequent events. Apply the same complete-history assertion after validation and reconciliation. Preserve the first finished snapshot including updated_at across the drain."
+    },
+    {
+      "finding": "Fresh baselines could expose existing case validation or validation events despite having no validation ledger rows.",
+      "disposition": "Require null validation on every case and no validation start/finish events across observed responses and complete baseline history. Standalone validation and request-reconciliation helpers drain stable baseline pages before any POST when no complete history was supplied. Keep general and post-validation checks unchanged."
+    },
+    {
+      "finding": "Cancellation could omit or misorder its recorded stop while retaining the expected terminal result.",
+      "disposition": "Require exactly one stop after the documented first-check checkpoint and before the resumed in-flight check and interrupted outcome; retain valid post-stop in-flight completion and paged history."
+    },
+    {
+      "finding": "The named stalled worker-loss scenario could omit its unresponsive warning or replace it at the wrong time.",
+      "disposition": "Require warning, interruption and replacement by reconciliation attention in order at the documented heartbeat thresholds. Generic early worker exits remain distinct; attention after request completion is permitted."
+    },
+    {
+      "finding": "Correct final states and ledger totals could hide missing or wrong named transition events.",
+      "disposition": "Compare pinned candidate-local check and outcome signatures, package digests, worker start, host readiness, source exhaustion and budget marker positions. Derive each budget row from deterministic costs, preserving generated identities and host-preparation interleaving. Uncertain-provider retains a partial rule and cannot show completed checks after its uncertain create."
+    },
+    {
+      "finding": "An ordinary terminal could report null attention while its history still held reconciliation attention.",
+      "disposition": "Replay attention for every probe, retaining valid warning-and-clear recovery. The positive recorded-launch-failure fixture now includes its matching attention event."
+    },
+    {
+      "finding": "First terminal Start and Stop observations could lose updated_at before later continuity checks established their baseline.",
+      "disposition": "Use one complete nonpaging snapshot from the first terminal response, including updated_at, across concurrent Starts, replay, Stop and reads. Keep event history separate and permit paging/poll hints and out-of-order concurrent nonfinished responses."
+    },
+    {
+      "finding": "Delivered case host and provenance could disagree with its qualified candidate, and the link could be duplicated or absent in the reverse direction.",
+      "disposition": "Require exactly one qualified candidate per delivered case and a delivered case for every qualified candidate, binding host, bug type, defect, item, source and entry. Keep generated opaque identities and nonqualified stages unchanged."
+    },
+    {
+      "finding": "Named failed/error validation probes could accept a different failing cell or trial profile with the expected aggregate result.",
+      "disposition": "Compare the completed six-cell matrix with its named fixture, including expected/observed outcomes, valid/total counts and cell verdicts. Keep generated identities, linked hashes, times, prose, polling and harness version outside fixture equality; generic null-matrix and uncertain null-cost errors remain valid."
+    },
+    {
+      "finding": "A delivered case could carry a baseline unrelated to its host while preserving the qualified-candidate link.",
+      "disposition": "Bind baseline_id to the host entry in pinned capabilities on every case check. Negative regressions cover swapped and unknown baselines for both hosts; both pinned baselines remain accepted."
+    },
+    {
+      "finding": "Interrupting the CLI could leave its detached local backend process group running.",
+      "disposition": "Install handlers immediately after spawn, share idempotent group cleanup with normal close, close active HTTP connections and await process closure before exiting 130 or 143. Suppress completed reports after interruption, retain handlers through repeated signals and remove them after cleanup. Subprocess regressions cover both signals during startup, polling and HTTP, normal-close races and TERM-resistant children or descendants."
+    },
+    {
+      "finding": "The uncertain-provider probe accepted missing or incorrect pre-reconciliation budget history when terminal status and evidence were correct.",
+      "disposition": "Require the pinned worker/candidate reservation, unused-copy release and worker-settlement trajectory from complete paged history, with independently priced amounts and final-status agreement. Preserve the uncertain copy, post-completion accounting and unrelated event timing without inventing a complete end-state fixture."
+    },
+    {
+      "finding": "Reconciliation accepted invented budget transitions with unchanged held spend, including repeated zero-held updates after settlement.",
+      "disposition": "Require each reconciliation budget event to reduce held spend strictly while retaining conservation and final attention-clear checks. Negative regressions cover initial, intermediate and completed settlement in single and paged histories; valid decreasing split settlements still pass."
+    },
+    {
+      "finding": "Request observations could move backward through nonterminal lifecycle states, including after a successful Stop response.",
+      "disposition": "Retain the furthest lifecycle state across unordered concurrent Starts and require every later sequential observation to preserve or advance it. Require Stop to return stopping or finished. Negative regressions cover all nonterminal backward transitions, every concurrent Start position and both cancellation boundaries; repeated, skipped and unordered states remain supported."
+    },
+    {
+      "finding": "Unstopped probes could accept stop_requested in otherwise valid terminal history.",
+      "disposition": "Require no stop_requested unless this probe actually called Stop, after draining complete history and before reconciliation. Regressions cover ordinary outcomes and uncertain-provider, in single and paged histories; cancellation test transports now exercise the Stop call rather than merely replay its terminal fixture."
+    },
+    {
+      "finding": "Delivered case qualification matrices could contradict their candidate check events while named outcomes remained correct.",
+      "disposition": "Bind observed outcomes, valid runs and total runs to the linked candidate check_finished events on every response. Require all six cells in complete probe history; named transition signatures independently pin check results. Regressions cover both hosts, all six cells, paging and missing evidence, while retaining partial pages and generic protocol counts."
+    },
+    {
+      "finding": "Initial/concurrent Start and one-off Stop replies could return an event suffix or cursor unrelated to the returned page.",
+      "disposition": "Anchor every observed page to its requested cursor, defaulting to zero for Start and Stop, and require next_after to equal the last returned sequence or the cursor for an empty page. Sequential polls and terminal rereads pass their actual cursor. Negative regressions cover each concurrent Start position and both Stop states; valid different-length/repeated prefixes remain accepted."
+    }
+  ],
+  "http_regression_evidence": {
+    "report": "service-http-before-checkpoint-fix.json",
+    "summary": {
+      "passed": 2,
+      "failed": 1,
+      "unavailable": 5
+    },
+    "exit_code": 1,
+    "meaning": "The new funnel assertion exposed early cancellation in the runner; regression and fix wait at the documented test-control checkpoint."
+  },
+  "local_backend_interruptions": {
+    "backend_revision": "f803962dcaf3b51b8881a7c4db99aeded33c7e1d",
+    "results": [
+      {
+        "phase": "startup",
+        "signal": "SIGINT",
+        "exit_code": 130,
+        "expected_exit_code": 130,
+        "no_owned_processes": true,
+        "port_closed": true,
+        "stdout_empty": true,
+        "stderr_empty": true
+      },
+      {
+        "phase": "loopback-listening",
+        "signal": "SIGTERM",
+        "exit_code": 143,
+        "expected_exit_code": 143,
+        "no_owned_processes": true,
+        "port_closed": true,
+        "stdout_empty": true,
+        "stderr_empty": true
+      }
+    ],
+    "command": "node tools/product-acceptance/src/cli.ts --local-backend ../rbw-api-test-backend",
+    "meaning": "The actual CLI received each signal after its owned backend spawned; SIGTERM followed loopback listener availability. This verifies process cleanup, not API acceptance."
+  }
+}

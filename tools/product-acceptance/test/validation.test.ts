@@ -1,0 +1,234 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { expect, it, vi } from "vitest";
+import { contractRevision, runValidation, type IsolatedBackend, type Reply } from "../src/runner.ts";
+import { integer, object, objects, text } from "../src/invariants.ts";
+
+const fixture = (name: string) => object(JSON.parse(readFileSync(new URL(`../fixtures/${name}.json`, import.meta.url), "utf8")) as unknown);
+function first<T>(values: T[]): T { const value = values[0]; assert(value); return value; }
+
+// Synthetic transport responses test the runner's rejection behavior, not a backend.
+function scenario(result: "failed" | "error" = "failed", finishedOnPost = false) {
+  const before = fixture("status-fulfilled");
+  const budget = object(before.budget);
+  budget.spent_microusd = 1_100_000; budget.committed_microusd = 1_100_000; budget.remaining_microusd = 900_000;
+  const c = first(objects(before.cases));
+  const cost = c.host_id === "task-report" ? 200_000 : 300_000;
+  const run = fixture(`validation-${result}`);
+  run.case_id = c.case_id; run.cost_microusd = cost;
+  run.package_sha256 = { bug_case: object(object(c.packages).bug_case).sha256, validator: object(object(c.packages).validator).sha256 };
+  const after = structuredClone(before);
+  first(objects(after.cases)).validation = run;
+  Object.assign(object(after.budget), { spent_microusd: 1_100_000 + cost, committed_microusd: 1_100_000 + cost, remaining_microusd: 900_000 - cost });
+  const history = objects(before.events);
+  const event = (type: string, data: Record<string, unknown>, ordinal: number) => ({
+    ...first(history), seq: history.length + ordinal, type, data, host_id: c.host_id, item_key: c.item_key,
+    case_id: c.case_id, candidate_id: null, message: "synthetic validation event",
+  });
+  const reserve = event("budget_updated", { reserved_microusd: cost, spent_microusd: 1_100_000, remaining_microusd: 900_000 - cost }, 1);
+  const started = event("validation_started", { validation_id: run.validation_id }, 2);
+  const finished = event("validation_finished", { validation_id: run.validation_id, result }, 3);
+  const settled = event("budget_updated", { reserved_microusd: 0, spent_microusd: 1_100_000 + cost, remaining_microusd: 900_000 - cost }, 4);
+  for (const e of [reserve, settled]) { e.host_id = null; e.item_key = null; e.case_id = null; }
+  after.events = [...structuredClone(history), reserve, started, finished, settled]; after.next_after = history.length + 4;
+  const operations = [200_000, 100_000, 100_000, 100_000, 200_000, 200_000, 200_000].map((amount, index) => ({
+    operation_id: (index + 1).toString(16).padStart(64, "0"), kind: index === 0 ? "worker" : "candidate_copy",
+    call_name: `synthetic-operation-${String(index)}`, state: "terminal", reserved_microusd: amount, settled_microusd: amount, attempt_ordinal: 1,
+  }));
+  const prior = { contract_version: "bug-request/1", request_id: before.request_id, operations,
+    slot: { slot_key: "factory", holder_request_id: null, holder_validation_id: null },
+    provider_calls: operations.map(op => ({ call_name: op.call_name, provider: "sandbox", action: "create", at: before.created_at })),
+  };
+  const evidence: Record<string, unknown> = structuredClone(prior);
+  evidence.operations = [...structuredClone(operations), { operation_id: "ab".repeat(32), kind: "validation", call_name: "synthetic-validation", state: "terminal", reserved_microusd: cost, settled_microusd: cost, attempt_ordinal: 1 }];
+  evidence.provider_calls = [...structuredClone(prior.provider_calls), { call_name: "synthetic-validation", provider: "sandbox", action: "create", at: before.created_at }];
+  let accepted = false;
+  const path = `/api/factory/requests/${text(before.request_id)}`;
+  const request = vi.fn((method: "GET" | "POST", target: string, payload?: unknown): Promise<Reply> => {
+    if (method === "POST") {
+      accepted = true;
+      run.validation_id = object(payload).validation_id;
+      started.data.validation_id = run.validation_id; finished.data.validation_id = run.validation_id;
+      return Promise.resolve({ status: 202, body: finishedOnPost ? run
+        : { ...run, state: "running", result: null, matrix: null, cost_microusd: null, finished_at: null } });
+    }
+    if (target.includes("/validations/")) return Promise.resolve({ status: 200, body: run });
+    if (target.includes("/test/evidence?")) return Promise.resolve({ status: 200, body: accepted ? evidence : prior });
+    assert(target.startsWith(path));
+    const cursor = Number(target.split("?after=")[1] ?? 0);
+    const source = accepted ? after : before;
+    const page = structuredClone(source);
+    page.events = objects(source.events).filter(e => integer(e.seq) > cursor).slice(0, 7);
+    page.next_after = objects(page.events).at(-1)?.seq ?? cursor;
+    return Promise.resolve({ status: 200, body: page });
+  });
+  const backend: IsolatedBackend = { request, verifyIsolation: () => Promise.resolve({ backendRevision: "a".repeat(40), contractRevision }), wait: () => Promise.resolve(), reconnect: () => Promise.resolve() };
+  return { before, after, run, evidence, prior, backend, request, cost, started, finished, reserve, settled };
+}
+
+it.each(["failed", "error"] as const)("checks completed %s validation accounting and slot evidence", async result => {
+  const s = scenario(result);
+  await expect(runValidation(s.backend, s.before, result)).resolves.toBeUndefined();
+  expect(s.request.mock.calls.filter(([, path]) => path.includes("/test/evidence?"))).toHaveLength(2);
+  expect(s.request.mock.calls.some(([method, path]) => method === "GET" && path.includes("?after="))).toBe(true);
+});
+
+for (const finishedOnPost of [false, true]) {
+  const completion = finishedOnPost ? "finished-202" : "polled";
+  for (const result of ["failed", "error"] as const) {
+    const changes = result === "failed" ? ["wrong-cell", "trial-counts"]
+      : ["wrong-cell", "valid-count", "total-count", "incomplete", "null-matrix"];
+    it.each(changes)(`rejects ${completion} ${result} validation %s despite its expected aggregate result`, async change => {
+      const s = scenario(result, finishedOnPost);
+      const original = object(object(s.run.matrix).original_suite);
+      const verification = object(object(s.run.matrix).verification);
+      if (change === "wrong-cell") {
+        if (result === "failed") {
+          Object.assign(object(verification.buggy), { observed: "fail", matches_expectation: true });
+          Object.assign(object(original.fixed), { observed: "fail", matches_expectation: false });
+        } else [original.clean, original.fixed] = [original.fixed, original.clean];
+      }
+      if (change === "trial-counts") Object.assign(object(original.fixed), { runs_valid: 4, runs_total: 4 });
+      if (change === "valid-count") object(original.clean).runs_valid = 1;
+      if (change === "total-count") object(original.clean).runs_total = 4;
+      if (change === "incomplete") object(original.clean).observed = "incomplete";
+      if (change === "null-matrix") s.run.matrix = null;
+      await expect(runValidation(s.backend, s.before, result)).rejects.toThrow();
+    });
+    it(`allows ${completion} ${result} validation timestamps and message prose to differ from the fixture`, async () => {
+      const s = scenario(result, finishedOnPost);
+      Object.assign(s.run, { started_at: "2026-10-21T10:00:00.000Z", finished_at: "2026-10-21T10:01:00.000Z",
+        message: "synthetic validation completion details", poll_after_ms: 1 });
+      await expect(runValidation(s.backend, s.before, result)).resolves.toBeUndefined();
+      expect(s.run.validation_id).not.toBe(fixture(`validation-${result}`).validation_id);
+      expect(s.request.mock.calls.some(([method, path]) => method === "GET" && path.includes("/validations/"))).toBe(!finishedOnPost);
+    });
+  }
+}
+
+it.each(["validation", "validation_copy"])("rejects phantom %s evidence before the first validation POST", async kind => {
+  const s = scenario();
+  const phantom = { operation_id: "cd".repeat(32), kind, call_name: "synthetic-phantom-validation", state: "terminal",
+    reserved_microusd: s.cost, settled_microusd: s.cost, attempt_ordinal: 1 };
+  const create = { call_name: phantom.call_name, provider: "sandbox", action: "create", at: s.before.created_at };
+  s.prior.operations.push(phantom); s.prior.provider_calls.push(create);
+  s.evidence.operations = [...objects(s.evidence.operations), structuredClone(phantom)];
+  s.evidence.provider_calls = [...objects(s.evidence.provider_calls), structuredClone(create)];
+  for (const status of [s.before, s.after]) {
+    const budget = object(status.budget);
+    budget.spent_microusd = integer(budget.spent_microusd) + s.cost;
+    budget.committed_microusd = integer(budget.committed_microusd) + s.cost;
+    budget.remaining_microusd = integer(budget.remaining_microusd) - s.cost;
+    for (const event of objects(status.events).filter(event => event.type === "budget_updated")) {
+      const data = object(event.data);
+      data.spent_microusd = integer(data.spent_microusd) + s.cost;
+      data.remaining_microusd = integer(data.remaining_microusd) - s.cost;
+    }
+  }
+  await expect(runValidation(s.backend, s.before, "failed")).rejects.toThrow();
+  expect(s.request.mock.calls.some(([method]) => method === "POST")).toBe(false);
+});
+
+it.each(["target", "other"])("rejects an existing validation on the %s case before a fresh validation POST", async location => {
+  const s = scenario();
+  const index = location === "target" ? 0 : 1;
+  const delivered = objects(s.before.cases)[index]; assert(delivered);
+  const prior = structuredClone(s.run);
+  prior.validation_id = "00000000-0000-4000-8000-000000000707";
+  prior.case_id = delivered.case_id;
+  prior.package_sha256 = { bug_case: object(object(delivered.packages).bug_case).sha256, validator: object(object(delivered.packages).validator).sha256 };
+  delivered.validation = prior;
+  if (location === "other") {
+    const afterCase = objects(s.after.cases)[index]; assert(afterCase);
+    afterCase.validation = structuredClone(prior);
+  }
+  await expect(runValidation(s.backend, s.before, "failed")).rejects.toThrow();
+  expect(s.request.mock.calls.some(([method]) => method === "POST")).toBe(false);
+});
+
+for (const type of ["validation_started", "validation_finished"]) {
+  it.each(["default-complete", "supplied-complete", "default-paged"])(`rejects baseline ${type} with %s history before a fresh validation POST`, async mode => {
+    const s = scenario();
+    const prior = structuredClone(type === "validation_started" ? s.started : s.finished);
+    prior.data.validation_id = "00000000-0000-4000-8000-000000000707";
+    prior.seq = objects(s.before.events).length + 1;
+    s.before.events = [...objects(s.before.events), prior];
+    s.before.next_after = objects(s.before.events).length;
+    s.after.events = [...structuredClone(objects(s.before.events)), s.reserve, s.started, s.finished, s.settled]
+      .map((event, index) => ({ ...event, seq: index + 1 }));
+    s.after.next_after = objects(s.after.events).length;
+    const initial = mode === "default-complete" ? s.before : { ...s.before, events: objects(s.before.events).slice(0, 7), next_after: 7 };
+    const history = mode === "supplied-complete" ? objects(s.before.events) : undefined;
+    await expect(runValidation(s.backend, initial, "failed", history)).rejects.toThrow();
+    expect(s.request.mock.calls.some(([method]) => method === "POST")).toBe(false);
+  });
+}
+
+it.each(["missing-field", "null-cost", "discounted-cost"])("rejects %s on the completed named validation", async change => {
+  const s = scenario("error");
+  if (change === "missing-field") delete s.run.finished_at;
+  else s.run.cost_microusd = change === "null-cost" ? null : 40_000;
+  await expect(runValidation(s.backend, s.before, "error")).rejects.toThrow();
+});
+
+it.each(["missing-charge", "retained-reservation", "retained-slot", "stale-validation", "changed-target", "changed-other-case", "changed-outcome"])("rejects %s after validation completion", async change => {
+  const s = scenario();
+  if (change === "missing-charge") s.after.budget = structuredClone(s.before.budget);
+  if (change === "retained-reservation") Object.assign(object(s.after.budget), { reserved_microusd: s.cost, spent_microusd: 1_100_000 });
+  if (change === "retained-slot") { object(s.evidence.slot).holder_request_id = s.before.request_id; object(s.evidence.slot).holder_validation_id = s.run.validation_id; }
+  if (change === "stale-validation") first(objects(s.after.cases)).validation = null;
+  if (change === "changed-target") first(objects(s.after.cases)).title = "synthetic changed target";
+  if (change === "changed-other-case") { const other = objects(s.after.cases)[1]; assert(other); other.title = "synthetic changed other case"; }
+  if (change === "changed-outcome") { s.after.outcome = "sources_exhausted"; s.after.stop_reason = { code: "sources_exhausted", message: "synthetic changed outcome" }; }
+  await expect(runValidation(s.backend, s.before, "failed")).rejects.toThrow();
+});
+
+it.each(["prior-event", "validation-started", "validation-finished", "reservation-event", "settlement-event", "wrong-result", "wrong-case", "wrong-reservation"])("rejects %s validation event history", async change => {
+  const s = scenario();
+  if (change === "prior-event") first(objects(s.after.events)).message = "synthetic changed earlier event";
+  const removals: Record<string, Record<string, unknown>> = { "validation-started": s.started, "validation-finished": s.finished, "reservation-event": s.reserve, "settlement-event": s.settled };
+  const removed = removals[change];
+  if (removed !== undefined) {
+    s.after.events = objects(s.after.events).filter(event => event !== removed).map((event, index) => ({ ...event, seq: index + 1 }));
+    s.after.next_after = objects(s.after.events).length;
+  }
+  if (change === "wrong-result") s.finished.data.result = "passed";
+  if (change === "wrong-case") s.finished.case_id = "ac".repeat(32);
+  if (change === "wrong-reservation") s.reserve.data.reserved_microusd = 1;
+  await expect(runValidation(s.backend, s.before, "failed")).rejects.toThrow();
+});
+
+for (const result of ["failed", "error"] as const) {
+  it.each(["start-before-reserve", "settle-before-start", "settle-before-finish", "extra-budget", "duplicate-settlement"])(`rejects ${result} validation transition %s despite correct final accounting`, async change => {
+    const s = scenario(result);
+    let transitions: Record<string, unknown>[] = [s.reserve, s.started, s.finished, s.settled];
+    if (change === "start-before-reserve") transitions = [s.started, s.reserve, s.finished, s.settled];
+    if (change === "settle-before-start") transitions = [s.reserve, s.settled, s.started, s.finished];
+    if (change === "settle-before-finish") transitions = [s.reserve, s.started, s.settled, s.finished];
+    if (change === "extra-budget") {
+      const bogus = { ...s.reserve, data: { ...s.reserve.data, reserved_microusd: s.cost + 1, remaining_microusd: 900_000 - s.cost - 1 } };
+      transitions = [s.reserve, s.started, bogus, s.finished, s.settled];
+    }
+    if (change === "duplicate-settlement") transitions.push(structuredClone(s.settled));
+    s.after.events = [...objects(s.before.events), ...transitions].map((event, index) => ({ ...event, seq: index + 1 }));
+    s.after.next_after = objects(s.after.events).length;
+    await expect(runValidation(s.backend, s.before, result)).rejects.toThrow();
+  });
+}
+
+it.each(["changed-prior", "missing-validation", "wrong-operation-kind"])("rejects %s ledger evidence after validation", async change => {
+  const s = scenario();
+  if (change === "changed-prior") first(objects(s.evidence.operations)).operation_id = "ce".repeat(32);
+  if (change === "missing-validation") s.evidence.operations = objects(s.evidence.operations).filter(op => op.kind !== "validation");
+  if (change === "wrong-operation-kind") { const op = objects(s.evidence.operations).at(-1); assert(op); op.kind = "candidate_copy"; }
+  await expect(runValidation(s.backend, s.before, "failed")).rejects.toThrow();
+});
+
+it("accepts a validation reservation split across validation operations", async () => {
+  const s = scenario();
+  s.evidence.operations = [...objects(s.evidence.operations).filter(op => op.kind !== "validation"), ...[1, 2].map(i => ({
+    operation_id: String(i).repeat(64), kind: "validation_copy", call_name: `synthetic-validation-copy-${String(i)}`, state: "terminal", reserved_microusd: s.cost / 2, settled_microusd: s.cost / 2, attempt_ordinal: 1,
+  }))];
+  s.evidence.provider_calls = [...objects(s.evidence.provider_calls).filter(call => call.call_name !== "synthetic-validation"), ...[1, 2].map(i => ({ call_name: `synthetic-validation-copy-${String(i)}`, provider: "sandbox", action: "create", at: s.before.created_at }))];
+  await expect(runValidation(s.backend, s.before, "failed")).resolves.toBeUndefined();
+});

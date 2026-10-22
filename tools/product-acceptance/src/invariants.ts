@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { BUG_TYPE_ID_VALUES } from "@rbw/factory-contract";
 
 export function object(value: unknown): Record<string, unknown> {
   assert(value !== null && typeof value === "object" && !Array.isArray(value), "expected object");
@@ -16,11 +18,20 @@ export function text(value: unknown): string {
   assert(typeof value === "string", "expected string");
   return value;
 }
+const pinnedCapabilities: unknown = JSON.parse(readFileSync(new URL("../fixtures/capabilities.json", import.meta.url), "utf8"));
+const pinnedBugTypes = objects(object(pinnedCapabilities).bug_types);
+const pinnedHosts = objects(object(pinnedCapabilities).hosts);
+
 function nonnegative(value: unknown): number {
   const n = integer(value); assert(n >= 0, "negative count or amount"); return n;
 }
 function unique(values: unknown[]): void {
   assert.equal(new Set(values).size, values.length, "duplicate identity");
+}
+function criterionIdentity(value: unknown): string {
+  const id = text(value);
+  assert(id.length > 0, "empty criterion identity");
+  return id;
 }
 function cells(value: unknown): Record<string, unknown>[] {
   const matrix = object(value);
@@ -48,6 +59,8 @@ export function checkValidation(value: unknown): void {
   const result = observed.length === 0 || observed.some(c => ["error", "incomplete"].includes(text(c.observed)))
     ? "error" : observed.every(c => c.matches_expectation === true) ? "passed" : "failed";
   assert.equal(v.result, result, "validation result contradicts observations");
+  if (result !== "error") assert.notEqual(v.cost_microusd, null, "completed validation has no recorded cost");
+  if (v.cost_microusd !== null) nonnegative(v.cost_microusd);
 }
 const caseFields = new Set([
   "case_id", "defect_id", "title", "host_id", "host_label", "baseline_id", "bug_type_id", "item_key", "criteria_met",
@@ -55,11 +68,24 @@ const caseFields = new Set([
 ]);
 function checkCase(c: Record<string, unknown>, requestId: unknown): void {
   assert(Object.keys(c).every(key => caseFields.has(key)), "unexpected case field");
+  const host = pinnedHosts.find(host => host.host_id === c.host_id);
+  assert(host, "case host is not in the pinned catalog");
+  assert.equal(c.baseline_id, host.baseline_id, "case baseline differs from pinned host");
   assert.equal(object(c.qualification).verdict, "accepted");
   assert.equal(object(c.difficulty).status, "not_assessed");
   assert(cells(c.matrix).every(cell => cell.matches_expectation === true), "unqualified matrix");
   assert.equal(object(c.provenance).request_id, requestId);
   assert.equal(object(c.provenance).origin, "live_request");
+  const criteria = objects(c.criteria_met);
+  assert(criteria.length > 0, "case has no demonstrated criterion");
+  unique(criteria.map(criterion => criterionIdentity(criterion.criterion_id)));
+  const bugType = pinnedBugTypes.find(type => type.bug_type_id === c.bug_type_id);
+  assert(bugType, "case bug type is not in the pinned catalog");
+  const declared = objects(bugType.criteria);
+  for (const criterion of criteria) {
+    assert(declared.some(known => known.criterion_id === criterion.criterion_id && known.version === criterion.version),
+      "demonstrated criterion is not in the pinned bug type catalog");
+  }
   const packages = object(c.packages);
   for (const kind of ["bug_case", "validator"]) {
     const part = object(packages[kind]);
@@ -75,6 +101,99 @@ const stopCodes: Record<string, string[]> = {
   sources_exhausted: ["sources_exhausted"], cancelled: ["cancelled_by_user"],
   operational_error: ["worker_lost", "needs_reconciliation", "operational_error"],
 };
+
+/** Check criterion event identities against delivered cases across a page or complete history. */
+export function checkCriteriaEvents(value: unknown, history: unknown, completeHistory = false): void {
+  const status = object(value);
+  const cases = objects(status.cases);
+  const candidates = objects(status.candidates);
+  const criterionEvents = objects(history).filter(event => event.type === "requested_criteria_passed");
+  const witnessedCases = new Set<unknown>();
+  for (const event of criterionEvents) {
+    const rawIds = object(event.data).criterion_ids;
+    assert(Array.isArray(rawIds) && rawIds.length > 0, "criterion event has no demonstrated criterion");
+    const ids = rawIds.map(criterionIdentity);
+    unique(ids);
+    const candidate = candidates.find(candidate => candidate.candidate_id === event.candidate_id);
+    assert(candidate, "criterion event has no candidate");
+    const delivered = cases.find(c => c.case_id === candidate.case_id);
+    if (delivered) {
+      assert.equal(event.item_key, delivered.item_key, "criterion event names another item");
+      assert.deepEqual(ids.sort(), objects(delivered.criteria_met).map(criterion => text(criterion.criterion_id)).sort(),
+        "event criteria differ from delivered case");
+      witnessedCases.add(delivered.case_id);
+    }
+  }
+  if (completeHistory && status.state === "finished") {
+    for (const delivered of cases) assert(witnessedCases.has(delivered.case_id), "delivered case has no criterion event");
+  }
+}
+
+/** Qualification cells describe the same outcomes and trial counts as candidate checks. */
+export function checkQualificationEvents(value: unknown, history: unknown, completeHistory = false): void {
+  const status = object(value);
+  const candidates = objects(status.candidates);
+  const checks = objects(history).filter(event => event.type === "check_finished");
+  for (const delivered of objects(status.cases)) {
+    const candidate = candidates.find(candidate => candidate.case_id === delivered.case_id);
+    assert(candidate, "delivered case has no qualification candidate");
+    const witnessed = new Set<string>();
+    for (const event of checks.filter(event => event.candidate_id === candidate.candidate_id)) {
+      const data = object(event.data);
+      const set = text(data.check_set); const copy = text(data.copy);
+      const cell = object(object(object(delivered.matrix)[set])[copy]);
+      assert.deepEqual({ outcome: cell.observed, runs_valid: cell.runs_valid, runs_total: cell.runs_total },
+        { outcome: data.outcome, runs_valid: data.runs_valid, runs_total: data.runs_total },
+        "qualification matrix differs from check transition");
+      witnessed.add(`${set}/${copy}`);
+    }
+    if (completeHistory) for (const set of ["original_suite", "verification"]) for (const copy of ["clean", "buggy", "fixed"]) {
+      assert(witnessed.has(`${set}/${copy}`), "delivered case lacks a qualification check transition");
+    }
+  }
+}
+
+/** Named fixture outcomes use catalog entries; generated identities stay opaque. */
+export function checkScenarioCandidates(value: unknown, expected: Record<string, unknown>[], history: Record<string, unknown>[]): void {
+  const candidates = objects(object(value).candidates);
+  const key = (candidate: Record<string, unknown>) => JSON.stringify([candidate.host_id, candidate.source_id, candidate.entry_id]);
+  assert.deepEqual(candidates.map(key).sort(), expected.map(key).sort(), "candidates differ from pinned scenario");
+  const meaning = (candidate: Record<string, unknown>) => ({
+    host_id: candidate.host_id, bug_type_id: candidate.bug_type_id, source_id: candidate.source_id, entry_id: candidate.entry_id,
+    stage: candidate.stage, reason: candidate.reason === null ? null : object(candidate.reason).code,
+    item_key: candidate.item_key, has_case: candidate.case_id !== null,
+  });
+  const terminalEvents = history.filter(event => ["candidate_rejected", "candidate_invalid", "candidate_incomplete", "candidate_skipped"].includes(text(event.type)));
+  for (const event of terminalEvents) assert(candidates.some(candidate => candidate.candidate_id === event.candidate_id), "candidate outcome event has no candidate");
+  for (const pinned of expected) {
+    const actual = candidates.find(candidate => key(candidate) === key(pinned)); assert(actual);
+    assert.deepEqual(meaning(actual), meaning(pinned), "candidate outcome differs from pinned scenario");
+    for (const other of expected) {
+      const counterpart = candidates.find(candidate => key(candidate) === key(other)); assert(counterpart);
+      assert.equal(actual.defect_id === counterpart.defect_id, pinned.defect_id === other.defect_id, "candidate defect relationship differs from pinned scenario");
+    }
+    const events = terminalEvents.filter(event => event.candidate_id === actual.candidate_id);
+    if (pinned.reason === null) assert.equal(events.length, 0, "qualified candidate has an unsuccessful outcome event");
+    else {
+      assert.equal(events.length, 1, "candidate has missing or duplicate outcome events");
+      const event = events[0]; assert(event);
+      assert.equal(event.type, `candidate_${text(pinned.stage)}`);
+      assert.deepEqual(event.data, { reason: object(pinned.reason).code }, "candidate event reason differs from pinned scenario");
+      for (const field of ["host_id", "item_key", "case_id"]) assert.equal(event[field], actual[field], "candidate outcome event identifies another result");
+    }
+  }
+}
+
+/** Complete history counts distinct candidates, not retry events or pages. */
+export function checkFunnelHistory(value: unknown, history: Record<string, unknown>[]): void {
+  const status = object(value);
+  const candidates = objects(status.candidates);
+  for (const field of ["behavior_checks_passed", "requested_criteria_passed"]) {
+    const events = history.filter(event => event.type === field);
+    for (const event of events) assert(candidates.some(candidate => candidate.candidate_id === event.candidate_id), "funnel history names an unknown candidate");
+    assert.equal(object(status.funnel)[field], new Set(events.map(event => event.candidate_id)).size, "funnel history disagrees with distinct candidate count");
+  }
+}
 
 /** Checks public response invariants, not provider side effects or package replay. */
 export function checkStatus(value: unknown): void {
@@ -115,24 +234,40 @@ export function checkStatus(value: unknown): void {
   }
   for (const c of cases) {
     assert(items.some(i => i.item_key === c.item_key), "case assigned to unknown item");
-    const candidate = candidates.find(candidate => candidate.case_id === c.case_id && candidate.stage === "qualified");
+    const matching = candidates.filter(candidate => candidate.case_id === c.case_id && candidate.stage === "qualified");
+    assert(matching.length <= 1, "case has multiple qualified candidates");
+    const candidate = matching[0];
     assert(candidate, "case without qualified candidate");
-    assert.equal(candidate.defect_id, c.defect_id);
-    assert.equal(candidate.item_key, c.item_key);
+    for (const field of ["defect_id", "item_key", "host_id", "bug_type_id"]) {
+      assert.equal(candidate[field], c[field], "case identity differs from qualified candidate");
+    }
+    for (const field of ["source_id", "entry_id"]) {
+      assert.equal(candidate[field], object(c.provenance)[field], "case provenance differs from qualified candidate");
+    }
     checkCase(c, s.request_id);
   }
   for (const candidate of candidates) {
+    if (candidate.stage === "qualified") {
+      assert(cases.some(c => c.case_id === candidate.case_id), "qualified candidate has no delivered case");
+    }
     if (["rejected", "invalid", "incomplete", "skipped"].includes(text(candidate.stage))) {
       assert(!cases.some(c => c.case_id === candidate.case_id), "unsuccessful candidate delivered");
     }
   }
   const totals = objects(s.type_totals);
   unique(totals.map(t => t.bug_type_id));
-  assert.deepEqual(totals.map(t => text(t.bug_type_id)).sort(), [...new Set(items.map(i => text(i.bug_type_id)))].sort(), "type totals do not identify requested types");
+  const totalTypes = totals.map(total => text(total.bug_type_id));
+  assert(totalTypes.every(type => BUG_TYPE_ID_VALUES.some(known => known === type)), "unknown type total");
+  for (const type of new Set(items.map(item => text(item.bug_type_id)))) {
+    assert(totalTypes.includes(type), "missing requested type total");
+  }
   for (const total of totals) for (const field of ["requested", "delivered", "missing"]) {
     assert.equal(total[field], items.filter(i => i.bug_type_id === total.bug_type_id).reduce((sum, i) => sum + nonnegative(i[field]), 0));
   }
-  assert.equal(object(s.funnel).packages_ready, cases.length);
+  const funnel = object(s.funnel);
+  assert.equal(funnel.packages_ready, cases.length);
+  const stages = [funnel.packages_ready, funnel.requested_criteria_passed, funnel.behavior_checks_passed, funnel.candidates_explored, candidates.length].map(nonnegative);
+  assert(stages.every((count, index) => index === 0 || count >= (stages[index - 1] ?? 0)), "funnel counts contradict candidate stages");
   const b = object(s.budget);
   assert.equal(b.budget_microusd, input.budget_microusd, "request budget changed");
   const committed = nonnegative(b.reserved_microusd) + nonnegative(b.spent_microusd);
@@ -148,4 +283,6 @@ export function checkStatus(value: unknown): void {
     assert(["queued", "starting", "running", "stopping"].includes(text(s.state)));
     assert.equal(s.outcome, null); assert.equal(s.stop_reason, null);
   }
+  checkCriteriaEvents(s, s.events);
+  checkQualificationEvents(s, s.events);
 }

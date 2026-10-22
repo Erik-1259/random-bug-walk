@@ -1,0 +1,171 @@
+{
+  "contract_version": "bug-request/1",
+  "service": {
+    "state": "available",
+    "code": null,
+    "message": null
+  },
+  "hosts": [
+    {
+      "host_id": "umami",
+      "label": "Umami",
+      "description": "Umami web analytics at a pinned upstream revision.",
+      "baseline_id": "umami@ec0ff503"
+    },
+    {
+      "host_id": "task-report",
+      "label": "Task and report service",
+      "description": "The custom task-and-report service at a pinned revision.",
+      "baseline_id": "task-report@ca4a71f"
+    }
+  ],
+  "bug_types": [
+    {
+      "bug_type_id": "concurrency",
+      "label": "Concurrency",
+      "description": "Overlapping requests or jobs leave a wrong stored result or return a wrong response.",
+      "criteria": [
+        {
+          "criterion_id": "concurrency.lost-acknowledged-change",
+          "version": "1",
+          "label": "An acknowledged change is lost when requests overlap",
+          "description": "Two overlapping requests both receive a success response, but at least one acknowledged change is missing from what was stored.",
+          "example_phrases": [
+            "an acknowledged change is lost when requests overlap",
+            "a saved change disappears when two updates overlap",
+            "lost update"
+          ],
+          "failure_code": "acknowledged_completion_not_counted"
+        },
+        {
+          "criterion_id": "concurrency.stale-success-response",
+          "version": "1",
+          "label": "A success response reports data different from what was stored when requests overlap",
+          "description": "Under overlapping requests, a success response returns data that differs from what was actually stored.",
+          "example_phrases": [
+            "a success response reports data different from what was stored when requests overlap",
+            "the response shows a value that was not saved"
+          ],
+          "failure_code": "stale_success_response"
+        }
+      ]
+    },
+    {
+      "bug_type_id": "date_time",
+      "label": "Date and time",
+      "description": "Dates, times or time zones are computed, compared or grouped incorrectly.",
+      "criteria": [
+        {
+          "criterion_id": "date_time.time-zone-grouping",
+          "version": "1",
+          "label": "Results grouped by date or time use the wrong time zone",
+          "description": "Results grouped by date or time are placed in buckets of a different time zone from the one requested or configured.",
+          "example_phrases": [
+            "results grouped by date or time use the wrong time zone",
+            "daily totals use the wrong time zone",
+            "events are counted on the wrong day"
+          ],
+          "failure_code": "local_day_counts_mismatch"
+        }
+      ]
+    }
+  ],
+  "combinations": [
+    {
+      "host_id": "umami",
+      "bug_type_id": "concurrency",
+      "status": "unsupported",
+      "reason": "No concurrency catalog with implemented verification checks is declared for Umami yet.",
+      "source": null
+    },
+    {
+      "host_id": "umami",
+      "bug_type_id": "date_time",
+      "status": "supported",
+      "reason": null,
+      "source": {
+        "source_id": "synthetic-umami-date-time",
+        "kind": "finite_recipe_catalog",
+        "catalog_version": "1",
+        "entries": 1,
+        "criteria_ids": [
+          "date_time.time-zone-grouping"
+        ],
+        "description": "A finite catalog of declared date and time recipes for Umami."
+      }
+    },
+    {
+      "host_id": "task-report",
+      "bug_type_id": "concurrency",
+      "status": "supported",
+      "reason": null,
+      "source": {
+        "source_id": "synthetic-task-report-concurrency",
+        "kind": "finite_recipe_catalog",
+        "catalog_version": "1",
+        "entries": 1,
+        "criteria_ids": [
+          "concurrency.lost-acknowledged-change"
+        ],
+        "description": "A finite catalog of declared concurrency recipes for the task-and-report service."
+      }
+    },
+    {
+      "host_id": "task-report",
+      "bug_type_id": "date_time",
+      "status": "unsupported",
+      "reason": "No date and time catalog with implemented verification checks is declared for the task-and-report service yet.",
+      "source": null
+    }
+  ],
+  "difficulty_options": [
+    {
+      "option_id": "source_inferable_allowed",
+      "label": "Source-inferable allowed",
+      "default": true,
+      "available": true,
+      "reason": null
+    },
+    {
+      "option_id": "source_only_difficulty_required",
+      "label": "Source-only difficulty required",
+      "default": false,
+      "available": false,
+      "reason": "Source-only difficulty assessment is not implemented and validated yet. Items that require it are refused, never downgraded."
+    }
+  ],
+  "limits": {
+    "max_items": 5,
+    "max_quantity_per_item": 3,
+    "max_total_quantity": 6,
+    "max_description_chars": 500,
+    "budget_presets_microusd": [
+      1000000,
+      2000000,
+      5000000
+    ],
+    "default_budget_microusd": 2000000,
+    "min_budget_microusd": 500000,
+    "max_budget_microusd": 5000000,
+    "max_wall_clock_s": 3600,
+    "max_candidates": 10
+  },
+  "interpreter": {
+    "interpreter_id": "criteria-match",
+    "version": "1",
+    "criteria_catalog_version": "1",
+    "filler_phrases": [
+      "I want a bug where",
+      "I need a bug where",
+      "a bug where"
+    ]
+  },
+  "qualification_route": {
+    "route_id": "behavioral-qualification",
+    "version": "1"
+  },
+  "package_formats": {
+    "bug_case": "rbw-bug-case/1",
+    "validator": "rbw-validator/1"
+  }
+}

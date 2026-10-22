@@ -194,7 +194,7 @@
         {
           "code": "quantity_exceeds_source",
           "severity": "warning",
-          "message": "Only 1 distinct concurrency catalog entry is eligible on the selected hosts, so at most 1 of the 2 concurrency cases that supported items ask for can be delivered.",
+          "message": "Only 1 distinct concurrency defect is eligible on the selected hosts, so at most 1 of the 2 concurrency cases that supported items ask for can be delivered.",
           "item_key": "concurrency-any"
         }
       ]
