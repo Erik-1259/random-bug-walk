@@ -2,9 +2,12 @@
 // state (outcomes, stop codes, delivery, attention, stages, counts and event order; amounts, also those
 // in texts, follow the test profile's worst cases), the evidence adds up to the status, the 2 s hold, reconcile and reset,
 // validation runs, hash-checked downloads, and no JSON response carries evaluator material.
+import { cpSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { RequestStatus, TestEvidence, TestScenario, ValidationRun } from "@rbw/factory-contract";
+import type { RequestInput, RequestStatus, TestEvidence, TestScenario, ValidationRun } from "@rbw/factory-contract";
 import { TEST_SCENARIO_VALUES } from "@rbw/factory-contract";
 import {
   getPackage,
@@ -22,8 +25,8 @@ import type { FactoryServer } from "../../src/factory-server/ports.ts";
 import { TEST_MODE_EVALUATOR_SENTINEL } from "../../src/factory-server/test-mode/archives.ts";
 import { loadTestFixtures, SCENARIO_FIXTURE } from "../../src/factory-server/test-mode/fixtures.ts";
 import { TEST_PROFILE } from "../../src/factory-server/test-mode/profile.ts";
-import { testRequestRoot, TestWorld } from "../../src/factory-server/test-mode/world.ts";
-import { contractBody, fixture, FIXTURES, OTHER_REQUEST_ID, PASSCODE, request, REQUEST_ID, sha256, START } from "./support.ts";
+import { testRequestRoot, TestWorld, withItemKeys } from "../../src/factory-server/test-mode/world.ts";
+import { contractBody, fixture, FIXTURES, OTHER_REQUEST_ID, PASSCODE, request, REQUEST_ID, sha256, START, VALIDATION_ID } from "./support.ts";
 
 const FIXTURE_SET = loadTestFixtures(FIXTURES);
 const STEP_MS = 100;
@@ -58,8 +61,7 @@ async function reset(w: World, scenario: TestScenario): Promise<void> {
   expect(await contractBody("TestResetResponse", response)).toEqual({ contract_version: "bug-request/1", scenario });
 }
 
-async function start(w: World, scenario: TestScenario, requestId = REQUEST_ID): Promise<Response> {
-  const input = endState(scenario).interpretation.input;
+async function start(w: World, scenario: TestScenario, requestId = REQUEST_ID, input: RequestInput = endState(scenario).interpretation.input): Promise<Response> {
   const interpreted = await keep(w, await postInterpretation(request("/api/factory/interpretations", { body: input, session: false }), w.server));
   const interpretation = await contractBody("Interpretation", interpreted);
   return keep(w, await postStart(request("/api/factory/requests", { body: { request_id: requestId, input, interpretation_sha256: interpretation.interpretation_sha256 } }), w.server));
@@ -239,6 +241,143 @@ describe("scenarios", () => {
     const after = await status(w);
     expect(after.budget.remaining_microusd).toBeLessThan(remaining);
     expect(after.stop_reason).toEqual(stopReason);
+  });
+});
+
+/** An input under other item keys, in item order: the request form's item-1 to item-n by default. */
+function keyed(input: RequestInput, keys: readonly string[] = input.items.map((_item, index) => `item-${String(index + 1)}`)): { input: RequestInput; map: Map<string, string> } {
+  const map = new Map(input.items.map((item, index) => [item.item_key, keys[index] ?? item.item_key]));
+  return { input: { ...input, items: input.items.map((item) => ({ ...item, item_key: map.get(item.item_key) ?? item.item_key })) }, map };
+}
+
+/** A key as a whole key in a body, as test mode rewrites it: not part of a longer key or word. */
+const wholeKey = (key: string): RegExp => new RegExp(`(?<![\\w-])${key}(?![\\w-])`);
+
+async function interpretation(w: World, input: RequestInput) {
+  return contractBody("Interpretation", await keep(w, await postInterpretation(request("/api/factory/interpretations", { body: input, session: false }), w.server)));
+}
+
+describe("item keys of the request form", () => {
+  it("rewrites every item_key field and whole fixture keys in message texts at once, so swapped keys stay swapped", () => {
+    const swap = new Map([
+      ["concurrency-1", "date-time-1"],
+      ["date-time-1", "concurrency-1"],
+    ]);
+    const value = {
+      item_key: "concurrency-1",
+      events: [
+        { item_key: "date-time-1", message: "Item concurrency-1, then date-time-1." },
+        { item_key: null, message: "concurrency-10, x-concurrency-1 and concurrency-1-b stay; concurrency-1 does not." },
+      ],
+      description: "concurrency-1 outside a message stays",
+      item: { item_key: "concurrency-any" },
+    };
+    expect(withItemKeys(value, swap)).toEqual({
+      item_key: "date-time-1",
+      events: [
+        { item_key: "concurrency-1", message: "Item date-time-1, then concurrency-1." },
+        { item_key: null, message: "concurrency-10, x-concurrency-1 and concurrency-1-b stay; date-time-1 does not." },
+      ],
+      description: "concurrency-1 outside a message stays",
+      item: { item_key: "concurrency-any" },
+    });
+    expect(value.item_key).toBe("concurrency-1");
+  });
+
+  it.each(ENDING)("%s with form item keys", async (scenario) => {
+    const w = makeWorld();
+    await reset(w, scenario);
+    const end = endState(scenario);
+    const { input, map } = keyed(end.interpretation.input);
+    const keys = [...map.values()];
+    const answer = await interpretation(w, input);
+    expect(answer.input.items.map((item) => item.item_key)).toEqual(keys);
+    expect(answer.items.map((item) => item.item_key)).toEqual(keys);
+    expect(answer.interpretation_sha256).not.toBe(end.interpretation.interpretation_sha256);
+    expect(await interpretation(w, input)).toEqual(answer);
+    expect(answer).toEqual({ ...withItemKeys(end.interpretation, map), interpretation_sha256: answer.interpretation_sha256 });
+
+    const started = await start(w, scenario, REQUEST_ID, input);
+    expect(started.status).toBe(202);
+    const last = (await runToEnd(w, scenario)).at(-1);
+    if (last === undefined) throw new Error("synthetic: no status");
+    const expected = withItemKeys(end, map);
+    expect(shape(last)).toEqual(shape({ ...expected, interpretation: answer }));
+    expect(last.items.map((item) => [item.item_key, item.delivered, item.case_ids.length])).toEqual(end.items.map((item) => [map.get(item.item_key), item.delivered, item.case_ids.length]));
+    expect(last.type_totals).toEqual(end.type_totals);
+    for (const item of last.cases) expect(keys).toContain(item.item_key);
+
+    const delivered = last.cases[0];
+    if (delivered !== undefined) {
+      expect((await validate(w, delivered.case_id, VALIDATION_ID)).status).toBe(202);
+      w.clock.ms += 3 * STEP_MS;
+      const runs = (await status(w)).events.filter((event) => event.type === "validation_started" || event.type === "validation_finished");
+      expect(runs.map((event) => event.item_key)).toEqual([delivered.item_key, delivered.item_key]);
+    }
+    for (const body of w.bodies) for (const key of map.keys()) expect(body, key).not.toMatch(wholeKey(key));
+  });
+
+  it("refuses other requirements, a hash computed for other keys, and the same request ID with other keys", async () => {
+    const w = makeWorld();
+    await reset(w, "two-host-fulfilled");
+    const end = endState("two-host-fulfilled");
+    const { input } = keyed(end.interpretation.input);
+    const refusal = async (response: Response): Promise<[number, string]> => [response.status, (await contractBody("ErrorResponse", response)).error.code];
+    const interpret = (body: unknown) => postInterpretation(request("/api/factory/interpretations", { body, session: false }), w.server);
+    const begin = (body: unknown, sha: string) => postStart(request("/api/factory/requests", { body: { request_id: REQUEST_ID, input: body, interpretation_sha256: sha } }), w.server);
+
+    // Items are positional: the same items in another order are other requirements.
+    expect(await refusal(await interpret({ ...input, items: [...input.items].reverse() }))).toEqual([400, "invalid_request"]);
+    const repeated = await interpret(keyed(input, ["item-1", "item-1"]).input);
+    expect(await contractBody("ErrorResponse", repeated)).toMatchObject({ error: { code: "invalid_request", message: "The item key item-1 is used twice." } });
+
+    // The fixture's hash, or the hash for other form keys, is stale for these keys.
+    const stale = await begin(input, end.interpretation.interpretation_sha256);
+    expect(await contractBody("ErrorResponse", stale.clone())).toMatchObject({ error: { code: "interpretation_stale" } });
+    expect(JSON.stringify(await stale.json())).not.toMatch(wholeKey("concurrency-1"));
+    const other = await interpretation(w, keyed(input, ["item-a", "item-b"]).input);
+    expect(await refusal(await begin(input, other.interpretation_sha256))).toEqual([409, "interpretation_stale"]);
+
+    // A swap of the fixture's own keys is a rewrite too, with its own hash.
+    const swapped = await interpretation(w, keyed(end.interpretation.input, ["date-time-1", "concurrency-1"]).input);
+    expect(swapped.items.map((item) => [item.item_key, item.bug_type_id])).toEqual([
+      ["date-time-1", "concurrency"],
+      ["concurrency-1", "date_time"],
+    ]);
+    expect(swapped.interpretation_sha256).not.toBe(end.interpretation.interpretation_sha256);
+
+    const answer = await interpretation(w, input);
+    expect((await begin(input, answer.interpretation_sha256)).status).toBe(202);
+    expect((await begin(input, answer.interpretation_sha256)).status).toBe(200);
+    expect(await refusal(await begin(end.interpretation.input, end.interpretation.interpretation_sha256))).toEqual([409, "idempotency_conflict"]);
+  });
+
+  it("refuses another scenario's input under form keys with unavailable and releases the slot, and answers an unsupported one unsupported_request", async () => {
+    const w = makeWorld();
+    await reset(w, "zero-result");
+    const refused = await start(w, "two-host-fulfilled", REQUEST_ID, keyed(endState("two-host-fulfilled").interpretation.input).input);
+    expect(refused.status).toBe(503);
+    expect((await contractBody("ErrorResponse", refused)).error.message).toContain("zero-result");
+    expect((await start(w, "zero-result", OTHER_REQUEST_ID, keyed(endState("zero-result").interpretation.input).input)).status).toBe(202);
+
+    const unsupported = fixture("Interpretation", "interpretation-unsupported.json");
+    const { input, map } = keyed(unsupported.input);
+    const answer = await interpretation(w, input);
+    expect(answer.startable).toBe(false);
+    expect(answer).toEqual({ ...withItemKeys(unsupported, map), interpretation_sha256: answer.interpretation_sha256 });
+    const response = await keep(w, await postStart(request("/api/factory/requests", { body: { request_id: REQUEST_ID, input, interpretation_sha256: answer.interpretation_sha256 } }), w.server));
+    expect(response.status).toBe(422);
+    expect((await contractBody("ErrorResponse", response)).error.code).toBe("unsupported_request");
+    for (const body of w.bodies.slice(-2)) for (const key of map.keys()) expect(body, key).not.toMatch(wholeKey(key));
+  });
+
+  it("refuses fixtures that interpret the same requirements under other item keys differently", () => {
+    const dir = mkdtempSync(join(tmpdir(), "rbw-test-mode-fixtures-"));
+    cpSync(FIXTURES, dir, { recursive: true });
+    const supported = fixture("Interpretation", "interpretation-supported.json");
+    const renamed = withItemKeys(supported, new Map([["concurrency-1", "other-1"], ["date-time-1", "other-2"]]));
+    writeFileSync(join(dir, "interpretation-supported.json"), JSON.stringify({ ...renamed, interpretation_sha256: "2".repeat(64) }));
+    expect(() => loadTestFixtures(dir)).toThrow("test mode: two fixtures interpret one input differently");
   });
 });
 

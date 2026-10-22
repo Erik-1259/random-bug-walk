@@ -511,10 +511,10 @@ The machine-readable definition of every shape in this document is the JSON Sche
 
 ### 15.1 Test controls (planned)
 
-For automated acceptance, the service can start in a test mode that is refused when the deployment is production. In test mode:
+For automated acceptance, the service can start in a test mode that is refused on any Vercel deployment (preview or production); it runs in one local server process. In test mode:
 
-- The hosted worker, sandbox provider and package storage are replaced by deterministic fakes, and the spend ledger runs on a disposable database. The test factory pool is `40000000` ($40.00). Every fake operation costs exactly its worst case, and the worst cases equal the fixtures' (worker $0.20; a candidate $0.60 on Umami and $0.30 on task-report; a validation run $0.30 on Umami and $0.20 on task-report). Settled amounts can therefore differ from the end-state fixtures; outcomes, stop codes, delivery, attention, stages and counts match them.
-- A named scenario fixes every check outcome. Catalog order puts task-report first. The client sends the `interpretation.input` of the named fixture:
+- The hosted worker, sandbox provider, package storage and spend ledger are replaced by deterministic in-memory fakes that live in that one server process, so test mode needs no database or other network service. The test factory pool is `40000000` ($40.00). Every fake operation costs exactly its worst case, and the worst cases equal the fixtures' (worker $0.20; a candidate $0.60 on Umami and $0.30 on task-report; a validation run $0.30 on Umami and $0.20 on task-report). Settled amounts can therefore differ from the end-state fixtures; outcomes, stop codes, delivery, attention, stages and counts match them.
+- A named scenario fixes every check outcome. Catalog order puts task-report first. The client sends the `interpretation.input` of the named fixture, or the same requirements under its own item keys: items are matched by position, and every response then carries the request's keys, with an `interpretation_sha256` of its own:
 
 | Scenario | The fakes | Input from | Outcome | Stop code | Delivery | Attention | End state |
 |---|---|---|---|---|---|---|---|
