@@ -147,7 +147,13 @@ attempts only the first copy and releases the unused copies at zero. Worker-only
 uncertainty cannot satisfy this probe. That candidate must end `incomplete` with
 `incomplete_run`, no item or case assignment, and exactly one matching
 `candidate_incomplete` event. Its uncertain first create cannot report completed
-checks or explored candidates. Every named
+checks or explored candidates. Its complete pre-reconciliation history must record
+the pinned worker reservation, all three candidate-copy reservations, release of
+the unlaunched copies and worker settlement, leaving the uncertain copy held.
+The runner checks each budget snapshot and its order across pages against these
+independent amounts and the final status. Accounting may follow request completion;
+attention timing, host preparation interleaving and generated metadata stay free.
+Every named
 terminal checks its expected attention; ordinary completed requests must show
 no held spend and both slot holders cleared before any subsequent action or reset.
 

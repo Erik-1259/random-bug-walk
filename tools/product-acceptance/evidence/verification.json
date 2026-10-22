@@ -10,12 +10,12 @@
   },
   "self_tests": {
     "command": "pnpm --filter @rbw/product-acceptance test --reporter=json",
-    "passed": 541,
+    "passed": 562,
     "failed": 0,
     "skipped": 0,
     "exit_code": 0
   },
-  "test_floor": 541,
+  "test_floor": 562,
   "failing_first": [
     {
       "scope": "final-contract invariant regressions",
@@ -381,6 +381,13 @@
       "failed": 5,
       "skipped": 0,
       "exit_code": 1
+    },
+    {
+      "scope": "missing, discounted, duplicated or misordered uncertain-provider pre-reconciliation budget snapshots despite correct terminal status and ledger, including paged history",
+      "passed": 3,
+      "failed": 18,
+      "skipped": 541,
+      "exit_code": 1
     }
   ],
   "local_checks": [
@@ -490,6 +497,12 @@
       "command": "pnpm --filter @rbw/product-acceptance test --reporter=json",
       "meaning": "independent focused review reran the full suite after pinned case baselines and owned-process interruption cleanup",
       "passed": 541,
+      "exit_code": 0
+    },
+    {
+      "command": "pnpm --filter @rbw/product-acceptance test --reporter=json",
+      "meaning": "independent focused review reran the full suite after uncertain-provider pre-reconciliation budget history checks",
+      "passed": 562,
       "exit_code": 0
     }
   ],
@@ -658,6 +671,10 @@
     {
       "finding": "Interrupting the CLI could leave its detached local backend process group running.",
       "disposition": "Install handlers immediately after spawn, share idempotent group cleanup with normal close, close active HTTP connections and await process closure before exiting 130 or 143. Suppress completed reports after interruption, retain handlers through repeated signals and remove them after cleanup. Subprocess regressions cover both signals during startup, polling and HTTP, normal-close races and TERM-resistant children or descendants."
+    },
+    {
+      "finding": "The uncertain-provider probe accepted missing or incorrect pre-reconciliation budget history when terminal status and evidence were correct.",
+      "disposition": "Require the pinned worker/candidate reservation, unused-copy release and worker-settlement trajectory from complete paged history, with independently priced amounts and final-status agreement. Preserve the uncertain copy, post-completion accounting and unrelated event timing without inventing a complete end-state fixture."
     }
   ],
   "http_regression_evidence": {

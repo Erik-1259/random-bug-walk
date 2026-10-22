@@ -240,10 +240,61 @@ function uncertainControl() {
       remaining_microusd: integer(object(s.state.budget).budget_microusd) - reserved - spent });
   };
   normalize();
+  // The pinned control reserves three copies, releases the two never launched,
+  // then settles its worker while the first copy remains uncertain.
+  const history = objects(s.state.events);
+  const incomplete = history.find(event => event.type === "candidate_incomplete"); assert(incomplete);
+  const sample = history.find(event => event.type === "budget_updated"); assert(sample);
+  const budget = integer(object(s.state.budget).budget_microusd);
+  const update = (held: number, spent: number) => ({ ...sample, data: {
+    reserved_microusd: held, spent_microusd: spent, remaining_microusd: budget - held - spent,
+  } });
+  replaceHistory(s, history.flatMap(event => event === incomplete ? [event, update(300000, 0), update(100000, 200000)] : [event]));
   return { ...s, probe, worker, copies, normalize };
 }
 it("accepts the first uncertain candidate create with unused originals retained", async () => {
   const s = uncertainControl(); await expect(runProbe(s.backend, s.probe)).resolves.toBeUndefined();
+});
+it.each([1, 4])("accepts uncertain budget history paged by %s events", async size => {
+  const s = uncertainControl(); pageScenario(s, size);
+  await expect(runProbe(s.backend, s.probe)).resolves.toBeUndefined();
+});
+for (const paged of [false, true]) {
+  it.each([0, 1, 2, 3])(`rejects missing uncertain budget update %s with paged=${String(paged)}`, async index => {
+    const s = uncertainControl(); const history = objects(s.state.events);
+    const budgets = history.filter(event => event.type === "budget_updated"); const removed = budgets[index]; assert(removed);
+    replaceHistory(s, history.filter(event => event !== removed));
+    if (paged) pageScenario(s, 1);
+    await expect(runProbe(s.backend, s.probe)).rejects.toThrow("uncertain-provider budget");
+  });
+}
+it.each([0, 1, 2, 3])("rejects discounted uncertain budget update %s despite a correct ledger", async index => {
+  const s = uncertainControl(); const event = objects(s.state.events).filter(event => event.type === "budget_updated")[index]; assert(event);
+  const data = object(event.data);
+  data.reserved_microusd = integer(data.reserved_microusd) - 1;
+  data.remaining_microusd = integer(data.remaining_microusd) + 1;
+  await expect(runProbe(s.backend, s.probe)).rejects.toThrow("uncertain-provider budget");
+});
+it.each(["all-missing", "duplicate", "worker-late", "candidate-early", "release-early", "settlements-reversed"])(
+  "rejects uncertain budget history %s despite correct terminal accounting", async change => {
+    const s = uncertainControl(); let history = objects(s.state.events);
+    const budgets = history.filter(event => event.type === "budget_updated");
+    const [worker, candidate, released, settled] = budgets; assert(worker && candidate && released && settled);
+    if (change === "all-missing") history = history.filter(event => event.type !== "budget_updated");
+    if (change === "duplicate") history = history.flatMap(event => event === candidate ? [event, structuredClone(event)] : [event]);
+    if (change === "worker-late") history = history.filter(event => event !== worker).flatMap(event => event.type === "worker_started" ? [event, worker] : [event]);
+    if (change === "candidate-early") history = history.filter(event => event !== candidate).flatMap(event => event.type === "candidate_selected" ? [candidate, event] : [event]);
+    if (change === "release-early") history = history.filter(event => event !== released).flatMap(event => event.type === "candidate_incomplete" ? [released, event] : [event]);
+    if (change === "settlements-reversed") history = history.map(event => event === released ? settled : event === settled ? released : event);
+    replaceHistory(s, history); pageScenario(s, 1);
+    await expect(runProbe(s.backend, s.probe)).rejects.toThrow("uncertain-provider budget");
+  });
+it("accepts uncertain budget settlements after request completion before reconciliation", async () => {
+  const s = uncertainControl(); const history = objects(s.state.events);
+  const settlements = history.filter(event => event.type === "budget_updated").slice(2);
+  replaceHistory(s, [...history.filter(event => !settlements.includes(event)), ...settlements]);
+  pageScenario(s, 1);
+  await expect(runProbe(s.backend, s.probe)).resolves.toBeUndefined();
 });
 it("rejects uncertain-provider on an internally consistent unrelated source", async () => {
   const s = uncertainControl();
@@ -327,7 +378,7 @@ for (const name of ["fulfilled", "exhausted", "cancelled", "operational-error"])
     await expect(runProbe(s.backend, s.probe)).rejects.toThrow("request_finished");
   });
 }
-function pageScenario(s: ReturnType<typeof terminalScenario>, size: number): void {
+function pageScenario(s: { backend: IsolatedBackend }, size: number): void {
   const request = s.backend.request.bind(s.backend);
   s.backend.request = async (...args) => {
     const reply = await request(...args);
@@ -451,7 +502,7 @@ it("rejects completed check progress after an uncertain first create", async () 
   await expect(runProbe(s.backend, s.probe)).rejects.toThrow("uncertain-provider");
 });
 
-function replaceHistory(s: ReturnType<typeof terminalScenario>, events: Record<string, unknown>[]): void {
+function replaceHistory(s: { state: Record<string, unknown> }, events: Record<string, unknown>[]): void {
   s.state.events = events.map((event, index) => ({ ...event, seq: index + 1 }));
   s.state.next_after = events.length;
 }

@@ -417,6 +417,26 @@ function checkUncertainAttempt(state: Record<string, unknown>, history: Record<s
   const attempt = launched[0]; assert(attempt);
   assert.equal(attempt.state, "uncertain", "uncertain-provider did not retain candidate uncertainty");
   assert.equal(attempt.settled_microusd, null, "uncertain-provider prematurely settled its candidate create");
+  // Sections 8.5/15.1 and the pinned service profile require each budget change.
+  // This is only the reservation trajectory, not a complete end-state fixture.
+  // Accounting may follow request_finished; attention and host timing stay free.
+  const markers = ["request_accepted", "budget_updated", "worker_started", "candidate_selected", "candidate_incomplete"];
+  assert.deepEqual(history.filter(event => markers.includes(text(event.type))).map(event => event.type),
+    ["request_accepted", "budget_updated", "worker_started", "candidate_selected", "budget_updated", "candidate_incomplete", "budget_updated", "budget_updated"],
+    "uncertain-provider budget transition order differs from pinned control");
+  const workerWorst = 200_000;
+  const copyWorst = candidate.host_id === "task-report" ? 100_000 : 200_000;
+  const budget = object(state.budget);
+  const cap = integer(budget.budget_microusd);
+  const expectedBudgets = [[workerWorst, 0], [workerWorst + 3 * copyWorst, 0],
+    [workerWorst + copyWorst, 0], [copyWorst, workerWorst]].map(([held, spent]) => {
+    assert(held !== undefined && spent !== undefined);
+    return { reserved_microusd: held, spent_microusd: spent, remaining_microusd: cap - held - spent };
+  });
+  const updates = history.filter(event => event.type === "budget_updated");
+  assert.deepEqual(updates.map(event => event.data), expectedBudgets, "uncertain-provider budget amounts differ from pinned reservations");
+  assert.deepEqual(expectedBudgets.at(-1), Object.fromEntries(["reserved_microusd", "spent_microusd", "remaining_microusd"].map(field => [field, budget[field]])),
+    "uncertain-provider budget history differs from terminal accounting");
 }
 
 /** Exercise one named deterministic validation scenario after request completion. */
