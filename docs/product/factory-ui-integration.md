@@ -48,7 +48,7 @@ The script refuses a non-local origin, intercepts only factory endpoints in its 
 
 ## Repeating the test-mode HTTP/UI proof
 
-This proof requires the candidate backend from [PR #144](https://github.com/Erik-1259/random-bug-walk/pull/144) at immutable commit [`d543065d540ca6a1e8a3818b95f6f0ff5e3bfb0a`](https://github.com/Erik-1259/random-bug-walk/commit/d543065d540ca6a1e8a3818b95f6f0ff5e3bfb0a), with this browser script applied. Until that backend is incorporated, use an isolated checkout of that commit; the script alone does not add the required server behavior. This prerequisite does not establish that PR #144 has merged or completed review.
+The backend prerequisites were merged in [PR #144](https://github.com/Erik-1259/random-bug-walk/pull/144) at [`092c1526b27a441c43f5fc1694fa44bf3d7cfb96`](https://github.com/Erik-1259/random-bug-walk/commit/092c1526b27a441c43f5fc1694fa44bf3d7cfb96). Run this browser script against that backend with the current proof changes applied. The pin identifies the local synthetic service behavior, not a durable-service or hosted integration handoff.
 
 Use a dedicated, single-process local server with the default committed contract fixtures. From that checkout's repository root:
 
@@ -62,14 +62,22 @@ Then, from its `packages/web` directory, using an externally available Playwrigh
 node test/factory-test-mode-browser.mjs <playwright-index.mjs> <chromium-binary> http://localhost:3033 <evidence-output-directory>
 ```
 
-The script requires exclusive use of this server: it calls the test reset endpoint between scenarios, discarding all in-memory test requests, operations and validation runs. Stop the server process after the proof. Do not point it at a shared or hosted service. At the pinned candidate, test mode is refused for both `VERCEL_ENV=preview` and `VERCEL_ENV=production`; the local command explicitly selects `development`. No provider, paid run or legacy replay is started.
+The script requires exclusive use of this server: it calls the test reset endpoint between scenarios, discarding all in-memory test requests, operations and validation runs. Stop the server process after the proof. Do not point it at a shared or hosted service. At the pinned backend revision, test mode is refused for both `VERCEL_ENV=preview` and `VERCEL_ENV=production`; the local command explicitly selects `development`. No provider, paid run or legacy replay is started.
 
-The fulfilled scenario signs in and enters requirements through the ordinary form, reviews the service interpretation, and starts through the UI at desktop and narrow widths. That journey does not seed a request through the API or write its identity into localStorage from the test; the application persists its own identity. The other six scenarios remain API-seeded UI-resumption journeys: they send unchanged fixture inputs through the real interpretation and start endpoints, save that identity for the browser, and reload the UI. The script does not intercept or rewrite factory responses.
+The form journeys sign in, enter requirements through the ordinary form, review the service interpretation, and start through the UI:
 
-Its assertions cover request resumption, partial and error outcomes, reconciliation, package downloads and validation outcomes against actual test-mode responses and operation evidence. Execution dependencies and archive contents remain synthetic. This mixed proof exercises one ordinary form-to-start journey and six API-seeded journeys, not real-worker execution, durable-service integration or production acceptance. A run's output records its results; these instructions alone do not establish a passing run.
+- `two-host-fulfilled` at desktop and narrow widths;
+- `cancel-midway` at narrow width;
+- `validation-failed` and `validation-error` at desktop width.
 
-### Candidate backend item-key support
+These journeys do not seed requests through the API or write identities into localStorage from the test; the application persists its own request and validation identities. Assertions check a single Start, the saved identity and reload without replacement work. The cancellation journey stops through the UI and checks that delivered cases remain available after cancellation and reload. Validation journeys retain the result, budget and reload assertions, distinguishing behavioral failure from operational error.
 
-The form generates opaque item keys such as `item-1` in `src/components/factory-request-form.tsx`. The pinned candidate's test mode matches fixture requirements without item keys, while preserving item order, descriptions, quantities and the other normalized input fields. It accepts the form's keys and carries them through the interpretation, events, candidates, items, cases and validation events. An interpretation under new keys gets its own hash; a hash for different keys is stale. The original fixture keys retain their fixture interpretation and hash.
+The remaining `partial-budget`, `worker-lost` and `uncertain-provider` scenarios are explicitly API-seeded UI-resumption journeys: they send unchanged fixture inputs through the real interpretation and start endpoints, save that identity for the browser, and reload the UI. The script does not intercept or rewrite factory responses.
 
-This replaces the earlier default-fixture restriction that rejected otherwise matching form inputs solely because their keys differed from `concurrency-1` or `date-time-1`. It does not add a general interpreter: requirements outside the committed fixtures still receive `invalid_request`, and a start must match the selected scenario's requirements. The proof uses the candidate's behavior without remapping browser requests or modifying shared fixtures.
+Assertions compare request resumption, partial and error outcomes, reconciliation, package downloads and validation outcomes with actual test-mode responses and operation evidence. Execution dependencies and archive contents remain synthetic. This mixed proof covers four form-started scenarios (fulfilled at two widths) and three API-seeded scenarios, not real-worker execution, durable-service integration or production acceptance. A run's output records its results; these instructions alone do not establish a passing run.
+
+### Backend item-key support
+
+The form generates opaque item keys such as `item-1` in `src/components/factory-request-form.tsx`. The pinned backend's test mode matches fixture requirements without item keys, while preserving item order, descriptions, quantities and the other normalized input fields. It accepts the form's keys and carries them through the interpretation, events, candidates, items, cases and validation events. An interpretation under new keys gets its own hash; a hash for different keys is stale. The original fixture keys retain their fixture interpretation and hash.
+
+This replaces the earlier default-fixture restriction that rejected otherwise matching form inputs solely because their keys differed from `concurrency-1` or `date-time-1`. It does not add a general interpreter: requirements outside the committed fixtures still receive `invalid_request`, and a start must match the selected scenario's requirements. The proof uses that merged behavior without remapping browser requests or modifying shared fixtures.
