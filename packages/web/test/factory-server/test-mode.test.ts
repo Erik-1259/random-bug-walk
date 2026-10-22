@@ -546,6 +546,76 @@ describe("the pending-package window of two-host-fulfilled (contract section 15.
     expect(Date.parse(umamiDelivered?.at ?? "") - Date.parse(umamiReady?.at ?? "")).toBe(STEP_MS);
   });
 
+  it("checks a validation POST for the delivered case when its 2 s hold ends: sent 2.5 s after package_ready it answers not_found, sent 3.5 s after it answers busy", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout"] });
+    const w = makeWorld(2000);
+    await reset(w, "two-host-fulfilled");
+    const started = start(w, "two-host-fulfilled");
+    await vi.advanceTimersByTimeAsync(2000);
+    expect((await started).status).toBe(202);
+    let current = await status(w);
+    for (let poll = 0; !current.events.some((event) => event.type === "package_ready"); poll += 1) {
+      if (poll > 100) throw new Error("synthetic: no package_ready");
+      w.clock.ms += STEP_MS;
+      current = await status(w);
+    }
+    const ready = current.events.find((event) => event.type === "package_ready");
+    if (ready?.type !== "package_ready" || ready.case_id === null) throw new Error("synthetic: no announced case");
+    const caseId = ready.case_id;
+    const readyMs = Date.parse(ready.at);
+    // Moves the service clock with the fake timers, 100 ms at a time.
+    const elapse = async (ms: number): Promise<void> => {
+      for (let done = 0; done < ms; done += 100) {
+        w.clock.ms += 100;
+        await vi.advanceTimersByTimeAsync(100);
+      }
+    };
+    // Sends a validation POST now; records its answer and how long after sending it came on the service clock.
+    const send = (validationId: string) => {
+      const sentMs = w.clock.ms;
+      const answer: { response: Response | null; afterMs: number | null } = { response: null, afterMs: null };
+      void validate(w, caseId, validationId).then((response) => {
+        answer.response = response;
+        answer.afterMs = w.clock.ms - sentMs;
+      });
+      return answer;
+    };
+    const answered = (answer: { response: Response | null }): Response => {
+      if (answer.response === null) throw new Error("synthetic: the validation POST has not answered");
+      return answer.response;
+    };
+    const early = "00000000-0000-4000-8000-0000000002d1";
+    const late = "00000000-0000-4000-8000-0000000002d2";
+
+    // Sent 2.5 s after package_ready: its hold ends at 4.5 s, inside the window.
+    w.clock.ms = readyMs + 2500;
+    const first = send(early);
+    await elapse(1000);
+    // At 3.5 s the case is still pending: not listed, and its parts answer not_found. The second POST is
+    // sent now, but its hold ends at 5.5 s, after the case_delivered at 5 s.
+    expect(first.response).toBeNull();
+    expect((await status(w)).cases).toEqual([]);
+    expect((await getPackage(request(`${STATUS_PATH}/cases/${caseId}/packages/bug-case`), w.server, { request_id: REQUEST_ID, case_id: caseId, part: "bug-case" })).status).toBe(404);
+    const second = send(late);
+    await elapse(1000);
+    expect(first.afterMs).toBe(2000);
+    expect(await contractBody("ErrorResponse", answered(first))).toMatchObject({ error: { code: "not_found" } });
+    expect(second.response).toBeNull();
+    await elapse(1000);
+    // The case check passes, and the request, which still runs, holds the slot.
+    expect(second.afterMs).toBe(2000);
+    expect(await contractBody("ErrorResponse", answered(second))).toMatchObject({ error: { code: "busy", details: { reason: "active" } } });
+    const after = await status(w);
+    expect([after.state, after.cases.map((item) => item.case_id)]).toEqual(["running", [caseId]]);
+    expect(Date.parse(after.events.find((event) => event.type === "case_delivered")?.at ?? "") - readyMs).toBe(PENDING_PACKAGE_MS);
+
+    // Both refusals recorded nothing.
+    expect((await evidence(w)).operations.filter((op) => op.kind === "validation")).toEqual([]);
+    for (const id of [early, late]) {
+      expect((await getValidationRun(request(`${STATUS_PATH}/cases/${caseId}/validations/${id}`), w.server, { request_id: REQUEST_ID, case_id: caseId, validation_id: id })).status).toBe(404);
+    }
+  });
+
   it("does not hold the other scenarios that replay status-fulfilled.json", async () => {
     for (const scenario of ["validation-failed", "validation-error"] as const) {
       const { last } = await finishedFulfilled(scenario);
