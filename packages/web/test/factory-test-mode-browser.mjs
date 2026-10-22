@@ -1,6 +1,6 @@
 /* global localStorage, document, innerWidth */
 // Real local HTTP/UI integration with deterministic fake providers, ledger, worker and storage.
-// Requests are API-seeded from exact contract fixtures; this is not form-to-start or real-worker proof.
+// Fulfillment starts through the form; recovery scenarios are API-seeded. No real-worker proof.
 // node test/factory-test-mode-browser.mjs <playwright-index.mjs> <chromium> <local-origin> <output-dir>
 import assert from "node:assert/strict";
 import console from "node:console";
@@ -136,43 +136,73 @@ async function scenario(name, width, run) {
     assert.deepEqual(errors, []);
     assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
     await page.screenshot({ path: join(outputDir, `${name}-${width}.png`), fullPage: true });
-    results.push({ scenario: name, width, proof: "API-seeded UI with real local HTTP and deterministic test-mode fakes", passed: true });
-    console.log(`PASS test-mode HTTP/browser ${width}px: ${name}`);
+    const setup = name === "two-host-fulfilled" ? "ordinary form-to-start" : "API-seeded UI resumption";
+    results.push({ scenario: name, width, proof: `${setup} with real local HTTP and deterministic test-mode fakes`, passed: true });
+    console.log(`PASS test-mode HTTP/browser ${width}px: ${name} (${setup})`);
   } finally {
     await context.close();
   }
 }
 
 try {
-  await scenario("two-host-fulfilled", 1440, async ({ context, page, posts }) => {
-    // Document the default fixture limitation, without rewriting a form's item keys or its responses.
+  for (const width of [1440, 390]) await scenario("two-host-fulfilled", width, async ({ context, page, posts }) => {
+    // Enter fixture requirements through the ordinary form; never seed this journey's identity.
     const input = fixture("status-fulfilled").interpretation.input;
     await page.getByRole("checkbox", { name: /Task and report service/ }).check();
     await page.getByLabel("Optional description for item 1", { exact: true }).fill(input.items[0].description);
     await page.getByRole("button", { name: "Add request item", exact: true }).click();
     await page.getByLabel("Bug type for item 2", { exact: true }).selectOption("date_time");
     await page.getByLabel("Shared budget (USD)", { exact: true }).fill("2");
-    const [submitted] = await Promise.all([
-      page.waitForRequest(request => request.method() === "POST" && new URL(request.url()).pathname === "/api/factory/interpretations"),
-      page.getByRole("button", { name: "Review requirements", exact: true }).click(),
-    ]);
-    const sent = submitted.postDataJSON();
+    const review = async () => {
+      const [response] = await Promise.all([
+        page.waitForResponse(response => response.request().method() === "POST" && new URL(response.url()).pathname === "/api/factory/interpretations"),
+        page.getByRole("button", { name: "Review requirements", exact: true }).click(),
+      ]);
+      assert.equal(response.status(), 200);
+      return { sent: response.request().postDataJSON(), interpretation: await response.json() };
+    };
+    const { sent, interpretation } = await review();
     assert.deepEqual(sent.items.map(item => item.item_key), ["item-1", "item-2"]);
     assert.deepEqual({ ...sent, items: sent.items.map((item, index) => ({ ...item, item_key: input.items[index].item_key })) }, input,
       "the form differs from this default fixture only in its opaque item keys");
-    await page.getByRole("alert").filter({ hasText: "Test mode interprets only the inputs of the contract fixtures." }).waitFor();
-    assert.equal(await page.getByRole("button", { name: "Start request", exact: true }).count(), 0);
+    assert.deepEqual(interpretation.input, sent);
+    assert.equal(interpretation.startable, true);
+    assert.deepEqual(interpretation.items.map(item => item.item_key), ["item-1", "item-2"]);
+    assert.match(interpretation.interpretation_sha256, /^[a-f0-9]{64}$/);
+    assert.notEqual(interpretation.interpretation_sha256, fixture("status-fulfilled").interpretation.interpretation_sha256);
+    assert.deepEqual(await review(), { sent, interpretation }, "reviewing unchanged form requirements returns the same key-specific interpretation");
+    await page.getByRole("heading", { name: "Service interpretation", exact: true }).waitFor();
     assert.equal(posts.filter(path => path === "/api/factory/requests").length, 0);
-    const id = await seededRequest(context, page, "status-fulfilled");
+    const [accepted] = await Promise.all([
+      page.waitForResponse(response => response.request().method() === "POST" && new URL(response.url()).pathname === "/api/factory/requests"),
+      page.getByRole("button", { name: "Start request", exact: true }).click(),
+    ]);
+    assert.equal(accepted.status(), 202);
+    const start = accepted.request().postDataJSON();
+    assert.deepEqual(start.input, sent);
+    assert.equal(start.interpretation_sha256, interpretation.interpretation_sha256);
+    const id = start.request_id;
+    assert.equal((await accepted.json()).request_id, id);
+    assert.equal(await page.evaluate(() => localStorage.getItem("rbw-factory-request-id")), id);
+    assert.deepEqual(await page.evaluate(() => JSON.parse(localStorage.getItem("rbw-factory-start"))), start);
+    await page.getByText(id, { exact: true }).waitFor();
     await page.getByRole("heading", { name: "Fulfilled", exact: true }).waitFor();
     assert.equal(await page.locator(".factory-case-card").count(), 2);
+    const delivered = await status(context, id);
+    assert.deepEqual(delivered.items.map(item => item.item_key), ["item-1", "item-2"]);
+    assert.deepEqual(delivered.cases.map(item => item.item_key), ["item-1", "item-2"]);
+    for (const key of ["item-1", "item-2"]) {
+      await page.locator(".factory-events li").filter({ hasText: `Case delivered for item ${key}.` }).waitFor();
+    }
     const beforeReload = await evidence(context, id);
     await page.reload();
     await page.getByRole("heading", { name: "Fulfilled", exact: true }).waitFor();
     assert.deepEqual(await evidence(context, id), beforeReload);
     await checkDownloads(page, await status(context, id));
     await validate(page, context, id, "passed", posts);
-    assert.equal(posts.filter(path => path === "/api/factory/requests").length, 0);
+    const validated = await status(context, id);
+    assert.deepEqual(validated.events.filter(event => ["validation_started", "validation_finished"].includes(event.type)).map(event => event.item_key), ["item-1", "item-1"]);
+    assert.equal(posts.filter(path => path === "/api/factory/requests").length, 1);
   });
 
   await scenario("cancel-midway", 390, async ({ context, page, posts }) => {

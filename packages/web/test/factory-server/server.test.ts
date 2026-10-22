@@ -1,4 +1,4 @@
-// The factory server's modes: test mode refused in production, the live wiring that is still held
+// The factory server's modes: test mode refused on any Vercel deployment, the live wiring that is still held
 // (each held port answers unavailable), the shared test-mode world, and the money isolation guard.
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -23,16 +23,19 @@ afterEach(() => {
 });
 
 describe("configuration", () => {
-  it("selects test mode with RBW_FACTORY_TEST_MODE=1 and refuses it when VERCEL_ENV is production", () => {
+  it("selects test mode with RBW_FACTORY_TEST_MODE=1 in a local server and refuses it on any Vercel deployment", () => {
     expect(loadFactoryConfig({ RBW_FACTORY_TEST_MODE: "1" }, "/synthetic/app").mode).toBe("test");
-    expect(loadFactoryConfig({ RBW_FACTORY_TEST_MODE: "1", VERCEL_ENV: "preview" }, "/synthetic/app").mode).toBe("test");
+    expect(loadFactoryConfig({ RBW_FACTORY_TEST_MODE: "1", VERCEL_ENV: "" }, "/synthetic/app").mode).toBe("test");
+    expect(loadFactoryConfig({ RBW_FACTORY_TEST_MODE: "1", VERCEL_ENV: "development" }, "/synthetic/app").mode).toBe("test");
+    expect(loadFactoryConfig({ RBW_FACTORY_TEST_MODE: "1", VERCEL_ENV: "preview" }, "/synthetic/app").mode).toBe("refused");
     expect(loadFactoryConfig({ RBW_FACTORY_TEST_MODE: "1", VERCEL_ENV: "production" }, "/synthetic/app").mode).toBe("refused");
+    expect(loadFactoryConfig({ RBW_FACTORY_TEST_MODE: "0", VERCEL_ENV: "preview" }, "/synthetic/app").mode).toBe("live");
     expect(loadFactoryConfig({ RBW_FACTORY_TEST_MODE: "0" }, "/synthetic/app").mode).toBe("live");
     expect(loadFactoryConfig({}, "/synthetic/repo/packages/web")).toEqual({ mode: "live", passcode: null, testFixturesDir: "/synthetic/repo/docs/product/fixtures/bug-request-v1" });
     expect(loadFactoryConfig({ RBW_JUDGE_PASSCODE: PASSCODE, RBW_FACTORY_TEST_FIXTURES: "fixtures" }, "/synthetic/app")).toMatchObject({ passcode: PASSCODE, testFixturesDir: "/synthetic/app/fixtures" });
   });
 
-  it("answers unavailable for every port in a production deployment that asks for test mode, signs nobody in, and has no test endpoints", async () => {
+  it("answers unavailable for every port on a Vercel deployment that asks for test mode, signs nobody in, and has no test endpoints", async () => {
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     const server = await factoryServer(config("refused"));
     expect((await getCapabilities(request("/api/factory/capabilities", { session: false }), server)).status).toBe(503);
@@ -43,7 +46,36 @@ describe("configuration", () => {
     expect((await postTestReset(request("/api/factory/test/reset", { body: { scenario: "zero-result" }, session: false }), server)).status).toBe(404);
   });
 
-  it("logs the production refusal once per server process, not on every call", async () => {
+  it.each(["preview", "production"])("refuses test mode through the route wrapper when VERCEL_ENV is %s: ports unavailable, nobody signed in, test endpoints 404", async (environment) => {
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.stubEnv("RBW_FACTORY_TEST_MODE", "1");
+    vi.stubEnv("VERCEL_ENV", environment);
+    vi.stubEnv("RBW_JUDGE_PASSCODE", PASSCODE);
+    vi.stubEnv("RBW_FACTORY_TEST_FIXTURES", FIXTURES);
+    try {
+      expect((await handle((server) => getCapabilities(request("/api/factory/capabilities", { session: false }), server))).status).toBe(503);
+      expect((await handle((server) => postSession(request("/api/factory/session", { body: { passcode: PASSCODE }, session: false }), server))).status).toBe(503);
+      expect((await handle((server) => getRequestStatus(request(`/api/factory/requests/${REQUEST_ID}`), server, { request_id: REQUEST_ID }))).status).toBe(401);
+      expect((await handle((server) => postTestReset(request("/api/factory/test/reset", { body: { scenario: "zero-result" }, session: false }), server))).status).toBe(404);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it.each(["", "development"])("keeps test mode through the route wrapper when VERCEL_ENV is '%s', as in next dev and vercel dev", async (environment) => {
+    vi.stubEnv("RBW_FACTORY_TEST_MODE", "1");
+    vi.stubEnv("VERCEL_ENV", environment);
+    vi.stubEnv("RBW_FACTORY_TEST_FIXTURES", FIXTURES);
+    try {
+      expect((await handle((server) => getCapabilities(request("/api/factory/capabilities", { session: false }), server))).status).toBe(200);
+      const reset = await handle((server) => postTestReset(request("/api/factory/test/reset", { body: { scenario: "zero-result" }, session: false }), server));
+      expect(await contractBody("TestResetResponse", reset)).toEqual({ contract_version: "bug-request/1", scenario: "zero-result" });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("logs the refusal once per server process, not on every call", async () => {
     const lines: string[] = [];
     vi.spyOn(console, "log").mockImplementation((line: string) => {
       lines.push(line);
