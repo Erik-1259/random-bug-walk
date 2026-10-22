@@ -131,6 +131,34 @@ it("accepts a status page that omits earlier criterion events", () => {
   value.events = [];
   expect(() => { checkStatus(value); }).not.toThrow();
 });
+for (const host of ["task-report", "umami"]) for (const set of ["original_suite", "verification"]) for (const copy of ["clean", "buggy", "fixed"]) {
+  it.each(["runs_valid", "runs_total"])(`binds qualification matrix ${host}/${set}/${copy} %s to its check event`, field => {
+    const value = object(fixture("status-fulfilled"));
+    const delivered = objects(value.cases).find(c => c.host_id === host); assert(delivered);
+    const cell = object(object(object(delivered.matrix)[set])[copy]);
+    cell[field] = Number(cell[field]) + (field === "runs_valid" ? -1 : 1);
+    expect(() => { checkStatus(value); }).toThrow("qualification matrix differs from check transition");
+  });
+}
+it("accepts qualification matrix checks across partial status pages", () => {
+  const value = object(fixture("status-fulfilled"));
+  const check = objects(value.events).find(event => event.type === "check_finished"); assert(check);
+  value.events = [check];
+  expect(() => { checkStatus(value); }).not.toThrow();
+});
+it("accepts qualification matrix run counts that agree with a different declared protocol", () => {
+  const value = object(fixture("status-fulfilled"));
+  for (const delivered of objects(value.cases)) {
+    object(delivered.repetition).protocol_id = "synthetic-other-protocol";
+    for (const set of ["original_suite", "verification"]) for (const copy of ["clean", "buggy", "fixed"]) {
+      const cell = object(object(object(delivered.matrix)[set])[copy]); cell.runs_valid = 7; cell.runs_total = 9;
+    }
+  }
+  for (const event of objects(value.events).filter(event => event.type === "check_finished")) {
+    object(event.data).runs_valid = 7; object(event.data).runs_total = 9;
+  }
+  expect(() => { checkStatus(value); }).not.toThrow();
+});
 it("accepts a criterion event before its case is ready", () => {
   const value = object(fixture("status-fulfilled"));
   const event = objects(value.events).find(e => e.type === "requested_criteria_passed"); assert(event);

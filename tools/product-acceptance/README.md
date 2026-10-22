@@ -112,6 +112,8 @@ as the named control specifies, before sending stop. Stopping at the first
 delivery is too early to exercise the fixture's cancellation outcome.
 Its complete history must contain exactly one stop after that checkpoint and
 before the in-flight check completes and the candidate becomes incomplete.
+Probes that never called Stop must have no `stop_requested` event, including in
+later history pages and before reconciliation.
 The stalled worker-loss control must record `worker_unresponsive` after the
 missed-heartbeat threshold, then interruption and `needs_reconciliation` after
 the lost-worker threshold. Generic early worker exits are not assigned this
@@ -132,6 +134,11 @@ case for every qualified candidate. Host, bug type, defect, item and provenance
 source/entry must agree across that link, including in Start responses.
 Delivered cases also carry the baseline pinned for their host in capabilities;
 another host's baseline or an unknown baseline cannot pass through unchanged.
+Each delivered qualification matrix must agree with its candidate's
+`check_finished` events on observed outcomes, valid runs and total runs. The
+runner compares checks present on each response page and requires all six cells
+after draining complete history. Checks before case delivery and partial pages
+remain valid; named scenarios independently pin the expected check counts.
 The named fixtures also pin candidate-local check signatures and order, behavior and
 criterion transitions, package/delivery events and source exhaustion. Package
 events must match the returned package digests. Host preparation may interleave,

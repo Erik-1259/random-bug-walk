@@ -129,6 +129,30 @@ export function checkCriteriaEvents(value: unknown, history: unknown, completeHi
   }
 }
 
+/** Qualification cells describe the same outcomes and trial counts as candidate checks. */
+export function checkQualificationEvents(value: unknown, history: unknown, completeHistory = false): void {
+  const status = object(value);
+  const candidates = objects(status.candidates);
+  const checks = objects(history).filter(event => event.type === "check_finished");
+  for (const delivered of objects(status.cases)) {
+    const candidate = candidates.find(candidate => candidate.case_id === delivered.case_id);
+    assert(candidate, "delivered case has no qualification candidate");
+    const witnessed = new Set<string>();
+    for (const event of checks.filter(event => event.candidate_id === candidate.candidate_id)) {
+      const data = object(event.data);
+      const set = text(data.check_set); const copy = text(data.copy);
+      const cell = object(object(object(delivered.matrix)[set])[copy]);
+      assert.deepEqual({ outcome: cell.observed, runs_valid: cell.runs_valid, runs_total: cell.runs_total },
+        { outcome: data.outcome, runs_valid: data.runs_valid, runs_total: data.runs_total },
+        "qualification matrix differs from check transition");
+      witnessed.add(`${set}/${copy}`);
+    }
+    if (completeHistory) for (const set of ["original_suite", "verification"]) for (const copy of ["clean", "buggy", "fixed"]) {
+      assert(witnessed.has(`${set}/${copy}`), "delivered case lacks a qualification check transition");
+    }
+  }
+}
+
 /** Named fixture outcomes use catalog entries; generated identities stay opaque. */
 export function checkScenarioCandidates(value: unknown, expected: Record<string, unknown>[], history: Record<string, unknown>[]): void {
   const candidates = objects(object(value).candidates);
@@ -260,4 +284,5 @@ export function checkStatus(value: unknown): void {
     assert.equal(s.outcome, null); assert.equal(s.stop_reason, null);
   }
   checkCriteriaEvents(s, s.events);
+  checkQualificationEvents(s, s.events);
 }

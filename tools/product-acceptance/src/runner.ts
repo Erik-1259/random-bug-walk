@@ -5,7 +5,7 @@ import { checkEvidence, checkReconciledEvidence } from "./evidence.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { isDeepStrictEqual } from "node:util";
-import { checkCriteriaEvents, checkFunnelHistory, checkScenarioCandidates, checkStatus, checkValidation, integer, object, objects, text } from "./invariants.ts";
+import { checkCriteriaEvents, checkFunnelHistory, checkQualificationEvents, checkScenarioCandidates, checkStatus, checkValidation, integer, object, objects, text } from "./invariants.ts";
 import { checkScenarioTransitions } from "./transitions.ts";
 
 export const contractRevision = "66651d67fcb09c402b25d9688ea492c0e69e1c2b";
@@ -266,7 +266,9 @@ export async function runProbe(backend: IsolatedBackend, probe: Probe): Promise<
   for (const [seq, event] of observedEvents) assert.deepEqual(history[seq - 1], event, "previous event disappeared from history");
   checkFinishedHistory(state, history);
   checkFreshRequest(state, history);
+  if (!stopped) assert(!history.some(event => event.type === "stop_requested"), "stop_requested without a Stop call");
   checkCriteriaEvents(state, history, true);
+  checkQualificationEvents(state, history, true);
   checkFunnelHistory(state, history);
   if (probe.expectedFunnel) assert.deepEqual(state.funnel, probe.expectedFunnel, "funnel differs from pinned scenario");
   const counts = (items: Record<string, unknown>[]) => items.map(item => ({

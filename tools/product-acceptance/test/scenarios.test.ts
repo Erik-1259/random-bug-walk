@@ -41,7 +41,7 @@ function terminalScenario(name: string) {
     event.data = { reserved_microusd: reserved, spent_microusd: spent, remaining_microusd: integer(object(state.budget).budget_microusd) - reserved - spent };
   }
   object(evidence.slot).holder_request_id = held ? expected.request_id : null;
-  let id = text(expected.request_id); let starts = 0;
+  let id = text(expected.request_id); let starts = 0; let stopped = false;
   const replaceId = (value: unknown) => object(JSON.parse(JSON.stringify(value).replaceAll(text(expected.request_id), id)) as unknown);
   const backend: IsolatedBackend = {
     verifyIsolation: () => Promise.resolve({ backendRevision: "a".repeat(40), contractRevision }),
@@ -49,11 +49,19 @@ function terminalScenario(name: string) {
     request: (method, path, payload): Promise<Reply> => {
       if (path.endsWith("/test/reset")) return Promise.resolve({ status: 200, body: { contract_version: "bug-request/1", scenario: object(payload).scenario } });
       if (path.endsWith("/interpretations")) return Promise.resolve({ status: 200, body: interpretation });
+      if (path.endsWith("/stop")) { stopped = true; return Promise.resolve({ status: 200, body: replaceId(state) }); }
       if (method === "POST") {
         id = text(object(payload).request_id);
         const first = ++starts === 1;
         const body = replaceId(state);
-        if (first) {
+        if (name === "cancelled" && !stopped) {
+          body.state = "running"; body.outcome = null; body.stop_reason = null;
+          const interrupted = objects(body.candidates).find(candidate => candidate.stage === "incomplete");
+          if (interrupted) { interrupted.stage = "checking"; interrupted.reason = null; interrupted.finished_at = null; }
+          body.events = objects(body.events).slice(0, objects(body.events).findIndex(event => event.type === "stop_requested"));
+          const last = objects(body.events).at(-1); assert(last);
+          body.next_after = last.seq; body.updated_at = last.at;
+        } else if (first) {
           body.state = objects(body.events).some(event => event.type === "stop_requested") ? "stopping" : "running";
           body.outcome = null; body.stop_reason = null;
           body.events = objects(body.events).slice(0, objects(body.events).findIndex(event => event.type === "request_finished"));
@@ -74,7 +82,7 @@ function terminalScenario(name: string) {
     stopCode: text(object(expected.stop_reason).code), expectedDelivery: text(expected.delivery),
     expectedItems: objects(object(expected.interpretation).items), expectedCounts: objects(expected.items),
     expectedInterpretation: object(expected.interpretation), expectedFunnel: object(expected.funnel),
-    expectedCandidates: objects(expected.candidates), expectedEvents: objects(expected.events), expectedAttention: expected.attention === null ? null : text(object(expected.attention).code), evidence: true };
+    expectedCandidates: objects(expected.candidates), expectedEvents: objects(expected.events), expectedAttention: expected.attention === null ? null : text(object(expected.attention).code), evidence: true, cancel: name === "cancelled" };
   return { state, interpretation, evidence, backend, probe };
 }
 for (const name of ["fulfilled", "exhausted", "cancelled"]) it.each(["request", "validation"])(`rejects a retained %s slot after ${name}`, async holder => {
@@ -390,6 +398,49 @@ function pageScenario(s: { backend: IsolatedBackend }, size: number): void {
     return reply;
   };
 }
+for (const paged of [false, true]) {
+  it.each(["fulfilled", "partial-budget", "exhausted", "duplicate-defect", "zero-result", "wrong-failure", "operational-error"])(
+    `rejects unsolicited stop_requested in %s with paged=${String(paged)}`, async name => {
+      const s = terminalScenario(name);
+      const stop = objects(fixture("status-cancelled").events).find(event => event.type === "stop_requested"); assert(stop);
+      replaceHistory(s, objects(s.state.events).flatMap(event => event.type === "request_finished" ? [{ ...stop, at: event.at }, event] : [event]));
+      if (paged) pageScenario(s, 1);
+      await expect(runProbe(s.backend, s.probe)).rejects.toThrow("stop_requested without a Stop call");
+    });
+  it.each(["task-report", "umami"])(`rejects qualification matrix drift for %s with paged=${String(paged)}`, async host => {
+    const s = terminalScenario("fulfilled");
+    const delivered = objects(s.state.cases).find(c => c.host_id === host); assert(delivered);
+    const cell = object(object(object(delivered.matrix).verification).buggy);
+    cell.runs_valid = 1; cell.runs_total = 10;
+    if (paged) pageScenario(s, 1);
+    await expect(runProbe(s.backend, s.probe)).rejects.toThrow("qualification matrix differs from check transition");
+  });
+  it(`requires complete qualification check history with paged=${String(paged)}`, async () => {
+    const s = terminalScenario("fulfilled");
+    const check = objects(s.state.events).find(event => event.type === "check_finished"); assert(check);
+    replaceHistory(s, objects(s.state.events).filter(event => event !== check));
+    const probe: Probe = { ...s.probe }; delete probe.expectedEvents;
+    if (paged) pageScenario(s, 1);
+    await expect(runProbe(s.backend, probe)).rejects.toThrow("delivered case lacks a qualification check transition");
+  });
+}
+it("rejects unsolicited stop_requested before uncertain-provider reconciliation", async () => {
+  const s = uncertainControl();
+  const stop = objects(fixture("status-cancelled").events).find(event => event.type === "stop_requested"); assert(stop);
+  replaceHistory(s, objects(s.state.events).flatMap(event => event.type === "request_finished" ? [{ ...stop, at: event.at }, event] : [event]));
+  pageScenario(s, 1);
+  await expect(runProbe(s.backend, s.probe)).rejects.toThrow("stop_requested without a Stop call");
+});
+it("rejects coordinated qualification matrix and event drift against the pinned scenario", async () => {
+  const s = terminalScenario("fulfilled");
+  const delivered = objects(s.state.cases)[0]; assert(delivered);
+  const candidate = objects(s.state.candidates).find(candidate => candidate.case_id === delivered.case_id); assert(candidate);
+  object(object(object(delivered.matrix).verification).buggy).runs_total = 10;
+  const check = objects(s.state.events).find(event => event.type === "check_finished" && event.candidate_id === candidate.candidate_id
+    && object(event.data).check_set === "verification" && object(event.data).copy === "buggy"); assert(check);
+  object(check.data).runs_total = 10;
+  await expect(runProbe(s.backend, s.probe)).rejects.toThrow("candidate transition sequence differs from pinned scenario");
+});
 it("drains terminal history before requiring request_finished on a later page", async () => {
   const s = terminalScenario("fulfilled"); pageScenario(s, 7);
   await expect(runProbe(s.backend, s.probe)).resolves.toBeUndefined();

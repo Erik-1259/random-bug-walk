@@ -10,12 +10,12 @@
   },
   "self_tests": {
     "command": "pnpm --filter @rbw/product-acceptance test --reporter=json",
-    "passed": 588,
+    "passed": 636,
     "failed": 0,
     "skipped": 0,
     "exit_code": 0
   },
-  "test_floor": 588,
+  "test_floor": 636,
   "failing_first": [
     {
       "scope": "final-contract invariant regressions",
@@ -409,6 +409,13 @@
       "failed": 1,
       "skipped": 587,
       "exit_code": 1
+    },
+    {
+      "scope": "unsolicited stop history in unstopped ordinary and uncertain probes; delivered qualification matrix run-count drift across both hosts and all six cells, with incomplete qualification evidence and paged history",
+      "passed": 3,
+      "failed": 45,
+      "skipped": 588,
+      "exit_code": 1
     }
   ],
   "local_checks": [
@@ -536,6 +543,12 @@
       "command": "pnpm --filter @rbw/product-acceptance test --reporter=json",
       "meaning": "independent focused review reran the full suite after request lifecycle and Stop-response continuity checks",
       "passed": 588,
+      "exit_code": 0
+    },
+    {
+      "command": "pnpm --filter @rbw/product-acceptance test --reporter=json",
+      "meaning": "independent focused review reran the full suite after unsolicited-stop and qualification-matrix evidence checks",
+      "passed": 636,
       "exit_code": 0
     }
   ],
@@ -716,6 +729,14 @@
     {
       "finding": "Request observations could move backward through nonterminal lifecycle states, including after a successful Stop response.",
       "disposition": "Retain the furthest lifecycle state across unordered concurrent Starts and require every later sequential observation to preserve or advance it. Require Stop to return stopping or finished. Negative regressions cover all nonterminal backward transitions, every concurrent Start position and both cancellation boundaries; repeated, skipped and unordered states remain supported."
+    },
+    {
+      "finding": "Unstopped probes could accept stop_requested in otherwise valid terminal history.",
+      "disposition": "Require no stop_requested unless this probe actually called Stop, after draining complete history and before reconciliation. Regressions cover ordinary outcomes and uncertain-provider, in single and paged histories; cancellation test transports now exercise the Stop call rather than merely replay its terminal fixture."
+    },
+    {
+      "finding": "Delivered case qualification matrices could contradict their candidate check events while named outcomes remained correct.",
+      "disposition": "Bind observed outcomes, valid runs and total runs to the linked candidate check_finished events on every response. Require all six cells in complete probe history; named transition signatures independently pin check results. Regressions cover both hosts, all six cells, paging and missing evidence, while retaining partial pages and generic protocol counts."
     }
   ],
   "http_regression_evidence": {
