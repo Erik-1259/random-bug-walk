@@ -693,7 +693,7 @@ export async function runReconciliation(backend: IsolatedBackend, before: Record
     if (event.type === "budget_updated") {
       const data = object(event.data);
       const remainingHeld = integer(data.reserved_microusd);
-      assert(remainingHeld >= 0 && remainingHeld <= held, "reconciliation event increased held spend");
+      assert(remainingHeld >= 0 && remainingHeld < held, "reconciliation budget update did not reduce held spend");
       assert.deepEqual(data, {
         reserved_microusd: remainingHeld, spent_microusd: expectedSpent - remainingHeld,
         remaining_microusd: previousBudget.remaining_microusd,

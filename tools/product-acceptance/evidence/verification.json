@@ -10,12 +10,12 @@
   },
   "self_tests": {
     "command": "pnpm --filter @rbw/product-acceptance test --reporter=json",
-    "passed": 562,
+    "passed": 569,
     "failed": 0,
     "skipped": 0,
     "exit_code": 0
   },
-  "test_floor": 562,
+  "test_floor": 569,
   "failing_first": [
     {
       "scope": "final-contract invariant regressions",
@@ -388,6 +388,13 @@
       "failed": 18,
       "skipped": 541,
       "exit_code": 1
+    },
+    {
+      "scope": "no-change reconciliation budget events before settlement, repeated partial settlements and repeated zero-held updates, in single and paged history",
+      "passed": 2,
+      "failed": 6,
+      "skipped": 561,
+      "exit_code": 1
     }
   ],
   "local_checks": [
@@ -503,6 +510,12 @@
       "command": "pnpm --filter @rbw/product-acceptance test --reporter=json",
       "meaning": "independent focused review reran the full suite after uncertain-provider pre-reconciliation budget history checks",
       "passed": 562,
+      "exit_code": 0
+    },
+    {
+      "command": "pnpm --filter @rbw/product-acceptance test --reporter=json",
+      "meaning": "independent focused review reran the full suite after rejecting unchanged reconciliation budget events",
+      "passed": 569,
       "exit_code": 0
     }
   ],
@@ -675,6 +688,10 @@
     {
       "finding": "The uncertain-provider probe accepted missing or incorrect pre-reconciliation budget history when terminal status and evidence were correct.",
       "disposition": "Require the pinned worker/candidate reservation, unused-copy release and worker-settlement trajectory from complete paged history, with independently priced amounts and final-status agreement. Preserve the uncertain copy, post-completion accounting and unrelated event timing without inventing a complete end-state fixture."
+    },
+    {
+      "finding": "Reconciliation accepted invented budget transitions with unchanged held spend, including repeated zero-held updates after settlement.",
+      "disposition": "Require each reconciliation budget event to reduce held spend strictly while retaining conservation and final attention-clear checks. Negative regressions cover initial, intermediate and completed settlement in single and paged histories; valid decreasing split settlements still pass."
     }
   ],
   "http_regression_evidence": {

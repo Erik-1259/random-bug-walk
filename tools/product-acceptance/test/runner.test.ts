@@ -604,7 +604,39 @@ it("reads reconciliation transitions beyond a POST containing only old history",
   await expect(runReconciliation(backend, before, objects(before.events))).resolves.toBeUndefined();
   expect(cursors).toContain(previousEnd);
 });
-it("accepts reconciliation settling held operations in separate budget updates", async () => {
+function pageReconciliation(backend: IsolatedBackend): void {
+  const request = backend.request.bind(backend);
+  backend.request = async (method, path, payload) => {
+    const reply = await request(method, path, payload);
+    if (!(method === "GET" && path.includes("/requests/")) && !path.endsWith("/reconcile")) return reply;
+    const page = structuredClone(object(reply.body));
+    page.events = objects(page.events).slice(0, 1);
+    page.next_after = objects(page.events).at(-1)?.seq ?? page.next_after;
+    return { ...reply, body: page };
+  };
+}
+for (const paged of [false, true]) {
+  it.each(["initial", "partial", "settled"])(`rejects no-change reconciliation budget updates at %s with paged=${String(paged)}`, async position => {
+    const { runReconciliation } = await import("../src/runner.ts");
+    const { before, after, backend } = reconciliationScenario();
+    const prior = objects(before.events);
+    const [settled, cleared] = objects(after.events).slice(prior.length); assert(settled && cleared);
+    const previousBudget = object(before.budget);
+    const held = integer(previousBudget.reserved_microusd) / 2;
+    const partial = { ...settled, data: { ...object(settled.data), reserved_microusd: held,
+      spent_microusd: integer(object(settled.data).spent_microusd) - held } };
+    const unchanged = { ...settled, data: Object.fromEntries(["reserved_microusd", "spent_microusd", "remaining_microusd"]
+      .map(field => [field, previousBudget[field]])) };
+    const added = position === "initial" ? [unchanged, settled, cleared]
+      : position === "partial" ? [partial, structuredClone(partial), settled, cleared]
+        : [settled, structuredClone(settled), cleared];
+    after.events = [...prior, ...added].map((event, index) => ({ ...event, seq: index + 1 }));
+    after.next_after = objects(after.events).length;
+    if (paged) pageReconciliation(backend);
+    await expect(runReconciliation(backend, before)).rejects.toThrow("reconciliation budget update did not reduce held spend");
+  });
+}
+it.each([false, true])("accepts reconciliation settling held operations in separate budget updates with paged=%s", async paged => {
   const { runReconciliation } = await import("../src/runner.ts");
   const { before, after, backend } = reconciliationScenario();
   const prior = objects(before.events);
@@ -615,6 +647,7 @@ it("accepts reconciliation settling held operations in separate budget updates",
     spent_microusd: integer(object(settled.data).spent_microusd) - held } };
   after.events = [...prior, partial, ...added].map((event, index) => ({ ...event, seq: index + 1 }));
   after.next_after = objects(after.events).length;
+  if (paged) pageReconciliation(backend);
   await expect(runReconciliation(backend, before)).resolves.toBeUndefined();
 });
 it("checks separate download paths and hashes without implementing package replay", async () => {

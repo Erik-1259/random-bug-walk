@@ -161,6 +161,9 @@ Reconciliation must return a `200 RequestStatus`. Both that response and later
 status reads must retain terminal data and event history and settle the previously
 held amount. New budget events must account for that settlement before the new
 attention-cleared event, including when they fall beyond the first history page.
+Each reconciliation budget update must reduce held spend; duplicate or no-change
+updates, including another zero-held update after settlement, fail the probe.
+Separate updates that each settle part of the held amount remain valid.
 Before request reconciliation, evidence must show that the request holds the
 slot and no validation holds it. This is specific to the request-failure probes;
 a separate completed validation with uncertain spend may legitimately retain its
