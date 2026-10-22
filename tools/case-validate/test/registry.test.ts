@@ -1,4 +1,6 @@
 import { syntheticAdapter } from "@rbw/case-package/synthetic";
+import { HOST_PRESENTATION } from "@rbw/factory";
+import { taskReportAdapter } from "@rbw/host-task-report/adapter";
 import { describe, expect, it } from "vitest";
 import { createHostRegistry, HOST_REGISTRY, RegistryError } from "../src/registry.ts";
 
@@ -27,7 +29,17 @@ describe("createHostRegistry", () => {
     expect(() => createHostRegistry([{ ...registration("umami"), host_id: "task-report" }])).toThrow(RegistryError);
   });
 
-  it("starts with no real hosts; their lines are added when the host packages land", () => {
-    expect(HOST_REGISTRY.list()).toEqual([]);
+  it("registers the task-report host with the factory's presentation text, its license and its adapter", () => {
+    expect(HOST_REGISTRY.list().map((item) => item.host_id)).toEqual(["task-report"]);
+    const taskReport = HOST_REGISTRY.get("task-report");
+    expect(taskReport?.adapter).toBe(taskReportAdapter);
+    expect(taskReport?.label).toBe(HOST_PRESENTATION["task-report"].label);
+    expect(taskReport?.description).toBe(HOST_PRESENTATION["task-report"].description);
+    expect(taskReport?.license).toBe("MIT");
+    expect(HOST_REGISTRY.adapters()).toEqual({ "task-report": taskReportAdapter });
+  });
+
+  it("does not register umami yet", () => {
+    expect(HOST_REGISTRY.get("umami")).toBeNull();
   });
 });

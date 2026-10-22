@@ -102,6 +102,11 @@ async function scanned(scan: ScanHook, part: PackageKind, members: readonly Arch
 export async function exportCase(options: ExportOptions): Promise<PreparedCase> {
   const { adapter, entry } = options;
   if (entry.host_id !== adapter.host_id) throw new ExportRefused("inconsistent_inputs", ["the entry belongs to another host"]);
+  // The case ID is computed from the entry, so the entry must be the adapter's own: an edited copy with the
+  // same ID would give packages whose case ID the adapter's catalog and checks never produced.
+  const own = adapter.catalog().find((item) => item.entry_id === entry.entry_id);
+  if (own === undefined) throw new ExportRefused("inconsistent_inputs", [`the adapter's catalog has no entry ${entry.entry_id}`]);
+  if (!canonicalEqual(own, entry)) throw new ExportRefused("inconsistent_inputs", ["the entry differs from the adapter's catalog entry with the same entry ID"]);
   const bugCase = await adapter.bugCaseInputs(entry);
   const validator = await adapter.validatorInputs(entry);
   const problems = [

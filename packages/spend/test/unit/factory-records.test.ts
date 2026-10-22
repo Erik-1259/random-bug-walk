@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import type { PGlite } from "@electric-sql/pglite";
 import { EVENT_TYPE_VALUES } from "@rbw/factory-contract";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import type { FactoryRecords } from "../../src/factory.ts";
+import type { FactoryRecords, RecordValidation } from "../../src/factory.ts";
 import {
   acceptRequest,
   budgetKey,
@@ -16,6 +16,7 @@ import {
   requestId,
   requestRoot,
   runningEvents,
+  validationRecord,
   validationRoot,
   withoutSeqAndAt,
 } from "../factory-helpers.ts";
@@ -274,7 +275,7 @@ describe("request events", () => {
     expectOk(await f.appendEvent(event(REQUEST, "budget", { type: "budget_updated", data })));
     expect((await read()).events.at(-1)?.data).toEqual(data);
     const validationId = uuid(9300);
-    expectOk(await f.recordValidation({ validation_id: validationId, request_id: REQUEST, case_id: hex(71), root_execution_id: validationRoot(3) }));
+    expectOk(await f.recordValidation(validationRecord({ validation_id: validationId, case_id: hex(71), root_execution_id: validationRoot(3) })));
     expectOk(
       await f.appendValidationEvent({
         validation_id: validationId,
@@ -330,7 +331,7 @@ describe("heartbeats", () => {
 
   it("keeps a validation run's heartbeats apart from the request's", async () => {
     const validationId = uuid(9001);
-    expectOk(await f.recordValidation({ validation_id: validationId, request_id: REQUEST, case_id: hex(31), root_execution_id: validationRoot(1) }));
+    expectOk(await f.recordValidation(validationRecord({ validation_id: validationId, case_id: hex(31) })));
     h.clock.advance(5000);
     expectOk(await f.recordHeartbeat({ request_id: REQUEST, validation_id: validationId }));
     expect((await read()).last_heartbeat_at).toBeNull();
@@ -341,7 +342,7 @@ describe("heartbeats", () => {
 
   it("refuses an unknown request and a validation of another request", async () => {
     await acceptRequest(h, 2);
-    expectOk(await f.recordValidation({ validation_id: uuid(9001), request_id: REQUEST, case_id: hex(31), root_execution_id: validationRoot(1) }));
+    expectOk(await f.recordValidation(validationRecord({ validation_id: uuid(9001), case_id: hex(31) })));
     await expectNothingWritten(h, async () => {
       expectRefused(await f.recordHeartbeat({ request_id: requestId(3), validation_id: null }), "unknown_request");
       expectRefused(await f.recordHeartbeat({ request_id: requestId(2), validation_id: uuid(9001) }), "unknown_validation");
@@ -414,8 +415,8 @@ describe("validation runs", () => {
     await acceptRequest(h, 1);
   });
 
-  function validation(overrides: Partial<{ validation_id: string; request_id: string; case_id: string; root_execution_id: string }> = {}) {
-    return { validation_id: VALIDATION, request_id: REQUEST, case_id: CASE, root_execution_id: validationRoot(1), ...overrides };
+  function validation(overrides: Partial<RecordValidation> = {}): RecordValidation {
+    return validationRecord({ validation_id: VALIDATION, request_id: REQUEST, case_id: CASE, ...overrides });
   }
 
   it("records a run once, replays it on the same path and refuses the ID on another case or request", async () => {
@@ -431,9 +432,20 @@ describe("validation runs", () => {
     });
   });
 
-  it("finds a run by its ID alone, with its request and case", async () => {
+  it("finds a run by its ID alone, with its request, case and every detail of its start", async () => {
     expectRefused(await f.readValidation({ validation_id: VALIDATION, after: 0, limit: 10 }), "unknown_validation");
-    expectOk(await f.recordValidation(validation()));
+    h.clock.advance(2000);
+    expectOk(
+      await f.recordValidation(
+        validation({
+          host_id: "umami",
+          accepted_at: "2026-10-04T00:00:01.250Z",
+          package_sha256: { bug_case: hex(9601), validator: hex(9602) },
+          harness: { name: "rbw-validate", version: "2.0.1-synthetic" },
+          copies: 3,
+        }),
+      ),
+    );
     const found = expectOk(await f.readValidation({ validation_id: VALIDATION, after: 0, limit: 10 }));
     expect(found).toEqual({
       ok: true,
@@ -442,14 +454,88 @@ describe("validation runs", () => {
         request_id: REQUEST,
         case_id: CASE,
         root_execution_id: validationRoot(1),
-        recorded_at: T0,
+        recorded_at: "2026-10-04T00:00:02.000Z",
         last_heartbeat_at: null,
+        host_id: "umami",
+        accepted_at: "2026-10-04T00:00:01.250Z",
+        package_sha256: { bug_case: hex(9601), validator: hex(9602) },
+        harness: { name: "rbw-validate", version: "2.0.1-synthetic" },
+        copies: 3,
       },
       events: [],
       next_after: 0,
       last_seq: 0,
     });
     expect((await read()).validations).toEqual([found.validation]);
+  });
+
+  it("returns accepted_at in the ledger's time format, with milliseconds", async () => {
+    expectOk(await f.recordValidation(validation({ accepted_at: "2026-10-04T00:00:01Z" })));
+    const found = expectOk(await f.readValidation({ validation_id: VALIDATION, after: 0, limit: 10 }));
+    expect(found.validation.accepted_at).toBe("2026-10-04T00:00:01.000Z");
+  });
+
+  it("replays a start retried with another accepted_at and keeps the first acceptance", async () => {
+    const first = expectOk(await f.recordValidation(validation({ accepted_at: "2026-10-04T00:00:00.000Z" })));
+    h.clock.advance(45_000);
+    await expectNothingWritten(h, async () => {
+      const retried = expectOk(await f.recordValidation(validation({ accepted_at: "2026-10-04T00:00:45.000Z" })));
+      expect(retried).toEqual({ ...first, replay: true });
+    });
+    const found = expectOk(await f.readValidation({ validation_id: VALIDATION, after: 0, limit: 10 }));
+    expect(found.validation.accepted_at).toBe("2026-10-04T00:00:00.000Z");
+    expect(found.validation.recorded_at).toBe(T0);
+  });
+
+  it.each([
+    ["another host", { host_id: "umami" }],
+    ["another bug case package", { package_sha256: { bug_case: hex(9701), validator: hex(9502) } }],
+    ["another validator package", { package_sha256: { bug_case: hex(9501), validator: hex(9702) } }],
+    ["another harness version", { harness: { name: "rbw-validate", version: "2" } }],
+    ["another copy count", { copies: 12 }],
+  ] satisfies [string, Partial<RecordValidation>][])("refuses the ID with %s as idempotency_conflict", async (_label, overrides) => {
+    expectOk(await f.recordValidation(validation()));
+    await expectNothingWritten(h, async () => {
+      expectRefused(await f.recordValidation(validation(overrides)), "idempotency_conflict");
+    });
+  });
+
+  it.each([
+    ["a harness other than rbw-validate", { harness: { name: "synthetic-harness", version: "1" } }, /^harness\.name must be rbw-validate$/],
+    ["an empty harness version", { harness: { name: "rbw-validate", version: "" } }, /^harness\.version must be a non-empty string/],
+    ["a harness version with a control character", { harness: { name: "rbw-validate", version: "1\u0007" } }, /^harness\.version must be/],
+    ["a harness without its version", { harness: { name: "rbw-validate" } }, /^harness: missing field version$/],
+    ["a harness with an extra key", { harness: { name: "rbw-validate", version: "1", build: "x" } }, /^harness: unknown field build$/],
+    ["a harness that is not an object", { harness: "rbw-validate" }, /^harness must be a JSON object$/],
+    ["2 copies", { copies: 2 }, /^copies must be an integer from 3 to /],
+    ["a fractional copy count", { copies: 3.5 }, /^copies must be an integer from 3 to /],
+    ["a copy count as a string", { copies: "9" }, /^copies must be an integer from 3 to /],
+    ["a package without its validator hash", { package_sha256: { bug_case: hex(9501) } }, /^package_sha256: missing field validator$/],
+    [
+      "a package with an extra key",
+      { package_sha256: { bug_case: hex(9501), validator: hex(9502), core: hex(9503) } },
+      /^package_sha256: unknown field core$/,
+    ],
+    [
+      "an uppercase package hash",
+      { package_sha256: { bug_case: hex(9501).replace(/0/g, "A"), validator: hex(9502) } },
+      /^package_sha256\.bug_case must be 64 lowercase hexadecimal characters$/,
+    ],
+    ["a package that is null", { package_sha256: null }, /^package_sha256 must be a JSON object$/],
+    ["an accepted_at with an offset instead of Z", { accepted_at: "2026-10-04T00:00:00.000+00:00" }, /^accepted_at must be a UTC RFC3339 time ending in Z$/],
+    ["an accepted_at without a time zone", { accepted_at: "2026-10-04T00:00:00.000" }, /^accepted_at must be a UTC RFC3339 time ending in Z$/],
+    ["a missing accepted_at", { accepted_at: undefined }, /^missing field accepted_at$/],
+    ["an uppercase host", { host_id: "Umami" }, /^host_id must be lowercase letters/],
+    ["a missing host", { host_id: undefined }, /^missing field host_id$/],
+    ["an unknown field", { attempt: 1 }, /^unknown field attempt$/],
+  ])("refuses %s as invalid_request", async (_label, overrides, detail) => {
+    await expectNothingWritten(h, async () => {
+      expect(expectRefused(await f.recordValidation(loose({ ...validation(), ...overrides })), "invalid_request").detail).toMatch(detail);
+    });
+  });
+
+  it("accepts 3 copies, the fewest a protocol has", async () => {
+    expect(expectOk(await f.recordValidation(validation({ copies: 3 }))).replay).toBe(false);
   });
 
   it("refuses a budget's root as a validation root, and an unknown request", async () => {
@@ -516,12 +602,69 @@ describe("validation runs", () => {
     expect(page.next_after).toBe(3);
     expect(page.last_seq).toBe(4);
   });
+
+  it("returns each event with the key it was appended under", async () => {
+    expectOk(await f.recordValidation(validation()));
+    expectOk(await f.appendValidationEvent({ validation_id: VALIDATION, event_key: "started", type: "running", data: {} }));
+    h.clock.advance(20);
+    expectOk(await f.appendValidationEvent({ validation_id: VALIDATION, event_key: "copy:clean:1", type: "copy_finished", data: { copy: 1 } }));
+    const stored = expectOk(await f.readValidation({ validation_id: VALIDATION, after: 0, limit: 10 }));
+    expect(stored.events).toEqual([
+      { seq: 1, at: T0, event_key: "started", type: "running", data: {} },
+      { seq: 2, at: "2026-10-04T00:00:00.020Z", event_key: "copy:clean:1", type: "copy_finished", data: { copy: 1 } },
+    ]);
+  });
+});
+
+describe("keyed request events", () => {
+  async function readKeyed(after = 0, limit = 1000) {
+    return expectOk(await f.readRequestEvents({ request_id: REQUEST, after, limit }));
+  }
+
+  it("returns the request's events as the status read does, each with its event key", async () => {
+    await acceptRequest(h, 1);
+    for (const [i, e] of runningEvents().slice(1).entries()) {
+      h.clock.advance(10);
+      expectOk(await f.appendEvent({ ...withoutSeqAndAt(e), request_id: REQUEST, event_key: `fixture:${String(i + 2)}` }));
+    }
+    const keyed = await readKeyed();
+    const plain = await read(0, 1000);
+    const keys = ["request_accepted", ...plain.events.slice(1).map((e) => `fixture:${String(e.seq)}`)];
+    expect(plain.events).toHaveLength(runningEvents().length);
+    expect(keyed.events).toEqual(plain.events.map((e, i) => ({ ...e, event_key: keys[i] })));
+    expect({ next_after: keyed.next_after, last_seq: keyed.last_seq }).toEqual({ next_after: plain.last_seq, last_seq: plain.last_seq });
+    // The status read stays contract-shaped: its events carry no key.
+    expect(plain.events.filter((e) => "event_key" in e)).toEqual([]);
+  });
+
+  it("returns events after a seq, up to the limit, with next_after and last_seq", async () => {
+    await acceptRequest(h, 1);
+    for (let i = 0; i < 5; i += 1) {
+      expectOk(await f.appendEvent(event(REQUEST, `e:${String(i)}`)));
+    }
+    const page = await readKeyed(2, 2);
+    expect(page.events.map((e) => [e.seq, e.event_key])).toEqual([
+      [3, "e:1"],
+      [4, "e:2"],
+    ]);
+    expect(page.next_after).toBe(4);
+    expect(page.last_seq).toBe(6);
+    const rest = await readKeyed(page.next_after, 1000);
+    expect(rest.events.map((e) => e.event_key)).toEqual(["e:3", "e:4"]);
+    expect(rest.next_after).toBe(rest.last_seq);
+    const empty = await readKeyed(6, 1000);
+    expect(empty).toEqual({ ok: true, events: [], next_after: 6, last_seq: 6 });
+  });
+
+  it("answers unknown_request for a request that was never recorded", async () => {
+    expectRefused(await f.readRequestEvents({ request_id: REQUEST, after: 0, limit: 1000 }), "unknown_request");
+  });
 });
 
 describe("root owners", () => {
   it("names the request or the validation run a root execution belongs to", async () => {
     await acceptRequest(h, 1);
-    expectOk(await f.recordValidation({ validation_id: uuid(9200), request_id: REQUEST, case_id: hex(61), root_execution_id: validationRoot(1) }));
+    expectOk(await f.recordValidation(validationRecord({ validation_id: uuid(9200), case_id: hex(61) })));
     expect(expectOk(await f.readRoot({ root_execution_id: requestRoot(1) }))).toEqual({
       ok: true,
       root_execution_id: requestRoot(1),
@@ -546,5 +689,17 @@ describe("read limits", () => {
   ])("refuses %s", async (_label, overrides) => {
     await acceptRequest(h, 1);
     expectRefused(await f.readRequest(loose({ request_id: REQUEST, after: 0, limit: 200, ...overrides })), "invalid_request");
+  });
+
+  it.each([
+    ["a zero limit", { limit: 0 }],
+    ["a limit above 1000", { limit: 1001 }],
+    ["a negative after", { after: -1 }],
+    ["a missing after", { after: undefined }],
+    ["an unknown field", { validation_id: uuid(9100) }],
+    ["a malformed request ID", { request_id: "synthetic" }],
+  ])("refuses %s in a keyed event read", async (_label, overrides) => {
+    await acceptRequest(h, 1);
+    expectRefused(await f.readRequestEvents(loose({ request_id: REQUEST, after: 0, limit: 1000, ...overrides })), "invalid_request");
   });
 });

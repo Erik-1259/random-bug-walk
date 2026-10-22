@@ -17,7 +17,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint . --max-warnings 0",
     "test": "vitest run",
-    "prepare-store": "node src/prepare-cli.ts"
+    "prepare-store": "node src/prepare-cli.ts",
+    "pin-runtime": "node src/pin-cli.ts"
   },
   "dependencies": {
     "@rbw/admission": "workspace:*",

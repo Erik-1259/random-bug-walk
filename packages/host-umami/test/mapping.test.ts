@@ -79,6 +79,15 @@ describe("the released-case mapping record", () => {
     expect(fake.calls).toEqual({ defect: [], case: [] });
   });
 
+  it("maps the entry that runs on the runtime image, because the pins' kit image is the one the release ran on", () => {
+    expect(entry.environment.kit_image_digest).not.toBe(RELEASED_CASE.kit_image_digest);
+    expect(UMAMI_PINS.kit.digest).toBe(RELEASED_CASE.kit_image_digest);
+    const fake = fakeIdentity();
+    expect(releasedCaseMapping(UMAMI_PINS, entry, fake.identity, "1").released.kit_image_digest).toBe(RELEASED_CASE.kit_image_digest);
+    const otherKit = { ...UMAMI_PINS, kit: { ...UMAMI_PINS.kit, digest: `sha256:${"2".repeat(64)}` } };
+    expect(() => releasedCaseMapping(otherKit, entry, fake.identity, "1")).toThrow(/kit image/);
+  });
+
   it("keeps the release's own names only on the evaluator side: the entry's IDs carry none of them", () => {
     for (const id of [entry.entry_id, entry.source_id, entry.verification.check_set_id]) {
       expect(id).not.toContain(RELEASED_CASE.family_id);

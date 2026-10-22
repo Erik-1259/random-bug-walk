@@ -1,10 +1,18 @@
 // The local qualification of the task-report entry under evaluator v2, in five steps:
 //
-//   node adapter/qualify.ts build --tag rbw-task-report:<name>      build the version 2 kit image
+//   node adapter/qualify.ts build --tag rbw-task-report:<name>      build the version 2 kit image for linux/amd64
 //   node adapter/qualify.ts pin --tag rbw-task-report:<name>        pin that image in catalog/kit-image.v2.json
 //   node adapter/qualify.ts prepare --out <new dir>                 adapter inputs, the three states, the copy plans
 //   node adapter/qualify.ts run --dir <dir> [--smoke <copy ID>]     every copy plan through local Docker
 //   node adapter/qualify.ts evaluate --dir <dir>                    collect, interpret and the verdict per state
+//
+// and the pin of a pushed build, for runners that pull the image by its repository digest:
+//
+//   node adapter/qualify.ts pin --registry <repository>@sha256:<digest>
+//
+// pin --tag records the local image ID, which the local runner checks; pin --registry records the
+// manifest digest the registry serves, which the shared Docker runner and the Sandbox runner pull
+// as <repository>@<digest>, and it pins only an amd64 image that Docker has under that digest.
 //
 // The qualification is of the pinned image, the one the catalog entry's environment and case ID
 // name: prepare and evaluate read the kit image from the pin, and the runner refuses an image with
@@ -31,11 +39,32 @@ import type { KitImagePin } from "./kit.ts";
 export const PACKAGE_DIR = fileURLToPath(new URL("..", import.meta.url));
 export const REPO_ROOT = resolve(PACKAGE_DIR, "../..");
 const TAG = /^rbw-task-report:[a-z0-9][a-z0-9._-]{0,63}$/;
+/** Docker's grammar for one path component of a repository name, and for a registry host with an optional port. */
+const PATH_COMPONENT = /^[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*$/;
+const REGISTRY_HOST = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*(?::[0-9]+)?$/;
 const SMOKE_ID = /^f3q2-smoke-[a-z0-9][a-z0-9-]{0,40}$/;
 const RUN_ORDER: readonly CopyState[] = ["buggy", "fixed", "clean"];
 
+/** The platform every kit image build targets: the hosted copies run linux/amd64 only. */
+export const BUILD_PLATFORM = "linux/amd64";
+
+/** How pin --registry reads an image: its ID, architecture and repository digests (`json`, as the shared Docker runner reads them). */
+export const REGISTRY_INSPECT_FORMAT = "{{.Id}} {{.Architecture}} {{json .RepoDigests}}";
+
 export class QualifyError extends Error {
   override name = "QualifyError";
+}
+
+/** Where qualify.ts finds Docker and the kit image pin; tests replace both. */
+export interface QualifyOptions {
+  docker?: string;
+  kitImageFile?: string;
+}
+
+/** A pushed image: its repository, without a tag, and the manifest digest the registry serves. */
+export interface RegistryReference {
+  repository: string;
+  digest: string;
 }
 
 function writeJson(path: string, value: unknown): void {
@@ -49,6 +78,8 @@ function readJson(path: string): unknown {
 export function buildArgsV2(tag: string, repoRoot: string): string[] {
   return [
     "build",
+    "--platform",
+    BUILD_PLATFORM,
     "-f",
     join(repoRoot, "kit/task-report/v2/Dockerfile"),
     "--build-arg",
@@ -63,10 +94,10 @@ export function buildArgsV2(tag: string, repoRoot: string): string[] {
   ];
 }
 
-function build(tag: string): Promise<number> {
+function build(docker: string, tag: string): Promise<number> {
   if (!TAG.test(tag)) throw new QualifyError("--tag must be rbw-task-report:<name>");
   return new Promise((resolvePromise) => {
-    const child = spawn("docker", buildArgsV2(tag, REPO_ROOT), { stdio: ["ignore", "inherit", "inherit"] });
+    const child = spawn(docker, buildArgsV2(tag, REPO_ROOT), { stdio: ["ignore", "inherit", "inherit"] });
     child.once("error", () => {
       resolvePromise(1);
     });
@@ -86,15 +117,78 @@ export function writeKitImagePin(file: string, reference: string, inspected: str
   writeJson(file, {
     format: KIT_IMAGE_FORMAT,
     ...kit,
-    built_from: "kit/task-report/v2/Dockerfile, on local Docker",
-    note: "Pinned by qualify.ts pin from the local image's ID and architecture. A hosted amd64 build in a registry replaces this pin when it is pushed (planned); a new pin changes the environment hash and with it the case ID.",
+    built_from: `kit/task-report/v2/Dockerfile, for linux/${kit.architecture} on local Docker`,
+    note: "Pinned by qualify.ts pin --tag from the local image's ID and architecture. qualify.ts pin --registry replaces it with the manifest digest of a pushed amd64 build; a new pin changes the environment hash and with it the case ID.",
   });
   return kit;
 }
 
-function inspectImage(reference: string): Promise<string | null> {
+/**
+ * Reads `--registry <repository>@sha256:<digest>`: a registry repository (a registry host or a
+ * namespace, then the name, in Docker's grammar and lowercase) without a tag, and the manifest digest.
+ */
+export function parseRegistryReference(value: string): RegistryReference {
+  const match = /^([^@]+)@(sha256:[0-9a-f]{64})$/.exec(value);
+  const repository = match?.[1];
+  const digest = match?.[2];
+  if (repository === undefined || digest === undefined) throw new QualifyError("--registry must be <repository>@sha256:<digest>, the pushed image's manifest digest");
+  const components = repository.split("/");
+  const [first = "", ...rest] = components;
+  const name = components[components.length - 1] ?? "";
+  if (rest.length > 0 && name.includes(":")) throw new QualifyError("--registry must name the repository without a tag; the digest names the image");
+  if (rest.length === 0 || repository.length > 256 || !(PATH_COMPONENT.test(first) || REGISTRY_HOST.test(first)) || !rest.every((component) => PATH_COMPONENT.test(component))) {
+    throw new QualifyError("--registry must name a registry repository, <registry or namespace>/<name>, in lowercase");
+  }
+  return { repository, digest };
+}
+
+/** A name as Docker reports it for Docker Hub: without `docker.io/` and, for official images, `library/`. */
+function familiarName(name: string): string {
+  const hub = /^(?:docker\.io|index\.docker\.io)\/(.*)$/.exec(name)?.[1];
+  return hub === undefined ? name : hub.replace(/^library\//, "");
+}
+
+/** The repository digests of an inspect answer, where Docker answers `null` for an image with none; null when the answer is not a list of names. */
+function parseRepoDigests(text: string): string[] | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    // An answer that is not the format's shape is no usable image; the caller refuses it.
+    return null;
+  }
+  if (parsed === null) return [];
+  return Array.isArray(parsed) && parsed.every((item): item is string => typeof item === "string") ? parsed : null;
+}
+
+/**
+ * Writes the kit image pin of a pushed image from its `docker image inspect` line in
+ * REGISTRY_INSPECT_FORMAT: the repository and the manifest digest, with architecture amd64. Refuses,
+ * before writing, an answer it cannot read, an image that is not amd64 and an image whose repository
+ * digests do not include the pinned one.
+ */
+export function writeRegistryPin(file: string, registry: RegistryReference, inspected: string): KitImagePin {
+  const pushed = `${registry.repository}@${registry.digest}`;
+  const [id = "", architecture = "", ...rest] = inspected.trim().split(" ");
+  const repoDigests = parseRepoDigests(rest.join(" "));
+  if (!/^sha256:[0-9a-f]{64}$/.test(id) || architecture === "" || repoDigests === null) {
+    throw new QualifyError(`Docker's answer for ${pushed} is not an image ID, architecture and repository digests`);
+  }
+  if (architecture !== "amd64") throw new QualifyError(`image ${pushed} is for ${architecture}, not amd64`);
+  if (!repoDigests.some((item) => familiarName(item) === familiarName(pushed))) throw new QualifyError(`${pushed} is not one of the image's repository digests`);
+  const kit = parseKitImage({ format: KIT_IMAGE_FORMAT, reference: registry.repository, digest: registry.digest, architecture });
+  writeJson(file, {
+    format: KIT_IMAGE_FORMAT,
+    ...kit,
+    built_from: "kit/task-report/v2/Dockerfile for linux/amd64, pushed to the reference's registry",
+    note: "Pinned by qualify.ts pin --registry from the pushed image's manifest digest; runners run <reference>@<digest>. A new pin changes the environment hash and with it the case ID.",
+  });
+  return kit;
+}
+
+function inspectImage(docker: string, reference: string, format: string): Promise<string | null> {
   return new Promise((resolvePromise) => {
-    const child = spawn("docker", ["image", "inspect", "--format", IMAGE_INSPECT_FORMAT, reference], { stdio: ["ignore", "pipe", "inherit"] });
+    const child = spawn(docker, ["image", "inspect", "--format", format, reference], { stdio: ["ignore", "pipe", "inherit"] });
     const chunks: Buffer[] = [];
     child.stdout.on("data", (chunk: Buffer) => chunks.push(chunk));
     child.once("error", () => {
@@ -106,11 +200,20 @@ function inspectImage(reference: string): Promise<string | null> {
   });
 }
 
-async function pin(tag: string): Promise<number> {
+async function pin(docker: string, file: string, tag: string): Promise<number> {
   if (!TAG.test(tag)) throw new QualifyError("--tag must be rbw-task-report:<name>");
-  const inspected = await inspectImage(tag);
+  const inspected = await inspectImage(docker, tag, IMAGE_INSPECT_FORMAT);
   if (inspected === null) throw new QualifyError(`image ${tag} is not available`);
-  process.stdout.write(`${JSON.stringify(writeKitImagePin(KIT_IMAGE_FILE, tag, inspected), null, 2)}\n`);
+  process.stdout.write(`${JSON.stringify(writeKitImagePin(file, tag, inspected), null, 2)}\n`);
+  return 0;
+}
+
+async function pinRegistry(docker: string, file: string, value: string): Promise<number> {
+  const registry = parseRegistryReference(value);
+  const pushed = `${registry.repository}@${registry.digest}`;
+  const inspected = await inspectImage(docker, pushed, REGISTRY_INSPECT_FORMAT);
+  if (inspected === null) throw new QualifyError(`image ${pushed} is not available; pull it with docker pull --platform ${BUILD_PLATFORM} ${pushed}`);
+  process.stdout.write(`${JSON.stringify(writeRegistryPin(file, registry, inspected), null, 2)}\n`);
   return 0;
 }
 
@@ -246,11 +349,18 @@ async function evaluate(dir: string): Promise<number> {
   return verdict === "qualified" && result.cross_check_agrees && schemaErrors.length === 0 ? 0 : 1;
 }
 
-export async function main(argv: string[]): Promise<number> {
+export async function main(argv: string[], options: QualifyOptions = {}): Promise<number> {
+  const docker = options.docker ?? "docker";
+  const kitImageFile = options.kitImageFile ?? KIT_IMAGE_FILE;
   const [command, ...rest] = argv;
-  const { values } = parseArgs({ args: rest, strict: true, options: { tag: { type: "string" }, out: { type: "string" }, dir: { type: "string" }, smoke: { type: "string" } } });
-  if (command === "build") return build(values.tag ?? "");
-  if (command === "pin") return pin(values.tag ?? "");
+  const { values } = parseArgs({ args: rest, strict: true, options: { tag: { type: "string" }, registry: { type: "string" }, out: { type: "string" }, dir: { type: "string" }, smoke: { type: "string" } } });
+  if (command === "build") return build(docker, values.tag ?? "");
+  if (command === "pin") {
+    if (values.tag !== undefined && values.registry !== undefined) throw new QualifyError("pin takes --tag or --registry, not both");
+    if (values.registry !== undefined) return pinRegistry(docker, kitImageFile, values.registry);
+    if (values.tag === undefined) throw new QualifyError("pin needs --tag rbw-task-report:<name> or --registry <repository>@sha256:<digest>");
+    return pin(docker, kitImageFile, values.tag);
+  }
   if (command === "prepare") {
     if (values.out === undefined) throw new QualifyError("--out is required");
     return prepare(resolve(values.out));

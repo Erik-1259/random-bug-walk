@@ -2,7 +2,8 @@
 // pure modules. Web routes import the pure subpaths instead: ./format, ./assembly and ./synthetic.
 export { ArchiveError, compareUtf8, DEFAULT_UNPACK_LIMITS, gunzip, gzip, isRelativePath, memberPathProblem, packArchive, unpackArchive } from "./archive.ts";
 export type { ArchiveMember, UnpackLimits } from "./archive.ts";
-export { assembleFinalValidator, AssemblyError } from "./assembly.ts";
+export { assembleFinalValidator, AssemblyError, inspectValidator } from "./assembly.ts";
+export type { ValidatorContents } from "./assembly.ts";
 export { exportCase, ExportRefused, readFileSet } from "./export.ts";
 export type { ExportOptions, ExportRefusalCode, PreparedCase, ScanHook, ScanInput, ScanVerdict } from "./export.ts";
 export * from "./format.ts";

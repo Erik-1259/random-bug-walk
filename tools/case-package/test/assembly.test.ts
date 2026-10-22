@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { encodeCanonical } from "@rbw/schema";
 import { describe, expect, it } from "vitest";
 import { packArchive, unpackArchive } from "../src/archive.ts";
-import { assembleFinalValidator, AssemblyError } from "../src/assembly.ts";
+import { assembleFinalValidator, AssemblyError, inspectValidator } from "../src/assembly.ts";
 import { EVIDENCE_PATH } from "../src/format.ts";
 import { buildSyntheticPair } from "../src/synthetic.ts";
 
@@ -52,6 +52,49 @@ describe("assembleFinalValidator", () => {
     const { validator_core: core } = buildSyntheticPair({ evidence: null });
     expect(() => assembleFinalValidator(core.bytes, { ratio: 0.5 })).toThrow(AssemblyError);
     expect(() => assembleFinalValidator(core.bytes, undefined)).toThrow(AssemblyError);
+  });
+});
+
+describe("inspectValidator", () => {
+  it("reads back the core and the evidence member of a final validator", () => {
+    const { validator_core: core } = buildSyntheticPair({ evidence: null });
+    const final = assembleFinalValidator(core.bytes, EVIDENCE);
+    expect(inspectValidator(final)).toEqual({ core_sha256: sha(core.bytes), evidence_sha256: sha(encodeCanonical(EVIDENCE)) });
+  });
+
+  it("reports a core as its own hash with no evidence", () => {
+    const { validator_core: core } = buildSyntheticPair({ evidence: null });
+    expect(inspectValidator(core.bytes)).toEqual({ core_sha256: core.sha256, evidence_sha256: null });
+  });
+
+  it("gives the recorded golden core back from the golden final validator", () => {
+    const { validator_core: core } = buildSyntheticPair({ host_id: "task-report", seed: "golden", evidence: null });
+    expect(inspectValidator(assembleFinalValidator(core.bytes, EVIDENCE)).core_sha256).toBe(GOLDEN.core);
+  });
+
+  it("gives another core hash when a core member changed, and another evidence hash for other evidence", () => {
+    const { validator_core: core } = buildSyntheticPair({ evidence: null });
+    const final = unpackArchive(assembleFinalValidator(core.bytes, EVIDENCE));
+    const changedCheck = final.map((member) => (member.path.startsWith("checks/") ? { path: member.path, bytes: new TextEncoder().encode("changed") } : member));
+    const read = inspectValidator(packArchive(changedCheck));
+    expect(read.core_sha256).not.toBeNull();
+    expect(read.core_sha256).not.toBe(core.sha256);
+    expect(read.evidence_sha256).toBe(sha(encodeCanonical(EVIDENCE)));
+    const otherEvidence = inspectValidator(assembleFinalValidator(core.bytes, { ...EVIDENCE, verdict: "rejected" }));
+    expect(otherEvidence.core_sha256).toBe(core.sha256);
+    expect(otherEvidence.evidence_sha256).not.toBe(sha(encodeCanonical(EVIDENCE)));
+  });
+
+  it("answers null for a bug case, an archive without a validator manifest and bytes that are not an archive", () => {
+    const pair = buildSyntheticPair({ evidence: EVIDENCE });
+    expect(inspectValidator(pair.bug_case.bytes)).toEqual({ core_sha256: null, evidence_sha256: null });
+    const evidenceOnly = packArchive([{ path: EVIDENCE_PATH, bytes: encodeCanonical(EVIDENCE) }]);
+    expect(inspectValidator(evidenceOnly)).toEqual({ core_sha256: null, evidence_sha256: sha(encodeCanonical(EVIDENCE)) });
+    const otherFormat = packArchive([{ path: "validator.json", bytes: encodeCanonical({ format: "rbw-bug-case/1", files: [] }) }]);
+    expect(inspectValidator(otherFormat).core_sha256).toBeNull();
+    const notJson = packArchive([{ path: "validator.json", bytes: new TextEncoder().encode("{ synthetic: not json") }]);
+    expect(inspectValidator(notJson).core_sha256).toBeNull();
+    expect(inspectValidator(new TextEncoder().encode("not an archive"))).toEqual({ core_sha256: null, evidence_sha256: null });
   });
 });
 
