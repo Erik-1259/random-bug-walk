@@ -177,6 +177,24 @@ describe("a request on the synthetic pair", () => {
     const budget = await w.db.spend.budgetStatus({ budget_key: record.budget_key });
     expect(budget.ok && budget.operations.filter((operation) => operation.state === "uncertain").map((operation) => operation.kind)).toEqual(["factory.copy"]);
   });
+
+  it("ends the request operational_error, running and delivering nothing, when an event differs from the one recorded under its key", async () => {
+    const record = await acceptSyntheticRequest(w, host.registry);
+    // Recorded under the key the core appends the host's preparation with, with other content.
+    const other = await w.db.factoryRecords.appendEvent(record.request_id, { event_key: "host:task-report:preparing", type: "host_preparing", host_id: "task-report", candidate_id: null, item_key: null, case_id: null, message: "synthetic: another message", data: {} }, w.clock.now());
+    expect(other.kind).toBe("appended");
+    expect((await startFactoryWorker(launchDeps(), record.request_id)).kind).toBe("launched");
+    const runner = localProcessRunner(await scratch("copies"));
+    const code = await worker(["--request-id", record.request_id, "--deadline-at", new Date(w.clock.ms + 3_600_000).toISOString()], runner);
+    // The conflicting append rejects; the core's loop ends the request as an operational error.
+    expect(out).toEqual([`request=${record.request_id} stop_code=operational_error slot_released=true`]);
+    expect(code).toBe(0);
+    expect(runner.plans).toHaveLength(0);
+    const types = (await w.db.factoryRecords.events(record.request_id)).map((event) => event.type);
+    expect(types).not.toContain("candidate_selected");
+    expect(types).not.toContain("case_delivered");
+    expect(w.logs.some((line) => line.includes("the event host:task-report:preparing differs from the one recorded under its key"))).toBe(true);
+  });
 });
 
 describe("a validation run of the delivered case", () => {
