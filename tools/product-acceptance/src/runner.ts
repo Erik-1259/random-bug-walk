@@ -161,7 +161,7 @@ export async function runProbe(backend: IsolatedBackend, probe: Probe): Promise<
   let launchFailure = false;
   const snapshot = (value: Record<string, unknown>) => Object.fromEntries(Object.entries(value)
     .filter(([field]) => !["events", "next_after", "poll_after_ms"].includes(field)));
-  const observe = (value: Record<string, unknown>, concurrent = false) => {
+  const observe = (value: Record<string, unknown>, after = 0, concurrent = false) => {
     checkScenarioStatus(value);
     checkFreshRequest(value, objects(value.events));
     assert.equal(value.request_id, requestId);
@@ -186,15 +186,17 @@ export async function runProbe(backend: IsolatedBackend, probe: Probe): Promise<
       if (!concurrent) assert(integer(count) >= previous, "funnel progress decreased");
       funnelProgress.set(field, Math.max(previous, integer(count)));
     }
-    let previousSeq: number | undefined;
+    // Start and Stop return the page after zero; status reads use their cursor.
+    let previousSeq = after;
     for (const event of objects(value.events)) {
       const seq = integer(event.seq);
-      assert(seq > 0 && (previousSeq === undefined || seq === previousSeq + 1), "event gap or duplicate");
+      assert.equal(seq, previousSeq + 1, "event gap or duplicate");
       previousSeq = seq;
       const previous = observedEvents.get(seq);
       if (previous !== undefined) assert.deepEqual(event, previous, "previous event changed");
       else observedEvents.set(seq, structuredClone(event));
     }
+    assert.equal(value.next_after, previousSeq, "event cursor does not match returned page");
     // Concurrent replies need not arrive in state order. Once all have returned,
     // sequential observations must preserve any completed request already seen.
     if (terminal !== undefined && (!concurrent || value.state === "finished")) {
@@ -211,7 +213,7 @@ export async function runProbe(backend: IsolatedBackend, probe: Probe): Promise<
   for (const reply of replies) {
     assert([200, 202].includes(reply.status));
     const initial = object(reply.body);
-    observe(initial, true);
+    observe(initial, 0, true);
     if (reply.status === 202 && initial.state === "finished") {
       assert.equal(initial.outcome, "operational_error", "finished fresh Start is not an operational failure");
       launchFailure = true;
@@ -237,7 +239,7 @@ export async function runProbe(backend: IsolatedBackend, probe: Probe): Promise<
   const history: Record<string, unknown>[] = [];
   // Bound a stalled service; do not poll faster than its declared interval.
   for (let polls = 0; polls < 1000; polls++) {
-    observe(state);
+    observe(state, cursor);
     if (state.state === "finished") {
       if (finishedSnapshot === undefined) finishedSnapshot = structuredClone(snapshot(state));
       else assert.deepEqual(snapshot(state), finishedSnapshot, "terminal result changed while reading history");
@@ -290,7 +292,7 @@ export async function runProbe(backend: IsolatedBackend, probe: Probe): Promise<
   const checkTerminalRead = async (page: Record<string, unknown>, phase: "reconnect" | "repeated stop") => {
     let checked = 0;
     for (;;) {
-      observe(page);
+      observe(page, checked);
       assert.deepEqual(snapshot(page), snapshot(state), `terminal result changed on ${phase}`);
       const events = objects(page.events);
       if (events.length === 0) {

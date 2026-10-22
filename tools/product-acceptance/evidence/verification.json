@@ -10,12 +10,12 @@
   },
   "self_tests": {
     "command": "pnpm --filter @rbw/product-acceptance test --reporter=json",
-    "passed": 636,
+    "passed": 661,
     "failed": 0,
     "skipped": 0,
     "exit_code": 0
   },
-  "test_floor": 636,
+  "test_floor": 661,
   "failing_first": [
     {
       "scope": "final-contract invariant regressions",
@@ -416,6 +416,13 @@
       "failed": 45,
       "skipped": 588,
       "exit_code": 1
+    },
+    {
+      "scope": "event suffixes and inconsistent next_after cursors in each initial/concurrent Start and in stopping or finished one-off Stop replies; valid short, repeated and unordered prefixes remain supported",
+      "passed": 5,
+      "failed": 20,
+      "skipped": 636,
+      "exit_code": 1
     }
   ],
   "local_checks": [
@@ -549,6 +556,12 @@
       "command": "pnpm --filter @rbw/product-acceptance test --reporter=json",
       "meaning": "independent focused review reran the full suite after unsolicited-stop and qualification-matrix evidence checks",
       "passed": 636,
+      "exit_code": 0
+    },
+    {
+      "command": "pnpm --filter @rbw/product-acceptance test --reporter=json",
+      "meaning": "independent focused review reran the full suite after cursor checks at every observed response boundary",
+      "passed": 661,
       "exit_code": 0
     }
   ],
@@ -737,6 +750,10 @@
     {
       "finding": "Delivered case qualification matrices could contradict their candidate check events while named outcomes remained correct.",
       "disposition": "Bind observed outcomes, valid runs and total runs to the linked candidate check_finished events on every response. Require all six cells in complete probe history; named transition signatures independently pin check results. Regressions cover both hosts, all six cells, paging and missing evidence, while retaining partial pages and generic protocol counts."
+    },
+    {
+      "finding": "Initial/concurrent Start and one-off Stop replies could return an event suffix or cursor unrelated to the returned page.",
+      "disposition": "Anchor every observed page to its requested cursor, defaulting to zero for Start and Stop, and require next_after to equal the last returned sequence or the cursor for an empty page. Sequential polls and terminal rereads pass their actual cursor. Negative regressions cover each concurrent Start position and both Stop states; valid different-length/repeated prefixes remain accepted."
     }
   ],
   "http_regression_evidence": {

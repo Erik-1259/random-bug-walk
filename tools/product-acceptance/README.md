@@ -187,6 +187,10 @@ Before an intentional reconciliation or
 validation, every terminal observation retains all nonpaging fields, including
 `updated_at`, budget and attention, from the first finished Start, Stop or status
 response. Concurrent nonfinished replies may still arrive out of order.
+Every observed event page starts immediately after its requested cursor and
+returns `next_after` as its last sequence, or the requested cursor when empty.
+Start and Stop responses use cursor zero. Concurrent and repeated responses may
+return different-length prefixes; each prefix must begin with event 1.
 The observation witness retains the furthest request lifecycle state across
 Start, replay, Stop and status replies. Sequential replies cannot move backward
 from that state; repeated and skipped states are valid. A successful Stop reply

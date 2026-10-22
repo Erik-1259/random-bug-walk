@@ -38,6 +38,36 @@ function scripted() {
   };
   return { backend, request };
 }
+function corruptEventPage(value: Record<string, unknown>, change: string): void {
+  const events = objects(value.events);
+  assert(events.length > 1);
+  if (change === "suffix") value.events = events.slice(1);
+  else if (change === "empty-with-cursor") value.events = [];
+  else value.next_after = integer(value.next_after) + (change === "cursor-ahead" ? 1 : -1);
+}
+for (const ordinal of [1, 2, 3]) it.each(["suffix", "cursor-ahead", "cursor-behind", "empty-with-cursor"])(
+  `rejects unpaged Start event page %s in response ${String(ordinal)}`, async change => {
+    const { backend, request } = scripted(); let starts = 0;
+    backend.request = async (...args) => {
+      const reply = await request(...args);
+      if (args[0] === "POST" && args[1] === "/api/factory/requests" && ++starts === ordinal) corruptEventPage(object(reply.body), change);
+      return reply;
+    };
+    await expect(runProbe(backend, probe)).rejects.toThrow(/event (gap or duplicate|cursor)/);
+  });
+it.each([[1, 2, 1, 2], [2, 1, 2, 1], [1, 1, 1, 1]])("accepts unpaged Start prefixes %j in concurrent and repeated replies", async (...lengths) => {
+  const { backend, request } = scripted(); let starts = 0;
+  backend.request = async (...args) => {
+    const reply = await request(...args);
+    if (args[0] === "POST" && args[1] === "/api/factory/requests" && reply.status !== 409) {
+      const value = object(reply.body);
+      value.events = objects(value.events).slice(0, lengths[starts++]);
+      value.next_after = objects(value.events).at(-1)?.seq;
+    }
+    return reply;
+  };
+  await expect(runProbe(backend, probe)).resolves.toBeUndefined();
+});
 function lifecycleScenario(starts: string[], polls: string[]) {
   const { backend, request } = scripted(); let startIndex = 0; let pollIndex = 0;
   let active: Record<string, unknown> | undefined;
@@ -383,6 +413,29 @@ it("waits for the named second-candidate check before cancelling", async () => {
   await expect(runProbe(s.backend, s.probe)).resolves.toBeUndefined();
   expect(s.wasStopped()).toBe(true);
 });
+for (const finished of [false, true]) {
+  for (const change of ["suffix", "cursor-ahead", "cursor-behind", "empty-with-cursor", "valid-prefix"]) {
+    it(`checks unpaged Stop event page ${change} with finished=${String(finished)}`, async () => {
+      const s = cancellationScenario(); const request = s.backend.request.bind(s.backend); let stops = 0;
+      s.backend.request = async (...args) => {
+        const reply = await request(...args);
+        if (args[0] === "POST" && args[1].endsWith("/stop") && ++stops === 1) {
+          let value = object(reply.body);
+          if (finished) {
+            const terminal = fixture("status-cancelled");
+            value = object(JSON.parse(JSON.stringify(terminal).replaceAll(text(terminal.request_id), text(value.request_id))) as unknown);
+          }
+          if (change === "valid-prefix") { value.events = objects(value.events).slice(0, 1); value.next_after = 1; }
+          else corruptEventPage(value, change);
+          return { ...reply, body: value };
+        }
+        return reply;
+      };
+      if (change === "valid-prefix") await expect(runProbe(s.backend, s.probe)).resolves.toBeUndefined();
+      else await expect(runProbe(s.backend, s.probe)).rejects.toThrow(/event (gap or duplicate|cursor)/);
+    });
+  }
+}
 it("rejects a successful Stop response still in the running lifecycle state", async () => {
   const s = cancellationScenario(); const request = s.backend.request.bind(s.backend);
   s.backend.request = async (...args) => {
