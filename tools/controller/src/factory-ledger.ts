@@ -1,23 +1,79 @@
 // The factory's spend ledger operations, built the way judge-web.ts builds the judge controller's:
 // the operation identity, the deterministic sandbox name as the provider
 // replay key, the reserve request priced from the factory profile, and the settlements. Also the
-// shared steps the launch, worker and lost-worker paths take: the budget_updated event, finishing a
-// request or a validation run, and the slot's busy reason. Web-safe: no runner, driver or PGlite.
+// factory core's identity and event modules as this code's ports (FACTORY_IDENTITY, FACTORY_EVENTS),
+// and the shared steps the launch, worker and lost-worker paths take: the budget_updated event,
+// finishing a request or a validation run, and the slot's busy reason. Web-safe: no runner, driver
+// or PGlite.
 import { toReserveRequest } from "@rbw/envelope";
 import type { Rates } from "@rbw/envelope";
+import { attention, copyExecutionId, factoryProjectId, isUuid, lostWorkerEvents, requestFinished, requestRoot, validationRoot } from "@rbw/factory";
+import type { NewEvent } from "@rbw/factory";
 import { STOP_CODE_VALUES, VALIDATION_RESULT_VALUES } from "@rbw/factory-contract";
-import type { CopyState, HostId, RequestOutcome, StopCode, ValidationMatrix, ValidationResult } from "@rbw/factory-contract";
+import type { CopyState, Event, HostId, RequestOutcome, StopCode, ValidationMatrix, ValidationResult } from "@rbw/factory-contract";
 import { callName, canonicalDigest, operationId, providerCallIdentity } from "@rbw/schema";
 import type { OperationState, ReserveRequest, Spend, UsageSettlement } from "@rbw/spend";
 import { FACTORY_PROFILE, factoryEnvelope } from "./factory-profile.ts";
 import type { FactoryEnvelope, FactoryProfile } from "./factory-profile.ts";
-import type { FactoryIdentity, FactoryLedger, FactoryRecords, FactoryRequestRecord, FactoryValidationRecord, StoredFactoryEvent, WorkerSandboxSdk } from "./factory-ports.ts";
+import type {
+  FactoryEventBuilders,
+  FactoryEventInput,
+  FactoryIdentity,
+  FactoryLedger,
+  FactoryRecords,
+  FactoryRequestRecord,
+  FactoryValidationRecord,
+  StoredFactoryEvent,
+  WorkerSandboxSdk,
+} from "./factory-ports.ts";
 
 export const FACTORY_KIND = { worker: "factory.worker", copy: "factory.copy", validation: "factory.validation" } as const;
+
 export const SANDBOX_PROVIDER = "vercel-sandbox";
 /** The ledger actor of the web service's calls and of the worker's. */
 export const ROUTE_ACTOR = "factory-route";
 export const WORKER_ACTOR = "factory-worker";
+
+// The factory core's modules ------------------------------------------------------------------
+
+/**
+ * The ledger project name of every factory operation. It is part of every operation ID, so it is
+ * fixed from the first recorded operation: changing it would orphan every earlier reservation.
+ */
+export const FACTORY_PROJECT = "rbw-factory";
+
+/** The factory core's identity module: the only implementation of the roots, the copies' execution IDs and the project ID. */
+export const FACTORY_IDENTITY: FactoryIdentity = Object.freeze({
+  project_id: factoryProjectId(FACTORY_PROJECT),
+  isUuid,
+  requestRoot,
+  validationRoot,
+  copyExecutionId,
+});
+
+/** A core event as this code appends it: the store assigns the time, so `at` is dropped. */
+function appended(event: NewEvent): FactoryEventInput {
+  return { event_key: event.event_key, type: event.type, host_id: event.host_id, candidate_id: event.candidate_id, item_key: event.item_key, case_id: event.case_id, message: event.message, data: { ...event.data } };
+}
+
+/**
+ * Stored request events as the core reads them, without their keys. The store holds contract
+ * events only (the core and this code append nothing else), which this port's loose type does not
+ * state, so the shape is asserted here and not checked again.
+ */
+function contractEvents(events: readonly StoredFactoryEvent[]): Event[] {
+  return events.map(({ seq, at, type, host_id, candidate_id, item_key, case_id, message, data }) => ({ seq, at, type, host_id, candidate_id, item_key, case_id, message, data }) as Event);
+}
+
+/**
+ * The factory core's event module, under the core's own keys and content, so the core's loop, the
+ * launch, the worker and the lost-worker routine append one key table.
+ */
+export const FACTORY_EVENTS: FactoryEventBuilders = Object.freeze({
+  lostWorker: ({ events, now }: { events: readonly StoredFactoryEvent[]; now: Date }) => lostWorkerEvents({ events: contractEvents(events), now }).map(appended),
+  finished: (stop: StopCode, now: Date) => appended(requestFinished(stop, now.toISOString())),
+  attention: (code: "needs_reconciliation", now: Date) => appended(attention(code, now.toISOString())),
+});
 
 // Sandbox names: deterministic, and unique per operation, because Vercel keeps a stopped named
 // sandbox and refuses a second create on its name.
@@ -300,27 +356,16 @@ export async function appendBudgetUpdate(deps: StepDeps, request: Pick<FactoryRe
 }
 
 /**
- * The keys of the request events this code appends with its own content: worker_started, the start
- * reservation's budget_updated, and the finish of a start whose worker never ran (a refused
- * reservation, a refused create or an uncertain launch), for which the factory core's loop never
- * runs. The lost-worker finish and every other request event take the core's keys and content
- * (FactoryEventBuilders), so there is one key table.
+ * The keys of the request events this code appends with its own content: worker_started and the
+ * worker reservation's budget_updated events. The finish of a start whose worker never ran (a
+ * refused reservation, a refused create or an uncertain launch), the lost-worker finish and every
+ * other request event take the core's keys and content (FACTORY_EVENTS), so there is one key table.
  */
 export const EVENT_KEYS = {
   workerStarted: "worker_started",
   workerReserved: "worker:reserved",
   workerReleased: "worker:settled",
-  launchAttention: "attention:needs_reconciliation",
-  launchFinish: "finish",
 } as const;
-
-const FINISH_MESSAGES: Record<RequestOutcome, string> = {
-  fulfilled: "Request finished: fulfilled.",
-  stopped_at_limit: "Request finished: stopped at a limit.",
-  sources_exhausted: "Request finished: sources exhausted.",
-  cancelled: "Request finished: cancelled.",
-  operational_error: "Request finished: operational error.",
-};
 
 /** The outcome each stop code belongs to (contract section 8.1). */
 export function outcomeOf(stop: StopCode): RequestOutcome {
@@ -357,19 +402,19 @@ export function needsReconciliationRaised(events: readonly StoredFactoryEvent[])
 }
 
 /**
- * Finishes a request whose worker never ran: attention first when its spend needs reconciliation,
- * then request_finished, then the budget closed with the stop code. Returns false when another
- * writer already finished the request with other content. A refused close (the budget is already
- * closed with another cause) is logged: the finish stands, so the caller still releases the slot.
+ * Finishes a request whose worker never ran, with the core's events (FACTORY_EVENTS): attention
+ * needs_reconciliation first when its spend needs reconciliation (`attention` says why, for the
+ * log; the event carries the core's text), then request_finished, then the budget closed with the
+ * stop code. Returns false when another writer already finished the request with other content. A
+ * refused close (the budget is already closed with another cause) is logged: the finish stands, so
+ * the caller still releases the slot.
  */
 export async function finishLaunch(deps: StepDeps, request: Pick<FactoryRequestRecord, "request_id" | "budget_key">, stop: StopCode, options: { attention: string | null }): Promise<boolean> {
-  if (options.attention !== null) await appendNeedsReconciliation(deps, request.request_id, options.attention, EVENT_KEYS.launchAttention);
-  const outcome = outcomeOf(stop);
-  const finished = await deps.records.appendEvent(
-    request.request_id,
-    { event_key: EVENT_KEYS.launchFinish, type: "request_finished", host_id: null, candidate_id: null, item_key: null, case_id: null, message: FINISH_MESSAGES[outcome], data: { outcome, stop_code: stop } },
-    deps.now(),
-  );
+  if (options.attention !== null) {
+    deps.log(`factory ${request.request_id} needs reconciliation: ${options.attention}`);
+    await deps.records.appendEvent(request.request_id, FACTORY_EVENTS.attention("needs_reconciliation", deps.now()), deps.now());
+  }
+  const finished = await deps.records.appendEvent(request.request_id, FACTORY_EVENTS.finished(stop, deps.now()), deps.now());
   if (finished.kind === "conflict" || finished.kind === "refused") return false;
   const closed = await deps.ledger.budgets.close(request.budget_key, stop);
   if (!closed.ok) deps.log(`factory ${request.request_id} the budget close was refused (${closed.code}); the finish stands`);

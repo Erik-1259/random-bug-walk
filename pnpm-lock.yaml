@@ -627,6 +627,9 @@ importers:
       '@rbw/envelope':
         specifier: workspace:*
         version: link:../../packages/envelope
+      '@rbw/factory':
+        specifier: workspace:*
+        version: link:../../packages/factory
       '@rbw/factory-contract':
         specifier: workspace:*
         version: link:../../packages/factory-contract
