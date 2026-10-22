@@ -624,6 +624,12 @@ importers:
       '@rbw/admission':
         specifier: workspace:*
         version: link:../../packages/admission
+      '@rbw/case-package':
+        specifier: workspace:*
+        version: link:../case-package
+      '@rbw/case-validate':
+        specifier: workspace:*
+        version: link:../case-validate
       '@rbw/envelope':
         specifier: workspace:*
         version: link:../../packages/envelope
@@ -633,6 +639,9 @@ importers:
       '@rbw/factory-contract':
         specifier: workspace:*
         version: link:../../packages/factory-contract
+      '@rbw/host-task-report':
+        specifier: workspace:*
+        version: link:../../packages/host-task-report
       '@rbw/local-runner':
         specifier: workspace:*
         version: link:../local-runner
