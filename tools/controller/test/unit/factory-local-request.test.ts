@@ -227,6 +227,25 @@ describe("the factory-worker command", () => {
     expect(await slotHolder(w)).toBeNull();
   });
 
+  it("gives the copies the registry namespace of RBW_FACTORY_WORKER_IMAGE on the sandbox backend, and none, with a log line, without it", async () => {
+    const seen: (string | null)[] = [];
+    const capture = (): FactoryWiring => ({
+      ...wiring(),
+      orchestrate: (_backend, ctx) => {
+        seen.push(ctx.copyRegistry);
+        return syntheticLoop;
+      },
+    });
+    for (const env of [{ ...CREDENTIALS, RBW_FACTORY_WORKER_IMAGE: WORKER_IMAGE }, { ...CREDENTIALS }]) {
+      const record = await acceptRequest(w, { budget: 3_000_000 });
+      expect((await startFactoryWorker(launchDeps(w.sandbox), record.request_id)).kind).toBe("launched");
+      const code = await factoryWorkerCommand(["--request-id", record.request_id, "--deadline-at", new Date(w.clock.ms + 3_600_000).toISOString()], { ...io(), env, sandbox: w.sandbox, load: () => Promise.resolve({ ok: true as const, wiring: capture() }) });
+      expect(code).toBe(0);
+    }
+    expect(seen).toEqual(["synthetic-team/synthetic-project", null]);
+    expect(w.logs.filter((line) => line.includes("RBW_FACTORY_WORKER_IMAGE is not set or names no registry namespace"))).toHaveLength(1);
+  });
+
   it("refuses a request that is not recorded as an input error", async () => {
     await expect(factoryWorkerCommand(["--request-id", syntheticUuid(), "--deadline-at", "2026-10-20T20:00:00Z", "--backend", "docker"], io())).rejects.toThrow(UsageError);
   });

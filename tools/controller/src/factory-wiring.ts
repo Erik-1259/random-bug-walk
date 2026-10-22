@@ -16,8 +16,9 @@
 // request's recorded evidence and checked against the hash the run was started with; then the
 // harness runs on the two parts with the run's copies under its own operation.
 //
-// The copy runner is the sandbox runner (one Vercel sandbox per copy) on the sandbox backend, and
-// the harness's docker runner with the meter's glue (factory-docker-runner.ts) on the docker one.
+// The copy runner is the sandbox runner (one Vercel sandbox per copy, each from the plan's image
+// pinned by digest in the deployment's registry namespace) on the sandbox backend, and the
+// harness's docker runner with the meter's glue (factory-docker-runner.ts) on the docker one.
 import { assembleFinalValidator, inspectValidator, packageFilename, pairSha256, readPreparedIndex, readPreparedObject, resultsSha256 } from "@rbw/case-package";
 import type { PreparedEntry, PreparedIndex } from "@rbw/case-package";
 import { HARNESS_IDENTITY, dockerRunner, validatePair } from "@rbw/case-validate";
@@ -54,6 +55,12 @@ export interface WiringContext {
   db: Pick<FactoryDatabase, "ledger" | "factoryRecords">;
   /** The copies' Sandbox SDK with the credentials bound; null on the docker backend. */
   copySandbox: SandboxSdk | null;
+  /**
+   * The registry namespace the copies' images are pushed to, from the worker's own image reference
+   * (copyRegistryFrom); null on the docker backend, and when the configuration names none (every
+   * sandbox copy is then refused).
+   */
+  copyRegistry: string | null;
   /** The prepared directory: index.json and the archives it names, each named by its sha256. */
   packagesDir: string;
   /** A local directory for the harness's workspaces and the copies' results. */
@@ -136,6 +143,7 @@ function copyRunner(options: WiringOptions, backend: WorkerBackend, ctx: WiringC
     if (ctx.copySandbox === null) throw new Error("the sandbox backend runs copies with a Sandbox SDK, and none was given");
     return createSandboxCopyRunner({
       sdk: ctx.copySandbox,
+      registry: ctx.copyRegistry,
       meter: run.meter,
       subject: run.subject,
       workDir: ctx.workDir,

@@ -5,7 +5,8 @@
 // the copy goes through the copy meter, which refuses limits above the host's copy limits and a
 // copy that would not end before the deadline, launches the operation its candidate reserved at
 // selection and settles it (or, in a validation run, records it under the run's operation).
-// Inside: a sandbox from the plan's kit image pinned by digest, named after the copy's execution,
+// Inside: a sandbox from the plan's kit image pinned by digest in the deployment's registry (see
+// copyImage: a copy starts only on an immutable registry reference), named after the copy's execution,
 // with no network, the plan's vCPUs (at least enough for its memory at 2 GB each) and the plan's
 // timeout plus the shutdown allowance as its provider timeout; the files placed at their
 // destinations; the command run once within its timeout, under a run-once guard because the SDK
@@ -27,6 +28,12 @@ import { runOnceCommand } from "./factory-run-once.ts";
 
 export interface SandboxRunnerDeps {
   sdk: SandboxSdk;
+  /**
+   * The registry namespace the copies' images are pushed to (copyRegistryFrom of the worker's own
+   * image reference), or null when the deployment's configuration names none: every copy is then
+   * refused before anything is launched.
+   */
+  registry: string | null;
   meter: CopyMeter;
   /** The candidate_id, or the case_id of a validation run, whose copies this runner runs. */
   subject: string;
@@ -90,16 +97,50 @@ export function guardedCommand(command: readonly string[]): { cmd: string; args:
   return runOnceCommand("rbw-copy", RUN_ONCE_DIR, command);
 }
 
-/** The sandbox image: the plan's repository pinned by its digest. */
-export function pinnedImage(plan: Pick<CopyPlan, "image">): string | null {
+/** A path component of a repository name, in Docker's grammar. */
+const PATH_COMPONENT = /^[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*$/;
+/** A registry host, with an optional port, as the first component of a namespace. */
+const REGISTRY_HOST = /^[a-z0-9-]+(?:\.[a-z0-9-]+)*(?::[0-9]{1,5})?$/;
+const SHA256_DIGEST = /^sha256:[0-9a-f]{64}$/;
+const PLACEHOLDER_DIGEST = `sha256:${"0".repeat(64)}`;
+
+/**
+ * The registry namespace of the worker's own image reference (RBW_FACTORY_WORKER_IMAGE,
+ * `<namespace>/<repository>@sha256:<digest>`): the reference without its last path component and its
+ * digest. The copies' runtime images are pushed to the same namespace. Null when the value is missing
+ * or is not such a reference, so no copy can start.
+ */
+export function copyRegistryFrom(workerImage: string | undefined): string | null {
+  const match = /^(.+)\/([^/@]+)@sha256:[0-9a-f]{64}$/.exec(workerImage ?? "");
+  const namespace = match?.[1];
+  const name = match?.[2];
+  if (namespace === undefined || name === undefined || !PATH_COMPONENT.test(name)) return null;
+  const [first = "", ...rest] = namespace.split("/");
+  if (!(PATH_COMPONENT.test(first) || REGISTRY_HOST.test(first)) || !rest.every((component) => PATH_COMPONENT.test(component))) return null;
+  return namespace;
+}
+
+/**
+ * The image a copy's sandbox starts from: the plan image's name (the last path component of its
+ * reference, without a tag) in the deployment's registry namespace, pinned by the plan's digest. A
+ * committed pin names no registry (a neutral name and the digest), so the namespace comes from the
+ * deployment's configuration. Refused (with the reason) when no namespace is configured, when the
+ * plan has no sha256 digest or a placeholder one (all zeros, a pin of an image not pushed yet), when
+ * the reference carries another digest, or when it names no repository.
+ */
+export function copyImage(registry: string | null, plan: Pick<CopyPlan, "image">): { image: string } | { refused: string } {
+  if (registry === null || registry === "") return { refused: "no registry for the copies' images is configured" };
   const { reference, digest } = plan.image;
-  if (digest === null || !/^sha256:[0-9a-f]{64}$/.test(digest)) return null;
+  if (digest === null || !SHA256_DIGEST.test(digest)) return { refused: "the plan's image is not pinned by a sha256 digest" };
+  if (digest === PLACEHOLDER_DIGEST) return { refused: "the plan's image digest is a placeholder" };
   const at = reference.indexOf("@");
-  if (at >= 0) return reference.slice(at + 1) === digest ? reference : null;
-  const slash = reference.lastIndexOf("/");
-  const colon = reference.lastIndexOf(":");
-  const repository = colon > slash ? reference.slice(0, colon) : reference;
-  return `${repository}@${digest}`;
+  if (at >= 0 && reference.slice(at + 1) !== digest) return { refused: "the plan's image reference carries another digest" };
+  const repository = at >= 0 ? reference.slice(0, at) : reference;
+  const slash = repository.lastIndexOf("/");
+  const colon = repository.lastIndexOf(":");
+  const name = (colon > slash ? repository.slice(0, colon) : repository).slice(slash + 1);
+  if (!PATH_COMPONENT.test(name)) return { refused: "the plan's image reference names no repository" };
+  return { image: `${registry}/${name}@${digest}` };
 }
 
 /** The vCPUs a copy's sandbox gets: the plan's, or more when its memory needs them (2 GB each). */
@@ -323,18 +364,22 @@ export function createSandboxCopyRunner(deps: SandboxRunnerDeps): CopyRunner {
         outcome,
         exit_code: null,
         results_dir: null,
-        image_digest: plan.image.digest ?? NO_IMAGE_DIGEST,
+        image_digest: plan.image.digest !== null && SHA256_DIGEST.test(plan.image.digest) ? plan.image.digest : NO_IMAGE_DIGEST,
         architecture: "amd64",
         started_at: iso(started),
         finished_at: iso(deps.now()),
         results_sha256: null,
       });
-      const image = pinnedImage(plan);
+      const image = copyImage(deps.registry, plan);
+      if ("refused" in image) {
+        deps.log(`factory: copy ${plan.copy_id} was not started (${image.refused})`);
+        return notRun("setup_failed");
+      }
       const digest = plan.image.digest;
       const app = readChecked(roots.app_root, plan.files, plan.destinations.app);
       const evaluator = readChecked(roots.evaluator_root, plan.evaluator_files, plan.destinations.evaluator);
-      if (image === null || digest === null || app === null || evaluator === null) return notRun("setup_failed");
-      const outcome = await deps.meter.run({ subject: deps.subject, host: plan.host_id, state: plan.state, limits: plan.limits }, (name, hooks) => launch(deps, plan, [...app, ...evaluator], image, digest, name, hooks));
+      if (digest === null || app === null || evaluator === null) return notRun("setup_failed");
+      const outcome = await deps.meter.run({ subject: deps.subject, host: plan.host_id, state: plan.state, limits: plan.limits }, (name, hooks) => launch(deps, plan, [...app, ...evaluator], image.image, digest, name, hooks));
       switch (outcome.kind) {
         case "ran":
           return outcome.result;

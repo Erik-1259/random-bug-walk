@@ -6,7 +6,10 @@
 //
 // It reads DATABASE_URL, and on the sandbox backend VERCEL_TOKEN, VERCEL_TEAM_ID and
 // VERCEL_PROJECT_ID, from the environment, here and nowhere else, and never prints them. The
-// credentials bind both the worker's own sandbox (stopped last) and the copies' sandboxes. The
+// credentials bind both the worker's own sandbox (stopped last) and the copies' sandboxes. On the
+// sandbox backend it also reads RBW_FACTORY_WORKER_IMAGE, the worker's own image reference
+// (`<namespace>/<repository>@sha256:<digest>`), whose namespace holds the copies' runtime images;
+// without it every copy is refused. The
 // prepared packages are the image's (/opt/rbw/factory-packages); on the docker backend
 // RBW_FACTORY_PACKAGES_DIR may name another prepared directory. A validation run's deadline is its
 // accepted time plus 1,800 s, read from its record.
@@ -23,7 +26,8 @@ import { loadRateSheet } from "@rbw/envelope";
 import { createSandboxSdk } from "@rbw/local-runner";
 import type { SandboxSdk } from "@rbw/local-runner";
 import { stopQuietly, validationSandboxName, workerSandboxName } from "./factory-ledger.ts";
-import { createWorkerSandboxSdk } from "./factory-web.ts";
+import { copyRegistryFrom } from "./factory-sandbox-runner.ts";
+import { WORKER_IMAGE_VARIABLE, createWorkerSandboxSdk } from "./factory-web.ts";
 import type { WorkerSandboxSdk } from "./factory-ports.ts";
 import { FACTORY_PACKAGES_DIR, PACKAGES_DIR_VARIABLE, loadFactoryWiring } from "./factory-wiring.ts";
 import type { WiringContext, WiringResult } from "./factory-wiring.ts";
@@ -89,6 +93,8 @@ async function command(args: string[], io: FactoryCommandIo): Promise<number> {
   const credentials = () => ({ token: variable(io.env, "VERCEL_TOKEN"), teamId: variable(io.env, "VERCEL_TEAM_ID"), projectId: variable(io.env, "VERCEL_PROJECT_ID") });
   const sandbox = backend === "sandbox" ? (io.sandbox ?? createWorkerSandboxSdk(credentials())) : io.sandbox;
   const copySandbox = backend === "sandbox" ? (io.copySandbox ?? createSandboxSdk(credentials())) : null;
+  const copyRegistry = backend === "sandbox" ? copyRegistryFrom(io.env[WORKER_IMAGE_VARIABLE]) : null;
+  if (backend === "sandbox" && copyRegistry === null) io.log(`factory: ${WORKER_IMAGE_VARIABLE} is not set or names no registry namespace; every copy will be refused`);
   const localPackages = io.env[PACKAGES_DIR_VARIABLE] ?? "";
   const packagesDir = backend === "docker" && localPackages !== "" ? localPackages : FACTORY_PACKAGES_DIR;
 
@@ -101,7 +107,7 @@ async function command(args: string[], io: FactoryCommandIo): Promise<number> {
   try {
     // The harness's workspaces and the copies' results, kept after the run for a local proof to read.
     const workDir = await mkdtemp(join(tmpdir(), "rbw-factory-worker-"));
-    const ctx: WiringContext = { db, copySandbox, packagesDir, workDir, log: io.log };
+    const ctx: WiringContext = { db, copySandbox, copyRegistry, packagesDir, workDir, log: io.log };
     const deps = { ledger: db.ledger, records: db.factoryRecords, identity, rates, now: io.now, log: io.log, provider: backend === "sandbox" ? ("vercel-sandbox" as const) : ("docker" as const), ...(sandbox === undefined ? {} : { sandbox }) };
     if (requestId !== undefined && deadline !== null) {
       const outcome = await runFactoryWorker(deps, { request_id: requestId, deadline, orchestrate: wiring.wiring.orchestrate(backend, ctx) });
