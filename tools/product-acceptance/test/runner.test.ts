@@ -38,6 +38,52 @@ function scripted() {
   };
   return { backend, request };
 }
+function lifecycleScenario(starts: string[], polls: string[]) {
+  const { backend, request } = scripted(); let startIndex = 0; let pollIndex = 0;
+  let active: Record<string, unknown> | undefined;
+  backend.request = async (...args) => {
+    const reply = await request(...args);
+    if (args[0] === "POST" && args[1] === "/api/factory/requests" && reply.status !== 409) {
+      const value = object(reply.body);
+      value.state = starts[startIndex++];
+      active = structuredClone(value);
+    } else if (args[0] === "GET" && pollIndex < polls.length) {
+      assert(active);
+      const value = structuredClone(active); value.state = polls[pollIndex++];
+      const cursor = Number(args[1].split("?after=")[1] ?? 0);
+      value.events = objects(value.events).filter(event => integer(event.seq) > cursor);
+      value.next_after = objects(value.events).at(-1)?.seq ?? cursor;
+      return { ...reply, body: value };
+    }
+    return reply;
+  };
+  return backend;
+}
+it.each([
+  ["starting", "queued"], ["running", "queued"], ["running", "starting"],
+  ["stopping", "queued"], ["stopping", "starting"], ["stopping", "running"],
+])("rejects observed lifecycle regression from %s to %s between polls", async (from, to) => {
+  const backend = lifecycleScenario(["queued", "queued", "queued", "queued"], [from, to]);
+  await expect(runProbe(backend, probe)).rejects.toThrow("request lifecycle regressed");
+});
+it.each([0, 1, 2])("retains lifecycle progress from concurrent Start response %s before replay", async ordinal => {
+  const states = ["queued", "queued", "queued", "queued"]; states[ordinal] = "running";
+  await expect(runProbe(lifecycleScenario(states, []), probe)).rejects.toThrow("request lifecycle regressed");
+});
+it.each([
+  ["running", "queued", "starting", "running"],
+  ["queued", "running", "starting", "running"],
+  ["starting", "queued", "running", "running"],
+])("allows unordered concurrent lifecycle snapshots %s/%s/%s before replay %s", async (...states) => {
+  await expect(runProbe(lifecycleScenario(states, []), probe)).resolves.toBeUndefined();
+});
+it.each([
+  ["queued", "starting", "starting", "running", "running", "stopping", "stopping"],
+  ["running", "running", "stopping"],
+])("allows repeated and skipped lifecycle states in observed polls %j", async (...states) => {
+  const backend = lifecycleScenario(["queued", "queued", "queued", "queued"], states);
+  await expect(runProbe(backend, probe)).resolves.toBeUndefined();
+});
 it("reports eight unavailable scenarios without an approved isolated backend", async () => {
   const report = await runAcceptance();
   expect(report.acceptance_executed).toBe(false);
@@ -336,6 +382,35 @@ it("waits for the named second-candidate check before cancelling", async () => {
   const s = cancellationScenario();
   await expect(runProbe(s.backend, s.probe)).resolves.toBeUndefined();
   expect(s.wasStopped()).toBe(true);
+});
+it("rejects a successful Stop response still in the running lifecycle state", async () => {
+  const s = cancellationScenario(); const request = s.backend.request.bind(s.backend);
+  s.backend.request = async (...args) => {
+    const reply = await request(...args);
+    if (args[0] === "POST" && args[1].endsWith("/stop") && object(reply.body).state === "stopping") object(reply.body).state = "running";
+    return reply;
+  };
+  await expect(runProbe(s.backend, s.probe)).rejects.toThrow("Stop response did not record stopping or completion");
+});
+it.each(["queued", "starting", "running", "stopping"])("preserves the stopping lifecycle witness when the next poll is %s", async state => {
+  const s = cancellationScenario(); const request = s.backend.request.bind(s.backend);
+  let stopping: Record<string, unknown> | undefined; let observed = false;
+  s.backend.request = async (...args) => {
+    const reply = await request(...args);
+    if (args[0] === "POST" && args[1].endsWith("/stop") && !stopping) stopping = structuredClone(object(reply.body));
+    else if (args[0] === "GET" && stopping && !observed) {
+      observed = true;
+      const value = structuredClone(stopping); value.state = state;
+      const cursor = Number(args[1].split("?after=")[1] ?? 0);
+      value.events = objects(value.events).filter(event => integer(event.seq) > cursor);
+      value.next_after = objects(value.events).at(-1)?.seq ?? cursor;
+      return { ...reply, body: value };
+    }
+    return reply;
+  };
+  if (state === "stopping") await expect(runProbe(s.backend, s.probe)).resolves.toBeUndefined();
+  else await expect(runProbe(s.backend, s.probe)).rejects.toThrow("request lifecycle regressed");
+  expect(observed).toBe(true);
 });
 it.each([false, true])("preserves a terminal Stop response timestamp before status reads with drift=%s", async drift => {
   const s = cancellationScenario(); const request = s.backend.request.bind(s.backend); let stops = 0;

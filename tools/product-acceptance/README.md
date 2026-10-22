@@ -180,6 +180,10 @@ Before an intentional reconciliation or
 validation, every terminal observation retains all nonpaging fields, including
 `updated_at`, budget and attention, from the first finished Start, Stop or status
 response. Concurrent nonfinished replies may still arrive out of order.
+The observation witness retains the furthest request lifecycle state across
+Start, replay, Stop and status replies. Sequential replies cannot move backward
+from that state; repeated and skipped states are valid. A successful Stop reply
+must show stopping or completion before polling continues.
 Reconnect must return exactly the witnessed terminal history, including an empty
 trailing page; no new event may appear before those intentional operations.
 Complete terminal history is drained through an empty page before requiring exactly

@@ -154,6 +154,8 @@ export async function runProbe(backend: IsolatedBackend, probe: Probe): Promise<
   const deliveredCases = new Map<unknown, Record<string, unknown>>();
   const observedEvents = new Map<number, Record<string, unknown>>();
   const funnelProgress = new Map<string, number>();
+  const lifecycle = ["queued", "starting", "running", "stopping", "finished"];
+  let furthestState = 0;
   let requestTimes: { created_at: unknown; deadline_at: unknown } | undefined;
   let terminal: Record<string, unknown> | undefined;
   let launchFailure = false;
@@ -199,6 +201,11 @@ export async function runProbe(backend: IsolatedBackend, probe: Probe): Promise<
       assert.deepEqual(snapshot(value), terminal, "terminal result changed after completion");
     }
     if (value.state === "finished" && terminal === undefined) terminal = structuredClone(snapshot(value));
+    // Concurrent Start snapshots are unordered; later sequential responses must
+    // retain their furthest state, including the response returned by Stop.
+    const stateIndex = lifecycle.indexOf(text(value.state));
+    if (!concurrent) assert(stateIndex >= furthestState, "request lifecycle regressed");
+    furthestState = Math.max(furthestState, stateIndex);
     if (launchFailure) checkLaunchFailure(value);
   };
   for (const reply of replies) {
@@ -245,6 +252,7 @@ export async function runProbe(backend: IsolatedBackend, probe: Probe): Promise<
     if (probe.cancel && !stopped && cancelCheckpoint && state.state !== "finished") {
       const stopping = body(await call("POST", `${path}/stop`, {}), 200);
       observe(stopping);
+      assert(stopping.state === "stopping" || stopping.state === "finished", "Stop response did not record stopping or completion");
       stopped = true;
     }
     if (state.state === "finished" && objects(state.events).length === 0) { completeHistory = true; break; }

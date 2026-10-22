@@ -10,12 +10,12 @@
   },
   "self_tests": {
     "command": "pnpm --filter @rbw/product-acceptance test --reporter=json",
-    "passed": 569,
+    "passed": 588,
     "failed": 0,
     "skipped": 0,
     "exit_code": 0
   },
-  "test_floor": 569,
+  "test_floor": 588,
   "failing_first": [
     {
       "scope": "final-contract invariant regressions",
@@ -395,6 +395,20 @@
       "failed": 6,
       "skipped": 561,
       "exit_code": 1
+    },
+    {
+      "scope": "sequential request lifecycle regressions between polls, from every concurrent Start position to replay, and from the Stop response to the next poll; legitimate skipped, repeated and unordered concurrent states remain valid",
+      "passed": 6,
+      "failed": 12,
+      "skipped": 569,
+      "exit_code": 1
+    },
+    {
+      "scope": "successful Stop response still running instead of recording stopping or completion",
+      "passed": 0,
+      "failed": 1,
+      "skipped": 587,
+      "exit_code": 1
     }
   ],
   "local_checks": [
@@ -516,6 +530,12 @@
       "command": "pnpm --filter @rbw/product-acceptance test --reporter=json",
       "meaning": "independent focused review reran the full suite after rejecting unchanged reconciliation budget events",
       "passed": 569,
+      "exit_code": 0
+    },
+    {
+      "command": "pnpm --filter @rbw/product-acceptance test --reporter=json",
+      "meaning": "independent focused review reran the full suite after request lifecycle and Stop-response continuity checks",
+      "passed": 588,
       "exit_code": 0
     }
   ],
@@ -692,6 +712,10 @@
     {
       "finding": "Reconciliation accepted invented budget transitions with unchanged held spend, including repeated zero-held updates after settlement.",
       "disposition": "Require each reconciliation budget event to reduce held spend strictly while retaining conservation and final attention-clear checks. Negative regressions cover initial, intermediate and completed settlement in single and paged histories; valid decreasing split settlements still pass."
+    },
+    {
+      "finding": "Request observations could move backward through nonterminal lifecycle states, including after a successful Stop response.",
+      "disposition": "Retain the furthest lifecycle state across unordered concurrent Starts and require every later sequential observation to preserve or advance it. Require Stop to return stopping or finished. Negative regressions cover all nonterminal backward transitions, every concurrent Start position and both cancellation boundaries; repeated, skipped and unordered states remain supported."
     }
   ],
   "http_regression_evidence": {
