@@ -7,6 +7,7 @@ import { COPY_SCRIPT } from "../src/copy-plans.ts";
 import { UmamiRefusal } from "../src/errors.ts";
 import { EXPECTED_TRIALS_FILE, REQUEST_FILE } from "../src/job.ts";
 import { UMAMI_PROTOCOL } from "../src/protocol.ts";
+import { filesOf } from "../src/tree.ts";
 import { cleanupTemp, evaluatorTree, syntheticWorld, unpackedPair } from "./support.ts";
 
 afterEach(cleanupTemp);
@@ -31,46 +32,70 @@ function refusal(run: () => unknown): string {
 const STATES: CopyState[] = ["clean", "buggy", "fixed"];
 
 describe("copyPlans", () => {
-  it("plans one schema-valid copy per state on the pinned image, running the copy script for that state's trial", () => {
+  it("plans one schema-valid copy per state on the pinned runtime image, running the copy script for that state's trial", () => {
     const { world, adapter, pair } = setup();
     for (const state of STATES) {
       const plans = adapter.copyPlans(state, pair, UMAMI_PROTOCOL);
       expect(plans).toHaveLength(1);
       const [plan] = plans;
       expect(validateContract("CopyPlan", plan)).toEqual([]);
-      expect(plan).toMatchObject({ copy_id: `${state}-01`, host_id: "umami", state, image: { reference: world.pins.kit.image, digest: world.pins.kit.digest } });
+      expect(plan).toMatchObject({ copy_id: `${state}-01`, host_id: "umami", state, image: { reference: world.pins.runtime.image, digest: world.pins.runtime.digest } });
+      expect(plan?.image.digest).not.toBe(world.pins.kit.digest);
       expect(plan?.command).toEqual(["/bin/sh", "-c", COPY_SCRIPT, "rbw-copy", "trial", { clean: "clean-01", buggy: "planted-01", fixed: "fixed-01" }[state]]);
       expect(plan?.limits).toEqual({ timeout_s: 720, vcpus: 4, memory_mb: 8192, network: "none" });
     }
   });
 
-  it("overlays only the files that differ from the image's tree: the planted target on buggy, nothing on clean and on the reverted fixed", () => {
+  it("places each state's whole source tree, because the runtime image holds no app source", () => {
     const { world, adapter, pair } = setup();
-    expect(adapter.copyPlans("clean", pair, UMAMI_PROTOCOL)[0]?.files).toEqual([]);
-    expect(adapter.copyPlans("buggy", pair, UMAMI_PROTOCOL)[0]?.files).toEqual([{ path: world.pins.target.path, sha256: world.pins.target.after_sha256 }]);
-    expect(adapter.copyPlans("fixed", pair, UMAMI_PROTOCOL)[0]?.files).toEqual([]);
+    const buggy = { ...world.source, [world.pins.target.path]: world.pins.target.after_sha256 };
+    expect(adapter.copyPlans("clean", pair, UMAMI_PROTOCOL)[0]?.files).toEqual(filesOf(world.source));
+    expect(adapter.copyPlans("buggy", pair, UMAMI_PROTOCOL)[0]?.files).toEqual(filesOf(buggy));
+    expect(adapter.copyPlans("fixed", pair, UMAMI_PROTOCOL)[0]?.files).toEqual(filesOf(world.source));
   });
 
-  it("declares where the copy script finds the app, reads the job and writes its record set", () => {
+  it("declares where the copy script finds the app, the fixture and the job, and writes its record set", () => {
     const { adapter, pair } = setup();
     for (const state of STATES) {
       const [plan] = adapter.copyPlans(state, pair, UMAMI_PROTOCOL);
       expect(plan?.destinations).toEqual({ app: "/workspace/app", evaluator: "/var/lib/rbw", results: "/var/lib/rbw/results/rbw-runner" });
-      // The script's own paths: its output directory and the job under the evaluator destination.
+      // The script's own paths: its output directory, and the fixture and the job under the evaluator destination.
       expect(COPY_SCRIPT).toContain(`out=${plan?.destinations.results ?? ""}\n`);
+      expect(COPY_SCRIPT).toContain(`placed=${plan?.destinations.evaluator ?? ""}/fixture\n`);
       expect(COPY_SCRIPT).toContain(`run --job ${plan?.destinations.evaluator ?? ""}/job --trial`);
-      expect(plan?.evaluator_files.every((file) => file.path.startsWith("job/"))).toBe(true);
+      expect(plan?.evaluator_files.every((file) => file.path.startsWith("fixture/") || file.path.startsWith("job/"))).toBe(true);
     }
   });
 
-  it("places the frozen job from the validator as evaluator files", () => {
+  it("places the validator's fixture and the frozen job as evaluator files, and no other validator material", () => {
     const { world, adapter, pair } = setup();
+    const fixture = Object.entries(world.fixtureTree).map(([path, sha256]) => ({ path: `fixture/${path}`, sha256 }));
+    const job = [
+      { path: REQUEST_FILE, sha256: world.pins.job.request_sha256 },
+      { path: EXPECTED_TRIALS_FILE, sha256: world.pins.job.expected_trials_sha256 },
+    ];
     for (const state of STATES) {
-      expect(adapter.copyPlans(state, pair, UMAMI_PROTOCOL)[0]?.evaluator_files).toEqual([
-        { path: REQUEST_FILE, sha256: world.pins.job.request_sha256 },
-        { path: EXPECTED_TRIALS_FILE, sha256: world.pins.job.expected_trials_sha256 },
-      ]);
+      const files = adapter.copyPlans(state, pair, UMAMI_PROTOCOL)[0]?.evaluator_files ?? [];
+      expect(files).toEqual(filesOf(Object.fromEntries([...fixture, ...job].map((file) => [file.path, file.sha256]))));
+      expect(files.filter((file) => file.path.startsWith("fixture/"))).toHaveLength(Object.keys(world.fixtureTree).length);
+      expect(files.map((file) => file.path)).not.toContain("expected-vectors.json");
     }
+  });
+
+  it("moves the fixture where the driver reads it and prepares the app tree before the local runner's freeze and run", () => {
+    const lines = COPY_SCRIPT.split("\n");
+    const at = (line: string): number => {
+      const index = lines.indexOf(line);
+      expect(index, line).toBeGreaterThanOrEqual(0);
+      return index;
+    };
+    expect(at("fixture=/opt/rbw/verifier/kit/umami-fixture")).toBeLessThan(at('  mv "$placed" "$fixture" &&'));
+    expect(at('  mv "$placed" "$fixture" &&')).toBeLessThan(at("  /opt/rbw/bin/rbw-prepare-app"));
+    // The placed fixture becomes root-only, like the rest of the verifier area.
+    expect(lines).toContain('  find "$fixture" -type d -exec chmod 0700 {} + &&');
+    expect(lines).toContain('  find "$fixture" -type f -exec chmod 0600 {} + &&');
+    expect(at('echo "$status" > "$out/prepare.exit"')).toBeLessThan(at('[ "$status" -eq 0 ] || exit 92'));
+    expect(at('[ "$status" -eq 0 ] || exit 92')).toBeLessThan(at('"$node" "$driver" freeze > "$out/freeze.stdout" 2> "$out/freeze.stderr"'));
   });
 
   it("applies no patch and reads no file: it maps the harness's trees as listed, whatever the roots", () => {
@@ -79,13 +104,13 @@ describe("copyPlans", () => {
     const pair = unpackedPair(world, evaluator);
     expect(pair.states.buggy.root).toBe("/nonexistent/buggy");
     const plan = adapter.copyPlans("buggy", pair, UMAMI_PROTOCOL)[0];
-    expect(plan?.files.map((file) => file.sha256)).toEqual([world.pins.target.after_sha256]);
+    expect(plan?.files.find((file) => file.path === world.pins.target.path)?.sha256).toBe(world.pins.target.after_sha256);
     // A fixed tree that is not the reference repair's result is refused, never repaired here.
     const tampered = unpackedPair(world, evaluator, { fixed: { ...world.source, [world.pins.target.path]: "c".repeat(64) } });
     expect(refusal(() => adapter.copyPlans("fixed", tampered, UMAMI_PROTOCOL))).toBe("state_tree_mismatch");
   });
 
-  it("refuses a clean reconstruction that is not the pinned image's source", () => {
+  it("refuses a clean reconstruction that is not the pinned source", () => {
     const { world, adapter, evaluator } = setup();
     const pair = unpackedPair(world, evaluator, { clean: { ...world.source, "README.md": "d".repeat(64) } });
     expect(refusal(() => adapter.copyPlans("clean", pair, UMAMI_PROTOCOL))).toBe("clean_tree_mismatch");
@@ -114,7 +139,7 @@ describe("copyPlans", () => {
     expect(refusal(() => adapter.copyPlans("fixed", unpackedPair(world, evaluator, { fixed: spec }), UMAMI_PROTOCOL))).toBe("closure_target");
   });
 
-  it("refuses validator checks that are not the fixture the kit image runs", () => {
+  it("refuses validator checks that are not the fixture the pinned kit ran", () => {
     const { world, adapter, evaluator } = setup();
     const [first] = Object.keys(evaluator).filter((path) => path.startsWith("fixture/checks/"));
     if (first === undefined) throw new Error("no check file");

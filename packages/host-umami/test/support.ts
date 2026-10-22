@@ -69,6 +69,9 @@ export function repoFixture(): { tree: Record<string, string>; bytes: Map<string
   return { tree, bytes };
 }
 
+/** The synthetic runtime image's digest; the synthetic kit image's is "a" repeated. */
+export const SYNTHETIC_RUNTIME_DIGEST = `sha256:${"c".repeat(64)}`;
+
 export const SYNTHETIC_TEST_IDS = ["synthetic-test-0001", "synthetic-test-0002", "synthetic-test-0003"];
 export const SYNTHETIC_CLEAN_TARGET = "export function synthetic() {\n  return 'clean';\n}\n";
 export const SYNTHETIC_PLANTED_TARGET = "export function synthetic() {\n  return 'planted';\n}\n";
@@ -99,10 +102,11 @@ export interface SyntheticWorld {
 const bytesOf = (text: string): Buffer => Buffer.from(text, "utf8");
 
 /**
- * Synthetic pins whose source, suite, incident and kit identity are synthetic; patches, vectors
- * and fixture are real. `kitSha256` sets the image manifest's hash (the prepare tests serve one).
+ * Synthetic pins whose source, suite, incident, kit and runtime identities are synthetic; patches,
+ * vectors and fixture are real. `kitSha256` sets the image manifest's hash (the prepare tests serve
+ * one); `runtime` replaces the runtime pin, and the frozen job is built for it.
  */
-export function syntheticWorld(options: { kitSha256?: string } = {}): SyntheticWorld {
+export function syntheticWorld(options: { kitSha256?: string; runtime?: UmamiPins["runtime"] } = {}): SyntheticWorld {
   const source = syntheticSource();
   const objects = new Map<string, Uint8Array>();
   const sourceTree: Record<string, string> = {};
@@ -134,6 +138,7 @@ export function syntheticWorld(options: { kitSha256?: string } = {}): SyntheticW
       source_tree_sha256: treeSha256(sourceTree),
       source_file_count: Object.keys(sourceTree).length,
     },
+    runtime: options.runtime ?? { image: "synthetic/umami-runtime", digest: SYNTHETIC_RUNTIME_DIGEST, architecture: "amd64" },
     incident: { path: "issue.json", sha256: sha256Hex(incidentBytes) },
     target: { path: UMAMI_PINS.target.path, before_sha256: sha256Hex(bytesOf(SYNTHETIC_CLEAN_TARGET)), after_sha256: sha256Hex(planted) },
     job: { request_sha256: "", expected_trials_sha256: "" },
@@ -212,6 +217,7 @@ export interface CopyDraft {
   /** Original tests and their outcomes; null writes no outcomes entry. */
   tests: { test_id: string; outcome: string }[] | null;
   /** Exit statuses the copy script writes; null leaves the file out. */
+  prepareExit: number | null;
   freezeExit: number | null;
   runExit: number | null;
   /** Writes no trial-result.json when false. */
@@ -242,6 +248,7 @@ export function copyDraft(job: FrozenJob, state: CopyState): CopyDraft {
     invalidReason: null,
     observations,
     tests: trial.original_test_ids.map((test_id) => ({ test_id, outcome: "passed" })),
+    prepareExit: 0,
     freezeExit: 0,
     runExit: 0,
     writeResult: true,
@@ -265,11 +272,13 @@ function writeAt(root: string, key: string, bytes: Uint8Array | string): void {
 }
 
 /**
- * Writes the copy's results directory as the copy script leaves it: exit files, and under out/
+ * Writes the copy's results directory as the copy script leaves it: exit files (the fixture placement
+ * and app preparation, the in-copy freeze and the driver's run), and under out/
  * the frozen job's request and expected trials plus this one trial's records. Returns the dir.
  */
 export function writeCopyResults(job: FrozenJob, draft: CopyDraft, extraTrials: CopyDraft[] = []): string {
   const results = tempDir("rbw-host-umami-results-");
+  if (draft.prepareExit !== null) writeAt(results, "prepare.exit", `${String(draft.prepareExit)}\n`);
   if (draft.freezeExit !== null) writeAt(results, "freeze.exit", `${String(draft.freezeExit)}\n`);
   if (draft.runExit !== null) writeAt(results, "run.exit", `${String(draft.runExit)}\n`);
   const out = join(results, "out");

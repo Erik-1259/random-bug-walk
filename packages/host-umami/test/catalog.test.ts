@@ -75,13 +75,14 @@ describe("the catalog umami-date-time, version 1", () => {
     expect(entry.reference_repair.patch_sha256).not.toBe(UMAMI_PINS.alternative_repair.patch_sha256);
   });
 
-  it("names the released incident by hash and the pinned amd64 kit image by a neutral reference and its digest", () => {
+  it("names the released incident by hash and the pinned amd64 runtime image, not the kit image, by a neutral reference and its digest", () => {
     expect(entry.incident).toEqual({ path: "issue.json", sha256: "1a1d227377b5de18db1be03ddbb8aaf6d77ae7a5746cde37081922c3afc993c5" });
     expect(entry.environment).toEqual({
-      kit_image: "random-bug-walk/umami-kit",
-      kit_image_digest: "sha256:295433e5a8b0dc81e1492a4d18220f5e1d323a78bc38cbb5eca688efde7863ff",
-      environment_sha256: canonicalDigest({ host_id: "umami", kit_image_digest: "sha256:295433e5a8b0dc81e1492a4d18220f5e1d323a78bc38cbb5eca688efde7863ff" }).sha256,
+      kit_image: "random-bug-walk/umami-runtime",
+      kit_image_digest: UMAMI_PINS.runtime.digest,
+      environment_sha256: canonicalDigest({ host_id: "umami", kit_image_digest: UMAMI_PINS.runtime.digest }).sha256,
     });
+    expect(entry.environment.kit_image_digest).not.toBe(UMAMI_PINS.kit.digest);
     // No registry host: a runner resolves the registry from its own configuration and runs by digest.
     expect(entry.environment.kit_image.split("/")[0]).not.toMatch(/[.:]/);
   });
