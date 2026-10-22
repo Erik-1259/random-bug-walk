@@ -1,6 +1,7 @@
 // The final validator archive: the validator core plus one per-run evidence member. Pure and in memory
 // (no file system or process access), so the worker that records the archive's SHA-256 and the download
 // route that re-assembles and hash-checks it produce the same bytes from the same core and evidence value.
+// inspectValidator reads the core and evidence hashes back from a stored archive.
 import { CanonicalError, encodeCanonical, parseCanonical, sha256Hex } from "@rbw/schema";
 import { ArchiveError, packArchive, unpackArchive } from "./archive.ts";
 import { EVIDENCE_PATH, VALIDATOR_FORMAT, VALIDATOR_MANIFEST } from "./format.ts";
@@ -62,4 +63,50 @@ export function assembleFinalValidator(core: Uint8Array, evidence: unknown): Uin
   }
   if (seen.size !== members.length) throw new AssemblyError("the core's members differ from its manifest");
   return packArchive([...members, { path: EVIDENCE_PATH, bytes: evidenceBytes }]);
+}
+
+/** What a stored validator archive holds, read back from its bytes (hashes and layout only). */
+export interface ValidatorContents {
+  /**
+   * SHA-256 of the validator core the archive holds: its members without the evidence member, packed as
+   * the exporter packs a core. Null when the archive is unreadable or holds no rbw-validator/1 manifest.
+   */
+  core_sha256: string | null;
+  /** SHA-256 of the evidence member's bytes; null when the archive is unreadable or has none. */
+  evidence_sha256: string | null;
+}
+
+function isValidatorManifest(bytes: Uint8Array | undefined): boolean {
+  if (bytes === undefined) return false;
+  let manifest: unknown;
+  try {
+    manifest = parseCanonical(bytes);
+  } catch (error) {
+    if (error instanceof CanonicalError) return false;
+    throw error;
+  }
+  return isRecord(manifest) && manifest.format === VALIDATOR_FORMAT;
+}
+
+/**
+ * The inverse of assembleFinalValidator for checking: `inspectValidator(assembleFinalValidator(core, evidence))`
+ * gives the core's SHA-256 and the SHA-256 of the evidence's canonical JSON, and a core gives its own SHA-256
+ * and no evidence. It answers nulls instead of throwing for bytes that are not a validator, so a caller that
+ * compares the hashes with the expected ones refuses such an archive.
+ */
+export function inspectValidator(bytes: Uint8Array): ValidatorContents {
+  let members;
+  try {
+    members = unpackArchive(bytes);
+  } catch (error) {
+    if (error instanceof ArchiveError) return { core_sha256: null, evidence_sha256: null };
+    throw error;
+  }
+  const evidence = members.find((member) => member.path === EVIDENCE_PATH);
+  const core = members.filter((member) => member.path !== EVIDENCE_PATH);
+  const manifest = core.find((member) => member.path === VALIDATOR_MANIFEST);
+  return {
+    core_sha256: isValidatorManifest(manifest?.bytes) ? sha256Hex(packArchive(core)) : null,
+    evidence_sha256: evidence === undefined ? null : sha256Hex(evidence.bytes),
+  };
 }

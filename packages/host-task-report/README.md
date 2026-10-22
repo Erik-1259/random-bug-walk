@@ -152,9 +152,11 @@ the repair; `test/adapter.test.ts` checks this with sentinels planted in each of
 own README states the contract's query for a completion, so the planted change is
 source-inferable (difficulty not assessed).
 
-The kit image pin is `catalog/kit-image.v2.json`: the local arm64 build the version 2
-qualification ran on. A hosted amd64 build replaces it when one is pushed to a registry (planned);
-a new pin changes the environment hash and with it the case ID.
+The kit image pin is `catalog/kit-image.v2.json`: today the local arm64 build the version 2
+qualification ran on, pinned by its local image ID. Hosted copies run linux/amd64 only and start
+the image by its repository digest, so the hosted pin is an amd64 build pushed to a registry and
+pinned with `qualify.ts pin --registry` (see Commands). No build has been pushed yet. A new pin
+changes the environment hash and with it the case ID.
 
 ## Evidence sets
 
@@ -167,19 +169,21 @@ a new pin changes the environment hash and with it the case ID.
   fixed the reference repair applied to it), every copy plan run through the local Docker runner,
   each copy collected and each state interpreted by the adapter. Copy IDs
   `f3q2-ffa914890d91cc15-buggy-1`, `-fixed-1` and `-clean-1`; check set SHA-256
-  `f19694529ecc51967ca81a77fe24275fe14ffe920b91a945b07aa3a335c079df`. Result: qualified, every
-  state met. The original suite passed 193 of 193 on all seven instances; on buggy all 60 valid
-  main trials reported `acknowledged_completion_not_counted`, on fixed and clean all 60 and 20
-  passed, every control trial passed, and no trial was invalid. A direct evaluation of the three
-  record sets gives the same verdict. An earlier run with the same check package on a previous
-  build of the image, whose setup files kept their comments and were readable by every user
-  (copy IDs `f3q2-8477824b6f78795f-*`), gave the same verdict and trial counts. A buggy copy
+  `f19694529ecc51967ca81a77fe24275fe14ffe920b91a945b07aa3a335c079df`, which `checkSetSha256`
+  (`adapter/check-package.ts`) computes from the committed check package files
+  (`test/adapter.test.ts` checks the entry's `verification.check_set_sha256` against it).
+  Result: qualified, every state met. A direct evaluation of the three record sets gives the same
+  verdict. An earlier run with the same check package on a previous build of the image, whose
+  setup files kept their comments and were readable by every user (copy IDs
+  `f3q2-8477824b6f78795f-*`), gave the same verdict. A buggy copy
   handed the clean tree stopped before its first instance and was collected as incomplete. These
   copies were collected before the local runner took the results archive hash, so their
   `results_sha256`, and the evidence hash of their copy records, is the tree hash of each results
   directory.
 
-The copies' record sets are evaluator material and are not committed.
+The copies' record sets are evaluator material and are not committed, so both verdicts are local
+results that cannot be rechecked from this repository, and this README gives no trial counts for
+them. The counts a qualification requires are the protocol files' declared values above.
 
 ## Commands
 
@@ -197,15 +201,35 @@ node packages/host-task-report/adapter/qualify.ts pin --tag rbw-task-report:<nam
 node packages/host-task-report/adapter/qualify.ts prepare --out <new dir>
 node packages/host-task-report/adapter/qualify.ts run --dir <dir>
 node packages/host-task-report/adapter/qualify.ts evaluate --dir <dir>
+
+# version 2, the hosted pin of a build pushed to a registry
+node packages/host-task-report/adapter/qualify.ts pin --registry <repository>@sha256:<digest>
 ```
 
+`build` builds the version 2 kit image for `linux/amd64`, the only platform hosted copies run. On
+an arm64 host Docker builds and runs that image under emulation; whether a qualification's F3
+timing windows hold under emulation has not been measured.
+
 A version 2 qualification is of the pinned kit image, the one the entry's environment and case ID
-name. `pin` writes the built image's reference, image ID and architecture, as Docker reports them,
-to `catalog/kit-image.v2.json`; `prepare` and `evaluate` read the image from that pin, and the
-runner refuses a copy whose image has another ID, so the image a qualification records is the
+name. `pin` writes the pin to `catalog/kit-image.v2.json` in one of two modes:
+
+- `--tag rbw-task-report:<name>`: a local build, pinned by its reference, image ID and
+  architecture as Docker reports them. The local runner refuses a copy whose image has another ID,
+  so `run` needs this mode.
+- `--registry <repository>@sha256:<digest>`: a build pushed to a registry, pinned by its
+  repository (a registry host or namespace, then the name, without a tag) and the manifest digest
+  the registry serves, with architecture `amd64`. Docker must hold the image under that digest,
+  as it does after the push or after `docker pull --platform linux/amd64 <repository>@sha256:<digest>`.
+  `pin` refuses an image that is not amd64 or whose repository digests do not include the given
+  one. It reads only the image Docker holds and never asks the registry, so it runs after the
+  push. The shared Docker runner of `@rbw/case-validate` and the Sandbox runner start
+  `<repository>@<digest>`; the local runner checks the image ID under the bare reference, so
+  `run` needs a `--tag` pin.
+
+`prepare` and `evaluate` read the image from the pin, so the image a qualification records is the
 image its copies ran. Without `pin`, the copies run the image pinned before, or fail setup where it
-is absent. A new pin changes the environment hash and with it the case ID, so it is committed with
-the qualification that ran on it.
+is absent. A new pin changes the environment hash and with it the case ID: a qualification counts
+for the pin it ran on, and prepared factory packages are made again from the new entry.
 
 `prepare`, `run` and `evaluate` need this package's dependencies installed; `build` and `pin` use
 Node's built-ins only, so they run where Docker is. The local runner reports each copy's

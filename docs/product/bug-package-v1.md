@@ -77,7 +77,7 @@ evidence/qualification.json    the per-run qualification evidence (final archive
 
 `result_sha256` lists every path the patch changes, with the SHA-256 that path must have after the patch is applied to the exported buggy source.
 
-**Core and final archive.** The validator *core* holds every member above except `evidence/qualification.json`; it is built once per catalog entry and stored by content hash. The *final* validator archive, the downloadable part, is the core plus the evidence member, packed with the encoding of section 1 (the evidence member takes its place in path order). The evidence member holds the canonical JSON v1 bytes of the evidence value, so a value read back from storage with its keys reordered gives the same archive. `assembleFinalValidator(core, evidence)` (`@rbw/case-package/assembly`, pure, in memory) is the one assembly function; the worker that records the final archive's SHA-256 and the download route that re-assembles and hash-checks it both call it. `files` never lists the evidence member, and a reader accepts a validator package with or without it. The evidence content (the qualification record and copy records) is defined by the qualification route (planned).
+**Core and final archive.** The validator *core* holds every member above except `evidence/qualification.json`; it is built once per catalog entry and stored by content hash. The *final* validator archive, the downloadable part, is the core plus the evidence member, packed with the encoding of section 1 (the evidence member takes its place in path order). The evidence member holds the canonical JSON v1 bytes of the evidence value, so a value read back from storage with its keys reordered gives the same archive. `assembleFinalValidator(core, evidence)` (`@rbw/case-package/assembly`, pure, in memory) is the one assembly function; the worker that records the final archive's SHA-256 and the download route that re-assembles and hash-checks it both call it. `inspectValidator(bytes)` in the same module reads a stored archive back: `core_sha256` is the SHA-256 of its members without the evidence member, packed as a core, and `evidence_sha256` the SHA-256 of the evidence member (`core_sha256` is `null` when the archive is not a readable validator, and `evidence_sha256` is `null` when the archive is unreadable or has no evidence member), so `inspectValidator(assembleFinalValidator(core, evidence))` gives the core's SHA-256 and that of the evidence's canonical JSON. `files` never lists the evidence member, and a reader accepts a validator package with or without it. The evidence content (the qualification record and copy records) is defined by the qualification route (planned).
 
 ## 4. Pair binding
 
@@ -99,7 +99,7 @@ A patch that does not apply, or whose changed paths and hashes differ from its `
 
 `exportCase` (`@rbw/case-package`) takes a host adapter, one of its catalog entries, the factory's identity functions and the host's license. It:
 
-1. reads the adapter's bug case and validator inputs and checks them against the entry and the adapter (host, entry, baseline, protocol, incident description, runtime image, patch hashes, the planted change present in the exported source, the qualification table);
+1. refuses an entry that is not canonically equal to the adapter's own `catalog()` entry with the same `entry_id`, then reads the adapter's bug case and validator inputs and checks them against the entry and the adapter (host, entry, baseline, protocol, incident description, runtime image, patch hashes, the planted change present in the exported source, the qualification table);
 2. reads every listed file, refusing links, other non-regular files and bytes that differ from the listed hash;
 3. applies both patches to the exported buggy source and compares the results with their recorded hashes (section 5);
 4. refuses a bug case that breaks section 2's list (the separation checks);
@@ -156,6 +156,6 @@ A change to the member layout, a manifest field, the encoding or the binding is 
 |---|---|
 | Encoding, both manifests, pair binding, separation checks, exporter, scan hook, prepared directory, final-validator assembly | implemented (`tools/case-package`) |
 | Pair verification, workspace and patch checks, copy loop, matrix and result, CLI, `docker` runner, host registry | implemented (`tools/case-validate`) |
-| Real host adapters in the host registry (`task-report`, `umami`) | planned; the registry is empty until the host adapters land |
-| Wiring of the factory's identity functions into `case-package prepare` | planned; the command takes them as a module until then |
+| Real host adapters in the host registry | `task-report` registered (`tools/case-validate`); `umami` planned, added with its own runtime image |
+| The factory's identity functions for `case-package prepare` | implemented: `tools/case-validate/src/factory-prepare.ts` exports `CASE_IDENTITY` over the factory core's `defectId` and `caseId`, and the registry |
 | Evidence content, the `sandbox` runner, the worker's and the download route's use of the assembly | planned (backend) |
