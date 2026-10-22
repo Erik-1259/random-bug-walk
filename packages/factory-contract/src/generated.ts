@@ -360,7 +360,7 @@ export const BUSY_REASON_VALUES = ["active", "needs_reconciliation"] as const;
 export type BusyReason = (typeof BUSY_REASON_VALUES)[number];
 
 /** A test-mode scenario (contract section 15.1). */
-export const TEST_SCENARIO_VALUES = ["two-host-fulfilled", "partial-budget", "sources-exhausted", "duplicate-defect", "zero-result", "wrong-failure", "cancel-midway", "worker-lost", "uncertain-provider", "validation-failed", "validation-error"] as const;
+export const TEST_SCENARIO_VALUES = ["two-host-fulfilled", "partial-budget", "sources-exhausted", "duplicate-defect", "zero-result", "wrong-failure", "cancel-midway", "worker-lost", "uncertain-provider", "validation-failed", "validation-error", "setup-failed"] as const;
 export type TestScenario = (typeof TEST_SCENARIO_VALUES)[number];
 
 export const TEST_OPERATION_KIND_VALUES = ["worker", "candidate_copy", "validation", "validation_copy"] as const;
@@ -1234,6 +1234,8 @@ export interface ExampleResponse {
 export interface TestEvidence {
   contract_version: ContractVersion;
   request_id: Uuid;
+  /** The request's root execution in the spend ledger. The worker's operation and every candidate copy run under it, and it stays the same across reads. */
+  root_execution_id: Uuid;
   operations: TestOperation[];
   slot: TestSlot;
   provider_calls: TestProviderCall[];
@@ -1245,6 +1247,10 @@ export interface TestOperation {
   operation_id: Sha256;
   kind: TestOperationKind;
   call_name: Identifier;
+  /** The execution this operation pays for. For the worker it is the request's root execution; for a candidate or validation copy, the copy's execution; for a validation run, the run's root execution. */
+  execution_id: Uuid;
+  /** The host of the copy or validation run; null for the worker. */
+  host_id: HostId | null;
   /** A settled operation is terminal with settled_microusd set. */
   state: TestOperationState;
   /** The operation's original reservation in every state. It is held until the operation is settled or reconciled, so the request's reserved_microusd sums only the operations still holding theirs (contract section 15.1). */
@@ -1266,6 +1272,8 @@ export interface TestSlot {
 /** One call made to the fake provider. */
 export interface TestProviderCall {
   call_name: Identifier;
+  /** The execution whose job this call created or stopped. It equals the execution_id of the operation with the same call_name. */
+  execution_id: Uuid;
   provider: TestProvider;
   action: TestProviderAction;
   at: UtcTime;

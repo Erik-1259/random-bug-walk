@@ -1,11 +1,14 @@
 {
   "contract_version": "bug-request/1",
   "request_id": "00000000-0000-4000-8000-000000000105",
+  "root_execution_id": "00000000-0000-4000-8000-000000000305",
   "operations": [
     {
       "operation_id": "3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a",
       "kind": "worker",
       "call_name": "worker",
+      "execution_id": "00000000-0000-4000-8000-000000000305",
+      "host_id": null,
       "state": "uncertain",
       "reserved_microusd": 200000,
       "settled_microusd": null,
@@ -15,6 +18,8 @@
       "operation_id": "3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b",
       "kind": "candidate_copy",
       "call_name": "candidate-01-clean",
+      "execution_id": "00000000-0000-4000-8000-000000000401",
+      "host_id": "task-report",
       "state": "uncertain",
       "reserved_microusd": 100000,
       "settled_microusd": null,
@@ -24,6 +29,8 @@
       "operation_id": "3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c",
       "kind": "candidate_copy",
       "call_name": "candidate-01-buggy",
+      "execution_id": "00000000-0000-4000-8000-000000000402",
+      "host_id": "task-report",
       "state": "uncertain",
       "reserved_microusd": 100000,
       "settled_microusd": null,
@@ -33,6 +40,8 @@
       "operation_id": "3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d",
       "kind": "candidate_copy",
       "call_name": "candidate-01-fixed",
+      "execution_id": "00000000-0000-4000-8000-000000000403",
+      "host_id": "task-report",
       "state": "uncertain",
       "reserved_microusd": 100000,
       "settled_microusd": null,
@@ -47,24 +56,28 @@
   "provider_calls": [
     {
       "call_name": "worker",
+      "execution_id": "00000000-0000-4000-8000-000000000305",
       "provider": "sandbox",
       "action": "create",
       "at": "2026-10-20T19:00:00.104Z"
     },
     {
       "call_name": "candidate-01-clean",
+      "execution_id": "00000000-0000-4000-8000-000000000401",
       "provider": "sandbox",
       "action": "create",
       "at": "2026-10-20T19:01:13.290Z"
     },
     {
       "call_name": "candidate-01-buggy",
+      "execution_id": "00000000-0000-4000-8000-000000000402",
       "provider": "sandbox",
       "action": "create",
       "at": "2026-10-20T19:01:13.302Z"
     },
     {
       "call_name": "candidate-01-fixed",
+      "execution_id": "00000000-0000-4000-8000-000000000403",
       "provider": "sandbox",
       "action": "create",
       "at": "2026-10-20T19:01:13.314Z"
