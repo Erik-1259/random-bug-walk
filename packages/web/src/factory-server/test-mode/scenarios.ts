@@ -4,7 +4,7 @@
 // amounts are not taken from the fixture: every budget_updated step settles or reserves at the test
 // profile's worst cases.
 import { REASON_TEXT } from "@rbw/factory";
-import type { Event, RequestStatus, TestScenario } from "@rbw/factory-contract";
+import type { CheckSet, CopyState, Event, ObservedOutcome, RequestStatus, TestScenario } from "@rbw/factory-contract";
 
 /** A hold delays the step after it: that step runs `ms` after the step before the hold. */
 export type Step = { kind: "event"; event: Event } | { kind: "pause" } | { kind: "stall" } | { kind: "hold"; ms: number };
@@ -21,6 +21,24 @@ export function draft(fields: Draft): Event {
 }
 
 const events = (list: readonly Event[]): Step[] => list.map((event) => ({ kind: "event", event }));
+
+/**
+ * setup-failed's six checks as the factory core emits them for the scenario's plan, state by state: the
+ * harness runs every state, so the clean copy, which cannot be prepared, observes error in both check
+ * sets, and the buggy and fixed copies still run and observe what a qualifying candidate's do.
+ */
+const SETUP_FAILED_CHECKS: readonly (readonly [CopyState, CheckSet, ObservedOutcome, number, number])[] = [
+  ["clean", "original_suite", "error", 0, 3],
+  ["clean", "verification", "error", 0, 3],
+  ["buggy", "original_suite", "pass", 3, 3],
+  ["buggy", "verification", "fail", 3, 3],
+  ["fixed", "original_suite", "pass", 3, 3],
+  ["fixed", "verification", "pass", 3, 3],
+];
+
+/** The factory core's check_finished text. */
+const CHECK_SET_TEXT: Readonly<Record<CheckSet, string>> = { original_suite: "Original suite", verification: "Verification checks" };
+const COPY_TEXT: Readonly<Record<CopyState, string>> = { clean: "clean copy", buggy: "buggy copy", fixed: "reference-fixed copy" };
 
 /** The steps the fake worker runs after the start, for one scenario and its end-state fixture. */
 export function scriptFor(scenario: TestScenario, end: RequestStatus): Step[] {
@@ -61,20 +79,26 @@ export function scriptFor(scenario: TestScenario, end: RequestStatus): Step[] {
       ];
     }
     case "setup-failed": {
-      // The zero-result run up to the candidate's reservation; then its clean copy, which was created,
-      // cannot be prepared: the check finishes error, the candidate is invalid, and the fixture's tail
-      // after its rejection follows (the settlement, the exhausted source, the worker and the finish).
+      // The zero-result run up to the candidate's reservation; then the candidate's six checks (its clean
+      // copy, which was created, cannot be prepared; its buggy and fixed copies still run), the candidate
+      // is invalid, and the fixture's tail after its rejection follows (the settlement, the exhausted
+      // source, the worker and the finish).
       const reserve = rest.findIndex((event) => event.type === "budget_updated");
       const candidate = rest.find((event) => event.type === "candidate_selected");
       const ended = rest.findIndex((event) => event.type === "candidate_rejected");
       if (reserve < 0 || candidate === undefined || ended < reserve) throw new Error("test mode: the setup-failed fixture has no rejected candidate after its reservation");
       const on = { host_id: candidate.host_id, candidate_id: candidate.candidate_id };
+      const checks = SETUP_FAILED_CHECKS.map(([copy, check_set, outcome, runs_valid, runs_total]) =>
+        draft({
+          type: "check_finished",
+          ...on,
+          message: `${CHECK_SET_TEXT[check_set]} on the ${COPY_TEXT[copy]}: ${outcome} (${String(runs_valid)} of ${String(runs_total)} runs valid).`,
+          data: { check_set, copy, outcome, runs_valid, runs_total },
+        }),
+      );
       return [
         ...events(rest.slice(0, reserve + 1)),
-        ...events([
-          draft({ type: "check_finished", ...on, message: "Original suite on the clean copy: error (0 of 3 runs valid).", data: { check_set: "original_suite", copy: "clean", outcome: "error", runs_valid: 0, runs_total: 3 } }),
-          draft({ type: "candidate_invalid", ...on, message: REASON_TEXT.setup_failed, data: { reason: "setup_failed" } }),
-        ]),
+        ...events([...checks, draft({ type: "candidate_invalid", ...on, message: REASON_TEXT.setup_failed, data: { reason: "setup_failed" } })]),
         ...events(rest.slice(ended + 1)),
       ];
     }

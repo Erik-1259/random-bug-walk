@@ -104,7 +104,8 @@ export function scenarioSetup(scenario: TestScenario, catalog: CriteriaCatalog):
         return base;
       case "setup-failed":
         // The first candidate (the only one, on Umami) cannot prepare its clean copy: both of that
-        // copy's cells observe error, so the candidate is invalid (setup_failed), never rejected.
+        // copy's cells observe error. The harness still runs the buggy and fixed copies, as the real
+        // harness runs every state, and the candidate is invalid (setup_failed), never rejected.
         if (entry.entry_id === umami) base.states.clean = { original_suite: "error", verification: "error" };
         return base;
       default:

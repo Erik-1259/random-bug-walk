@@ -760,8 +760,9 @@ export class TestWorld implements FactoryServerPorts, FactoryTestControls {
 
   /**
    * Reserves the candidate's worst case as its three copies on its host and creates their sandboxes. For
-   * the first candidate, uncertain-provider's first create is uncertain, and setup-failed's clean copy is
-   * created but cannot be prepared; in both the other two copies are never created.
+   * the first candidate, uncertain-provider's first create is uncertain and its other two copies are never
+   * created. setup-failed creates all three like any other candidate: its clean copy cannot be prepared,
+   * and its buggy and fixed copies still run.
    */
   private reserveCandidate(req: WorldRequest, candidateId: string, atMs: number): string {
     const host = req.template.candidates.find((candidate) => candidate.candidate_id === candidateId)?.host_id;
@@ -782,9 +783,8 @@ export class TestWorld implements FactoryServerPorts, FactoryTestControls {
       }),
     );
     const uncertainFirst = req.scenario === "uncertain-provider" && ordinal === 1;
-    const firstOnly = uncertainFirst || (req.scenario === "setup-failed" && ordinal === 1);
     for (const [index, op] of ops.entries()) {
-      if (firstOnly && index > 0) break;
+      if (uncertainFirst && index > 0) break;
       this.create(req.request_id, op, atMs + index, uncertainFirst);
     }
     return `Reserved ${money(worst)} for this candidate's worst case on ${HOST_TEXT[host]}.`;

@@ -427,7 +427,7 @@ describe("setup-failed (contract section 15.1, revision 3)", () => {
   it.each([
     ["the fixture's item keys", false],
     ["the request form's item keys", true],
-  ] as const)("with %s: the Umami clean copy cannot be prepared, the candidate is invalid, and only that copy was created", async (_keys, form) => {
+  ] as const)("with %s: the Umami clean copy cannot be prepared, its buggy and fixed copies still run, and the candidate is invalid", async (_keys, form) => {
     const w = makeWorld();
     await reset(w, "setup-failed");
     // The scenario sends the input of status-zero-result.json.
@@ -450,24 +450,41 @@ describe("setup-failed (contract section 15.1, revision 3)", () => {
     expect(last.funnel).toEqual({ candidates_explored: 1, behavior_checks_passed: 0, requested_criteria_passed: 0, packages_ready: 0 });
     expect(last.cases).toEqual([]);
     expect(last.items.map((item) => [item.item_key, item.delivered, item.missing])).toEqual(input.items.map((item) => [item.item_key, 0, item.quantity]));
+    // The factory core's own sequence for this plan: the harness runs every state, so all six checks
+    // finish (the clean copy's two observed error) before the candidate is invalid.
     expect(last.events.map((event) => event.type)).toEqual([
       "request_accepted", "budget_updated", "worker_started", "host_preparing", "host_ready", "candidate_selected", "budget_updated",
-      "check_finished", "candidate_invalid", "budget_updated", "source_exhausted", "budget_updated", "request_finished",
+      "check_finished", "check_finished", "check_finished", "check_finished", "check_finished", "check_finished",
+      "candidate_invalid", "budget_updated", "source_exhausted", "budget_updated", "request_finished",
     ]);
-    expect(last.events.flatMap((event) => (event.type === "check_finished" ? [event.data] : []))).toEqual([{ check_set: "original_suite", copy: "clean", outcome: "error", runs_valid: 0, runs_total: 3 }]);
+    const candidateId = last.candidates[0]?.candidate_id;
+    expect(last.events.flatMap((event) => (event.type === "check_finished" ? [[event.host_id, event.candidate_id === candidateId, event.data, event.message]] : []))).toEqual([
+      ["umami", true, { check_set: "original_suite", copy: "clean", outcome: "error", runs_valid: 0, runs_total: 3 }, "Original suite on the clean copy: error (0 of 3 runs valid)."],
+      ["umami", true, { check_set: "verification", copy: "clean", outcome: "error", runs_valid: 0, runs_total: 3 }, "Verification checks on the clean copy: error (0 of 3 runs valid)."],
+      ["umami", true, { check_set: "original_suite", copy: "buggy", outcome: "pass", runs_valid: 3, runs_total: 3 }, "Original suite on the buggy copy: pass (3 of 3 runs valid)."],
+      ["umami", true, { check_set: "verification", copy: "buggy", outcome: "fail", runs_valid: 3, runs_total: 3 }, "Verification checks on the buggy copy: fail (3 of 3 runs valid)."],
+      ["umami", true, { check_set: "original_suite", copy: "fixed", outcome: "pass", runs_valid: 3, runs_total: 3 }, "Original suite on the reference-fixed copy: pass (3 of 3 runs valid)."],
+      ["umami", true, { check_set: "verification", copy: "fixed", outcome: "pass", runs_valid: 3, runs_total: 3 }, "Verification checks on the reference-fixed copy: pass (3 of 3 runs valid)."],
+    ]);
 
+    // Every copy was created and settles at its worst case, like any other copy.
     const proof = await evidence(w);
     expectEvidenceIdentities(proof, REQUEST_ID);
     const share = TEST_PROFILE.candidate_microusd.umami / 3;
     expect(proof.operations.map((op) => [op.kind, op.call_name, op.host_id, op.state, op.reserved_microusd, op.settled_microusd])).toEqual([
       ["worker", "worker", null, "terminal", TEST_PROFILE.worker_microusd, TEST_PROFILE.worker_microusd],
       ["candidate_copy", "candidate-01-clean", "umami", "terminal", share, share],
-      ["candidate_copy", "candidate-01-buggy", "umami", "terminal", share, 0],
-      ["candidate_copy", "candidate-01-fixed", "umami", "terminal", share, 0],
+      ["candidate_copy", "candidate-01-buggy", "umami", "terminal", share, share],
+      ["candidate_copy", "candidate-01-fixed", "umami", "terminal", share, share],
     ]);
-    expect(proof.provider_calls.map((call) => [call.call_name, call.action])).toEqual([["worker", "create"], ["candidate-01-clean", "create"]]);
+    expect(proof.provider_calls.map((call) => [call.call_name, call.action])).toEqual([
+      ["worker", "create"],
+      ["candidate-01-clean", "create"],
+      ["candidate-01-buggy", "create"],
+      ["candidate-01-fixed", "create"],
+    ]);
     expect(proof.slot).toEqual({ slot_key: "factory", holder_request_id: null, holder_validation_id: null });
-    expect(last.budget).toMatchObject({ reserved_microusd: 0, spent_microusd: TEST_PROFILE.worker_microusd + share, overrun: false });
+    expect(last.budget).toMatchObject({ reserved_microusd: 0, spent_microusd: TEST_PROFILE.worker_microusd + TEST_PROFILE.candidate_microusd.umami, overrun: false });
     for (const body of w.bodies) for (const key of map.keys()) expect(body, key).not.toMatch(wholeKey(key));
   });
 });
