@@ -14,7 +14,7 @@
     "test:upstream": "node test/upstream/run.ts"
   },
   "dependencies": {
-    "@ast-grep/napi": "0.45.3",
+    "@ast-grep/napi": "0.51.0",
     "diff": "9.0.0",
     "yaml": "2.9.1"
   },
