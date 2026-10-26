@@ -1,18 +1,26 @@
-// The Node modules live mode loads by name at run time, so the bundler leaves them to Node (as
-// src/records.ts does for the record packages): the host registry, whose task-report adapter reads
-// its catalog and baseline files next to its sources; the package tooling's root entry (the prepared
-// directory reads, the archive reader and the manifest parser); and the controller's local worker
-// backend, which runs only in a local server. The last two are also kept out of this app's type
-// check: their process code (the package tooling's git patching, the local runner's drivers) passes
-// child environments that the Next.js ProcessEnv type rejects. The interfaces below are the parts
-// live mode calls, and the live test's own type check (test/factory-live) holds the real modules to
-// them.
+// The modules live mode calls at run time. A deployment's function holds only the files the build
+// traced, so the host registry and the package tooling are imports the bundler sees and builds into
+// the factory routes, never modules that Node would resolve by name:
+// - the host registry, loaded on first use, so a registry that fails to load leaves live mode without
+//   hosts instead of failing every route. Its task-report adapter reads its catalog, baseline and
+//   protocol files next to its sources, which a bundled copy cannot do, so the build replaces that
+//   adapter with its read-only part frozen at build time (next.config.ts, task-report-frozen.ts),
+//   which is all the web calls;
+// - the package tooling's prepared directory reads, archive reader and manifest parser, through
+//   their own subpath entries (the root entry also holds the exporter's process code).
+// The controller's local worker backend runs only in a local server, so it stays loaded by name and
+// the bundler leaves it to Node. It is also kept out of this app's type check: its process code (the
+// local runner's drivers) passes child environments that the Next.js ProcessEnv type rejects. The
+// interface below is the part live mode calls, and the live test's own type check (test/factory-live)
+// holds the real module to it.
+import { unpackArchive } from "@rbw/case-package/archive";
 import type { PreparedIndex } from "@rbw/case-package/format";
+import { parseValidatorManifest } from "@rbw/case-package/manifest";
+import type { HostRegistry } from "@rbw/case-validate/registry";
 import type { FactoryLog, WorkerSandboxSdk } from "@rbw/controller/factory-web";
 import type { Protocol } from "@rbw/factory-contract";
-import type { HostRegistry } from "@rbw/case-validate/registry";
 
-/** The package tooling's root entry, as live mode calls it. */
+/** The package tooling's calls, as live mode makes them. */
 export interface PackageTools {
   readPreparedIndex: (dir: string) => Promise<PreparedIndex>;
   /** Checks the bytes against the object's name. */
@@ -28,15 +36,21 @@ export interface LocalBackend {
   localWorkerSandbox: (input: { repoRoot: string; env: Record<string, string>; log: FactoryLog }) => WorkerSandboxSdk;
 }
 
-export const PACKAGE_TOOLS = "@rbw/case-package";
 export const LOCAL_BACKEND = "@rbw/controller/factory-local";
 
+type PreparedReads = Pick<PackageTools, "readPreparedIndex" | "readPreparedObject">;
+const PREPARED_READS = "@rbw/case-package/prepared";
+
 export async function hostRegistry(): Promise<HostRegistry> {
-  return (await import(/* webpackIgnore: true */ /* turbopackIgnore: true */ "@rbw/case-validate/registry")).HOST_REGISTRY;
+  return (await import("@rbw/case-validate/registry")).HOST_REGISTRY;
 }
 
 export async function packageTools(): Promise<PackageTools> {
-  return (await import(/* webpackIgnore: true */ /* turbopackIgnore: true */ PACKAGE_TOOLS)) as PackageTools;
+  // Named through a constant, so this app's type check does not follow it into the prepared directory
+  // module, whose exporter types reach process code that the Next.js ProcessEnv type rejects; the
+  // bundler resolves the constant and builds the module in.
+  const { readPreparedIndex, readPreparedObject } = (await import(PREPARED_READS)) as PreparedReads;
+  return { readPreparedIndex, readPreparedObject, unpackArchive, parseValidatorManifest };
 }
 
 export async function localBackend(): Promise<LocalBackend> {

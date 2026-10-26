@@ -1,7 +1,9 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { HOST_REGISTRY } from "@rbw/case-validate/registry";
 import type { NextConfig } from "next";
 import { loadSiteConfig } from "./src/config.ts";
+import { freezeTaskReport } from "./src/factory-server/live/task-report-frozen.ts";
 
 /** The pinned rate sheet the judge route prices the controller and the copies with, and the factory routes their work. */
 const RATE_SHEET = new URL("../envelope/rate-sheets/v1.json", import.meta.url);
@@ -25,6 +27,19 @@ function frozenJudge(): string {
   return JSON.stringify({ releases, rateSheet });
 }
 
+/** The task-report adapter's baseline, catalog and protocols, read here from its files (task-report-frozen.ts). */
+function frozenTaskReport(): string {
+  const registration = HOST_REGISTRY.get("task-report");
+  return registration === null ? "" : freezeTaskReport(registration.adapter);
+}
+
+/**
+ * The factory routes' functions hold the prepared packages directory at this path in the app
+ * directory: the deploy copies it there before the build (it is never committed), the build traces
+ * every file under it into each factory route, and RBW_FACTORY_PACKAGES_DIR names it.
+ */
+const FACTORY_PACKAGES = "factory-packages";
+
 const config: NextConfig = {
   // The record packages read their schema files next to their sources at load time, so Node
   // loads them from the workspace instead of the bundler. The judge routes import the controller's
@@ -34,8 +49,15 @@ const config: NextConfig = {
   // reads its criteria catalog file next to its sources.
   serverExternalPackages: ["@rbw/schema", "@rbw/admission", "@rbw/factory-contract", "@rbw/factory"],
   poweredByHeader: false,
-  // The factory routes price with the same pinned rate sheet, frozen as its text.
-  env: { RBW_JUDGE_FROZEN: frozenJudge(), RBW_FACTORY_RATE_SHEET: readFileSync(RATE_SHEET, "utf8") },
+  // The factory routes price with the same pinned rate sheet, frozen as its text, and offer the
+  // task-report host from its adapter's frozen read-only part.
+  env: { RBW_JUDGE_FROZEN: frozenJudge(), RBW_FACTORY_RATE_SHEET: readFileSync(RATE_SHEET, "utf8"), RBW_FACTORY_TASK_REPORT_FROZEN: frozenTaskReport() },
+  // The bundled host registry registers the frozen task-report adapter (src/factory-server/live/tools.ts).
+  turbopack: { resolveAlias: { "@rbw/host-task-report/adapter": "./src/factory-server/live/task-report-frozen.ts" } },
+  // A glob that matches nothing adds nothing, so a build without the directory is unchanged.
+  outputFileTracingIncludes: { "/api/factory/**": [`./${FACTORY_PACKAGES}/**/*`] },
+  // Only for the local check that serves a build from its traced files alone (README, "Deploying on Vercel").
+  ...(process.env.RBW_WEB_STANDALONE === "1" ? { output: "standalone" as const } : {}),
 };
 
 export default config;

@@ -1,5 +1,5 @@
-// Live mode when the host registry cannot be loaded, as on a deployment whose files do not hold the
-// modules live mode loads by name: the session and the example still answer, and no host is offered.
+// Live mode when the host registry cannot be loaded (the build bundles it, and loads it on first use):
+// the session and the example still answer, and no host is offered.
 import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { FactoryConfig } from "../../src/config.ts";

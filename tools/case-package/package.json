@@ -9,6 +9,9 @@
     ".": "./src/index.ts",
     "./format": "./src/format.ts",
     "./assembly": "./src/assembly.ts",
+    "./prepared": "./src/prepared.ts",
+    "./archive": "./src/archive.ts",
+    "./manifest": "./src/manifest.ts",
     "./synthetic": "./src/synthetic.ts"
   },
   "engines": {

@@ -9,9 +9,12 @@ The exporter for a case's two package parts, the bug case (`rbw-bug-case/1`) and
 | `@rbw/case-package` | `exportCase`, the prepared directory (`writePrepared`, `readPreparedIndex`, `readPreparedObject`), manifest readers, patch application, `resultsSha256`, `runPrepareCli`, and everything below | yes (Node) |
 | `@rbw/case-package/format` | Format constants, manifest shapes, `pairSha256`, `packageFilename`, the prepared index shape, `CaseIdentity` | no |
 | `@rbw/case-package/assembly` | `assembleFinalValidator(core, evidence)`: the final validator archive, in memory; `inspectValidator(bytes)`: the `core_sha256` and `evidence_sha256` a stored validator archive holds | no |
+| `@rbw/case-package/prepared` | The prepared directory: `writePrepared`, `readPreparedIndex`, `readPreparedObject` | file system only |
+| `@rbw/case-package/archive` | `packArchive`, `unpackArchive` and the archive path checks | no |
+| `@rbw/case-package/manifest` | `parseBugCaseManifest`, `parseValidatorManifest` | no |
 | `@rbw/case-package/synthetic` | The synthetic host: `buildSyntheticPair`, `buildMismatchedSyntheticPair`, `syntheticAdapter`, `syntheticEntry`, `syntheticIdentity`, `syntheticPairInput` | only the adapter's input methods and `collect` |
 
-The format, assembly and synthetic pair builder import no runner, no child process and no Docker code, so the web routes and the test mode can use them.
+The format, assembly, prepared directory, archive, manifest and synthetic pair builder entries import no runner, no child process and no Docker code, so the web routes and the test mode can use them.
 
 ## Exporting
 
