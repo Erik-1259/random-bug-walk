@@ -8,6 +8,7 @@ import { FACTORY_PROFILE } from "../../src/factory-profile.ts";
 import { validationOperation, workerOperation, workerSandboxName } from "../../src/factory-ledger.ts";
 import { WORKER_REPOSITORY, WORKER_RUN_ONCE_DIR, startFactoryValidation, startFactoryWorker } from "../../src/factory-launch.ts";
 import { RUN_ONCE_SCRIPT } from "../../src/factory-run-once.ts";
+import { copyRegistryFrom } from "../../src/factory-sandbox-runner.ts";
 import { runFactoryValidation } from "../../src/factory-worker.ts";
 import type { FactoryLaunchDeps, ValidationStartArgs } from "../../src/factory-launch.ts";
 import type { WorkerSandboxCreateParams } from "../../src/factory-ports.ts";
@@ -71,6 +72,16 @@ describe("startFactoryWorker", () => {
     const events = await w.records.events(record.request_id);
     expect(events.map((event) => event.type)).toEqual(["request_accepted", "budget_updated"]);
     expect(events[1]?.data).toEqual({ reserved_microusd: FACTORY_PROFILE.prices.worker_worst_case_microusd, spent_microusd: 0, remaining_microusd: 1_500_000 - FACTORY_PROFILE.prices.worker_worst_case_microusd });
+  });
+
+  it("gives the worker sandbox its own image reference as RBW_FACTORY_WORKER_IMAGE, over any value in launch.env", async () => {
+    const record = await acceptRequest(w);
+    const stale = `synthetic-team/other-project/rbw-factory-worker@sha256:${"cd".repeat(32)}`;
+    expect((await startFactoryWorker(deps({ launch: { image: WORKER_IMAGE, env: { ...CREDENTIALS, RBW_FACTORY_WORKER_IMAGE: stale } } }), record.request_id)).kind).toBe("launched");
+    const params = w.sandbox.calls.find((call) => call.action === "create")?.detail as WorkerSandboxCreateParams;
+    expect(params.env.RBW_FACTORY_WORKER_IMAGE).toBe(WORKER_IMAGE);
+    // The worker reads its copy registry namespace from that value.
+    expect(copyRegistryFrom(params.env.RBW_FACTORY_WORKER_IMAGE)).toBe("synthetic-team/synthetic-project");
   });
 
   it("starts the worker command under the run-once guard, so a start the SDK replays runs one worker", { timeout: 20_000 }, async () => {
@@ -324,6 +335,13 @@ describe("startFactoryValidation", () => {
     const refused = await w.ledger.budgets.reserve(record.budget_key, "request", workerOp(record).request);
     expect(refused.ok).toBe(false);
     expect(!refused.ok && refused.code).toBe("budget_closed");
+  });
+
+  it("gives the validation worker sandbox its own image reference as RBW_FACTORY_WORKER_IMAGE", async () => {
+    const record = await finishedRequest();
+    expect((await startFactoryValidation(deps(), args(record.request_id))).kind).toBe("accepted");
+    const params = w.sandbox.calls.find((call) => call.action === "create")?.detail as WorkerSandboxCreateParams;
+    expect(params.env).toMatchObject({ ...CREDENTIALS, RBW_FACTORY_WORKER_IMAGE: WORKER_IMAGE });
   });
 
   it("answers a repeated start of one run with the existing run, reserving and launching nothing more, and refuses its ID on another case", async () => {

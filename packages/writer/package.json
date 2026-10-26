@@ -20,7 +20,7 @@
     "@rbw/spend": "workspace:*",
     "ai": "7.0.130",
     "pg": "8.23.1",
-    "zod": "4.6.5"
+    "zod": "4.6.6"
   },
   "devDependencies": {
     "@electric-sql/pglite": "0.5.8",

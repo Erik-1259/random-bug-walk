@@ -68,11 +68,19 @@ import type {
 } from "./factory-ports.ts";
 import { runOnceCommand } from "./factory-run-once.ts";
 
+/** The configuration value that names the pinned worker image: `<vcr repository>@sha256:<digest>`. */
+export const WORKER_IMAGE_VARIABLE = "RBW_FACTORY_WORKER_IMAGE";
+
 /** How the worker is launched: the image from RBW_FACTORY_WORKER_IMAGE and the credentials it reads. */
 export interface WorkerLaunchConfig {
   /** The worker image in VCR pinned by digest: `<repository>@sha256:<64 hex>`. */
   image: string;
-  /** DATABASE_URL, VERCEL_TOKEN, VERCEL_TEAM_ID and VERCEL_PROJECT_ID, passed as create-time environment values. */
+  /**
+   * DATABASE_URL, VERCEL_TOKEN, VERCEL_TEAM_ID and VERCEL_PROJECT_ID, passed as create-time
+   * environment values. The launcher sets PATH and HOME itself, and RBW_FACTORY_WORKER_IMAGE to
+   * `image` (the worker derives its copies' registry namespace from it); `image` wins over a value
+   * here.
+   */
   env: Record<string, string>;
 }
 
@@ -198,7 +206,7 @@ async function createAndStart(deps: FactoryLaunchDeps, op: FactoryOperation, siz
       networkPolicy: "allow-all",
       resources: { vcpus: size.vcpus },
       timeout: size.timeout_s * 1000,
-      env: { ...BASE_ENV, ...deps.launch.env },
+      env: { ...BASE_ENV, ...deps.launch.env, [WORKER_IMAGE_VARIABLE]: deps.launch.image },
     });
   } catch (error) {
     const status = httpStatus(error);
