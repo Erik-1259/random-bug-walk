@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PGlite } from "@electric-sql/pglite";
 import { assembleFinalValidator, exportCase, packageFilename, pairSha256, parseValidatorManifest, preparedObjectName, readPreparedIndex, unpackArchive, VALIDATOR_MANIFEST, writePrepared } from "@rbw/case-package";
-import type { PreparedEntry, PreparedIndex } from "@rbw/case-package";
+import type { PreparedCase, PreparedEntry, PreparedIndex } from "@rbw/case-package";
 import { syntheticAdapter } from "@rbw/case-package/synthetic";
 import { CASE_IDENTITY } from "@rbw/case-validate/factory-prepare";
 import { HARNESS_IDENTITY } from "@rbw/case-validate/version";
@@ -18,7 +18,7 @@ import { FACTORY_IDENTITY, FACTORY_PROFILE, factoryDatabaseOver, parseRateSheet,
 import type { FactoryDatabase, FactoryEventInput, WorkerSandboxCreateParams, WorkerSandboxInstance, WorkerSandboxSdk, WorkerSandboxStatus } from "@rbw/controller/factory-web";
 import { budgetKey, candidateId, qualificationRecord } from "@rbw/factory";
 import type { CaseEvidence, CellMatrix } from "@rbw/factory";
-import type { CatalogEntry, CellObservation, HostAdapter, Interpretation, RequestInput } from "@rbw/factory-contract";
+import type { CatalogEntry, CellObservation, HostAdapter, Interpretation, Protocol, RequestInput } from "@rbw/factory-contract";
 import { canonicalDigest } from "@rbw/schema";
 import { migrate } from "@rbw/spend";
 import * as casePackage from "@rbw/case-package";
@@ -92,6 +92,7 @@ interface Host {
   prepared: PreparedEntry;
   bugCase: Uint8Array;
   core: Uint8Array;
+  exported: PreparedCase;
 }
 
 let host: Host;
@@ -106,7 +107,7 @@ beforeAll(async () => {
   const index = await writePrepared(dir, [exported]);
   const [prepared] = index.entries;
   if (prepared === undefined) throw new Error("synthetic: nothing was prepared");
-  host = { adapter, entry, dir, index, prepared, bugCase: exported.bug_case.bytes, core: exported.validator_core.bytes };
+  host = { adapter, entry, dir, index, prepared, bugCase: exported.bug_case.bytes, core: exported.validator_core.bytes, exported };
 });
 
 // The world --------------------------------------------------------------------------------------
@@ -295,6 +296,50 @@ function coreCopies(): number {
   if (manifest === undefined) throw new Error("synthetic: the core has no manifest");
   const { clean, buggy, fixed } = parseValidatorManifest(manifest.bytes).protocol.per_state;
   return clean.copies + buggy.copies + fixed.copies;
+}
+
+/** The synthetic protocol with two copies per state, so a core built with it prices a validation run differently. */
+function twoCopyProtocol(adapter: HostAdapter): Protocol {
+  const base = adapter.protocol(host.entry);
+  const copies = { copies: 2, rounds_per_copy: 2, min_valid_runs: 2 };
+  const changed = { protocol_id: base.protocol_id, version: base.version, per_state: { clean: copies, buggy: copies, fixed: copies }, valid_trial_rules: base.valid_trial_rules };
+  return { ...changed, sha256: canonicalDigest(changed).sha256 };
+}
+
+interface PreparedDir {
+  dir: string;
+  index: PreparedIndex;
+}
+
+/**
+ * A new prepared directory holding the synthetic entry as first prepared, then package version 2 of it
+ * written into the same directory, as a later `case-package prepare` does after a catalog revision that
+ * changed only the entry's protocol (not part of the case ID): the index names version 2's core under
+ * the same case ID, and version 1's archives stay.
+ */
+async function newerVersionDir(): Promise<PreparedDir> {
+  const dir = await mkdtemp(join(tmpdir(), "rbw-web-live-v2-"));
+  await writePrepared(dir, [host.exported]);
+  const protocol = twoCopyProtocol(host.adapter);
+  const entry: CatalogEntry = { ...host.entry, verification: { ...host.entry.verification, protocol_id: protocol.protocol_id, protocol_sha256: protocol.sha256 } };
+  const adapter: HostAdapter = {
+    ...host.adapter,
+    catalog: () => [entry],
+    protocol: () => protocol,
+    bugCaseInputs: () => host.adapter.bugCaseInputs(host.entry),
+    validatorInputs: async () => ({ ...(await host.adapter.validatorInputs(host.entry)), protocol }),
+  };
+  const v2 = await exportCase({ adapter, entry, identity: CASE_IDENTITY, license: "MIT", scan: null, package_version: 2 });
+  const index = await writePrepared(dir, [v2]);
+  expect(index.entries).toHaveLength(1);
+  expect(index.entries[0]).toMatchObject({ case_id: host.prepared.case_id, package_version: 2 });
+  expect(index.entries[0]?.validator_core_sha256).not.toBe(host.prepared.validator_core_sha256);
+  return { dir, index: await readPreparedIndex(dir) };
+}
+
+/** A new live server over the world's database, as after a restart, reading the given prepared directory. */
+function restartedServer(prepared: PreparedDir): FactoryServer {
+  return createLiveServer({ passcode: PASSCODE, database: () => Promise.resolve(w.db), launch: { sandbox: w.sandbox, config: { image: IMAGE, env: LAUNCH_ENV } }, adapters: [host.adapter], prepared, rates: RATES, now: () => new Date(w.clock.ms), log: (line) => w.logs.push(line) });
 }
 
 // Tests ------------------------------------------------------------------------------------------
@@ -593,6 +638,19 @@ describe("downloads", () => {
     w.server = createLiveServer({ passcode: PASSCODE, database: () => Promise.resolve(w.db), launch: { sandbox: w.sandbox, config: { image: IMAGE, env: LAUNCH_ENV } }, adapters: [host.adapter], prepared: { dir: work, index: await readPreparedIndex(host.dir) }, rates: RATES, now: () => new Date(w.clock.ms), log: () => undefined });
     expect((await download(REQUEST_ID, evidence.case.case_id, "bug-case")).status).toBe(503);
   });
+
+  it("rebuilds a delivered validator from the core its record verified after a newer package version is prepared into the same directory", async () => {
+    await acceptWithoutSlot();
+    const evidence = await packageCase(REQUEST_ID, true);
+    w.server = restartedServer(await newerVersionDir());
+    const validator = await download(REQUEST_ID, evidence.case.case_id, "validator");
+    expect(validator.status).toBe(200);
+    const bytes = new Uint8Array(await validator.arrayBuffer());
+    expect(sha256(bytes)).toBe(evidence.case.packages.validator.sha256);
+    expect(bytes.length).toBe(evidence.case.packages.validator.size_bytes);
+    expect(validator.headers.get("content-disposition")).toBe(`attachment; filename="${packageFilename("validator", evidence.case.case_id, 1)}"`);
+    expect((await download(REQUEST_ID, evidence.case.case_id, "bug-case")).status).toBe(200);
+  });
 });
 
 describe("validation runs", () => {
@@ -622,6 +680,19 @@ describe("validation runs", () => {
     expect(await w.server.ports.getValidation(OTHER_REQUEST_ID, caseId, VALIDATION_ID)).toBeNull();
     const shown = await contractBody("RequestStatus", await status());
     expect(shown.cases[0]?.validation).toMatchObject({ validation_id: VALIDATION_ID, state: "queued" });
+  });
+
+  it("prices a validation run on the protocol of the core the case's record verified after a newer package version is prepared into the same directory", async () => {
+    await acceptWithoutSlot();
+    const evidence = await packageCase(REQUEST_ID, true);
+    await finishFulfilled(REQUEST_ID);
+    w.server = restartedServer(await newerVersionDir());
+    const before = await budget();
+    const accepted = await validate(REQUEST_ID, evidence.case.case_id);
+    expect(accepted.status).toBe(202);
+    expect(await contractBody("ValidationRun", accepted)).toMatchObject({ package_sha256: { bug_case: evidence.case.packages.bug_case.sha256, validator: evidence.case.packages.validator.sha256 } });
+    expect(coreCopies()).toBe(3);
+    expect((await budget()).open - before.open).toBe(BigInt(validationWorstCase(RATES, "task-report", coreCopies())));
   });
 
   it("shows each case's latest validation run by acceptance, whatever order the runs were recorded in", async () => {

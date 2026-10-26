@@ -1,8 +1,9 @@
 // A delivered case's two parts in live mode, read from the prepared packages directory as the worker
 // built them: the bug case is the prepared object its package_ready event names, and the validator is
-// the prepared validator core with the case's recorded qualification record as its evidence member,
-// assembled again (the assembly is deterministic, so these are the bytes the worker hashed). The
-// download handler checks the size and SHA-256 against the case before any byte is sent.
+// the validator core the case's export verification ran on with the case's recorded qualification
+// record as its evidence member, assembled again (the assembly is deterministic, so these are the bytes
+// the worker hashed). The download handler checks the size and SHA-256 against the case before any
+// byte is sent.
 import { Readable } from "node:stream";
 import { assembleFinalValidator } from "@rbw/case-package/assembly";
 import type { PreparedEntry, PreparedIndex } from "@rbw/case-package/format";
@@ -20,6 +21,16 @@ export interface PreparedPackages {
 /** The prepared entry of a delivered case, by its case ID and host. */
 export function caseEntry(prepared: PreparedPackages, evidence: CaseEvidence): PreparedEntry | null {
   return prepared.index.entries.find((entry) => entry.case_id === evidence.case.case_id && entry.host_id === evidence.case.host_id) ?? null;
+}
+
+/**
+ * The SHA-256 of the validator core the case's export verification ran on, as its qualification record
+ * names it (the record cannot name the final validator, which holds the record). The prepared index
+ * entry can name another core: a later package version prepared into the same directory replaces the
+ * entry under the same case ID and keeps the earlier archives.
+ */
+export function verifiedCoreSha256(evidence: CaseEvidence): string {
+  return evidence.record.export_verification.validator_sha256;
 }
 
 /** The SHA-256 the case's package_ready event recorded for each part; null before that event. */
@@ -45,10 +56,8 @@ export async function readPackage(db: FactoryDatabase, prepared: PreparedPackage
     sha256 = hashes.bug_case;
     bytes = await readPreparedObject(prepared.dir, sha256);
   } else {
-    const entry = caseEntry(prepared, evidence);
-    if (entry === null) throw new Error("the prepared packages hold no entry for the delivered case");
     sha256 = hashes.validator;
-    bytes = assembleFinalValidator(await readPreparedObject(prepared.dir, entry.validator_core_sha256), evidence.record);
+    bytes = assembleFinalValidator(await readPreparedObject(prepared.dir, verifiedCoreSha256(evidence)), evidence.record);
   }
   const filename = part === "bug-case" ? evidence.case.packages.bug_case.filename : evidence.case.packages.validator.filename;
   return { filename, sha256, size: bytes.length, body: Readable.from([bytes]) };
