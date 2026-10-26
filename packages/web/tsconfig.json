@@ -12,5 +12,5 @@
     "plugins": [{ "name": "next" }]
   },
   "include": ["app", "src", "test", "next.config.ts", "vitest.config.ts", "next-env.d.ts", ".next/types/**/*.ts"],
-  "exclude": ["node_modules", "test/judge"]
+  "exclude": ["node_modules", "test/judge", "test/factory-live"]
 }

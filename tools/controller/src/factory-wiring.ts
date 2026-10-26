@@ -303,13 +303,22 @@ async function validationRun(options: WiringOptions, registry: HostRegistry, bac
   };
   const evidence = await ctx.db.factoryRecords.readEvidence(request.request_id, validation.case_id);
   if (evidence === null) return refused("the request has no evidence for the case", "The case's delivered validator could not be rebuilt.");
+  // The core the case's export verification ran on and assembled the delivered validator from, by the
+  // hash its record names: preparing a later package version replaces the index entry under the same
+  // case ID and keeps the earlier archives, so the core the index names now can be a newer one.
+  const coreSha256 = evidence.record.export_verification.validator_sha256;
   let bugCase: Uint8Array;
   let validator: Uint8Array;
   try {
-    const prepared = (await readPreparedIndex(ctx.packagesDir)).entries.find((item) => item.case_id === validation.case_id && item.host_id === validation.host_id) ?? null;
-    if (prepared === null) return refused("the prepared directory has no package for the case", "The case's packages are not in the worker's packages.");
+    let core: Uint8Array;
+    try {
+      core = await readPreparedObject(ctx.packagesDir, coreSha256);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      return refused("the prepared directory has no archive of the validator core the case's record verified", "The case's packages are not in the worker's packages.");
+    }
     bugCase = await readPreparedObject(ctx.packagesDir, validation.package_sha256.bug_case);
-    validator = assembleFinalValidator(await readPreparedObject(ctx.packagesDir, prepared.validator_core_sha256), evidence.record);
+    validator = assembleFinalValidator(core, evidence.record);
   } catch (error) {
     return refused(`the case's parts could not be read or rebuilt (${errorText(error)})`, "The case's delivered validator could not be rebuilt.");
   }
