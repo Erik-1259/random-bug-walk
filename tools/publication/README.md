@@ -162,7 +162,7 @@ A request takes at most one git source or one files source, plus any number of t
 
 ## Prepare scan hook
 
-`src/prepare-scan-hook.ts` exports `SCAN_HOOK`, the pre-write scan hook that `case-package prepare --scan-hook` loads (see `tools/case-package/README.md`). For each package part it writes every member, manifest included, as a new file in a new temporary directory and runs `scan()` over them in files mode: the private pattern list, the attribution rules and gitleaks. It returns `scan()`'s result unchanged, so a finding is a location only, `<member path>:<line>`, or `paths:<n>` for a path that is itself a violation. It removes the directory afterwards and prints nothing.
+`src/prepare-scan-hook.ts` exports `SCAN_HOOK`, the pre-write scan hook that `case-package prepare --scan-hook` loads (see `tools/case-package/README.md`). For each package part it writes every member, manifest included, as a new file in a new temporary directory and runs `scan()` over them in files mode: the private pattern list, the attribution rules and gitleaks. It returns `scan()`'s result, less any known upstream line (see "Known upstream lines"), so a finding is a location only, `<member path>:<line>`, or `paths:<n>` for a path that is itself a violation. It removes the directory afterwards and prints nothing.
 
 Its two settings come only from the environment, so nothing private is committed:
 
@@ -179,7 +179,13 @@ RBW_SCAN_PATTERNS=<pattern file> RBW_GITLEAKS_COMMAND="<gitleaks command>" \
     --scan-hook tools/publication/src/prepare-scan-hook.ts --out <dir>
 ```
 
-One scan per part covers the checks of both required CI jobs. The attribution rules always run in `scan()`; the `names-attribution` job differs from `public-safety` only in also scanning a pull request's title and body, and a package has neither. Neither exception applies, because the hook passes no repository and no trusted `LICENSE`: the owner name and every copyright line are checked like any other text.
+One scan per part covers the checks of both required CI jobs. The attribution rules always run in `scan()`; the `names-attribution` job differs from `public-safety` only in also scanning a pull request's title and body, and a package has neither. Neither of the scanner's own exceptions applies, because the hook passes no repository and no trusted `LICENSE`: the owner name and every copyright line are checked like any other text.
+
+### Known upstream lines
+
+A host's bug package can ship its pinned upstream source byte for byte, and a few upstream lines trip the scan although they are public upstream text: in Umami, the header line that its API contract tool writes at the top of every `contract.generated.ts` (the attribution check reads it as a credit line), and the public test-only encryption key in its test compose file (gitleaks' generic-key rule). `src/known-upstream-lines.ts` lists such lines, and after `scan()` answers `blocked` the hook drops each location that an entry exempts. A location `<path>:<line>` (split at the last colon, the line a positive decimal integer) is exempted only when an entry has the part's name, a `path` expression that matches `<path>` and the same `line`, a member with exactly that path exists in the part, and the SHA-256 of that member's line equals the entry's `sha256`. The line's text is the member's bytes split on LF, the 1-based line taken, one trailing CR removed. `paths:<n>` locations and malformed ones are never exempted.
+
+When every location is exempted the answer is `clean`; otherwise it is `blocked` with the remaining locations in their original order. `clean` and `unavailable` pass through, and an error in this step answers `unavailable`, never `clean`. The list is committed and reviewed like any other change, and each entry is a named public-safety exception (see `AGENTS.md`). It applies only to this hook: it changes nothing for pushes, pull request text or CI, which scan every line as before.
 
 ## Container side
 
