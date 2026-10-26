@@ -580,6 +580,29 @@ describe("status, stop and the lost worker", () => {
     expect(events.filter((event) => event.type === "attention")).toHaveLength(1);
   });
 
+  it("clears worker_unresponsive once when the worker resumed and finished between polls, under concurrent polls", async () => {
+    await acceptWithoutSlot();
+    w.clock.ms += 61_000;
+    expect((await contractBody("RequestStatus", await status())).attention).toMatchObject({ code: "worker_unresponsive" });
+    // Between polls the heartbeat resumes and the worker records its case and its finish.
+    w.clock.ms += 5_000;
+    await w.db.factoryRecords.recordHeartbeat({ request_id: REQUEST_ID }, new Date(w.clock.ms));
+    await packageCase(REQUEST_ID, true);
+    await finishFulfilled(REQUEST_ID);
+    const finishedAt = (await w.db.factoryRecords.events(REQUEST_ID)).find((event) => event.type === "request_finished")?.at;
+    w.clock.ms += 5_000;
+    const polls = await Promise.all([status(), status()]);
+    for (const response of polls) {
+      const shown = await contractBody("RequestStatus", response);
+      expect(shown).toMatchObject({ state: "finished", outcome: "fulfilled", attention: null });
+      expect(shown.events.filter((event) => event.type === "attention_cleared")).toEqual([expect.objectContaining({ at: finishedAt, data: { code: "worker_unresponsive" } })]);
+    }
+    const events = await w.db.factoryRecords.events(REQUEST_ID);
+    expect(events.filter((event) => event.type === "attention")).toHaveLength(1);
+    expect(events.filter((event) => event.type === "attention_cleared")).toHaveLength(1);
+    expect((await contractBody("RequestStatus", await status())).attention).toBeNull();
+  });
+
   it("records a stop once and answers a repeat as a replay", async () => {
     expect((await start()).status).toBe(202);
     const stopped = await postStop(request(`/api/factory/requests/${REQUEST_ID}/stop`, { body: {} }), w.server, { request_id: REQUEST_ID });

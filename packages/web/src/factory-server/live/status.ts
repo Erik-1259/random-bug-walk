@@ -1,7 +1,9 @@
 // The request's status in live mode: the ledger's request record and every event, each delivered
 // case's recorded evidence, each case's latest validation run and the request budget, projected by the
 // factory core (projectStatus). The status side's two appends live here too: the worker_unresponsive
-// attention change and the user's stop.
+// attention change and the user's stop. The status read itself appends one attention change: the
+// clearing of a worker_unresponsive that a finished request still shows (its worker resumed and finished
+// between polls), since the status route asks for attention changes only while a request is active.
 import { ROUTE_ACTOR, validationRunView } from "@rbw/controller/factory-web";
 import type { FactoryDatabase, FactoryEventInput } from "@rbw/controller/factory-web";
 import { projectStatus, workerAttentionEvent } from "@rbw/factory";
@@ -45,8 +47,13 @@ async function latestRuns(db: FactoryDatabase, record: RequestRecord): Promise<R
 
 /** RequestStatus for `after`; null for an unknown request. A record the projection refuses throws ProjectionError. */
 export async function readStatus(db: FactoryDatabase, candidates: ReadonlyMap<string, CandidateInfo>, requestId: string, after: number, now: Date): Promise<RequestStatus | null> {
-  const read = await readRequest(db, requestId);
+  let read = await readRequest(db, requestId);
   if (read === null) return null;
+  // Read again also after a replay: a concurrent poll appended the change after this read.
+  if (read.events.some((event) => event.type === "request_finished") && (await appendAttentionChange(db, requestId, read, now)) !== null) {
+    read = await readRequest(db, requestId);
+    if (read === null) throw new Error("the request is no longer readable after its attention change");
+  }
   const { record, events } = read;
   const evidence: CaseEvidence[] = [];
   for (const summary of record.evidence) {
@@ -81,12 +88,19 @@ function eventInput(event: NewEvent): FactoryEventInput {
  */
 export async function noteUnresponsive(db: FactoryDatabase, requestId: string, now: Date): Promise<boolean> {
   const read = await readRequest(db, requestId);
-  if (read === null) return false;
+  return read !== null && (await appendAttentionChange(db, requestId, read, now)) === "appended";
+}
+
+/**
+ * Appends the attention change the factory core gives for the request as read, at the event's own time.
+ * Null when none is due; "replay" when that event is already recorded, "refused" when the store refused it.
+ */
+async function appendAttentionChange(db: FactoryDatabase, requestId: string, read: { record: RequestRecord; events: Event[] }, now: Date): Promise<"appended" | "replay" | "refused" | null> {
   const event = workerAttentionEvent({ events: read.events, last_heartbeat_at: read.record.last_heartbeat_at, created_at: read.record.request.created_at, now });
-  if (event === null) return false;
+  if (event === null) return null;
   const appended = await db.factoryRecords.appendEvent(requestId, eventInput(event), new Date(event.at));
   if (appended.kind === "conflict") throw new Error(`the attention event ${event.event_key} differs from the one recorded under its key`);
-  return appended.kind === "appended";
+  return appended.kind;
 }
 
 /**
