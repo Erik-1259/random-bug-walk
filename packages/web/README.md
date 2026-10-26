@@ -233,6 +233,8 @@ curl -s -b cookies.txt -OJ "localhost:3000/api/factory/requests/$ID/cases/$CASE/
 
 To reset, stop the server and the database (`docker stop rbw-factory-pg`, which removes it), then start again from the top with a new packages directory. The local backend keeps its worker sandboxes in the server's memory, so a worker still running when the server stops is not stopped by a later lost-worker finish: stop the server only after the request finished, or stop its worker process yourself.
 
+Preparing a later package version into the same directory replaces the entry's index line under the same case ID and keeps the earlier archives. A case delivered before that still downloads, and its validation runs are still priced, from the validator core its qualification record names (`export_verification.validator_sha256`), not the core the index names now. When a worker resumes and finishes between two polls while `worker_unresponsive` is raised, the next status read appends that attention's `attention_cleared`, dated at the finish, since the status route asks for attention changes only while a request is active. `test/factory-live/database.test.ts` checks that live mode opens the database on the first call that needs it, once for concurrent calls and again after a failed open, while the session and the example answer without it.
+
 ## Configuration
 
 `src/config.ts` is the one configuration loader. `RBW_RESULTS_DIR` names the results directory, relative to this directory or absolute. The default is `fixtures/development-2026-10-06`.
