@@ -138,7 +138,9 @@ export const DEFAULT_FACTORY_TEST_FIXTURES = "../../docs/product/fixtures/bug-re
 /**
  * RBW_FACTORY_TEST_MODE=1 selects test mode, which keeps its records in one server process's memory. It
  * is refused on any Vercel deployment (VERCEL_ENV preview or production), where instances do not share
- * that memory; a local `next dev` or `vercel dev` (VERCEL_ENV unset or development) keeps it.
+ * that memory; a local `next dev` or `vercel dev` (VERCEL_ENV unset or development) keeps it. Live
+ * mode reads the ledger, the worker launch and the prepared packages directory from the variables
+ * named on FactoryConfig.
  */
 export function loadFactoryConfig(env: Env = process.env, cwd: string = process.cwd()): FactoryConfig {
   const test = value(env, "RBW_FACTORY_TEST_MODE") === "1";
