@@ -84,9 +84,9 @@ describe("the copy", () => {
     expect(RUNTIME_SETUP[0]).toContain(`linux/${UMAMI_PINS.runtime.architecture} container of the runtime image`);
   });
 
-  it("names the runtime image by a neutral reference; its amd64 build is not pushed yet, so its digest names no image", () => {
+  it("names the runtime image by a neutral reference and the pushed amd64 build's digest", () => {
     expect(UMAMI_PINS.runtime.image).toBe("random-bug-walk/umami-runtime");
-    expect(UMAMI_PINS.runtime.digest).toBe(`sha256:${"0".repeat(64)}`);
+    expect(UMAMI_PINS.runtime.digest).toBe("sha256:2edc2b3acd6a7de2678169db27a9f06b3f68c298f93b482ed054630249eb7995");
     expect(UMAMI_PINS.runtime.digest).not.toBe(UMAMI_PINS.kit.digest);
   });
 
@@ -127,11 +127,12 @@ describe("the released case's identities", () => {
   it("pins the image's source tree (2026 files) and the frozen job on the runtime pin, derived once from the prepared store", () => {
     expect(UMAMI_PINS.kit.source_tree_sha256).toBe("712ebd687ed85386d3c1bea26204f120d18260aa03ad8fc6b15737afadd8fd2d");
     expect(UMAMI_PINS.kit.source_file_count).toBe(2026);
-    // src/pin-cli.ts on the real store gives these for the runtime pin, and the job before the
-    // runtime image (on the kit image's digest: request 89db318c…, expected trials f14185dc…).
+    // src/pin-cli.ts on the real store gives these for the pushed runtime pin. Earlier pins: the
+    // all-zeros runtime digest (request a94bf899…, expected trials 2b162a87…) and the kit image's
+    // digest (request 89db318c…, expected trials f14185dc…).
     expect(UMAMI_PINS.job).toEqual({
-      request_sha256: "a94bf899d0882218e0e60426b778373fe08f544c61ca1c9e9424619a94e91aaf",
-      expected_trials_sha256: "2b162a87d4b1942911f2c87aabbb4c80732b5fcf3e09064214c6b168bd7f1706",
+      request_sha256: "2eec2d559f6c988e372986161bcddbfaa6c2ec12de3130e9ae0b52723c203c33",
+      expected_trials_sha256: "d7c343810e3ed2cdd07c252f8f4b775aa07d067245fd2552065e347a867240a8",
     });
   });
 });

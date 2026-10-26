@@ -185,11 +185,11 @@ export const UMAMI_PINS: UmamiPins = {
     fixture_sha256: "787bd7722d86d585de86193c145b70884a075b4cc1e2fd6f08ff38c710528bdf",
     profile_sha256: "a22992701032b6ea704fb3165e65ded659fc3006bcfce11366eb088373929f91",
   },
-  // The amd64 build of kit/umami-runtime from the pinned kit image is not pushed yet, so the digest
-  // names no image and no copy or debugging runtime on these pins can start. It is replaced by the
-  // pushed image's digest, and the frozen job's hashes below with the ones src/pin-cli.ts derives
-  // for it, once the image is pushed.
-  runtime: { image: "random-bug-walk/umami-runtime", digest: `sha256:${"0".repeat(64)}`, architecture: "amd64" },
+  // The amd64 build of kit/umami-runtime from the pinned kit image, pushed to the deployment's
+  // registry: the neutral reference and the manifest digest the registry serves. Hosted copies start
+  // umami-runtime@<digest> in the deployment's registry. The frozen job's hashes below are the ones
+  // src/pin-cli.ts derives for this digest from the prepared store.
+  runtime: { image: "random-bug-walk/umami-runtime", digest: "sha256:2edc2b3acd6a7de2678169db27a9f06b3f68c298f93b482ed054630249eb7995", architecture: "amd64" },
   incident: { path: "issue.json", sha256: "1a1d227377b5de18db1be03ddbb8aaf6d77ae7a5746cde37081922c3afc993c5" },
   target: {
     path: TARGET_PATH,
@@ -204,5 +204,5 @@ export const UMAMI_PINS: UmamiPins = {
     result_sha256: "49a8fba295573cce4577a4667c02781691f72057132f3554094d6a4f8e32e649",
   },
   vectors: TIME_ZONE_VECTORS,
-  job: { request_sha256: "a94bf899d0882218e0e60426b778373fe08f544c61ca1c9e9424619a94e91aaf", expected_trials_sha256: "2b162a87d4b1942911f2c87aabbb4c80732b5fcf3e09064214c6b168bd7f1706" },
+  job: { request_sha256: "2eec2d559f6c988e372986161bcddbfaa6c2ec12de3130e9ae0b52723c203c33", expected_trials_sha256: "d7c343810e3ed2cdd07c252f8f4b775aa07d067245fd2552065e347a867240a8" },
 };
