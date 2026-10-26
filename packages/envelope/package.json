@@ -17,7 +17,7 @@
     "@rbw/schema": "workspace:*",
     "@rbw/spend": "workspace:*",
     "canonicalize": "5.1.0",
-    "zod": "4.6.5"
+    "zod": "4.6.6"
   },
   "devDependencies": {
     "pg": "8.23.1",

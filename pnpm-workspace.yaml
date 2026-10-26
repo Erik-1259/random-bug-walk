@@ -6,3 +6,7 @@ packages:
 # web app does not use next/image, so the dependency is removed.
 overrides:
   sharp: "-"
+  # @vercel/cli-config (through @vercel/oidc) pins zod 4.1.11 exactly, even in its latest release, and
+  # that version carries a high advisory (GHSA-mrhx-c7xc-m3w5, fixed in 4.6.6). Remove this once a
+  # release of @vercel/cli-config allows a patched zod.
+  "@vercel/cli-config>zod": "4.6.6"
