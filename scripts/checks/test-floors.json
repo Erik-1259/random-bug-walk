@@ -29,7 +29,7 @@
     "scripts/checks": 247,
     "tools/candidates": 131,
     "tools/case-package": 90,
-    "tools/case-validate": 80,
+    "tools/case-validate": 81,
     "tools/controller": 501,
     "tools/local-runner": 212,
     "tools/neon-ci": 98,

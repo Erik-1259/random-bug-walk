@@ -45,27 +45,43 @@ export function createHostRegistry(registrations: readonly HostRegistration[]): 
   };
 }
 
+/** Settings of the real hosts' adapters that only an exporter needs. */
+export interface RealHostOptions {
+  /**
+   * The Umami prepared store's directory. Only exporting a case reads it (bugCaseInputs and
+   * validatorInputs); without it those refuse with store_missing, and everything else works.
+   */
+  umamiStore?: string | null;
+}
+
 /**
  * The real hosts, one line each (see docs/product/adding-a-host.md). The label and description are the
  * factory's presentation text, so capabilities and the registry cannot drift apart. The Umami adapter runs
  * the bug case and every copy on its runtime image (kit/umami-runtime), which holds no app source and no
  * fixture.
  */
-const REGISTRATIONS: readonly HostRegistration[] = [
-  {
-    host_id: "task-report",
-    label: HOST_PRESENTATION["task-report"].label,
-    description: HOST_PRESENTATION["task-report"].description,
-    license: "MIT",
-    adapter: taskReportAdapter,
-  },
-  {
-    host_id: "umami",
-    label: HOST_PRESENTATION.umami.label,
-    description: HOST_PRESENTATION.umami.description,
-    license: "MIT",
-    adapter: createUmamiAdapter(),
-  },
-];
+function realRegistrations(options: RealHostOptions): readonly HostRegistration[] {
+  return [
+    {
+      host_id: "task-report",
+      label: HOST_PRESENTATION["task-report"].label,
+      description: HOST_PRESENTATION["task-report"].description,
+      license: "MIT",
+      adapter: taskReportAdapter,
+    },
+    {
+      host_id: "umami",
+      label: HOST_PRESENTATION.umami.label,
+      description: HOST_PRESENTATION.umami.description,
+      license: "MIT",
+      adapter: createUmamiAdapter({ store: options.umamiStore ?? null }),
+    },
+  ];
+}
 
-export const HOST_REGISTRY: HostRegistry = createHostRegistry(REGISTRATIONS);
+/** The real hosts' registry with the given adapter settings; HOST_REGISTRY is the one without any. */
+export function createRealHostRegistry(options: RealHostOptions = {}): HostRegistry {
+  return createHostRegistry(realRegistrations(options));
+}
+
+export const HOST_REGISTRY: HostRegistry = createRealHostRegistry();
