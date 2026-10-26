@@ -16,6 +16,7 @@
 //         --release <release.json> --deadline-at <UTC time> [--backend sandbox] [--sandbox-image <kit image>] [--work <dir>]
 //   factory-worker (--request-id <uuid> --deadline-at <UTC time> | --validation-id <uuid>) [--backend sandbox|docker]
 //         (src/factory-cli.ts)
+//   factory-local-bootstrap   (src/factory-local.ts: the local factory ledger, loopback databases only)
 //
 // --ledger defaults to the judge allocation and slot for judge_verify and the development pool and
 // slot otherwise; solver grades pass --ledger development so they never take the judge slot.
@@ -47,6 +48,7 @@ import { createTavilyClient } from "@rbw/search";
 import { KEY_VARIABLES, prepareAttempt, runAttempt } from "./attempt.ts";
 import { runJob } from "./controller.ts";
 import { FACTORY_WORKER_USAGE, factoryWorkerCommand } from "./factory-cli.ts";
+import { factoryLocalBootstrapCommand } from "./factory-local.ts";
 import type { Backend, ControllerDeps } from "./controller.ts";
 import { isRequestId } from "./judge.ts";
 import { NO_DOCKER, runJudgeReplay } from "./judge-run.ts";
@@ -222,6 +224,7 @@ async function main(argv: string[]): Promise<number> {
     if (command === "create-slot-key") return await createSlotKeyCommand(rest);
     if (command === "attempt") return await attemptCommand(rest);
     if (command === "factory-worker") return await factoryWorkerCommand(rest, { env: process.env, out: (line) => process.stdout.write(`${line}\n`), log, now: () => new Date() });
+    if (command === "factory-local-bootstrap") return await factoryLocalBootstrapCommand(rest, { env: process.env, out: (line) => process.stdout.write(`${line}\n`) });
     throw new UsageError("unknown command");
   } catch (error) {
     if (KNOWN.some((kind) => error instanceof kind) || (error instanceof TypeError && "code" in error)) {

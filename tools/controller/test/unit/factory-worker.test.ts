@@ -325,6 +325,7 @@ describe("runFactoryWorker", () => {
     const orchestrate: Orchestrate = async (hooks) => {
       const runner = createSandboxCopyRunner({
         sdk,
+        registry: "synthetic-team/synthetic-project",
         meter: hooks.meter,
         subject: CANDIDATE_A,
         workDir: work,

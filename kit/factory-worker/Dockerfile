@@ -8,7 +8,8 @@
 # Build it with kit/factory-worker/build.sh, which makes the context from the committed tree of one
 # commit (nothing uncommitted, no credentials) and the prepared directory:
 #   <context>/repo/              git archive of the commit
-#   <context>/factory-packages/  the prepared archives, flat, each file named <sha256>.<extension>
+#   <context>/factory-packages/  the prepared directory, flat: index.json and the archives it names,
+#                                each named <sha256>.tar.gz
 # The credentials reach the sandbox as environment values at create time, never through the image.
 
 ARG REGISTRY=docker.io
@@ -25,12 +26,9 @@ COPY repo/ ./
 RUN pnpm install --frozen-lockfile --prod --ignore-scripts --filter "@rbw/controller..." \
     && rm -rf /root/.cache /root/.local/share/pnpm
 
-# Every prepared file must be named by the sha256 of its bytes; the build fails on any other file.
+# The prepared directory: index.json and every archive it names, each archive named by the sha256 of
+# its bytes; the build fails on any other file, a missing index or an archive the index names but the
+# directory lacks (kit/factory-worker/check-packages.mjs).
 COPY factory-packages/ /opt/rbw/factory-packages/
-RUN set -eu; cd /opt/rbw/factory-packages; \
-    for file in *; do \
-      [ -f "$file" ] || { echo "no prepared packages, or not a regular file: $file" >&2; exit 1; }; \
-      sum="$(sha256sum "$file" | cut -d ' ' -f 1)"; \
-      [ "$sum" = "${file%%.*}" ] || { echo "content hash mismatch: $file" >&2; exit 1; }; \
-    done; \
-    chmod -R a-w /opt/rbw/factory-packages
+RUN node /opt/rbw/repo/kit/factory-worker/check-packages.mjs /opt/rbw/factory-packages \
+    && chmod -R a-w /opt/rbw/factory-packages
