@@ -7,6 +7,7 @@
 // (next.config.ts), since a bundled module cannot resolve the envelope package's file.
 import { WORKER_IMAGE_VARIABLE, createWorkerSandboxSdk, openFactoryDatabase, parseRateSheet } from "@rbw/controller/factory-web";
 import type { FactoryDatabase } from "@rbw/controller/factory-web";
+import type { HostAdapter } from "@rbw/factory-contract";
 import type { FactoryConfig } from "../../config.ts";
 import type { FactoryServer } from "../ports.ts";
 import type { PreparedPackages } from "./packages.ts";
@@ -62,6 +63,20 @@ async function preparedPackages(dir: string | null, log: Log): Promise<PreparedP
   }
 }
 
+/**
+ * The host registry's adapters, or none (logged) when the registry cannot be loaded: a deployment
+ * whose files do not hold it then still serves the session and the example, and offers no host.
+ */
+async function registeredAdapters(log: Log): Promise<readonly HostAdapter[]> {
+  try {
+    return (await hostRegistry()).list().map((registration) => registration.adapter);
+  } catch (error) {
+    if (!(error instanceof Error)) throw error;
+    log(`factory: the host registry could not be loaded (${error.name}); no host is offered`);
+    return [];
+  }
+}
+
 /** The rate sheet the build froze into RBW_FACTORY_RATE_SHEET. */
 function frozenRates(): Rates {
   const text = process.env.RBW_FACTORY_RATE_SHEET;
@@ -86,7 +101,7 @@ async function build(config: FactoryConfig, log: Log): Promise<FactoryServer> {
     passcode: config.passcode,
     database: config.databaseUrl === null ? null : lazyDatabase(config.databaseUrl, log),
     launch: await launchFor(config, log),
-    adapters: (await hostRegistry()).list().map((registration) => registration.adapter),
+    adapters: await registeredAdapters(log),
     prepared: await preparedPackages(config.packagesDir, log),
     rates: frozenRates(),
     now: () => new Date(),
