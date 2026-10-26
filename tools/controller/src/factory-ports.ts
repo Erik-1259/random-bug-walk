@@ -1,10 +1,15 @@
 // What the factory worker and its launch functions call in other parts of the factory, as narrow
 // injected ports, so this code depends on behavior and not on module names: the request budgets
 // and factory records of the spend ledger, the identity roots of the factory core, and the
-// Vercel Sandbox SDK with the credentials bound. The integration pass maps each port to the real
-// function once it is on the same base. Type-only, so web-safe.
-import type { CopyState, EventType, HarnessIdentity, HostId, PackageHashes, StopCode } from "@rbw/factory-contract";
+// Vercel Sandbox SDK with the credentials bound. factory-spend.ts maps the budgets and records to
+// the spend ledger, and factory-ledger.ts binds the identity and event builders to the factory
+// core. Type-only, so web-safe.
+import type { CaseEvidence } from "@rbw/factory";
+import type { CopyState, EventType, HarnessIdentity, HostId, Interpretation, PackageHashes, StopCode } from "@rbw/factory-contract";
 import type { Reservation, ReserveRequest, Spend } from "@rbw/spend";
+
+/** The one log the factory code writes to: a line of text that names no secret. */
+export type FactoryLog = (line: string) => void;
 
 // Request budgets ---------------------------------------------------------------------------
 
@@ -73,18 +78,17 @@ export interface FactoryRequestRecord {
   /** The request root: every ledger operation of the request uses it. */
   root: string;
   budget_key: string;
+  /** The frozen interpretation the request was accepted with; the request loop runs on it. */
+  interpretation: Interpretation;
   interpretation_sha256: string;
   profile_sha256: string;
   created_at: string;
 }
 
 /**
- * A validation run's record. HELD: the spend ledger's validation record stores the IDs, the root
- * and its own record time, but not `host_id`, `accepted_at`, `package_sha256`, `harness` or
- * `copies`, which this code needs for the run's operation and its price, its 1,800 s window, its
- * harness input and every answer about the run. The planned source is columns on the ledger's
- * validation table, added by a forward-only migration in the wiring change; until then the
- * integration cannot map this port (HELD_INTERFACES in factory-wiring.ts).
+ * A validation run's record, as the spend ledger's validation record stores it (migration 0007):
+ * the IDs, the root and the details of its start, which this code needs for the run's operation
+ * and its price, its 1,800 s window, its harness input and every answer about the run.
  */
 export interface FactoryValidationRecord {
   validation_id: string;
@@ -130,6 +134,13 @@ export interface FactoryRecords {
   validationEvents(validationId: string): Promise<(ValidationEventInput & { seq: number; at: string })[]>;
   /** The request, or the validation run and its request, whose root this is (such as the slot's holder); null for no factory root. */
   rootOwner(root: string): Promise<{ request_id: string; validation_id: string | null } | null>;
+  /**
+   * Records a delivered case's evidence once per request and case. `sha256` is the canonical
+   * digest of `evidence`. The same evidence again replays; other evidence for the case rejects.
+   */
+  recordEvidence(input: { request_id: string; case_id: string; evidence: CaseEvidence; sha256: string }): Promise<"recorded" | "replay">;
+  /** A case's recorded evidence, as recorded; null when the request has none for the case. */
+  readEvidence(requestId: string, caseId: string): Promise<CaseEvidence | null>;
 }
 
 // Identity ----------------------------------------------------------------------------------

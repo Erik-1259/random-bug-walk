@@ -18,10 +18,10 @@ function definition(name: string): DefName {
   return value;
 }
 
-describe("pinned revision-2 UI fixtures, not backend acceptance", () => {
+describe("pinned revision-3 UI fixtures, not backend acceptance", () => {
   const names = readdirSync(fixtures).filter(name => name.endsWith(".json")).sort();
   it("pins the shared Git package and copies the complete published fixture set", () => {
-    expect(FACTORY_CONTRACT_REVISION).toBe("66651d67fcb09c402b25d9688ea492c0e69e1c2b");
+    expect(FACTORY_CONTRACT_REVISION).toBe("4be0c93f94a8582b998383c70d10837ba49c8014");
     expect(names).toEqual(readdirSync(upstream).filter(name => name.endsWith(".json")).sort());
   });
   it.each(names)("validates exact published bytes of %s with the shared server/test parser", name => {

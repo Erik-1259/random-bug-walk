@@ -108,6 +108,8 @@ function cutAt(cut: Cut): CutDeps {
     appendValidationEvent: (id, event, at) => call(false, () => records.appendValidationEvent(id, event, at)),
     validationEvents: (id) => call(false, () => records.validationEvents(id)),
     rootOwner: (root) => call(false, () => records.rootOwner(root)),
+    recordEvidence: (input) => call(false, () => records.recordEvidence(input)),
+    readEvidence: (id, caseId) => call(false, () => records.readEvidence(id, caseId)),
   };
   return { ledger: { spend: ledgerSpend, budgets: ledgerBudgets }, records: store, hit: () => hit };
 }

@@ -9,10 +9,11 @@
 // package (its copy count), so its amount is computed per run from the same sheet. The numbers for
 // lifetimes are predictions until measured on the hosted path.
 //
-// This module is web-safe: it imports only @rbw/envelope and @rbw/schema.
+// This module is web-safe: it imports only @rbw/envelope and @rbw/schema, and types.
 import { priceFor } from "@rbw/envelope";
 import type { Envelope, Fraction, Rates } from "@rbw/envelope";
-import type { HostId, Limits } from "@rbw/factory-contract";
+import type { FactoryProfileInput } from "@rbw/factory";
+import type { CatalogEntry, HostAdapter, HostId, Limits } from "@rbw/factory-contract";
 import { canonicalDigest } from "@rbw/schema";
 import type { EnforcedBy, EnvelopeLine, Unit } from "@rbw/spend";
 
@@ -296,4 +297,37 @@ export function validationWorstCase(rates: Rates, host: HostId, copies: number, 
 /** The request form's limits and the profile hash, as the web service publishes them. */
 export function profileForService(profile: FactoryProfile = FACTORY_PROFILE): { limits: Limits; profile_sha256: string } {
   return { limits: profile.limits, profile_sha256: profile.profile_sha256 };
+}
+
+/** A protocol's copies in all, over its three states. */
+function protocolCopies(adapter: HostAdapter, entry: CatalogEntry): number {
+  const { clean, buggy, fixed } = adapter.protocol(entry).per_state;
+  return clean.copies + buggy.copies + fixed.copies;
+}
+
+/**
+ * The profile as the factory core reads it (its FactoryProfileInput), priced from `rates`: the
+ * worker's and each host's copy amounts are the envelopes this code reserves (factoryEnvelope, which
+ * refuses a sheet that is not the profile's), so a candidate the core prices at its copies'
+ * envelopes is exactly what the copy meter reserves. A host's validation worst case is priced for
+ * the most copies any protocol of its adapter's catalog declares; a host with no catalog entry has
+ * none.
+ */
+export function factoryProfileInput(input: { rates: Rates; registry: readonly HostAdapter[]; profile?: FactoryProfile }): FactoryProfileInput {
+  const profile = input.profile ?? FACTORY_PROFILE;
+  const copyEnvelope: Partial<Record<HostId, number>> = {};
+  for (const host of FACTORY_HOSTS) copyEnvelope[host] = Number(factoryEnvelope(input.rates, { kind: "copy", host }, profile).reserved_microusd);
+  const copies = new Map<HostId, number>();
+  for (const adapter of input.registry) {
+    for (const entry of adapter.catalog()) copies.set(adapter.host_id, Math.max(copies.get(adapter.host_id) ?? 0, protocolCopies(adapter, entry)));
+  }
+  const validation: Partial<Record<HostId, number>> = {};
+  for (const [host, count] of copies) validation[host] = validationWorstCase(input.rates, host, count, profile);
+  return {
+    profile_sha256: profile.profile_sha256,
+    limits: profile.limits,
+    worker_worst_case_microusd: Number(factoryEnvelope(input.rates, { kind: "worker" }, profile).reserved_microusd),
+    copy_envelope_microusd: copyEnvelope,
+    validation_worst_case_microusd: validation,
+  };
 }

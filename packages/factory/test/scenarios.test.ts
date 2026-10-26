@@ -6,6 +6,7 @@ import type { RequestStatus, TestScenario } from "@rbw/factory-contract";
 import { describe, expect, it } from "vitest";
 import { criteriaCatalogV1 } from "../src/criteria.ts";
 import { lostWorkerEvents } from "../src/projection.ts";
+import type { HarnessResult } from "../src/ports.ts";
 import { scenarioSetup, SCENARIOS, validationPlan } from "../src/testing/scenarios.ts";
 import { fixtureInput, world } from "./orchestrator-support.ts";
 import { statusFixture } from "./support.ts";
@@ -26,7 +27,8 @@ function summary(status: RequestStatus): unknown {
   };
 }
 
-const RUNS: readonly TestScenario[] = SCENARIOS.filter((scenario) => scenario !== "worker-lost" && scenario !== "uncertain-provider");
+/** The scenarios with an end-state fixture that a run reaches on its own. */
+const RUNS: readonly TestScenario[] = SCENARIOS.filter((scenario) => scenario !== "worker-lost" && scenario !== "uncertain-provider" && scenario !== "setup-failed");
 
 describe("named scenarios (synthetic)", () => {
   const catalog = criteriaCatalogV1();
@@ -84,6 +86,52 @@ describe("named scenarios (synthetic)", () => {
     const result = await w.run();
     expect(result).toMatchObject({ outcome: "operational_error", stop_code: "needs_reconciliation", needs_reconciliation: true });
     expect(w.status()).toMatchObject({ delivery: "none", attention: { code: "needs_reconciliation" } });
+  });
+
+  it("setup-failed: the Umami candidate's clean copy cannot be prepared, its buggy and fixed copies still run, and it ends invalid with no delivery", async () => {
+    const setup = scenarioSetup("setup-failed", catalog);
+    // Contract section 15.1: input from status-zero-result.json, no end-state fixture.
+    expect([setup.input_fixture, setup.end_fixture]).toEqual(["status-zero-result.json", null]);
+    const harnessed: HarnessResult[] = [];
+    const w = world({
+      input: fixtureInput(setup.input_fixture),
+      registry: setup.registry,
+      plan: setup.plan,
+      qualify: (inner) => async (input) => {
+        const answer = await inner(input);
+        harnessed.push(answer);
+        return answer;
+      },
+    });
+    const result = await w.run();
+    expect(result).toMatchObject({ outcome: "sources_exhausted", stop_code: "sources_exhausted", delivered: 0 });
+    const status = w.status();
+    expect(validateContract("RequestStatus", status)).toEqual([]);
+    expect([status.outcome, status.stop_reason?.code, status.delivery, status.attention]).toEqual(["sources_exhausted", "sources_exhausted", "none", null]);
+    expect(status.candidates.map((c) => [c.host_id, c.entry_id, c.stage, c.reason?.code ?? null])).toEqual([["umami", "synthetic-umami-date-time-01", "invalid", "setup_failed"]]);
+    expect(status.funnel).toEqual({ candidates_explored: 1, behavior_checks_passed: 0, requested_criteria_passed: 0, packages_ready: 0 });
+    expect(status.cases).toEqual([]);
+    // The harness does not stop after the clean copy: every state's copy runs, as the real harness runs them.
+    expect(harnessed.map((answer) => [answer.result, answer.stopped, answer.records.map((record) => [record.state, record.status])])).toEqual([
+      ["error", false, [["clean", "invalid"], ["buggy", "complete"], ["fixed", "complete"]]],
+    ]);
+    expect(status.events.map((event) => event.type)).toEqual([
+      "request_accepted", "budget_updated", "worker_started", "host_preparing", "host_ready", "candidate_selected", "budget_updated",
+      "check_finished", "check_finished", "check_finished", "check_finished", "check_finished", "check_finished",
+      "candidate_invalid", "budget_updated", "source_exhausted", "budget_updated", "request_finished",
+    ]);
+    const checks = status.events.flatMap((event) => (event.type === "check_finished" ? [[event.data.copy, event.data.check_set, event.data.outcome, event.data.runs_valid, event.data.runs_total]] : []));
+    expect(checks).toEqual([
+      ["clean", "original_suite", "error", 0, 3],
+      ["clean", "verification", "error", 0, 3],
+      ["buggy", "original_suite", "pass", 3, 3],
+      ["buggy", "verification", "fail", 3, 3],
+      ["fixed", "original_suite", "pass", 3, 3],
+      ["fixed", "verification", "pass", 3, 3],
+    ]);
+    expect(status.events.flatMap((event) => (event.type === "candidate_invalid" ? [event.data.reason] : []))).toEqual(["setup_failed"]);
+    // Everything settles at its worst case: the worker's $0.20 and the candidate's three copies at $0.20 each.
+    expect(status.budget).toMatchObject({ reserved_microusd: 0, spent_microusd: 800_000, overrun: false });
   });
 
   it("names the validation result each scenario's validation runs observe", () => {

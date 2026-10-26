@@ -157,6 +157,8 @@ function interrupted(point: Point, target: HeartbeatTarget, sandboxName: string)
     appendValidationEvent: (id, event, at) => (FINISH_POINTS.has(point) && event.type === "finished" ? after(records.appendValidationEvent(id, event, at)) : records.appendValidationEvent(id, event, at)),
     validationEvents: (id) => records.validationEvents(id),
     rootOwner: (root) => records.rootOwner(root),
+    recordEvidence: (input) => records.recordEvidence(input),
+    readEvidence: (id, caseId) => records.readEvidence(id, caseId),
   };
   const instance = (created: WorkerSandboxInstance): WorkerSandboxInstance => ({
     get name() {

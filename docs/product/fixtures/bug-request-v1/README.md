@@ -1,8 +1,8 @@
 # Fixtures for `bug-request/1`
 
-These are representative bodies for the contract in [`../../bug-request-v1.md`](../../bug-request-v1.md). Each JSON file is one response body, except `start-request.json`, which is a request body. The endpoints are planned. The fixtures show shapes and states, not measured results. They follow revision 2 of the contract.
+These are representative bodies for the contract in [`../../bug-request-v1.md`](../../bug-request-v1.md). Each JSON file is one response body, except `start-request.json`, which is a request body. The endpoints are planned. The fixtures show shapes and states, not measured results. They follow revision 3 of the contract.
 
-All values are synthetic. Request IDs follow the pattern `00000000-0000-4000-8000-0000000001nn`, and validation IDs follow `00000000-0000-4000-8000-0000000002nn`. Hashes and test-mode ledger operation IDs, which are 64 lowercase hex characters (section 15.1 of the contract), are a repeated two-character pattern (operation IDs `3a3a…`, `3b3b…` and so on), catalog and suite IDs start with `synthetic-`, and amounts are invented. Message text is illustrative, because clients branch on codes and never on messages.
+All values are synthetic. Request IDs follow the pattern `00000000-0000-4000-8000-0000000001nn`, validation IDs follow `00000000-0000-4000-8000-0000000002nn`, test-mode root executions follow `00000000-0000-4000-8000-0000000003nn`, and test-mode execution IDs follow `00000000-0000-4000-8000-0000000004nn`. Hashes and test-mode ledger operation IDs, which are 64 lowercase hex characters (section 15.1 of the contract), are a repeated two-character pattern (operation IDs `3a3a…`, `3b3b…` and so on), catalog and suite IDs start with `synthetic-`, and amounts are invented. Message text is illustrative, because clients branch on codes and never on messages.
 
 How the files relate:
 
@@ -52,4 +52,4 @@ How the files relate:
 | `error-budget-unavailable.json` | `POST /api/factory/requests` (also `POST …/validations`) | 409 | The factory pool's available amount (which counts committed amounts, not whole budgets) or the request budget cannot cover it. |
 | `error-unsupported-request.json` | `POST /api/factory/requests` | 422 | `details.interpretation` holds the blocking interpretation (the body of `interpretation-unsupported.json`). |
 | `error-unavailable.json` | `POST /api/factory/requests` (any endpoint) | 503 | The spend ledger is halted. `retryable: true`. |
-| `test-evidence.json` | `GET /api/factory/test/evidence?request_id=` (test mode only) | 200 | The `worker-lost` request of `status-operational-error.json`: the worker and the three candidate copies are `uncertain` and hold $0.50 in all, the slot is still held by that request, and the provider calls show one worker `create` and no replacement. |
+| `test-evidence.json` | `GET /api/factory/test/evidence?request_id=` (test mode only) | 200 | The `worker-lost` request of `status-operational-error.json`: the worker and the three candidate copies are `uncertain` and hold $0.50 in all, the slot is still held by that request, and the provider calls show one worker `create` and no replacement. The worker runs under the request's root execution (`…000000000305`) with no host; each task-report copy has its own execution (`…000000000401` to `…000000000403`), which its `create` names. |

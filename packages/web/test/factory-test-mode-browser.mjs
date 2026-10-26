@@ -190,7 +190,43 @@ async function scenario(name, width, run) {
 
 try {
   for (const width of [1440, 390]) await scenario("two-host-fulfilled", width, async ({ context, page, posts }) => {
-    const id = await formRequest(page, posts, "status-fulfilled");
+    // Observe the application's own poll; no response interception or fixed-duration sleep.
+    const [packagingResponse, id] = await Promise.all([
+      page.waitForResponse(async response => {
+        if (response.request().method() !== "GET" || !/^\/api\/factory\/requests\/[^/]+$/.test(new URL(response.url()).pathname) || response.status() !== 200) return false;
+        const current = await response.json();
+        return current.cases.length === 0 && current.candidates.some(candidate => candidate.stage === "packaging")
+          && current.events.some(event => event.type === "package_ready");
+      }),
+      formRequest(page, posts, "status-fulfilled"),
+    ]);
+    const packaging = await packagingResponse.json();
+    assert.equal(packaging.request_id, id);
+    const ready = packaging.events.find(event => event.type === "package_ready");
+    assert(ready?.case_id);
+    assert.equal(packaging.funnel.packages_ready, 0);
+    await page.locator(".factory-events li").filter({ hasText: ready.message }).waitFor();
+    await page.getByText("No qualified cases have been delivered.", { exact: true }).waitFor();
+    assert.equal(await page.locator(".factory-case-card").count(), 0);
+    assert.equal(await page.getByRole("link", { name: "Download bug case", exact: true }).count(), 0);
+    assert.equal(await page.getByRole("link", { name: "Download validator package", exact: true }).count(), 0);
+    assert.equal(await page.getByRole("button", { name: "Validate case", exact: true }).count(), 0);
+    assert.equal(posts.filter(path => path.endsWith("/validations")).length, 0);
+    await page.screenshot({ path: join(outputDir, `two-host-fulfilled-${width}-packaging.png`), fullPage: true });
+    await page.locator(".factory-events li").filter({ hasText: "Case delivered for item item-1." }).waitFor();
+    await page.getByRole("link", { name: "Download bug case", exact: true }).first().waitFor();
+    await page.getByRole("link", { name: "Download validator package", exact: true }).first().waitFor();
+    const afterDelivery = await status(context, id);
+    const deliveredEvent = afterDelivery.events.find(event => event.type === "case_delivered" && event.case_id === ready.case_id);
+    assert(deliveredEvent);
+    assert.equal(Date.parse(deliveredEvent.at) - Date.parse(ready.at), 5000, "the recorded delivery follows package_ready by the revision-3 window");
+    assert(afterDelivery.cases.some(item => item.case_id === ready.case_id));
+    fs.writeFileSync(join(outputDir, `two-host-fulfilled-${width}-packaging.json`), JSON.stringify({
+      request_id: id, package_ready: ready, case_delivered: deliveredEvent,
+      packaging_cases: packaging.cases, packaging_packages_ready: packaging.funnel.packages_ready,
+      delivered_case_ids: afterDelivery.cases.map(item => item.case_id),
+      proof: "Observed packaging without case actions, then delivery, over local synthetic HTTP/UI",
+    }, null, 2) + "\n");
     await page.getByRole("heading", { name: "Fulfilled", exact: true }).waitFor();
     assert.equal(await page.locator(".factory-case-card").count(), 2);
     const delivered = await status(context, id);

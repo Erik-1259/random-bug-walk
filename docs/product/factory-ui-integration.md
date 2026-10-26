@@ -1,8 +1,8 @@
 # Factory UI integration status
 
-The `/factory` UI follows **bug-request/1 revision 2**, pinned to code commit [`66651d67fcb09c402b25d9688ea492c0e69e1c2b`](https://github.com/Erik-1259/random-bug-walk/blob/66651d67fcb09c402b25d9688ea492c0e69e1c2b/docs/product/bug-request-v1.md). The factory routes now include a deterministic local test mode. An unavailable service produces an explicit unavailable state; the production page never substitutes fixtures.
+The `/factory` contract consumer and test fixtures follow **bug-request/1 revision 3**, pinned to merged public commit [`4be0c93f94a8582b998383c70d10837ba49c8014`](https://github.com/Erik-1259/random-bug-walk/blob/4be0c93f94a8582b998383c70d10837ba49c8014/docs/product/bug-request-v1.md). Revision 3 adds test controls. The [public backend handoff](https://github.com/Erik-1259/random-bug-walk/pull/150#issuecomment-6419181966) identifies this merged revision for local synthetic integration; this update does not change runtime product UI or establish hosted or production acceptance. An unavailable service produces an explicit unavailable state; the production page never substitutes fixtures.
 
-That contract revision was merged in [PR #121](https://github.com/Erik-1259/random-bug-walk/pull/121) at `6b2c8bae430d565d5df7b94bd77d1846da1bb2bd`. This records the original UI contract integration; it does not claim that subsequent shared-package changes are byte-identical to that revision.
+The original revision-2 UI integration used commit `66651d67fcb09c402b25d9688ea492c0e69e1c2b`, merged in [PR #121](https://github.com/Erik-1259/random-bug-walk/pull/121) at `6b2c8bae430d565d5df7b94bd77d1846da1bb2bd`. The current fixture pin above supersedes that historical pin.
 
 ## Implemented UI behavior
 
@@ -20,7 +20,7 @@ An accepted start can return a finished operational failure when worker launch f
 
 ## Shared contract handoff
 
-The UI consumes the workspace package `@rbw/factory-contract`, originally integrated from the pinned PR #121 revision above. Client code imports its root entry's types and contract-version constant. The former local transport projections are removed. The package's `/validate` entry reads files and uses Node/Ajv, so it is used only by tests to parse every pinned UI fixture, never imported into a client component. The browser still checks JSON and contract-version envelopes; full runtime response validation requires a client-safe parser if the contract owner later supplies one.
+The UI consumes the workspace package `@rbw/factory-contract`, originally integrated from the pinned PR #121 revision above. Client code imports its root entry's types and contract-version constant. The former local transport projections are removed. The package's `/validate` entry reads files and uses Node/Ajv, so it is used by UI tests to parse every pinned UI fixture, never imported into a client component. The browser still checks JSON and contract-version envelopes; full runtime response validation requires a client-safe parser if the contract owner later supplies one.
 
 Revision 2 stores the validation UUID under `rbw-factory-validation-id` before POST, with scoped request/case metadata kept separately. Existing revision-1 scoped metadata is migrated without starting work. Definite validation refusals clear the rejected ID; uncertain responses retain it for the same-ID retry. Stale factory tabs adopt the saved request before Start, and clearing an older request does not delete a newer tab's identity. New warning codes and criterion failure-code fixtures come from the shared contract, while interpretation and qualification remain service decisions.
 
@@ -32,7 +32,7 @@ Request and validation identity mutations use one origin-wide Web Lock, held thr
 
 Backend ownership remains `app/api/factory/**`, `src/factory-server/**` and request execution. The implemented routes support deterministic test-mode sessions, interpretations, requests, status, downloads and validation over in-memory fakes. The browser proof below exercises those HTTP boundaries and UI behavior. It does not establish real-worker integration, hosted execution, or production acceptance.
 
-Synthetic contract fixtures are copied byte-for-byte into `packages/web/test/fixtures/factory-v1/` with the pinned source documented. Unit tests and the original browser proof use fake transport responses and explicitly label that evidence as synthetic. The separate test-mode browser proof uses real local HTTP routes with fake execution dependencies. No provider or paid execution is part of either UI proof. Real-worker integration and production acceptance remain separate, unfinished work.
+All synthetic contract fixtures, including revision-3 `test-evidence.json`, are copied byte-for-byte into `packages/web/test/fixtures/factory-v1/` with the pinned source documented. Unit tests and the original browser proof use fake transport responses and explicitly label that evidence as synthetic. The separate test-mode browser proof uses real local HTTP routes with fake execution dependencies. No provider or paid execution is part of either UI proof. Real-worker integration and production acceptance remain separate, unfinished work.
 
 The published Umami example, case anchors, immutable release files and existing replay controls remain unchanged. The historical example is not relabeled as a newly exported revision-1 package.
 
@@ -48,7 +48,7 @@ The script refuses a non-local origin, intercepts only factory endpoints in its 
 
 ## Repeating the test-mode HTTP/UI proof
 
-The backend prerequisites were merged in [PR #144](https://github.com/Erik-1259/random-bug-walk/pull/144) at [`092c1526b27a441c43f5fc1694fa44bf3d7cfb96`](https://github.com/Erik-1259/random-bug-walk/commit/092c1526b27a441c43f5fc1694fa44bf3d7cfb96). Run this browser script against that backend with the current proof changes applied. The pin identifies the local synthetic service behavior, not a durable-service or hosted integration handoff.
+The earlier form-key backend was merged in [PR #144](https://github.com/Erik-1259/random-bug-walk/pull/144) at `092c1526b27a441c43f5fc1694fa44bf3d7cfb96`. Revision-3 proof uses the exact merged backend [`4be0c93f94a8582b998383c70d10837ba49c8014`](https://github.com/Erik-1259/random-bug-walk/commit/4be0c93f94a8582b998383c70d10837ba49c8014) with these UI proof changes applied. Use an isolated checkout. The public handoff is limited to local synthetic integration; durable-service, real-worker, hosted and production acceptance remain unverified.
 
 Use a dedicated, single-process local server with the default committed contract fixtures. From that checkout's repository root:
 
@@ -81,3 +81,13 @@ Assertions compare request resumption, partial and error outcomes, reconciliatio
 The form generates opaque item keys such as `item-1` in `src/components/factory-request-form.tsx`. The pinned backend's test mode matches fixture requirements without item keys, while preserving item order, descriptions, quantities and the other normalized input fields. It accepts the form's keys and carries them through the interpretation, events, candidates, items, cases and validation events. An interpretation under new keys gets its own hash; a hash for different keys is stale. The original fixture keys retain their fixture interpretation and hash.
 
 This replaces the earlier default-fixture restriction that rejected otherwise matching form inputs solely because their keys differed from `concurrency-1` or `date-time-1`. It does not add a general interpreter: requirements outside the committed fixtures still receive `invalid_request`, and a start must match the selected scenario's requirements. The proof uses that merged behavior without remapping browser requests or modifying shared fixtures.
+
+### Revision-3 evidence and readiness proof
+
+Revision 3 adds `TestEvidence.root_execution_id`, operation `execution_id` and `host_id`, and provider-call `execution_id`. Fixture checks retain every field, compare exact published bytes and parse every fixture with the shared validator; the former revision-2 stripping exception is removed.
+
+The `two-host-fulfilled` browser journey observes the application's status poll reporting a packaging candidate and `package_ready`, with no delivered case. It checks the rendered event, zero case cards and no download or validation controls, then waits for `case_delivered` and the download links. The recorded event timestamps must show the contracted five-service-second window; the test does not sleep for an assumed execution duration. Pending-state screenshots and event records accompany the run output.
+
+This checks visible availability, without sending a pre-delivery validation POST. The service checks a validation request's eligibility only after its two-second hold inside the validation-ID lock; a request sent before delivery may still be checked after delivery. The later, existing validation journey starts only after the request finishes.
+
+The revision-3 `setup-failed` scenario still runs all three copies. The clean copy is created but cannot be prepared, so its two checks report `error`; buggy and fixed copies run their checks. After all six checks, the candidate is `invalid` with `setup_failed`, one candidate was explored, and no case is delivered. This describes the backend scenario, not a new UI browser journey or reproduction. The form and recovery journeys above remain intact; a run's output establishes which checks passed.

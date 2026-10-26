@@ -12,12 +12,14 @@ import type {
   EmptyObject,
   Event,
   HostAdapter,
+  HostId,
   RequestOutcome,
   RequestStatus,
   TestEvidence,
   TestOperationState,
+  TestScenario,
 } from "../src/index.ts";
-import { DEF_NAMES, HOST_ID_VALUES } from "../src/index.ts";
+import { DEF_NAMES, HOST_ID_VALUES, TEST_SCENARIO_VALUES } from "../src/index.ts";
 import { assertContract, validateContract } from "../src/validate.ts";
 import { contractFixture, internalFixture } from "./support.ts";
 
@@ -64,6 +66,23 @@ describe("generated types", () => {
     expectTypeOf(evidence).toEqualTypeOf<TestEvidence>();
     expect(evidence.operations.map((operation) => operation.state)).toEqual(["uncertain", "uncertain", "uncertain", "uncertain"]);
     expectTypeOf(evidence.slot.holder_validation_id).toEqualTypeOf<string | null>();
+  });
+
+  it("types the revision-3 test controls: execution identities, copy hosts and the setup-failed scenario", () => {
+    const evidence = assertContract("TestEvidence", contractFixture("test-evidence.json"));
+    expectTypeOf(evidence.root_execution_id).toEqualTypeOf<string>();
+    expectTypeOf<TestEvidence["operations"][number]["execution_id"]>().toEqualTypeOf<string>();
+    expectTypeOf<TestEvidence["operations"][number]["host_id"]>().toEqualTypeOf<HostId | null>();
+    expectTypeOf<TestEvidence["provider_calls"][number]["execution_id"]>().toEqualTypeOf<string>();
+    // The fixture's worker runs under the root execution with no host, and each provider call names its operation's execution.
+    expect(evidence.operations.map((operation) => [operation.kind, operation.host_id])).toEqual([["worker", null], ["candidate_copy", "task-report"], ["candidate_copy", "task-report"], ["candidate_copy", "task-report"]]);
+    expect(evidence.operations[0]?.execution_id).toBe(evidence.root_execution_id);
+    expect(new Set(evidence.operations.map((operation) => operation.execution_id)).size).toBe(evidence.operations.length);
+    const executionOf = new Map(evidence.operations.map((operation) => [operation.call_name, operation.execution_id]));
+    for (const call of evidence.provider_calls) expect(call.execution_id, call.call_name).toBe(executionOf.get(call.call_name));
+    expect(TEST_SCENARIO_VALUES).toHaveLength(12);
+    expect(TEST_SCENARIO_VALUES.at(-1)).toBe("setup-failed");
+    expectTypeOf<Extract<TestScenario, "setup-failed">>().toEqualTypeOf<"setup-failed">();
   });
 
   it("types the adapter and runner interfaces over the generated shapes", async () => {

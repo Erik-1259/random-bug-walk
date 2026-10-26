@@ -1,9 +1,9 @@
-/** Client integration with bug-request/1 revision 2 at the pinned shared-package commit.
+/** Client integration with bug-request/1 revision 3 at the pinned public commit.
  * Qualification, interpretation and execution remain service responsibilities. */
 import { CONTRACT_VERSION_VALUES } from "@rbw/factory-contract";
 import type { Capabilities, RequestInput, Interpretation, RequestStatus, StartRequest, ValidationRun, SessionStatus } from "@rbw/factory-contract";
 export type { Capabilities, RequestInput, Interpretation, RequestStatus, StartRequest, ValidationRun, Cell, PackagePart, Problem, Case as FactoryCase, Event as FactoryEvent } from "@rbw/factory-contract";
-export const FACTORY_CONTRACT_REVISION = "66651d67fcb09c402b25d9688ea492c0e69e1c2b";
+export const FACTORY_CONTRACT_REVISION = "4be0c93f94a8582b998383c70d10837ba49c8014";
 export class FactoryError extends Error {
   code: string; status: number; details: Record<string, unknown> | null;
   constructor(code: string, message: string, status = 0, details: Record<string, unknown> | null = null) { super(message); this.code = code; this.status = status; this.details = details; }

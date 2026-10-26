@@ -1,16 +1,21 @@
-// What the factory web service imports (@rbw/controller/factory-web): the factory profile, the
-// operation identities and sandbox names, the request and validation launches, the one lost-worker
-// routine and the end of a reconciliation. Like judge-web.ts it imports only small modules: no
-// runner, harness, driver or PGlite. The service injects the ledger, the factory records, the
-// identity module, the factory core's event builders, the Sandbox SDK and the clock.
+// What the factory web service imports (@rbw/controller/factory-web): the factory profile and the
+// profile as the factory core reads it, the operation identities and sandbox names, the factory
+// core's identity and event modules as ports, the factory database (the ledger, the factory records
+// and the start lock), the request and validation launches, the one lost-worker routine and the end
+// of a reconciliation. Like judge-web.ts it imports only small modules: no runner, harness, driver
+// or PGlite. The service injects the ledger, the factory records, the identity module, the event
+// builders, the Sandbox SDK and the clock.
 import type { WorkerSandboxInstance, WorkerSandboxSdk } from "./factory-ports.ts";
 
 export { parseRateSheet } from "@rbw/envelope";
-export { CopyCountInvalid, FACTORY_HOSTS, FACTORY_PROFILE, ProfileMismatch, RATE_SHEET_V1_SHA256, factoryEnvelope, priceProfile, profileForService, validationWorstCase } from "./factory-profile.ts";
+export { CopyCountInvalid, FACTORY_HOSTS, FACTORY_PROFILE, ProfileMismatch, RATE_SHEET_V1_SHA256, factoryEnvelope, factoryProfileInput, priceProfile, profileForService, validationWorstCase } from "./factory-profile.ts";
 export type { CopyLimitsProfile, EnvelopeKind, FactoryEnvelope, FactoryPrices, FactoryProfile, FactoryProfileBody, SandboxSize } from "./factory-profile.ts";
 export {
   EVENT_KEYS,
+  FACTORY_EVENTS,
+  FACTORY_IDENTITY,
   FACTORY_KIND,
+  FACTORY_PROJECT,
   ROUTE_ACTOR,
   SANDBOX_PROVIDER,
   WORKER_ACTOR,
@@ -31,6 +36,8 @@ export { LaunchConfigError, VALIDATION_POLL_MS, WORKER_REPOSITORY, WORKER_RUN_ON
 export type { FactoryLaunchDeps, ValidationStart, ValidationStartArgs, WorkerLaunchConfig, WorkerStart } from "./factory-launch.ts";
 export { completeReconciliation, finalizeLostWorker } from "./factory-lost.ts";
 export type { LostDeps, LostOutcome, LostTarget, ReconciliationOutcome } from "./factory-lost.ts";
+export { factoryDatabaseOver, openFactoryDatabase } from "./factory-spend.ts";
+export type { FactoryDatabase } from "./factory-spend.ts";
 export type * from "./factory-ports.ts";
 
 /** The configuration value that names the pinned worker image: `<vcr repository>@sha256:<digest>`. */
