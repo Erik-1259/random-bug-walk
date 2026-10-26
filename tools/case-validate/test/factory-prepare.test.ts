@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { exportCase } from "@rbw/case-package";
@@ -7,7 +7,7 @@ import { caseId, criteriaCatalogV1, defectId } from "@rbw/factory";
 import { createTaskReportAdapter } from "@rbw/host-task-report/adapter";
 import type { BaselineIdentity, CatalogEntry } from "@rbw/factory-contract";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { CASE_IDENTITY, HOST_REGISTRY } from "../src/factory-prepare.ts";
+import { CASE_IDENTITY, HOST_REGISTRY, prepareRegistry } from "../src/factory-prepare.ts";
 import { HOST_REGISTRY as REGISTRY } from "../src/registry.ts";
 
 let workdir: string;
@@ -24,8 +24,30 @@ function coreCaseId(baseline: BaselineIdentity, entry: CatalogEntry): string {
 }
 
 describe("factory-prepare module", () => {
-  it("re-exports the host registry", () => {
+  it.skipIf(process.env.RBW_UMAMI_STORE !== undefined && process.env.RBW_UMAMI_STORE !== "")("re-exports the host registry when RBW_UMAMI_STORE is not set", () => {
     expect(HOST_REGISTRY).toBe(REGISTRY);
+  });
+
+  it("keeps the harness registry without a store, and gives the Umami adapter the store RBW_UMAMI_STORE names", async () => {
+    expect(prepareRegistry({})).toBe(REGISTRY);
+    expect(prepareRegistry({ RBW_UMAMI_STORE: "" })).toBe(REGISTRY);
+    // A store whose index is not a prepared store's: the adapter given it reads it and refuses it as
+    // invalid, where the harness's adapter refuses for having no store at all.
+    const store = join(workdir, "store");
+    await mkdir(store);
+    await writeFile(join(store, "index.json"), "{}\n");
+    const withStore = prepareRegistry({ RBW_UMAMI_STORE: store });
+    expect(withStore).not.toBe(REGISTRY);
+    expect(withStore.list().map((item) => [item.host_id, item.label, item.license])).toEqual(REGISTRY.list().map((item) => [item.host_id, item.label, item.license]));
+    expect(withStore.get("task-report")?.adapter).toBe(REGISTRY.get("task-report")?.adapter);
+    const umami = withStore.get("umami")?.adapter;
+    const harness = REGISTRY.get("umami")?.adapter;
+    if (umami === undefined || harness === undefined) throw new Error("umami is not registered");
+    expect(umami.catalog()).toEqual(harness.catalog());
+    const entry = umami.catalog()[0];
+    if (entry === undefined) throw new Error("empty umami catalog");
+    await expect(harness.bugCaseInputs(entry)).rejects.toMatchObject({ code: "store_missing" });
+    await expect(umami.bugCaseInputs(entry)).rejects.toMatchObject({ code: "store_invalid" });
   });
 
   it("gives the factory core's defect and case IDs for the task-report catalog entry", () => {

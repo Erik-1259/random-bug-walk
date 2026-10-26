@@ -615,6 +615,9 @@ importers:
       '@rbw/host-task-report':
         specifier: workspace:*
         version: link:../../packages/host-task-report
+      '@rbw/host-umami':
+        specifier: workspace:*
+        version: link:../../packages/host-umami
       '@rbw/schema':
         specifier: workspace:*
         version: link:../../packages/schema

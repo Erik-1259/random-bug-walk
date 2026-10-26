@@ -27,6 +27,7 @@
     "@rbw/factory": "workspace:*",
     "@rbw/factory-contract": "workspace:*",
     "@rbw/host-task-report": "workspace:*",
+    "@rbw/host-umami": "workspace:*",
     "@rbw/schema": "workspace:*"
   },
   "devDependencies": {

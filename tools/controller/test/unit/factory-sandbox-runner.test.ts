@@ -141,7 +141,7 @@ describe("the sandbox copy runner", () => {
   });
 
   it("returns setup_failed for a placeholder digest (an image not pushed yet), launching and creating nothing", async () => {
-    // As the committed Umami runtime pin has it until its image is pushed.
+    // As a committed pin has it until its image is pushed.
     const collected = await createSandboxCopyRunner(deps()).run(plan({ image: { reference: "random-bug-walk/umami-runtime", digest: `sha256:${"0".repeat(64)}` } }), roots);
     expect(collected).toMatchObject({ outcome: "setup_failed", results_dir: null });
     expect(sdk.creates).toHaveLength(0);
@@ -162,7 +162,7 @@ describe("the sandbox copy runner", () => {
     const image = (reference: string, digest: string | null = DIGEST) => copyImage(REGISTRY, plan({ image: { reference, digest } }));
     // The committed pins' shapes: a neutral name, or a local tag, and the digest.
     expect(image("random-bug-walk/umami-runtime")).toEqual({ image: `${REGISTRY}/umami-runtime@${DIGEST}` });
-    expect(image("rbw-task-report:kit-v2-arm64-r2")).toEqual({ image: `${REGISTRY}/rbw-task-report@${DIGEST}` });
+    expect(image("rbw-task-report:kit-v2-amd64")).toEqual({ image: `${REGISTRY}/rbw-task-report@${DIGEST}` });
     expect(image("registry.invalid:5000/a/b")).toEqual({ image: `${REGISTRY}/b@${DIGEST}` });
     expect(image(`registry.invalid/a/b@${DIGEST}`)).toEqual({ image: `${REGISTRY}/b@${DIGEST}` });
     expect(image(`registry.invalid/a/b@sha256:${"1".repeat(64)}`)).toEqual({ refused: "the plan's image reference carries another digest" });
