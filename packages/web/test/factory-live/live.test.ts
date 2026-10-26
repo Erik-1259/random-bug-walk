@@ -38,6 +38,7 @@ const RATES = parseRateSheet(readFileSync(new URL("../../../envelope/rate-sheets
 const IMAGE = `synthetic.invalid/rbw-factory-worker@sha256:${"a".repeat(64)}`;
 const LAUNCH_ENV = { DATABASE_URL: "postgres://synthetic.invalid/factory" };
 const OTHER_VALIDATION_ID = "00000000-0000-4000-8000-0000000002a2";
+const LATER_VALIDATION_ID = "00000000-0000-4000-8000-0000000002a3";
 const WORKER_WORST_CASE = BigInt(FACTORY_PROFILE.prices.worker_worst_case_microusd);
 /** Stands for evaluator material in the qualification record's cells; no JSON response may hold it. */
 const SENTINEL = "synthetic-evaluator-detail-7f3a";
@@ -125,14 +126,14 @@ function ok(result: { ok: boolean; code?: string }): void {
   if (!result.ok) throw new Error(`synthetic: refused (${result.code ?? "no code"})`);
 }
 
-async function world(options: { poolCap?: number; deps?: Partial<LiveDeps> } = {}): Promise<World> {
+async function world(options: { poolCap?: number; without?: "pool" | "slot"; deps?: Partial<LiveDeps> } = {}): Promise<World> {
   const clock = { ms: START };
   const now = (): Date => new Date(clock.ms);
   const pglite = await PGlite.create();
   await migrate(pglite, { schema: "public" });
   const db = factoryDatabaseOver({ client: pglite, now });
-  ok(await db.spend.createPool({ pool_key: "factory", cap_microusd: options.poolCap ?? 40_000_000, allocations: [], actor_role: "owner", reason: "synthetic factory pool" }));
-  ok(await db.spend.createSlotKey({ slot_key: "factory", actor_role: "owner", reason: "synthetic factory slot" }));
+  if (options.without !== "pool") ok(await db.spend.createPool({ pool_key: "factory", cap_microusd: options.poolCap ?? 40_000_000, allocations: [], actor_role: "owner", reason: "synthetic factory pool" }));
+  if (options.without !== "slot") ok(await db.spend.createSlotKey({ slot_key: "factory", actor_role: "owner", reason: "synthetic factory slot" }));
   const sandbox = new FakeSandbox();
   const logs: string[] = [];
   const server = createLiveServer({
@@ -335,6 +336,19 @@ describe("session and capabilities", () => {
     expect(opened).toBe(0);
   });
 
+  it("answers not_configured on a ledger without the factory pool, and on one without the factory slot key", async () => {
+    for (const without of ["pool", "slot"] as const) {
+      const other = await world({ without });
+      try {
+        expect(await other.server.ports.ledgerState(), without).toEqual({ configured: false, halted: false });
+        const capabilities = await contractBody("Capabilities", await getCapabilities(request("/api/factory/capabilities", { session: false }), other.server));
+        expect(capabilities.service.code, without).toBe("not_configured");
+      } finally {
+        await other.pglite.close();
+      }
+    }
+  });
+
   it("answers a start 503 before anything is recorded while the launch configuration is incomplete", async () => {
     const server = createLiveServer({ passcode: PASSCODE, database: () => Promise.resolve(w.db), launch: null, adapters: [host.adapter], prepared: { dir: host.dir, index: host.index }, rates: RATES, now: () => new Date(w.clock.ms), log: () => undefined });
     const response = await start(REQUEST_ID, input(), server);
@@ -404,6 +418,15 @@ describe("starts", () => {
     expect(await budget()).toEqual({ cap: 1_500_000n, open: WORKER_WORST_CASE, settled: 0n });
   });
 
+  it("runs concurrent identical starts one at a time under the request lock: one 202, the others 200, one launch", async () => {
+    const interpretation = await interpret(input());
+    const body = { request_id: REQUEST_ID, input: input(), interpretation_sha256: interpretation.interpretation_sha256 };
+    const responses = await Promise.all([1, 2, 3].map(() => postStart(request("/api/factory/requests", { body }), w.server)));
+    expect(responses.map((response) => response.status).sort()).toEqual([200, 200, 202]);
+    expect(w.sandbox.creates).toHaveLength(1);
+    expect(await budget()).toEqual({ cap: 1_500_000n, open: WORKER_WORST_CASE, settled: 0n });
+  });
+
   it("answers a second request ID busy (active) while the first holds the slot, and records nothing for it", async () => {
     expect((await start()).status).toBe(202);
     const second = await start(OTHER_REQUEST_ID);
@@ -424,13 +447,25 @@ describe("starts", () => {
     expect(await slotHolder()).toBeNull();
   });
 
-  it("maps a pool that cannot cover the worker's worst case at step 7 to budget_unavailable, with nothing recorded", async () => {
+  it("answers budget_unavailable when the pool covered the budget at step 5 but not the worker's worst case at step 7, releasing the slot and recording nothing", async () => {
     await w.pglite.close();
     w = await world({ poolCap: Number(WORKER_WORST_CASE) - 1 });
-    const interpretation = await interpret(input(1_000_000));
-    const startRequest = { request_id: REQUEST_ID, input: input(1_000_000), interpretation_sha256: interpretation.interpretation_sha256 };
-    const result = await w.server.ports.createRecordLaunch({ start: startRequest, sha256: "e".repeat(64), interpretation, root: FACTORY_IDENTITY.requestRoot(REQUEST_ID) });
-    expect(result).toMatchObject({ ok: false, code: "budget_unavailable" });
+    // The pool read at step 5 covers the budget; by step 7 the pool holds less than the worker's worst case.
+    let held: string | null = null;
+    const live = w.server.ports;
+    const poolAvailable = (): Promise<number> => Promise.resolve(40_000_000);
+    const acquireSlot: typeof live.acquireSlot = async (root) => {
+      const taken = await live.acquireSlot(root);
+      held = await slotHolder();
+      return taken;
+    };
+    w.server = { ...w.server, ports: { ...live, poolAvailable, acquireSlot } };
+    const response = await start(REQUEST_ID, input(1_000_000));
+    expect(response.status).toBe(409);
+    expect((await readJson(response)).error).toMatchObject({ code: "budget_unavailable" });
+    expect(held).toBe(FACTORY_IDENTITY.requestRoot(REQUEST_ID));
+    expect(await slotHolder()).toBeNull();
+    expect(await w.server.ports.slotHolder()).toBeNull();
     expect(await w.db.factoryRecords.request(REQUEST_ID)).toBeNull();
     expect(w.sandbox.creates).toHaveLength(0);
   });
@@ -587,6 +622,23 @@ describe("validation runs", () => {
     expect(await w.server.ports.getValidation(OTHER_REQUEST_ID, caseId, VALIDATION_ID)).toBeNull();
     const shown = await contractBody("RequestStatus", await status());
     expect(shown.cases[0]?.validation).toMatchObject({ validation_id: VALIDATION_ID, state: "queued" });
+  });
+
+  it("shows each case's latest validation run by acceptance, whatever order the runs were recorded in", async () => {
+    await acceptWithoutSlot();
+    const evidence = await packageCase(REQUEST_ID, true);
+    await finishFulfilled(REQUEST_ID);
+    const caseId = evidence.case.case_id;
+    expect((await validate(REQUEST_ID, caseId)).status).toBe(202);
+    const accepted = await w.db.factoryRecords.validation(VALIDATION_ID);
+    if (accepted === null) throw new Error("synthetic: the validation run is not recorded");
+    // Further runs of the same case as the ledger holds them after earlier runs finished: one accepted before, one after.
+    const run = (validationId: string, offsetMs: number) => ({ ...accepted, validation_id: validationId, root: FACTORY_IDENTITY.validationRoot(validationId), accepted_at: new Date(Date.parse(accepted.accepted_at) + offsetMs).toISOString() });
+    const shown = async (): Promise<string | undefined> => (await contractBody("RequestStatus", await status())).cases[0]?.validation?.validation_id;
+    expect(await w.db.factoryRecords.recordValidation(run(OTHER_VALIDATION_ID, -60_000))).toBe("created");
+    expect(await shown()).toBe(VALIDATION_ID);
+    expect(await w.db.factoryRecords.recordValidation(run(LATER_VALIDATION_ID, 60_000))).toBe("created");
+    expect(await shown()).toBe(LATER_VALIDATION_ID);
   });
 
   it("answers a validation ID used on another case idempotency_conflict, and another run busy while one holds the slot", async () => {
