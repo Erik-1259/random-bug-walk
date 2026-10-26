@@ -3,7 +3,7 @@ import { join } from "node:path";
 import type { NextConfig } from "next";
 import { loadSiteConfig } from "./src/config.ts";
 
-/** The pinned rate sheet the judge route prices the controller and the copies with. */
+/** The pinned rate sheet the judge route prices the controller and the copies with, and the factory routes their work. */
 const RATE_SHEET = new URL("../envelope/rate-sheets/v1.json", import.meta.url);
 
 /**
@@ -31,10 +31,12 @@ const config: NextConfig = {
   // slim judge entry by name, and the bundler builds it into them with what it imports, the schema
   // file included. The factory routes check their bodies with the contract package's validator,
   // which reads its schema file the same way, and use the factory core's identities, whose package
-  // reads its criteria catalog file next to its sources.
-  serverExternalPackages: ["@rbw/schema", "@rbw/admission", "@rbw/factory-contract", "@rbw/factory"],
+  // reads its criteria catalog file next to its sources. Live mode's package tooling and host
+  // registry (the task-report adapter reads its catalog files next to its sources) load the same way.
+  serverExternalPackages: ["@rbw/schema", "@rbw/admission", "@rbw/factory-contract", "@rbw/factory", "@rbw/case-package", "@rbw/case-validate"],
   poweredByHeader: false,
-  env: { RBW_JUDGE_FROZEN: frozenJudge() },
+  // The factory routes price with the same pinned rate sheet, frozen as its text.
+  env: { RBW_JUDGE_FROZEN: frozenJudge(), RBW_FACTORY_RATE_SHEET: readFileSync(RATE_SHEET, "utf8") },
 };
 
 export default config;
