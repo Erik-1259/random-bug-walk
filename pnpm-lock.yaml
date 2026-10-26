@@ -454,6 +454,9 @@ importers:
       '@rbw/controller':
         specifier: workspace:*
         version: link:../../tools/controller
+      '@rbw/factory':
+        specifier: workspace:*
+        version: link:../factory
       '@rbw/factory-contract':
         specifier: workspace:*
         version: link:../factory-contract
