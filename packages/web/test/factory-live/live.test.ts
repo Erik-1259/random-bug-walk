@@ -17,8 +17,8 @@ import { HARNESS_IDENTITY } from "@rbw/case-validate/version";
 import { FACTORY_IDENTITY, FACTORY_PROFILE, factoryDatabaseOver, parseRateSheet, validationWorstCase } from "@rbw/controller/factory-web";
 import type { FactoryDatabase, FactoryEventInput, WorkerSandboxCreateParams, WorkerSandboxInstance, WorkerSandboxSdk, WorkerSandboxStatus } from "@rbw/controller/factory-web";
 import { budgetKey, candidateId, qualificationRecord } from "@rbw/factory";
-import type { CaseEvidence } from "@rbw/factory";
-import type { CatalogEntry, HostAdapter, Interpretation, RequestInput } from "@rbw/factory-contract";
+import type { CaseEvidence, CellMatrix } from "@rbw/factory";
+import type { CatalogEntry, CellObservation, HostAdapter, Interpretation, RequestInput } from "@rbw/factory-contract";
 import { canonicalDigest } from "@rbw/schema";
 import { migrate } from "@rbw/spend";
 import * as casePackage from "@rbw/case-package";
@@ -39,6 +39,8 @@ const IMAGE = `synthetic.invalid/rbw-factory-worker@sha256:${"a".repeat(64)}`;
 const LAUNCH_ENV = { DATABASE_URL: "postgres://synthetic.invalid/factory" };
 const OTHER_VALIDATION_ID = "00000000-0000-4000-8000-0000000002a2";
 const WORKER_WORST_CASE = BigInt(FACTORY_PROFILE.prices.worker_worst_case_microusd);
+/** Stands for evaluator material in the qualification record's cells; no JSON response may hold it. */
+const SENTINEL = "synthetic-evaluator-detail-7f3a";
 
 // The fake Sandbox SDK ---------------------------------------------------------------------------
 
@@ -206,11 +208,17 @@ async function acceptWithoutSlot(requestId = REQUEST_ID): Promise<void> {
   );
 }
 
+/** A matrix whose every cell carries the sentinel as its evaluator detail. */
+function sentinelMatrix(): CellMatrix {
+  const cell = (observed: "pass" | "fail"): CellObservation => ({ observed, runs_valid: 1, runs_total: 1, failure_codes: observed === "fail" ? [SENTINEL] : [], detail: SENTINEL });
+  return { original_suite: { clean: cell("pass"), buggy: cell("pass"), fixed: cell("pass") }, verification: { clean: cell("pass"), buggy: cell("fail"), fixed: cell("pass") } };
+}
+
 /** The delivered case's evidence as the worker records it: the client-safe case over the prepared bytes, and its record. */
 function caseEvidence(requestId: string): CaseEvidence {
   const caseId = host.prepared.case_id;
   const record = qualificationRecord({
-    harness: { result: "passed", stopped: false, package_sha256: { bug_case: host.prepared.bug_case_sha256, validator: host.prepared.validator_core_sha256 }, harness: HARNESS_IDENTITY, matrix: null, records: [], integrity: "verified", message: null },
+    harness: { result: "passed", stopped: false, package_sha256: { bug_case: host.prepared.bug_case_sha256, validator: host.prepared.validator_core_sha256 }, harness: HARNESS_IDENTITY, matrix: sentinelMatrix(), records: [], integrity: "verified", message: null },
     case_id: caseId,
     defect_id: host.prepared.defect_id,
     entry_id: host.entry.entry_id,
@@ -594,6 +602,26 @@ describe("validation runs", () => {
     expect(busy.status).toBe(409);
     expect((await readJson(busy)).error).toMatchObject({ code: "busy", details: { reason: "active" } });
     expect(await w.db.factoryRecords.validation(OTHER_VALIDATION_ID)).toBeNull();
+  });
+
+  it("keeps the qualification record's evaluator detail out of every JSON response", async () => {
+    await acceptWithoutSlot();
+    const evidence = await packageCase(REQUEST_ID, true);
+    await finishFulfilled(REQUEST_ID);
+    expect(JSON.stringify(evidence.record)).toContain(SENTINEL);
+    const caseId = evidence.case.case_id;
+    const responses = [
+      await status(),
+      await validate(REQUEST_ID, caseId),
+      await validate(REQUEST_ID, caseId),
+      await getValidationRun(request(`/api/factory/requests/${REQUEST_ID}/cases/${caseId}/validations/${VALIDATION_ID}`), w.server, { request_id: REQUEST_ID, case_id: caseId, validation_id: VALIDATION_ID }),
+      await postStop(request(`/api/factory/requests/${REQUEST_ID}/stop`, { body: {} }), w.server, { request_id: REQUEST_ID }),
+      await getCapabilities(request("/api/factory/capabilities", { session: false }), w.server),
+    ];
+    for (const response of responses) {
+      expect(response.status).toBeLessThan(300);
+      expect(await response.text()).not.toContain(SENTINEL);
+    }
   });
 
   it("answers a validation POST 404 before the case is delivered", async () => {
