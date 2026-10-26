@@ -344,12 +344,16 @@ function restartedServer(prepared: PreparedDir): FactoryServer {
 
 // Tests ------------------------------------------------------------------------------------------
 
-describe("the modules live mode loads by name", () => {
-  it("are the package tooling's root entry and the controller's local backend, with the calls live mode makes", async () => {
+describe("the package tooling and the local backend live mode calls", () => {
+  it("are the package tooling's functions and the controller's local backend, with the calls live mode makes", async () => {
     // This directory's type check holds the real modules to the interfaces the app's type check sees.
     const tools: PackageTools = casePackage;
     const backend: LocalBackend = factoryLocal;
-    expect((await packageTools()).readPreparedIndex).toBe(tools.readPreparedIndex);
+    const loaded = await packageTools();
+    expect(loaded.readPreparedIndex).toBe(tools.readPreparedIndex);
+    expect(loaded.readPreparedObject).toBe(tools.readPreparedObject);
+    expect(loaded.unpackArchive).toBe(tools.unpackArchive);
+    expect(loaded.parseValidatorManifest).toBe(tools.parseValidatorManifest);
     expect((await localBackend()).localWorkerSandbox).toBe(backend.localWorkerSandbox);
   });
 });
