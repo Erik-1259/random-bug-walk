@@ -141,7 +141,7 @@ describe("the sandbox copy runner", () => {
   });
 
   it("returns setup_failed for a placeholder digest (an image not pushed yet), launching and creating nothing", async () => {
-    // As the committed Umami runtime pin has it until its image is pushed.
+    // As a committed pin has it until its image is pushed.
     const collected = await createSandboxCopyRunner(deps()).run(plan({ image: { reference: "random-bug-walk/umami-runtime", digest: `sha256:${"0".repeat(64)}` } }), roots);
     expect(collected).toMatchObject({ outcome: "setup_failed", results_dir: null });
     expect(sdk.creates).toHaveLength(0);
