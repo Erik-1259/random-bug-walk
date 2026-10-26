@@ -37,9 +37,14 @@ describe("prepare scan hook", () => {
 
   it("blocks a planted synthetic term and a stand-in secret, with member locations and never the matched text", async () => {
     const { env } = settings();
-    const files = { ...CLEAN_FILES, "src/app.js": `export const total = 1;\n// ${TERM}\n`, "notes/readme.md": `# Notes\n\nkey ${STUB_LEAK_MARKER}\n` };
+    // The term also sits in manifest.json, the first member, so a hook that leaves the first member out of the scan fails.
+    const files = {
+      "manifest.json": `{ "format": "synthetic",\n  "note": "${TERM}" }\n`,
+      "src/app.js": `export const total = 1;\n// ${TERM}\n`,
+      "notes/readme.md": `# Notes\n\nkey ${STUB_LEAK_MARKER}\n`,
+    };
     const verdict = await scanPreparedPart(part(files), env);
-    expect(verdict).toEqual({ outcome: "blocked", locations: ["notes/readme.md:3", "src/app.js:2"] });
+    expect(verdict).toEqual({ outcome: "blocked", locations: ["manifest.json:2", "notes/readme.md:3", "src/app.js:2"] });
     expect(JSON.stringify(verdict)).not.toContain(TERM);
     expect(JSON.stringify(verdict)).not.toContain(STUB_LEAK_MARKER);
   });
