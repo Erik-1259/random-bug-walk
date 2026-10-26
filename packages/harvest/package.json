@@ -17,6 +17,6 @@
     "@octokit/core": "7.0.8",
     "@octokit/request-error": "7.1.2",
     "@rbw/shapes": "workspace:*",
-    "zod": "4.6.5"
+    "zod": "4.6.6"
   }
 }
