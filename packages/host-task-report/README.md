@@ -152,11 +152,14 @@ the repair; `test/adapter.test.ts` checks this with sentinels planted in each of
 own README states the contract's query for a completion, so the planted change is
 source-inferable (difficulty not assessed).
 
-The kit image pin is `catalog/kit-image.v2.json`: today the local arm64 build the version 2
-qualification ran on, pinned by its local image ID. Hosted copies run linux/amd64 only and start
-the image by its repository digest, so the hosted pin is an amd64 build pushed to a registry and
-pinned with `qualify.ts pin --registry` (see Commands). No build has been pushed yet. A new pin
-changes the environment hash and with it the case ID.
+The kit image pin is `catalog/kit-image.v2.json`: the linux/amd64 build pushed to the
+deployment's registry, pinned with `qualify.ts pin --tag` under the neutral reference
+`rbw-task-report:kit-v2-amd64` and its image ID, which equals the manifest digest the registry
+serves. Hosted copies run linux/amd64 only and start the image by that digest in the deployment's
+registry, so the committed pin names no registry. The version 2 qualification below ran on the
+earlier local arm64 build (`rbw-task-report:kit-v2-arm64-r2`) and counts for that pin only; the
+amd64 pin has no qualification of its own yet. A new pin changes the environment hash and with it
+the case ID.
 
 ## Evidence sets
 

@@ -334,7 +334,7 @@ describe("collect", () => {
     exit_code: 0,
     results_dir: results,
     image_digest: kit.digest,
-    architecture: "arm64",
+    architecture: kit.architecture,
     started_at: "2030-01-01T00:00:00.000Z",
     finished_at: "2030-01-01T00:01:30.000Z",
     results_sha256: results === null ? null : "e".repeat(64),
@@ -353,7 +353,7 @@ describe("collect", () => {
     expect(errors("CollectedCopy", collected(plan, null, { outcome: "setup_failed", exit_code: null }))).toEqual([]);
     const record = await adapter.collect(plan, collected(plan, resultsWith(summaryFor(plan, FAILURE_CODE))));
     expect(errors("CopyRecord", record)).toEqual([]);
-    expect(record).toMatchObject({ copy_id: plan.copy_id, state: "buggy", status: "complete", image_digest: kit.digest, architecture: "arm64", evidence_sha256: "e".repeat(64) });
+    expect(record).toMatchObject({ copy_id: plan.copy_id, state: "buggy", status: "complete", image_digest: kit.digest, architecture: kit.architecture, evidence_sha256: "e".repeat(64) });
     expect(record.verification).toMatchObject({ observed: "fail", failure_codes: [FAILURE_CODE], runs_valid: 3, runs_total: 3 });
     expect(record.original_suite).toMatchObject({ observed: "pass", executed: 579, expected: 579, suite_sha256: baseline.suite.tree_sha256 });
   });
@@ -442,7 +442,7 @@ describe("interpret", () => {
     original_suite: { observed: checks === "fail" ? ("pass" as const) : checks, runs_valid: 3, runs_total: 3, failure_codes: [], detail: "", executed: 579, expected: 579, failing_test_ids: [], suite_sha256: baseline.suite.tree_sha256 },
     verification: { observed: checks, runs_valid: 3, runs_total: 3, failure_codes: checks === "fail" ? [FAILURE_CODE] : [], detail: "" },
     image_digest: kit.digest,
-    architecture: "arm64" as const,
+    architecture: kit.architecture,
     started_at: "2030-01-01T00:00:00.000Z",
     finished_at: "2030-01-01T00:01:30.000Z",
     evidence_sha256: "e".repeat(64),

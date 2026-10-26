@@ -162,7 +162,7 @@ describe("the sandbox copy runner", () => {
     const image = (reference: string, digest: string | null = DIGEST) => copyImage(REGISTRY, plan({ image: { reference, digest } }));
     // The committed pins' shapes: a neutral name, or a local tag, and the digest.
     expect(image("random-bug-walk/umami-runtime")).toEqual({ image: `${REGISTRY}/umami-runtime@${DIGEST}` });
-    expect(image("rbw-task-report:kit-v2-arm64-r2")).toEqual({ image: `${REGISTRY}/rbw-task-report@${DIGEST}` });
+    expect(image("rbw-task-report:kit-v2-amd64")).toEqual({ image: `${REGISTRY}/rbw-task-report@${DIGEST}` });
     expect(image("registry.invalid:5000/a/b")).toEqual({ image: `${REGISTRY}/b@${DIGEST}` });
     expect(image(`registry.invalid/a/b@${DIGEST}`)).toEqual({ image: `${REGISTRY}/b@${DIGEST}` });
     expect(image(`registry.invalid/a/b@sha256:${"1".repeat(64)}`)).toEqual({ refused: "the plan's image reference carries another digest" });
