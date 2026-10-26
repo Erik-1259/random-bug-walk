@@ -5,14 +5,13 @@
 // failed open is retried by the next call; the session and the example never open it. The prepared
 // packages index is read once, when the server is built. The rate sheet is the one the build froze
 // (next.config.ts), since a bundled module cannot resolve the envelope package's file.
-import { HOST_REGISTRY } from "@rbw/case-validate/registry";
 import { WORKER_IMAGE_VARIABLE, createWorkerSandboxSdk, openFactoryDatabase, parseRateSheet } from "@rbw/controller/factory-web";
 import type { FactoryDatabase } from "@rbw/controller/factory-web";
 import type { FactoryConfig } from "../../config.ts";
 import type { FactoryServer } from "../ports.ts";
 import type { PreparedPackages } from "./packages.ts";
 import { createLiveServer } from "./server.ts";
-import { localBackend, packageTools } from "./tools.ts";
+import { hostRegistry, localBackend, packageTools } from "./tools.ts";
 import type { LiveDeps, Rates } from "./server.ts";
 
 /** A worker image reference pinned by digest, as the launch requires. */
@@ -87,7 +86,7 @@ async function build(config: FactoryConfig, log: Log): Promise<FactoryServer> {
     passcode: config.passcode,
     database: config.databaseUrl === null ? null : lazyDatabase(config.databaseUrl, log),
     launch: await launchFor(config, log),
-    adapters: HOST_REGISTRY.list().map((registration) => registration.adapter),
+    adapters: (await hostRegistry()).list().map((registration) => registration.adapter),
     prepared: await preparedPackages(config.packagesDir, log),
     rates: frozenRates(),
     now: () => new Date(),

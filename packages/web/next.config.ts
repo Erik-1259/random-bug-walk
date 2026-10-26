@@ -31,9 +31,8 @@ const config: NextConfig = {
   // slim judge entry by name, and the bundler builds it into them with what it imports, the schema
   // file included. The factory routes check their bodies with the contract package's validator,
   // which reads its schema file the same way, and use the factory core's identities, whose package
-  // reads its criteria catalog file next to its sources. Live mode's package tooling and host
-  // registry (the task-report adapter reads its catalog files next to its sources) load the same way.
-  serverExternalPackages: ["@rbw/schema", "@rbw/admission", "@rbw/factory-contract", "@rbw/factory", "@rbw/case-package", "@rbw/case-validate"],
+  // reads its criteria catalog file next to its sources.
+  serverExternalPackages: ["@rbw/schema", "@rbw/admission", "@rbw/factory-contract", "@rbw/factory"],
   poweredByHeader: false,
   // The factory routes price with the same pinned rate sheet, frozen as its text.
   env: { RBW_JUDGE_FROZEN: frozenJudge(), RBW_FACTORY_RATE_SHEET: readFileSync(RATE_SHEET, "utf8") },
