@@ -7,25 +7,49 @@
 import { randomUUID } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { assembleFinalValidator, inspectValidator, packArchive, pairSha256, preparedObjectName, unpackArchive } from "@rbw/case-package";
 import type { PreparedIndex } from "@rbw/case-package";
 import { syntheticProtocol } from "@rbw/case-package/synthetic";
 import { HARNESS_IDENTITY } from "@rbw/case-validate";
-import type { CaseEvidence } from "@rbw/factory";
+import type * as Factory from "@rbw/factory";
+import type { CaseEvidence, LedgerStatus, RunRequestDeps } from "@rbw/factory";
 import type { CollectedCopy, CopyPlan, CopyRunner } from "@rbw/factory-contract";
 import { encodeCanonical, sha256Hex } from "@rbw/schema";
 import { factoryWorkerCommand } from "../../src/factory-cli.ts";
 import { DockerCopyUncertain, createDockerCopyRunner } from "../../src/factory-docker-runner.ts";
 import { startFactoryValidation, startFactoryWorker, validationRunView } from "../../src/factory-launch.ts";
 import type { FactoryLaunchDeps } from "../../src/factory-launch.ts";
-import { FACTORY_IDENTITY } from "../../src/factory-ledger.ts";
+import { FACTORY_IDENTITY, makeUncertain } from "../../src/factory-ledger.ts";
 import { CopyMeter } from "../../src/factory-meter.ts";
 import type { FactoryRequestRecord, StoredFactoryEvent } from "../../src/factory-ports.ts";
 import { HELD_INTERFACES, MISSING_MODULES, loadFactoryWiring } from "../../src/factory-wiring.ts";
 import { CREDENTIALS, FakeWorkerSandbox, PROTOCOL, WORKER_IMAGE, copyPlan, copyRoots } from "./factory-fakes.ts";
 import { acceptSyntheticRequest, localProcessRunner, scratch, syntheticHost, syntheticWiring, wiringWorld } from "./factory-wiring-fakes.ts";
 import type { LocalProcessRunner, SyntheticHost, WiringWorld } from "./factory-wiring-fakes.ts";
+
+/** Called with each ledger status the wiring hands the request loop, before the loop reads it. */
+const ledgerProbe = vi.hoisted(() => ({ read: null as ((status: LedgerStatus) => Promise<void>) | null }));
+
+// The factory core as it is; only the request loop's ledger reads also pass through the probe.
+vi.mock("@rbw/factory", async (importOriginal) => {
+  const actual = await importOriginal<typeof Factory>();
+  return {
+    ...actual,
+    runRequest: (deps: RunRequestDeps) =>
+      actual.runRequest({
+        ...deps,
+        ledger: {
+          ...deps.ledger,
+          async status() {
+            const status = await deps.ledger.status();
+            await ledgerProbe.read?.(status);
+            return status;
+          },
+        },
+      }),
+  };
+});
 
 let w: WiringWorld;
 let host: SyntheticHost;
@@ -40,6 +64,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  ledgerProbe.read = null;
   await w.pglite.close();
 });
 
@@ -70,6 +95,28 @@ async function slotHolder(): Promise<string | null> {
   const slot = await w.db.spend.slotStatus({ slot_key: "factory" });
   if (!slot.ok) throw new Error("synthetic: the slot status was refused");
   return slot.holder;
+}
+
+/** The request budget, the factory pool and the ledger's halt as the database records them now. */
+async function recordedLedger(record: FactoryRequestRecord): Promise<{ budget: bigint; open: bigint; settled: bigint; poolAvailable: bigint; halted: boolean }> {
+  const budget = await w.db.ledger.budgets.status(record.budget_key);
+  const pool = await w.db.spend.poolStatus({ pool_key: "factory" });
+  const halt = await w.db.spend.haltStatus();
+  if (!budget.ok || !pool.ok || !halt.ok) throw new Error("synthetic: a ledger read was refused");
+  return { budget: budget.budget_microusd, open: budget.open_microusd, settled: budget.settled_microusd, poolAvailable: pool.available_microusd, halted: halt.halted };
+}
+
+/** Pairs each ledger status the request loop reads with what the database records at that read. */
+function probeLedger(record: FactoryRequestRecord): [LedgerStatus, LedgerStatus][] {
+  const reads: [LedgerStatus, LedgerStatus][] = [];
+  ledgerProbe.read = async (status) => {
+    const recorded = await recordedLedger(record);
+    reads.push([
+      status,
+      { budget_microusd: Number(recorded.budget), reserved_microusd: Number(recorded.open), spent_microusd: Number(recorded.settled), halted: recorded.halted, pool_available_microusd: Number(recorded.poolAvailable), pool_halted: recorded.halted },
+    ]);
+  };
+  return reads;
 }
 
 async function evidenceOf(record: FactoryRequestRecord): Promise<CaseEvidence> {
@@ -194,6 +241,98 @@ describe("a request on the synthetic pair", () => {
     expect(types).not.toContain("candidate_selected");
     expect(types).not.toContain("case_delivered");
     expect(w.logs.some((line) => line.includes("the event host:task-report:preparing differs from the one recorded under its key"))).toBe(true);
+  });
+
+  it("ends the request operational_error, running and delivering nothing, when the store refuses an event", async () => {
+    const record = await acceptSyntheticRequest(w, host.registry);
+    expect((await startFactoryWorker(launchDeps(), record.request_id)).kind).toBe("launched");
+    const records = w.db.factoryRecords;
+    // The store refuses the host's preparation event, as it refuses an event it no longer allows.
+    w.db = { ...w.db, factoryRecords: { ...records, appendEvent: (id, event, at) => (event.event_key === "host:task-report:preparing" ? Promise.resolve({ kind: "refused", reason: "event_not_allowed" }) : records.appendEvent(id, event, at)) } };
+    const runner = localProcessRunner(await scratch("copies"));
+    const code = await worker(["--request-id", record.request_id, "--deadline-at", new Date(w.clock.ms + 3_600_000).toISOString()], runner);
+    // The refused append rejects; the core's loop ends the request as an operational error.
+    expect(out).toEqual([`request=${record.request_id} stop_code=operational_error slot_released=true`]);
+    expect(code).toBe(0);
+    expect(runner.plans).toHaveLength(0);
+    const types = (await records.events(record.request_id)).map((event) => event.type);
+    expect(types).not.toContain("host_preparing");
+    expect(types).not.toContain("candidate_selected");
+    expect(types).not.toContain("case_delivered");
+    expect(w.logs.some((line) => line.includes("the event host:task-report:preparing was refused (event_not_allowed)"))).toBe(true);
+  });
+});
+
+describe("the request loop's ledger status", () => {
+  it("is the request budget and the factory pool as recorded, and budget_updated reports the budget's amounts", async () => {
+    const record = await acceptSyntheticRequest(w, host.registry);
+    const reads = probeLedger(record);
+    // The amounts the database records once the candidate is reserved, read as its first copy starts.
+    const atFirstCopy: Awaited<ReturnType<typeof recordedLedger>>[] = [];
+    const local = localProcessRunner(await scratch("copies"));
+    const runner: CopyRunner = {
+      async run(plan, roots) {
+        if (atFirstCopy.length === 0) atFirstCopy.push(await recordedLedger(record));
+        return local.run(plan, roots);
+      },
+    };
+    expect((await startFactoryWorker(launchDeps(), record.request_id)).kind).toBe("launched");
+    const code = await worker(["--request-id", record.request_id, "--deadline-at", new Date(w.clock.ms + 3_600_000).toISOString()], runner);
+    expect(out).toEqual([`request=${record.request_id} stop_code=fulfilled slot_released=true`]);
+    expect(code).toBe(0);
+
+    expect(reads.length).toBeGreaterThan(1);
+    for (const [status, recorded] of reads) expect(status).toEqual(recorded);
+    expect(reads.every(([status]) => status.budget_microusd === 1_500_000 && !status.halted && !status.pool_halted)).toBe(true);
+
+    const [first] = atFirstCopy;
+    if (first === undefined) throw new Error("synthetic: no copy ran");
+    const { budget, open, settled } = first;
+    expect([budget, open > 0n]).toEqual([1_500_000n, true]);
+    const events = await w.db.factoryRecords.events(record.request_id);
+    const candidate = events.find((event) => event.type === "candidate_selected")?.candidate_id;
+    const reservation = events.find((event) => event.event_key === `cand:${String(candidate)}:reserved`);
+    expect(reservation?.type).toBe("budget_updated");
+    expect(reservation?.data).toEqual({ reserved_microusd: Number(open), spent_microusd: Number(settled), remaining_microusd: Number(budget - open - settled) });
+  });
+
+  it("stops the request operational_error before selecting a candidate once the ledger records a halt", async () => {
+    const record = await acceptSyntheticRequest(w, host.registry);
+    expect((await startFactoryWorker(launchDeps(), record.request_id)).kind).toBe("launched");
+    // The worker's operation reconciled with usage above its open amount, which records an over-envelope
+    // observation and halts new work.
+    const operations = await w.db.spend.budgetOperations({ budget_key: record.budget_key });
+    const operation = operations.ok ? operations.operations[0] : undefined;
+    if (operation === undefined) throw new Error("synthetic: the worker's operation is not recorded");
+    expect(await makeUncertain(w.db.spend, operation.operation_id, "factory-worker")).toBe("uncertain");
+    const slot = await w.db.spend.slotStatus({ slot_key: "factory" });
+    const reconciled = await w.db.spend.reconcile({
+      schema_version: 1,
+      operation_id: operation.operation_id,
+      previous_state: "uncertain",
+      evidence: [{ key: "synthetic/reconcile/worker", sha256: "f".repeat(64) }],
+      provider_resource_ids: slot.ok ? slot.children.filter((child) => child.operation_id === operation.operation_id).map((child) => child.resource_id) : [],
+      recorded_at: w.clock.now().toISOString(),
+      actor_role: "operator",
+      decision: "confirm_stopped_incomplete",
+      retained_microusd: Number(operation.open_microusd) + 1,
+      released_microusd: 0,
+      reason: "synthetic over-envelope reconciliation",
+    });
+    expect(reconciled.ok && reconciled.over_envelope).toBe(true);
+    expect((await recordedLedger(record)).halted).toBe(true);
+    const reads = probeLedger(record);
+    const runner = localProcessRunner(await scratch("copies"));
+    const code = await worker(["--request-id", record.request_id, "--deadline-at", new Date(w.clock.ms + 3_600_000).toISOString()], runner);
+    expect(out).toEqual([`request=${record.request_id} stop_code=operational_error slot_released=true`]);
+    expect(code).toBe(0);
+    expect(runner.plans).toHaveLength(0);
+    expect(reads.length).toBeGreaterThan(0);
+    for (const [status, recorded] of reads) expect(status).toEqual(recorded);
+    expect(reads.every(([status]) => status.halted && status.pool_halted)).toBe(true);
+    const types = (await w.db.factoryRecords.events(record.request_id)).map((event) => event.type);
+    expect(types).not.toContain("candidate_selected");
+    expect(types.at(-1)).toBe("request_finished");
   });
 });
 

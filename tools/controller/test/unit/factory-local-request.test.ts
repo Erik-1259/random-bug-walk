@@ -17,6 +17,7 @@ import { factoryWorkerCommand } from "../../src/factory-cli.ts";
 import { startFactoryValidation, startFactoryWorker } from "../../src/factory-launch.ts";
 import type { FactoryLaunchDeps } from "../../src/factory-launch.ts";
 import type { WorkerSandboxCreateParams, WorkerSandboxInstance, WorkerSandboxSdk } from "../../src/factory-ports.ts";
+import { FACTORY_PACKAGES_DIR } from "../../src/factory-wiring.ts";
 import type { FactoryWiring } from "../../src/factory-wiring.ts";
 import type { Orchestrate, Validate } from "../../src/factory-worker.ts";
 import { UsageError } from "../../src/run-options.ts";
@@ -244,6 +245,25 @@ describe("the factory-worker command", () => {
     }
     expect(seen).toEqual(["synthetic-team/synthetic-project", null]);
     expect(w.logs.filter((line) => line.includes("RBW_FACTORY_WORKER_IMAGE is not set or names no registry namespace"))).toHaveLength(1);
+  });
+
+  it("reads the image's prepared packages on the sandbox backend even when RBW_FACTORY_PACKAGES_DIR is set, which only the docker backend takes", async () => {
+    const seen: string[] = [];
+    const capture = (): FactoryWiring => ({
+      ...wiring(),
+      orchestrate: (_backend, ctx) => {
+        seen.push(ctx.packagesDir);
+        return syntheticLoop;
+      },
+    });
+    for (const backend of ["sandbox", "docker"]) {
+      const record = await acceptRequest(w, { budget: 3_000_000 });
+      expect((await startFactoryWorker(launchDeps(w.sandbox), record.request_id)).kind).toBe("launched");
+      const args = ["--request-id", record.request_id, "--deadline-at", new Date(w.clock.ms + 3_600_000).toISOString(), "--backend", backend];
+      const code = await factoryWorkerCommand(args, { ...io(), env: { ...CREDENTIALS, RBW_FACTORY_PACKAGES_DIR: "synthetic-packages" }, sandbox: w.sandbox, load: () => Promise.resolve({ ok: true as const, wiring: capture() }) });
+      expect(code).toBe(0);
+    }
+    expect(seen).toEqual([FACTORY_PACKAGES_DIR, "synthetic-packages"]);
   });
 
   it("refuses a request that is not recorded as an input error", async () => {
