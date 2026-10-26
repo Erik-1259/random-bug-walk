@@ -93,6 +93,8 @@ export type Checkpoint = "continue" | "stop" | "fenced";
 export interface RequestHooks {
   request: FactoryRequestRecord;
   profile: FactoryProfile;
+  /** The pinned rate sheet the profile's envelopes are priced from, for the core's view of the profile. */
+  rates: Rates;
   /** The worker sandbox's end: no copy starts unless it ends, with its margin, before this. */
   deadline: Date;
   now: () => Date;
@@ -242,7 +244,7 @@ export async function runFactoryWorker(deps: WorkerDeps, args: { request_id: str
     });
 
     try {
-      await args.orchestrate({ request: record, profile, deadline: args.deadline, now: deps.now, meter, checkpoint, append, settleWorker });
+      await args.orchestrate({ request: record, profile, rates: deps.rates, deadline: args.deadline, now: deps.now, meter, checkpoint, append, settleWorker });
     } catch (error) {
       deps.log(`factory ${id} the request loop failed (${errorText(error)})`);
     }
