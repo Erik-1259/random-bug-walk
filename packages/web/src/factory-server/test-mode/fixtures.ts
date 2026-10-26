@@ -21,6 +21,8 @@ export const SCENARIO_FIXTURE: Record<TestScenario, string> = {
   "uncertain-provider": "status-operational-error.json",
   "validation-failed": "status-fulfilled.json",
   "validation-error": "status-fulfilled.json",
+  // No end-state fixture: the run ends as status-zero-result.json does, with its candidate invalid.
+  "setup-failed": "status-zero-result.json",
 };
 
 const STATUS_FILES = [...new Set([...Object.values(SCENARIO_FIXTURE), "status-queued.json", "status-running.json", "status-validated.json"])];

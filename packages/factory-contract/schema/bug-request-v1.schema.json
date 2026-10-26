@@ -414,7 +414,8 @@
         "worker-lost",
         "uncertain-provider",
         "validation-failed",
-        "validation-error"
+        "validation-error",
+        "setup-failed"
       ]
     },
     "TestOperationKind": {
@@ -9954,6 +9955,7 @@
       "required": [
         "contract_version",
         "request_id",
+        "root_execution_id",
         "operations",
         "slot",
         "provider_calls"
@@ -9963,6 +9965,10 @@
           "$ref": "#/$defs/ContractVersion"
         },
         "request_id": {
+          "$ref": "#/$defs/Uuid"
+        },
+        "root_execution_id": {
+          "description": "The request's root execution in the spend ledger. The worker's operation and every candidate copy run under it, and it stays the same across reads.",
           "$ref": "#/$defs/Uuid"
         },
         "operations": {
@@ -9990,6 +9996,8 @@
         "operation_id",
         "kind",
         "call_name",
+        "execution_id",
+        "host_id",
         "state",
         "reserved_microusd",
         "settled_microusd",
@@ -10005,6 +10013,21 @@
         },
         "call_name": {
           "$ref": "#/$defs/Identifier"
+        },
+        "execution_id": {
+          "description": "The execution this operation pays for. For the worker it is the request's root execution; for a candidate or validation copy, the copy's execution; for a validation run, the run's root execution.",
+          "$ref": "#/$defs/Uuid"
+        },
+        "host_id": {
+          "description": "The host of the copy or validation run; null for the worker.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HostId"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "state": {
           "description": "A settled operation is terminal with settled_microusd set.",
@@ -10073,6 +10096,35 @@
             "properties": {
               "settled_microusd": {
                 "type": "integer"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "const": "worker"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "host_id": {
+                "const": null
+              }
+            }
+          },
+          "else": {
+            "type": "object",
+            "properties": {
+              "host_id": {
+                "$ref": "#/$defs/HostId"
               }
             }
           }
@@ -10145,6 +10197,7 @@
       "additionalProperties": false,
       "required": [
         "call_name",
+        "execution_id",
         "provider",
         "action",
         "at"
@@ -10152,6 +10205,10 @@
       "properties": {
         "call_name": {
           "$ref": "#/$defs/Identifier"
+        },
+        "execution_id": {
+          "description": "The execution whose job this call created or stopped. It equals the execution_id of the operation with the same call_name.",
+          "$ref": "#/$defs/Uuid"
         },
         "provider": {
           "$ref": "#/$defs/TestProvider"
