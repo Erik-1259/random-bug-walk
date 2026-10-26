@@ -6,7 +6,8 @@
   "license": "MIT",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./prepare-scan-hook": "./src/prepare-scan-hook.ts"
   },
   "engines": {
     "node": ">=24.21 <25"
@@ -19,6 +20,7 @@
     "proof": "node proof/proof.ts"
   },
   "devDependencies": {
+    "@rbw/case-package": "workspace:*",
     "@types/node": "24.19.1",
     "typescript": "6.0.3",
     "vitest": "5.0.3"

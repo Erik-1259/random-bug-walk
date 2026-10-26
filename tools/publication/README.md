@@ -2,7 +2,7 @@
 
 The publication boundary for agent work. It has four parts:
 
-- **Scanner** (`src/cli.ts`, `scan()` from the package entry). Checks content against the private pattern list, the attribution rules and gitleaks. It runs in the container, on the host and in CI. Its `scan-public` subcommand runs only gitleaks and the attribution rules, for the cloud route.
+- **Scanner** (`src/cli.ts`, `scan()` from the package entry). Checks content against the private pattern list, the attribution rules and gitleaks. It runs in the container, on the host and in CI. Its `scan-public` subcommand runs only gitleaks and the attribution rules, for the cloud route. `src/prepare-scan-hook.ts` runs it as the pre-write scan of `case-package prepare` (see "Prepare scan hook").
 - **Host helper** (`src/helper.ts`). Answers publication requests from the inbox. It scans exactly what a push or PR text would make public, then pushes or posts those same bytes. Nothing is published unless that content scanned clean, and nothing is published when a check cannot run.
 - **Wrapper** (`bin/rbw-publish`). The only publication route from inside the container. It writes one request into the inbox and waits for the helper's response.
 - **Pre-push hook** (`hooks/pre-push`). Refuses every direct `git push` and points to the wrapper.
@@ -159,6 +159,27 @@ const result = await scan({
 ```
 
 A request takes at most one git source or one files source, plus any number of text items, and needs at least one input. With no excluded revision, every commit reachable from the head is scanned. `scan()` never throws; any error becomes `unavailable`.
+
+## Prepare scan hook
+
+`src/prepare-scan-hook.ts` exports `SCAN_HOOK`, the pre-write scan hook that `case-package prepare --scan-hook` loads (see `tools/case-package/README.md`). For each package part it writes every member, manifest included, as a new file in a new temporary directory and runs `scan()` over them in files mode: the private pattern list, the attribution rules and gitleaks. It returns `scan()`'s result unchanged, so a finding is a location only, `<member path>:<line>`, or `paths:<n>` for a path that is itself a violation. It removes the directory afterwards and prints nothing.
+
+Its two settings come only from the environment, so nothing private is committed:
+
+| Variable | Value |
+|---|---|
+| `RBW_SCAN_PATTERNS` | The private pattern file. |
+| `RBW_GITLEAKS_COMMAND` | The gitleaks command, in the format under "gitleaks command"; on the host, the Docker form. |
+
+A missing or empty variable gives `unavailable`, as do the scanner's own `unavailable` causes and a malformed part; unlike the CLI, the hook has no default gitleaks command. Any answer other than `clean` makes `prepare` refuse the export and write nothing.
+
+```
+RBW_SCAN_PATTERNS=<pattern file> RBW_GITLEAKS_COMMAND="<gitleaks command>" \
+  node tools/case-package/src/cli.ts prepare --registry <module> --identity <module> \
+    --scan-hook tools/publication/src/prepare-scan-hook.ts --out <dir>
+```
+
+One scan per part covers the checks of both required CI jobs. The attribution rules always run in `scan()`; the `names-attribution` job differs from `public-safety` only in also scanning a pull request's title and body, and a package has neither. Neither exception applies, because the hook passes no repository and no trusted `LICENSE`: the owner name and every copyright line are checked like any other text.
 
 ## Container side
 
@@ -347,5 +368,5 @@ The log never contains request text, matched text, terms, the pattern file's pat
 
 ## Tests and proof
 
-- `pnpm --filter @rbw/publication test` runs the hermetic unit tests. They use temporary git repositories, a local bare remote, a stub gitleaks and a stub gh.
+- `pnpm --filter @rbw/publication test` runs the hermetic unit tests. They use temporary git repositories, a local bare remote, a stub gitleaks and a stub gh. The prepare scan hook's tests also run `case-package prepare` end to end over its synthetic host, so `@rbw/case-package` is a development dependency; nothing imports it at run time.
 - `pnpm --filter @rbw/publication run proof [--gitleaks <command>]` runs the integration proof against a temporary inbox, a synthetic pattern file, a registry, a standalone working copy and a local bare remote. It runs the helper (`once` and one `serve` run) and the wrapper as separate processes, and prints one PASS or FAIL line per check. It takes the gitleaks command the same way as the CLI, so the host can rerun it with the Docker form.
