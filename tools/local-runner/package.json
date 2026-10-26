@@ -20,7 +20,7 @@
     "runner": "node src/cli.ts"
   },
   "dependencies": {
-    "@electric-sql/pglite": "0.5.8",
+    "@electric-sql/pglite": "0.5.10",
     "@rbw/admission": "workspace:*",
     "@rbw/projection": "workspace:*",
     "@rbw/schema": "workspace:*",
@@ -31,7 +31,7 @@
     "@rbw/umami-fixture": "workspace:*",
     "@rbw/umami-fixture-rc1": "workspace:*",
     "@rbw/writer": "workspace:*",
-    "@vercel/sandbox": "3.5.1",
+    "@vercel/sandbox": "3.8.0",
     "axios": "1.20.0",
     "diff": "9.0.0",
     "tar-stream": "3.2.2"

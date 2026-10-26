@@ -13,14 +13,14 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@ai-sdk/openai-compatible": "3.0.65",
+    "@ai-sdk/openai-compatible": "3.0.71",
     "@rbw/schema": "workspace:*",
     "@rbw/spend": "workspace:*",
     "@rbw/writer": "workspace:*",
-    "ai": "7.0.130",
-    "zod": "4.6.6"
+    "ai": "7.0.143",
+    "zod": "4.6.7"
   },
   "devDependencies": {
-    "@electric-sql/pglite": "0.5.8"
+    "@electric-sql/pglite": "0.5.10"
   }
 }
