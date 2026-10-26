@@ -33,6 +33,7 @@ const FILES = {
   "src/gen/b/c/contract.ts": `${HEADER}\r\nexport const b = 2;\r\n`,
   "src/other.ts": `export const c = 3;\n${HEADER}\n`,
   "src/gen/d/contract.ts": `${OTHER_HEADER}\nexport const d = 4;\n`,
+  "src/gen/f/contract.ts": `export const f = 6;\n${HEADER}\n`,
   "src/gen/contract.ts": `${HEADER}\n`,
   "xsrc/gen/a/contract.ts": `${HEADER}\n`,
   paths: `${HEADER}\n`,
@@ -63,6 +64,7 @@ describe("exemptKnownLines", () => {
 
   it("still blocks the listed text on another line, under a path the expression does not match, or in another part", () => {
     expect(exemptKnownLines(blocked("src/other.ts:2"), "bug_case", members(FILES), LIST)).toEqual(blocked("src/other.ts:2"));
+    expect(exemptKnownLines(blocked("src/gen/f/contract.ts:2"), "bug_case", members(FILES), LIST)).toEqual(blocked("src/gen/f/contract.ts:2"));
     expect(exemptKnownLines(blocked("src/gen/contract.ts:1"), "bug_case", members(FILES), LIST)).toEqual(blocked("src/gen/contract.ts:1"));
     expect(exemptKnownLines(blocked("xsrc/gen/a/contract.ts:1"), "bug_case", members(FILES), LIST)).toEqual(blocked("xsrc/gen/a/contract.ts:1"));
     expect(exemptKnownLines(blocked("src/gen/a/contract.ts:1"), "validator", members(FILES), LIST)).toEqual(blocked("src/gen/a/contract.ts:1"));
