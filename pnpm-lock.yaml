@@ -774,6 +774,9 @@ importers:
 
   tools/publication:
     devDependencies:
+      '@rbw/case-package':
+        specifier: workspace:*
+        version: link:../case-package
       '@types/node':
         specifier: 24.19.1
         version: 24.19.1
