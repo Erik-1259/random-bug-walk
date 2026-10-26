@@ -3,7 +3,7 @@ import { join } from "node:path";
 import type { NextConfig } from "next";
 import { loadSiteConfig } from "./src/config.ts";
 
-/** The pinned rate sheet the judge route prices the controller and the copies with. */
+/** The pinned rate sheet the judge route prices the controller and the copies with, and the factory routes their work. */
 const RATE_SHEET = new URL("../envelope/rate-sheets/v1.json", import.meta.url);
 
 /**
@@ -34,7 +34,8 @@ const config: NextConfig = {
   // reads its criteria catalog file next to its sources.
   serverExternalPackages: ["@rbw/schema", "@rbw/admission", "@rbw/factory-contract", "@rbw/factory"],
   poweredByHeader: false,
-  env: { RBW_JUDGE_FROZEN: frozenJudge() },
+  // The factory routes price with the same pinned rate sheet, frozen as its text.
+  env: { RBW_JUDGE_FROZEN: frozenJudge(), RBW_FACTORY_RATE_SHEET: readFileSync(RATE_SHEET, "utf8") },
 };
 
 export default config;

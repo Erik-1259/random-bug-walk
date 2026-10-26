@@ -8,14 +8,15 @@ import { randomUUID } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { assembleFinalValidator, inspectValidator, packArchive, pairSha256, preparedObjectName, unpackArchive } from "@rbw/case-package";
+import { assembleFinalValidator, exportCase, inspectValidator, packArchive, pairSha256, preparedObjectName, unpackArchive, writePrepared } from "@rbw/case-package";
 import type { PreparedIndex } from "@rbw/case-package";
 import { syntheticProtocol } from "@rbw/case-package/synthetic";
 import { HARNESS_IDENTITY } from "@rbw/case-validate";
+import { CASE_IDENTITY } from "@rbw/case-validate/factory-prepare";
 import type * as Factory from "@rbw/factory";
 import type { CaseEvidence, LedgerStatus, RunRequestDeps } from "@rbw/factory";
-import type { CollectedCopy, CopyPlan, CopyRunner } from "@rbw/factory-contract";
-import { encodeCanonical, sha256Hex } from "@rbw/schema";
+import type { CatalogEntry, CollectedCopy, CopyPlan, CopyRunner, HostAdapter, Protocol } from "@rbw/factory-contract";
+import { canonicalDigest, encodeCanonical, sha256Hex } from "@rbw/schema";
 import { factoryWorkerCommand } from "../../src/factory-cli.ts";
 import { DockerCopyUncertain, createDockerCopyRunner } from "../../src/factory-docker-runner.ts";
 import { startFactoryValidation, startFactoryWorker, validationRunView } from "../../src/factory-launch.ts";
@@ -363,6 +364,59 @@ describe("a validation run of the delivered case", () => {
     expect(view.matrix?.verification.buggy).toEqual({ expected: "fail", observed: "fail", runs_valid: 2, runs_total: 2, matches_expectation: true });
     expect(view.matrix?.original_suite.clean.matches_expectation).toBe(true);
     expect(await slotHolder()).toBeNull();
+  });
+
+  /**
+   * Package version 2 of the synthetic entry written into the host's prepared directory, as a later
+   * `case-package prepare` does after a catalog revision that changed only the entry's protocol (not
+   * part of the case ID): the index names version 2's core under the same case ID, and version 1's
+   * archives stay.
+   */
+  async function prepareNewerVersion(): Promise<void> {
+    const [entry] = host.adapter.catalog();
+    if (entry === undefined) throw new Error("synthetic: the synthetic catalog is empty");
+    const base = host.adapter.protocol(entry);
+    const copies = { copies: 2, rounds_per_copy: 2, min_valid_runs: 2 };
+    const changed = { protocol_id: base.protocol_id, version: base.version, per_state: { clean: copies, buggy: copies, fixed: copies }, valid_trial_rules: base.valid_trial_rules };
+    const protocol: Protocol = { ...changed, sha256: canonicalDigest(changed).sha256 };
+    const revised: CatalogEntry = { ...entry, verification: { ...entry.verification, protocol_id: protocol.protocol_id, protocol_sha256: protocol.sha256 } };
+    const adapter: HostAdapter = {
+      ...host.adapter,
+      catalog: () => [revised],
+      protocol: () => protocol,
+      bugCaseInputs: () => host.adapter.bugCaseInputs(entry),
+      validatorInputs: async () => ({ ...(await host.adapter.validatorInputs(entry)), protocol }),
+    };
+    const v2 = await exportCase({ adapter, entry: revised, identity: CASE_IDENTITY, license: "MIT", scan: null, package_version: 2 });
+    const index = await writePrepared(host.packagesDir, [v2]);
+    expect(index.entries).toHaveLength(1);
+    expect(index.entries[0]).toMatchObject({ case_id: host.prepared.case_id, package_version: 2 });
+    expect(index.entries[0]?.validator_core_sha256).not.toBe(host.prepared.validator_core_sha256);
+  }
+
+  it("rebuilds the delivered validator from the core its record verified after a newer package version is prepared into the same directory", async () => {
+    const { record, evidence } = await delivered();
+    await prepareNewerVersion();
+    const runner = localProcessRunner(await scratch("validation"));
+    const { id, code } = await validate(record, evidence.case.packages.validator.sha256, runner);
+    expect(out.at(-1)).toBe(`validation=${id} result=passed slot_released=true`);
+    expect(code).toBe(0);
+    expect(runner.plans.map((plan) => plan.state)).toEqual(["clean", "buggy", "fixed"]);
+  });
+
+  it("answers error without running a copy when the core its record verified is not in the prepared directory", async () => {
+    const { record, evidence } = await delivered();
+    await prepareNewerVersion();
+    // The index and the bug case as prepared now, without version 1's validator core.
+    const dir = await scratch("packages");
+    for (const name of ["index.json", preparedObjectName(host.prepared.bug_case_sha256)]) await writeFile(join(dir, name), await readFile(join(host.packagesDir, name)));
+    const runner = localProcessRunner(await scratch("validation"));
+    const id = randomUUID();
+    expect((await startFactoryValidation(launchDeps(), { request_id: record.request_id, case_id: host.prepared.case_id, validation_id: id, host_id: "task-report", package_sha256: { bug_case: host.prepared.bug_case_sha256, validator: evidence.case.packages.validator.sha256 }, harness: HARNESS_IDENTITY, protocol: syntheticProtocol() })).kind).toBe("accepted");
+    await worker(["--validation-id", id], runner, dir);
+    expect(out.at(-1)).toBe(`validation=${id} result=error slot_released=true`);
+    expect(runner.plans).toHaveLength(0);
+    expect(w.logs.some((line) => line.includes("the prepared directory has no archive of the validator core the case's record verified"))).toBe(true);
   });
 
   it("answers error without running a copy when the rebuilt validator is not the one the run was started with", async () => {

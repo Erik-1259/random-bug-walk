@@ -107,12 +107,30 @@ export function judgeEnabled(config: JudgeConfig, releaseId: string | null): boo
  */
 export type FactoryMode = "live" | "test" | "refused";
 
+/** Where live mode runs the factory worker: a Vercel sandbox, or a child process of the local server. */
+export type FactoryWorkerBackend = "sandbox" | "local";
+
 export interface FactoryConfig {
   mode: FactoryMode;
   /** RBW_JUDGE_PASSCODE: the factory session is an HMAC of the judges' passcode; null disables it. */
   passcode: string | null;
   /** RBW_FACTORY_TEST_FIXTURES: the contract fixtures test mode replays, resolved against the app directory. */
   testFixturesDir: string;
+  /** DATABASE_URL: the spend ledger live mode records in; null leaves live mode not configured. */
+  databaseUrl: string | null;
+  /** VERCEL_TOKEN, VERCEL_TEAM_ID and VERCEL_PROJECT_ID for the worker sandboxes; null unless all three are set. */
+  sandbox: { token: string; teamId: string; projectId: string } | null;
+  /** RBW_FACTORY_WORKER_IMAGE: the worker image pinned by digest, for the sandbox backend. */
+  workerImage: string | null;
+  /** RBW_FACTORY_PACKAGES_DIR: the prepared packages directory, resolved against the app directory. */
+  packagesDir: string | null;
+  /**
+   * RBW_FACTORY_WORKER_BACKEND: `sandbox` (the default) or `local`; null for any other value, and for
+   * `local` whenever VERCEL_ENV is set, so a deployment never runs workers as local processes.
+   */
+  workerBackend: FactoryWorkerBackend | null;
+  /** The repository root, two levels above the app directory: the local backend runs its worker command from it. */
+  repoRoot: string;
 }
 
 export const DEFAULT_FACTORY_TEST_FIXTURES = "../../docs/product/fixtures/bug-request-v1";
@@ -120,15 +138,28 @@ export const DEFAULT_FACTORY_TEST_FIXTURES = "../../docs/product/fixtures/bug-re
 /**
  * RBW_FACTORY_TEST_MODE=1 selects test mode, which keeps its records in one server process's memory. It
  * is refused on any Vercel deployment (VERCEL_ENV preview or production), where instances do not share
- * that memory; a local `next dev` or `vercel dev` (VERCEL_ENV unset or development) keeps it.
+ * that memory; a local `next dev` or `vercel dev` (VERCEL_ENV unset or development) keeps it. Live
+ * mode reads the ledger, the worker launch and the prepared packages directory from the variables
+ * named on FactoryConfig.
  */
 export function loadFactoryConfig(env: Env = process.env, cwd: string = process.cwd()): FactoryConfig {
   const test = value(env, "RBW_FACTORY_TEST_MODE") === "1";
   const environment = value(env, "VERCEL_ENV");
   const deployed = environment === "preview" || environment === "production";
+  const token = value(env, "VERCEL_TOKEN");
+  const teamId = value(env, "VERCEL_TEAM_ID");
+  const projectId = value(env, "VERCEL_PROJECT_ID");
+  const packagesDir = value(env, "RBW_FACTORY_PACKAGES_DIR");
+  const backend = value(env, "RBW_FACTORY_WORKER_BACKEND") ?? "sandbox";
   return {
     mode: test ? (deployed ? "refused" : "test") : "live",
     passcode: value(env, "RBW_JUDGE_PASSCODE"),
     testFixturesDir: resolve(cwd, value(env, "RBW_FACTORY_TEST_FIXTURES") ?? DEFAULT_FACTORY_TEST_FIXTURES),
+    databaseUrl: value(env, "DATABASE_URL"),
+    sandbox: token === null || teamId === null || projectId === null ? null : { token, teamId, projectId },
+    workerImage: value(env, "RBW_FACTORY_WORKER_IMAGE"),
+    packagesDir: packagesDir === null ? null : resolve(cwd, packagesDir),
+    workerBackend: backend === "sandbox" ? "sandbox" : backend === "local" && environment === null ? "local" : null,
+    repoRoot: resolve(cwd, "../.."),
   };
 }
