@@ -57,4 +57,8 @@ both sides compute the same operation IDs and envelopes.
 ## The packages in the web service
 
 The web service reads the same prepared directory, bundled into its build (no object storage). The
-service side of that is planned in its own package (`packages/web`).
+service side is in `packages/web`: the deploy copies the directory into `packages/web/factory-packages`,
+whose `index.json` must have the same SHA-256 as the image's (see
+[Deploying on Vercel](../../packages/web/README.md#deploying-on-vercel)). A pushed linux/amd64 build of
+this image runs the requests of a hosted preview deployment; the production site is not deployed with
+the factory yet.

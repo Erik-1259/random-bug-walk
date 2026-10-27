@@ -23,7 +23,7 @@ One entry, `umami-date-time-01`, for bug type `date_time` and criterion `date_ti
 - **Reference repair:** the reverse patch, kind `revert`, which restores the clean file. It is the local runner's fixed-state patch, the one the release's judge job grades. The local runner's alternative fix is kept as extra evaluator evidence in the validator, not as the reference repair.
 - **Incident:** the released `issue.json`, unchanged (named by its SHA-256; the bytes come from the prepared store).
 - **Verification:** check set `umami-date-time-checks` version 1, identified by the fixture package's added-suite hash (the pins' `kit.added_suite_sha256`, `42c50a8b…`, the fixture the pinned kit image ran; `test/pins.test.ts` recomputes it from the repository's fixture package), the canonical hash of the clean, buggy and fixed vectors, and the protocol's hash.
-- **Environment:** the pinned amd64 runtime image (see [Runtime image](#runtime-image)) as a neutral reference (`random-bug-walk/umami-runtime`) and its digest, never the kit image. The reference names no registry; a runner has to map it to the repository the image was pushed to and run by the digest (see "Not yet connected").
+- **Environment:** the pinned amd64 runtime image (see [Runtime image](#runtime-image)) as a neutral reference (`random-bug-walk/umami-runtime`) and its digest, never the kit image. The reference names no registry; a runner has to map it to the repository the image was pushed to and run by the digest (see "Hosted copies" under [Runtime image](#runtime-image)).
 - **Difficulty:** `not_assessed`.
 
 Its IDs are opaque, and its presentation text names the symptom and the method only; a test checks that IDs and presentation carry no check IDs, file names, code identifiers or expected counts.
@@ -82,6 +82,8 @@ node packages/host-umami/src/pin-cli.ts --store <prepared store> --runtime-image
 
 It prints `{ kit, runtime, job }`; the kit options replace the kit pins for a store prepared from another build of the kit image, such as a local arm64 build. Adapter tests and local proofs build the adapter from such pins with `buildUmamiAdapter(pins)`.
 
+**Hosted copies.** The amd64 runtime image is pushed to the deployment's registry and pinned: `UMAMI_PINS.runtime` names it by its neutral reference `random-bug-walk/umami-runtime` and the manifest digest the registry serves, and `UMAMI_PINS.job` holds the frozen job's hashes that `src/pin-cli.ts` derived for that digest from the prepared store. The Sandbox runner starts `umami-runtime@<digest>` in the deployment's registry namespace (`copyImage` in `@rbw/controller`), so the committed pin names no registry. Hosted copies of this host have run on the pushed image: on a hosted preview deployment, Umami requests for the released time-zone case were delivered with all six behavior cells matching (the original suite and the verification checks on the clean, buggy and reference-fixed copies). Under linux/amd64 emulation on Apple silicon the kit's no-build-outputs-or-caches check fails on the emulator's own cache (see `kit/umami-race/README.md`), so the amd64 evidence for this host comes from hosted runs. A local Docker run finds the image when it is present under the neutral reference with the pinned digest.
+
 ## Package inputs
 
 - `bugCaseInputs(entry)`: the buggy source (the pinned source with the planted target), the incident, the baseline and the runtime: the runtime image and its setup steps (`runtimeSetup(pins)`): copy the source tree to `/workspace/app`, run `/opt/rbw/bin/rbw-prepare-app` once, then the kit's build and start commands.
@@ -105,10 +107,9 @@ Destinations: the app files go to `/workspace/app`, the validator's `fixture/` a
 
 ## Not yet connected
 
-These parts are planned and not built yet:
+This part is planned and not built yet:
 
-- **Hosted evidence for the runtime image.** The amd64 runtime image is pushed to the deployment's registry and pinned: `UMAMI_PINS.runtime` names it by its neutral reference `random-bug-walk/umami-runtime` and the manifest digest the registry serves, and `UMAMI_PINS.job` holds the frozen job's hashes that `src/pin-cli.ts` derived for that digest from the prepared store. The Sandbox runner starts `umami-runtime@<digest>` in the deployment's registry namespace (`copyImage` in `@rbw/controller`), so the committed pin names no registry. No hosted copy of this host has run on the pushed image yet. Under linux/amd64 emulation on Apple silicon the kit's no-build-outputs-or-caches check fails on the emulator's own cache (see `kit/umami-race/README.md`), so the first amd64 evidence for this host is a hosted run. A local Docker run finds the image when it is present under the neutral reference with the pinned digest.
-- **The released-case IDs.** The tests pass synthetic identity functions. The mapping record with the real `defect_id` and `case_id`, pinned as literal values, is added once the factory's identity module is in the repository.
+- **The released-case IDs.** The tests pass synthetic identity functions. The mapping record with the real `defect_id` and `case_id`, pinned as literal values, is not added yet, although the factory's identity module (`packages/factory/src/identity.ts`) is now in the repository.
 
 ## Tests
 
