@@ -25,7 +25,7 @@
     "controller": "node src/cli.ts"
   },
   "dependencies": {
-    "@electric-sql/pglite": "0.5.8",
+    "@electric-sql/pglite": "0.5.10",
     "@rbw/admission": "workspace:*",
     "@rbw/case-package": "workspace:*",
     "@rbw/case-validate": "workspace:*",
@@ -42,15 +42,15 @@
     "@rbw/umami-fixture": "workspace:*",
     "@rbw/umami-fixture-rc1": "workspace:*",
     "@rbw/writer": "workspace:*",
-    "@vercel/sandbox": "3.5.1",
+    "@vercel/sandbox": "3.8.0",
     "pg": "8.23.1",
     "tar-stream": "3.2.2"
   },
   "devDependencies": {
     "@rbw/shapes": "workspace:*",
-    "@types/node": "24.19.1",
+    "@types/node": "24.19.2",
     "@types/pg": "8.23.1",
     "typescript": "6.0.3",
-    "vitest": "5.0.3"
+    "vitest": "5.0.5"
   }
 }
