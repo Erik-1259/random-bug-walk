@@ -292,6 +292,41 @@ describe("browser request lifecycle with synthetic service responses", () => {
     await c.controller.validate(run.case_id); expect(c.controller.needsPoll()).toBe(true);
     c.advance(); await c.controller.poll(); expect(c.controller.needsPoll()).toBe(false);
   });
+  it.each([1, 2])("queues %i Stop clicks during a status read as one Stop after the read, retaining delivered cases", async clicks => {
+    const c = await prepared(); await c.controller.start();
+    let enterRead: () => void = () => undefined;
+    const reading = new Promise<void>(resolve => { enterRead = resolve; });
+    let finishRead: (value: RequestStatus) => void = () => undefined;
+    c.api.status.mockImplementationOnce(() => { enterRead(); return new Promise(resolve => { finishRead = resolve; }); });
+    c.advance(); const polling = c.controller.poll(); await reading;
+    const stops = Array.from({ length: clicks }, () => c.controller.stop());
+    expect(c.api.stop).not.toHaveBeenCalled();
+    const cancelled = fixture<RequestStatus>("status-cancelled");
+    const running = { ...cancelled, state: "running" as const, outcome: null, stop_reason: null };
+    finishRead(running); await Promise.all([polling, ...stops]);
+    expect(c.api.stop).toHaveBeenCalledExactlyOnceWith(input.request_id);
+    expect(c.controller.snapshot().status?.state).toBe("finished");
+    expect(c.controller.snapshot().status?.delivery).toBe("partial");
+    expect(c.controller.snapshot().status?.cases).toEqual(cancelled.cases);
+    expect(c.controller.snapshot().requestId).toBe(input.request_id);
+  });
+  it.each(["finished", "unauthorized"] as const)("does not send queued Stop when the held poll reports %s", async outcome => {
+    const c = await prepared(); await c.controller.start();
+    let enterRead: () => void = () => undefined;
+    const reading = new Promise<void>(resolve => { enterRead = resolve; });
+    let finishRead: (value: RequestStatus) => void = () => undefined;
+    let rejectRead: (error: Error) => void = () => undefined;
+    c.api.status.mockImplementationOnce(() => { enterRead(); return new Promise((resolve, reject) => { finishRead = resolve; rejectRead = reject; }); });
+    c.advance(); const polling = c.controller.poll(); await reading;
+    const stopping = c.controller.stop(); expect(c.api.stop).not.toHaveBeenCalled();
+    if (outcome === "finished") finishRead(fixture<RequestStatus>("status-fulfilled"));
+    else rejectRead(new FactoryError("unauthorized", "Synthetic session expired", 401));
+    await Promise.all([polling, stopping]);
+    expect(c.api.stop).not.toHaveBeenCalled();
+    expect(c.controller.snapshot().requestId).toBe(input.request_id);
+    if (outcome === "finished") expect(c.controller.snapshot().status?.state).toBe("finished");
+    else expect(c.controller.snapshot().signedIn).toBe(false);
+  });
   it("stops without losing previously delivered partial cases", async () => {
     const c = await prepared(); await c.controller.start(); await c.controller.stop();
     expect(c.api.stop).toHaveBeenCalledWith(input.request_id); expect(c.controller.snapshot().status?.delivery).toBe("partial");
