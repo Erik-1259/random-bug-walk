@@ -4,12 +4,13 @@
 // node test/factory-test-mode-browser.mjs <playwright-index.mjs> <chromium> <local-origin> <output-dir>
 import assert from "node:assert/strict";
 import console from "node:console";
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import { join } from "node:path";
 import process from "node:process";
 import { pathToFileURL, URL } from "node:url";
 import { gunzipSync } from "node:zlib";
+import { factoryJson, signInToFactory, reviewFactoryForm, startReviewedFactoryForm, checkFactoryDownloads } from "./factory-browser-journey.mjs";
 
 const [modulePath, executablePath, origin, outputDir] = process.argv.slice(2);
 if (!modulePath || !executablePath || !origin || !outputDir) {
@@ -25,27 +26,8 @@ fs.mkdirSync(outputDir, { recursive: true });
 const browser = await chromium.launch({ executablePath, headless: true, args: ["--no-sandbox"] });
 const results = [];
 
-async function json(context, method, path, data, expected = 200) {
-  const response = await context.request[method](origin + path, data === undefined ? {} : { data });
-  assert.equal(response.status(), expected, `${method.toUpperCase()} ${path}: ${await response.text()}`);
-  return response.json();
-}
-
-async function signIn(page, wrongFirst = false) {
-  await page.goto(origin + "/factory");
-  await page.getByText("Request service available", { exact: true }).waitFor();
-  const passcode = page.getByLabel("Judge passcode", { exact: true });
-  if (wrongFirst) {
-    await passcode.fill("synthetic-wrong-passcode");
-    await page.getByRole("button", { name: "Sign in to the request service", exact: true }).click();
-    await page.getByRole("alert").filter({ hasText: "passcode_incorrect:" }).waitFor();
-    assert.equal(await passcode.inputValue(), "");
-  }
-  await passcode.fill("synthetic-factory-passcode");
-  await page.getByRole("button", { name: "Sign in to the request service", exact: true }).click();
-  await passcode.waitFor({ state: "hidden" });
-  assert.equal((await json(page.context(), "get", "/api/factory/session")).signed_in, true);
-}
+const json = (context, method, path, data, expected = 200) => factoryJson(context, origin, method, path, data, expected);
+const signIn = (page, wrongFirst = false) => signInToFactory(page, origin, wrongFirst);
 
 async function formRequest(page, posts, statusFixture) {
   // Enter fixture requirements through the ordinary form; never seed this journey's identity.
@@ -55,14 +37,7 @@ async function formRequest(page, posts, statusFixture) {
   await page.getByRole("button", { name: "Add request item", exact: true }).click();
   await page.getByLabel("Bug type for item 2", { exact: true }).selectOption("date_time");
   await page.getByLabel("Shared budget (USD)", { exact: true }).fill("2");
-  const review = async () => {
-    const [response] = await Promise.all([
-      page.waitForResponse(response => response.request().method() === "POST" && new URL(response.url()).pathname === "/api/factory/interpretations"),
-      page.getByRole("button", { name: "Review requirements", exact: true }).click(),
-    ]);
-    assert.equal(response.status(), 200);
-    return { sent: response.request().postDataJSON(), interpretation: await response.json() };
-  };
+  const review = () => reviewFactoryForm(page);
   const { sent, interpretation } = await review();
   assert.deepEqual(sent.items.map(item => item.item_key), ["item-1", "item-2"]);
   assert.deepEqual({ ...sent, items: sent.items.map((item, index) => ({ ...item, item_key: input.items[index].item_key })) }, input,
@@ -73,22 +48,7 @@ async function formRequest(page, posts, statusFixture) {
   assert.match(interpretation.interpretation_sha256, /^[a-f0-9]{64}$/);
   assert.notEqual(interpretation.interpretation_sha256, fixture(statusFixture).interpretation.interpretation_sha256);
   assert.deepEqual(await review(), { sent, interpretation }, "reviewing unchanged form requirements returns the same key-specific interpretation");
-  await page.getByRole("heading", { name: "Service interpretation", exact: true }).waitFor();
-  assert.equal(posts.filter(path => path === "/api/factory/requests").length, 0);
-  const [accepted] = await Promise.all([
-    page.waitForResponse(response => response.request().method() === "POST" && new URL(response.url()).pathname === "/api/factory/requests"),
-    page.getByRole("button", { name: "Start request", exact: true }).click(),
-  ]);
-  assert.equal(accepted.status(), 202);
-  const start = accepted.request().postDataJSON();
-  assert.deepEqual(start.input, sent);
-  assert.equal(start.interpretation_sha256, interpretation.interpretation_sha256);
-  const id = start.request_id;
-  assert.equal((await accepted.json()).request_id, id);
-  assert.equal(await page.evaluate(() => localStorage.getItem("rbw-factory-request-id")), id);
-  assert.deepEqual(await page.evaluate(() => JSON.parse(localStorage.getItem("rbw-factory-start"))), start);
-  await page.getByText(id, { exact: true }).waitFor();
-  return id;
+  return startReviewedFactoryForm(page, posts, sent, interpretation);
 }
 
 async function seededRequest(context, page, statusFixture) {
@@ -116,19 +76,11 @@ async function waitMetric(page, label, amount) {
 }
 
 async function checkDownloads(page, current) {
-  for (const [index, item] of current.cases.entries()) {
-    const card = page.locator(".factory-case-card").nth(index);
-    for (const [part, label] of [["bug_case", "Download bug case"], ["validator", "Download validator package"]]) {
-      const link = card.getByRole("link", { name: label, exact: true });
-      assert.equal(await link.getAttribute("href"), item.packages[part].download_path);
-      const [download] = await Promise.all([page.waitForEvent("download"), link.click()]);
-      const bytes = fs.readFileSync(await download.path());
-      assert.equal(createHash("sha256").update(bytes).digest("hex"), item.packages[part].sha256);
-      const text = gunzipSync(bytes).toString("utf8");
-      assert(text.includes("Synthetic test-mode"));
-      assert.equal(text.includes("synthetic-test-mode-evaluator-material-5e0b"), part === "validator");
-    }
-  }
+  await checkFactoryDownloads(page, current, (bytes, part) => {
+    const text = gunzipSync(bytes).toString("utf8");
+    assert(text.includes("Synthetic test-mode"));
+    assert.equal(text.includes("synthetic-test-mode-evaluator-material-5e0b"), part === "validator");
+  });
 }
 
 async function validate(page, context, id, result, posts) {

@@ -11,13 +11,15 @@
   "scripts": {
     "build": "NEXT_TELEMETRY_DISABLED=1 next build",
     "dev": "next dev",
-    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p scripts/tsconfig.json --noEmit && tsc -p test/judge/tsconfig.json --noEmit",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p scripts/tsconfig.json --noEmit && tsc -p test/judge/tsconfig.json --noEmit && tsc -p test/factory-live/tsconfig.json --noEmit",
     "lint": "eslint . --max-warnings 0",
     "test": "vitest run",
     "publish-fixture": "node scripts/publish-fixture.ts"
   },
   "dependencies": {
     "@rbw/admission": "workspace:*",
+    "@rbw/case-package": "workspace:*",
+    "@rbw/case-validate": "workspace:*",
     "@rbw/controller": "workspace:*",
     "@rbw/factory": "workspace:*",
     "@rbw/factory-contract": "workspace:*",
@@ -25,15 +27,16 @@
     "@rbw/schema": "workspace:*",
     "@rbw/spend": "workspace:*",
     "@vercel/oidc": "3.8.10",
-    "next": "16.4.1",
+    "next": "16.4.2",
     "react": "19.3.1",
     "react-dom": "19.3.1"
   },
   "devDependencies": {
-    "@types/node": "24.19.1",
+    "@electric-sql/pglite": "0.5.10",
+    "@types/node": "24.19.2",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "typescript": "6.0.3",
-    "vitest": "5.0.3"
+    "vitest": "5.0.5"
   }
 }

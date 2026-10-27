@@ -1,13 +1,12 @@
-// The factory server's modes: test mode refused on any Vercel deployment, the live wiring that is still held
-// (each held port answers unavailable), the shared test-mode world, and the money isolation guard.
+// The factory server's modes: test mode refused on any Vercel deployment, live mode without a database
+// (not configured, the session still served), the shared test-mode world, and the money isolation guard.
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { loadFactoryConfig, type FactoryConfig } from "../../src/config.ts";
 import { getCapabilities, getExample, getRequestStatus, getSession, getTestEvidence, postSession, postTestReset } from "../../src/factory-server/handlers.ts";
-import { FactoryNotWiredError, HELD_PORTS, liveServer } from "../../src/factory-server/integration.ts";
-import type { FactoryServerPorts } from "../../src/factory-server/ports.ts";
+import { liveServer } from "../../src/factory-server/integration.ts";
 import { factoryServer, handle } from "../../src/factory-server/server.ts";
 import { contractBody, FIXTURES, PASSCODE, request, REQUEST_ID } from "./support.ts";
 
@@ -15,8 +14,10 @@ const SOURCE = fileURLToPath(new URL("../../src/factory-server/", import.meta.ur
 const ROUTES = fileURLToPath(new URL("../../app/api/factory/", import.meta.url));
 
 function config(mode: FactoryConfig["mode"]): FactoryConfig {
-  return { mode, passcode: PASSCODE, testFixturesDir: FIXTURES };
+  return { mode, passcode: PASSCODE, testFixturesDir: FIXTURES, databaseUrl: null, sandbox: null, workerImage: null, packagesDir: null, workerBackend: "sandbox", repoRoot: "/synthetic/repo" };
 }
+
+const RATE_SHEET = readFileSync(new URL("../../../envelope/rate-sheets/v1.json", import.meta.url), "utf8");
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -31,8 +32,34 @@ describe("configuration", () => {
     expect(loadFactoryConfig({ RBW_FACTORY_TEST_MODE: "1", VERCEL_ENV: "production" }, "/synthetic/app").mode).toBe("refused");
     expect(loadFactoryConfig({ RBW_FACTORY_TEST_MODE: "0", VERCEL_ENV: "preview" }, "/synthetic/app").mode).toBe("live");
     expect(loadFactoryConfig({ RBW_FACTORY_TEST_MODE: "0" }, "/synthetic/app").mode).toBe("live");
-    expect(loadFactoryConfig({}, "/synthetic/repo/packages/web")).toEqual({ mode: "live", passcode: null, testFixturesDir: "/synthetic/repo/docs/product/fixtures/bug-request-v1" });
+    expect(loadFactoryConfig({}, "/synthetic/repo/packages/web")).toEqual({
+      mode: "live",
+      passcode: null,
+      testFixturesDir: "/synthetic/repo/docs/product/fixtures/bug-request-v1",
+      databaseUrl: null,
+      sandbox: null,
+      workerImage: null,
+      packagesDir: null,
+      workerBackend: "sandbox",
+      repoRoot: "/synthetic/repo",
+    });
     expect(loadFactoryConfig({ RBW_JUDGE_PASSCODE: PASSCODE, RBW_FACTORY_TEST_FIXTURES: "fixtures" }, "/synthetic/app")).toMatchObject({ passcode: PASSCODE, testFixturesDir: "/synthetic/app/fixtures" });
+  });
+
+  it("reads live mode's ledger, Sandbox credentials, worker image, packages directory and worker backend", () => {
+    const live = { DATABASE_URL: "postgres://synthetic.invalid/factory", VERCEL_TOKEN: "synthetic-token", VERCEL_TEAM_ID: "synthetic-team", VERCEL_PROJECT_ID: "synthetic-project", RBW_FACTORY_WORKER_IMAGE: "synthetic.invalid/worker@sha256:" + "a".repeat(64), RBW_FACTORY_PACKAGES_DIR: "packages" };
+    expect(loadFactoryConfig(live, "/synthetic/repo/packages/web")).toMatchObject({
+      databaseUrl: live.DATABASE_URL,
+      sandbox: { token: "synthetic-token", teamId: "synthetic-team", projectId: "synthetic-project" },
+      workerImage: live.RBW_FACTORY_WORKER_IMAGE,
+      packagesDir: "/synthetic/repo/packages/web/packages",
+      workerBackend: "sandbox",
+    });
+    expect(loadFactoryConfig({ ...live, VERCEL_PROJECT_ID: "" }, "/synthetic/app").sandbox).toBeNull();
+    expect(loadFactoryConfig({ RBW_FACTORY_WORKER_BACKEND: "local" }, "/synthetic/app").workerBackend).toBe("local");
+    expect(loadFactoryConfig({ RBW_FACTORY_WORKER_BACKEND: "local", VERCEL_ENV: "development" }, "/synthetic/app").workerBackend).toBeNull();
+    expect(loadFactoryConfig({ RBW_FACTORY_WORKER_BACKEND: "local", VERCEL_ENV: "preview" }, "/synthetic/app").workerBackend).toBeNull();
+    expect(loadFactoryConfig({ RBW_FACTORY_WORKER_BACKEND: "docker" }, "/synthetic/app").workerBackend).toBeNull();
   });
 
   it("answers unavailable for every port on a Vercel deployment that asks for test mode, signs nobody in, and has no test endpoints", async () => {
@@ -105,33 +132,37 @@ describe("configuration", () => {
   });
 });
 
-describe("live wiring (held)", () => {
-  it("throws FactoryNotWiredError from every held port, so each endpoint that needs one answers unavailable", async () => {
-    const logs: string[] = [];
-    const server = liveServer(config("live"), (line) => logs.push(line));
-    const ports = server.ports as unknown as Record<string, unknown>;
-    for (const port of HELD_PORTS) {
-      const attempt = () => (port === "requestRoot" ? server.requestRoot(REQUEST_ID) : port === "profile" ? ports.profile : (ports[port] as () => unknown)());
-      expect(attempt, port).toThrow(FactoryNotWiredError);
+describe("live mode without a database", () => {
+  it("serves the session, answers capabilities not_configured, the example and the test endpoints 404, and every ledger call unavailable", async () => {
+    vi.stubEnv("RBW_FACTORY_RATE_SHEET", RATE_SHEET);
+    try {
+      const logs: string[] = [];
+      const server = await liveServer(config("live"), (line) => logs.push(line));
+      expect((await postSession(request("/api/factory/session", { body: { passcode: PASSCODE }, session: false }), server)).status).toBe(204);
+      const capabilities = await contractBody("Capabilities", await getCapabilities(request("/api/factory/capabilities", { session: false }), server));
+      expect(capabilities.service).toEqual({ state: "unavailable", code: "not_configured", message: "The factory service is not configured." });
+      expect((await getExample(request("/api/factory/example", { session: false }), server)).status).toBe(404);
+      expect((await getTestEvidence(request(`/api/factory/test/evidence?request_id=${REQUEST_ID}`, { session: false }), server)).status).toBe(404);
+      expect((await getRequestStatus(request(`/api/factory/requests/${REQUEST_ID}`), server, { request_id: REQUEST_ID })).status).toBe(503);
+      expect(logs.join("\n")).toContain("FactoryNotConfigured");
+      expect(await liveServer(config("live"), () => undefined)).toBe(server);
+    } finally {
+      vi.unstubAllEnvs();
     }
-    const capabilities = await getCapabilities(request("/api/factory/capabilities", { session: false }), server);
-    expect(capabilities.status).toBe(503);
-    expect(logs.join("\n")).toContain("FactoryNotWiredError");
-    const signedIn = await getRequestStatus(request(`/api/factory/requests/${REQUEST_ID}`), server, { request_id: REQUEST_ID });
-    expect(signedIn.status).toBe(503);
   });
 
-  it("serves the session and answers the example 404 while none is published", async () => {
-    const server = liveServer(config("live"), () => undefined);
-    expect((await postSession(request("/api/factory/session", { body: { passcode: PASSCODE }, session: false }), server)).status).toBe(204);
-    expect((await getExample(request("/api/factory/example", { session: false }), server)).status).toBe(404);
-    expect((await getTestEvidence(request(`/api/factory/test/evidence?request_id=${REQUEST_ID}`, { session: false }), server)).status).toBe(404);
-  });
-
-  it("lists exactly the ports that are not wired", () => {
-    const wired: (keyof FactoryServerPorts)[] = ["now", "passcode", "example"];
-    const all = Object.keys(liveServer(config("live"), () => undefined).ports).sort();
-    expect([...HELD_PORTS.filter((port) => port !== "requestRoot"), ...wired].sort()).toEqual(all);
+  it("answers capabilities not_configured with a database but an incomplete launch configuration", async () => {
+    vi.stubEnv("RBW_FACTORY_RATE_SHEET", RATE_SHEET);
+    try {
+      const unpinned = { ...config("live"), databaseUrl: "postgres://synthetic.invalid/factory", sandbox: { token: "t", teamId: "team", projectId: "project" }, workerImage: "synthetic.invalid/worker:latest" };
+      for (const incomplete of [unpinned, { ...unpinned, workerImage: null }, { ...unpinned, sandbox: null }, { ...unpinned, workerBackend: null }, { ...unpinned, workerBackend: "local" as const }]) {
+        const server = await liveServer(incomplete, () => undefined);
+        const capabilities = await contractBody("Capabilities", await getCapabilities(request("/api/factory/capabilities", { session: false }), server));
+        expect(capabilities.service.code, JSON.stringify(incomplete)).toBe("not_configured");
+      }
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });
 
@@ -158,7 +189,7 @@ function files(dir: string): string[] {
  * factory pool and slot: the controller's judge and development targets (the judge one also under its
  * judge-web name), the judge modules, those targets' key values as string literals, and any literal
  * slot or pool key but "factory" or an allocation key (the factory pool has no allocations), with a
- * quoted or unquoted key. The runtime proof needs the ledger's budget calls, which are not wired yet.
+ * quoted or unquoted key. live.test.ts runs the live ports on the factory pool and slot of a real ledger.
  */
 const FORBIDDEN: readonly RegExp[] = [
   /judge-demo/,

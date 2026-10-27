@@ -9,6 +9,9 @@
     ".": "./src/index.ts",
     "./format": "./src/format.ts",
     "./assembly": "./src/assembly.ts",
+    "./prepared": "./src/prepared.ts",
+    "./archive": "./src/archive.ts",
+    "./manifest": "./src/manifest.ts",
     "./synthetic": "./src/synthetic.ts"
   },
   "engines": {
@@ -25,11 +28,11 @@
     "@rbw/factory-contract": "workspace:*",
     "@rbw/projection": "workspace:*",
     "@rbw/schema": "workspace:*",
-    "fflate": "0.8.2"
+    "fflate": "0.8.3"
   },
   "devDependencies": {
-    "@types/node": "24.19.1",
+    "@types/node": "24.19.2",
     "typescript": "6.0.3",
-    "vitest": "5.0.3"
+    "vitest": "5.0.5"
   }
 }

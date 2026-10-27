@@ -1,6 +1,7 @@
 import { syntheticAdapter } from "@rbw/case-package/synthetic";
 import { HOST_PRESENTATION } from "@rbw/factory";
 import { taskReportAdapter } from "@rbw/host-task-report/adapter";
+import { createUmamiAdapter } from "@rbw/host-umami";
 import { describe, expect, it } from "vitest";
 import { createHostRegistry, HOST_REGISTRY, RegistryError } from "../src/registry.ts";
 
@@ -30,16 +31,22 @@ describe("createHostRegistry", () => {
   });
 
   it("registers the task-report host with the factory's presentation text, its license and its adapter", () => {
-    expect(HOST_REGISTRY.list().map((item) => item.host_id)).toEqual(["task-report"]);
+    expect(HOST_REGISTRY.list().map((item) => item.host_id)).toEqual(["task-report", "umami"]);
     const taskReport = HOST_REGISTRY.get("task-report");
     expect(taskReport?.adapter).toBe(taskReportAdapter);
     expect(taskReport?.label).toBe(HOST_PRESENTATION["task-report"].label);
     expect(taskReport?.description).toBe(HOST_PRESENTATION["task-report"].description);
     expect(taskReport?.license).toBe("MIT");
-    expect(HOST_REGISTRY.adapters()).toEqual({ "task-report": taskReportAdapter });
+    expect(HOST_REGISTRY.adapters()["task-report"]).toBe(taskReportAdapter);
   });
 
-  it("does not register umami yet", () => {
-    expect(HOST_REGISTRY.get("umami")).toBeNull();
+  it("registers the umami host with the factory's presentation text, its license and the adapter on the real pins", () => {
+    const umami = HOST_REGISTRY.get("umami");
+    expect(umami?.adapter.host_id).toBe("umami");
+    expect(umami?.label).toBe(HOST_PRESENTATION.umami.label);
+    expect(umami?.description).toBe(HOST_PRESENTATION.umami.description);
+    expect(umami?.license).toBe("MIT");
+    expect(umami?.adapter.catalog()).toEqual(createUmamiAdapter().catalog());
+    expect(HOST_REGISTRY.adapters().umami).toBe(umami?.adapter);
   });
 });

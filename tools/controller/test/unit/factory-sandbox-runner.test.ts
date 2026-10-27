@@ -9,7 +9,7 @@ import { copyOperation } from "../../src/factory-ledger.ts";
 import { CopyMeter } from "../../src/factory-meter.ts";
 import type { MeterContext } from "../../src/factory-meter.ts";
 import type { FactoryRequestRecord } from "../../src/factory-ports.ts";
-import { NO_IMAGE_DIGEST, RUN_ONCE_DIR, RUN_ONCE_SCRIPT, SandboxCopyUncertain, createSandboxCopyRunner, pinnedImage, sandboxVcpus } from "../../src/factory-sandbox-runner.ts";
+import { NO_IMAGE_DIGEST, RUN_ONCE_DIR, RUN_ONCE_SCRIPT, SandboxCopyUncertain, copyImage, copyRegistryFrom, createSandboxCopyRunner, sandboxVcpus } from "../../src/factory-sandbox-runner.ts";
 import type { SandboxRunnerDeps } from "../../src/factory-sandbox-runner.ts";
 import { CANDIDATE_A, CANDIDATE_B, COPY_APP as APP, COPY_CHECK as CHECK, COPY_DIGEST as DIGEST, FakeCopySandbox, PROTOCOL, acceptRequest, copyPlan, copyRoots, factoryWorld, operationState, slotHolder } from "./factory-fakes.ts";
 import type { FactoryWorld } from "./factory-fakes.ts";
@@ -58,9 +58,13 @@ function meter(overrides: Partial<MeterContext> = {}): CopyMeter {
   });
 }
 
+/** The deployment's registry namespace, as copyRegistryFrom reads it from the worker's image reference. */
+const REGISTRY = "synthetic-team/synthetic-project";
+
 function deps(overrides: Partial<SandboxRunnerDeps> = {}): SandboxRunnerDeps {
   return {
     sdk,
+    registry: REGISTRY,
     meter: reserved,
     subject: CANDIDATE_A,
     workDir: work,
@@ -102,7 +106,7 @@ describe("the sandbox copy runner", () => {
 
     expect(sdk.creates).toHaveLength(1);
     const create = sdk.creates[0];
-    expect(create?.image).toBe(`registry.invalid/synthetic/task-report-kit@${DIGEST}`);
+    expect(create?.image).toBe(`${REGISTRY}/task-report-kit@${DIGEST}`);
     expect(create?.networkPolicy).toBe("deny-all");
     expect(create?.resources.vcpus).toBe(4);
     expect(create?.timeout).toBe((600 + 60) * 1000);
@@ -126,12 +130,56 @@ describe("the sandbox copy runner", () => {
     expect(await operationState(w, opId())).toBe("prepared");
   });
 
-  it("returns setup_failed for a plan whose image is not pinned by digest", async () => {
-    const collected = await createSandboxCopyRunner(deps()).run(plan({ image: { reference: "registry.invalid/synthetic/task-report-kit:1", digest: null } }), roots);
-    expect(collected).toMatchObject({ outcome: "setup_failed", image_digest: NO_IMAGE_DIGEST, results_dir: null, results_sha256: null });
+  it("returns setup_failed for a plan whose image is not pinned by a sha256 digest, launching and creating nothing", async () => {
+    for (const digest of [null, "sha256:abc", `sha512:${"1".repeat(128)}`, `sha256:${"A".repeat(64)}`]) {
+      const collected = await createSandboxCopyRunner(deps()).run(plan({ image: { reference: "registry.invalid/synthetic/task-report-kit:1", digest } }), roots);
+      expect(collected).toMatchObject({ outcome: "setup_failed", image_digest: NO_IMAGE_DIGEST, results_dir: null, results_sha256: null });
+    }
     expect(sdk.creates).toHaveLength(0);
-    expect(pinnedImage(plan({ image: { reference: `registry.invalid/a/b@sha256:${"1".repeat(64)}`, digest: DIGEST } }))).toBeNull();
-    expect(pinnedImage(plan({ image: { reference: "registry.invalid:5000/a/b", digest: DIGEST } }))).toBe(`registry.invalid:5000/a/b@${DIGEST}`);
+    expect(await operationState(w, opId())).toBe("prepared");
+    expect(w.logs.filter((line) => line.includes("not pinned by a sha256 digest"))).toHaveLength(4);
+  });
+
+  it("returns setup_failed for a placeholder digest (an image not pushed yet), launching and creating nothing", async () => {
+    // As a committed pin has it until its image is pushed.
+    const collected = await createSandboxCopyRunner(deps()).run(plan({ image: { reference: "random-bug-walk/umami-runtime", digest: `sha256:${"0".repeat(64)}` } }), roots);
+    expect(collected).toMatchObject({ outcome: "setup_failed", results_dir: null });
+    expect(sdk.creates).toHaveLength(0);
+    expect(await operationState(w, opId())).toBe("prepared");
+    expect(w.logs.some((line) => line.includes("placeholder"))).toBe(true);
+  });
+
+  it("returns setup_failed when the deployment's configuration names no registry for the copies' images, launching and creating nothing", async () => {
+    for (const registry of [null, ""]) {
+      expect((await createSandboxCopyRunner(deps({ registry })).run(plan(), roots)).outcome).toBe("setup_failed");
+    }
+    expect(sdk.creates).toHaveLength(0);
+    expect(await operationState(w, opId())).toBe("prepared");
+    expect(w.logs.filter((line) => line.includes("no registry for the copies' images is configured"))).toHaveLength(2);
+  });
+
+  it("starts a copy only on the plan image's name in the deployment's registry namespace, pinned by the plan's digest", () => {
+    const image = (reference: string, digest: string | null = DIGEST) => copyImage(REGISTRY, plan({ image: { reference, digest } }));
+    // The committed pins' shapes: a neutral name, or a local tag, and the digest.
+    expect(image("random-bug-walk/umami-runtime")).toEqual({ image: `${REGISTRY}/umami-runtime@${DIGEST}` });
+    expect(image("rbw-task-report:kit-v2-amd64")).toEqual({ image: `${REGISTRY}/rbw-task-report@${DIGEST}` });
+    expect(image("registry.invalid:5000/a/b")).toEqual({ image: `${REGISTRY}/b@${DIGEST}` });
+    expect(image(`registry.invalid/a/b@${DIGEST}`)).toEqual({ image: `${REGISTRY}/b@${DIGEST}` });
+    expect(image(`registry.invalid/a/b@sha256:${"1".repeat(64)}`)).toEqual({ refused: "the plan's image reference carries another digest" });
+    expect(image("registry.invalid/a/Upper")).toEqual({ refused: "the plan's image reference names no repository" });
+    expect(image("registry.invalid/a/")).toEqual({ refused: "the plan's image reference names no repository" });
+    expect(image("random-bug-walk/umami-runtime", `sha256:${"0".repeat(64)}`)).toEqual({ refused: "the plan's image digest is a placeholder" });
+    expect(image("random-bug-walk/umami-runtime", null)).toEqual({ refused: "the plan's image is not pinned by a sha256 digest" });
+    expect(copyImage(null, plan())).toEqual({ refused: "no registry for the copies' images is configured" });
+  });
+
+  it("reads the registry namespace from the worker's own image reference, and none from a value that is not one", () => {
+    const digest = `sha256:${"ab".repeat(32)}`;
+    expect(copyRegistryFrom(`synthetic-team/synthetic-project/rbw-factory-worker@${digest}`)).toBe("synthetic-team/synthetic-project");
+    expect(copyRegistryFrom(`registry.invalid:5000/synthetic-team/synthetic-project/rbw-factory-worker@${digest}`)).toBe("registry.invalid:5000/synthetic-team/synthetic-project");
+    for (const value of [undefined, "", `rbw-factory-worker@${digest}`, "synthetic-team/synthetic-project/rbw-factory-worker:latest", `synthetic-team/synthetic-project/rbw-factory-worker:1@${digest}`, `Synthetic-Team/project/rbw-factory-worker@${digest}`, "synthetic-team/synthetic-project/rbw-factory-worker@sha256:abc"]) {
+      expect(copyRegistryFrom(value)).toBeNull();
+    }
   });
 
   it("refuses a plan above its host's copy limits through the meter, creating nothing", async () => {

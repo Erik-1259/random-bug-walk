@@ -10,8 +10,8 @@ function fixture(name: string): string {
 }
 const statusFixture = (name: string) => parseContract("RequestStatus", fixture(name));
 const validationFixture = (name: string) => parseContract("ValidationRun", fixture(name));
-function render(status: RequestStatus | null, validation: ValidationRun | null = null, busy = false) {
-  return renderToStaticMarkup(<FactoryProgress status={status} busy={busy} onStop={() => undefined} onValidate={() => undefined} validation={validation} />);
+function render(status: RequestStatus | null, validation: ValidationRun | null = null, busy = false, options: { polling?: boolean; stopPending?: boolean; disabled?: boolean } = {}) {
+  return renderToStaticMarkup(<FactoryProgress status={status} busy={busy} onStop={() => undefined} onValidate={() => undefined} validation={validation} {...options} />);
 }
 function validationButton(html: string) {
   return /<button([^>]*)>Validate case<\/button>/.exec(html)?.[1];
@@ -23,6 +23,35 @@ describe("factory contract progress", () => {
     expect(html).toContain("No request status is available");
     expect(html).not.toContain("Delivered cases");
     expect(html).not.toContain("Download");
+  });
+
+  it("keeps Stop available during polling without enabling validation or hiding delivered cases", () => {
+    const status = statusFixture("status-partial-budget");
+    status.state = "running";
+    status.outcome = null;
+    status.stop_reason = null;
+    const html = render(status, null, true, { polling: true });
+    const stop = /<button([^>]*)>Stop request<\/button>/.exec(html);
+    expect(stop).not.toBeNull();
+    expect(stop?.[1]).not.toContain("disabled");
+    expect(validationButton(html)).toContain("disabled");
+    for (const item of status.cases) {
+      expect(html).toContain(item.title);
+      expect(html).toContain(`href="${String(item.packages.bug_case.download_path)}"`);
+      expect(html).toContain(`href="${String(item.packages.validator.download_path)}"`);
+    }
+  });
+
+  it.each([
+    { label: "pending stop", polling: true, stopPending: true, disabled: false, stopping: false },
+    { label: "non-polling operation", polling: false, stopPending: false, disabled: false, stopping: false },
+    { label: "signed-out controls", polling: true, stopPending: false, disabled: true, stopping: false },
+    { label: "stopping request", polling: true, stopPending: false, disabled: false, stopping: true },
+  ])("disables Stop during $label", ({ polling, stopPending, disabled, stopping }) => {
+    const status = statusFixture("status-running");
+    if (stopping) status.state = "stopping";
+    const html = render(status, null, true, { polling, stopPending, disabled });
+    expect(/<button([^>]*)>Stop request<\/button>/.exec(html)?.[1]).toContain("disabled");
   });
 
   it.each([

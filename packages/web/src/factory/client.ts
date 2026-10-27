@@ -68,11 +68,11 @@ export const browserIdentityLock: FactoryIdentityLock = async operation => {
 export interface FactoryView {
   capabilities: Capabilities | null; signedIn: boolean; interpretation: Interpretation | null;
   status: RequestStatus | null; validation: ValidationRun | null; requestId: string | null;
-  busy: boolean; message: string | null; canRetryStart: boolean; canRetryValidation: boolean;
+  busy: boolean; polling: boolean; stopPending: boolean; message: string | null; canRetryStart: boolean; canRetryValidation: boolean;
 }
 /** The browser owns identity, never execution. A failed read cannot create replacement work. */
 export class FactoryController {
-  private view: FactoryView = { capabilities: null, signedIn: false, interpretation: null, status: null, validation: null, requestId: null, busy: false, message: null, canRetryStart: false, canRetryValidation: false };
+  private view: FactoryView = { capabilities: null, signedIn: false, interpretation: null, status: null, validation: null, requestId: null, busy: false, polling: false, stopPending: false, message: null, canRetryStart: false, canRetryValidation: false };
   private listeners = new Set<() => void>();
   private client: FactoryClient;
   private storage: Pick<Storage, "getItem" | "setItem" | "removeItem">;
@@ -88,6 +88,7 @@ export class FactoryController {
   private generation = 0;
   private moreEvents = false;
   private refreshAfterValidation = false;
+  private activePoll: Promise<void> | null = null;
   constructor(client: FactoryClient, storage: Pick<Storage, "getItem" | "setItem" | "removeItem">, uuid: () => string, now: () => number = Date.now, identityLock: FactoryIdentityLock = browserIdentityLock) { this.client = client; this.storage = storage; this.uuid = uuid; this.now = now; this.identityLock = identityLock; }
   snapshot = (): FactoryView => this.view;
   subscribe = (listener: () => void): (() => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
@@ -242,10 +243,18 @@ export class FactoryController {
     });
   }
   async stop() {
-    if (this.view.busy || !this.view.signedIn || this.view.requestId === null || this.view.status === null || this.view.status.state === "finished") return;
-    this.update({ busy: true });
-    try { this.accept(await this.client.stop(this.view.requestId)); }
-    catch (error) { this.error(error); await this.readStatus(); } finally { this.update({ busy: false }); }
+    if (this.view.stopPending || (this.view.busy && this.activePoll === null) || !this.view.signedIn || this.view.requestId === null || this.view.status === null || this.view.status.state === "finished" || this.view.status.state === "stopping") return;
+    const requestId = this.view.requestId;
+    this.update({ stopPending: true });
+    try {
+      // Keep the click through a status read, without allowing that read to overwrite Stop's response.
+      if (this.activePoll !== null) await this.activePoll;
+      const current = this.snapshot();
+      if (current.busy || !current.signedIn || current.requestId !== requestId || current.status === null || current.status.state === "finished" || current.status.state === "stopping") return;
+      this.update({ busy: true });
+      try { this.accept(await this.client.stop(requestId)); }
+      catch (error) { this.error(error); await this.readStatus(); } finally { this.update({ busy: false }); }
+    } finally { this.update({ stopPending: false }); }
   }
   async validate(caseId: string) {
     if (!this.view.signedIn) return;
@@ -308,10 +317,14 @@ export class FactoryController {
   pollAfter(): number { return Math.max(1000, this.nextPollAt - this.now()); }
   needsPoll(): boolean { return this.view.signedIn && this.view.requestId !== null && (this.moreEvents || this.refreshAfterValidation || this.view.status?.state !== "finished" || this.view.status.attention !== null || this.view.status.cases.some(item => item.validation !== null && item.validation.state !== "finished") || (this.validationIdentity !== null && this.view.validation?.state !== "finished")); }
   async poll() {
-    if (this.view.busy || !this.view.signedIn || this.now() < this.nextPollAt) return;
-    this.update({ busy: true });
+    if (this.view.busy || this.view.stopPending || !this.view.signedIn || this.now() < this.nextPollAt) return;
     const failures = this.failures;
-    try { await this.readStatus(); if (this.validationIdentity !== null && this.view.validation?.state !== "finished") await this.readValidation(); if (this.failures === failures) this.failures = 0; }
-    finally { this.update({ busy: false }); }
+    const polling = Promise.resolve().then(async () => {
+      try { await this.readStatus(); if (this.validationIdentity !== null && this.view.validation?.state !== "finished") await this.readValidation(); if (this.failures === failures) this.failures = 0; }
+      finally { this.activePoll = null; this.update({ busy: false, polling: false }); }
+    });
+    this.activePoll = polling;
+    this.update({ busy: true, polling: true });
+    await polling;
   }
 }

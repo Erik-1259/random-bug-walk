@@ -1,13 +1,13 @@
 /* global document, localStorage, innerWidth, navigator */
 // Synthetic transport proof only. Run against a local production build with the public results snapshot.
-// node test/factory-browser.mjs <playwright-index.mjs> <chromium> <origin> <output-dir> <results-repository>
+// node test/factory-browser.mjs <playwright-index.mjs> <chromium> <origin> <output-dir> <results-repository> [--stop-poll-only]
 import fs from "node:fs";
 import assert from "node:assert/strict";
 import process from "node:process";
 import console from "node:console";
 import { pathToFileURL, URL } from "node:url";
 import { join } from "node:path";
-const [modulePath, executablePath, origin, outputDir, resultsRepository] = process.argv.slice(2);
+const [modulePath, executablePath, origin, outputDir, resultsRepository, scenario] = process.argv.slice(2);
 if (!modulePath || !executablePath || !origin || !outputDir || !resultsRepository) throw new Error("Provide Playwright module, Chromium, local origin, output directory and public results repository.");
 if (!["localhost", "127.0.0.1"].includes(new URL(origin).hostname)) throw new Error("Browser fixture proof requires a local server.");
 const { chromium } = await import(pathToFileURL(modulePath).href);
@@ -15,6 +15,77 @@ fs.mkdirSync(outputDir, { recursive: true });
 const fixture = name => JSON.parse(fs.readFileSync(new URL(`./fixtures/factory-v1/${name}.json`, import.meta.url), "utf8"));
 (async()=>{
  const browser=await chromium.launch({executablePath,headless:true,args:['--no-sandbox']});
+ // Synthetic transport: hold an automatic status read between pointerdown and pointerup.
+ // The focused mode needs no public results snapshot; its fifth argument can be "unused".
+ for (const width of [1440, 390]) {
+  const context = await browser.newContext({ viewport: { width, height: 1000 } });
+  const page = await context.newPage();
+  const cancelled = fixture('status-cancelled');
+  const running = { ...cancelled, state: 'running', outcome: null, stop_reason: null, poll_after_ms: 60000 };
+  // Keep the delivered case while presenting the synthetic pre-stop state.
+  running.events = cancelled.events.filter(event => event.seq < 24);
+  running.next_after = running.events.at(-1).seq;
+  let releasePoll;
+  const pollGate = new Promise(resolve => { releasePoll = resolve; });
+  let reads = 0, holdNextRead = false;
+  const writes = [], errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await context.addInitScript(id => localStorage.setItem('rbw-factory-request-id', id), running.request_id);
+  await context.route('**/api/factory/**', async route => {
+   const request = route.request(), path = new URL(request.url()).pathname;
+   const send = (body, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
+   if (request.method() !== 'GET') writes.push({ path, method: request.method(), body: request.postDataJSON() });
+   if (path.endsWith('/capabilities')) return send(fixture('capabilities'));
+   if (path.endsWith('/session')) return send(fixture('session'));
+   if (path === `/api/factory/requests/${running.request_id}/stop` && request.method() === 'POST') return send(cancelled);
+   if (path === `/api/factory/requests/${running.request_id}` && request.method() === 'GET') {
+    reads++;
+    if (holdNextRead) { holdNextRead = false; await pollGate; }
+    return send(running);
+   }
+   return send(fixture('error-not-found'), 404);
+  });
+  try {
+   await page.clock.install();
+   await page.goto(origin + '/factory');
+   const stop = page.getByRole('button', { name: 'Stop request', exact: true });
+   await stop.waitFor();
+   assert.equal(await stop.isDisabled(), false);
+   await page.clock.pauseAt(new Date());
+   const downloads = page.getByRole('link', { name: 'Download bug case', exact: true });
+   const retainedHref = await downloads.getAttribute('href');
+   assert(retainedHref);
+   await stop.scrollIntoViewIfNeeded();
+   const box = await stop.boundingBox();
+   assert(box);
+   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+   await page.mouse.down();
+   const readsBeforePoll = reads;
+   holdNextRead = true;
+   const pollStarted = page.waitForRequest(request => request.method() === 'GET' && new URL(request.url()).pathname === `/api/factory/requests/${running.request_id}`);
+   await page.clock.fastForward(60000);
+   await pollStarted;
+   await page.clock.runFor(50);
+   assert.equal(reads, readsBeforePoll + 1);
+   assert.equal(await stop.isDisabled(), false, 'a poll must not disable Stop between pointerdown and pointerup');
+   await page.mouse.up();
+   await page.clock.runFor(50);
+   assert.equal(await stop.isDisabled(), true, 'the queued Stop intent must disable duplicate input');
+   await stop.evaluate(button => { button.click(); button.click(); });
+   assert.deepEqual(writes, [], 'Stop must wait for the held status read');
+   releasePoll();
+   await page.getByRole('heading', { name: 'Cancelled', exact: true }).waitFor();
+   assert.deepEqual(writes, [{ path: `/api/factory/requests/${running.request_id}/stop`, method: 'POST', body: {} }]);
+   assert.equal(await downloads.getAttribute('href'), retainedHref);
+   assert.equal(await page.getByRole('link', { name: 'Download validator package', exact: true }).count(), 1);
+   assert.deepEqual(errors, []);
+   console.log(`PASS synthetic ${width}px: pointer release during held poll queues exactly one Stop, disables duplicates, reaches Cancelled and retains delivered downloads.`);
+  } finally {
+   releasePoll();
+   await context.close();
+  }
+ }
+ if (scenario === '--stop-poll-only') { await browser.close(); return; }
  for(const resumedWidth of [1440,390]) {
   const resumed=await browser.newContext({viewport:{width:resumedWidth,height:1000}});
   const saved=fixture('status-fulfilled');const writes=[];let validationFinished=false;

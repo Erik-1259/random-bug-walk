@@ -36,9 +36,11 @@ function PackageLinks({ item }: { item: FactoryCase }) {
 }
 
 /** Contract bug-request/1, revision 2: render service facts; never infer qualification or completion. */
-export function FactoryProgress({ status, busy, onStop, onValidate, validation = null, disabled = false }: {
+export function FactoryProgress({ status, busy, onStop, onValidate, validation = null, disabled = false, polling = false, stopPending = false }: {
   status: RequestStatus | null;
   busy: boolean;
+  polling?: boolean;
+  stopPending?: boolean;
   onStop: () => void;
   onValidate: (caseId: string) => void;
   validation?: ValidationRun | null;
@@ -76,7 +78,7 @@ export function FactoryProgress({ status, busy, onStop, onValidate, validation =
       <dt>Remaining</dt><dd>{money(status.budget.remaining_microusd)}</dd>
     </dl>
     {status.budget.overrun && <p role="alert">The service reports a budget overrun.</p>}
-    {status.state !== "finished" && <button type="button" onClick={onStop} disabled={busy || disabled || status.state === "stopping"}>Stop request</button>}
+    {status.state !== "finished" && <button type="button" onClick={onStop} disabled={stopPending || (busy && !polling) || disabled || status.state === "stopping"}>Stop request</button>}
     <h3>Recorded events</h3>
     {status.events.length === 0 ? <p>No events received yet.</p> : <ol className="factory-events">{status.events.map((event) => <li key={event.seq}>
       <time dateTime={event.at}>{event.at}</time> — {event.message}

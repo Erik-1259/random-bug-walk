@@ -32,16 +32,13 @@ export {
   workerSandboxName,
 } from "./factory-ledger.ts";
 export type { CopyIdentity, CopyOperationContext, FactoryOperation, OperationContext, SandboxUsage } from "./factory-ledger.ts";
-export { LaunchConfigError, VALIDATION_POLL_MS, WORKER_REPOSITORY, WORKER_RUN_ONCE_DIR, startFactoryValidation, startFactoryWorker, validationRunView, workerCommandArgs } from "./factory-launch.ts";
+export { LaunchConfigError, VALIDATION_POLL_MS, WORKER_IMAGE_VARIABLE, WORKER_REPOSITORY, WORKER_RUN_ONCE_DIR, startFactoryValidation, startFactoryWorker, validationRunView, workerCommandArgs } from "./factory-launch.ts";
 export type { FactoryLaunchDeps, ValidationStart, ValidationStartArgs, WorkerLaunchConfig, WorkerStart } from "./factory-launch.ts";
 export { completeReconciliation, finalizeLostWorker } from "./factory-lost.ts";
 export type { LostDeps, LostOutcome, LostTarget, ReconciliationOutcome } from "./factory-lost.ts";
 export { factoryDatabaseOver, openFactoryDatabase } from "./factory-spend.ts";
 export type { FactoryDatabase } from "./factory-spend.ts";
 export type * from "./factory-ports.ts";
-
-/** The configuration value that names the pinned worker image: `<vcr repository>@sha256:<digest>`. */
-export const WORKER_IMAGE_VARIABLE = "RBW_FACTORY_WORKER_IMAGE";
 
 function status(error: unknown): number | null {
   if (typeof error !== "object" || error === null || !("response" in error)) return null;
