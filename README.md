@@ -25,7 +25,7 @@ The [full diagnostic catalog](https://random-bug-walk.vercel.app/catalog) remain
 
 The issue writer’s model runs on Nebius Token Factory. Vercel hosts the site, runs app copies on Sandbox, and stores status and large files on Blob. Neon Postgres holds the spend ledger. Tavily supplied the released issue’s exact-phrase novelty searches.
 
-The bug factory, a request service built on the same validation, is in progress; see [Bug factory (in progress)](#bug-factory-in-progress) for what exists and what is planned.
+The bug factory, a request service built on the same validation, runs on the production site at [`/factory`](https://random-bug-walk.vercel.app/factory); see [Bug factory](#bug-factory) for what exists and what is planned.
 
 ## Repository map
 
@@ -38,7 +38,7 @@ The bug factory, a request service built on the same validation, is in progress;
 | [`packages/harvest`](packages/harvest/README.md) | Finds public source fixes on GitHub that match a bug shape (`DT-1.tz-arg` or the race class `RC-1.guarded-write`) and reports a funnel |
 | [`packages/harvest-review`](packages/harvest-review/README.md) | Two-model review of the harvest's matches |
 | [`packages/host-task-report`](packages/host-task-report/README.md) | The task-report host's evaluator material (baseline identity, original-suite runner, verification check, evaluator versions 1 and 2) and its factory adapter |
-| [`packages/host-umami`](packages/host-umami/README.md) | The Umami host adapter of the bug factory: baseline, the released time-zone case as its one catalog entry, protocol, calendar window, package inputs from a prepared store, copy plans and copy results; every copy runs on the Umami runtime image, which is not pushed yet |
+| [`packages/host-umami`](packages/host-umami/README.md) | The Umami host adapter of the bug factory: baseline, the released time-zone case as its one catalog entry, protocol, calendar window, package inputs from a prepared store, copy plans and copy results; every copy runs on the Umami runtime image, pushed for linux/amd64 and pinned by digest |
 | [`packages/projection`](packages/projection/README.md) | Audits a solver-visible copy: pinned source, one declared change, no history or answer-bearing files (part of ADM-01, ADM-07's scan) |
 | [`packages/publisher`](packages/publisher/README.md) | Trusted publisher of runs and releases to the results repository and the public store |
 | [`packages/schema`](packages/schema/README.md) | Shared record schema, canonical JSON, the project policy builder, the family registry and job contracts (TypeScript, with the Python package in `python/schema`) |
@@ -50,12 +50,12 @@ The bug factory, a request service built on the same validation, is in progress;
 | [`packages/umami-driver`](packages/umami-driver/README.md) | Protected command that runs one trial inside an app copy and writes its records |
 | [`packages/umami-fixture`](packages/umami-fixture/README.md) | The fixture `umami-tz-arg-001`: data and the four added checks |
 | [`packages/umami-fixture-rc1`](packages/umami-fixture-rc1/README.md) | The race-family fixture `rc-1-backup-code-001`: data and two added checks (serial and concurrent backup-code use); the family did not reach admission and is parked |
-| [`packages/web`](packages/web/README.md) | The results site (Next.js), its judge routes, and the `/factory` page with the bug request routes under `/api/factory/` (a local test mode runs them; live mode is not wired yet and answers unavailable) |
+| [`packages/web`](packages/web/README.md) | The results site (Next.js), its judge routes, and the `/factory` page with the bug request routes under `/api/factory/` (a local test mode runs them, and live mode runs them on the deployed site) |
 | [`packages/writer`](packages/writer/README.md) | Model-written pattern cards and bug reports, with code checks on every issue |
 | [`tools/candidates`](tools/candidates/README.md) | Candidate pipeline: lists the sites a class rule matches in the host and plants each; by default records them for behavioral qualification, or with `--route static-screen/v1` screens each planted copy and ranks the survivors |
 | [`tools/case-package`](tools/case-package/README.md) | Exporter for a case's two package parts (bug case and validator package): deterministic archives, pair binding, separation checks, final-validator assembly, a synthetic host, and the prepared package directory built into the factory worker image |
-| [`tools/case-validate`](tools/case-validate/README.md) | Standalone validation harness `rbw-validate`, the `docker` copy runner and the host registry (it holds `task-report`; the `umami` entry is planned) |
-| [`tools/controller`](tools/controller/README.md) | Runs jobs and the candidate attempt against the spend ledger on Vercel Sandbox; also the judge replay's controller, and the factory worker that runs a bug request or validation run in its own sandbox (the web service does not start it yet), with a local mode on Docker |
+| [`tools/case-validate`](tools/case-validate/README.md) | Standalone validation harness `rbw-validate`, the `docker` copy runner and the host registry (it holds `task-report` and `umami`) |
+| [`tools/controller`](tools/controller/README.md) | Runs jobs and the candidate attempt against the spend ledger on Vercel Sandbox; also the judge replay's controller, and the factory worker that runs a bug request or validation run in its own sandbox (the web service starts it), with a local mode on Docker |
 | [`tools/local-runner`](tools/local-runner/README.md) | Runs the kit check, observation and admission on local Docker; its job builders and copy path are reused by the controller |
 | [`tools/release`](tools/release/README.md) | Stages runs for the publisher, builds a checked release with its frozen judge job, and publishes judge replays |
 | [`tools/uc1`](tools/uc1/README.md) | Runs the UC1 paired comparison's attempts (server logs off and on) in the pre-registered order, with the spend guard and both grades |
@@ -68,12 +68,12 @@ The bug factory, a request service built on the same validation, is in progress;
 | [`kit/umami-race`](kit/umami-race/README.md) | The race family's kit image: the `kit/umami` image with Toxiproxy between Umami and Postgres for a fixed database delay |
 | [`kit/umami-runtime`](kit/umami-runtime/README.md) | The Umami runtime image: the `kit/umami` image without the app source, the fixture package or the file-hash list, for a debugging agent's copy and the factory's validation copies |
 | [`kit/task-report`](kit/task-report/README.md) | The task-report host's copy image (version 1, and version 2 under `v2/`): one app copy with its own PostgreSQL and no network |
-| [`kit/factory-worker`](kit/factory-worker/README.md) | The image the factory service is to start on Vercel Sandbox for each request and validation run (hosted runs are planned), with the prepared catalog packages built in |
+| [`kit/factory-worker`](kit/factory-worker/README.md) | The linux/amd64 image the factory service starts on Vercel Sandbox for each request and validation run, with the scanned prepared catalog packages built in |
 | [`docs/admission-rules.md`](docs/admission-rules.md) | Admission rules ADM-01 to ADM-10 and their status |
 | [`docs/bug-generation-pipeline.md`](docs/bug-generation-pipeline.md) | What each pipeline step does today, which package does it, and what is still manual |
 | [`docs/product/bug-package-v1.md`](docs/product/bug-package-v1.md) | The package format of a case's two parts (`rbw-bug-case/1`, `rbw-validator/1`) |
 | [`docs/product/adding-a-host.md`](docs/product/adding-a-host.md) | How a third host application is connected to the bug factory |
-| [`docs/product/bug-request-v1.md`](docs/product/bug-request-v1.md) | The bug request contract `bug-request/1` (draft, revision 3); its endpoints run in local test mode, and live mode is planned |
+| [`docs/product/bug-request-v1.md`](docs/product/bug-request-v1.md) | The bug request contract `bug-request/1` (draft, revision 3); its endpoints run in local test mode and in live mode on the deployed site |
 | [`docs/product/bug-request-v1-enforcement.md`](docs/product/bug-request-v1-enforcement.md) | Which layer and component enforce each contract requirement, and which tests cover it |
 | [`docs/product/factory-ui-integration.md`](docs/product/factory-ui-integration.md) | Integration status of the `/factory` page |
 | [`docs/product/fixtures/bug-request-v1/`](docs/product/fixtures/bug-request-v1/README.md) | Synthetic example bodies for the contract: shapes and states, not measured results |
@@ -121,7 +121,7 @@ RBW_RESULTS_DIR=fixtures/no-release pnpm --filter @rbw/web build
 RBW_RESULTS_DIR=../../tools/release/fixtures/release pnpm --filter @rbw/web build   # a synthetic release
 ```
 
-The judge routes stay disabled unless their variables are set, and the bug request routes that need live wiring answer unavailable outside test mode (see [Bug factory](#bug-factory-in-progress)). See [`packages/web/README.md`](packages/web/README.md) for the pages, the results directory layout, the fixtures and the configuration.
+The judge routes stay disabled unless their variables are set, and the bug request routes that need the ledger answer unavailable unless test mode or live mode's variables are set (see [Bug factory](#bug-factory)). See [`packages/web/README.md`](packages/web/README.md) for the pages, the results directory layout, the fixtures and the configuration.
 
 ## How a candidate, a release and a judge replay fit together
 
@@ -130,12 +130,12 @@ The judge routes stay disabled unless their variables are set, and the bug reque
 3. **Release.** After the owner approves the frozen issue, `tools/release build` checks the published run and writes a release with a frozen judge job in the private store; the publisher's `release` command publishes the release directory. The results site, rebuilt with it, shows the validated example.
 4. **Judge replay.** On the site, a judge with the passcode starts a replay. The judge route reserves the budget and starts the controller in its own sandbox, which runs the frozen judge job on three fresh copies (clean, planted, fixed) and compares the six cells with the release. `tools/release publish-replays` later publishes finished replays. See [Judge routes](packages/web/README.md#judge-routes) and `--prebuilt` in [`tools/controller`](tools/controller/README.md#commands).
 
-## Bug factory (in progress)
+## Bug factory
 
-The bug factory is designed as a service that takes a bug request and returns validated bug cases. A request names one or both host apps, a quantity of each bug type (`concurrency` or `date_time`), an optional plain-language description and one budget. A case qualifies only when the host's unchanged original suite passes on clean, buggy and reference-fixed copies, while the case's separate checks pass on the clean and fixed copies and detect the declared failure on the buggy copy. Each case is to be delivered as two package parts: a bug case for a debugging agent and a validator package for an evaluator. Today it runs only in a local test mode and in the worker's local mode (below); live requests are planned.
+The bug factory is a service that takes a bug request and returns validated bug cases. A request names one or both host apps, a quantity of each bug type (`concurrency` or `date_time`), an optional plain-language description and one budget. A case qualifies only when the host's unchanged original suite passes on clean, buggy and reference-fixed copies, while the case's separate checks pass on the clean and fixed copies and detect the declared failure on the buggy copy. Each case is delivered as two package parts: a bug case for a debugging agent and a validator package for an evaluator. It runs in a local test mode, in the worker's local mode, and in live mode on the production site and on hosted preview deployments (below).
 
 - **Contract.** [`docs/product/bug-request-v1.md`](docs/product/bug-request-v1.md) defines `bug-request/1` (draft, revision 3). The package format is [`docs/product/bug-package-v1.md`](docs/product/bug-package-v1.md), and [`docs/product/adding-a-host.md`](docs/product/adding-a-host.md) describes how a host is connected.
-- **Hosts.** Umami, the host of the released demonstration case, and task-report, a synthetic task-and-report service built for experiments and vendored in `hosts/task-report`. The validation harness's host registry holds task-report; the Umami entry in that registry is planned, together with its runtime image. Neither host's copy image is pushed to a registry yet. No task-report case is released or published.
+- **Hosts.** Umami, the host of the released demonstration case, and task-report, a synthetic task-and-report service built for experiments and vendored in `hosts/task-report`. The validation harness's host registry holds both, and each host's linux/amd64 copy image is pushed to a registry and pinned by digest. Two host and bug type pairs are live: task-report with `concurrency`, and Umami with `date_time` (the released time-zone case); the other two pairs are reported unsupported. No task-report case is released or published.
 
 What exists on main and how it is exercised:
 
@@ -147,11 +147,13 @@ What exists on main and how it is exercised:
   ```
 
 - **The worker's local mode.** `factory-worker --backend docker` runs a request or a validation run on one machine, against a local Postgres ledger, with each copy as a local Docker container. Its tests run a full local request with a validation run over the package tooling's synthetic host. See [Factory worker](tools/controller/README.md#factory-worker).
+- **Hosted preview.** On a hosted Vercel preview deployment of commit `269a22a` (October 26 and 27, 2026), the `/factory` page and the routes under `/api/factory/` run in live mode: a judge-passcode session, capabilities, interpretation, starting a request, status, stop, package downloads and validation runs of the delivered task-report and Umami cases, which both passed. Starting a request launches the factory worker in its own Vercel Sandbox from a pushed linux/amd64 worker image that carries the scanned prepared packages; the web service and the worker share the Neon ledger (the factory pool and the serial factory slot). A later preview deployment, with the worker image rebuilt at commit `ca6c77a`, also fulfilled a request. See [Factory service](packages/web/README.md#factory-service).
+- **Production.** The production site has served the `/factory` page and its routes in live mode since October 27, 2026, first from commit `ca6c77a` and then from `d98d7d7`. It offers task-report for `concurrency` and Umami for `date_time`. The measured results below come from hosted preview deployments, not from production.
+- **Hosted preview results.** A task-report request, an Umami request and one request with both hosts were each fulfilled. In each delivered case all six behavior cells matched (the original suite and the verification checks on the clean, buggy and reference-fixed copies), and every delivered package part downloaded through the deployment matched its published sha256. A user stop ended a request as `cancelled` with nothing delivered. The worker's worst-case reservation (about $0.35) is settled in full on each request, so a request costs at least that much.
+- **Package scan.** The prepare scan blocks a package part with any private-pattern, attribution or credential finding. The only exceptions are two exact upstream lines of Umami's pinned source, named by hash (PR #166).
 
 Planned:
 
-- Live requests from the site. On a deployment the request endpoints answer `503 unavailable`, start no work and spend nothing; only sign-in (`/api/factory/session`) and the completed-example endpoint respond, and the example answers `404` while none is published.
-- Hosted factory runs: the web service's live wiring to the worker, which then runs each request and validation run in its own Vercel Sandbox, and pushed copy images for both hosts.
 - The completed example's two package archives and their publication.
 - A request API acceptance runner (`tools/product-acceptance`).
 
@@ -165,7 +167,7 @@ The site is deployed on Vercel from a tree of this repository plus a results dir
 - Its planted bugs are synthetic; it finds no real Umami bug and files nothing upstream.
 - It makes no calibrated claim: calibration is recorded as `not_requested`, and ADM-10 (regrade for reported solves) is planned.
 - Anonymous visitors cannot start a replay; only judges with the passcode can, one replay at a time. Candidate attempts start from a controller command on the operator's machine, not from the site.
-- The bug factory takes no live requests yet: on a deployment its request endpoints answer unavailable, and hosted factory runs are planned. It does not assess source-only difficulty, serves only its two hosts, and does not publish live results to the results repository.
+- The bug factory does not assess source-only difficulty, serves only its two hosts, and does not publish live results to the results repository.
 - It does not evaluate Umami's upstream tests other than the API suite.
 
 ## How this was built

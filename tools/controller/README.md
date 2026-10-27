@@ -1,6 +1,6 @@
 # @rbw/controller
 
-The trusted controller. It runs one job (kit check, observation, admission or judge replay) end to end against the spend ledger, one app copy at a time, on Vercel Sandbox, or on Docker for the conductor's local checks. It also runs the candidate attempt: one factory root, from the kit check to the admission, under a project policy. The conductor starts it with one command; factory runs launch from a conductor command, not a web route. For a judge replay, the judge route (`packages/web`) starts the same controller in its own Vercel Sandbox (prebuilt mode, below). This is part of a hackathon prototype.
+The trusted controller. It runs one job (kit check, observation, admission or judge replay) end to end against the spend ledger, one app copy at a time, on Vercel Sandbox, or on Docker for the conductor's local checks. It also runs the candidate attempt: one factory root, from the kit check to the admission, under a project policy. The conductor starts it with one command; factory runs (candidate attempts) launch from a conductor command, not a web route. The bug factory's worker is different: the factory service's routes start it (see [Factory worker](#factory-worker)). For a judge replay, the judge route (`packages/web`) starts the same controller in its own Vercel Sandbox (prebuilt mode, below). This is part of a hackathon prototype.
 
 Everything it writes is **development evidence**. It makes no admission claim and publishes nothing, and the planted bug is synthetic.
 
@@ -367,7 +367,7 @@ Adding `--backend docker` (and leaving out `--sandbox-image`) runs any of these 
 
 ## Factory worker
 
-The bug request service (`docs/product/bug-request-v1.md`) runs each request, and each validation run a user starts, in its own worker sandbox on Vercel Sandbox, so the developer's laptop can be off. The files are `src/factory-*.ts`; the image is `kit/factory-worker/`.
+The bug request service (`docs/product/bug-request-v1.md`) runs each request, and each validation run a user starts, in its own worker sandbox on Vercel Sandbox, so by design the developer's laptop can be off. The files are `src/factory-*.ts`; the image is `kit/factory-worker/`. The production site runs it this way. On hosted preview deployments it ran requests on both hosts and validation runs of the delivered task-report and Umami cases, which passed.
 
 **The factory profile** (`src/factory-profile.ts`) is the one frozen object with every factory limit, lifetime and envelope, and its own sha256. The other factory modules receive it; none defines these numbers. Its envelopes are priced from the pinned rate sheet, a test recomputes them, and every reservation re-prices its lines and refuses when the total differs from the profile's. A validation run is priced for the copies the protocol inside the case's delivered validator package declares, from the same sheet (`validationWorstCase(rates, host, copies)`). The lifetimes are predictions until measured on the hosted path.
 
