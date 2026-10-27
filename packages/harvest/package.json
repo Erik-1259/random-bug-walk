@@ -13,10 +13,10 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@ast-grep/napi": "0.45.3",
+    "@ast-grep/napi": "0.51.0",
     "@octokit/core": "7.0.8",
     "@octokit/request-error": "7.1.2",
     "@rbw/shapes": "workspace:*",
-    "zod": "4.6.6"
+    "zod": "4.6.7"
   }
 }

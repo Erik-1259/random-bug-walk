@@ -68,7 +68,7 @@ function ConnectedWorkspace({ controller }: { controller: FactoryController }) {
       {view.canRetryValidation && <button type="button" disabled={view.busy || !view.signedIn} onClick={() => { void controller.retryValidation(); }}>Retry the same validation</button>}
       {view.status?.state === "finished" && <button type="button" disabled={view.busy || view.status.attention !== null || (view.validation !== null && view.validation.state !== "finished") || view.status.cases.some((item) => item.validation !== null && item.validation.state !== "finished") || view.canRetryValidation} onClick={() => { void controller.newDraft(); }}>Prepare another request</button>}
     </section>}
-    <FactoryProgress status={view.status} busy={view.busy || view.canRetryValidation} disabled={!view.signedIn} validation={view.validation}
+    <FactoryProgress status={view.status} busy={view.busy || view.canRetryValidation} polling={view.polling} stopPending={view.stopPending} disabled={!view.signedIn} validation={view.validation}
       onStop={() => { void controller.stop(); }} onValidate={(caseId) => { void controller.validate(caseId); }} />
   </>;
 }
