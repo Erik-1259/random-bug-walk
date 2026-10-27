@@ -60,5 +60,4 @@ The web service reads the same prepared directory, bundled into its build (no ob
 service side is in `packages/web`: the deploy copies the directory into `packages/web/factory-packages`,
 whose `index.json` must have the same SHA-256 as the image's (see
 [Deploying on Vercel](../../packages/web/README.md#deploying-on-vercel)). A pushed linux/amd64 build of
-this image runs the requests of a hosted preview deployment; the production site is not deployed with
-the factory yet.
+this image runs the requests of the production site and of hosted preview deployments.

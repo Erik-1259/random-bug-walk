@@ -367,7 +367,7 @@ Adding `--backend docker` (and leaving out `--sandbox-image`) runs any of these 
 
 ## Factory worker
 
-The bug request service (`docs/product/bug-request-v1.md`) runs each request, and each validation run a user starts, in its own worker sandbox on Vercel Sandbox, so the developer's laptop can be off. The files are `src/factory-*.ts`; the image is `kit/factory-worker/`. It has run this way from a hosted preview deployment, for requests on both hosts and a validation run of the task-report case, which passed; the production site is not deployed with the factory yet.
+The bug request service (`docs/product/bug-request-v1.md`) runs each request, and each validation run a user starts, in its own worker sandbox on Vercel Sandbox, so the developer's laptop can be off. The files are `src/factory-*.ts`; the image is `kit/factory-worker/`. It runs this way from the production site. On hosted preview deployments it ran requests on both hosts and validation runs of the delivered task-report and Umami cases, which passed.
 
 **The factory profile** (`src/factory-profile.ts`) is the one frozen object with every factory limit, lifetime and envelope, and its own sha256. The other factory modules receive it; none defines these numbers. Its envelopes are priced from the pinned rate sheet, a test recomputes them, and every reservation re-prices its lines and refuses when the total differs from the profile's. A validation run is priced for the copies the protocol inside the case's delivered validator package declares, from the same sheet (`validationWorstCase(rates, host, copies)`). The lifetimes are predictions until measured on the hosted path.
 
