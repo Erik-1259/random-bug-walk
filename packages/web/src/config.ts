@@ -163,3 +163,27 @@ export function loadFactoryConfig(env: Env = process.env, cwd: string = process.
     repoRoot: resolve(cwd, "../.."),
   };
 }
+
+/** The bug designer's default model: NVIDIA Nemotron 3 Super on Nebius Token Factory. */
+export const DEFAULT_ASSIST_MODEL = "nvidia/nemotron-3-super-120b-a12b";
+/** A model ID as Token Factory names them: provider/model, plain characters only. */
+const MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+export interface AssistConfig {
+  /** RBW_ASSIST_TOKEN_FACTORY_KEY: the Token Factory key the designer's model calls use; null leaves them unavailable. */
+  tokenFactoryKey: string | null;
+  /** RBW_ASSIST_TAVILY_KEY: the Tavily key the designer's web searches use; null leaves them unavailable. */
+  tavilyKey: string | null;
+  /** RBW_ASSIST_MODEL: the model ID, DEFAULT_ASSIST_MODEL when unset or not a plain provider/model ID. */
+  model: string;
+}
+
+/** The bug designer's server variables. Each is optional; a route whose key is missing answers assist_unavailable. */
+export function loadAssistConfig(env: Env = process.env): AssistConfig {
+  const model = value(env, "RBW_ASSIST_MODEL");
+  return {
+    tokenFactoryKey: value(env, "RBW_ASSIST_TOKEN_FACTORY_KEY"),
+    tavilyKey: value(env, "RBW_ASSIST_TAVILY_KEY"),
+    model: model !== null && MODEL_ID.test(model) ? model : DEFAULT_ASSIST_MODEL,
+  };
+}

@@ -264,6 +264,16 @@ The factory routes' live mode reads these at request time (`loadFactoryConfig`),
 | `RBW_FACTORY_WORKER_IMAGE` | Sandbox backend: the worker image pinned by digest (`<repository>@sha256:<digest>`), also given to the worker; required |
 | `RBW_FACTORY_PACKAGES_DIR` | The prepared packages directory (relative to this directory or absolute). Only its entries are offered; without a readable index nothing is. Required on the local backend, which gives it to the worker. On a deployment: `factory-packages`, the directory the deploy copies in (see [Deploying on Vercel](#deploying-on-vercel)) |
 
+The bug designer's routes (`src/assist/`, `POST /api/assist/{bug-shapes,bug-spec,delivery-brief}`, also mounted under `/api/factory/assist/` so the factory session cookie reaches them) read these at request time (`loadAssistConfig`), and print none of them. Each is optional: a route whose key is unset answers `503 assist_unavailable`, and the request form works as before.
+
+| Variable | Use |
+|---|---|
+| `RBW_ASSIST_TOKEN_FACTORY_KEY` | The Nebius Token Factory key for the designer's model calls |
+| `RBW_ASSIST_TAVILY_KEY` | The Tavily key for the designer's web searches and the delivery brief's phrase check |
+| `RBW_ASSIST_MODEL` | The model ID; unset, `nvidia/nemotron-3-super-120b-a12b` |
+
+The designer needs the factory session, keeps its rate limits in each server instance's memory (per session per hour: 20 shape searches, 20 specifications, 10 delivery briefs; 300 calls per instance per hour in all), abandons each provider call after 20 s and retries nothing. The delivery brief reads only the delivered case's bug-case part, never the validator.
+
 The build also freezes the pinned rate sheet's text into the server bundle as `RBW_FACTORY_RATE_SHEET` (`next.config.ts`), which live mode prices its work with, and the task-report adapter's baseline, catalog and protocols as `RBW_FACTORY_TASK_REPORT_FROZEN`.
 
 The record packages read their schema files next to their sources, which a bundled copy cannot do, so `src/records.ts` loads them with imports the bundler leaves out, and Node loads them from the workspace during prerendering.

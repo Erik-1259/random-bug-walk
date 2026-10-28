@@ -479,6 +479,9 @@ importers:
       '@vercel/oidc':
         specifier: 3.8.10
         version: 3.8.10
+      ajv:
+        specifier: 8.20.0
+        version: 8.20.0
       next:
         specifier: 16.4.2
         version: 16.4.2(@playwright/test@1.63.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
