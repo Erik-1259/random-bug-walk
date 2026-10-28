@@ -188,6 +188,14 @@ describe("factory contract progress", () => {
     expect(html).toContain(status.stop_reason?.message.replaceAll("'", "&#x27;") ?? "missing");
   });
 
+  it("shows a plain latest update while a request runs, and the run's duration once it finishes", () => {
+    const running = render(statusFixture("status-running"));
+    expect(running).toMatch(/Latest update \(\+\d+ min \d+ s\): A check finished on task-report\.<\/p>/);
+    const finished = render(statusFixture("status-fulfilled"));
+    expect(finished).toContain("finished after ");
+    expect(finished).not.toContain("Latest update");
+  });
+
   it("names bug types and hosts with the capabilities' labels when they are supplied", () => {
     const status = statusFixture("status-wrong-failure");
     const html = renderToStaticMarkup(<FactoryProgress status={status} busy={false} onStop={() => undefined} onValidate={() => undefined}

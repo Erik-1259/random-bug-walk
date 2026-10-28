@@ -2,7 +2,7 @@
 // Nothing here changes what the browser sends or decides; every gate keeps using the exact
 // micro-dollar amounts and the service's own codes. Erasable syntax only (type imports, no enums):
 // test/factory-test-mode-browser.mjs imports this file through Node's type stripping.
-import type { Capabilities, RequestStatus } from "./client.ts";
+import type { Capabilities, FactoryEvent, RequestStatus } from "./client.ts";
 
 const MICRO_PER_CENT = 10_000;
 
@@ -150,3 +150,29 @@ export function closedByCalendar(capabilities: Capabilities, hostId: string): bo
 }
 
 export const CALENDAR_HINT = "Not available today: Umami cases cannot run on the 2nd to the 5th of each month (UTC), because two of Umami's own tests fail on those days. They can run again from the 6th.";
+
+/**
+ * A plain line for an event, for the latest-update line; the activity log keeps the service's own
+ * text. Budget bookkeeping events have no line of their own (null), and unknown types keep their text.
+ */
+export function describeEvent(event: Pick<FactoryEvent, "type" | "host_id" | "message">, hostLabels: Readonly<Record<string, string>> = {}): string | null {
+  const host = event.host_id === null ? "the application" : hostLabels[event.host_id] ?? event.host_id;
+  switch (event.type) {
+    case "budget_updated": return null;
+    case "request_accepted": return "Request accepted.";
+    case "worker_started": return "The run started.";
+    case "host_preparing": return `Preparing a fresh copy of ${host}.`;
+    case "host_ready": return `The copy of ${host} is ready.`;
+    case "candidate_selected": return `Trying a candidate bug on ${host}.`;
+    case "check_finished": return `A check finished on ${host}.`;
+    case "behavior_checks_passed": return "A candidate bug passed its behavior checks.";
+    case "requested_criteria_passed": return "A candidate bug matches what you asked for.";
+    case "candidate_rejected": case "candidate_invalid": case "candidate_incomplete": case "candidate_skipped": return "A candidate bug was set aside.";
+    case "package_ready": return "Packaging a case.";
+    case "case_delivered": return "A case was delivered.";
+    case "stop_requested": return "Stop requested.";
+    case "validation_started": return "Validation started.";
+    case "validation_finished": return "Validation finished.";
+    default: return event.message;
+  }
+}

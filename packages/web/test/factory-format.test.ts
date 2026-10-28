@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
-  closedByCalendar, describeFactoryMessage, describeServiceState, describeStopReason, describeSupport, formatBudgetInput, formatClock, formatDateTime,
+  closedByCalendar, describeEvent, describeFactoryMessage, describeServiceState, describeStopReason, describeSupport, formatBudgetInput, formatClock, formatDateTime,
   formatDuration, formatExactUsd, formatOffset, formatUsd, shortId, UMAMI_CALENDAR_REASON,
 } from "../src/factory/format.ts";
 import type { Capabilities } from "../src/factory/client.ts";
@@ -82,5 +82,12 @@ describe("plain service states", () => {
     const capabilities = { combinations: [{ host_id: "umami", bug_type_id: "date_time", status: "unsupported", reason: CALENDAR_REASON, source: null }] } as unknown as Capabilities;
     expect(closedByCalendar(capabilities, "umami")).toBe(true);
     expect(closedByCalendar(capabilities, "task-report")).toBe(false);
+  });
+
+  it("words the latest event plainly and leaves budget bookkeeping to the activity log", () => {
+    const labels = { umami: "Umami" };
+    expect(describeEvent({ type: "host_preparing", host_id: "umami", message: "Preparing Umami at its pinned baseline." }, labels)).toBe("Preparing a fresh copy of Umami.");
+    expect(describeEvent({ type: "budget_updated", host_id: null, message: "Reserved $0.20 for the worker's worst case." })).toBeNull();
+    expect(describeEvent({ type: "attention", host_id: null, message: "synthetic attention text" })).toBe("synthetic attention text");
   });
 });

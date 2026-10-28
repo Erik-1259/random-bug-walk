@@ -1,7 +1,7 @@
 "use client";
 
 import type { FactoryCase, RequestStatus, ValidationRun } from "../factory/client.ts";
-import { describeStopReason, formatClock, formatDuration, formatExactUsd, formatOffset, formatUsd } from "../factory/format.ts";
+import { describeEvent, describeStopReason, formatClock, formatDuration, formatExactUsd, formatOffset, formatUsd } from "../factory/format.ts";
 
 const OUTCOMES: Record<string, string> = {
   fulfilled: "Fulfilled",
@@ -63,7 +63,7 @@ export function FactoryProgress({ status, busy, onStop, onValidate, validation =
   const delivered = status.items.reduce((total, item) => total + item.delivered, 0);
   const plainStop = describeStopReason(status);
   const finishedAt = status.state === "finished" ? status.events.find((event) => event.type === "request_finished")?.at ?? status.updated_at : null;
-  const latest = status.events.at(-1);
+  const latest = status.events.findLast((event) => describeEvent(event) !== null);
   const setAside = status.candidates.filter((candidate) => candidate.reason !== null);
   const { budget } = status;
   return <section className="factory-panel" aria-labelledby="factory-progress">
@@ -80,7 +80,7 @@ export function FactoryProgress({ status, busy, onStop, onValidate, validation =
     <p className="factory-note">
       Started <time dateTime={status.created_at} title={status.created_at}>{formatClock(status.created_at)}</time>
       {finishedAt !== null && <>; finished after {formatDuration(Date.parse(finishedAt) - Date.parse(status.created_at))}</>}.
-      {finishedAt === null && latest !== undefined && <> Latest update ({formatOffset(status.created_at, latest.at)}): {latest.message}</>}
+      {finishedAt === null && latest !== undefined && <> Latest update ({formatOffset(status.created_at, latest.at)}): {describeEvent(latest, labels.hosts)}</>}
     </p>
     {status.attention !== null && <p role="alert">Attention required ({status.attention.code}): {status.attention.message}</p>}
     <h3>Requested and delivered</h3>
@@ -134,7 +134,7 @@ export function FactoryProgress({ status, busy, onStop, onValidate, validation =
       const canValidate = !busy && !disabled && !validationActive && status.state === "finished" && status.attention === null && !insufficientBudget && item.packages.bug_case.ready && !!item.packages.bug_case.download_path && item.packages.validator.ready && !!item.packages.validator.download_path;
       return <li className="factory-case-card" key={item.case_id}>
         <h4>{item.title}</h4>
-        <p>{item.host_label} <small>(fixed version {item.baseline_id})</small></p>
+        <p>{item.host_label} <small>(app version {item.baseline_id})</small></p>
         <p>{item.summary.observed_failure}</p>
         <p>{item.difficulty.note}</p>
         <PackageLinks item={item} />
