@@ -73,7 +73,8 @@ const NEEDS_OPERATOR = /operator/i;
 
 /**
  * A plain heading and sentence for a message the client reports as `code: message`
- * (src/factory/client.ts). Unknown codes keep only the service's text.
+ * (src/factory/client.ts). Unknown codes keep only the service's text, and a message the client
+ * writes itself, without a code, is not called a refusal.
  */
 export function describeFactoryMessage(raw: string): FriendlyMessage {
   const code = /^([a-z_]+): /.exec(raw)?.[1] ?? null;
@@ -83,7 +84,7 @@ export function describeFactoryMessage(raw: string): FriendlyMessage {
         ? { title: "Paused for an operator check", body: "Earlier work is waiting for an operator to confirm what it spent. New requests can start after that.", raw }
         : { title: "Another request is running", body: "The service runs one live request or validation at a time, for everyone. A request can take several minutes. Try again after it finishes.", raw };
     case "budget_unavailable":
-      return { title: "Not enough shared budget left", body: "The shared judging budget cannot cover this request's budget right now. Try a smaller budget. When the shared budget is used up, new requests cannot start.", raw };
+      return { title: "Not enough budget left", body: "The shared judging budget, or what is left of this request's own budget, cannot cover this right now. For a new request, try a smaller budget. When the shared budget is used up, new requests cannot start.", raw };
     case "passcode_incorrect":
       return { title: "That passcode didn't work", body: "Check the judge passcode and try again.", raw };
     case "unauthorized":
@@ -92,6 +93,10 @@ export function describeFactoryMessage(raw: string): FriendlyMessage {
       return { title: "The request service isn't reachable right now", body: "Try again in a moment.", raw };
     case "interpretation_stale":
       return { title: "The requirements changed", body: "Review them again before starting.", raw };
+    case "not_found":
+      return { title: "Nothing was found with this ID", body: null, raw };
+    case null:
+      return { title: "Your saved request", body: null, raw };
     default:
       return { title: "The request service refused this", body: null, raw };
   }
@@ -115,7 +120,7 @@ export function describeStopReason(status: Pick<RequestStatus, "stop_reason" | "
   switch (code) {
     case undefined: return null;
     case "fulfilled": return "Every requested case was delivered.";
-    case "budget_exhausted": return "Stopped because the rest of this request's budget could not cover another attempt. Cases delivered before that stay available below.";
+    case "budget_exhausted": return "Stopped because the rest of this request's budget, or of the shared judging budget, could not cover another attempt. Cases delivered before that stay available below.";
     case "time_limit": return `Stopped at the ${String(Math.round(status.limits.max_wall_clock_s / 60))}-minute time limit. Cases delivered before that stay available below.`;
     case "candidate_limit": return `Stopped after trying ${String(status.limits.max_candidates)} candidate bugs, the most one request may try.`;
     case "sources_exhausted": return "Every candidate bug available for this request was tried.";
@@ -168,7 +173,7 @@ export function describeEvent(event: Pick<FactoryEvent, "type" | "host_id" | "me
     case "behavior_checks_passed": return "A candidate bug passed its behavior checks.";
     case "requested_criteria_passed": return "A candidate bug matches what you asked for.";
     case "candidate_rejected": case "candidate_invalid": case "candidate_incomplete": case "candidate_skipped": return "A candidate bug was set aside.";
-    case "package_ready": return "Packaging a case.";
+    case "package_ready": return "A case's downloads are packaged; delivery comes next.";
     case "case_delivered": return "A case was delivered.";
     case "stop_requested": return "Stop requested.";
     case "validation_started": return "Validation started.";

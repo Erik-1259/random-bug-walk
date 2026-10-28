@@ -184,7 +184,7 @@ describe("factory contract progress", () => {
     if (first === undefined) throw new Error("Missing fixture event");
     expect(html).toContain(`<time dateTime="${first.at}" title="${first.at}">`);
     expect(html).not.toContain(`>${first.at}<`);
-    expect(html).toContain("Stopped because the rest of this request&#x27;s budget could not cover another attempt.");
+    expect(html).toContain("Stopped because the rest of this request&#x27;s budget, or of the shared judging budget, could not cover another attempt.");
     expect(html).toContain(status.stop_reason?.message.replaceAll("'", "&#x27;") ?? "missing");
   });
 

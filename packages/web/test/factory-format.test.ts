@@ -54,9 +54,13 @@ describe("plain service states", () => {
     const reconcile = describeFactoryMessage("busy: Earlier factory work has spend that is waiting for an operator to reconcile it. No new factory work can start until then.");
     expect(reconcile.title).toBe("Paused for an operator check");
     expect(reconcile.body).not.toMatch(/minute/);
-    expect(describeFactoryMessage("budget_unavailable: The factory pool's available amount cannot cover this request's budget right now.").title).toBe("Not enough shared budget left");
+    expect(describeFactoryMessage("budget_unavailable: The factory pool's available amount cannot cover this request's budget right now.").title).toBe("Not enough budget left");
+    expect(describeFactoryMessage("budget_unavailable: The request budget's remaining amount or the factory pool's available amount cannot cover this validation run's worst case.").body).toContain("or what is left of this request's own budget");
     expect(describeFactoryMessage("passcode_incorrect: The passcode is not correct. Check it and try again.").title).toBe("That passcode didn't work");
-    expect(describeFactoryMessage("synthetic text without a code")).toEqual({ title: "The request service refused this", body: null, raw: "synthetic text without a code" });
+    // The client's own retry note carries no code and is not a refusal; an unknown code is.
+    expect(describeFactoryMessage("Request not found yet. Its identity is retained; retrying sends the same request, never a replacement.").title).toBe("Your saved request");
+    expect(describeFactoryMessage("not_found: No request, case or validation run with this ID was found.").title).toBe("Nothing was found with this ID");
+    expect(describeFactoryMessage("synthetic_code: synthetic text")).toEqual({ title: "The request service refused this", body: null, raw: "synthetic_code: synthetic text" });
   });
 
   it("words the service state by its code", () => {

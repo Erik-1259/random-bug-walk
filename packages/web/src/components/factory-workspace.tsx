@@ -48,7 +48,7 @@ function ConnectedWorkspace({ controller }: { controller: FactoryController }) {
   return <>
     <aside className={unavailable ? "factory-availability factory-availability-closed" : "factory-availability"} aria-label="Request availability">
       <strong>{unavailable ? "Live requests unavailable" : "Request service available"}</strong>
-      <p>{describeServiceState(view.capabilities?.service ?? null)}</p>
+      <p>{view.capabilities === null && view.busy ? "Checking whether the request service is available. No work has started." : describeServiceState(view.capabilities?.service ?? null)}</p>
       {serviceMessage !== null && <p><small>Service message: {serviceMessage}</small></p>}
       <button type="button" disabled={view.busy} onClick={() => { void controller.initialize(); }}>Refresh service availability</button>
     </aside>
