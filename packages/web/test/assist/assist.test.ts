@@ -9,7 +9,7 @@ import { postBugShapes, postBugSpec, postDeliveryBrief, type AssistDeps } from "
 import { INSTANCE_LIMIT, RateLimiter, SESSION_LIMITS, WINDOW_MS } from "../../src/assist/limits.ts";
 import { distinctivePhrases } from "../../src/assist/novelty.ts";
 import { CHAT_COMPLETIONS_URL, TAVILY_SEARCH_URL } from "../../src/assist/providers.ts";
-import { holdsCode, securityTopic } from "../../src/assist/safety.ts";
+import { designSecurityTopic, holdsCode, securityTopic } from "../../src/assist/safety.ts";
 import { getRequestStatus, postInterpretation, postStart, postTestReset } from "../../src/factory-server/handlers.ts";
 import type { FactoryServer } from "../../src/factory-server/ports.ts";
 import { TEST_MODE_EVALUATOR_SENTINEL } from "../../src/factory-server/test-mode/archives.ts";
@@ -213,22 +213,57 @@ describe("bug shapes", () => {
     expect(shapes.every((shape) => shape.fit === null)).toBe(true);
   });
 
-  it("refuses when the model finds the request out of scope", async () => {
+  it("refuses when the model finds the request out of scope twice, asking once more and searching once", async () => {
     const { h, mock, deps } = setup();
     mock.tavily.push(tavilyReply(REPORTS));
-    mock.model.push(modelReply({ in_scope: false, shapes: [] }));
+    mock.model.push(modelReply({ in_scope: false, shapes: [] }), modelReply({ in_scope: false, shapes: [] }));
     const response = await postBugShapes(post(path, { query: "how to break into a server" }), h.server, deps);
     expect(response.status).toBe(422);
     expect(await errorCode(response)).toBe("refused");
+    expect(mock.modelCalls()).toHaveLength(2);
+    expect(mock.tavilyCalls()).toHaveLength(1);
+    expect(h.logs).toEqual(["assist bug-shapes: model_out_of_scope; retrying the model call once", "assist bug-shapes: model_out_of_scope; answered refused"]);
   });
 
-  it("drops shapes that turn to security topics, and refuses when none is left", async () => {
+  it("serves the second answer when the first is out of scope", async () => {
+    const { h, mock, deps } = setup();
+    mock.tavily.push(tavilyReply(REPORTS));
+    mock.model.push(modelReply({ in_scope: false, shapes: [] }), modelReply(shapeOutput()));
+    const response = await postBugShapes(post(path, { query: "date/time bugs" }), h.server, deps);
+    expect(response.status).toBe(200);
+    expect((await body(response)).shapes).toHaveLength(4);
+    expect(mock.modelCalls()).toHaveLength(2);
+    expect(mock.modelCalls()[1]?.raw).toBe(mock.modelCalls()[0]?.raw);
+    expect(mock.tavilyCalls()).toHaveLength(1);
+  });
+
+  it("drops shapes that turn to security topics, and refuses when none is left after one retry", async () => {
     const { h, mock, deps } = setup();
     mock.tavily.push(tavilyReply(REPORTS));
     const output = shapeOutput([{ title: "Session hijacking through stale tokens" }]) as { shapes: unknown[] };
-    mock.model.push(modelReply({ in_scope: true, shapes: output.shapes.slice(0, 1) }));
+    mock.model.push(modelReply({ in_scope: true, shapes: output.shapes.slice(0, 1) }), modelReply({ in_scope: true, shapes: output.shapes.slice(0, 1) }));
     const response = await postBugShapes(post(path, { query: "state bugs" }), h.server, deps);
     expect(response.status).toBe(422);
+    expect(mock.modelCalls()).toHaveLength(2);
+    expect(h.logs.at(-1)).toBe("assist bug-shapes: output_security_term:title; answered refused");
+  });
+
+  it("drops one security shape without asking again", async () => {
+    const { h, mock, deps } = setup();
+    mock.tavily.push(tavilyReply(REPORTS));
+    mock.model.push(modelReply(shapeOutput([{}, { summary: "Two updates race and the permission check reads a stale row." }])));
+    const response = await postBugShapes(post(path, { query: "state bugs" }), h.server, deps);
+    expect(response.status).toBe(200);
+    expect(((await body(response)).shapes as { title: string }[]).map((shape) => shape.title)).not.toContain("Overlapping updates lose a change");
+    expect(mock.modelCalls()).toHaveLength(1);
+    expect(h.logs).toEqual([]);
+  });
+
+  it("logs the input reason code when it refuses a query", async () => {
+    const { h, mock, deps } = setup();
+    expect((await postBugShapes(post(path, { query: "token theft in reports" }), h.server, deps)).status).toBe(422);
+    expect(mock.calls).toEqual([]);
+    expect(h.logs).toEqual(["assist bug-shapes: input_security_term; answered refused"]);
   });
 
   it("answers assist_unavailable when the search finds no report", async () => {
@@ -345,13 +380,80 @@ describe("bug spec", () => {
     expect(mock.tavilyCalls()).toEqual([]);
   });
 
-  it("refuses a design the model marks out of scope or that turns to login or permissions", async () => {
-    for (const output of [{ ...SPEC, in_scope: false }, { ...SPEC, change: "The login handler skips the permission check under load." }]) {
-      const { h, mock, deps } = setup();
-      mock.model.push(modelReply(output));
-      const response = await postBugSpec(post(path, { shape: SHAPE, host_id: "task-report" }), h.server, deps);
-      expect(response.status).toBe(422);
+  it.each([
+    ["marks out of scope", { ...SPEC, in_scope: false }, "model_out_of_scope"],
+    ["turns to login or permissions", { ...SPEC, change: "The login handler skips the permission check under load." }, "output_security_term:change"],
+    ["names authentication", { ...SPEC, where: "The authentication middleware that stamps each request's time." }, "output_security_term:where"],
+    ["names a credential in a check", { ...SPEC, checks_to_add: ["Check the totals.", "Rotate the credential and check again."] }, "output_security_term:checks_to_add"],
+  ])("refuses a design the model %s twice, after asking once more", async (_name, output, reason) => {
+    const { h, mock, deps } = setup();
+    mock.model.push(modelReply(output), modelReply(output));
+    const response = await postBugSpec(post(path, { shape: SHAPE, host_id: "task-report" }), h.server, deps);
+    expect(response.status).toBe(422);
+    expect(await errorCode(response)).toBe("refused");
+    expect(mock.modelCalls()).toHaveLength(2);
+    expect(h.logs).toEqual([`assist bug-spec: ${reason}; retrying the model call once`, `assist bug-spec: ${reason}; answered refused`]);
+  });
+
+  it.each([
+    ["marked out of scope", { ...SPEC, in_scope: false }, "model_out_of_scope"],
+    ["naming a security term", { ...SPEC, fix: "Remove the injected offset." }, "output_security_term:fix"],
+  ])("serves the second design when the first is %s", async (_name, first, reason) => {
+    const { h, mock, deps } = setup();
+    mock.model.push(modelReply(first), modelReply(SPEC));
+    const response = await postBugSpec(post(path, { shape: SHAPE, host_id: "umami" }), h.server, deps);
+    expect(response.status).toBe(200);
+    expect(((await body(response)).spec as { title: string }).title).toBe(SPEC.title);
+    const calls = mock.modelCalls();
+    expect(calls).toHaveLength(2);
+    // The same call again: the same prompt, max_tokens and model.
+    expect(calls[1]?.raw).toBe(calls[0]?.raw);
+    expect(h.logs).toEqual([`assist bug-spec: ${reason}; retrying the model call once`]);
+  });
+
+  it("allows bypass and payload in a design, at the first answer", async () => {
+    const { h, mock, deps } = setup();
+    const design = { ...SPEC, change: "The cached path bypasses the time-zone conversion, so event payloads near midnight land on the neighboring day.", checks_to_add: ["Send a payload at 23:30 in a UTC-5 zone and check the day it counts on."] };
+    mock.model.push(modelReply(design));
+    const response = await postBugSpec(post(path, { shape: SHAPE, host_id: "umami" }), h.server, deps);
+    expect(response.status).toBe(200);
+    expect(((await body(response)).spec as { change: string }).change).toBe(design.change);
+    expect(mock.modelCalls()).toHaveLength(1);
+    expect(h.logs).toEqual([]);
+  });
+
+  it("refuses a shape that names bypass before any provider call, with the input reason code", async () => {
+    const { h, mock, deps } = setup();
+    const response = await postBugSpec(post(path, { shape: { ...SHAPE, summary: "A cache bypass shifts daily totals." }, host_id: "umami" }), h.server, deps);
+    expect(response.status).toBe(422);
+    expect(mock.calls).toEqual([]);
+    expect(h.logs).toEqual(["assist bug-spec: input_security_term; answered refused"]);
+  });
+
+  it("does not retry a provider failure", async () => {
+    const { h, mock, deps } = setup();
+    mock.model.push(jsonResponse({}, 503), modelReply(SPEC));
+    const response = await postBugSpec(post(path, { shape: SHAPE, host_id: "umami" }), h.server, deps);
+    expect(response.status).toBe(503);
+    expect(await errorCode(response)).toBe("assist_unavailable");
+    expect(mock.modelCalls()).toHaveLength(1);
+  });
+
+  it("counts the retry against the session's limit, and answers refused when no call is left for it", async () => {
+    const { h, mock, deps } = setup();
+    mock.model.push(modelReply({ ...SPEC, in_scope: false }), modelReply(SPEC));
+    expect((await postBugSpec(post(path, { shape: SHAPE, host_id: "umami" }), h.server, deps)).status).toBe(200);
+    for (let index = 0; index < 57; index += 1) {
+      mock.model.push(modelReply(SPEC));
+      expect((await postBugSpec(post(path, { shape: SHAPE, host_id: "umami" }), h.server, deps)).status).toBe(200);
     }
+    // 59 calls taken: this request takes the 60th, and its retry finds no room.
+    mock.model.push(modelReply({ ...SPEC, in_scope: false }), modelReply(SPEC));
+    const response = await postBugSpec(post(path, { shape: SHAPE, host_id: "umami" }), h.server, deps);
+    expect(response.status).toBe(422);
+    expect(mock.modelCalls()).toHaveLength(60);
+    expect(h.logs.at(-1)).toBe("assist bug-spec: model_out_of_scope (no retry: rate limited); answered refused");
+    expect((await postBugSpec(post(path, { shape: SHAPE, host_id: "umami" }), h.server, deps)).status).toBe(429);
   });
 
   it("does not use a design that holds code or patch text", async () => {
@@ -588,6 +690,14 @@ describe("scope and novelty helpers", () => {
 
   it.each(["XSS in comments", "OAuth redirect", "privilege escalation", "sign-in page race", "secret rotation", "CVE-2024-1234"])("treats %j as a security topic", (text) => {
     expect(securityTopic(text)).toBe(true);
+  });
+
+  it("leaves bypass and payload out of the design check only", () => {
+    for (const text of ["The cached path bypasses the time-zone conversion.", "Umami's event payloads carry a local timestamp."]) {
+      expect(securityTopic(text)).toBe(true);
+      expect(designSecurityTopic(text)).toBe(false);
+    }
+    for (const text of ["The authentication step runs first.", "SQL injection in the filter.", "A permission check races."]) expect(designSecurityTopic(text)).toBe(true);
   });
 
   it("finds code and patch text but not prose", () => {

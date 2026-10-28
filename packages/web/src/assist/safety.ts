@@ -2,6 +2,13 @@
 // topics (vulnerabilities, authentication, identity and permissions, injection, secrets) are refused
 // before any provider call, and a model answer that turns to them is refused too. Designs stay at
 // component level: an answer holding code blocks or patch text is not used.
+//
+// Two checks share one term list. securityTopic, the input check, uses the full list on what a visitor
+// sends (a query, or a shape sent for a design); bug shapes are checked with it too, because a shape the
+// page shows comes back as bug-spec input. designSecurityTopic, the output check, is used only on a
+// bug-spec model answer and leaves out "bypass" and "payload": in date/time and concurrency designs they
+// are ordinary words ("the cached path bypasses the time-zone conversion", Umami's event payloads), and
+// the other terms still catch a design that turns to security.
 
 const SECURITY_TERMS: readonly string[] = [
   "secur(?:e|ity)",
@@ -66,11 +73,22 @@ const SECURITY_TERMS: readonly string[] = [
   "deseriali[sz]\\w*",
 ];
 
-const SECURITY = new RegExp(`(?<![\\p{L}\\p{N}])(?:${SECURITY_TERMS.join("|")})(?![\\p{L}\\p{N}])`, "iu");
+/** Terms the output check leaves out: ordinary words in the designs the designer writes. */
+const DESIGN_WORDS: readonly string[] = ["bypass\\w*", "payloads?"];
 
-/** Whether the text names a security topic the designer does not cover. */
+const termsPattern = (terms: readonly string[]): RegExp => new RegExp(`(?<![\\p{L}\\p{N}])(?:${terms.join("|")})(?![\\p{L}\\p{N}])`, "iu");
+
+const SECURITY = termsPattern(SECURITY_TERMS);
+const DESIGN_SECURITY = termsPattern(SECURITY_TERMS.filter((term) => !DESIGN_WORDS.includes(term)));
+
+/** The input check: whether the text names a security topic the designer does not cover. */
 export function securityTopic(text: string): boolean {
   return SECURITY.test(text);
+}
+
+/** The output check on a model's design: the input check without the terms in DESIGN_WORDS. */
+export function designSecurityTopic(text: string): boolean {
+  return DESIGN_SECURITY.test(text);
 }
 
 /** Code blocks, patch headers and hunks, or lines that read as source code. */
