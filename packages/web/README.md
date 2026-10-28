@@ -273,7 +273,7 @@ The bug designer's routes (`src/assist/`, `POST /api/factory/assist/{bug-shapes,
 | `RBW_ASSIST_MODEL` | The model ID; unset, `nvidia/nemotron-3-super-120b-a12b` |
 | `RBW_ASSIST_TEST_PROVIDER_ORIGIN` | Test only: a loopback `http://` origin of a local stub that answers in place of Token Factory (`/v1/chat/completions`) and Tavily (`/search`). Honored only in test mode on a local server (`RBW_FACTORY_TEST_MODE=1`, `VERCEL_ENV` unset or `development`); ignored everywhere else |
 
-The designer needs the factory session, keeps its rate limits in each server instance's memory (per session per hour: 20 shape searches, 20 specifications, 10 delivery briefs; 300 calls per instance per hour in all), abandons each provider call after 20 s and retries nothing. The delivery brief reads only the delivered case's bug-case part, never the validator.
+The designer needs the factory session, keeps its rate limits in each server instance's memory (per session per hour: 60 shape searches, 60 specifications, 30 delivery briefs; 600 calls per instance per hour in all; every judge shares the one passcode session, so these are shared limits), abandons each provider call after 20 s and retries nothing. The delivery brief reads only the delivered case's bug-case part, never the validator.
 
 The build also freezes the pinned rate sheet's text into the server bundle as `RBW_FACTORY_RATE_SHEET` (`next.config.ts`), which live mode prices its work with, and the task-report adapter's baseline, catalog and protocols as `RBW_FACTORY_TASK_REPORT_FROZEN`.
 

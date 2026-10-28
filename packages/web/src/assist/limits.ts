@@ -1,14 +1,16 @@
 // The bug designer's caps: per-session and per-instance request limits over a sliding hour, kept in
 // this server instance's memory, and the input and output sizes every call stays within. The limits
-// bound what the designer can spend; they are not shared across instances.
+// bound what the designer can spend; they are not shared across instances. Every judge signs in with
+// the same passcode and so holds the same session, so the per-session limits act as limits shared by
+// all judges, and are set high enough for several to use the designer in the same hour.
 
 export type AssistRoute = "bug-shapes" | "bug-spec" | "delivery-brief";
 
 export const WINDOW_MS = 3_600_000;
 /** Accepted calls per session per hour, by route. */
-export const SESSION_LIMITS: Record<AssistRoute, number> = { "bug-shapes": 20, "bug-spec": 20, "delivery-brief": 10 };
+export const SESSION_LIMITS: Record<AssistRoute, number> = { "bug-shapes": 60, "bug-spec": 60, "delivery-brief": 30 };
 /** Accepted calls per server instance per hour, every route and session together. */
-export const INSTANCE_LIMIT = 300;
+export const INSTANCE_LIMIT = 600;
 
 /** Each provider call is abandoned after this long, and nothing retries. */
 export const PROVIDER_TIMEOUT_MS = 20_000;

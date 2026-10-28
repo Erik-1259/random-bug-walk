@@ -6,7 +6,7 @@ import { packArchive } from "@rbw/case-package/archive";
 import type { RequestStatus } from "@rbw/factory-contract";
 import { DEFAULT_ASSIST_MODEL, loadAssistConfig, type AssistConfig } from "../../src/config.ts";
 import { postBugShapes, postBugSpec, postDeliveryBrief, type AssistDeps } from "../../src/assist/handlers.ts";
-import { INSTANCE_LIMIT, RateLimiter, WINDOW_MS } from "../../src/assist/limits.ts";
+import { INSTANCE_LIMIT, RateLimiter, SESSION_LIMITS, WINDOW_MS } from "../../src/assist/limits.ts";
 import { distinctivePhrases } from "../../src/assist/novelty.ts";
 import { CHAT_COMPLETIONS_URL, TAVILY_SEARCH_URL } from "../../src/assist/providers.ts";
 import { holdsCode, securityTopic } from "../../src/assist/safety.ts";
@@ -267,9 +267,9 @@ describe("bug shapes", () => {
     expect((await postBugShapes(post(path, { query: "date/time bugs" }), h.server, deps)).status).toBe(200);
   });
 
-  it("answers rate_limited after 20 calls per session in an hour", async () => {
+  it("answers rate_limited after 60 calls per session in an hour", async () => {
     const { h, mock, deps } = setup();
-    for (let index = 0; index < 20; index += 1) {
+    for (let index = 0; index < 60; index += 1) {
       mock.tavily.push(tavilyReply(REPORTS));
       mock.model.push(modelReply(shapeOutput()));
       expect((await postBugShapes(post(path, { query: "date/time bugs" }), h.server, deps)).status).toBe(200);
@@ -280,7 +280,7 @@ describe("bug shapes", () => {
     expect(error.code).toBe("rate_limited");
     expect(error.retry_after_s).toBe(3600);
     expect(response.headers.get("retry-after")).toBe("3600");
-    expect(mock.tavilyCalls()).toHaveLength(20);
+    expect(mock.tavilyCalls()).toHaveLength(60);
   });
 });
 
@@ -369,9 +369,9 @@ describe("bug spec", () => {
     expect(await errorCode(await postBugSpec(post(path, { shape: SHAPE, host_id: "umami" }), h.server, deps))).toBe("assist_unavailable");
   });
 
-  it("answers rate_limited after 20 calls per session", async () => {
+  it("answers rate_limited after 60 calls per session", async () => {
     const { h, mock, deps } = setup();
-    for (let index = 0; index < 20; index += 1) {
+    for (let index = 0; index < 60; index += 1) {
       mock.model.push(modelReply(SPEC));
       expect((await postBugSpec(post(path, { shape: SHAPE, host_id: "umami" }), h.server, deps)).status).toBe(200);
     }
@@ -537,10 +537,10 @@ describe("delivery brief", () => {
     expect(h.logs.join("\n")).not.toContain("synthetic database outage");
   });
 
-  it("answers rate_limited after 10 briefs per session", async () => {
+  it("answers rate_limited after 30 briefs per session", async () => {
     const { h, mock, deps } = setup();
     seedDelivered(h);
-    for (let index = 0; index < 10; index += 1) {
+    for (let index = 0; index < 30; index += 1) {
       mock.model.push(modelReply(BRIEF));
       for (let search = 0; search < 3; search += 1) mock.tavily.push(tavilyReply([]));
       expect((await postDeliveryBrief(post(path, ask), h.server, deps)).status).toBe(200);
@@ -552,14 +552,19 @@ describe("delivery brief", () => {
 describe("rate limiter", () => {
   it("counts each session and route apart, caps the instance and frees calls an hour later", () => {
     const limiter = new RateLimiter();
-    for (let index = 0; index < 10; index += 1) expect(limiter.take("delivery-brief", "a", 0).ok).toBe(true);
+    for (let index = 0; index < 30; index += 1) expect(limiter.take("delivery-brief", "a", 0).ok).toBe(true);
     expect(limiter.take("delivery-brief", "a", 1000)).toEqual({ ok: false, retry_after_s: 3599 });
     expect(limiter.take("delivery-brief", "b", 1000).ok).toBe(true);
     expect(limiter.take("bug-spec", "a", 1000).ok).toBe(true);
     expect(limiter.take("delivery-brief", "a", WINDOW_MS + 1).ok).toBe(true);
   });
 
-  it("refuses every session once the instance took 300 calls in the hour", () => {
+  it("shares 60 shape searches, 60 specifications and 30 briefs per session, and 600 calls per instance, an hour", () => {
+    expect(SESSION_LIMITS).toEqual({ "bug-shapes": 60, "bug-spec": 60, "delivery-brief": 30 });
+    expect(INSTANCE_LIMIT).toBe(600);
+  });
+
+  it("refuses every session once the instance took 600 calls in the hour", () => {
     const limiter = new RateLimiter();
     for (let index = 0; index < INSTANCE_LIMIT; index += 1) expect(limiter.take("bug-shapes", `session-${String(index)}`, index).ok).toBe(true);
     expect(limiter.take("bug-spec", "fresh", INSTANCE_LIMIT).ok).toBe(false);
