@@ -8,8 +8,8 @@ import "./factory.css";
 
 export const dynamic = "force-static";
 export const metadata: Metadata = {
-  title: "Request synthetic bug cases · Random Bug Walk",
-  description: "Explore a completed synthetic bug example and request cases when the service is configured.",
+  title: "Request synthetic bug cases",
+  description: "Request synthetic bugs that an application's own tests miss, review the requirements for free, and download each delivered case with its separate validator package.",
 };
 
 export default async function FactoryPage() {

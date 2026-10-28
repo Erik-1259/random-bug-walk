@@ -106,7 +106,9 @@ describe("next build", () => {
     expect(page).not.toContain(`href="/runs/${DEVELOPMENT_ROOT}/generated/symptom.json"`);
     expect(prerendered()).toContain(`/runs/${DEVELOPMENT_ROOT}`);
     const index = readFileSync(join(SERVER_APP, "runs", `${DEVELOPMENT_ROOT}.html`), "utf8");
-    expect(index).toContain(`Files of run ${DEVELOPMENT_ROOT}`);
+    // The heading names the whole run ID; the page title names its first eight characters.
+    expect(index).toMatch(new RegExp(`<h1>Files of run (<!-- -->)?${DEVELOPMENT_ROOT}</h1>`));
+    expect(index).toContain(`<title>Files of run ${DEVELOPMENT_ROOT.slice(0, 8)}… · Random Bug Walk</title>`);
     expect(index).toContain(`href="/runs/${DEVELOPMENT_ROOT}/generated/symptom.json"`);
     const body = join(SERVER_APP, "runs", DEVELOPMENT_ROOT, "report.md.body");
     expect(existsSync(body)).toBe(true);

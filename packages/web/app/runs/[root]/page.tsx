@@ -2,6 +2,7 @@
 // /runs/<root>/<path> (the route beside this page).
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
+import { shortId } from "../../../src/factory/format.ts";
 import { RunIndex } from "../../../src/components/run-index.tsx";
 import { loadSiteConfig } from "../../../src/config.ts";
 import { loadResults } from "../../../src/release.ts";
@@ -20,7 +21,7 @@ export async function generateStaticParams(): Promise<Params[]> {
 
 export async function generateMetadata({ params }: { params: Promise<Params> }): Promise<Metadata> {
   const { root } = await params;
-  return { title: `Files of run ${root}: Random Bug Walk results` };
+  return { title: `Files of run ${shortId(root)}` };
 }
 
 export default async function RunIndexPage({ params }: { params: Promise<Params> }) {

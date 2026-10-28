@@ -1,18 +1,16 @@
-.factory { --factory-ink: #142c3b; --factory-muted: #415769; --factory-border: #c8d5dc; --factory-accent: #075e58; max-width: 70rem; padding-block: 2rem 4rem; color: var(--factory-ink); }
+.factory { --factory-ink: var(--ink); --factory-muted: var(--muted); --factory-border: var(--border); --factory-accent: var(--accent); padding-block: 2rem 4rem; color: var(--factory-ink); }
 .factory-heading { max-width: 48rem; margin-bottom: 1.5rem; }
-.factory h1 { font-size: clamp(2rem, 5vw, 3.25rem); line-height: 1.12; letter-spacing: -.035em; margin: .5rem 0 1rem; }
+.factory h1 { margin: .5rem 0 1rem; }
 .factory h2 { margin-top: 0; font-size: 1.4rem; }
 .factory h3 { font-size: 1.1rem; }
 .factory-eyebrow { text-transform: uppercase; letter-spacing: .08em; font-size: .8rem; font-weight: 700; color: var(--factory-accent); }
 .factory-panel { border: 1px solid var(--factory-border); border-radius: 1rem; padding: clamp(1rem, 3vw, 2rem); margin-block: 1.5rem; background: #fff; }
-.factory-example { background: #f1f8f6; border-color: #a9ccc4; }
+.factory-example { background: var(--accent-tint); border-color: #a9ccc4; }
 .factory-availability { background: #fff8e8; border-left: 4px solid #926000; padding: 1rem 1.25rem; border-radius: .25rem; }
 .factory-availability p { margin: .4rem 0 0; }
 .factory-note, .factory small { color: var(--factory-muted); font-size: .9rem; }
 .factory-links { display: flex; align-items: center; flex-wrap: wrap; gap: .75rem 1.25rem; margin-block: 1.25rem; }
-.factory a { color: #074f77; text-underline-offset: .18em; }
 .factory a.factory-link-primary { display: inline-block; background: var(--factory-accent); color: white; padding: .7rem 1rem; border-radius: .5rem; font-weight: 650; }
-.factory :is(a, button, input, select, textarea):focus-visible { outline: 3px solid #936300; outline-offset: 3px; }
 .factory :is(input, select, textarea, button) { font: inherit; box-sizing: border-box; max-width: 100%; }
 .factory :is(input:not([type=checkbox]):not([type=radio]), select, textarea) { border: 1px solid #617887; border-radius: .35rem; padding: .55rem .65rem; background: white; color: var(--factory-ink); }
 .factory textarea { width: 100%; min-height: 6rem; resize: vertical; }

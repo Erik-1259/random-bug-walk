@@ -3,6 +3,7 @@
 // were added still show it.
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
+import { shortId } from "../../../src/factory/format.ts";
 import { CasePage } from "../../../src/components/case-page.tsx";
 import { judgeEnabled, loadJudgeConfig, loadSiteConfig } from "../../../src/config.ts";
 import { caseView, loadResults } from "../../../src/release.ts";
@@ -21,7 +22,7 @@ export async function generateStaticParams(): Promise<Params[]> {
 
 export async function generateMetadata({ params }: { params: Promise<Params> }): Promise<Metadata> {
   const { release } = await params;
-  return { title: `Case of release ${release}: Random Bug Walk results` };
+  return { title: `Released case ${shortId(release)}` };
 }
 
 export default async function ReleasedCasePage({ params }: { params: Promise<Params> }) {
