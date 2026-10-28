@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { Capabilities } from "../src/factory/client.ts";
-import { FactoryRequestForm, prepareFactoryInput, usdToMicrousd, type FactoryDraftRow } from "../src/components/factory-request-form.tsx";
+import { defaultSelection, FactoryRequestForm, prepareFactoryInput, usdToMicrousd, type FactoryDraftRow } from "../src/components/factory-request-form.tsx";
 
 const capabilities = JSON.parse(readFileSync(new URL("./fixtures/factory-v1/capabilities.json", import.meta.url), "utf8")) as Capabilities;
 const row = (item_key = "item-1"): FactoryDraftRow => ({ item_key, bug_type_id: "concurrency", quantity: "1", description: "", difficulty: "source_inferable_allowed" });
@@ -24,11 +24,33 @@ describe("contract-driven factory form", () => {
     expect(html).not.toMatch(/maxlength=/i);
     expect(html).toContain('aria-describedby="factory-description-item-1-help"');
     expect(html).toContain("500 Unicode code points after trimming surrounding whitespace");
-    expect(html).toContain('value="2.000000"');
-    expect(html).toContain("No concurrency catalog with implemented verification checks is declared for Umami yet.");
+    expect(html).toContain('value="2.00"');
+    expect(html).toContain("Allowed: $0.50 to $5.00.");
+    expect(html).not.toContain("0.500000");
     expect(html).toContain('value="source_only_difficulty_required" disabled=""');
     expect(html).toContain("Reviewing is free and starts no work");
+    expect(html).toContain("Umami cases include the bug report that NVIDIA Nemotron 3.5 Lightning wrote on Nebius Token Factory for the completed example. A request itself makes no model call.");
     for (const match of html.matchAll(/<label for="([^"]+)"/g)) expect(html).toContain(`id="${match[1] ?? ""}"`);
+  });
+
+  it("starts on a supported pair: the task-and-report service with concurrency, one host checked", () => {
+    expect(defaultSelection(capabilities)).toEqual({ hosts: ["task-report"], bugTypeId: "concurrency" });
+    const html = renderToStaticMarkup(<FactoryRequestForm capabilities={capabilities} disabled={false} {...callbacks} />);
+    expect(html.match(/<input type="checkbox" checked=""/g)).toHaveLength(1);
+    expect(html).toMatch(/<input type="checkbox" checked=""\/> Task and report service —/);
+    expect(html).toContain('<option value="concurrency" selected="">Concurrency</option>');
+    expect(html).toContain("Task and report service: available.");
+    expect(html).not.toContain("not offered yet");
+    // Without the task-and-report service it picks Umami's supported type.
+    const umamiOnly = { ...capabilities, hosts: capabilities.hosts.filter((host) => host.host_id === "umami") };
+    expect(defaultSelection(umamiOnly)).toEqual({ hosts: ["umami"], bugTypeId: "date_time" });
+  });
+
+  it("shows an unsupported pair's service reason when no supported pair exists", () => {
+    const concurrencyOnUmami = { ...capabilities, hosts: capabilities.hosts.filter((host) => host.host_id === "umami"), bug_types: capabilities.bug_types.filter((type) => type.bug_type_id === "concurrency") };
+    expect(defaultSelection(concurrencyOnUmami)).toEqual({ hosts: ["umami"], bugTypeId: "concurrency" });
+    const html = renderToStaticMarkup(<FactoryRequestForm capabilities={concurrencyOnUmami} disabled={false} {...callbacks} />);
+    expect(html).toContain("Umami: not offered yet. No concurrency catalog with implemented verification checks is declared for Umami yet.");
   });
 
   it("preserves independent item keys, quantities, and descriptions and permits the union of host sources", () => {

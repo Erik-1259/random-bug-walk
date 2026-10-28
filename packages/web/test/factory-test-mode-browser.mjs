@@ -10,6 +10,7 @@ import { join } from "node:path";
 import process from "node:process";
 import { pathToFileURL, URL } from "node:url";
 import { gunzipSync } from "node:zlib";
+import { formatExactUsd } from "../src/factory/format.ts";
 import { factoryJson, signInToFactory, reviewFactoryForm, startReviewedFactoryForm, checkFactoryDownloads } from "./factory-browser-journey.mjs";
 
 const [modulePath, executablePath, origin, outputDir] = process.argv.slice(2);
@@ -32,7 +33,11 @@ const signIn = (page, wrongFirst = false) => signInToFactory(page, origin, wrong
 async function formRequest(page, posts, statusFixture) {
   // Enter fixture requirements through the ordinary form; never seed this journey's identity.
   const input = fixture(statusFixture).interpretation.input;
+  // The form starts on the task-and-report service alone; the fixture asks for Umami first, then it.
+  await page.getByRole("checkbox", { name: /Task and report service/ }).uncheck();
+  await page.getByRole("checkbox", { name: /Umami —/ }).check();
   await page.getByRole("checkbox", { name: /Task and report service/ }).check();
+  await page.getByLabel("Bug type for item 1", { exact: true }).selectOption("concurrency");
   await page.getByLabel("Optional description for item 1", { exact: true }).fill(input.items[0].description);
   await page.getByRole("button", { name: "Add request item", exact: true }).click();
   await page.getByLabel("Bug type for item 2", { exact: true }).selectOption("date_time");
@@ -68,11 +73,13 @@ async function seededRequest(context, page, statusFixture) {
 
 const evidence = (context, id) => json(context, "get", `/api/factory/test/evidence?request_id=${id}`);
 const status = (context, id) => json(context, "get", `/api/factory/requests/${id}`);
+// The exact amounts and the activity log sit in closed Details elements, so these waits need the
+// elements attached, not visible.
 const metric = (page, label) => page.locator(".factory-metrics dt").filter({ hasText: new RegExp(`^${label}$`) }).locator("+ dd");
-const money = amount => `$${(amount / 1_000_000).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 6 })}`;
+const eventItem = (page, text) => page.locator(".factory-events li").filter({ hasText: text });
 
 async function waitMetric(page, label, amount) {
-  await metric(page, label).getByText(money(amount), { exact: true }).waitFor();
+  await metric(page, label).getByText(formatExactUsd(amount), { exact: true }).waitFor({ state: "attached" });
 }
 
 async function checkDownloads(page, current) {
@@ -157,7 +164,7 @@ try {
     const ready = packaging.events.find(event => event.type === "package_ready");
     assert(ready?.case_id);
     assert.equal(packaging.funnel.packages_ready, 0);
-    await page.locator(".factory-events li").filter({ hasText: ready.message }).waitFor();
+    await eventItem(page, ready.message).waitFor({ state: "attached" });
     await page.getByText("No qualified cases have been delivered.", { exact: true }).waitFor();
     assert.equal(await page.locator(".factory-case-card").count(), 0);
     assert.equal(await page.getByRole("link", { name: "Download bug case", exact: true }).count(), 0);
@@ -165,7 +172,7 @@ try {
     assert.equal(await page.getByRole("button", { name: "Validate case", exact: true }).count(), 0);
     assert.equal(posts.filter(path => path.endsWith("/validations")).length, 0);
     await page.screenshot({ path: join(outputDir, `two-host-fulfilled-${width}-packaging.png`), fullPage: true });
-    await page.locator(".factory-events li").filter({ hasText: "Case delivered for item item-1." }).waitFor();
+    await eventItem(page, "Case delivered for item item-1.").waitFor({ state: "attached" });
     await page.getByRole("link", { name: "Download bug case", exact: true }).first().waitFor();
     await page.getByRole("link", { name: "Download validator package", exact: true }).first().waitFor();
     const afterDelivery = await status(context, id);
@@ -185,7 +192,7 @@ try {
     assert.deepEqual(delivered.items.map(item => item.item_key), ["item-1", "item-2"]);
     assert.deepEqual(delivered.cases.map(item => item.item_key), ["item-1", "item-2"]);
     for (const key of ["item-1", "item-2"]) {
-      await page.locator(".factory-events li").filter({ hasText: `Case delivered for item ${key}.` }).waitFor();
+      await eventItem(page, `Case delivered for item ${key}.`).waitFor({ state: "attached" });
     }
     const beforeReload = await evidence(context, id);
     await page.reload();

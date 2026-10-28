@@ -211,7 +211,7 @@ describe("case page with a published release", () => {
     const results = await readResults(RELEASE);
     const page = text(renderToStaticMarkup(<CasePage results={results} />));
     const record = results.release?.record;
-    expect(page).toContain(`Release ${RELEASE_ID} Release SHA-256 ${results.release?.sha256 ?? "none"} Release created 2026-10-06T11:38:10Z`);
+    expect(page).toContain(`Release ${RELEASE_ID} Release SHA-256 ${results.release?.sha256 ?? "none"} Release created Oct 6, 2026, 11:38 AM UTC`);
     expect(page).toContain(`Run ${RELEASE_ROOT} (factory, completed)`);
     expect(page).toContain(`Publication ${record?.run.publication_id ?? "none"}`);
     expect(page).toContain(`Results repository commit ${record?.run.repository_commit ?? "none"}`);

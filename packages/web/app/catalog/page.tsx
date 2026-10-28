@@ -4,7 +4,7 @@ import { loadSiteConfig } from "../../src/config.ts";
 import { loadResults } from "../../src/release.ts";
 
 export const dynamic = "force-static";
-export const metadata: Metadata = { title: "Diagnostic catalog: Random Bug Walk results" };
+export const metadata: Metadata = { title: "Diagnostic catalog" };
 
 export default async function CatalogPage() {
   return <Catalog results={(await loadResults(loadSiteConfig().resultsDir)).results} />;

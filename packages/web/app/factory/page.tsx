@@ -8,8 +8,8 @@ import "./factory.css";
 
 export const dynamic = "force-static";
 export const metadata: Metadata = {
-  title: "Request synthetic bug cases · Random Bug Walk",
-  description: "Explore a completed synthetic bug example and request cases when the service is configured.",
+  title: "Request synthetic bug cases",
+  description: "Request synthetic bugs that an application's own tests miss, review the requirements for free, and download each delivered case with its separate validator package.",
 };
 
 export default async function FactoryPage() {
@@ -19,12 +19,17 @@ export default async function FactoryPage() {
       <div className="factory-heading">
         <p className="factory-eyebrow">Random Bug Walk</p>
         <h1>Synthetic bugs. Useful test cases.</h1>
-        <p>Explore where tests miss an intended defect, with the original test suite and separate verification checks kept distinct.</p>
+        <p>Request a bug that an application’s own tests miss. Each case comes with separate checks that prove the bug is there and that a fix removes it.</p>
+        <ol className="factory-steps-intro">
+          <li><strong>Describe</strong> the kind of bug you want, on one or both applications.</li>
+          <li><strong>Review</strong> how the service reads your request. Reviewing is free.</li>
+          <li><strong>Start</strong> the request. One runs at a time, paid from the shared judging budget, and the cases appear on this page as they are delivered.</li>
+        </ol>
       </div>
       <FactoryExample availableLocally={results.releases.some(({ release }) => release.record.release_id === RELEASED_TIME_ZONE_CASE)} />
       <FactoryWorkspace />
-      <section className="factory-panel" aria-labelledby="factory-qualification">
-        <h2 id="factory-qualification">What makes a case qualified?</h2>
+      <details className="factory-panel factory-details" aria-labelledby="factory-qualification">
+        <summary><h2 id="factory-qualification">What makes a case qualified?</h2></summary>
         <p>The service must confirm that unchanged original tests pass on clean, buggy and reference-fixed copies.
           Separate verification checks must pass on clean and fixed copies and detect the intended failure on the buggy copy.
           Setup failures and missing checks are not reproduction.</p>
@@ -32,7 +37,7 @@ export default async function FactoryPage() {
           Separate validator packages and validation actions become available only when the service reports them ready.
           Clicking a validation action alone does not establish that a replay ran.</p>
         <a href="/#cell-6">Read the completed experiment’s scope and limitations</a>
-      </section>
+      </details>
     </main>
   );
 }
