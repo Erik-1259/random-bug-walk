@@ -33,7 +33,11 @@ const signIn = (page, wrongFirst = false) => signInToFactory(page, origin, wrong
 async function formRequest(page, posts, statusFixture) {
   // Enter fixture requirements through the ordinary form; never seed this journey's identity.
   const input = fixture(statusFixture).interpretation.input;
+  // The form starts on the task-and-report service alone; the fixture asks for Umami first, then it.
+  await page.getByRole("checkbox", { name: /Task and report service/ }).uncheck();
+  await page.getByRole("checkbox", { name: /Umami —/ }).check();
   await page.getByRole("checkbox", { name: /Task and report service/ }).check();
+  await page.getByLabel("Bug type for item 1", { exact: true }).selectOption("concurrency");
   await page.getByLabel("Optional description for item 1", { exact: true }).fill(input.items[0].description);
   await page.getByRole("button", { name: "Add request item", exact: true }).click();
   await page.getByLabel("Bug type for item 2", { exact: true }).selectOption("date_time");

@@ -57,6 +57,24 @@ export function prepareFactoryInput(capabilities: Capabilities, hosts: RequestIn
   return { input: errors.length === 0 && amount !== null ? { hosts, items, budget_microusd: amount } : null, errors, fieldErrors };
 }
 
+/** Hosts tried first for the form's starting selection: the task-and-report service is the quicker first request. */
+const PREFERRED_HOSTS: readonly string[] = ["task-report"];
+
+/**
+ * The form's starting selection: one host and a bug type the service reports as supported on it, so
+ * a first review is not refused for its defaults. A UI default only; the service still interprets
+ * whatever the visitor sends. Without any supported pair it falls back to the first host and type.
+ */
+export function defaultSelection(capabilities: Capabilities): { hosts: RequestInput["hosts"]; bugTypeId: FactoryDraftRow["bug_type_id"] } {
+  const order = [...capabilities.hosts].sort((a, b) => Number(!PREFERRED_HOSTS.includes(a.host_id)) - Number(!PREFERRED_HOSTS.includes(b.host_id)));
+  for (const host of order) {
+    const type = capabilities.bug_types.find((option) => capabilities.combinations.some((combination) =>
+      combination.host_id === host.host_id && combination.bug_type_id === option.bug_type_id && combination.status === "supported"));
+    if (type !== undefined) return { hosts: [host.host_id], bugTypeId: type.bug_type_id };
+  }
+  return { hosts: capabilities.hosts.slice(0, 1).map((host) => host.host_id), bugTypeId: capabilities.bug_types[0]?.bug_type_id ?? "" };
+}
+
 interface Props {
   capabilities: Capabilities | null;
   disabled: boolean;
@@ -74,8 +92,9 @@ export function FactoryRequestForm(props: Props) {
 }
 
 function RequestFields({ capabilities, disabled, onInterpret, onChange }: Props & { capabilities: Capabilities }) {
-  const newRow = (key: number): FactoryDraftRow => ({ item_key: `item-${String(key)}`, bug_type_id: capabilities.bug_types[0]?.bug_type_id ?? "", quantity: "1", description: "", difficulty: capabilities.difficulty_options.find((option) => option.default && option.available)?.option_id ?? "" });
-  const [hosts, setHosts] = useState<RequestInput["hosts"]>(capabilities.hosts.slice(0, 1).map((host) => host.host_id));
+  const [initial] = useState(() => defaultSelection(capabilities));
+  const newRow = (key: number): FactoryDraftRow => ({ item_key: `item-${String(key)}`, bug_type_id: initial.bugTypeId, quantity: "1", description: "", difficulty: capabilities.difficulty_options.find((option) => option.default && option.available)?.option_id ?? "" });
+  const [hosts, setHosts] = useState<RequestInput["hosts"]>(initial.hosts);
   const [rows, setRows] = useState<FactoryDraftRow[]>(() => [newRow(1)]);
   const [nextKey, setNextKey] = useState(2);
   const [budget, setBudget] = useState(() => formatBudgetInput(capabilities.limits.default_budget_microusd));

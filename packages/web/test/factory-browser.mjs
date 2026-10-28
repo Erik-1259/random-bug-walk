@@ -145,6 +145,7 @@ const fixture = name => JSON.parse(fs.readFileSync(new URL(`./fixtures/factory-v
   });
   await page.goto(origin+'/factory',{waitUntil:'networkidle'});
   await page.getByRole('checkbox',{name:/Task and report service/}).check();
+  await page.getByLabel('Bug type for item 1',{exact:true}).selectOption('concurrency');
   const description=page.getByLabel('Optional description for item 1',{exact:true});
   const reviewRequirements=page.getByRole('button',{name:'Review requirements',exact:true});
   assert.equal(await description.getAttribute('maxlength'),null);
