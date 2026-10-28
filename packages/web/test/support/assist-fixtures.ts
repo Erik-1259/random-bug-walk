@@ -1,4 +1,4 @@
-// Made-up /api/assist responses for the designer and delivery-brief tests. No provider wrote these.
+// Made-up /api/factory/assist responses for the designer and delivery-brief tests. No provider wrote these.
 import type { BriefResult, ShapesResult, SpecResult } from "../../src/assist/client.ts";
 
 const MODEL = { provider: "nebius-token-factory", model_id: "nvidia/nemotron-3-super-120b-a12b", at: "2026-10-28T19:00:00.000Z" } as const;

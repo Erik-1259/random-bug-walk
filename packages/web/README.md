@@ -264,7 +264,7 @@ The factory routes' live mode reads these at request time (`loadFactoryConfig`),
 | `RBW_FACTORY_WORKER_IMAGE` | Sandbox backend: the worker image pinned by digest (`<repository>@sha256:<digest>`), also given to the worker; required |
 | `RBW_FACTORY_PACKAGES_DIR` | The prepared packages directory (relative to this directory or absolute). Only its entries are offered; without a readable index nothing is. Required on the local backend, which gives it to the worker. On a deployment: `factory-packages`, the directory the deploy copies in (see [Deploying on Vercel](#deploying-on-vercel)) |
 
-The bug designer's routes (`src/assist/`, `POST /api/assist/{bug-shapes,bug-spec,delivery-brief}`, also mounted under `/api/factory/assist/`, the path the page calls, since the factory session cookie reaches only `/api/factory`) read these variables at request time (`loadAssistConfig`), and print none of them. Each is optional: a route whose key is unset answers `503 assist_unavailable`, and the request form works as before.
+The bug designer's routes (`src/assist/`, `POST /api/factory/assist/{bug-shapes,bug-spec,delivery-brief}`, under the factory routes since the factory session cookie reaches only `/api/factory`) read these variables at request time (`loadAssistConfig`), and print none of them. Each is optional: a route whose key is unset answers `503 assist_unavailable`, and the request form works as before.
 
 | Variable | Use |
 |---|---|

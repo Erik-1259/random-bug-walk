@@ -1,6 +1,6 @@
-// POST /api/factory/assist/bug-shapes: the same bug designer endpoint as /api/assist/bug-shapes, under the
-// factory session cookie's path (Path=/api/factory), so a signed-in browser sends the cookie here, and
-// in the factory routes' traced files, so the delivery brief can read the prepared packages.
+// POST /api/factory/assist/bug-shapes: the bug designer (src/assist/handlers.ts), under the factory session
+// cookie's path (Path=/api/factory), so a signed-in browser sends the cookie here, and in the factory
+// routes' traced files, so the delivery brief can read the prepared packages.
 import { postBugShapes } from "../../../../../src/assist/handlers.ts";
 import { handleAssist } from "../../../../../src/assist/server.ts";
 

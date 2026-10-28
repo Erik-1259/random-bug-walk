@@ -110,7 +110,7 @@ function shapeOutput(overrides: Record<string, unknown>[] = []): unknown {
 }
 
 describe("bug shapes", () => {
-  const path = "/api/assist/bug-shapes";
+  const path = "/api/factory/assist/bug-shapes";
 
   it("answers signed_out without the factory session, before reading the body or calling a provider", async () => {
     const { h, mock, deps } = setup();
@@ -296,7 +296,7 @@ const SPEC = {
 };
 
 describe("bug spec", () => {
-  const path = "/api/assist/bug-spec";
+  const path = "/api/factory/assist/bug-spec";
 
   it("answers signed_out without the session", async () => {
     const { h, mock, deps } = setup();
@@ -411,7 +411,7 @@ function seedDelivered(h: Harness, overrides: Partial<RequestStatus> = {}): void
 }
 
 describe("delivery brief", () => {
-  const path = "/api/assist/delivery-brief";
+  const path = "/api/factory/assist/delivery-brief";
   const ask = { request_id: REQUEST_ID, case_id: CASE_ID };
 
   it("answers signed_out without the session, before any port or provider call", async () => {
@@ -636,11 +636,8 @@ describe("delivery brief over test mode's ports", () => {
 });
 
 describe("route files", () => {
-  it("mount each endpoint at /api/assist and under the factory session's path, dynamic, with room for two 20 s calls", async () => {
+  it("mount each endpoint under the factory session's path, dynamic, with room for two 20 s calls", async () => {
     const modules = await Promise.all([
-      import("../../app/api/assist/bug-shapes/route.ts"),
-      import("../../app/api/assist/bug-spec/route.ts"),
-      import("../../app/api/assist/delivery-brief/route.ts"),
       import("../../app/api/factory/assist/bug-shapes/route.ts"),
       import("../../app/api/factory/assist/bug-spec/route.ts"),
       import("../../app/api/factory/assist/delivery-brief/route.ts"),

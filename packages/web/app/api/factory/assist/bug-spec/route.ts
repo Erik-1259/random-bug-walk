@@ -1,6 +1,6 @@
-// POST /api/factory/assist/bug-spec: the same bug designer endpoint as /api/assist/bug-spec, under the
-// factory session cookie's path (Path=/api/factory), so a signed-in browser sends the cookie here, and
-// in the factory routes' traced files, so the delivery brief can read the prepared packages.
+// POST /api/factory/assist/bug-spec: the bug designer (src/assist/handlers.ts), under the factory session
+// cookie's path (Path=/api/factory), so a signed-in browser sends the cookie here, and in the factory
+// routes' traced files, so the delivery brief can read the prepared packages.
 import { postBugSpec } from "../../../../../src/assist/handlers.ts";
 import { handleAssist } from "../../../../../src/assist/server.ts";
 

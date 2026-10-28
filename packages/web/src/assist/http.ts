@@ -1,4 +1,4 @@
-// Responses of the bug designer's routes (/api/assist/*): JSON, never cached, and errors as
+// Responses of the bug designer's routes (/api/factory/assist/*): JSON, never cached, and errors as
 // { error: { code, message } }. The designer is an addition beside the factory contract, so its
 // error codes are its own; the body reader is the factory routes' one.
 import { json } from "../factory-server/http.ts";

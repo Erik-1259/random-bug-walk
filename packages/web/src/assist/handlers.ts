@@ -1,4 +1,4 @@
-// The bug designer's endpoints: POST /api/assist/bug-shapes, /bug-spec and /delivery-brief. Each checks
+// The bug designer's endpoints: POST /api/factory/assist/bug-shapes, /bug-spec and /delivery-brief. Each checks
 // the factory session first (the factory routes' own check), then the body, the designer's scope, its
 // configuration and its rate limits, and only then calls a provider. Every failure past the body answers
 // a plain error, so the page shows "unavailable right now" and the request form works as before. Only
@@ -81,7 +81,7 @@ function capabilitiesOf(server: FactoryServer, now: Date): Capabilities | null {
 
 const NO_FIT_REASON = "No proven catalog pair fits this shape.";
 
-/** POST /api/assist/bug-shapes { query }: public bug reports of the class, generalized into 3 to 5 shapes. */
+/** POST /api/factory/assist/bug-shapes { query }: public bug reports of the class, generalized into 3 to 5 shapes. */
 export function postBugShapes(request: Request, server: FactoryServer, deps: AssistDeps): Promise<Response> {
   return guard(server, "bug-shapes", async () => {
     const prepared = await prepare(request, server, "bug-shapes");
@@ -134,7 +134,7 @@ function sourcesOf(results: readonly SearchResult[], numbers: readonly number[])
   return sources;
 }
 
-/** POST /api/assist/bug-spec { shape, host_id }: a component-level design of the shape in one target app. */
+/** POST /api/factory/assist/bug-spec { shape, host_id }: a component-level design of the shape in one target app. */
 export function postBugSpec(request: Request, server: FactoryServer, deps: AssistDeps): Promise<Response> {
   return guard(server, "bug-spec", async () => {
     const prepared = await prepare(request, server, "bug-spec");
@@ -186,7 +186,7 @@ function briefFacts(delivered: Case, material: Awaited<ReturnType<typeof readBug
 }
 
 /**
- * POST /api/assist/delivery-brief { request_id, case_id }: what the team received, written from the
+ * POST /api/factory/assist/delivery-brief { request_id, case_id }: what the team received, written from the
  * delivered case's public material (its status entry and its bug-case archive, never the validator), and
  * the novelty check of the incident report's wording. A request that is not finished, or a case that is
  * not delivered with a ready bug case, answers not_found.
