@@ -26,7 +26,7 @@ Test files are named without their directory: contract tests are in `packages/fa
 | Umami host adapter | `packages/host-umami/` | on `main` | Umami lane |
 | Task-report host adapter | `packages/host-task-report/` | on `main` | custom host lane |
 | Package format, exporter and `rbw-validate` | `tools/case-package/`, `tools/case-validate/` | on `main` | package lane |
-| API acceptance runner | `tools/product-acceptance/` | open pull request #124 | acceptance lane |
+| API acceptance runner | `tools/product-acceptance/` | draft pull request #140 (supersedes the closed #124) | acceptance lane |
 
 ## Producer responsibilities
 
