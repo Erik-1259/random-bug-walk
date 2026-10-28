@@ -1,4 +1,5 @@
-// Browser client for the bug designer and the delivery brief (/api/assist/*). These calls are
+// Browser client for the bug designer and the delivery brief (/api/factory/assist/*, where the factory
+// session cookie reaches them, since it is scoped to /api/factory). These calls are
 // optional help on /factory: every failure comes back as a plain outcome, never an exception, so
 // the request form keeps working exactly as before whatever the assist service does. Responses
 // are checked field by field; anything unreadable counts as "unavailable", never as a result.
@@ -128,7 +129,7 @@ export function createAssistClient(fetcher: typeof fetch = fetch, timeoutMs = AS
     const controller = new AbortController();
     const timeout = setTimeout(() => { controller.abort(); }, timeoutMs);
     try {
-      const response = await fetcher(`/api/assist/${path}`, { method: "POST", credentials: "same-origin", cache: "no-store", signal: controller.signal,
+      const response = await fetcher(`/api/factory/assist/${path}`, { method: "POST", credentials: "same-origin", cache: "no-store", signal: controller.signal,
         headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       let data: unknown = null;
       try { data = await response.json(); } catch { data = null; }

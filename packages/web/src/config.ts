@@ -187,3 +187,19 @@ export function loadAssistConfig(env: Env = process.env): AssistConfig {
     model: model !== null && MODEL_ID.test(model) ? model : DEFAULT_ASSIST_MODEL,
   };
 }
+
+/** A loopback origin with no path: http://localhost, 127.0.0.1 or [::1], with an optional port. */
+const LOOPBACK_ORIGIN = /^http:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d{1,5})?$/;
+
+/**
+ * RBW_ASSIST_TEST_PROVIDER_ORIGIN: test only. A local stub standing in for Token Factory (at
+ * /v1/chat/completions) and Tavily (at /search). It is honored only in factory test mode on a local
+ * server (RBW_FACTORY_TEST_MODE=1 and VERCEL_ENV unset or development) and only for a loopback http
+ * origin; anywhere else it is ignored and the designer calls the real providers.
+ */
+export function assistTestProviderOrigin(env: Env = process.env): string | null {
+  const origin = value(env, "RBW_ASSIST_TEST_PROVIDER_ORIGIN");
+  const environment = value(env, "VERCEL_ENV");
+  const local = environment === null || environment === "development";
+  return origin !== null && LOOPBACK_ORIGIN.test(origin) && value(env, "RBW_FACTORY_TEST_MODE") === "1" && local ? origin : null;
+}

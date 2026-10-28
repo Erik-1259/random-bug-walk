@@ -3,7 +3,8 @@
 // change and its fix come from RBW's public catalog.
 import { NOVELTY_MAX_PHRASES } from "./limits.ts";
 
-export const NOVELTY_CAVEAT = "The planted change and its fix come from RBW's public catalog, so they are not new. This check covers only the wording of the delivered incident report: whether its distinctive phrases already appear on the public web.";
+/** The same sentence the "What you received" panel shows (src/components/delivery-brief.tsx), so it is not repeated there. */
+export const NOVELTY_CAVEAT = "The planted change and its fix come from Random Bug Walk’s public catalog; this check covers only the report’s wording.";
 
 const COMMON = new Set(
   "the a an and or but of to in on at by for with from as is are was were be been being it its this that these those when then than which who what where while after before into over under both each only same also not no one two can could would should will may might have has had does did do there their they them our your request requests response responses".split(" "),
