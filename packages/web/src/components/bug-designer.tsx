@@ -115,7 +115,7 @@ export function BugDesignerView({ signedIn, capabilities, applyBlocked, onUsePla
         <p>{item.fit === null
           ? "No proven bug in the catalog matches this shape yet."
           : <>Closest proven bug: {hostLabel(capabilities, item.fit.host_id)}, {bugTypeLabel(capabilities, item.fit.bug_type_id)} — “{item.fit.phrase}”.</>}
-          {item.fit_reason !== "" && <> <small>{item.fit_reason}</small></>}</p>
+          {item.fit !== null && item.fit_reason !== "" && <> <small>{item.fit_reason}</small></>}</p>
         {item.sources.length > 0 && <details className="factory-details"><summary>Sources ({item.sources.length})</summary>
           <ul>{item.sources.map((source) => <li key={source.url}><a href={source.url} target="_blank" rel="noopener noreferrer nofollow">{source.title}</a></li>)}</ul>
         </details>}

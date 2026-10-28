@@ -84,6 +84,8 @@ describe("bug designer steps", () => {
     expect(html).toContain(shape.title);
     expect(html).toContain("Closest proven bug: Umami, Date and time — “daily totals use the wrong time zone”.");
     expect(html).toContain("No proven bug in the catalog matches this shape yet.");
+    expect(html).toContain("Matches the proven Umami date and time bug.");
+    expect(html).not.toContain("No catalog bug covers daylight-saving changes yet."); // a no-fit reason would only repeat the line above
     expect(html).toContain('href="https://example.org/issues/101" target="_blank" rel="noopener noreferrer nofollow"');
     expect(html).not.toContain("Step 3");
     html = render(designerReducer(listed, { type: "pick_shape", shapeId: shape.id }));
