@@ -45,7 +45,8 @@ describe("the factory routes' traced files", () => {
 
   it("hold the prepared packages directory in every factory route", () => {
     const factory = routes.filter((route) => route.startsWith("/api/factory/"));
-    expect(factory.length).toBe(13);
+    // The factory contract's 13 routes and the bug designer's 3 under the factory session's path.
+    expect(factory.length).toBe(16);
     for (const route of factory) expect(tracedFor(route), route).toEqual(["./factory-packages/**/*"]);
   });
 

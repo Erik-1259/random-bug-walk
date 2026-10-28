@@ -163,3 +163,43 @@ export function loadFactoryConfig(env: Env = process.env, cwd: string = process.
     repoRoot: resolve(cwd, "../.."),
   };
 }
+
+/** The bug designer's default model: NVIDIA Nemotron 3 Super on Nebius Token Factory. */
+export const DEFAULT_ASSIST_MODEL = "nvidia/nemotron-3-super-120b-a12b";
+/** A model ID as Token Factory names them: provider/model, plain characters only. */
+const MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+export interface AssistConfig {
+  /** RBW_ASSIST_TOKEN_FACTORY_KEY: the Token Factory key the designer's model calls use; null leaves them unavailable. */
+  tokenFactoryKey: string | null;
+  /** RBW_ASSIST_TAVILY_KEY: the Tavily key the designer's web searches use; null leaves them unavailable. */
+  tavilyKey: string | null;
+  /** RBW_ASSIST_MODEL: the model ID, DEFAULT_ASSIST_MODEL when unset or not a plain provider/model ID. */
+  model: string;
+}
+
+/** The bug designer's server variables. Each is optional; a route whose key is missing answers assist_unavailable. */
+export function loadAssistConfig(env: Env = process.env): AssistConfig {
+  const model = value(env, "RBW_ASSIST_MODEL");
+  return {
+    tokenFactoryKey: value(env, "RBW_ASSIST_TOKEN_FACTORY_KEY"),
+    tavilyKey: value(env, "RBW_ASSIST_TAVILY_KEY"),
+    model: model !== null && MODEL_ID.test(model) ? model : DEFAULT_ASSIST_MODEL,
+  };
+}
+
+/** A loopback origin with no path: http://localhost, 127.0.0.1 or [::1], with an optional port. */
+const LOOPBACK_ORIGIN = /^http:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d{1,5})?$/;
+
+/**
+ * RBW_ASSIST_TEST_PROVIDER_ORIGIN: test only. A local stub standing in for Token Factory (at
+ * /v1/chat/completions) and Tavily (at /search). It is honored only in factory test mode on a local
+ * server (RBW_FACTORY_TEST_MODE=1 and VERCEL_ENV unset or development) and only for a loopback http
+ * origin; anywhere else it is ignored and the designer calls the real providers.
+ */
+export function assistTestProviderOrigin(env: Env = process.env): string | null {
+  const origin = value(env, "RBW_ASSIST_TEST_PROVIDER_ORIGIN");
+  const environment = value(env, "VERCEL_ENV");
+  const local = environment === null || environment === "development";
+  return origin !== null && LOOPBACK_ORIGIN.test(origin) && value(env, "RBW_FACTORY_TEST_MODE") === "1" && local ? origin : null;
+}
