@@ -1,7 +1,8 @@
 // The bug designer's scope: date and time, concurrency, data handling, state and UI logic bugs. Security
 // topics (vulnerabilities, authentication, identity and permissions, injection, secrets) are refused
 // before any provider call, and a model answer that turns to them is refused too. Designs stay at
-// component level: an answer holding code blocks or patch text is not used.
+// component level: an answer holding code blocks or patch text is not used. Injection counts only in its
+// security senses ("SQL injection", "inject malicious code"), not "inject a delay" or "fault injection".
 //
 // Two checks share one term list. securityTopic, the input check, uses the full list on what a visitor
 // sends (a query, or a shape sent for a design); bug shapes are checked with it too, because a shape the
@@ -21,7 +22,11 @@ const SECURITY_TERMS: readonly string[] = [
   "malware",
   "backdoor\\w*",
   "phishing",
-  "inject\\w*",
+  "(?:sql|nosql|code|(?:os )?command|shell|(?:java)?script|js|html|header|crlf|ldap|xpath|xml|template|prompt|log)[- ]injections?",
+  "injections? attacks?",
+  // "inject" with a security object within two words; the words between are not prepositions, so
+  // "inject latency into queries" stays a testing phrase.
+  "inject(?:s|ed|ing)?(?:\\s+(?!(?:in|into|to|on|at|for|before|after|between|across)(?![\\w-]))[\\w-]+){0,2}\\s+(?:sql|code|scripts?|commands?|payloads?|malicious|shellcode|quer(?:y|ies))",
   "sqli",
   "xss",
   "cross[- ]site",
