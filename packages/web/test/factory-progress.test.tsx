@@ -173,6 +173,31 @@ describe("factory contract progress", () => {
     expect(html).toContain(message);
   });
 
+  it("leads with a plain budget line and keeps exact amounts, events, reasons and qualification under Details", () => {
+    const status = statusFixture("status-partial-budget");
+    const html = render(status);
+    expect(html).toMatch(/<p class="factory-budget-line">Budget: \$[0-9.]+ spent of \$[0-9.]+, \$0\.59 left/);
+    for (const summary of ["Budget and check counts", "Activity log (", "Why some candidate bugs were set aside (", "How cases qualify"]) expect(html).toContain(`<summary>${summary}`);
+    expect(html).toMatch(/<details class="factory-details"><summary>Budget and check counts<\/summary><dl class="factory-metrics">/);
+    expect(html).toMatch(/<details class="factory-details"><summary>Activity log \(\d+ events\)<\/summary><ol class="factory-events">/);
+    const first = status.events[0];
+    if (first === undefined) throw new Error("Missing fixture event");
+    expect(html).toContain(`<time dateTime="${first.at}" title="${first.at}">`);
+    expect(html).not.toContain(`>${first.at}<`);
+    expect(html).toContain("Stopped because the rest of this request&#x27;s budget could not cover another attempt.");
+    expect(html).toContain(status.stop_reason?.message.replaceAll("'", "&#x27;") ?? "missing");
+  });
+
+  it("names bug types and hosts with the capabilities' labels when they are supplied", () => {
+    const status = statusFixture("status-wrong-failure");
+    const html = renderToStaticMarkup(<FactoryProgress status={status} busy={false} onStop={() => undefined} onValidate={() => undefined}
+      labels={{ hosts: { umami: "Umami", "task-report": "Task and report service" }, bugTypes: { concurrency: "Concurrency", date_time: "Date and time" } }} />);
+    const item = status.items[0];
+    if (item === undefined) throw new Error("Missing fixture item");
+    expect(html).toContain(`<strong>${item.bug_type_id === "concurrency" ? "Concurrency" : "Date and time"}</strong> <small>(${item.item_key})</small>`);
+    expect(html).not.toContain(`<strong>${item.item_key}: ${item.bug_type_id}</strong>`);
+  });
+
   it("does not serialize event data or arbitrary evaluator fields", () => {
     const status = statusFixture("status-fulfilled");
     const event = status.events[0];

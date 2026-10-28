@@ -24,7 +24,9 @@ describe("contract-driven factory form", () => {
     expect(html).not.toMatch(/maxlength=/i);
     expect(html).toContain('aria-describedby="factory-description-item-1-help"');
     expect(html).toContain("500 Unicode code points after trimming surrounding whitespace");
-    expect(html).toContain('value="2.000000"');
+    expect(html).toContain('value="2.00"');
+    expect(html).toContain("Allowed: $0.50 to $5.00.");
+    expect(html).not.toContain("0.500000");
     expect(html).toContain("No concurrency catalog with implemented verification checks is declared for Umami yet.");
     expect(html).toContain('value="source_only_difficulty_required" disabled=""');
     expect(html).toContain("Reviewing is free and starts no work");
