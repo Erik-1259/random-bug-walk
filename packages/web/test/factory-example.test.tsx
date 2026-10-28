@@ -12,6 +12,9 @@ describe("factory example and disconnected client", () => {
     expect(html).toContain("not debugging-agent performance");
     expect(html).toContain("not new bug-case or validator-package downloads");
     expect(html).not.toContain("download=");
+    expect(html).toContain("written by NVIDIA Nemotron 3.5 Lightning on Nebius Token Factory, in 2 live calls");
+    expect(html).toContain("A request itself makes no model call.");
+    expect(html).toContain('href="/cases/319f3100-9ecf-441d-b7af-a643af9ae4e5#bug-report"');
   });
 
   it("keeps approved evidence reachable without labeling a development fixture as published", () => {

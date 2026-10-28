@@ -30,6 +30,12 @@ describe("judge presentation", () => {
     expect(summary).toContain("In America/Los_Angeles, daily pageview counts for March 7–9, 2026 should be 3, 8, 1; the recorded API response instead gives 2, 8, 2.");
     expect(summary).toContain("The measurements are API responses. Chart rendering and dashboard interactions described in the report were not independently verified.");
     expect(summary).toContain(`href="/releases/${RELEASED_TIME_ZONE_CASE}/issue.json"`);
+    // Which model wrote the report, said in the report's own section rather than in a collapsed block.
+    expect(summary).toContain("<strong>Written by NVIDIA Nemotron 3.5 Lightning on Nebius Token Factory</strong>, in 2 live calls: one for the bug card and one for this report.");
+    expect(html).toMatch(/<p class="built-with"><strong>Built with:<\/strong> the issue writer’s model runs on Nebius Token Factory/);
+    expect(html).not.toContain("<summary>Code, records and infrastructure</summary>");
+    // The recording link appears only when the release holds the writer's report recording; this synthetic release does not.
+    expect(summary).not.toContain("issue-2.recording.json");
 
     const other = caseView(await readResults(RELEASE), RELEASE_ID);
     expect(other).not.toBeNull();
@@ -41,6 +47,7 @@ describe("judge presentation", () => {
       expect(fallback).not.toContain("should be 3, 8, 1; the recorded API response instead gives 2, 8, 2");
       expect(fallback).not.toContain(`href="/releases/${RELEASED_TIME_ZONE_CASE}/issue.json"`);
       expect(fallback).not.toContain("three published replays");
+      expect(fallback).not.toContain("Nemotron");
       expect(fallback).toContain(state.release === null
         ? "No frozen bug report has been released for this case."
         : `href="/releases/${RELEASE_ID}/issue.json"`);

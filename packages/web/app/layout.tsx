@@ -41,6 +41,7 @@ caption { text-align: left; font-weight: 600; }
 code, .hash { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 0.85em; word-break: break-all; overflow-wrap: anywhere; }
 .files tbody th, .runs tbody th, .case-list td a { overflow-wrap: anywhere; }
 .headline { font-size: 1.25rem; font-weight: 600; }
+.model-credit, .built-with { border-left: 3px solid var(--accent); padding: 0.25rem 0 0.25rem 0.75rem; background: var(--accent-tint); }
 .label { display: inline-block; padding: 0.1rem 0.5rem; border: 1px solid var(--warn); background: var(--warn-tint); }
 .cell { border-top: 2px solid var(--rule); margin-top: 1.5rem; }
 .status { font-weight: 600; }

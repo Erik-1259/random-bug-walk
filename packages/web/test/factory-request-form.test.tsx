@@ -29,6 +29,7 @@ describe("contract-driven factory form", () => {
     expect(html).not.toContain("0.500000");
     expect(html).toContain('value="source_only_difficulty_required" disabled=""');
     expect(html).toContain("Reviewing is free and starts no work");
+    expect(html).toContain("Umami cases include the bug report that NVIDIA Nemotron 3.5 Lightning wrote on Nebius Token Factory for the completed example. A request itself makes no model call.");
     for (const match of html.matchAll(/<label for="([^"]+)"/g)) expect(html).toContain(`id="${match[1] ?? ""}"`);
   });
 

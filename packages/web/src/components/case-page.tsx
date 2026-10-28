@@ -32,6 +32,7 @@ import {
   VERDICT_TEXT,
   verificationReplays,
 } from "../model.ts";
+import { formatDateTime } from "../factory/format.ts";
 import { HistoricalReplays, RELEASED_TIME_ZONE_CASE } from "./historical-replays.tsx";
 import { ReplayControl } from "./replay-control.tsx";
 import { RunSummary } from "./run-summary.tsx";
@@ -345,7 +346,7 @@ function ReleaseProvenance({ release, run }: { release: PublishedRelease; run: R
       <dt>Release SHA-256</dt>
       <dd>{release.sha256}</dd>
       <dt>Release created</dt>
-      <dd>{record.created_at}</dd>
+      <dd><time dateTime={record.created_at} title={record.created_at}>{formatDateTime(record.created_at)}</time></dd>
       <dt>Run</dt>
       <dd>
         {run.rootExecutionId} ({run.kind}, {runStatusText(run).outcome.toLowerCase()})
@@ -554,15 +555,17 @@ function Intro({ results }: { results: Results }) {
         </ol>
         <p>For the full diagnostic catalog, <a href="/catalog">browse all runs</a>.</p>
       </nav>
-      <details>
-        <summary>Code, records and infrastructure</summary>
-        <p>The <a href={CODE_REPOSITORY}>code repository</a> produces the evidence in the <a href={RESULTS_REPOSITORY}>results repository</a>.
-          The issue writer’s model runs on Nebius Token Factory; app copies run on Vercel Sandbox, and Vercel hosts the site and stores status and large files on Blob.
-          Neon Postgres holds the spend ledger. Tavily provides the released issue’s exact-phrase novelty searches.</p>
-      </details>
+      <p className="built-with">
+        <strong>Built with:</strong> the issue writer’s model runs on Nebius Token Factory; app copies run on Vercel Sandbox, and Vercel hosts the site and stores status and large files on Blob.
+        Neon Postgres holds the spend ledger. Tavily provides the released issue’s exact-phrase novelty searches.
+        The <a href={CODE_REPOSITORY}>code repository</a> produces the evidence in the <a href={RESULTS_REPOSITORY}>results repository</a>.
+      </p>
     </>
   );
 }
+
+/** The released time-zone case's recorded writer call for the report (the card's call is recordings/card-1.recording.json). */
+const WRITER_RECORDING = "recordings/issue-2.recording.json";
 
 function BugReport({ results }: { results: Results }) {
   const release = results.release;
@@ -572,6 +575,10 @@ function BugReport({ results }: { results: Results }) {
       {release?.record.release_id === RELEASED_TIME_ZONE_CASE ? (
         <>
           <p>In America/Los_Angeles, daily pageview counts for March 7–9, 2026 should be 3, 8, 1; the recorded API response instead gives 2, 8, 2.</p>
+          <p className="model-credit">
+            <strong>Written by NVIDIA Nemotron 3.5 Lightning on Nebius Token Factory</strong>, in 2 live calls: one for the bug card and one for this report.
+            {release.record.files.some((file) => file.path === WRITER_RECORDING) && <> <a href={releaseHref(release.record.release_id, WRITER_RECORDING)}>See the recorded call</a>.</>}
+          </p>
           <p>The model wrote the report from recorded symptoms; a human approved it before release.
             The measurements are API responses. Chart rendering and dashboard interactions described in the report were not independently verified.</p>
           <p><a href={releaseHref(release.record.release_id, "issue.json")}>Read the original frozen bug report: pageviews assigned to the wrong local day</a>.</p>
