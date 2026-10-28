@@ -397,7 +397,7 @@ describe("bug spec", () => {
 
   it.each([
     ["marked out of scope", { ...SPEC, in_scope: false }, "model_out_of_scope"],
-    ["naming a security term", { ...SPEC, fix: "Remove the injected offset." }, "output_security_term:fix"],
+    ["naming a security term", { ...SPEC, fix: "Remove the SQL injection." }, "output_security_term:fix"],
   ])("serves the second design when the first is %s", async (_name, first, reason) => {
     const { h, mock, deps } = setup();
     mock.model.push(modelReply(first), modelReply(SPEC));
@@ -418,6 +418,17 @@ describe("bug spec", () => {
     const response = await postBugSpec(post(path, { shape: SHAPE, host_id: "umami" }), h.server, deps);
     expect(response.status).toBe(200);
     expect(((await body(response)).spec as { change: string }).change).toBe(design.change);
+    expect(mock.modelCalls()).toHaveLength(1);
+    expect(h.logs).toEqual([]);
+  });
+
+  it("serves a design whose checks inject a delay, at the first answer", async () => {
+    const { h, mock, deps } = setup();
+    const design = { ...SPEC, checks_to_add: ["Inject a delay in the route handler after the database query, then send two views for the same day at once.", "Check the daily totals sum to the range total for a non-UTC zone."] };
+    mock.model.push(modelReply(design));
+    const response = await postBugSpec(post(path, { shape: SHAPE, host_id: "umami" }), h.server, deps);
+    expect(response.status).toBe(200);
+    expect(((await body(response)).spec as { checks_to_add: string[] }).checks_to_add).toEqual(design.checks_to_add);
     expect(mock.modelCalls()).toHaveLength(1);
     expect(h.logs).toEqual([]);
   });
@@ -698,6 +709,16 @@ describe("scope and novelty helpers", () => {
       expect(designSecurityTopic(text)).toBe(false);
     }
     for (const text of ["The authentication step runs first.", "SQL injection in the filter.", "A permission check races."]) expect(designSecurityTopic(text)).toBe(true);
+  });
+
+  it.each(["Inject a delay in the route handler after the database query", "inject latency into the pool", "fault injection test", "dependency injection"])("keeps the testing sense of injection, %j, in scope for both checks", (text) => {
+    expect(securityTopic(text)).toBe(false);
+    expect(designSecurityTopic(text)).toBe(false);
+  });
+
+  it.each(["SQL injection in the login form", "code injection", "inject malicious code", "inject SQL into the query", "prompt injection", "JavaScript injection in rendered comments"])("treats the security sense of injection, %j, as a security topic for both checks", (text) => {
+    expect(securityTopic(text)).toBe(true);
+    expect(designSecurityTopic(text)).toBe(true);
   });
 
   it("finds code and patch text but not prose", () => {
