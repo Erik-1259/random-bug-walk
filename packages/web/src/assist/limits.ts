@@ -12,7 +12,10 @@ export const SESSION_LIMITS: Record<AssistRoute, number> = { "bug-shapes": 60, "
 /** Accepted calls per server instance per hour, every route and session together. */
 export const INSTANCE_LIMIT = 600;
 
-/** Each provider call is abandoned after this long, and nothing retries. */
+/**
+ * Each provider call is abandoned after this long, and a failed call is not retried. A model answer
+ * refused for its scope is asked for once more (see the handlers), within the routes' 60 s duration.
+ */
 export const PROVIDER_TIMEOUT_MS = 20_000;
 
 export const QUERY_MIN_CHARS = 3;

@@ -1,8 +1,10 @@
 // The bug designer's endpoints: POST /api/factory/assist/bug-shapes, /bug-spec and /delivery-brief. Each checks
 // the factory session first (the factory routes' own check), then the body, the designer's scope, its
 // configuration and its rate limits, and only then calls a provider. Every failure past the body answers
-// a plain error, so the page shows "unavailable right now" and the request form works as before. Only
-// error names and codes are logged; no key, prompt or provider text is.
+// a plain error, so the page shows "unavailable right now" and the request form works as before. A model
+// answer refused for its scope is asked for once more, counted against the same limits, before the route
+// answers refused; a provider failure is not retried. Only error names, codes and refusal reason codes
+// are logged; no key, prompt or provider text is.
 import { createHash } from "node:crypto";
 import type { Capabilities, Case } from "@rbw/factory-contract";
 import type { AssistConfig } from "../config.ts";
@@ -16,7 +18,7 @@ import { MAX_TOKENS, NOVELTY_MAX_RESULTS, QUERY_MAX_CHARS, QUERY_MIN_CHARS, Rate
 import { distinctivePhrases, NOVELTY_CAVEAT } from "./novelty.ts";
 import { APP_CONTEXT, briefPrompt, shapesPrompt, specPrompt, type BriefFacts, type CatalogPair } from "./prompts.ts";
 import { chat, search, SEARCH_PROVIDER, type Fetch, type SearchResult } from "./providers.ts";
-import { holdsCode, securityTopic } from "./safety.ts";
+import { designSecurityTopic, holdsCode, securityTopic } from "./safety.ts";
 import { validateBody, type BodySchemaName, type Bodies } from "./schemas.ts";
 
 /** Public bug reports are searched on these hosts, as the search package's source searches are. */
@@ -31,7 +33,33 @@ export interface AssistDeps {
   now: () => Date;
 }
 
-const refusedTopic = (): Response => assistError("refused");
+/**
+ * Why a route answered refused, logged as a code only: the visitor's text named a security term, the
+ * model marked the request out of scope, or the model's answer named one in this field.
+ */
+type RefusalReason = "input_security_term" | "model_out_of_scope" | `output_security_term:${string}`;
+
+function refused(server: FactoryServer, route: AssistRoute, reason: RefusalReason, note = ""): Response {
+  server.log(`assist ${route}: ${reason}${note}; answered refused`);
+  return assistError("refused");
+}
+
+/** One model attempt: a usable answer, or the reason the whole answer is refused. */
+type Attempt<T> = { ok: true; value: T } | { ok: false; reason: RefusalReason };
+
+/**
+ * Runs a model attempt, and once more when its answer is refused, taking the second call from the
+ * route's limits; a second refusal, or no room in the limits, answers refused. A provider failure
+ * throws out of the attempt and is not retried.
+ */
+async function retryRefused<T>(server: FactoryServer, deps: AssistDeps, route: AssistRoute, request: Request, attempt: () => Promise<Attempt<T>>): Promise<{ ok: true; value: T } | { ok: false; response: Response }> {
+  const first = await attempt();
+  if (first.ok) return first;
+  if (limit(deps, route, request) !== null) return { ok: false, response: refused(server, route, first.reason, " (no retry: rate limited)") };
+  server.log(`assist ${route}: ${first.reason}; retrying the model call once`);
+  const second = await attempt();
+  return second.ok ? second : { ok: false, response: refused(server, route, second.reason) };
+}
 
 /** The session's limiter key: a digest of its cookie, so the limiter never holds the cookie itself. */
 function sessionKey(request: Request): string {
@@ -88,7 +116,7 @@ export function postBugShapes(request: Request, server: FactoryServer, deps: Ass
     if (!prepared.ok) return prepared.response;
     const query = prepared.body.query.replace(/\s+/g, " ").trim();
     if (query.length < QUERY_MIN_CHARS || query.length > QUERY_MAX_CHARS) return assistError("invalid_request", `Describe the bug class in ${String(QUERY_MIN_CHARS)} to ${String(QUERY_MAX_CHARS)} characters.`);
-    if (securityTopic(query)) return refusedTopic();
+    if (securityTopic(query)) return refused(server, "bug-shapes", "input_security_term");
     const { tokenFactoryKey, tavilyKey, model } = deps.config;
     if (tokenFactoryKey === null || tavilyKey === null) return assistError("assist_unavailable");
     const limited = limit(deps, "bug-shapes", request);
@@ -101,24 +129,38 @@ export function postBugShapes(request: Request, server: FactoryServer, deps: Ass
     const capabilities = capabilitiesOf(server, deps.now());
     const pairs: CatalogPair[] = capabilities === null ? [] : catalogPairs(capabilities);
     const prompt = shapesPrompt(query, results, pairs);
-    const { output, model: info } = await chat(deps.fetch, { apiKey: tokenFactoryKey, model, schema: "bug_shapes", ...prompt, maxTokens: MAX_TOKENS["bug-shapes"] }, deps.now);
-    if (!output.in_scope) return refusedTopic();
-
-    const shapes = output.shapes
-      .filter((shape) => !securityTopic(`${shape.title} ${shape.summary} ${shape.fit_reason}`) && !holdsCode(shape.summary))
-      .map((shape) => ({ shape, sources: sourcesOf(results, shape.source_numbers) }))
-      .filter((item) => item.sources.length > 0)
-      .map(({ shape, sources }, index) => {
-        const fit = shape.fit_host_id === "none" || shape.fit_bug_type_id === "none" ? null : checkedFit(pairs, shape.fit_host_id, shape.fit_bug_type_id, shape.fit_phrase);
-        const reason = shape.fit_reason.trim();
-        return { id: `shape-${String(index + 1)}`, title: shape.title.trim(), summary: shape.summary.trim(), sources, fit, fit_reason: fit === null ? NO_FIT_REASON : reason === "" ? "This shape matches a proven catalog pair." : reason };
-      });
-    if (shapes.length === 0) {
-      if (output.shapes.some((shape) => securityTopic(`${shape.title} ${shape.summary} ${shape.fit_reason}`))) return refusedTopic();
-      throw new AssistUnavailable("token factory: no usable shape", "The bug designer could not generalize these reports into bug shapes. Try another description.");
-    }
+    // One shape naming a security term is dropped; only an answer left with no shape for that reason is refused, and retried.
+    const answered = await retryRefused(server, deps, "bug-shapes", request, async () => {
+      const { output, model: info } = await chat(deps.fetch, { apiKey: tokenFactoryKey, model, schema: "bug_shapes", ...prompt, maxTokens: MAX_TOKENS["bug-shapes"] }, deps.now);
+      if (!output.in_scope) return { ok: false, reason: "model_out_of_scope" };
+      const shapes = output.shapes
+        .filter((shape) => shapeSecurityField(shape) === null && !holdsCode(shape.summary))
+        .map((shape) => ({ shape, sources: sourcesOf(results, shape.source_numbers) }))
+        .filter((item) => item.sources.length > 0)
+        .map(({ shape, sources }, index) => {
+          const fit = shape.fit_host_id === "none" || shape.fit_bug_type_id === "none" ? null : checkedFit(pairs, shape.fit_host_id, shape.fit_bug_type_id, shape.fit_phrase);
+          const reason = shape.fit_reason.trim();
+          return { id: `shape-${String(index + 1)}`, title: shape.title.trim(), summary: shape.summary.trim(), sources, fit, fit_reason: fit === null ? NO_FIT_REASON : reason === "" ? "This shape matches a proven catalog pair." : reason };
+        });
+      if (shapes.length === 0) {
+        const field = output.shapes.map(shapeSecurityField).find((name) => name !== null);
+        if (field !== undefined) return { ok: false, reason: `output_security_term:${field}` };
+        throw new AssistUnavailable("token factory: no usable shape", "The bug designer could not generalize these reports into bug shapes. Try another description.");
+      }
+      return { ok: true, value: { shapes, info } };
+    });
+    if (!answered.ok) return answered.response;
+    const { shapes, info } = answered.value;
     return sendJson({ shapes, search: { provider: SEARCH_PROVIDER, query: searchQuery, at: searchedAt, result_count: results.length }, model: info });
   });
+}
+
+/**
+ * The first field of a model's shape that names a security term, or null. Shapes take the input check,
+ * since a shown shape is sent back as bug-spec input.
+ */
+function shapeSecurityField(shape: { title: string; summary: string; fit_reason: string }): "title" | "summary" | "fit_reason" | null {
+  return (["title", "summary", "fit_reason"] as const).find((field) => securityTopic(shape[field])) ?? null;
 }
 
 /** The search results a shape names by number, each once, in the order named. */
@@ -141,7 +183,7 @@ export function postBugSpec(request: Request, server: FactoryServer, deps: Assis
     if (!prepared.ok) return prepared.response;
     const { shape, host_id: host } = prepared.body;
     const clean = { title: shape.title.trim(), summary: shape.summary.trim(), sources: shape.sources.map((item) => ({ title: item.title, url: item.url })) };
-    if (securityTopic(`${clean.title} ${clean.summary}`)) return refusedTopic();
+    if (securityTopic(`${clean.title} ${clean.summary}`)) return refused(server, "bug-spec", "input_security_term");
     const { tokenFactoryKey, model } = deps.config;
     if (tokenFactoryKey === null) return assistError("assist_unavailable");
     const limited = limit(deps, "bug-spec", request);
@@ -149,10 +191,15 @@ export function postBugSpec(request: Request, server: FactoryServer, deps: Assis
 
     const baseline = capabilitiesOf(server, deps.now())?.hosts.find((item) => item.host_id === host)?.baseline_id ?? null;
     const prompt = specPrompt(clean, host, baseline);
-    const { output, model: info } = await chat(deps.fetch, { apiKey: tokenFactoryKey, model, schema: "bug_spec", ...prompt, maxTokens: MAX_TOKENS["bug-spec"] }, deps.now);
-    if (!output.in_scope) return refusedTopic();
+    const answered = await retryRefused(server, deps, "bug-spec", request, async () => {
+      const answer = await chat(deps.fetch, { apiKey: tokenFactoryKey, model, schema: "bug_spec", ...prompt, maxTokens: MAX_TOKENS["bug-spec"] }, deps.now);
+      if (!answer.output.in_scope) return { ok: false, reason: "model_out_of_scope" };
+      const field = specSecurityField(answer.output);
+      return field === null ? { ok: true, value: answer } : { ok: false, reason: `output_security_term:${field}` };
+    });
+    if (!answered.ok) return answered.response;
+    const { output, model: info } = answered.value;
     const fields = [output.title, output.where, output.change, output.why_tests_miss, output.fix, ...output.checks_to_add];
-    if (fields.some(securityTopic)) return refusedTopic();
     if (fields.some(holdsCode)) throw new AssistUnavailable("token factory: the design holds code", "The bug designer did not write a component-level design this time. Try again.");
     const spec = {
       title: output.title.trim(),
@@ -165,6 +212,13 @@ export function postBugSpec(request: Request, server: FactoryServer, deps: Assis
     };
     return sendJson({ spec, model: info });
   });
+}
+
+const SPEC_FIELDS = ["title", "where", "change", "why_tests_miss", "fix", "checks_to_add"] as const;
+
+/** The first field of a model's design that names a security term under the output check, or null. */
+function specSecurityField(output: Record<(typeof SPEC_FIELDS)[number], string | string[]>): (typeof SPEC_FIELDS)[number] | null {
+  return SPEC_FIELDS.find((field) => [output[field]].flat().some(designSecurityTopic)) ?? null;
 }
 
 function briefFacts(delivered: Case, material: Awaited<ReturnType<typeof readBugCase>>, bugType: string): BriefFacts {
