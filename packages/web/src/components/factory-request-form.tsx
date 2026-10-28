@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import type { FactoryPlan } from "../assist/plan.ts";
 import type { Capabilities, RequestInput } from "../factory/client.ts";
 import { CALENDAR_HINT, closedByCalendar, describeSupport, formatBudgetInput, formatUsd } from "../factory/format.ts";
 
@@ -80,22 +81,32 @@ interface Props {
   disabled: boolean;
   onInterpret: (input: RequestInput) => void;
   onChange: () => void;
+  /** A plan from the bug designer: the form starts from it. Pass a new `key` to the form with each plan. */
+  plan?: FactoryPlan | null;
 }
 
 export function FactoryRequestForm(props: Props) {
   return <section aria-labelledby="factory-draft-heading" className="factory-panel">
-    <h2 id="factory-draft-heading">Request synthetic bugs</h2>
+    <h2 id="factory-draft-heading" tabIndex={-1}>Request synthetic bugs</h2>
     {props.capabilities === null
       ? <><p>Available applications, bug types, and budget limits could not be loaded. Requests are disabled.</p><button type="button" disabled>Review requirements</button></>
       : <RequestFields {...props} capabilities={props.capabilities} />}
   </section>;
 }
 
-function RequestFields({ capabilities, disabled, onInterpret, onChange }: Props & { capabilities: Capabilities }) {
-  const [initial] = useState(() => defaultSelection(capabilities));
+/** The plan's host and bug type when the service offers both; otherwise the form's usual default. */
+export function startingSelection(capabilities: Capabilities, plan: FactoryPlan | null | undefined): { hosts: RequestInput["hosts"]; bugTypeId: FactoryDraftRow["bug_type_id"]; description: string; fromPlan: boolean } {
+  if (plan != null && capabilities.hosts.some((host) => host.host_id === plan.host_id) && capabilities.bug_types.some((type) => type.bug_type_id === plan.bug_type_id)) {
+    return { hosts: [plan.host_id], bugTypeId: plan.bug_type_id, description: plan.description, fromPlan: true };
+  }
+  return { ...defaultSelection(capabilities), description: "", fromPlan: false };
+}
+
+function RequestFields({ capabilities, disabled, onInterpret, onChange, plan }: Props & { capabilities: Capabilities }) {
+  const [initial] = useState(() => startingSelection(capabilities, plan));
   const newRow = (key: number): FactoryDraftRow => ({ item_key: `item-${String(key)}`, bug_type_id: initial.bugTypeId, quantity: "1", description: "", difficulty: capabilities.difficulty_options.find((option) => option.default && option.available)?.option_id ?? "" });
   const [hosts, setHosts] = useState<RequestInput["hosts"]>(initial.hosts);
-  const [rows, setRows] = useState<FactoryDraftRow[]>(() => [newRow(1)]);
+  const [rows, setRows] = useState<FactoryDraftRow[]>(() => [{ ...newRow(1), description: initial.description }]);
   const [nextKey, setNextKey] = useState(2);
   const [budget, setBudget] = useState(() => formatBudgetInput(capabilities.limits.default_budget_microusd));
   const prepared = prepareFactoryInput(capabilities, hosts, rows, budget);
@@ -104,6 +115,7 @@ function RequestFields({ capabilities, disabled, onInterpret, onChange }: Props 
     event.preventDefault();
     if (!disabled && prepared.input !== null) onInterpret(prepared.input);
   }}>
+    {plan != null && initial.fromPlan && <p className="factory-note" role="status">Filled from your bug design{plan.exact ? "" : ": the closest proven bug on this application, with no description"}. Check it, change anything, then review.</p>}
     <p>Pick an application and the kind of bug you want, then review. Reviewing is free and starts no work. Each item keeps its own description and quantity.</p>
     <fieldset disabled={disabled}>
       <legend>Applications and request items</legend>

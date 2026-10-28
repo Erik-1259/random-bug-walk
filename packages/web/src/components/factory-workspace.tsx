@@ -1,9 +1,12 @@
 "use client";
 
 import { useEffect, useState, useSyncExternalStore } from "react";
+import type { FactoryPlan } from "../assist/plan.ts";
 import { FactoryController, factoryClient } from "../factory/client.ts";
 import { describeFactoryMessage, describeServiceState, formatExactUsd, formatUsd } from "../factory/format.ts";
+import { BugDesigner } from "./bug-designer.tsx";
 import { CopyButton } from "./copy-button.tsx";
+import { DeliveryBriefs } from "./delivery-brief.tsx";
 import { FactoryRequestForm } from "./factory-request-form.tsx";
 import { FactoryProgress, type FactoryLabels } from "./factory-progress.tsx";
 
@@ -34,6 +37,11 @@ export function FactoryWorkspace() {
 function ConnectedWorkspace({ controller }: { controller: FactoryController }) {
   const view = useSyncExternalStore(controller.subscribe, controller.snapshot, controller.snapshot);
   const [passcode, setPasscode] = useState("");
+  const [plan, setPlan] = useState<FactoryPlan | null>(null);
+  useEffect(() => {
+    // After "Use this plan", move to the refilled request form so keyboard and screen reader users land on it.
+    if (plan !== null) document.getElementById("factory-draft-heading")?.focus();
+  }, [plan]);
   useEffect(() => {
     if (view.busy || !controller.needsPoll()) return;
     const timer = setTimeout(() => { void controller.poll(); }, controller.pollAfter());
@@ -60,7 +68,10 @@ function ConnectedWorkspace({ controller }: { controller: FactoryController }) {
       <input id="factory-passcode" type="password" autoComplete="current-password" value={passcode} onChange={(event) => { setPasscode(event.target.value); }} />
       <button type="submit" disabled={view.busy || passcode.length === 0}>Sign in to the request service</button>
     </form>}
-    <div hidden={view.requestId !== null}><FactoryRequestForm capabilities={view.capabilities} disabled={view.busy || view.requestId !== null || unavailable}
+    <BugDesigner signedIn={view.signedIn} capabilities={view.capabilities}
+      applyBlocked={view.requestId !== null ? "A request is in progress on this page. When it finishes, prepare another request, then use this plan." : view.capabilities === null ? "The request form is not loaded, so this plan cannot fill it." : null}
+      onUsePlan={(next) => { controller.invalidateInterpretation(); setPlan(next); }} />
+    <div hidden={view.requestId !== null}><FactoryRequestForm key={plan?.key ?? 0} plan={plan} capabilities={view.capabilities} disabled={view.busy || view.requestId !== null || unavailable}
       onChange={() => { controller.invalidateInterpretation(); }} onInterpret={(input) => { void controller.interpret(input); }} /></div>
     {view.interpretation !== null && <section className="factory-panel" aria-labelledby="factory-interpretation">
       <h2 id="factory-interpretation">Service interpretation</h2>
@@ -99,5 +110,6 @@ function ConnectedWorkspace({ controller }: { controller: FactoryController }) {
     </section>}
     <FactoryProgress status={view.status} busy={view.busy || view.canRetryValidation} polling={view.polling} stopPending={view.stopPending} disabled={!view.signedIn} validation={view.validation} labels={labels}
       onStop={() => { void controller.stop(); }} onValidate={(caseId) => { void controller.validate(caseId); }} />
+    {view.requestId !== null && view.status?.state === "finished" && <DeliveryBriefs key={view.requestId} requestId={view.requestId} cases={view.status.cases} signedIn={view.signedIn} />}
   </>;
 }
