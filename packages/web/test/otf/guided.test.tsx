@@ -30,6 +30,12 @@ describe("guided custom design", () => {
     expect(html).toContain("Write my spec card");
     expect(design).not.toHaveBeenCalled();
   });
+  it("separates examples from the label and skips an example that repeats it", () => {
+    const repeated: OtfBehaviorOption = { ...behavior, example_phrases: ["synthetic overlapping edits", "A synthetic edit disappears."] };
+    const html = renderToStaticMarkup(<BehaviorPickerView behaviors={[repeated]} hosts={hosts} nowMs={NOW} criterionId={null} sentence="" signedIn busy={false} onBehavior={noop} onSentence={noop} onDesign={noop} />);
+    expect(html).toContain("<br/><small>For example: A synthetic edit disappears.</small>");
+    expect(html).not.toContain("synthetic overlapping edits");
+  });
   it("requires sign-in before invoking the designer", () => {
     const html = renderToStaticMarkup(<BehaviorPickerView behaviors={[behavior]} hosts={hosts} nowMs={NOW} criterionId={behavior.criterion_id} sentence="Synthetic overlap" signedIn={false} busy={false} onBehavior={noop} onSentence={noop} onDesign={noop} />);
     expect(html).toContain("Sign in");

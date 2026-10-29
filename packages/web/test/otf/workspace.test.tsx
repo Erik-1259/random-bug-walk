@@ -112,6 +112,7 @@ describe("custom workspace boundary", () => {
     expect(offline).not.toContain("Building this exact design is the next step");
     const online = renderToStaticMarkup(<BugDesignerView {...common} otfEnabled />);
     expect(online).toContain("Building this exact design is the next step");
-    expect(online).toContain("task-report");
+    expect(online).toContain("Custom builds are available above.");
+    expect(online).not.toContain("For a task-report design");
   });
 });
