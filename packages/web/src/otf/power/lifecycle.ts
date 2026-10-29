@@ -8,8 +8,11 @@
 //   the instance state the last Get saw, so it makes one call: a Get, a Start or a Stop.
 // - While the operator hold is set (hold_until in the future) production never starts or stops
 //   the instance; Gets continue, so the state stays accurate.
-// - It never stops the instance while a job is building with a fresh builder post, not even for
-//   the uptime limit or the day cap. The builder's own timer enforces the uptime limit then.
+// - It never stops the instance while a job is building with a fresh builder post, or while a
+//   validation runs with a fresh builder heartbeat, not even for the uptime limit or the day cap.
+//   The builder's own timer enforces the uptime limit then.
+// - A watchdog stop finishes the building jobs with no recent post builder_lost and every running
+//   validation error, since the builder they ran on is stopping.
 // - A start error finishes every waiting job builder_start_failed with its reason; so does a start
 //   that brought no healthy claim within START_TIMEOUT_MS.
 // - A stopped or starting builder starts for a job of any host. Once a fresh heartbeat leaves a
@@ -38,6 +41,7 @@ import {
   type OtfPowerLogEntry,
   type OtfPowerRecord,
   type OtfStore,
+  type OtfValidationRecord,
   type StartFailureReason,
   type VmPower,
 } from "../contract.ts";
@@ -201,9 +205,28 @@ function freshPost(job: OtfJobRecord, at: number): boolean {
   return last !== null && at - last < BUILDER_LOST_MS;
 }
 
+/** The latest validation of each delivered job while it is queued or running (validations exist only for delivered jobs). */
+export async function openValidations(store: OtfStore): Promise<OtfValidationRecord[]> {
+  const open: OtfValidationRecord[] = [];
+  for (const job of await store.listJobs(["finished"])) {
+    if (job.outcome !== "delivered") continue;
+    const validation = await store.latestValidation(job.job_id);
+    if (validation !== null && (validation.state === "queued" || validation.state === "running")) open.push(validation);
+  }
+  return open;
+}
+
+/** Ends running validations as error because their builder stopped: every one, or only those claimed by `claimedBy`. */
+export async function finishRunningValidations(store: OtfStore, at: string, claimedBy?: string): Promise<void> {
+  for (const validation of await openValidations(store)) {
+    if (validation.state !== "running" || (claimedBy !== undefined && validation.claimed_by !== claimedBy)) continue;
+    await store.updateValidation(validation.validation_id, ["running"], { state: "error", finished_at: at });
+  }
+}
+
 // ---- follow-up job changes (made after the power lock is released)
 
-/** started: builder_starting to every starting_builder job; start_failed: finish every waiting job; lost: finish building jobs with no recent post. */
+/** started: builder_starting to every starting_builder job; start_failed: finish every waiting job; lost: finish building jobs with no recent post and running validations. */
 type FollowUp =
   | { kind: "started"; requested_at: string; preset: string }
   /** starting: set when this pass's own Start threw, so builder_starting is appended before the failure. */
@@ -255,6 +278,9 @@ async function applyFollowUp(store: OtfStore, followUp: FollowUp | null, at: str
     for (const job of await store.listJobs(["building"])) {
       if (!freshPost(job, now)) await finishJob(store, job, ["building"], { outcome: "builder_lost", reason: "builder_stopped" }, at);
     }
+    // A validation has no posts of its own, and the stop rules spare a running one only while the
+    // builder heartbeat is fresh: one still running when the Stop was sent cannot finish.
+    await finishRunningValidations(store, at);
     return;
   }
   if (followUp.kind === "started") {
@@ -360,16 +386,29 @@ export interface WatchdogResult {
   timed_out: number;
 }
 
-/** Which stop rule fires for a running instance, or null. Never one while a building job posts. */
-export function stopRule(row: OtfPowerRecord, jobs: readonly OtfJobRecord[], lastSignal: number | null, lastFinished: number | null, at: number, capSeconds: number): StopRule | null {
+/**
+ * Which stop rule fires for a running instance, or null. Never one while a building job posts, or
+ * while a validation runs with a builder heartbeat (lastSignal) within BUILDER_LOST_MS: a validation
+ * has no posts of its own. A queued or running validation counts as open work for after_last_job.
+ */
+export function stopRule(
+  row: OtfPowerRecord,
+  jobs: readonly OtfJobRecord[],
+  lastSignal: number | null,
+  lastFinished: number | null,
+  at: number,
+  capSeconds: number,
+  validations: readonly OtfValidationRecord[] = [],
+): StopRule | null {
   if (jobs.some((job) => job.state === "building" && freshPost(job, at))) return null;
+  if (validations.some((validation) => validation.state === "running") && lastSignal !== null && at - lastSignal < BUILDER_LOST_MS) return null;
   const up = latest(ms(row.running_since), ms(row.last_start_at));
   const signal = latest(lastSignal, up);
   if (signal !== null && at - signal >= WATCHDOG_NO_HEARTBEAT_MS) return "no_heartbeat";
   const since = ms(row.running_since);
   if (since !== null && at - since >= MAX_UPTIME_MS) return "max_uptime";
   if (vmSecondsUsed(row, new Date(at)) >= capSeconds) return "day_cap";
-  const open = jobs.some((job) => (OPEN_STATES as readonly string[]).includes(job.state));
+  const open = jobs.some((job) => (OPEN_STATES as readonly string[]).includes(job.state)) || validations.some((validation) => validation.state === "queued" || validation.state === "running");
   const idleSince = latest(lastFinished, since);
   if (!open && idleSince !== null && at - idleSince >= WATCHDOG_AFTER_LAST_JOB_MS) return "after_last_job";
   const stoppingSince = ms(row.since);
@@ -420,9 +459,13 @@ export async function runWatchdog(deps: PowerDeps): Promise<WatchdogResult> {
         const lastJobFinished = latest(lastFinished, ms(current.last_job_finished_at));
         let rule = stopRule(current, open, lastSignal, lastJobFinished, at, dayCapSeconds(deps));
         if (rule !== null) {
-          // The job listing above predates the lock: a claim since then may have started a build.
-          // Re-read the open jobs right before the Stop so a fresh claim is never cut off.
-          rule = stopRule(current, await deps.store.listJobs(OPEN_STATES), lastSignal, lastJobFinished, at, dayCapSeconds(deps));
+          // The listings above predate the lock: a claim since then may have started a build or a
+          // validation. Re-read the open jobs, the open validations (read only here, since they can
+          // only hold a stop back) and the heartbeat right before the Stop, so a fresh claim is never cut off.
+          const openNow = await deps.store.listJobs(OPEN_STATES);
+          const validations = await openValidations(deps.store);
+          const signalNow = latest(lastSignal, ms((await deps.store.lastBuilderSeen())?.last_seen_at));
+          rule = stopRule(current, openNow, signalNow, lastJobFinished, at, dayCapSeconds(deps), validations);
         }
         if (rule !== null) {
           try {

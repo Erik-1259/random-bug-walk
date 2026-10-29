@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 import {
   BUILDER_FRESH_MS,
+  BUILDER_LOST_MS,
   MAX_UPTIME_MS,
   OTF_DEFAULTS,
   START_TIMEOUT_MS,
@@ -19,6 +20,8 @@ import {
   type OtfPowerLogEntry,
   type OtfPowerRecord,
   type OtfStore,
+  type OtfValidationRecord,
+  type OtfValidationState,
   type ProductionEvent,
   type VmPower,
 } from "../../src/otf/contract.ts";
@@ -110,6 +113,24 @@ function job(state: OtfJobState, overrides: Partial<OtfJobRecord> = {}): OtfJobR
   };
 }
 
+let validationCounter = 0;
+
+/** A validation of a delivered job, claimed by the synthetic builder once it runs. */
+function validationOf(owner: OtfJobRecord, state: OtfValidationState, overrides: Partial<OtfValidationRecord> = {}): OtfValidationRecord {
+  validationCounter += 1;
+  return {
+    validation_id: `11111111-1111-4111-8111-${String(validationCounter).padStart(12, "0")}`,
+    job_id: owner.job_id,
+    state,
+    cells: null,
+    admission: null,
+    started_at: new Date(T0 - 5 * 60_000).toISOString(),
+    finished_at: null,
+    claimed_by: state === "queued" ? null : "synthetic-builder",
+    ...overrides,
+  };
+}
+
 function unused(name: string): never {
   throw new Error(`the power fake does not implement ${name}`);
 }
@@ -119,6 +140,7 @@ class FakeStore implements OtfStore {
   jobs: OtfJobRecord[];
   events: { job_id: string; event: OtfEvent }[] = [];
   log: OtfPowerLogEntry[] = [];
+  validations: OtfValidationRecord[] = [];
   lastSeen: string | null;
   readyHosts: OtfHostId[] = ["task-report", "umami"];
   lockDepth = 0;
@@ -198,8 +220,23 @@ class FakeStore implements OtfStore {
   getArtifact = (): never => unused("getArtifact");
   createValidation = (): never => unused("createValidation");
   getValidation = (): never => unused("getValidation");
-  latestValidation = (): never => unused("latestValidation");
-  updateValidation = (): never => unused("updateValidation");
+  latestValidation(job_id: string): Promise<OtfValidationRecord | null> {
+    const found = this.validations.filter((entry) => entry.job_id === job_id).at(-1);
+    return Promise.resolve(found === undefined ? null : { ...found });
+  }
+
+  updateValidation(validation_id: string, whenStates: readonly OtfValidationState[], patch: Parameters<OtfStore["updateValidation"]>[2]): Promise<OtfValidationRecord | null> {
+    const found = this.validations.find((entry) => entry.validation_id === validation_id);
+    if (found === undefined || !whenStates.includes(found.state)) return Promise.resolve(null);
+    Object.assign(found, patch);
+    return Promise.resolve({ ...found });
+  }
+
+  validationById(validation_id: string): OtfValidationRecord {
+    const found = this.validations.find((entry) => entry.validation_id === validation_id);
+    if (found === undefined) throw new Error("no such validation");
+    return found;
+  }
 }
 
 /** A VmPower whose instance state the test sets; it records every call in order. */
@@ -475,6 +512,54 @@ describe("runWatchdog", () => {
     expect(store.jobById(queued.job_id).state).toBe("building");
   });
 
+  it("never stops at the day cap while a validation runs with a fresh heartbeat, and ends it error when a later stop cuts it off", async () => {
+    const clock = new Clock();
+    const delivered = job("finished", { outcome: "delivered", finished_at: clock.iso(-20 * MIN) });
+    const store = new FakeStore(runningRow(clock, HOUR, MIN, { vm_seconds_today: DAY_CAP_S }), [delivered], clock.iso(-10_000));
+    const running = validationOf(delivered, "running");
+    store.validations.push(running);
+    const power = new FakePower("RUNNING");
+    expect(await runWatchdog(deps(store, power, clock))).toMatchObject({ action: "get" });
+    expect(power.calls).toEqual(["get"]);
+    expect(store.validationById(running.validation_id).state).toBe("running");
+
+    // The builder falls silent: past BUILDER_LOST_MS the day cap stops the machine, and the
+    // validation it was running ends error instead of staying running for good.
+    clock.advance(BUILDER_LOST_MS);
+    expect(await runWatchdog(deps(store, power, clock))).toMatchObject({ action: "stop", reason: "day_cap" });
+    expect(power.calls).toEqual(["get", "stop"]);
+    expect(store.validationById(running.validation_id)).toMatchObject({ state: "error", finished_at: clock.iso() });
+  });
+
+  it("ends a running validation error when the no-heartbeat rule stops the machine", async () => {
+    const clock = new Clock();
+    const delivered = job("finished", { outcome: "delivered", finished_at: clock.iso(-HOUR) });
+    const store = new FakeStore(runningRow(clock, HOUR, MIN), [delivered], clock.iso(-WATCHDOG_NO_HEARTBEAT_MS));
+    const running = validationOf(delivered, "running");
+    const earlier = validationOf(delivered, "passed", { finished_at: clock.iso(-30 * MIN) });
+    store.validations.push(earlier, running);
+    const power = new FakePower("RUNNING");
+    expect(await runWatchdog(deps(store, power, clock))).toMatchObject({ action: "stop", reason: "no_heartbeat" });
+    expect(store.validationById(running.validation_id)).toMatchObject({ state: "error", finished_at: clock.iso() });
+    expect(store.validationById(earlier.validation_id).state).toBe("passed");
+  });
+
+  it("does not stop for a validation claimed between the watchdog's listings and its lock", async () => {
+    const clock = new Clock();
+    const delivered = job("finished", { outcome: "delivered", finished_at: clock.iso(-20 * MIN) });
+    const store = new FakeStore(runningRow(clock, HOUR, MIN, { vm_seconds_today: DAY_CAP_S }), [delivered], clock.iso(-10 * MIN + 1));
+    const queued = validationOf(delivered, "queued");
+    store.validations.push(queued);
+    store.beforeLock = () => {
+      Object.assign(store.validationById(queued.validation_id), { state: "running", claimed_by: "synthetic-builder" });
+      store.lastSeen = clock.iso();
+    };
+    const power = new FakePower("RUNNING");
+    expect(await runWatchdog(deps(store, power, clock))).toMatchObject({ action: "get" });
+    expect(power.calls).toEqual(["get"]);
+    expect(store.validationById(queued.validation_id).state).toBe("running");
+  });
+
   it("stops at MAX_UPTIME_MS when no job is building", async () => {
     const clock = new Clock();
     const store = new FakeStore(runningRow(clock, MAX_UPTIME_MS, MIN, { last_job_finished_at: clock.iso(-10 * MIN) }), [job("queued")], clock.iso(-5000));
@@ -716,6 +801,15 @@ describe("stopRule", () => {
     const clock = new Clock();
     const row = runningRow(clock, HOUR, MIN);
     expect(stopRule(row, [job("queued")], clock.at - 5000, null, clock.at, DAY_CAP_S)).toBeNull();
+  });
+
+  it("counts an open validation as open work for after_last_job", () => {
+    const clock = new Clock();
+    const row = runningRow(clock, 2 * HOUR, MIN, { last_job_finished_at: clock.iso(-WATCHDOG_AFTER_LAST_JOB_MS) });
+    const delivered = job("finished", { outcome: "delivered", finished_at: clock.iso(-WATCHDOG_AFTER_LAST_JOB_MS) });
+    const lastFinished = clock.at - WATCHDOG_AFTER_LAST_JOB_MS;
+    expect(stopRule(row, [], clock.at - 5000, lastFinished, clock.at, DAY_CAP_S)).toBe("after_last_job");
+    expect(stopRule(row, [], clock.at - 5000, lastFinished, clock.at, DAY_CAP_S, [validationOf(delivered, "queued")])).toBeNull();
   });
 });
 

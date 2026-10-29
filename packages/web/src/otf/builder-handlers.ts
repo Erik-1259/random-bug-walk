@@ -43,6 +43,7 @@ import {
   type StopReason,
   type ValidateJob,
 } from "./contract.ts";
+import { finishRunningValidations, openValidations } from "./power/lifecycle.ts";
 import { parseOtf, validateOtf, type OtfBodies, type OtfSchemaName } from "./schemas.ts";
 import { otfStoreFor } from "./store.ts";
 
@@ -549,12 +550,7 @@ export async function postValidationResult(request: Request, deps: OtfBuilderDep
 /** Whether any job waits or builds, or a delivered job has a validation open. */
 async function workWaiting(store: OtfStore): Promise<boolean> {
   if ((await store.listJobs(["queued", "starting_builder", "building"])).length > 0) return true;
-  for (const job of await store.listJobs(["finished"])) {
-    if (job.outcome !== "delivered") continue;
-    const validation = await store.latestValidation(job.job_id);
-    if (validation !== null && (validation.state === "queued" || validation.state === "running")) return true;
-  }
-  return false;
+  return (await openValidations(store)).length > 0;
 }
 
 const LOST_REASON = { max_uptime: "the builder machine reached its uptime limit", builder_fault: "the builder service failed" } as const;
@@ -604,10 +600,7 @@ export async function postStopIntent(request: Request, deps: OtfBuilderDeps): Pr
       const finished = await deps.store.updateJob(job.job_id, ["building"], { state: "finished", outcome: "builder_lost", reason, finished_at: at });
       if (finished !== null) await deps.store.appendJobEvent(job.job_id, { type: "job_finished", lane_id: null, data: { outcome: "builder_lost", reason } }, at);
     }
-    for (const job of await deps.store.listJobs(["finished"])) {
-      const validation = await deps.store.latestValidation(job.job_id);
-      if (validation?.state === "running" && validation.claimed_by === builder_id) await deps.store.updateValidation(validation.validation_id, ["running"], { state: "error", finished_at: at });
-    }
+    await finishRunningValidations(deps.store, at, builder_id);
   }
   return sendOtf(deps.log, 200, "StopIntentReply", reply);
 }
