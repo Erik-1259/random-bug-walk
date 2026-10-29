@@ -264,6 +264,16 @@ describe("OTF persisted controller", () => {
     expect(c.api.validate).toHaveBeenCalledTimes(2); expect(reloaded.snapshot()).toMatchObject({ validationPending: false });
     expect(reloaded.snapshot().status?.validation?.state).toBe("queued");
   });
+  it("drops the saved marker of an unanswered validation when the explicit retry is refused", async () => {
+    const c = await setup(); const finished = await status({ state: "finished", outcome: "delivered" });
+    c.api.create.mockResolvedValue({ job_id: JOB, status: finished }); serveStatus(c.api, finished);
+    c.api.validate.mockRejectedValueOnce(new Error("Synthetic lost validation response.")); await c.controller.create(input); await c.controller.validate();
+    c.api.validate.mockRejectedValueOnce(new OtfClientError("host_unavailable", "Synthetic host refusal.", 409)); await c.controller.validate();
+    expect(c.api.validate).toHaveBeenCalledTimes(2);
+    const reloaded = new OtfController(c.api, c.storage, c.uuid, c.lock); await reloaded.initialize();
+    expect(reloaded.snapshot()).toMatchObject({ validationPending: false, canNewDraft: true });
+    await reloaded.newDraft(); expect(reloaded.snapshot().jobId).toBeNull(); expect(c.storage.getItem("rbw.otf.job")).toBeNull();
+  });
   it("adopts a validation that an unanswered POST created instead of sending another", async () => {
     const c = await setup(); const finished = await status({ state: "finished", outcome: "delivered" });
     c.api.create.mockResolvedValue({ job_id: JOB, status: finished }); serveStatus(c.api, finished);

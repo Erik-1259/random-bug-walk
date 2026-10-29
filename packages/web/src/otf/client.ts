@@ -314,6 +314,8 @@ export class OtfController {
       if (saved?.job_id === null || saved === null || status.outcome !== "delivered" || status.state !== "finished"
         || validationOpen(status.validation)
         || (status.validation?.validation_id ?? null) !== seenValidation) return;
+      // The saved job without any marker from an earlier unanswered POST; a definite answer stores this.
+      const unmarked = { ...saved }; delete unmarked.validation_before;
       this.save({ ...saved, validation_before: status.validation?.validation_id ?? null });
       this.update({ validationPending: true, validationRefused: false });
       let result: OtfValidation;
@@ -322,13 +324,13 @@ export class OtfController {
         if (error instanceof OtfClientError && OTF_ERROR_STATUS[error.code] === error.status
           && ["signed_out", "invalid_request", "not_found", "not_delivered", "host_unavailable"].includes(error.code)) {
           // A definite refusal queued nothing, so the pending marker is cleared and only a new click asks again.
-          this.save(saved); this.update({ validationPending: false });
+          this.save(unmarked); this.update({ validationPending: false });
           if (error.code === "host_unavailable") { this.update({ validationRefused: true }); await this.readAvailability(); }
         }
         throw error;
       }
       if (!isOtf("OtfValidation", result)) throw unavailable();
-      this.save(saved);
+      this.save(unmarked);
       this.nextPollAt = Date.now() + POLL_FINISHED_MS;
       this.update({ status: { ...status, validation: result }, validationPending: false, message: null });
     });
