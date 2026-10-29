@@ -42,6 +42,7 @@ import {
   EXPECTED_CELLS,
   OTF_HOST_DEFAULTS,
   OTF_HOST_IDS,
+  OTF_OPEN_CRITERION_ID,
   START_TIMEOUT_MS,
   CALENDAR_MARGIN_MS,
   StartError,
@@ -56,6 +57,7 @@ import {
   type OtfJobId,
   type OtfJobRecord,
   type OtfPart,
+  type OtfOpenRule,
   type OtfStore,
   type QualifiedAdmission,
   type ResultPart,
@@ -207,6 +209,7 @@ export interface SyntheticDelivery {
 export interface DeliveryInput {
   job_id: OtfJobId;
   criterion_id: OtfCriterionId;
+  rule?: OtfOpenRule;
   spec_sha256: string;
   builder_id: string;
   claimed_at_ms: number;
@@ -243,6 +246,9 @@ const GRADER_CHECK: Readonly<Record<OtfHostId, string>> = {
 /** The invented certificate, the two invented bundles and the certificate part, and the result post that carries them. */
 export function syntheticDelivery(input: DeliveryInput): SyntheticDelivery {
   const { job_id, script } = input;
+  const open = input.criterion_id === OTF_OPEN_CRITERION_ID;
+  if (open && (input.rule === undefined || script.host_id !== "task-report")) throw new Error("otf test mode: an open delivery needs a task-report rule");
+  if (!open && input.rule !== undefined) throw new Error("otf test mode: a proven delivery cannot carry an open rule");
   const winner = script.winner;
   if (winner === null) throw new Error("otf test mode: a delivery needs a winner");
   const job8 = job_id.slice(0, 8);
@@ -263,7 +269,8 @@ export function syntheticDelivery(input: DeliveryInput): SyntheticDelivery {
     format: CERTIFICATE_FORMAT,
     job_id,
     app_base_commit: createHash("sha1").update(`synthetic-otf-test-mode-${host}-app-base`).digest("hex"),
-    criterion: { criterion_id: input.criterion_id, version: "1", failure_code: "synthetic-failure-code" },
+    criterion: { criterion_id: input.criterion_id, version: open ? "open-1" : "1", failure_code: input.rule?.failure_code ?? "synthetic-failure-code" },
+    ...(input.rule === undefined ? {} : { rule: structuredClone(input.rule) }),
     spec_sha256: input.spec_sha256,
     designer: { model: "synthetic/designer-model", route: "bug-spec" },
     implementer: { lane_id: winner.lane_id, agent: AGENT_LABEL, provider: TOKEN_FACTORY_PROVIDER, model: winner.model, rounds_used: winner.rounds_used },
@@ -524,6 +531,7 @@ export class FakeBuilder {
       const delivery = syntheticDelivery({
         job_id: job.job_id,
         criterion_id: job.criterion_id,
+        ...(job.rule == null ? {} : { rule: job.rule }),
         spec_sha256: job.spec_sha256,
         builder_id: this.builder_id,
         claimed_at_ms: run.claimedMs,

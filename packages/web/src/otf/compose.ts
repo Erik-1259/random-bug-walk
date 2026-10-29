@@ -21,6 +21,8 @@ import {
   CRITERION_HOST,
   LANE_IDS,
   OTF_HOST_IDS,
+  OTF_OPEN_CRITERION_ID,
+  OTF_OPEN_LABEL,
   PROVEN_CRITERION_IDS,
   type OtfBehaviorOption,
   type OtfHostId,
@@ -37,6 +39,7 @@ import {
   type OtfCustomerHostConfig,
   type OtfCustomerLifecycle,
 } from "./handlers.ts";
+import { openBehaviorsEnabled } from "./open.ts";
 import { builderState, requestStart, runWatchdog } from "./power/lifecycle.ts";
 import { nebiusPowerFrom } from "./power/nebius.ts";
 import { otfStoreFor, setOtfPoolOpener, type PgPoolLike } from "./store.ts";
@@ -78,19 +81,24 @@ let behaviorsCache: OtfBehaviorOption[] | null = null;
 
 /**
  * Every proven OTF criterion with its label and example phrases from the factory's criteria catalog.
- * The open criterion is left out until RBW_OTF_OPEN_BEHAVIORS exists (SPEC section 8).
+ * SPEC 8.2: the flag adds the unmeasured task-report option without changing proven entries.
  */
-export function otfBehaviors(): OtfBehaviorOption[] {
+export function otfBehaviors(openBehaviors = false): OtfBehaviorOption[] {
   behaviorsCache ??= otfBehaviorsFrom(criteriaCatalogV1());
-  return structuredClone(behaviorsCache);
+  return [...structuredClone(behaviorsCache), ...(openBehaviors ? [openBehavior()] : [])];
 }
 
-/** otfBehaviors over a given catalog: only proven criteria, even when the catalog names the open one. */
-export function otfBehaviorsFrom(catalog: CriteriaCatalog): OtfBehaviorOption[] {
-  return PROVEN_CRITERION_IDS.flatMap((criterion_id) => {
+function openBehavior(): OtfBehaviorOption {
+  return { criterion_id: OTF_OPEN_CRITERION_ID, host_id: "task-report", label: OTF_OPEN_LABEL, example_phrases: [], measured: false };
+}
+
+/** The measured catalog entries plus the flag's unmeasured option, independently of catalog contents. */
+export function otfBehaviorsFrom(catalog: CriteriaCatalog, openBehaviors = false): OtfBehaviorOption[] {
+  const proven = PROVEN_CRITERION_IDS.flatMap((criterion_id) => {
     const found = criterionOf(catalog, criterion_id);
     return found === null ? [] : [{ criterion_id, host_id: CRITERION_HOST[criterion_id], label: found.criterion.label, example_phrases: [...found.criterion.example_phrases], measured: true }];
   });
+  return [...proven, ...(openBehaviors ? [openBehavior()] : [])];
 }
 
 function hostConfig(enabled: boolean, lanes: readonly { model: string; model_label: string }[], profile: Readonly<OtfHostProfile>, typical: OtfTypical | null): OtfCustomerHostConfig {
@@ -108,7 +116,7 @@ function hostConfig(enabled: boolean, lanes: readonly { model: string; model_lab
 }
 
 /** The customer routes' config from W1's OTF config and the factory session passcode. */
-export function otfCustomerConfig(otf: OtfConfig, passcode: string | null): OtfCustomerConfig {
+export function otfCustomerConfig(otf: OtfConfig, passcode: string | null, openBehaviors = false): OtfCustomerConfig {
   const hosts = Object.fromEntries(
     OTF_HOST_IDS.map((host) => {
       const found = otf.hosts[host];
@@ -117,21 +125,22 @@ export function otfCustomerConfig(otf: OtfConfig, passcode: string | null): OtfC
   ) as Record<OtfHostId, OtfCustomerHostConfig>;
   return {
     enabled: otfConfigured(otf),
+    openBehaviors,
     builderSecretConfigured: otf.builderSecret !== null,
     passcode,
     maxQueued: otf.maxQueued,
     maxPerDay: otf.maxPerDay,
     totalSpendCapMicrousd: otf.spendCapMicrousd,
     vmHoursPerDay: otf.vmHoursPerDay,
-    behaviors: otfBehaviors(),
+    behaviors: otfBehaviors(openBehaviors),
     hosts,
     coldStartMin: otf.coldStartMin,
   };
 }
 
 /** The customer dependencies over a given store, power port and clock. */
-export function otfCustomerDependencies(input: { otf: OtfConfig; passcode: string | null; store: OtfStore; power: VmPower | null; now: () => Date }): OtfCustomerDependencies {
-  return { store: input.store, power: input.power, now: input.now, lifecycle: OTF_LIFECYCLE, config: otfCustomerConfig(input.otf, input.passcode) };
+export function otfCustomerDependencies(input: { otf: OtfConfig; passcode: string | null; store: OtfStore; power: VmPower | null; now: () => Date; openBehaviors?: boolean }): OtfCustomerDependencies {
+  return { store: input.store, power: input.power, now: input.now, lifecycle: OTF_LIFECYCLE, config: otfCustomerConfig(input.otf, input.passcode, input.openBehaviors) };
 }
 
 export class OtfNotConfiguredError extends Error {
@@ -167,14 +176,14 @@ export async function liveOtfCustomerDependencies(env: Env = process.env): Promi
     notConfiguredLogged = true;
     throw new OtfNotConfiguredError(named);
   }
-  return otfCustomerDependencies({ otf, passcode, store, power, now: () => new Date() });
+  return otfCustomerDependencies({ otf, passcode, store, power, now: () => new Date(), openBehaviors: openBehaviorsEnabled(env) });
 }
 
 /** The test-mode dependencies: the world's store, power port, clock and host profiles. Throws outside test mode. */
 export function testOtfCustomerDependencies(env: Env = process.env): OtfCustomerDependencies {
   const world = otfTestWorld(env);
   const otf = loadOtfConfig(env);
-  const config = otfCustomerConfig(otf, loadFactoryConfig(env).passcode);
+  const config = otfCustomerConfig(otf, loadFactoryConfig(env).passcode, openBehaviorsEnabled(env));
   const hosts = Object.fromEntries(
     OTF_HOST_IDS.map((host) => {
       const found = world.hosts[host];

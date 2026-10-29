@@ -183,6 +183,68 @@ describe("OTF customer routes", () => {
     }
     expect(s.store.jobs.size).toBe(0); expect(s.power.startCalls).toBe(0);
   });
+  it("omits a stored null rule from a proven job's status", async () => {
+    const s = setup();
+    const created = await parsedResponse("OtfCreateResponse", await s.handlers.create(request(await body())));
+    requiredValue(s.store.jobs, created.job_id).rule = null;
+    const status = await parsedResponse("OtfJobStatus", await s.handlers.status(request(), created.job_id));
+    expect(status).not.toHaveProperty("rule");
+  });
+  it("accepts an enabled open rule and preserves it through create, status and idempotent replay", async () => {
+    const s = setup();
+    s.deps.config.openBehaviors = true;
+    s.deps.config.behaviors.push({ criterion_id: OTF_OPEN_CRITERION_ID, host_id: "task-report", label: OTF_OPEN_LABEL, example_phrases: [], measured: false });
+    const rule: OtfOpenRule = { family: "data_handling", observable_failure: "POST /api/tasks saves a title, but GET /api/tasks/{id} returns a different title after the create completes.", failure_code: "synthetic_title_mismatch" };
+    const input = await body({ criterion_id: OTF_OPEN_CRITERION_ID, rule, rule_sha256: await ruleSha256(rule) });
+    const response = await s.handlers.create(request(input));
+    expect(response.status).toBe(201);
+    const created = await parsedResponse("OtfCreateResponse", response);
+    expect(created.status.rule).toEqual(rule);
+    expect((await s.store.getJob(created.job_id))?.rule).toEqual(rule);
+    const replay = await s.handlers.create(request(input));
+    expect(replay.status).toBe(200);
+    expect((await parsedResponse("OtfCreateResponse", replay)).status.rule).toEqual(rule);
+    expect((await parsedResponse("OtfJobStatus", await s.handlers.status(request(), created.job_id))).rule).toEqual(rule);
+    expect(s.store.jobs.size).toBe(1); expect(s.power.startCalls).toBe(1);
+    const edited = { ...rule, observable_failure: rule.observable_failure + " The note is also altered." };
+    const conflict = await s.handlers.create(request({ ...input, rule: edited, rule_sha256: await ruleSha256(edited) }));
+    expect((await parsedResponse("OtfErrorBody", conflict)).error.code).toBe("idempotency_conflict");
+  });
+  it("validates the submitted open rule and its hash before storage or power", async () => {
+    const s = setup(); s.deps.config.openBehaviors = true;
+    s.deps.config.behaviors.push({ criterion_id: OTF_OPEN_CRITERION_ID, host_id: "task-report", label: OTF_OPEN_LABEL, example_phrases: [], measured: false });
+    const rule: OtfOpenRule = { family: "data_handling", observable_failure: "POST /api/tasks saves a title, but GET /api/tasks/{id} returns a different title after the create completes.", failure_code: "synthetic_title_mismatch" };
+    const valid = await body({ criterion_id: OTF_OPEN_CRITERION_ID, rule, rule_sha256: await ruleSha256(rule) });
+    for (const input of [
+      { ...valid, rule: undefined }, { ...valid, rule_sha256: undefined },
+      { ...valid, rule_sha256: "0".repeat(64) },
+      { ...valid, rule: { ...rule, observable_failure: "Too short" } },
+      { ...valid, rule: { ...rule, failure_code: "control_failed" } },
+    ]) {
+      expect((await parsedResponse("OtfErrorBody", await s.handlers.create(request(input)))).error.code).toBe("invalid_spec");
+    }
+    expect(s.store.jobs.size).toBe(0); expect(s.power.startCalls).toBe(0);
+  });
+  it("screens edited rule text for security and code before scope or power", async () => {
+    const s = setup(); s.deps.config.openBehaviors = true;
+    s.deps.config.behaviors.push({ criterion_id: OTF_OPEN_CRITERION_ID, host_id: "task-report", label: OTF_OPEN_LABEL, example_phrases: [], measured: false });
+    const scope = vi.spyOn(s.deps, "inScope");
+    for (const text of ["GET /api/tasks/{id} returns credentials after a task title is changed.", "const syntheticTaskTitle = 'This synthetic title is returned incorrectly';"]) {
+      const rule: OtfOpenRule = { family: "data_handling", observable_failure: text, failure_code: "synthetic_title_mismatch" };
+      const response = await s.handlers.create(request(await body({ criterion_id: OTF_OPEN_CRITERION_ID, rule, rule_sha256: await ruleSha256(rule) })));
+      expect((await parsedResponse("OtfErrorBody", response)).error.code).toBe("refused_topic");
+    }
+    expect(scope).not.toHaveBeenCalled(); expect(s.store.jobs.size).toBe(0); expect(s.power.startCalls).toBe(0);
+  });
+  it("passes the edited rule to the trusted scope check and honors its refusal", async () => {
+    const s = setup(); s.deps.config.openBehaviors = true;
+    s.deps.config.behaviors.push({ criterion_id: OTF_OPEN_CRITERION_ID, host_id: "task-report", label: OTF_OPEN_LABEL, example_phrases: [], measured: false });
+    const rule: OtfOpenRule = { family: "data_handling", observable_failure: "POST /api/tasks saves a title, but GET /api/tasks/{id} returns a different title after the create completes.", failure_code: "synthetic_title_mismatch" };
+    const scope = vi.spyOn(s.deps, "inScope").mockResolvedValue(false);
+    const input = await body({ criterion_id: OTF_OPEN_CRITERION_ID, rule, rule_sha256: await ruleSha256(rule) });
+    expect((await parsedResponse("OtfErrorBody", await s.handlers.create(request(input)))).error.code).toBe("invalid_spec");
+    expect(scope).toHaveBeenCalledWith(input); expect(s.store.jobs.size).toBe(0); expect(s.power.startCalls).toBe(0);
+  });
   it("replays before all admission caps and refuses a changed body", async () => {
     const s = setup(); const input = await body();
     const first = await parsedResponse("OtfCreateResponse", (await s.handlers.create(request(input))));

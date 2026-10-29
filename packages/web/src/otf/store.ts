@@ -1,4 +1,4 @@
-// The OtfStore port (contract.ts) on Postgres, over the `otf` schema of otf-migrations/0001_otf.sql,
+// The OtfStore port (contract.ts) on Postgres, over the `otf` schema and its open-rule migration,
 // plus an in-memory implementation with the same behavior for tests and local runs. Nothing here
 // reads or writes the spend ledger. Every multi-step change runs in one transaction under a row
 // lock (the job row, the power row) or, for the claim, a transaction-scoped advisory lock (plus a
@@ -25,6 +25,7 @@ import {
   type OtfJobRecord,
   type OtfJobState,
   type OtfNewJob,
+  type OtfOpenRule,
   type OtfPart,
   type OtfPowerLogEntry,
   type OtfPowerRecord,
@@ -235,6 +236,7 @@ function jobFromRow(row: Record<string, unknown>): OtfJobRecord {
     sentence: str(row.sentence),
     spec: json(row.spec) as OtfSpecCard,
     spec_sha256: str(row.spec_sha256),
+    ...(row.rule === null || row.rule === undefined ? {} : { rule: json(row.rule) as OtfOpenRule }),
     state: str(row.state) as OtfJobState,
     outcome: strOrNull(row.outcome) as OtfJobRecord["outcome"],
     reason: strOrNull(row.reason),
@@ -372,15 +374,15 @@ async function insertJobEvent(tx: OtfSql, job_id: OtfJobId, event: ProductionEve
 
 const UUID_TEXT = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
-/** The OtfStore on Postgres. The `otf` schema must already be migrated (otf-migrations/0001_otf.sql). */
+/** The OtfStore on Postgres. Apply otf-migrations/0001_otf.sql and 0002_otf_open.sql first. */
 export function createPgOtfStore(pool: OtfSqlPool): OtfStore {
   return {
     async createJob(job: OtfNewJob): Promise<CreateJobResult> {
       const inserted = await pool.query(
-        `INSERT INTO otf.jobs (job_id, client_key, create_sha256, created_at, host_id, criterion_id, sentence, spec, spec_sha256, state, catalog_request_id)
-         VALUES ($1::uuid, $2::uuid, $3, $4::timestamptz, $5, $6, $7, $8::jsonb, $9, $10, $11::uuid)
+        `INSERT INTO otf.jobs (job_id, client_key, create_sha256, created_at, host_id, criterion_id, sentence, spec, spec_sha256, state, catalog_request_id, rule)
+         VALUES ($1::uuid, $2::uuid, $3, $4::timestamptz, $5, $6, $7, $8::jsonb, $9, $10, $11::uuid, $12::jsonb)
          ON CONFLICT (client_key) DO NOTHING RETURNING *`,
-        [job.job_id, job.client_key, job.create_sha256, job.created_at, job.host_id, job.criterion_id, job.sentence, JSON.stringify(job.spec), job.spec_sha256, job.state, job.catalog_request_id],
+        [job.job_id, job.client_key, job.create_sha256, job.created_at, job.host_id, job.criterion_id, job.sentence, JSON.stringify(job.spec), job.spec_sha256, job.state, job.catalog_request_id, job.rule == null ? null : JSON.stringify(job.rule)],
       );
       const created = inserted.rows[0];
       if (created !== undefined) return { kind: "created", job: jobFromRow(created) };

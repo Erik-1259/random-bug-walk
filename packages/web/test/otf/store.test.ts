@@ -1,16 +1,18 @@
 // The OtfStore port, against both implementations: the in-memory store and the Postgres store on
-// PGlite with otf-migrations/0001_otf.sql applied. Every value is synthetic (invented spec text,
+// PGlite with the OTF migrations applied. Every value is synthetic (invented spec text,
 // builder ids and bytes); nothing comes from a real job or model output.
 import { AsyncLocalStorage } from "node:async_hooks";
 import { readFileSync } from "node:fs";
 import { PGlite } from "@electric-sql/pglite";
 import { describe, expect, it } from "vitest";
 import { builderEventBytes } from "../../src/otf/canonical.ts";
-import { BUILDER_LOST_MS, MAX_UPTIME_MS, WATCHDOG_MIN_INTERVAL_MS, type BuilderEventIn, type OtfAdmissionResult, type OtfHostId, type OtfNewJob, type OtfSpecCard, type OtfStore, type VmPower } from "../../src/otf/contract.ts";
+import { BUILDER_LOST_MS, MAX_UPTIME_MS, OTF_OPEN_CRITERION_ID, WATCHDOG_MIN_INTERVAL_MS, type BuilderEventIn, type OtfAdmissionResult, type OtfHostId, type OtfNewJob, type OtfOpenRule, type OtfSpecCard, type OtfStore, type VmPower } from "../../src/otf/contract.ts";
 import { runWatchdog } from "../../src/otf/power/lifecycle.ts";
 import { createMemoryOtfStore, createPgOtfStore, type OtfSql, type OtfSqlPool } from "../../src/otf/store.ts";
 
 const MIGRATION = readFileSync(new URL("../../otf-migrations/0001_otf.sql", import.meta.url), "utf8");
+const OPEN_MIGRATION = readFileSync(new URL("../../otf-migrations/0002_otf_open.sql", import.meta.url), "utf8");
+const OPEN_RULE: OtfOpenRule = { family: "data_handling", observable_failure: "POST /api/tasks with a title containing a comma, then GET /api/tasks/{id}; the returned title loses the comma.", failure_code: "title_loses_comma" };
 const T0 = "2026-10-29T12:00:00.000Z";
 const SPEC: OtfSpecCard = {
   title: "Synthetic lost update",
@@ -58,6 +60,7 @@ function meter(builder_seq: number, lane: "lane-1" | "lane-2", cost: number): Bu
 async function pgliteStore(): Promise<OtfStore> {
   const db = await PGlite.create();
   await db.exec(MIGRATION);
+  await db.exec(OPEN_MIGRATION);
   const inTx = new AsyncLocalStorage<OtfSql>();
   const direct: OtfSql = { query: async (text, params) => ({ rows: (await db.query<Record<string, unknown>>(text, params)).rows }) };
   const pool: OtfSqlPool = {
@@ -101,6 +104,24 @@ async function claimed(store: OtfStore, n: number, builder = "builder-a"): Promi
 }
 
 describe.each(STORES)("OtfStore (%s)", (_name, open) => {
+  it("round-trips the open rule through create, replay, reads, lists and claims after migration", async () => {
+    const store = await open();
+    const job = newJob(1, { criterion_id: OTF_OPEN_CRITERION_ID, rule: structuredClone(OPEN_RULE) });
+    expect(await store.createJob(job)).toMatchObject({ kind: "created", job: { rule: OPEN_RULE } });
+    // Neither the caller's object nor a returned object can change the stored rule.
+    if (job.rule === undefined || job.rule === null) throw new Error("expected an open rule");
+    job.rule.failure_code = "synthetic_changed_rule";
+    const found = await store.getJob(job.job_id);
+    expect(found?.rule).toEqual(OPEN_RULE);
+    if (found?.rule === undefined || found.rule === null) throw new Error("expected a stored rule");
+    found.rule.failure_code = "synthetic_changed_return";
+    expect(await store.createJob(newJob(1, { criterion_id: OTF_OPEN_CRITERION_ID, rule: OPEN_RULE }))).toMatchObject({ kind: "replayed", job: { rule: OPEN_RULE } });
+    expect(await store.listJobs(["queued"])).toMatchObject([{ rule: OPEN_RULE }]);
+    expect(await store.claimNext(uuid(3), at(10_000), CLAIM)).toMatchObject({ kind: "build", job: { rule: OPEN_RULE } });
+    await store.createJob(newJob(2));
+    expect((await store.getJob(uuid(2)))?.rule ?? null).toBeNull();
+  });
+
   it("creates a job once per client_key: a replay returns it unchanged, another body conflicts", async () => {
     const store = await open();
     const created = await store.createJob(newJob(1));
