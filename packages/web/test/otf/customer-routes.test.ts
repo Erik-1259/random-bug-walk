@@ -593,6 +593,13 @@ describe("OTF customer routes", () => {
       expect(await parsedResponse("OtfJobStatus", await s.handlers.status(request(), created.job_id)))
         .toMatchObject({ state: "finished", outcome: "builder_unavailable", reason: "task-report service builds were turned off while this job waited." });
     });
+    it.each([["disabled", "Custom builds were turned off while this Umami job waited."], ["hold", "Custom builds were put on hold while this Umami job waited."]] as const)(
+      "names the host and the cause when OTF becomes unavailable for a waiting job (%s)", async (cause, reason) => {
+        const s = setup(); const created = await parsedResponse("OtfCreateResponse", await s.handlers.create(request(await umami())));
+        if (cause === "disabled") s.deps.config.enabled = false; else s.store.power.hold_until = "2026-01-02T00:00:00.000Z";
+        expect(await parsedResponse("OtfJobStatus", await s.handlers.status(request(), created.job_id)))
+          .toMatchObject({ state: "finished", outcome: "builder_unavailable", reason });
+      });
     it("lists every host once with its reason, lanes, deadline and typical time", async () => {
       const s = setup(); s.deps.config.coldStartMin = 4;
       const value = await parsedResponse("OtfAvailability", await s.handlers.availability(request(undefined, false)));

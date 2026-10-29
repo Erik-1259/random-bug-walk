@@ -190,10 +190,9 @@ export function createCustomerHandlers(deps: OtfCustomerDependencies) {
   /** Why a waiting job can no longer run, or null. */
   async function waitingBlock(job: OtfJobRecord, at: string, builder: BuilderState, seen: Seen): Promise<string | null> {
     const power = await store.getPower();
-    if (!config.enabled || (power.hold_until !== null && Date.parse(power.hold_until) > Date.parse(at))) {
-      return "Custom builds became unavailable while this job waited.";
-    }
     const host = job.host_id; const label = OTF_HOST_LABELS[host]; const profile = config.hosts[host];
+    if (!config.enabled) return `Custom builds were turned off while this ${label} job waited.`;
+    if (power.hold_until !== null && Date.parse(power.hold_until) > Date.parse(at)) return `Custom builds were put on hold while this ${label} job waited.`;
     if (!profile.enabled) return `${label} builds were turned off while this job waited.`;
     const from = Date.parse(at);
     if (!hostCalendarOpen(host, from, from + profile.deadlineMs + CALENDAR_MARGIN_MS)) return calendarReason(host);
