@@ -306,6 +306,21 @@ describe("OTF persisted controller", () => {
     await c.controller.validate(); expect(c.controller.snapshot().validationPending).toBe(false);
     await c.controller.validate(); expect(c.api.validate).toHaveBeenCalledTimes(2);
   });
+  it("clears pending validation after a host_unavailable refusal, across reload, and sends again only on a new click", async () => {
+    const c = await setup(); const finished = await status({ state: "finished", outcome: "delivered" });
+    c.api.create.mockResolvedValue({ job_id: JOB, status: finished }); serveStatus(c.api, finished); await c.controller.create(input);
+    const closed: OtfAvailability = { ...availability, hosts: availability.hosts.map(host => ({ ...host, offered: false, unavailable_reason: host.host_id === "umami" ? "calendar" : "disabled" })) };
+    c.api.availability.mockResolvedValue(closed); const reads = c.api.availability.mock.calls.length;
+    c.api.validate.mockRejectedValueOnce(new OtfClientError("host_unavailable", "Synthetic host refusal.", 409));
+    await c.controller.validate();
+    expect(c.api.availability.mock.calls.length).toBe(reads + 1);
+    expect(c.controller.snapshot()).toMatchObject({ validationPending: false, validationRefused: true, message: null, availability: closed, busy: false, canNewDraft: true });
+    const reloaded = new OtfController(c.api, c.storage, c.uuid, c.lock); await reloaded.initialize();
+    expect(reloaded.snapshot()).toMatchObject({ validationPending: false, canNewDraft: true }); expect(c.api.validate).toHaveBeenCalledTimes(1);
+    c.api.availability.mockResolvedValue(availability); await reloaded.validate();
+    expect(c.api.validate).toHaveBeenCalledTimes(2); expect(reloaded.snapshot()).toMatchObject({ validationRefused: false, validationPending: false });
+    expect(reloaded.snapshot().status?.validation?.state).toBe("queued");
+  });
   it("keeps a known job pollable when its create response has an invalid event cursor", async () => {
     const c = await setup(); c.api.create.mockResolvedValue({ job_id: JOB, status: await status({ next_after: 2 }) }); await c.controller.create(input);
     expect(c.controller.snapshot().jobId).toBe(JOB); expect(c.controller.needsPoll()).toBe(true); expect(c.controller.snapshot().status).toBeNull();

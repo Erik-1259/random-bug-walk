@@ -112,6 +112,8 @@ export interface OtfView {
   refusal: OtfCreateRefusal | null;
   /** This tab sent a stop for the current job. */
   stopRequested: boolean;
+  /** This tab's last validation request was refused host_unavailable; nothing was queued. */
+  validationRefused: boolean;
 }
 type StoragePort = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 type CreateInput = Omit<OtfCreateJob, "client_key" | "spec_sha256">;
@@ -124,7 +126,7 @@ function validationOpen(validation: OtfValidation | null): boolean { return vali
 
 /** External store for the browser. Only an explicit create/validation action can begin new work. */
 export class OtfController {
-  private view: OtfView = { availability: null, status: null, busy: false, message: null, canRetryCreate: false, canNewDraft: false, jobId: null, pendingRequest: null, catalogRequestId: null, polling: false, validationPending: false, refusal: null, stopRequested: false };
+  private view: OtfView = { availability: null, status: null, busy: false, message: null, canRetryCreate: false, canNewDraft: false, jobId: null, pendingRequest: null, catalogRequestId: null, polling: false, validationPending: false, refusal: null, stopRequested: false, validationRefused: false };
   private listeners = new Set<() => void>();
   private client: OtfClient;
   private storage: StoragePort;
@@ -176,7 +178,7 @@ export class OtfController {
     this.update({ jobId: value?.job_id ?? null, pendingRequest: value?.request ?? null,
       catalogRequestId: value?.catalog_request_id ?? value?.request.catalog_request_id ?? null,
       validationPending: value?.validation_before !== undefined, canRetryCreate: value !== null && value.job_id === null,
-      ...(changed ? { status: null, refusal: null, stopRequested: false } : {}) });
+      ...(changed ? { status: null, refusal: null, stopRequested: false, validationRefused: false } : {}) });
     return changed;
   }
   private locked(operation: () => Promise<void>): Promise<void> {
@@ -310,13 +312,15 @@ export class OtfController {
         || saved.validation_before !== undefined || validationOpen(status.validation)
         || (status.validation?.validation_id ?? null) !== seenValidation) return;
       this.save({ ...saved, validation_before: status.validation?.validation_id ?? null });
-      this.update({ validationPending: true });
+      this.update({ validationPending: true, validationRefused: false });
       let result: OtfValidation;
       try { result = await this.client.validate(saved.job_id); }
       catch (error) {
         if (error instanceof OtfClientError && OTF_ERROR_STATUS[error.code] === error.status
-          && ["signed_out", "invalid_request", "not_found", "not_delivered"].includes(error.code)) {
+          && ["signed_out", "invalid_request", "not_found", "not_delivered", "host_unavailable"].includes(error.code)) {
+          // A definite refusal queued nothing, so the pending marker is cleared and only a new click asks again.
           this.save(saved); this.update({ validationPending: false });
+          if (error.code === "host_unavailable") { this.update({ validationRefused: true }); await this.readAvailability(); }
         }
         throw error;
       }
@@ -340,7 +344,7 @@ export class OtfController {
       if (this.view.status?.state === "finished") await this.readStatus();
       if (!this.view.canNewDraft) return;
       this.storage.removeItem(OTF_JOB_KEY); this.saved = null;
-      this.update({ status: null, jobId: null, pendingRequest: null, catalogRequestId: null, validationPending: false, canRetryCreate: false, message: null, refusal: null, stopRequested: false });
+      this.update({ status: null, jobId: null, pendingRequest: null, catalogRequestId: null, validationPending: false, canRetryCreate: false, message: null, refusal: null, stopRequested: false, validationRefused: false });
     });
   }
 }

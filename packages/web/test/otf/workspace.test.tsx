@@ -86,6 +86,13 @@ describe("custom workspace boundary", () => {
     const failed = renderToStaticMarkup(<OtfWorkspaceView {...props} pending status={{ ...running, state: "finished", outcome: "time_limit" }} />);
     expect(failed).not.toContain("While this builds"); expect(failed).toContain("<h2>Start the closest catalog bug</h2>");
   });
+  it("shows a host_unavailable validation refusal as the host's reason line, never an error", async () => {
+    const delivered: OtfJobStatus = { job_id: "00000000-0000-4000-8000-000000000001", created_at: "2026-10-29T00:00:00Z", state: "finished", host_id: "umami", queue_position: null, builder: "running", outcome: "delivered", reason: null, criterion_id: "date_time.time-zone-grouping", spec, spec_sha256: await specSha256(spec), deadline_at: null, elapsed_ms: 0, lanes: [], events: [], next_after: 0, poll_after_ms: 30000, spend: { model_microusd: 0, cap_microusd: 8000000, source: "builder proxy meter (upper bound)" }, winner: null, artifacts: [], certificate: null, validation: null, catalog_request_id: null };
+    const html = renderToStaticMarkup(<OtfWorkspaceView {...props} pending status={delivered} validationRefused nowMs={NOV_3} />);
+    expect(html).toContain("Validation was not started. Umami is unavailable on UTC days 2–5. They open again on November 6 (UTC). Task-report builds and the catalog are still available.");
+    expect(html).toContain("Validate stored bundles"); expect(html).not.toContain('role="alert"');
+    expect(renderToStaticMarkup(<OtfWorkspaceView {...props} pending status={delivered} nowMs={NOV_3} />)).not.toContain("Validation was not started");
+  });
   it("hides the spec card when the picked behavior's host is not offered", () => {
     const html = renderToStaticMarkup(<OtfWorkspaceView {...props} criterionId="date_time.time-zone-grouping" spec={spec} />);
     expect(html).not.toContain("Accept and build this custom bug");

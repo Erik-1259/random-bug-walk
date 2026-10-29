@@ -60,6 +60,13 @@ export function HostReason({ host, hosts, nowMs }: { host: OtfHostAvailability; 
   return <p role="status">{hostReasonLines(host, hosts, nowMs).join(" ")}</p>;
 }
 
+/** Why a validation request was refused host_unavailable, from the refreshed availability. Never worded as an error. */
+export function validationRefusalLines(hostId: OtfHostId, availability: OtfAvailability | null, nowMs: number): string[] {
+  const host = availability?.hosts.find(option => option.host_id === hostId);
+  if (availability === null || host === undefined) return [`${HOST_NAMES[hostId]} builds are offline right now.`];
+  return host.offered ? [`${HOST_NAMES[hostId]} builds were not available when you asked.`] : hostReasonLines(host, availability.hosts, nowMs);
+}
+
 /** Why a create was refused host_unavailable, from the refreshed availability. Never worded as an error. */
 export function hostRefusalLines(hostId: OtfHostId, availability: OtfAvailability | null, nowMs: number): string[] {
   const host = availability?.hosts.find(option => option.host_id === hostId);
