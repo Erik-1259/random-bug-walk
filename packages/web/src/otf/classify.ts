@@ -60,29 +60,62 @@ const API_TOKEN = new RegExp(`(?<![^\\s${OPENERS}])[^\\s<>${OPENERS}]*\\/api\\/[
 const ROUTE_LIST = "GET /api/heartbeat, POST /api/tasks, GET /api/tasks/{id}, PATCH /api/tasks/{id}, POST /api/tasks/{id}/completions, GET /api/reports/completions/daily";
 const WRITE_ROUTES = 'write each route as "METHOD /path", such as "PATCH /api/tasks/{id}"';
 const ROUTED_METHODS = new Set(Object.values(METHODS).flat());
+const METHOD_GROUP_SPLIT = /\s*(?:[|/,]|\b(?:and|or)\b)\s*/;
+/** Quoted text ("...", '...', “...”, `...`) is data, so a method word inside it is not a method. */
+const QUOTED = /"[^"]*"|“[^”]*”|`[^`]*`|(?<!\w)'[^'\n]*'(?!\w)/g;
+/** A sentence ends at ". ", "; ", "! ", "? " or the end of the text. */
+const SENTENCE_BREAK = /[.;!?] /g;
+type Span = readonly [start: number, end: number];
+function inside(spans: readonly Span[], index: number): boolean { return spans.some(([start, end]) => index >= start && index < end); }
 /**
  * Every named API path must be one of the six task-report routes. A method attached to a path ("METHOD /path",
  * a group such as "GET|PATCH /path", or "a PATCH request to /path") must be allowed for that route; a path with
- * no attached method only has to exist. A method that no route allows at all is refused wherever it appears.
+ * no attached method only has to exist. A method that no route allows at all is refused wherever it appears. A
+ * GET, POST or PATCH that stands apart from any path must be allowed for at least one route named in its own
+ * sentence (a sentence that names no route refers back and is not checked). Method words inside quotes are data.
  */
 export function ruleRouteProblems(text: string): string[] {
   const tokens = [...text.matchAll(API_TOKEN)];
   if (tokens.length === 0) return [`observable_failure must name at least one task-report route; ${WRITE_ROUTES}`];
+  const breaks = [...text.matchAll(SENTENCE_BREAK)].map((found) => found.index);
+  const sentenceOf = (index: number): number => breaks.filter((end) => end < index).length;
+  const quoted: Span[] = [...text.matchAll(QUOTED)].map((found) => [found.index, found.index + found[0].length]);
+  const attached: Span[] = [];
+  const sentenceAllows = new Map<number, Set<string>>();
   const attachedRefusals = new Set<string>();
-  const problems = tokens.flatMap((found) => {
+  const problems: string[] = [];
+  for (const found of tokens) {
+    const before = text.slice(0, found.index);
+    const direct = DIRECT_METHODS.exec(before);
+    const match = direct ?? FILLER_METHOD.exec(before);
+    const group = match?.[1];
+    if (match !== null && group !== undefined) attached.push([match.index, match.index + group.length]);
     const path = (found[0].split("?")[0] ?? "").replace(/[\]).,;:!?"'`]+$/, "");
     const allowed = METHODS[path];
-    if (allowed === undefined) return [`${path} is not one of the six task-report routes (${ROUTE_LIST}); ${WRITE_ROUTES}`];
-    const before = text.slice(0, found.index);
-    const direct = DIRECT_METHODS.exec(before)?.[1];
-    const methods = direct === undefined ? (FILLER_METHOD.exec(before)?.slice(1, 2) ?? []) : direct.split(/\s*(?:[|/,]|\b(?:and|or)\b)\s*/);
-    return methods.filter((method) => !allowed.includes(method)).map((method) => {
+    if (allowed === undefined) {
+      problems.push(`${path} is not one of the six task-report routes (${ROUTE_LIST}); ${WRITE_ROUTES}`);
+      continue;
+    }
+    const sentence = sentenceOf(found.index);
+    sentenceAllows.set(sentence, new Set([...(sentenceAllows.get(sentence) ?? []), ...allowed]));
+    const methods = group === undefined ? [] : direct === null ? [group] : group.split(METHOD_GROUP_SPLIT);
+    for (const method of methods.filter((method) => !allowed.includes(method))) {
       attachedRefusals.add(method);
-      return `${method} is not allowed for ${path} (allowed: ${allowed.join(", ")}); ${WRITE_ROUTES}`;
-    });
-  });
-  const unrouted = [...text.matchAll(METHOD_TOKEN)].map((token) => token[0]).filter((method) => !ROUTED_METHODS.has(method) && !attachedRefusals.has(method));
-  return [...new Set([...problems, ...unrouted.map((method) => `the task-report service has no ${method} route (${ROUTE_LIST}); ${WRITE_ROUTES}`)])];
+      problems.push(`${method} is not allowed for ${path} (allowed: ${allowed.join(", ")}); ${WRITE_ROUTES}`);
+    }
+  }
+  for (const token of text.matchAll(METHOD_TOKEN)) {
+    const method = token[0];
+    if (inside(quoted, token.index)) continue;
+    if (!ROUTED_METHODS.has(method)) {
+      if (!attachedRefusals.has(method)) problems.push(`the task-report service has no ${method} route (${ROUTE_LIST}); ${WRITE_ROUTES}`);
+      continue;
+    }
+    const named = sentenceAllows.get(sentenceOf(token.index));
+    if (named === undefined || named.has(method) || inside(attached, token.index)) continue;
+    problems.push(`${method} is not allowed for the routes named in this sentence (allowed: ${[...named].join(", ")}); ${WRITE_ROUTES}`);
+  }
+  return [...new Set(problems)];
 }
 /** A failed answer keeps its wire decision when it had one, so two failed security decisions still refuse as security. */
 type Mapped = { value: OtfClassification; problems?: never } | { problems: string[]; decision?: unknown; value?: never };
