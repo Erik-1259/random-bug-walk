@@ -4,7 +4,7 @@ import { designSecurityTopic, holdsCode, securityTopic } from "../assist/safety.
 import { loadFactoryConfig } from "../config.ts";
 import { readBody } from "../factory-server/http.ts";
 import { hasFactorySession } from "../factory-server/session.ts";
-import { createSha256, sha256Hex, specSha256 } from "./canonical.ts";
+import { createSha256, ruleSha256, sha256Hex, specSha256 } from "./canonical.ts";
 import {
   BUILDER_LOST_MS, CALENDAR_MARGIN_MS, CRITERION_HOST, HOST_CALENDAR_BLOCKS, HOST_SCOPE_EXCLUDED,
   OTF_CONTRACT_VERSION, OTF_ERROR_STATUS, OTF_HOST_DEFAULTS, OTF_OPEN_CRITERION_ID, OTF_HOST_IDS, OTF_HOST_LABELS, OTF_JOB_STATES,
@@ -53,6 +53,8 @@ export interface OtfCustomerHostConfig {
 
 export interface OtfCustomerConfig {
   enabled: boolean;
+  /** SPEC 8.2: only the exact open-behavior feature flag enables admission. */
+  openBehaviors?: boolean;
   builderSecretConfigured: boolean;
   passcode: string | null;
   maxQueued: number;
@@ -135,13 +137,13 @@ export function calendarReason(host: OtfHostId): string {
  * names, every card field passes the designer safety checks, and no card field touches the host's
  * HOST_SCOPE_EXCLUDED topics. Whether the host is offered right now is step 6a, not this check.
  */
-export function cardInScope(config: Pick<OtfCustomerConfig, "behaviors">, input: OtfCreateJob): boolean {
-  // Open behaviors are not accepted until RBW_OTF_OPEN_BEHAVIORS exists (SPEC section 8).
-  if (input.criterion_id === OTF_OPEN_CRITERION_ID) return false;
+export function cardInScope(config: Pick<OtfCustomerConfig, "behaviors" | "openBehaviors">, input: OtfCreateJob): boolean {
+  // SPEC 8.2: a listed behavior alone cannot enable open admission.
+  if (input.criterion_id === OTF_OPEN_CRITERION_ID && config.openBehaviors !== true) return false;
   const host = CRITERION_HOST[input.criterion_id];
   if (input.host_id !== host) return false;
   if (!config.behaviors.some((behavior) => behavior.criterion_id === input.criterion_id && behavior.host_id === host)) return false;
-  const fields = [input.spec.title, input.spec.where, input.spec.change, input.spec.why_tests_miss, input.spec.fix, ...input.spec.checks_to_add];
+  const fields = [input.spec.title, input.spec.where, input.spec.change, input.spec.why_tests_miss, input.spec.fix, ...input.spec.checks_to_add, ...(input.rule === undefined ? [] : [input.rule.observable_failure])];
   if (fields.some((field) => designSecurityTopic(field) || holdsCode(field))) return false;
   const excluded = HOST_SCOPE_EXCLUDED[host];
   return excluded === undefined || !fields.some((field) => excluded.test(field));
@@ -246,7 +248,7 @@ export function createCustomerHandlers(deps: OtfCustomerDependencies) {
       job_id: job.job_id, created_at: job.created_at, state: job.state, host_id: job.host_id,
       queue_position: job.state === "queued" || job.state === "starting_builder" ? (position < 0 ? null : position + 1) : null,
       builder, outcome: job.outcome, reason: job.reason, criterion_id: job.criterion_id,
-      spec: job.spec, spec_sha256: job.spec_sha256, deadline_at: job.deadline_at,
+      spec: job.spec, spec_sha256: job.spec_sha256, ...(job.rule == null ? {} : { rule: job.rule }), deadline_at: job.deadline_at,
       elapsed_ms: Math.max(0, Date.parse(job.finished_at ?? at) - Date.parse(job.claimed_at ?? job.created_at)),
       lanes: projectLanes(events, profile.lanes, OTF_HOST_DEFAULTS[job.host_id].confirm_rounds),
       events: events.filter((event) => event.seq > after),
@@ -307,8 +309,14 @@ export function createCustomerHandlers(deps: OtfCustomerDependencies) {
         if (!parsed.ok || !isOtf("OtfCreateJob", parsed.value)) return failure("invalid_spec");
         const input = parsed.value;
         const fields = [input.spec.title, input.spec.where, input.spec.change, input.spec.why_tests_miss, input.spec.fix, ...input.spec.checks_to_add];
-        if (securityTopic(input.sentence) || holdsCode(input.sentence) || fields.some((field) => designSecurityTopic(field) || holdsCode(field))) return failure("refused_topic");
+        const unsafe = (field: string): boolean => designSecurityTopic(field) || holdsCode(field);
+        if (securityTopic(input.sentence) || holdsCode(input.sentence) || fields.some(unsafe)) return failure("refused_topic");
+        // SPEC 2.1 step 4 and 8.2: with the flag off, the open criterion answers invalid_spec, and its rule is never screened.
+        if (input.criterion_id === OTF_OPEN_CRITERION_ID && config.openBehaviors !== true) return failure("invalid_spec");
+        // SPEC 8.3 step 2: with the flag on, the safety checks also run on the rule text.
+        if (input.rule !== undefined && unsafe(input.rule.observable_failure)) return failure("refused_topic");
         if (await specSha256(input.spec) !== input.spec_sha256) return failure("invalid_spec");
+        if (input.rule !== undefined && await ruleSha256(input.rule) !== input.rule_sha256) return failure("invalid_spec");
         if (!cardInScope(config, input) || (deps.inScope !== undefined && !await deps.inScope(input))) return failure("invalid_spec");
         const createHash = await createSha256(input); const at = now().toISOString();
         const activeLimit = OTF_HOST_IDS.reduce((sum, host) => sum + (config.hosts[host].enabled ? config.hosts[host].maxActive : 0), 0);
@@ -329,7 +337,7 @@ export function createCustomerHandlers(deps: OtfCustomerDependencies) {
           if (code !== null) return { patch: null, log: [], result: { kind: "refused" as const, code } };
           const result = await store.createJob({ job_id: id(), client_key: input.client_key, create_sha256: createHash,
             created_at: at, host_id: input.host_id, criterion_id: input.criterion_id, sentence: input.sentence, spec: input.spec,
-            spec_sha256: input.spec_sha256, state: builder === "running" ? "queued" : "starting_builder",
+            spec_sha256: input.spec_sha256, ...(input.rule === undefined ? {} : { rule: input.rule }), state: builder === "running" ? "queued" : "starting_builder",
             catalog_request_id: input.catalog_request_id ?? null });
           if (result.kind === "conflict") return { patch: null, log: [], result: { kind: "refused" as const, code: "idempotency_conflict" as const } };
           if (result.kind === "created") await store.appendJobEvent(result.job.job_id, { type: "job_queued", lane_id: null,

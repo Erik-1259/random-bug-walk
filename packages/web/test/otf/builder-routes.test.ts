@@ -17,6 +17,7 @@ import {
   COPY_LIMITS,
   EXPECTED_CELLS,
   OTF_HOST_DEFAULTS,
+  OTF_OPEN_CRITERION_ID,
   PART_MAX_BYTES_BY_PART,
   RESULT_BODY_MAX_BYTES,
   TOKEN_FACTORY_PROVIDER,
@@ -24,6 +25,7 @@ import {
   type OtfAdmissionResult,
   type OtfCertificate,
   type OtfNewJob,
+  type OtfOpenRule,
   type OtfSpecCard,
   type OtfStore,
   type ResultPost,
@@ -48,6 +50,7 @@ const SPEC: OtfSpecCard = {
   fix: "A synthetic fix",
 };
 const SPEC_SHA = "b".repeat(64);
+const OPEN_RULE: OtfOpenRule = { family: "data_handling", observable_failure: "POST /api/tasks with a title containing a comma, then GET /api/tasks/{id}; the returned title loses the comma.", failure_code: "title_loses_comma" };
 
 function iso(offsetMs: number): string {
   return new Date(T0 + offsetMs).toISOString();
@@ -214,6 +217,7 @@ function delivery(
 async function pgliteStore(): Promise<OtfStore> {
   const db = await PGlite.create();
   await db.exec(readFileSync(new URL("../../otf-migrations/0001_otf.sql", import.meta.url), "utf8"));
+  await db.exec(readFileSync(new URL("../../otf-migrations/0002_otf_open.sql", import.meta.url), "utf8"));
   const inTx = new AsyncLocalStorage<OtfSql>();
   const direct: OtfSql = { query: async (text, params) => ({ rows: (await db.query<Record<string, unknown>>(text, params)).rows }) };
   const pool: OtfSqlPool = {
@@ -235,6 +239,16 @@ afterEach(() => {
 });
 
 describe("builder claim", () => {
+  it("includes the stored open rule in a build claim", async () => {
+    const w = world();
+    await w.store.createJob({ ...newJob(1), criterion_id: OTF_OPEN_CRITERION_ID, rule: OPEN_RULE });
+    const response = await claim(w);
+    expect(response.status).toBe(200);
+    const reply: unknown = await response.json();
+    expect(isOtf("ClaimReply", reply)).toBe(true);
+    expect(reply).toMatchObject({ job: { criterion_id: OTF_OPEN_CRITERION_ID, rule: OPEN_RULE } });
+  });
+
   it("moves waiting jobs to queued with builder_ready, then hands out the oldest build job with its lanes and limits", async () => {
     const w = world();
     await w.store.withPowerLock(() => Promise.resolve({ patch: { state: "starting", last_start_at: iso(5_000) }, log: [], result: null }));
@@ -430,6 +444,25 @@ describe("builder events", () => {
 });
 
 describe("builder result", () => {
+  it("delivers an open certificate only when its rule matches the stored job", async () => {
+    const w = world();
+    const job = uuid(1);
+    await w.store.createJob({ ...newJob(1), criterion_id: OTF_OPEN_CRITERION_ID, rule: OPEN_RULE });
+    expect((await claim(w)).status).toBe(200);
+    const certificate = { criterion: { criterion_id: OTF_OPEN_CRITERION_ID, version: "open-1", failure_code: OPEN_RULE.failure_code }, rule: OPEN_RULE } as const;
+    const wrongRule = { ...OPEN_RULE, observable_failure: "POST /api/tasks with a title containing a quote, then GET /api/tasks/{id}; the returned title loses the quote." };
+    const wrong = delivery(job, { certificate: { ...certificate, rule: wrongRule } });
+    expect(isOtf("ResultPost", wrong.post)).toBe(true);
+    const rejected = await result(w, job, wrong.post);
+    expect(rejected.status).toBe(400);
+    expect(await errorCode(rejected)).toBe("invalid_request");
+    expect(await w.store.listArtifacts(job)).toEqual([]);
+    expect(await w.store.getJob(job)).toMatchObject({ state: "building", rule: OPEN_RULE, certificate: null });
+    const matching = delivery(job, { certificate });
+    expect((await result(w, job, matching.post)).status).toBe(200);
+    expect(await w.store.getJob(job)).toMatchObject({ state: "finished", outcome: "delivered", certificate: { rule: OPEN_RULE, criterion: certificate.criterion } });
+  });
+
   it("stores a checked delivery with the certificate countersigned, finishes the job, and replays the same post", async () => {
     const w = world();
     const job = await claimedJob(w);
