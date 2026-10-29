@@ -1,0 +1,134 @@
+{
+  "format": "rbw-otf-build-time-evidence/0",
+  "measured_on": "2026-10-29",
+  "method": "Development measurement, not OTF job times: each live implementer attempt (Goose 1.57.0 with one Nebius Token Factory model, GOOSE_MAX_TOKENS=32768, one lane, one spec) on the experiment builder machine, timed by its attempt record from start to end, including any wait for a qualification slot; queue, cold start, confirmation and packaging of an OTF job are not included. Harness errors are counted apart from attempts. Median is the middle value (mean of the two middle values for an even count); p90 is the nearest-rank 90th percentile; minutes are rounded to 0.1.",
+  "hosts": {
+    "task-report": {
+      "spec_count": 13,
+      "attempts": 175,
+      "qualified": 89,
+      "harness_errors": 17,
+      "outcomes": {
+        "not_qualified": 65,
+        "provider_error": 2,
+        "qualified": 89,
+        "stopped_spend_cap": 19
+      },
+      "qualified_at_round": {
+        "1": 53,
+        "2": 25,
+        "3": 11
+      },
+      "qualified_wall_min": {
+        "median": 15.5,
+        "p90": 30.9,
+        "min": 4.3,
+        "max": 49.0
+      },
+      "per_model": {
+        "MiniMaxAI/MiniMax-M3": {
+          "attempts": 33,
+          "qualified": 10,
+          "harness_errors": 1
+        },
+        "deepseek-ai/DeepSeek-V4-Flash-0731": {
+          "attempts": 33,
+          "qualified": 28,
+          "harness_errors": 1
+        },
+        "deepseek-ai/DeepSeek-V4-Pro-0813": {
+          "attempts": 13,
+          "qualified": 2,
+          "harness_errors": 0
+        },
+        "deepseek-ai/DeepSeek-V4.1-Flash": {
+          "attempts": 39,
+          "qualified": 39,
+          "harness_errors": 9
+        },
+        "nvidia/Nemotron-3-Ultra-550b-a55b": {
+          "attempts": 8,
+          "qualified": 0,
+          "harness_errors": 0
+        },
+        "nvidia/Nemotron-3_5-Lightning": {
+          "attempts": 8,
+          "qualified": 0,
+          "harness_errors": 0
+        },
+        "nvidia/nemotron-3-super-120b-a12b": {
+          "attempts": 20,
+          "qualified": 0,
+          "harness_errors": 6
+        },
+        "zai-org/GLM-5.3": {
+          "attempts": 13,
+          "qualified": 7,
+          "harness_errors": 0
+        },
+        "zai-org/GLM-5.3-Flash": {
+          "attempts": 8,
+          "qualified": 3,
+          "harness_errors": 0
+        }
+      },
+      "max_rounds_per_attempt": 3,
+      "harness_limits": {
+        "copy_limits": "4 vCPU / 8 GB per copy",
+        "cpus_per_copy": 4,
+        "memory_mb_per_copy": 8192
+      },
+      "note": "Qualification is the tier-B round (1 clean, 3 buggy, 3 fixed copies), measured per round with 4 CPUs and 8192 MB per copy."
+    },
+    "umami": {
+      "spec_count": 8,
+      "attempts": 22,
+      "qualified": 17,
+      "harness_errors": 1,
+      "outcomes": {
+        "not_qualified": 3,
+        "qualified": 17,
+        "stopped_spend_cap": 2
+      },
+      "qualified_at_round": {
+        "1": 14,
+        "2": 3
+      },
+      "qualified_wall_min": {
+        "median": 21.0,
+        "p90": 34.2,
+        "min": 12.4,
+        "max": 35.7
+      },
+      "per_model": {
+        "MiniMaxAI/MiniMax-M3": {
+          "attempts": 5,
+          "qualified": 4,
+          "harness_errors": 0
+        },
+        "deepseek-ai/DeepSeek-V4-Flash-0731": {
+          "attempts": 4,
+          "qualified": 3,
+          "harness_errors": 1
+        },
+        "deepseek-ai/DeepSeek-V4.1-Flash": {
+          "attempts": 8,
+          "qualified": 7,
+          "harness_errors": 0
+        },
+        "zai-org/GLM-5.3": {
+          "attempts": 5,
+          "qualified": 3,
+          "harness_errors": 0
+        }
+      },
+      "max_rounds_per_attempt": 2,
+      "harness_limits": {
+        "copy_limits": "4 vCPU / 8 GB per copy",
+        "cpus_per_copy": 4,
+        "memory_mb_per_copy": 8192
+      },
+      "note": "Qualification is the local runner's 13-copy admission sequence with 4 CPUs and 8192 MB per copy, on 2 shared admission slots, so wall time includes the wait for a slot."
+    }
+  }
+}

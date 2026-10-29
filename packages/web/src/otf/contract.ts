@@ -4,8 +4,9 @@
 // stops the builder machine. It is separate from @rbw/factory-contract on purpose: that contract's
 // enums and event union are closed, and OTF does not revise them.
 //
-// This module holds types and constants only, plus one pure string helper, so the browser bundle
-// can import it. Runtime validators live in schemas.ts and canonical hashing in canonical.ts.
+// This module holds types and constants only, plus small pure helpers (the signing string, the
+// criterion-to-host lookup, the lane stage order and the host calendar), so the browser bundle can
+// import it. Runtime validators live in schemas.ts and canonical hashing in canonical.ts.
 // docs/otf/SPEC.md explains the behavior around these types.
 
 export const OTF_CONTRACT_VERSION = "otf/0";
@@ -18,13 +19,122 @@ export type OtfJobId = string;
 export const LANE_IDS = ["lane-1", "lane-2", "lane-3", "lane-4"] as const;
 export type LaneId = (typeof LANE_IDS)[number];
 
-/** Only task-report in v0; another host joins by one new value here. */
-export const OTF_HOST_IDS = ["task-report"] as const;
+/** The hosts OTF builds on. Each has a profile in OTF_HOST_DEFAULTS and its own criteria (CRITERION_HOST). */
+export const OTF_HOST_IDS = ["task-report", "umami"] as const;
 export type OtfHostId = (typeof OTF_HOST_IDS)[number];
 
+export const OTF_HOST_LABELS: Readonly<Record<OtfHostId, string>> = Object.freeze({
+  "task-report": "task-report service",
+  umami: "Umami",
+});
+
 /** The criteria the contract knows. Availability lists the ones offered right now. */
-export const OTF_CRITERION_IDS = ["concurrency.lost-acknowledged-change", "concurrency.stale-success-response"] as const;
+export const OTF_CRITERION_IDS = [
+  "concurrency.lost-acknowledged-change",
+  "concurrency.stale-success-response",
+  "date_time.time-zone-grouping",
+] as const;
 export type OtfCriterionId = (typeof OTF_CRITERION_IDS)[number];
+
+/** The one host each criterion is built on. A create names both; production refuses a mismatch. */
+export const CRITERION_HOST: Readonly<Record<OtfCriterionId, OtfHostId>> = Object.freeze({
+  "concurrency.lost-acknowledged-change": "task-report",
+  "concurrency.stale-success-response": "task-report",
+  "date_time.time-zone-grouping": "umami",
+});
+
+/** The criteria of one host, in OTF_CRITERION_IDS order. */
+export function criteriaOf(host: OtfHostId): OtfCriterionId[] {
+  return OTF_CRITERION_IDS.filter((id) => CRITERION_HOST[id] === host);
+}
+
+/**
+ * Topics a host's card may not touch, on top of the shared security checks. Umami OTF covers the
+ * time-zone grouping class only: its sign-in, identity, permission and race areas are out of scope.
+ * A card field that matches answers invalid_spec.
+ */
+export const HOST_SCOPE_EXCLUDED: Readonly<Partial<Record<OtfHostId, RegExp>>> = Object.freeze({
+  umami: /\b(auth\w*|log ?in|sign[- ]?in|password|permission|session token|identity|identify|credential|role|race|concurren\w*)\b/i,
+});
+
+// ---- host profiles, global caps and the host calendar (defaults; W1 reads overrides from config)
+
+export const QUALIFICATION_KINDS = ["tier_b", "admission"] as const;
+export type QualificationKind = (typeof QUALIFICATION_KINDS)[number];
+
+/** One host's build profile. W1 reads per-host overrides from config; these are the defaults. */
+export interface OtfHostProfile {
+  qualification: QualificationKind;
+  lanes_per_job: number;
+  max_rounds: 3;
+  /**
+   * 1: a lane whose qualification passes runs one confirmation round before it wins.
+   * 0: the qualifying round wins. Admission already runs 5 planted and 5 fixed copies, with 20
+   *    repetitions in the first of each (docs/admission-rules.md, ADM-02 and ADM-05).
+   */
+  confirm_rounds: 0 | 1;
+  max_usd_lane: string;
+  max_usd_job: string;
+  /** Build jobs of this host running at once. */
+  max_active: number;
+  /** From claim to the job deadline. */
+  deadline_ms: number;
+  /** The builder starts a qualification or confirmation only with at least this long left before the deadline. */
+  round_min_remaining_ms: number;
+}
+
+export const OTF_HOST_DEFAULTS: Readonly<Record<OtfHostId, Readonly<OtfHostProfile>>> = Object.freeze({
+  "task-report": Object.freeze({
+    qualification: "tier_b",
+    lanes_per_job: 3,
+    max_rounds: 3,
+    confirm_rounds: 1,
+    max_usd_lane: "3.00",
+    max_usd_job: "8.00",
+    max_active: 2,
+    deadline_ms: 45 * 60_000,
+    round_min_remaining_ms: 0,
+  }),
+  umami: Object.freeze({
+    qualification: "admission",
+    lanes_per_job: 2,
+    max_rounds: 3,
+    confirm_rounds: 0,
+    max_usd_lane: "3.00",
+    max_usd_job: "6.00",
+    max_active: 1,
+    deadline_ms: 60 * 60_000,
+    round_min_remaining_ms: 11 * 60_000,
+  }),
+});
+
+/** Caps shared by every host. */
+export const OTF_DEFAULTS = {
+  max_queued: 4,
+  max_per_day: 30,
+  vm_hours_per_day: 12,
+} as const;
+
+/** UTC days of the month on which a host's copies cannot qualify, inclusive. */
+export const HOST_CALENDAR_BLOCKS: Readonly<Partial<Record<OtfHostId, Readonly<{ first_utc_day: number; last_utc_day: number }>>>> = Object.freeze({
+  // On the 2nd to the 5th (UTC) two of Umami's own revenue tests fail on an unmodified copy
+  // (packages/host-umami/src/availability.ts, CALENDAR_REASON).
+  umami: Object.freeze({ first_utc_day: 2, last_utc_day: 5 }),
+});
+/** Slack added after the deadline when production checks a job's calendar window. */
+export const CALENDAR_MARGIN_MS = 15 * 60_000;
+
+/** True when no instant in [fromMs, untilMs] falls on a blocked UTC day of the host. */
+export function hostCalendarOpen(host: OtfHostId, fromMs: number, untilMs: number): boolean {
+  const block = HOST_CALENDAR_BLOCKS[host];
+  if (block === undefined) return true;
+  const DAY_MS = 86_400_000;
+  for (let day = Math.floor(fromMs / DAY_MS) * DAY_MS; day <= untilMs; day += DAY_MS) {
+    const date = new Date(day).getUTCDate();
+    if (date >= block.first_utc_day && date <= block.last_utc_day) return false;
+  }
+  return true;
+}
 
 // ---- builder state, as the customer sees it
 
@@ -40,6 +150,7 @@ export type BuilderState = (typeof BUILDER_STATES)[number];
 
 export interface OtfBehaviorOption {
   criterion_id: OtfCriterionId;
+  host_id: OtfHostId;
   /** The capabilities criteria label. */
   label: string;
   example_phrases: string[];
@@ -48,7 +159,7 @@ export interface OtfBehaviorOption {
 /**
  * The spec card: the bug designer's bug_spec answer without in_scope. The UI gets it from the
  * existing POST /api/factory/assist/bug-spec with
- * { shape: { title: <picker label>, summary: <sentence>, sources: [] }, host_id: "task-report" }.
+ * { shape: { title: <picker label>, summary: <sentence>, sources: [] }, host_id: <the behavior's host_id> }.
  */
 export interface OtfSpecCard {
   title: string;
@@ -64,6 +175,8 @@ export interface OtfSpecCard {
 export interface OtfCreateJob {
   /** A UUID chosen by the client. A repeat create with the same key and the same body replays. */
   client_key: string;
+  /** Must equal CRITERION_HOST[criterion_id]. */
+  host_id: OtfHostId;
   criterion_id: OtfCriterionId;
   /** The customer's own words, SENTENCE_MIN_CHARS..SENTENCE_MAX_CHARS. */
   sentence: string;
@@ -90,9 +203,10 @@ export const OTF_CREATE_REFUSALS = [
   "daily_cap", // jobs created this UTC day >= the daily cap
   "spend_cap", // reported model spend >= the OTF spend cap
   "refused_topic", // a security topic, or code, in the sentence or any spec field
-  "invalid_spec", // the body fails its schema, the spec hash does not match, or the card is out of scope
+  "invalid_spec", // the body fails its schema, the spec hash does not match, host and criterion do not pair, or the card is out of the host's scope
   "idempotency_conflict", // the client_key was used before with a different body
   "signed_out", // no judge session
+  "host_unavailable", // the criterion's host is disabled, left out of a running builder's ready_hosts, or its calendar window would be touched
   "unavailable", // OTF disabled or unconfigured, an operator hold, the VM-hours day cap, or a server fault
 ] as const;
 export type OtfCreateRefusal = (typeof OTF_CREATE_REFUSALS)[number];
@@ -117,6 +231,7 @@ export const OTF_ERROR_STATUS: Record<OtfErrorCode, number> = {
   invalid_spec: 422,
   idempotency_conflict: 409,
   signed_out: 401,
+  host_unavailable: 409,
   unavailable: 503,
   invalid_request: 400,
   not_found: 404,
@@ -148,11 +263,39 @@ export const LANE_STAGES = [
 ] as const;
 export type LaneStage = (typeof LANE_STAGES)[number];
 
-/** Which candidate files the lane has written so far: the change, check files, the fix. */
+/**
+ * Which candidate files the lane has written so far, per host:
+ * - change: the planted change is defined (task-report: planted.patch; Umami: the candidate's site record);
+ * - checks: added check files written (task-report: checks/*.check.mjs; Umami: changed files of the check package);
+ * - fix: a fix is defined (task-report: repair.patch; Umami: true together with change, because the harness derives the fix).
+ */
 export interface LaneFiles {
   change: boolean;
   checks: number;
   fix: boolean;
+}
+
+/**
+ * The lane stage moves the builder may report; a terminal stage has none. qualifying -> won is
+ * legal only on a job whose BuildJob.limits.confirm_rounds is 0.
+ */
+export const LANE_STAGE_NEXT: Readonly<Record<LaneStage, readonly LaneStage[]>> = Object.freeze({
+  queued: ["setting_up", "stopped", "error"],
+  setting_up: ["writing", "stopped", "error"],
+  writing: ["prechecking", "stopped", "error"],
+  prechecking: ["qualifying", "revising", "not_qualified", "stopped", "error"],
+  qualifying: ["confirming", "won", "revising", "not_qualified", "stopped", "error"],
+  revising: ["prechecking", "stopped", "error"],
+  confirming: ["won", "not_qualified", "stopped", "error"],
+  won: [],
+  stopped: [],
+  not_qualified: [],
+  error: [],
+});
+
+/** The iteration a lane_stage event must carry: 1 on writing, +1 on revising, else unchanged; never above max_rounds. */
+export function nextIteration(stage: LaneStage, current: number): number {
+  return stage === "writing" ? 1 : stage === "revising" ? current + 1 : current;
 }
 
 export const CELL_VALUES = ["pass", "fail", "invalid", "incomplete", "error", "not_run"] as const;
@@ -176,21 +319,40 @@ export interface LaneMeter {
   cost_microusd: number;
 }
 
+export const ADMISSION_RULES = ["adm_02", "adm_03", "adm_04", "adm_05", "adm_06"] as const;
+export type AdmissionRule = (typeof ADMISSION_RULES)[number];
+export const ADMISSION_DECISION_VALUES = ["pass", "reject", "invalid", "incomplete", "not_applicable", "not_run"] as const;
+export type AdmissionDecision = (typeof ADMISSION_DECISION_VALUES)[number];
+export const ADMISSION_COMPARISON_VALUES = ["blind_spot_demonstrated", "caught_by_original_suite", "not_demonstrated", "invalid", "incomplete", "not_run"] as const;
+export type AdmissionComparison = (typeof ADMISSION_COMPARISON_VALUES)[number];
+export const ALTERNATIVE_FIX_VALUES = ["pass", "fail", "not_run"] as const;
+export type AlternativeFixResult = (typeof ALTERNATIVE_FIX_VALUES)[number];
+
+/** What an admission round reports beside its six cells (docs/admission-rules.md). */
+export interface OtfAdmissionResult {
+  decisions: Record<AdmissionRule, AdmissionDecision>;
+  comparison: AdmissionComparison;
+  alternative_fix: AlternativeFixResult;
+}
+
 export const ROUND_KINDS = ["precheck_rejected", "qualification", "confirmation"] as const;
 export const ROUND_RESULTS = ["qualified", "not_qualified", "rejected", "error"] as const;
 export interface RoundResult {
   iteration: 1 | 2 | 3;
   kind: (typeof ROUND_KINDS)[number];
   result: (typeof ROUND_RESULTS)[number];
-  /** null for precheck_rejected. */
+  /** null for precheck_rejected, and on an admission round whose admission copies did not run. */
   cells: SixCells | null;
-  /** Whitelisted harness report lines, each at most FEEDBACK_LINE_MAX_CHARS. */
+  /** Admission hosts: set on every qualification and confirmation round. Tier-B hosts and precheck_rejected: null. */
+  admission: OtfAdmissionResult | null;
+  /** Whitelisted harness report lines, each at most FEEDBACK_LINE_MAX_CHARS. They never name files, functions or check ids. */
   feedback: string[];
   goose_ms: number | null;
   qualify_ms: number | null;
 }
 
-export const LANE_OUTCOMES = ["won", "lost_race", "not_qualified", "spend_cap", "error", "cancelled"] as const;
+/** time_limit: the job deadline, or too little time left to start a round; cancelled: a customer stop only. */
+export const LANE_OUTCOMES = ["won", "lost_race", "not_qualified", "spend_cap", "time_limit", "error", "cancelled"] as const;
 export type LaneOutcome = (typeof LANE_OUTCOMES)[number];
 
 export const OTF_OUTCOMES = [
@@ -200,7 +362,7 @@ export const OTF_OUTCOMES = [
   "spend_limit", // a lane or job spend cap was reached
   "cancelled", // the customer stopped it
   "builder_start_failed", // the machine did not start, or no claim came within START_TIMEOUT_MS
-  "builder_unavailable", // OTF was disabled or put on hold while the job waited
+  "builder_unavailable", // OTF was disabled or put on hold while the job waited, or the job's host became unavailable
   "builder_lost", // no builder post for BUILDER_LOST_MS on a claimed job
   "error", // an infrastructure failure, never worded as "the models could not build it"
 ] as const;
@@ -269,6 +431,7 @@ export interface OtfJobStatus {
   job_id: OtfJobId;
   created_at: string;
   state: OtfJobState;
+  host_id: OtfHostId;
   /** 1 = next to be claimed; null unless queued or starting_builder. */
   queue_position: number | null;
   builder: BuilderState;
@@ -314,31 +477,75 @@ export interface OtfArtifact {
   download_path: string;
 }
 
+/** The largest part (the agent bundle). */
+export const PART_MAX_BYTES = 2 * 1024 * 1024;
+/** Per-part caps. With base64 and the JSON envelope, a full result stays under RESULT_BODY_MAX_BYTES. */
+export const PART_MAX_BYTES_BY_PART: Readonly<Record<OtfPart, number>> = Object.freeze({
+  agent: PART_MAX_BYTES,
+  grader: 512 * 1024,
+  certificate: 64 * 1024,
+});
+/**
+ * The largest serialized ResultPost a builder may send: under the 4.5 MB function body limit of the
+ * hosting platform, which answers a larger body with its own 413 before the route runs. The builder
+ * measures the body before posting and finishes the job error ("result too large") instead.
+ */
+export const RESULT_BODY_MAX_BYTES = 4_400_000;
+
 export const CERTIFICATE_FORMAT = "rbw-otf-certificate/0";
 export const CERTIFICATE_RUNNER = "docker on the RBW builder (Nebius VM)";
 export const COPY_LIMITS = "4 vCPU / 8192 MB";
 export const TOKEN_FACTORY_PROVIDER = "nebius-token-factory";
+export const ADMISSION_EVIDENCE = "development evidence: the local runner's admission sequence, not an RBW release";
 
-/** Built by the builder; production hash-checks it on receipt and sets received. */
-export interface OtfCertificate {
+/** Task-report: one tier-B round (1 clean, 3 buggy, 3 fixed copies), then a confirmation round. */
+export interface OtfTierBHarness {
+  tier: "B";
+  kit_image_id: string;
+  copy_limits: typeof COPY_LIMITS;
+  instances: { clean: 1; buggy: 3; fixed: 3 };
+  runner: typeof CERTIFICATE_RUNNER;
+  harness_sha256: string;
+}
+
+/** Umami: the local runner's admission sequence (docs/admission-rules.md ADM-02 to ADM-06 and ADM-08). */
+export interface OtfAdmissionHarness {
+  tier: "admission";
+  /** The released kit's content hash; the round's kit image only replaces the check package. */
+  kit_sha256: string;
+  /** The round's kit image (built on the builder and never published). */
+  kit_image_id: string;
+  /** The hash of the check package the round ran. */
+  added_suite_sha256: string;
+  /** sha256:<64 hex>: the runtime image the agent bundle names. */
+  runtime_image_digest: string;
+  original_suite: { test_count: number; sha256: string };
+  copy_limits: typeof COPY_LIMITS;
+  copies: { kit_check_clean: 5; observe_planted: 1; clean: 1; planted: 5; fixed: 5; partial: 1; stub: 1 };
+  /** Repetitions of the added checks in the first fixed and the first planted copy (ADM-05). */
+  repetitions: 20;
+  evidence: typeof ADMISSION_EVIDENCE;
+  runner: typeof CERTIFICATE_RUNNER;
+  harness_sha256: string;
+}
+
+/** The only admission result a certificate can carry. */
+export interface QualifiedAdmission {
+  decisions: Record<AdmissionRule, "pass">;
+  comparison: "blind_spot_demonstrated";
+  alternative_fix: "pass";
+}
+
+interface OtfCertificateBase {
   format: typeof CERTIFICATE_FORMAT;
   job_id: OtfJobId;
-  host_id: OtfHostId;
-  /** The clean task-report app source commit (40 hex). */
+  /** The clean host app's source commit (40 hex): the task-report app, or upstream Umami. */
   app_base_commit: string;
   criterion: { criterion_id: OtfCriterionId; version: "1"; failure_code: string };
+  /** The customer's accepted card. The certificate never names the planted file, line or check ids. */
   spec_sha256: string;
   designer: { model: string; route: "bug-spec" };
   implementer: { lane_id: LaneId; agent: typeof AGENT_LABEL; provider: typeof TOKEN_FACTORY_PROVIDER; model: string; rounds_used: number };
-  qualification: { cells: SixCells; confirmation_cells: SixCells; result: "qualified" };
-  harness: {
-    tier: "B";
-    kit_image_id: string;
-    copy_limits: typeof COPY_LIMITS;
-    instances: { clean: 1; buggy: 3; fixed: 3 };
-    runner: typeof CERTIFICATE_RUNNER;
-    harness_sha256: string;
-  };
   bundles: { agent_sha256: string; grader_sha256: string };
   spend: { model_microusd: number; tokens_in: number; tokens_out: number; lanes: number };
   timings: { started_at: string; qualified_at: string; wall_ms: number };
@@ -347,6 +554,20 @@ export interface OtfCertificate {
   /** null as the builder sends it; set by production once the hashes check. */
   received: { at: string; sha256_verified: true } | null;
 }
+
+/** Built by the builder; production hash-checks it on receipt and sets received. One variant per host. */
+export type OtfCertificate =
+  | (OtfCertificateBase & {
+      host_id: "task-report";
+      qualification: { cells: SixCells; confirmation_cells: SixCells; admission: null; result: "qualified" };
+      harness: OtfTierBHarness;
+    })
+  | (OtfCertificateBase & {
+      host_id: "umami";
+      /** confirmation_cells is null when the job ran with confirm_rounds 0. */
+      qualification: { cells: SixCells; confirmation_cells: SixCells | null; admission: QualifiedAdmission; result: "qualified" };
+      harness: OtfAdmissionHarness;
+    });
 
 export const VALIDATION_STATES = ["queued", "running", "passed", "failed", "error"] as const;
 export type OtfValidationState = (typeof VALIDATION_STATES)[number];
@@ -357,12 +578,55 @@ export interface OtfValidation {
   validation_id: string;
   state: OtfValidationState;
   cells: SixCells | null;
+  /** Admission hosts: the validation's admission result; null on tier-B hosts and while not finished. */
+  admission: OtfAdmissionResult | null;
   started_at: string;
   finished_at: string | null;
   where: typeof VALIDATION_WHERE;
 }
 
-export const TYPICAL_BASIS = "measured on 13 sample specs, Oct 29";
+/** Fewer finished jobs than this give no typical time. */
+export const TYPICAL_MIN_SAMPLES = 5;
+
+/**
+ * What a typical time measured. otf_jobs: claim to finish of finished OTF jobs. development_attempts:
+ * qualified single-lane experiment attempts (docs/otf/evidence), which leave out the queue, the cold
+ * start, the confirmation round and packaging. Each source has its own copy (SPEC section 6).
+ */
+export const TYPICAL_SOURCES = ["otf_jobs", "development_attempts"] as const;
+export type TypicalSource = (typeof TYPICAL_SOURCES)[number];
+
+/**
+ * A host's typical build time, set by the operator from a committed results file, or null when not
+ * measured. Copy renders it only when present, always with its source, samples and measured_on.
+ */
+export interface OtfTypical {
+  source: TypicalSource;
+  median_min: number;
+  p90_min: number;
+  /** Finished jobs or qualified attempts measured, at least TYPICAL_MIN_SAMPLES. */
+  samples: number;
+  /** YYYY-MM-DD (UTC) of the last measurement. */
+  measured_on: string;
+}
+
+/** builder_not_ready: the builder is running and its fresh heartbeat leaves the host out of ready_hosts. */
+export const HOST_UNAVAILABLE_REASONS = ["disabled", "calendar", "builder_not_ready"] as const;
+export type HostUnavailableReason = (typeof HOST_UNAVAILABLE_REASONS)[number];
+
+export interface OtfHostAvailability {
+  host_id: OtfHostId;
+  label: string;
+  offered: boolean;
+  /** null exactly when offered. */
+  unavailable_reason: HostUnavailableReason | null;
+  active_jobs: number;
+  queued_jobs: number;
+  max_active: number;
+  lanes: { lane_id: LaneId; model_label: string }[];
+  deadline_min: number;
+  typical: OtfTypical | null;
+}
 
 /** GET /api/factory/otf/availability: no session needed, and it never starts the machine. */
 export interface OtfAvailability {
@@ -370,12 +634,13 @@ export interface OtfAvailability {
   builder: BuilderState;
   active_jobs: number;
   queued_jobs: number;
-  max_active: number;
   max_queued: number;
+  /** The behaviors of offered hosts only. */
   behaviors: OtfBehaviorOption[];
-  lanes: { lane_id: LaneId; model_label: string }[];
-  /** cold_start_min is null until the cold start is measured; the UI then omits that sentence. */
-  typical: { median_min: number; p90_min: number; cold_start_min: number | null; basis: typeof TYPICAL_BASIS };
+  /** Every host once, in any order. */
+  hosts: OtfHostAvailability[];
+  /** null until the cold start is measured; the UI then omits that sentence. */
+  cold_start_min: number | null;
   spend_left_microusd: number;
 }
 
@@ -413,7 +678,16 @@ export interface ClaimRequest {
    * up jobs created while its heartbeat was stale.
    */
   images_ok: boolean;
-  free: { build: number; validate: number };
+  /** Free capacity per host. 0 for a host the builder cannot take now. */
+  free: { build: Record<OtfHostId, number>; validate: Record<OtfHostId, number> };
+  /**
+   * Hosts whose lane profile is installed and checked on this boot and that can take a new build
+   * (Umami: its pinned harness files match and an eligible target remains). While the builder is
+   * running, production offers a host only when the last fresh heartbeat lists it. A stopped or
+   * starting builder has no fresh heartbeat; then readiness is not checked at create, and a job
+   * whose host the next fresh heartbeat leaves out finishes builder_unavailable on read.
+   */
+  ready_hosts: OtfHostId[];
 }
 
 export interface BuildJobLane {
@@ -439,13 +713,17 @@ export interface BuildJob {
     max_usd_job: string;
     goose_max_tokens: 32768;
     deadline_at: string;
-    confirm_rounds: 1;
+    /** The host profile's confirm_rounds. */
+    confirm_rounds: 0 | 1;
+    /** The host profile's round_min_remaining_ms. */
+    round_min_remaining_ms: number;
   };
 }
 
 export interface ValidateJob {
   kind: "validate";
   job_id: OtfJobId;
+  host_id: OtfHostId;
   validation_id: string;
   artifacts: { part: "agent" | "grader"; sha256: string; size: number }[];
 }
@@ -484,10 +762,11 @@ export interface ResultPart {
 }
 
 /**
- * POST /api/factory/otf/builder/jobs/{id}/result. Production checks: gzip magic for the tarballs,
- * size <= PART_MAX_BYTES each, sha256 of the decoded bytes, SAFE_FILENAME, one of each part, that
- * certificate.bundles equal the part hashes, and that the job's spec_sha256 equals the
- * certificate's. Idempotent on (job_id, part sha256s). The answer is 200 with the job's status.
+ * POST /api/factory/otf/builder/jobs/{id}/result. Production reads at most RESULT_BODY_MAX_BYTES and
+ * checks: gzip magic for the tarballs, size <= PART_MAX_BYTES_BY_PART[part] each, sha256 of the
+ * decoded bytes, SAFE_FILENAME, one of each part, that certificate.bundles equal the part hashes,
+ * that the certificate's host_id equals the job's, and that the job's spec_sha256 equals the
+ * certificate's. Idempotent on (job_id, part sha256s). The answer is 200 ResultReply.
  */
 export interface ResultPost {
   builder_id: string;
@@ -499,6 +778,13 @@ export interface ResultPost {
   parts?: ResultPart[];
 }
 
+/** POST /api/factory/otf/builder/jobs/{id}/result answers 200 with this. */
+export interface ResultReply {
+  job_id: OtfJobId;
+  state: "finished";
+  outcome: OtfOutcome;
+}
+
 /** GET /api/factory/otf/builder/jobs/{id}/artifacts/{part}: the stored bytes, for validate jobs. */
 
 /** POST /api/factory/otf/builder/validations/{vid}/result */
@@ -506,6 +792,8 @@ export interface ValidationResultPost {
   builder_id: string;
   state: "passed" | "failed" | "error";
   cells: SixCells | null;
+  /** Admission hosts: the admission result; null on tier-B hosts. */
+  admission: OtfAdmissionResult | null;
   finished_at: string;
 }
 
@@ -526,27 +814,14 @@ export interface StopIntentReply {
   reason: "ok" | "jobs_waiting" | "operator_hold";
 }
 
-// ---- caps, timings and limits (defaults; W1 reads overrides from config)
+// ---- timings and limits (host profiles and global caps are above, after the hosts)
 
 export const SENTENCE_MIN_CHARS = 3;
 export const SENTENCE_MAX_CHARS = 300;
 export const FEEDBACK_LINE_MAX_CHARS = 400;
 export const REASON_MAX_CHARS = 400;
-export const PART_MAX_BYTES = 2 * 1024 * 1024;
 /** SAFE_FILENAME, as the factory's download handler uses. */
 export const SAFE_FILENAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/;
-
-export const OTF_DEFAULTS = {
-  lanes_per_job: 3,
-  max_rounds: 3,
-  max_usd_lane: "3.00",
-  max_usd_job: "8.00",
-  max_active: 2,
-  max_queued: 4,
-  max_per_day: 30,
-  deadline_ms: 45 * 60_000,
-  vm_hours_per_day: 12,
-} as const;
 
 export const POLL_RUNNING_MS = 2_000;
 export const POLL_FINISHED_MS = 30_000;
@@ -601,6 +876,7 @@ export interface OtfJobRecord {
   /** sha256 of the canonical create body (createSha256), for the idempotency check. */
   create_sha256: string;
   created_at: string;
+  host_id: OtfHostId;
   criterion_id: OtfCriterionId;
   sentence: string;
   spec: OtfSpecCard;
@@ -630,6 +906,7 @@ export interface OtfNewJob {
   client_key: string;
   create_sha256: string;
   created_at: string;
+  host_id: OtfHostId;
   criterion_id: OtfCriterionId;
   sentence: string;
   spec: OtfSpecCard;
@@ -659,6 +936,8 @@ export interface OtfBuilderInfo {
   builder_revision: string;
   boot_id: string;
   booted_at: string;
+  /** ClaimRequest.ready_hosts of this heartbeat. */
+  ready_hosts: OtfHostId[];
 }
 
 export interface OtfArtifactRecord {
@@ -675,6 +954,7 @@ export interface OtfValidationRecord {
   job_id: OtfJobId;
   state: OtfValidationState;
   cells: SixCells | null;
+  admission: OtfAdmissionResult | null;
   started_at: string;
   finished_at: string | null;
   claimed_by: string | null;
@@ -751,26 +1031,34 @@ export interface OtfStore {
   /** The most recent heartbeat of any builder, or null. */
   lastBuilderSeen(): Promise<(OtfBuilderInfo & { last_seen_at: string }) | null>;
   /**
-   * Atomically claims the oldest validation queued, else the oldest queued build job while fewer
-   * than maxActiveBuilds are building. A build claim sets state building, claimed_by, claimed_at,
-   * deadline_at = at + deadlineMs and lease_until = at + LEASE_MS. A validation claim sets running.
+   * Atomically claims, in this order:
+   * 1. the oldest queued validation whose host has validate true;
+   * 2. else the oldest queued build whose host has build true and fewer than that host's
+   *    maxActiveBuilds building.
+   * A saturated host never blocks another host's jobs. A build claim sets building, claimed_by,
+   * claimed_at, deadline_at = at + that host's deadlineMs and lease_until = at + LEASE_MS.
+   * A validation claim sets running.
    */
-  claimNext(builder_id: string, at: string, opts: { maxActiveBuilds: number; deadlineMs: number; build: boolean; validate: boolean }): Promise<
-    { kind: "build"; job: OtfJobRecord } | { kind: "validate"; validation: OtfValidationRecord } | null
-  >;
+  claimNext(
+    builder_id: string,
+    at: string,
+    opts: { hosts: Readonly<Record<OtfHostId, { build: boolean; validate: boolean; maxActiveBuilds: number; deadlineMs: number }>> },
+  ): Promise<{ kind: "build"; job: OtfJobRecord } | { kind: "validate"; validation: OtfValidationRecord } | null>;
 
   /**
-   * Stores all parts and finishes the job in one transaction, only while the job is building and
-   * claimed by builder_id (checked under the same row lock, so a concurrent finish on read cannot be
-   * overwritten). "replayed" when the job already delivered with the same sha256s; "conflict" when
-   * it delivered with different ones; "finished" when it finished with another outcome (nothing is
-   * changed); "wrong_builder" when another builder holds the claim.
+   * Stores all parts, finishes the job and appends job_finished { outcome: "delivered" } at `at`, in
+   * one transaction, only while the job is building and claimed by builder_id (checked under the same
+   * row lock, so a concurrent finish on read cannot be overwritten). "replayed" when the job already
+   * delivered with the same sha256s; "conflict" when it delivered with different ones; "finished"
+   * when it finished with another outcome (nothing is changed); "wrong_builder" when another builder
+   * holds the claim.
    */
   storeDelivery(
     job_id: OtfJobId,
     builder_id: string,
     parts: readonly (OtfArtifactRecord & { bytes: Uint8Array })[],
     patch: JobPatch,
+    at: string,
   ): Promise<"stored" | "replayed" | "conflict" | "finished" | "wrong_builder" | "not_found">;
   listArtifacts(job_id: OtfJobId): Promise<OtfArtifactRecord[]>;
   getArtifact(job_id: OtfJobId, part: OtfPart): Promise<(OtfArtifactRecord & { bytes: Uint8Array }) | null>;
@@ -782,7 +1070,7 @@ export interface OtfStore {
   updateValidation(
     validation_id: string,
     whenStates: readonly OtfValidationState[],
-    patch: Partial<Pick<OtfValidationRecord, "state" | "cells" | "finished_at">>,
+    patch: Partial<Pick<OtfValidationRecord, "state" | "cells" | "admission" | "finished_at">>,
   ): Promise<OtfValidationRecord | null>;
 
   /** The power row as it is now (without a lock). */
