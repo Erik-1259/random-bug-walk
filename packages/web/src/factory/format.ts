@@ -154,7 +154,85 @@ export function closedByCalendar(capabilities: Capabilities, hostId: string): bo
   return capabilities.combinations.some((combination) => combination.host_id === hostId && isCalendarReason(combination.reason));
 }
 
-export const CALENDAR_HINT = "Not available today: Umami cases cannot run on the 2nd to the 5th of each month (UTC), because two of Umami's own tests fail on those days. They can run again from the 6th.";
+export const CALENDAR_HINT = "Umami is unavailable on UTC days 2–5.";
+
+const DAY_MS = 86_400_000;
+
+/**
+ * A copy of the rule in packages/host-umami/src/availability.ts: true when any instant from `fromMs`
+ * to `untilMs` (inclusive) falls on UTC day 2 to 5 of a month. A UI hint only: the service decides.
+ */
+export function calendarBlocks(fromMs: number, untilMs: number): boolean {
+  for (let day = Math.floor(fromMs / DAY_MS) * DAY_MS; day <= untilMs; day += DAY_MS) {
+    const date = new Date(Math.max(day, fromMs)).getUTCDate();
+    if (date >= 2 && date <= 5) return true;
+  }
+  return false;
+}
+
+/**
+ * True when the calendar closes a host now: the capabilities say so, or (with a clock, for a page
+ * whose capabilities were read earlier) a request started at `nowMs` would touch a blocked day.
+ */
+export function hostClosedByCalendar(capabilities: Capabilities, hostId: string, nowMs: number | null = null): boolean {
+  if (closedByCalendar(capabilities, hostId)) return true;
+  return hostId === "umami" && nowMs !== null && calendarBlocks(nowMs, nowMs + capabilities.limits.max_wall_clock_s * 1000);
+}
+
+/** The hosts the calendar closes now, in capabilities order. */
+export function calendarClosedHosts(capabilities: Capabilities | null, nowMs: number | null = null): string[] {
+  return capabilities === null ? [] : capabilities.hosts.map((host) => host.host_id).filter((hostId) => hostClosedByCalendar(capabilities, hostId, nowMs));
+}
+
+/** True when the host would offer this bug type but the calendar closes it now. */
+export function calendarClosesPair(capabilities: Capabilities, hostId: string, bugTypeId: string, nowMs: number | null = null): boolean {
+  const combination = capabilities.combinations.find((item) => item.host_id === hostId && item.bug_type_id === bugTypeId);
+  if (combination === undefined) return false;
+  return isCalendarReason(combination.reason) || (combination.status === "supported" && hostClosedByCalendar(capabilities, hostId, nowMs));
+}
+
+/**
+ * The next instant after `nowMs` when the clock rule opens or closes Umami for a request window of
+ * `windowMs`, or null. The rule changes only at a UTC midnight or one window before one.
+ */
+export function nextCalendarChange(nowMs: number, windowMs: number): number | null {
+  const blocked = calendarBlocks(nowMs, nowMs + windowMs);
+  const firstDay = Math.floor(nowMs / DAY_MS) * DAY_MS;
+  const candidates: number[] = [];
+  for (let day = firstDay; day <= firstDay + 40 * DAY_MS; day += DAY_MS) candidates.push(day - windowMs, day);
+  candidates.sort((a, b) => a - b);
+  return candidates.find((instant) => instant > nowMs && calendarBlocks(instant, instant + windowMs) !== blocked) ?? null;
+}
+
+/** The longest delay setTimeout accepts. */
+const MAX_TIMEOUT_MS = 2_147_483_647;
+
+/** How long a page waits before a service still closed by the calendar is read again, past the window by this clock. */
+const REOPEN_RETRY_MS = 60_000;
+
+/** How long a page waits before it rereads its clock for the calendar, or null when it need not. */
+export function calendarClockDelay(capabilities: Capabilities | null, nowMs: number): number | null {
+  if (capabilities === null) return null;
+  if (calendarReopened(capabilities, nowMs)) return REOPEN_RETRY_MS;
+  const next = nextCalendarChange(nowMs, capabilities.limits.max_wall_clock_s * 1000);
+  return next === null ? null : Math.min(next - nowMs, MAX_TIMEOUT_MS);
+}
+
+/**
+ * True when the capabilities say the calendar closes Umami but this browser's clock says it is open
+ * again: capabilities read during the window, on a page left open past it. They need a fresh read.
+ */
+export function calendarReopened(capabilities: Capabilities | null, nowMs: number): boolean {
+  return capabilities !== null && closedByCalendar(capabilities, "umami") && !calendarBlocks(nowMs, nowMs + capabilities.limits.max_wall_clock_s * 1000);
+}
+
+/** The line that offers the task-and-report service while Umami is closed, or null when it offers nothing either. */
+export function calendarFallback(capabilities: Capabilities | null): string | null {
+  if (capabilities === null) return null;
+  const host = capabilities.hosts.find((item) => item.host_id === "task-report");
+  const offered = capabilities.combinations.some((item) => item.host_id === "task-report" && item.status === "supported");
+  return host === undefined || !offered ? null : `The ${host.label} is still available.`;
+}
 
 /**
  * A plain line for an event, for the latest-update line; the activity log keeps the service's own

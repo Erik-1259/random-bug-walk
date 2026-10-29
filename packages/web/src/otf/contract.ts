@@ -1038,6 +1038,9 @@ export interface OtfStore {
    * A saturated host never blocks another host's jobs. A build claim sets building, claimed_by,
    * claimed_at, deadline_at = at + that host's deadlineMs and lease_until = at + LEASE_MS.
    * A validation claim sets running.
+   * The claim waits for the power row lock (it takes the row FOR SHARE) and claims nothing while the
+   * power row reads stopping, so a stop decided under that lock and a claim never overlap. Never call
+   * it inside withPowerLock.
    */
   claimNext(
     builder_id: string,
@@ -1051,7 +1054,8 @@ export interface OtfStore {
    * row lock, so a concurrent finish on read cannot be overwritten). "replayed" when the job already
    * delivered with the same sha256s; "conflict" when it delivered with different ones; "finished"
    * when it finished with another outcome (nothing is changed); "wrong_builder" when another builder
-   * holds the claim.
+   * holds the claim. With no parts, the same call finishes a claimed job with another outcome
+   * (patch.outcome and patch.reason), appending that job_finished at `at` the same way.
    */
   storeDelivery(
     job_id: OtfJobId,

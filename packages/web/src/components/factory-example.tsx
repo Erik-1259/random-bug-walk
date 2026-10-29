@@ -13,7 +13,7 @@ export function FactoryExample({ availableLocally }: { availableLocally: boolean
         All four separate checks pass on clean and reference-fixed copies; on the buggy copy, three non-UTC checks fail as expected while the UTC control passes.</p>
       <p>In Los Angeles, the expected counts are 3, 8, 1; the recorded API counts are 2, 8, 2.
         This demonstrates a test-suite blind spot, not debugging-agent performance.</p>
-      <p className="factory-model-credit">Its bug report was written by NVIDIA Nemotron 3.5 Lightning on Nebius Token Factory, in 2 live calls (one for the bug card, one for the report).
+      <p className="factory-model-credit">For catalog requests: Its bug report was written by NVIDIA Nemotron 3.5 Lightning on Nebius Token Factory, in 2 live calls (one for the bug card, one for the report).
         Every Umami case this service delivers includes that report. A request itself makes no model call.</p>
       <div className="factory-links">
         <a className="factory-link-primary" href={`${caseHref}#cell-2`}>Explore the completed example</a>

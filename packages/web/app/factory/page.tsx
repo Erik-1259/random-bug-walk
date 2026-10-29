@@ -23,7 +23,7 @@ export default async function FactoryPage() {
         <ol className="factory-steps-intro">
           <li><strong>Describe</strong> the kind of bug you want, on one or both applications.</li>
           <li><strong>Review</strong> how the service reads your request. Reviewing is free.</li>
-          <li><strong>Start</strong> the request. One runs at a time, paid from the shared judging budget, and the cases appear on this page as they are delivered.</li>
+          <li><strong>Start</strong> the catalog request. One runs at a time, paid from the shared judging budget, and the cases appear on this page as they are delivered.</li>
         </ol>
       </div>
       <FactoryExample availableLocally={results.releases.some(({ release }) => release.record.release_id === RELEASED_TIME_ZONE_CASE)} />

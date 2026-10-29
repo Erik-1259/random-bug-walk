@@ -3,7 +3,7 @@
 import { useState } from "react";
 import type { FactoryPlan } from "../assist/plan.ts";
 import type { Capabilities, RequestInput } from "../factory/client.ts";
-import { CALENDAR_HINT, closedByCalendar, describeSupport, formatBudgetInput, formatUsd } from "../factory/format.ts";
+import { CALENDAR_HINT, calendarClosedHosts, describeSupport, formatBudgetInput, formatUsd } from "../factory/format.ts";
 
 type Item = RequestInput["items"][number];
 export interface FactoryDraftRow {
@@ -83,6 +83,8 @@ interface Props {
   onChange: () => void;
   /** A plan from the bug designer: the form starts from it. Pass a new `key` to the form with each plan. */
   plan?: FactoryPlan | null;
+  /** Hosts the calendar closes now (a UI hint); without it, the ones the capabilities report closed. */
+  closedHosts?: readonly string[];
 }
 
 export function FactoryRequestForm(props: Props) {
@@ -102,7 +104,7 @@ export function startingSelection(capabilities: Capabilities, plan: FactoryPlan 
   return { ...defaultSelection(capabilities), description: "", fromPlan: false };
 }
 
-function RequestFields({ capabilities, disabled, onInterpret, onChange, plan }: Props & { capabilities: Capabilities }) {
+function RequestFields({ capabilities, disabled, onInterpret, onChange, plan, closedHosts = calendarClosedHosts(capabilities) }: Props & { capabilities: Capabilities }) {
   const [initial] = useState(() => startingSelection(capabilities, plan));
   const newRow = (key: number): FactoryDraftRow => ({ item_key: `item-${String(key)}`, bug_type_id: initial.bugTypeId, quantity: "1", description: "", difficulty: capabilities.difficulty_options.find((option) => option.default && option.available)?.option_id ?? "" });
   const [hosts, setHosts] = useState<RequestInput["hosts"]>(initial.hosts);
@@ -121,12 +123,14 @@ function RequestFields({ capabilities, disabled, onInterpret, onChange, plan }: 
       <legend>Applications and request items</legend>
       <fieldset><legend>Choose one or both applications</legend>
         {capabilities.hosts.map((host) => <label key={host.host_id}>
-          <input type="checkbox" checked={hosts.includes(host.host_id)} onChange={(event) => {
+          {/* A closed host cannot be added, but one already selected (from a plan or before a refresh) can be removed. */}
+          <input type="checkbox" checked={hosts.includes(host.host_id)} disabled={closedHosts.includes(host.host_id) && !hosts.includes(host.host_id)}
+            aria-describedby={closedHosts.includes(host.host_id) ? `factory-calendar-${host.host_id}` : undefined} onChange={(event) => {
             onChange(); setHosts((current) => event.target.checked ? [...current, host.host_id] : current.filter((id) => id !== host.host_id));
           }} /> {host.label} — {host.description}
         </label>)}
-        {capabilities.hosts.some((host) => host.host_id === "umami") && <p className="factory-note">Umami cases include the bug report that NVIDIA Nemotron 3.5 Lightning wrote on Nebius Token Factory for the completed example. A request itself makes no model call.</p>}
-        {capabilities.hosts.filter((host) => closedByCalendar(capabilities, host.host_id)).map((host) => <p key={host.host_id} className="factory-badge">{CALENDAR_HINT}</p>)}
+        {capabilities.hosts.some((host) => host.host_id === "umami") && <p className="factory-note">For catalog requests: Umami cases include the bug report that NVIDIA Nemotron 3.5 Lightning wrote on Nebius Token Factory for the completed example. A request itself makes no model call.</p>}
+        {capabilities.hosts.filter((host) => closedHosts.includes(host.host_id)).map((host) => <p key={host.host_id} id={`factory-calendar-${host.host_id}`} className="factory-badge">{CALENDAR_HINT}</p>)}
       </fieldset>
       {rows.map((row, index) => <fieldset className="factory-request-row" key={row.item_key}>
         <legend>Request item {index + 1}</legend>
