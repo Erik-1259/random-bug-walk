@@ -1,9 +1,10 @@
 // The OtfStore port (contract.ts) on Postgres, over the `otf` schema of otf-migrations/0001_otf.sql,
 // plus an in-memory implementation with the same behavior for tests and local runs. Nothing here
 // reads or writes the spend ledger. Every multi-step change runs in one transaction under a row
-// lock (the job row, the power row) or, for the claim, a transaction-scoped advisory lock, so
-// concurrent function instances cannot hand one job out twice, skip an event seq or let a late
-// delivery overwrite a job that already finished.
+// lock (the job row, the power row) or, for the claim, a transaction-scoped advisory lock (plus a
+// share of the power row lock), so concurrent function instances cannot hand one job out twice, skip
+// an event seq, let a late delivery overwrite a job that already finished or claim work while a stop
+// is being decided.
 //
 // The Postgres implementation takes a connection pool through OtfSqlPool, so this module imports no
 // driver: otfPoolFromPg adapts a node-postgres Pool, and the tests adapt PGlite.
@@ -507,6 +508,10 @@ export function createPgOtfStore(pool: OtfSqlPool): OtfStore {
       return pool.transaction(async (tx) => {
         // One claim at a time, so the active-build count cannot be read twice before either claim lands.
         await tx.query("SELECT pg_advisory_xact_lock(hashtext('otf'), hashtext('claim'))");
+        // Claim admission shares the power row lock, so a stop decided under it (the watchdog holds it
+        // through its Stop call) and a claim never overlap: once the row reads stopping, no work goes out.
+        const power = await tx.query("SELECT state FROM otf.power WHERE id = 1 FOR SHARE");
+        if (power.rows[0]?.state === "stopping") return null;
         const validating = hostsWhere(opts.hosts, (entry) => entry.validate);
         if (validating.length > 0) {
           const { rows } = await tx.query(
@@ -672,6 +677,11 @@ export interface MemoryOtfStore extends OtfStore {
   powerLog(): OtfPowerLogEntry[];
   /** Sets the operator hold, as the operator script does in Postgres (tests). */
   setHold(hold_until: string | null): void;
+  /**
+   * claimNext without waiting for the power lock (it still claims nothing while the power row reads
+   * stopping): the test-mode fake builder, which plays before every store call, also inside a lock.
+   */
+  claimNextUnlocked: OtfStore["claimNext"];
 }
 
 /** The power row a fresh store starts with, as the migration inserts it. */
@@ -721,6 +731,41 @@ export function createMemoryOtfStore(options: { now?: () => Date } = {}): Memory
     delete copy.builder_seq;
     delete copy.builder_bytes;
     return copy as unknown as OtfEvent;
+  }
+
+  /** One claim, atomic (no await inside), refused while the power row reads stopping. */
+  function claimNow(builder_id: string, at: string, opts: Parameters<OtfStore["claimNext"]>[2]): Awaited<ReturnType<OtfStore["claimNext"]>> {
+    if (power.state === "stopping") return null;
+    const validating = hostsWhere(opts.hosts, (entry) => entry.validate);
+    if (validating.length > 0) {
+      const claimable = (item: OtfValidationRecord): boolean => {
+        const host = jobs.get(item.job_id)?.record.host_id;
+        return item.state === "queued" && host !== undefined && validating.includes(host);
+      };
+      const queued = [...validations.values()].filter(claimable).sort((a, b) => (a.started_at < b.started_at ? -1 : a.started_at > b.started_at ? 1 : a.validation_id < b.validation_id ? -1 : 1))[0];
+      if (queued !== undefined) {
+        const next: OtfValidationRecord = { ...queued, state: "running", claimed_by: builder_id };
+        validations.set(next.validation_id, next);
+        return { kind: "validate", validation: clone(next) };
+      }
+    }
+    const all = [...jobs.values()];
+    const building = (host: OtfHostId): number => all.filter((job) => job.record.state === "building" && job.record.host_id === host).length;
+    const open = hostsWhere(opts.hosts, (entry) => entry.build).filter((host) => building(host) < opts.hosts[host].maxActiveBuilds);
+    const next = ordered(all.filter((job) => job.record.state === "queued" && open.includes(job.record.host_id)).map((job) => job.record))[0];
+    if (next === undefined) return null;
+    const job = jobs.get(next.job_id);
+    if (job === undefined) return null;
+    job.record = {
+      ...job.record,
+      state: "building",
+      claimed_by: builder_id,
+      claimed_at: at,
+      deadline_at: addMs(at, opts.hosts[next.host_id].deadlineMs),
+      lease_until: addMs(at, LEASE_MS),
+      last_builder_post_at: at,
+    };
+    return { kind: "build", job: clone(job.record) };
   }
 
   return {
@@ -825,36 +870,8 @@ export function createMemoryOtfStore(options: { now?: () => Date } = {}): Memory
     },
 
     claimNext(builder_id, at, opts) {
-      const validating = hostsWhere(opts.hosts, (entry) => entry.validate);
-      if (validating.length > 0) {
-        const claimable = (item: OtfValidationRecord): boolean => {
-          const host = jobs.get(item.job_id)?.record.host_id;
-          return item.state === "queued" && host !== undefined && validating.includes(host);
-        };
-        const queued = [...validations.values()].filter(claimable).sort((a, b) => (a.started_at < b.started_at ? -1 : a.started_at > b.started_at ? 1 : a.validation_id < b.validation_id ? -1 : 1))[0];
-        if (queued !== undefined) {
-          const next: OtfValidationRecord = { ...queued, state: "running", claimed_by: builder_id };
-          validations.set(next.validation_id, next);
-          return Promise.resolve({ kind: "validate", validation: clone(next) });
-        }
-      }
-      const all = [...jobs.values()];
-      const building = (host: OtfHostId): number => all.filter((job) => job.record.state === "building" && job.record.host_id === host).length;
-      const open = hostsWhere(opts.hosts, (entry) => entry.build).filter((host) => building(host) < opts.hosts[host].maxActiveBuilds);
-      const next = ordered(all.filter((job) => job.record.state === "queued" && open.includes(job.record.host_id)).map((job) => job.record))[0];
-      if (next === undefined) return Promise.resolve(null);
-      const job = jobs.get(next.job_id);
-      if (job === undefined) return Promise.resolve(null);
-      job.record = {
-        ...job.record,
-        state: "building",
-        claimed_by: builder_id,
-        claimed_at: at,
-        deadline_at: addMs(at, opts.hosts[next.host_id].deadlineMs),
-        lease_until: addMs(at, LEASE_MS),
-        last_builder_post_at: at,
-      };
-      return Promise.resolve({ kind: "build", job: clone(job.record) });
+      // The claim waits for the power lock, as the Postgres claim takes the power row FOR SHARE.
+      return powerTail.then(() => claimNow(builder_id, at, opts));
     },
 
     storeDelivery(job_id, builder_id, parts, patch, at) {
@@ -942,6 +959,10 @@ export function createMemoryOtfStore(options: { now?: () => Date } = {}): Memory
 
     setHold(hold_until) {
       power = { ...power, hold_until };
+    },
+
+    claimNextUnlocked(builder_id, at, opts) {
+      return Promise.resolve(claimNow(builder_id, at, opts));
     },
   };
 }

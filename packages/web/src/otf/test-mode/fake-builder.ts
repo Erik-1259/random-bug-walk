@@ -349,7 +349,7 @@ interface Run {
 }
 
 export interface FakeBuilderOptions {
-  store: OtfStore;
+  store: MemoryOtfStore;
   power: FakeVmPower;
   clock: () => number;
   scenario: OtfTestScenario;
@@ -360,7 +360,7 @@ export interface FakeBuilderOptions {
 
 export class FakeBuilder {
   readonly builder_id: string;
-  private readonly store: OtfStore;
+  private readonly store: MemoryOtfStore;
   private readonly power: FakeVmPower;
   private readonly clock: () => number;
   private readonly scenario: OtfTestScenario;
@@ -431,7 +431,9 @@ export class FakeBuilder {
     const scenario = this.scenario;
     const build = isOtfTestJobScenario(scenario);
     for (;;) {
-      const claimed = await this.store.claimNext(this.builder_id, iso(now), { hosts: claimHosts(this.ready_hosts, this.speed, build) });
+      // The world's store plays this builder before every call, also from inside a power lock, so
+      // the claim cannot wait for that lock.
+      const claimed = await this.store.claimNextUnlocked(this.builder_id, iso(now), { hosts: claimHosts(this.ready_hosts, this.speed, build) });
       if (claimed === null) return;
       if (claimed.kind === "validate") {
         const parent = await this.store.getJob(claimed.validation.job_id);

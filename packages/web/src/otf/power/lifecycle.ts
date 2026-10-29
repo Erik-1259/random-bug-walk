@@ -11,6 +11,8 @@
 // - It never stops the instance while a job is building with a fresh builder post, or while a
 //   validation runs with a fresh builder heartbeat, not even for the uptime limit or the day cap.
 //   The builder's own timer enforces the uptime limit then.
+// - Claims share the power row lock and claim nothing while it reads stopping, so a claim never
+//   starts work between a stop decision and its Stop call.
 // - A watchdog stop finishes the building jobs with no recent post builder_lost and every running
 //   validation error, since the builder they ran on is stopping.
 // - A start error finishes every waiting job builder_start_failed with its reason; so does a start
@@ -462,6 +464,8 @@ export async function runWatchdog(deps: PowerDeps): Promise<WatchdogResult> {
           // The listings above predate the lock: a claim since then may have started a build or a
           // validation. Re-read the open jobs, the open validations (read only here, since they can
           // only hold a stop back) and the heartbeat right before the Stop, so a fresh claim is never cut off.
+          // This lock is held through the Stop call and claimNext waits for it and claims nothing once
+          // the row reads stopping, so no claim can start work between this re-read and the Stop.
           const openNow = await deps.store.listJobs(OPEN_STATES);
           const validations = await openValidations(deps.store);
           const signalNow = latest(lastSignal, ms((await deps.store.lastBuilderSeen())?.last_seen_at));
