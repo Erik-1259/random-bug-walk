@@ -349,9 +349,12 @@ describe("the composed OTF server", () => {
 
   it("leaves the open behavior out even when the catalog and the offered behaviors name it", async () => {
     // The factory catalog has no open criterion, so the test above cannot tell the exclusion from its absence.
-    const catalog = criteriaCatalogV1();
-    const template = catalog.bug_types[0]!.criteria[0]!;
-    catalog.bug_types[0]!.criteria.push({ ...structuredClone(template), criterion_id: OTF_OPEN_CRITERION_ID });
+    // A copy, so the catalog the other tests read stays unchanged.
+    const catalog = structuredClone(criteriaCatalogV1());
+    const bugType = catalog.bug_types[0];
+    const template = bugType?.criteria[0];
+    if (bugType === undefined || template === undefined) throw new Error("the factory catalog has no criteria");
+    bugType.criteria.push({ ...structuredClone(template), criterion_id: OTF_OPEN_CRITERION_ID });
     expect(criterionOf(catalog, OTF_OPEN_CRITERION_ID)).not.toBeNull();
     expect(otfBehaviorsFrom(catalog).map((behavior) => behavior.criterion_id)).toEqual([...PROVEN_CRITERION_IDS]);
     expect(otfBehaviorsFrom(criteriaCatalogV1())).toEqual(otfBehaviors());
