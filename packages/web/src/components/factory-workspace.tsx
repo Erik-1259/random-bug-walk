@@ -4,6 +4,7 @@ import { useEffect, useState, useSyncExternalStore } from "react";
 import type { FactoryPlan } from "../assist/plan.ts";
 import { FactoryController, factoryClient, type Capabilities, type Interpretation } from "../factory/client.ts";
 import { CALENDAR_HINT, calendarClockDelay, calendarClosedHosts, calendarClosesPair, calendarFallback, calendarReopened, describeFactoryMessage, describeServiceState, formatExactUsd, formatUsd } from "../factory/format.ts";
+import { OtfWorkspace } from "./otf/workspace.tsx";
 import { BugDesigner } from "./bug-designer.tsx";
 import { CopyButton } from "./copy-button.tsx";
 import { DeliveryBriefs } from "./delivery-brief.tsx";
@@ -73,6 +74,7 @@ export function FactoryWorkspace() {
 
 function ConnectedWorkspace({ controller }: { controller: FactoryController }) {
   const view = useSyncExternalStore(controller.subscribe, controller.snapshot, controller.snapshot);
+  const [otfEnabled, setOtfEnabled] = useState(false);
   const [passcode, setPasscode] = useState("");
   const [plan, setPlan] = useState<FactoryPlan | null>(null);
   useEffect(() => {
@@ -109,7 +111,8 @@ function ConnectedWorkspace({ controller }: { controller: FactoryController }) {
       <input id="factory-passcode" type="password" autoComplete="current-password" value={passcode} onChange={(event) => { setPasscode(event.target.value); }} />
       <button type="submit" disabled={view.busy || passcode.length === 0}>Sign in to the request service</button>
     </form>}
-    <BugDesigner signedIn={view.signedIn} capabilities={view.capabilities} closedHosts={closedHosts}
+    <OtfWorkspace catalogController={controller} onAvailability={setOtfEnabled} />
+    <BugDesigner otfEnabled={otfEnabled} signedIn={view.signedIn} capabilities={view.capabilities} closedHosts={closedHosts}
       applyBlocked={view.requestId !== null ? "A request is in progress on this page. When it finishes, prepare another request, then use this plan." : view.capabilities === null ? "The request form is not loaded, so this plan cannot fill it." : null}
       onUsePlan={(next) => { controller.invalidateInterpretation(); setPlan(next); }} />
     <div hidden={view.requestId !== null}><FactoryRequestForm key={plan?.key ?? 0} plan={plan} capabilities={view.capabilities} closedHosts={closedHosts} disabled={view.busy || view.requestId !== null || unavailable}
