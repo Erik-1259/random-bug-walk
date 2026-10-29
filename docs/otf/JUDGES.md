@@ -30,18 +30,18 @@ Use the `/factory` page with a judge-passcode session. This guide follows the [m
 
 ## Open behaviors (not available yet)
 
-<!-- TODO-SHIP: open behaviors ship only if they pass acceptance before 2026-10-30 10:00Z. If they ship, replace the availability paragraph below with the production commit; if they do not, remove this section. -->
+<!-- TODO-SHIP: open behaviors ship only if they pass acceptance before 2026-10-30 10:00Z. There are three outcomes. If open behaviors ship, replace the availability paragraph below with the production commit. If only the bug designer's handoff for classifier-proven matches ships, with RBW_OTF_OPEN_BEHAVIORS off in production, rewrite this section to describe that handoff as available and open behaviors as not available; SPEC section 8.2 then needs its flag-off classify answer (`unavailable`) updated to match. If nothing ships, remove this section. -->
 
 Open behaviors are not available yet. Until they ship, the picker offers only the three proven behaviors above. This section describes the design in the [OTF specification](SPEC.md#8-open-behaviors).
 
 An open behavior is any other non-security behavior of the task-report service. Open behaviors are built only on the task-report service; Umami stays limited to the time-zone date/time criterion.
 
-1. **Start from a bug designer card.** After the bug designer drafts a card, choose its custom-build handoff to have that card built. <!-- TODO-UI: the specification names this handoff "Build this as a custom bug"; check the label against the built UI. --> In the picker, the open behavior appears under the task-report service as “Another non-security behavior (not measured yet)”. <!-- TODO-UI: the picker's open option is not built yet; check that it shows OTF_OPEN_LABEL. -->
+1. **Start from a bug specification.** After the bug designer drafts a bug specification, choose its custom-build handoff to have it prepared as a spec card and built. <!-- TODO-UI: the specification names this handoff "Build this as a custom bug"; check the label against the built UI. --> In the picker, the open behavior appears under the task-report service as “Another non-security behavior (not measured yet)”. <!-- TODO-UI: the picker's open option is not built yet; check that it shows OTF_OPEN_LABEL. -->
 
-2. **Read the classification.** Nemotron 3 Super classifies the card. Its answer takes one of three forms: <!-- TODO-UI: the classification outcomes are not built yet; check this wording against the built UI. -->
-   - **Proven match.** The card matches one of the three proven behaviors, and you can build it as that behavior. The open behavior may be offered beside it.
+2. **Read the classification.** The classifier model classifies the spec card. <!-- TODO-UI: the specification names only "the classifier model"; once the server branch fixes the model, name it here and check it against the built UI. --> Its answer takes one of three forms: <!-- TODO-UI: the classification outcomes are not built yet; check this wording against the built UI. -->
+   - **Proven match.** The spec card matches one of the three proven behaviors, and you can build it as that behavior. The open behavior may be offered beside it.
    - **Open behavior with a rule.** The answer names a bug family (`concurrency`, `date_time`, `data_handling` or `state_ui`) and proposes a grading rule: the observable failure that the added checks look for through the app's routes (40 to 600 characters) and the failure code they report on the buggy copy. You can edit the rule before you accept it.
-   - **Refusal.** A security topic, or a behavior that could not plausibly exist in a task-and-report service, is refused with a reason, and that card cannot be built. An Umami card about anything other than time-zone grouping is offered as a task-report open behavior only when the behavior could plausibly exist there.
+   - **Refusal.** A security topic in your sentence or spec card is refused before any model call, with the error `refused_topic`. A security topic that the classifier model finds comes back as a security refusal with a reason, and a behavior that could not plausibly exist in a task-and-report service comes back as an out-of-scope refusal with a reason. A refused card cannot be built. An Umami card about anything other than time-zone grouping is offered as a task-report open behavior only when the behavior could plausibly exist there.
 
    The classification is advisory. Production checks what you submit, including the rule: a security topic in the rule is refused, and a rule outside the host's scope is rejected.
 
