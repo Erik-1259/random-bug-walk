@@ -413,11 +413,16 @@ export function createPgOtfStore(pool: OtfSqlPool): OtfStore {
       return num(rows[0]?.total ?? 0);
     },
 
-    async updateJob(job_id, whenStates, patch) {
+    async updateJob(job_id, whenStates, patch, when) {
       if (!UUID_TEXT.test(job_id)) return null;
       const { sql, params } = setClauses(patch, JOB_PATCH_COLUMNS, 3);
       const sets = sql.length === 0 ? "job_id = job_id" : sql.join(", ");
-      const { rows } = await pool.query(`UPDATE otf.jobs SET ${sets} WHERE job_id = $1::uuid AND state = ANY($2::text[]) RETURNING *`, [job_id, [...whenStates], ...params]);
+      let quiet = "";
+      if (when !== undefined) {
+        params.push(when.quietSince);
+        quiet = ` AND COALESCE(last_builder_post_at, claimed_at) <= $${String(2 + params.length)}::timestamptz`;
+      }
+      const { rows } = await pool.query(`UPDATE otf.jobs SET ${sets} WHERE job_id = $1::uuid AND state = ANY($2::text[])${quiet} RETURNING *`, [job_id, [...whenStates], ...params]);
       const row = rows[0];
       return row === undefined ? null : jobFromRow(row);
     },
@@ -819,9 +824,14 @@ export function createMemoryOtfStore(options: { now?: () => Date } = {}): Memory
       return Promise.resolve(total);
     },
 
-    updateJob(job_id, whenStates, patch) {
+    updateJob(job_id, whenStates, patch, when) {
       const job = jobs.get(job_id);
       if (job === undefined || !whenStates.includes(job.record.state)) return Promise.resolve(null);
+      if (when !== undefined) {
+        // As COALESCE(last_builder_post_at, claimed_at) <= quietSince: a job with neither never matches.
+        const last = job.record.last_builder_post_at ?? job.record.claimed_at;
+        if (last === null || Date.parse(last) > Date.parse(when.quietSince)) return Promise.resolve(null);
+      }
       for (const key of Object.keys(patch)) if (!(key in JOB_PATCH_COLUMNS)) return Promise.reject(new Error(`otf store: ${key} cannot be patched`));
       const next = { ...job.record, ...clone(patch) };
       if (!jobInvariantHolds(next)) return Promise.reject(new Error(INVARIANT));

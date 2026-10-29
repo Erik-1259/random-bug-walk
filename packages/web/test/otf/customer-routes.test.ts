@@ -354,7 +354,21 @@ describe("OTF customer routes", () => {
     s.advance(BUILDER_LOST_MS);
     const update = vi.spyOn(s.store, "updateJob");
     expect((await parsedResponse("OtfJobStatus", (await s.handlers.status(request(), created.job_id)))).outcome).toBe("builder_lost");
-    expect(update).toHaveBeenCalledWith(created.job_id, ["building"], expect.objectContaining({ state: "finished", outcome: "builder_lost" }));
+    expect(update).toHaveBeenCalledWith(created.job_id, ["building"], expect.objectContaining({ state: "finished", outcome: "builder_lost" }), { quietSince: FAKE_AT });
+  });
+  it("keeps a job building when a builder post lands between the status read and the builder_lost finish", async () => {
+    const s = setup(); const created = await parsedResponse("OtfCreateResponse", (await s.handlers.create(request(await body()))));
+    Object.assign(requiredValue(s.store.jobs, created.job_id), { state: "building", claimed_by: "synthetic-builder", claimed_at: FAKE_AT, last_builder_post_at: FAKE_AT });
+    s.advance(BUILDER_LOST_MS);
+    const update = s.store.updateJob.bind(s.store);
+    vi.spyOn(s.store, "updateJob").mockImplementationOnce(async (...args) => {
+      // The builder's heartbeat commits after the status read saw the job quiet.
+      requiredValue(s.store.jobs, created.job_id).last_builder_post_at = new Date(Date.parse(FAKE_AT) + BUILDER_LOST_MS).toISOString();
+      return update(...args);
+    });
+    expect((await parsedResponse("OtfJobStatus", (await s.handlers.status(request(), created.job_id))))).toMatchObject({ state: "building", outcome: null });
+    expect(requiredValue(s.store.jobs, created.job_id).state).toBe("building");
+    expect((s.store.events.get(created.job_id) ?? []).filter((e) => e.type === "job_finished")).toHaveLength(0);
   });
   it("wakes a stopped builder for a new validation", async () => {
     const s = setup(); const created = await parsedResponse("OtfCreateResponse", (await s.handlers.create(request(await body()))));
