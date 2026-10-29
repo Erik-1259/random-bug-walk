@@ -6,7 +6,7 @@ import { MAX_TOKENS } from "../assist/limits.ts";
 import { structuredChat } from "../assist/providers.ts";
 import { designSecurityTopic, holdsCode, securityTopic } from "../assist/safety.ts";
 import { assistDeps } from "../assist/server.ts";
-import { DEFAULT_ASSIST_MODEL, loadOtfConfig, otfConfigured } from "../config.ts";
+import { DEFAULT_ASSIST_MODEL, loadFactoryConfig, loadOtfConfig, otfConfigured } from "../config.ts";
 import { readBody } from "../factory-server/http.ts";
 import { factoryServer } from "../factory-server/server.ts";
 import { FACTORY_SESSION_COOKIE, hasFactorySession } from "../factory-server/session.ts";
@@ -159,8 +159,11 @@ export async function classify(request: Request, deps: ClassifyDeps): Promise<Re
 export async function handleOtfClassify(request: Request): Promise<Response> {
   try {
     // The same session check as the bug-spec route: a refused test-mode server signs nobody in.
-    const server = await factoryServer();
-    return await classify(request, { enabled: openBehaviorsEnabled() && otfConfigured(loadOtfConfig()),
+    const config = loadFactoryConfig();
+    const server = await factoryServer(config);
+    // Match the customer routes: local test mode supplies its own hosts and in-memory store.
+    const enabled = config.mode === "test" || otfConfigured(loadOtfConfig());
+    return await classify(request, { enabled: openBehaviorsEnabled() && enabled,
       passcode: server.ports.passcode, assist: assistDeps() });
   } catch { return failure("unavailable"); }
 }
