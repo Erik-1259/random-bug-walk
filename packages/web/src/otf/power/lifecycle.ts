@@ -12,6 +12,9 @@
 //   the uptime limit or the day cap. The builder's own timer enforces the uptime limit then.
 // - A start error finishes every waiting job builder_start_failed with its reason; so does a start
 //   that brought no healthy claim within START_TIMEOUT_MS.
+// - A stopped or starting builder starts for a job of any host. Once a fresh heartbeat leaves a
+//   queued job's host out of ready_hosts, that job finishes builder_unavailable on the next pass,
+//   so a job no builder can take never keeps the machine up or blocks its self-stop.
 // - The stop intent itself is decided by the builder routes (builder-handlers.ts); this module
 //   reads the stopping state it leaves.
 import {
@@ -21,6 +24,7 @@ import {
   OTF_CONTRACT_VERSION,
   OTF_DEFAULTS,
   OTF_ERROR_STATUS,
+  OTF_HOST_LABELS,
   START_TIMEOUT_MS,
   StartError,
   WATCHDOG_AFTER_LAST_JOB_MS,
@@ -29,6 +33,7 @@ import {
   type BuilderState,
   type NebiusInstanceState,
   type OtfErrorBody,
+  type OtfHostId,
   type OtfJobRecord,
   type OtfPowerLogEntry,
   type OtfPowerRecord,
@@ -204,7 +209,19 @@ type FollowUp = { kind: "started"; requested_at: string; preset: string } | { ki
 type Finish =
   | { outcome: "builder_start_failed"; reason: StartFailureReason }
   | { outcome: "builder_lost"; reason: "builder_stopped" }
-  | { outcome: "builder_unavailable"; reason: Exclude<StartBlock, "start_backoff"> };
+  /** A start block code (unconfigured, hold, day_cap), or hostNotReadyReason. */
+  | { outcome: "builder_unavailable"; reason: string };
+
+/** The job reason when a fresh heartbeat leaves the job's host out of ready_hosts. */
+export function hostNotReadyReason(host: OtfHostId): string {
+  return `The builder machine is not ready for ${OTF_HOST_LABELS[host]} builds right now.`;
+}
+
+/** The ready_hosts of the last builder heartbeat while it is fresh, or null (readiness unknown). */
+export function freshReadyHosts(seen: { ready_hosts: readonly OtfHostId[]; last_seen_at: string } | null, at: number): readonly OtfHostId[] | null {
+  const seenAt = ms(seen?.last_seen_at);
+  return seen !== null && seenAt !== null && at - seenAt < BUILDER_FRESH_MS ? seen.ready_hosts : null;
+}
 
 /** Finishes one job (compare-and-set on its state) and appends its events; false when another finish won. */
 async function finishJob(store: OtfStore, job: OtfJobRecord, whenStates: readonly OtfJobRecord["state"][], finish: Finish, at: string): Promise<boolean> {
@@ -357,8 +374,8 @@ export async function runWatchdog(deps: PowerDeps): Promise<WatchdogResult> {
   // without the job listings or the lock.
   const before = await deps.store.getPower();
   if (deps.power !== null && rateLimited(before, at)) {
-    const seenAt = ms((await deps.store.lastBuilderSeen())?.last_seen_at);
-    return { action: "none", reason: "rate_limited", timed_out: await finishStuckJobs(deps, before, at, seenAt !== null && at - seenAt < BUILDER_FRESH_MS) };
+    const ready = freshReadyHosts(await deps.store.lastBuilderSeen(), at);
+    return { action: "none", reason: "rate_limited", timed_out: await finishStuckJobs(deps, before, at, ready !== null, ready) };
   }
   const [open, finished, seen] = await Promise.all([deps.store.listJobs(OPEN_STATES), deps.store.listJobs(["finished"]), deps.store.lastBuilderSeen()]);
   const lastSignal = latest(ms(seen?.last_seen_at), ...open.map((job) => ms(job.last_builder_post_at)));
@@ -424,7 +441,7 @@ export async function runWatchdog(deps: PowerDeps): Promise<WatchdogResult> {
   });
 
   await applyFollowUp(deps.store, outcome.followUp, iso);
-  const timedOut = await finishStuckJobs(deps, outcome.row, at, heartbeatFresh);
+  const timedOut = await finishStuckJobs(deps, outcome.row, at, heartbeatFresh, freshReadyHosts(seen, at));
   return { ...outcome.result, timed_out: timedOut };
 }
 
@@ -435,8 +452,12 @@ export async function runWatchdog(deps: PowerDeps): Promise<WatchdogResult> {
  * builder_start_failed (timeout) for a job that never saw a healthy claim. A queued job counts as
  * waiting for a start only when a start was requested after it was created and no builder
  * heartbeat is fresh, so an ordinary wait behind a healthy builder never times out here.
+ *
+ * A queued job whose host the fresh heartbeat (`readyHosts`, null without one) leaves out finishes
+ * builder_unavailable at once: no claim can take it. A starting_builder job is left to the timeout,
+ * because a claim with images_ok: false heartbeats without promoting it.
  */
-async function finishStuckJobs(deps: PowerDeps, row: OtfPowerRecord, at: number, heartbeatFresh: boolean): Promise<number> {
+async function finishStuckJobs(deps: PowerDeps, row: OtfPowerRecord, at: number, heartbeatFresh: boolean, readyHosts: readonly OtfHostId[] | null): Promise<number> {
   const iso = new Date(at).toISOString();
   const block = startBlock(row, new Date(at), deps);
   const unavailable: Finish | null = block === null || block === "start_backoff" ? null : { outcome: "builder_unavailable", reason: block };
@@ -444,6 +465,10 @@ async function finishStuckJobs(deps: PowerDeps, row: OtfPowerRecord, at: number,
   const lastStart = ms(row.last_start_at);
   let count = 0;
   for (const job of await deps.store.listJobs(WAITING_STATES)) {
+    if (job.state === "queued" && readyHosts !== null && !readyHosts.includes(job.host_id)) {
+      if (await finishJob(deps.store, job, ["queued"], { outcome: "builder_unavailable", reason: hostNotReadyReason(job.host_id) }, iso)) count += 1;
+      continue;
+    }
     const created = ms(job.created_at);
     const from = latest(created, lastStart);
     if (from === null || at - from < START_TIMEOUT_MS) continue;

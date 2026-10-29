@@ -13,6 +13,7 @@ import {
   WATCHDOG_NO_HEARTBEAT_MS,
   type NebiusInstanceState,
   type OtfEvent,
+  type OtfHostId,
   type OtfJobRecord,
   type OtfJobState,
   type OtfPowerLogEntry,
@@ -28,6 +29,8 @@ import {
   START_SETTLE_MS,
   STOPPING_GRACE_MS,
   builderState,
+  freshReadyHosts,
+  hostNotReadyReason,
   powerCron,
   requestStart,
   runWatchdog,
@@ -82,6 +85,7 @@ function job(state: OtfJobState, overrides: Partial<OtfJobRecord> = {}): OtfJobR
     client_key: `synthetic-key-${String(jobCounter)}`,
     create_sha256: "0".repeat(64),
     created_at: new Date(T0).toISOString(),
+    host_id: "task-report",
     criterion_id: "concurrency.lost-acknowledged-change",
     sentence: "synthetic sentence",
     spec: { title: "Synthetic", where: "synthetic", change: "synthetic", why_tests_miss: "synthetic", checks_to_add: ["synthetic"], fix: "synthetic" },
@@ -116,6 +120,7 @@ class FakeStore implements OtfStore {
   events: { job_id: string; event: OtfEvent }[] = [];
   log: OtfPowerLogEntry[] = [];
   lastSeen: string | null;
+  readyHosts: OtfHostId[] = ["task-report", "umami"];
   lockDepth = 0;
   lockCount = 0;
 
@@ -153,7 +158,7 @@ class FakeStore implements OtfStore {
   }
 
   lastBuilderSeen(): ReturnType<OtfStore["lastBuilderSeen"]> {
-    return Promise.resolve(this.lastSeen === null ? null : { builder_id: "synthetic-builder", builder_revision: "synthetic-rev", boot_id: "synthetic-boot", booted_at: this.lastSeen, last_seen_at: this.lastSeen });
+    return Promise.resolve(this.lastSeen === null ? null : { builder_id: "synthetic-builder", builder_revision: "synthetic-rev", boot_id: "synthetic-boot", booted_at: this.lastSeen, ready_hosts: [...this.readyHosts], last_seen_at: this.lastSeen });
   }
 
   getPower(): Promise<OtfPowerRecord> {
@@ -539,6 +544,52 @@ describe("runWatchdog", () => {
     const older = job("queued", { created_at: clock.iso(-20 * MIN) });
     const startedBefore = new FakeStore({ ...row, last_start_at: clock.iso(-30 * MIN) }, [older], clock.iso(-15 * MIN));
     expect(await runWatchdog(deps(startedBefore, new FakePower("RUNNING"), clock))).toMatchObject({ timed_out: 0 });
+  });
+
+  it("finishes builder_unavailable a queued job whose host the fresh heartbeat leaves out, and keeps the other host's job", async () => {
+    const clock = new Clock();
+    const umami = job("queued", { host_id: "umami", criterion_id: "date_time.time-zone-grouping", created_at: clock.iso(-MIN) });
+    const taskReport = job("queued", { created_at: clock.iso(-MIN) });
+    const store = new FakeStore(runningRow(clock, HOUR, 5 * MIN), [umami, taskReport], clock.iso(-5000));
+    store.readyHosts = ["task-report"];
+    const power = new FakePower("RUNNING");
+    expect(await runWatchdog(deps(store, power, clock))).toMatchObject({ action: "get", timed_out: 1 });
+    expect(store.jobById(umami.job_id)).toMatchObject({ state: "finished", outcome: "builder_unavailable", reason: hostNotReadyReason("umami") });
+    expect(hostNotReadyReason("umami")).toContain("Umami");
+    expect(store.eventsOf(umami.job_id)).toEqual(["job_finished"]);
+    expect(store.jobById(taskReport.job_id).state).toBe("queued");
+    // Within the API interval the pass makes no call and still finishes such a job.
+    const late = job("queued", { host_id: "umami", criterion_id: "date_time.time-zone-grouping", created_at: clock.iso() });
+    store.jobs.push(late);
+    clock.advance(1000);
+    expect(await runWatchdog(deps(store, power, clock))).toMatchObject({ action: "none", reason: "rate_limited", timed_out: 1 });
+    expect(store.jobById(late.job_id).outcome).toBe("builder_unavailable");
+    expect(power.calls).toEqual(["get"]);
+  });
+
+  it("checks readiness only against a fresh heartbeat, and leaves a starting_builder job to the start timeout", async () => {
+    const clock = new Clock();
+    const queued = job("queued", { host_id: "umami", criterion_id: "date_time.time-zone-grouping", created_at: clock.iso(-MIN) });
+    const stale = new FakeStore(runningRow(clock, HOUR, 5 * MIN), [queued], clock.iso(-BUILDER_FRESH_MS));
+    stale.readyHosts = [];
+    expect(await runWatchdog(deps(stale, new FakePower("RUNNING"), clock))).toMatchObject({ timed_out: 0 });
+    expect(stale.jobById(queued.job_id).state).toBe("queued");
+    const waiting = job("starting_builder", { host_id: "umami", criterion_id: "date_time.time-zone-grouping", created_at: clock.iso(-MIN) });
+    const booting = new FakeStore(powerRow({ state: "starting", instance_state: "RUNNING", last_start_at: clock.iso(-MIN), running_since: clock.iso(-MIN), last_api_call_at: clock.iso(-10_000) }), [waiting], clock.iso(-5000));
+    booting.readyHosts = [];
+    expect(await runWatchdog(deps(booting, new FakePower("RUNNING"), clock))).toMatchObject({ timed_out: 0 });
+    expect(booting.jobById(waiting.job_id).state).toBe("starting_builder");
+    expect(freshReadyHosts(null, clock.at)).toBeNull();
+    expect(freshReadyHosts({ ready_hosts: ["umami"], last_seen_at: clock.iso(-(BUILDER_FRESH_MS - 1)) }, clock.at)).toEqual(["umami"]);
+  });
+
+  it("starts a stopped machine for a waiting job of any host", async () => {
+    const clock = new Clock();
+    const store = new FakeStore(powerRow({ instance_state: "STOPPED", last_api_call_at: clock.iso(-5 * MIN) }), [job("starting_builder", { host_id: "umami", criterion_id: "date_time.time-zone-grouping" })], clock.iso(-HOUR));
+    store.readyHosts = ["task-report"];
+    const power = new FakePower("STOPPED");
+    expect(await runWatchdog(deps(store, power, clock))).toMatchObject({ action: "start", reason: "jobs_waiting" });
+    expect(power.calls).toEqual(["start"]);
   });
 
   it("finishes builder_unavailable a job that waited out START_TIMEOUT_MS under the operator hold", async () => {
