@@ -5,7 +5,8 @@
 //   RUNNING once the scenario's cold start has passed on the injected clock. In the
 //   builder_start_failed scenario start() throws StartError("capacity").
 // - FakeBuilder plays the scenario's timeline (timeline.ts) through an OtfStore, as the builder
-//   machine and the builder routes would: once the fake instance runs it heartbeats, moves
+//   machine and the builder routes would: once the fake instance runs it heartbeats (ready_hosts is
+//   the scenario's host, so production offers only that host while the fake builder runs), moves
 //   starting_builder jobs to queued with builder_ready, claims with job_claimed, posts the builder
 //   events with a gap-free builder_seq, and posts the result (a delivery with an invented
 //   certificate and two tiny invented gzip bundles, or another outcome). It honors a customer stop
@@ -14,7 +15,11 @@
 // - MemoryOtfStore is an in-memory OtfStore, so test mode needs no database.
 // - OtfTestWorld ties them together on one clock. Its `store` advances the fake builder before
 //   every call, so the customer routes need nothing special: they get `store` and `power` from the
-//   world in place of Postgres and the cloud SDK, and the timeline plays as they read.
+//   world in place of Postgres and the cloud SDK, `now()` in place of the wall clock, and `hosts`
+//   (every host enabled with its default profile, invented lanes and typical null) in place of the
+//   per-host config, and the timeline plays as they read. In the umami_calendar_blocked scenario
+//   `now()` starts on UTC day 3, so production's calendar check answers a Umami create
+//   host_unavailable ("Umami is unavailable on UTC days 2–5.") and no job runs.
 //
 // Test mode is selected exactly as the factory's: RBW_FACTORY_TEST_MODE=1 on a local server, refused
 // on any Vercel deployment (VERCEL_ENV preview or production). otfTestWorld() throws outside it.
@@ -27,14 +32,19 @@ import { gzipSync } from "node:zlib";
 import { loadFactoryConfig } from "../../config.ts";
 import { builderEventBytes, canonicalJson } from "../canonical.ts";
 import {
+  ADMISSION_EVIDENCE,
   AGENT_LABEL,
   CERTIFICATE_FORMAT,
   CERTIFICATE_RUNNER,
   COPY_LIMITS,
   EXPECTED_CELLS,
   LEASE_MS,
-  OTF_DEFAULTS,
+  OTF_HOST_DEFAULTS,
+  OTF_HOST_IDS,
+  START_TIMEOUT_MS,
+  CALENDAR_MARGIN_MS,
   StartError,
+  hostCalendarOpen,
   TOKEN_FACTORY_PROVIDER,
   type AppendBuilderEventsResult,
   type BuilderEventIn,
@@ -45,7 +55,9 @@ import {
   type OtfBuilderInfo,
   type OtfCertificate,
   type OtfCriterionId,
+  type OtfAdmissionResult,
   type OtfEvent,
+  type OtfHostId,
   type OtfJobId,
   type OtfJobRecord,
   type OtfJobState,
@@ -57,6 +69,7 @@ import {
   type OtfValidationRecord,
   type OtfValidationState,
   type ProductionEvent,
+  type QualifiedAdmission,
   type ResultPart,
   type ResultPost,
   type SixCells,
@@ -64,11 +77,20 @@ import {
 } from "../contract.ts";
 import {
   REASON_TEXT,
+  SCENARIO_HOST,
   TEST_BUILDER_REVISION,
+  TEST_CALENDAR_BLOCKED_AT,
+  TEST_COLD_START_MS,
+  TEST_HOSTS,
   TEST_PRESET,
+  isOtfTestJobScenario,
   lastMeters,
+  scenarioRefusal,
   scenarioScript,
   stopSteps,
+  timeLimitReason,
+  type OtfTestHost,
+  type OtfTestRefusal,
   type OtfTestScenario,
   type ScenarioScript,
   type ScriptStep,
@@ -79,6 +101,25 @@ const sha256 = (data: string | Uint8Array): string => createHash("sha256").updat
 
 /** A validation run on the fake builder takes this long (script time) and always passes. */
 const VALIDATION_MS = 180_000;
+
+/** The only admission result a qualified Umami bundle carries; a passing validation repeats it. */
+const QUALIFIED_ADMISSION: Readonly<QualifiedAdmission> = Object.freeze({
+  decisions: Object.freeze({ adm_02: "pass", adm_03: "pass", adm_04: "pass", adm_05: "pass", adm_06: "pass" }),
+  comparison: "blind_spot_demonstrated",
+  alternative_fix: "pass",
+});
+
+/** The claim options a builder with these ready hosts sends (ClaimRequest.free per host), at this speed. */
+export type ClaimHosts = Parameters<OtfStore["claimNext"]>[2]["hosts"];
+export function claimHosts(ready: readonly OtfHostId[], speed: number, build = true): ClaimHosts {
+  return Object.fromEntries(
+    OTF_HOST_IDS.map((host) => {
+      const profile = OTF_HOST_DEFAULTS[host];
+      const isReady = ready.includes(host);
+      return [host, { build: build && isReady, validate: isReady, maxActiveBuilds: profile.max_active, deadlineMs: Math.round(profile.deadline_ms / speed) }];
+    }),
+  ) as ClaimHosts;
+}
 
 /** Stands for grader material: it is in the grader bundle only, so a test can check no JSON body carries it. */
 export const OTF_TEST_GRADER_SENTINEL = "synthetic-otf-test-mode-grader-material-7c41";
@@ -228,35 +269,40 @@ export class MemoryOtfStore implements OtfStore {
     return Promise.resolve(this.seen === null ? null : { ...this.seen });
   }
 
+  /** As the contract's claimNext: validations first, then the oldest queued build of a host with room; a saturated host never blocks another. */
   claimNext(
     builder_id: string,
     at: string,
-    opts: { maxActiveBuilds: number; deadlineMs: number; build: boolean; validate: boolean },
+    opts: { hosts: ClaimHosts },
   ): Promise<{ kind: "build"; job: OtfJobRecord } | { kind: "validate"; validation: OtfValidationRecord } | null> {
-    if (opts.validate) {
-      const waiting = [...this.validations.values()].filter((run) => run.state === "queued").sort((a, b) => Date.parse(a.started_at) - Date.parse(b.started_at))[0];
-      if (waiting !== undefined) {
-        waiting.state = "running";
-        waiting.claimed_by = builder_id;
-        return Promise.resolve({ kind: "validate", validation: structuredClone(waiting) });
-      }
+    const hostOf = (job_id: OtfJobId): OtfHostId | undefined => this.jobs.get(job_id)?.record.host_id;
+    const waiting = [...this.validations.values()]
+      .filter((run) => {
+        const host = hostOf(run.job_id);
+        return run.state === "queued" && host !== undefined && opts.hosts[host].validate;
+      })
+      .sort((a, b) => Date.parse(a.started_at) - Date.parse(b.started_at))[0];
+    if (waiting !== undefined) {
+      waiting.state = "running";
+      waiting.claimed_by = builder_id;
+      return Promise.resolve({ kind: "validate", validation: structuredClone(waiting) });
     }
-    if (!opts.build) return Promise.resolve(null);
     const records = [...this.jobs.values()].map((stored) => stored.record);
-    if (records.filter((record) => record.state === "building").length >= opts.maxActiveBuilds) return Promise.resolve(null);
-    const next = records.filter((record) => record.state === "queued").sort(byCreated)[0];
+    const building = (host: OtfHostId): number => records.filter((record) => record.state === "building" && record.host_id === host).length;
+    const next = records.filter((record) => record.state === "queued" && opts.hosts[record.host_id].build && building(record.host_id) < opts.hosts[record.host_id].maxActiveBuilds).sort(byCreated)[0];
     if (next === undefined) return Promise.resolve(null);
     const now = Date.parse(at);
-    Object.assign(next, { state: "building", claimed_by: builder_id, claimed_at: at, deadline_at: iso(now + opts.deadlineMs), lease_until: iso(now + LEASE_MS) } satisfies Partial<OtfJobRecord>);
+    Object.assign(next, { state: "building", claimed_by: builder_id, claimed_at: at, deadline_at: iso(now + opts.hosts[next.host_id].deadlineMs), lease_until: iso(now + LEASE_MS) } satisfies Partial<OtfJobRecord>);
     return Promise.resolve({ kind: "build", job: structuredClone(next) });
   }
 
-  /** Also appends job_finished, in the same step (SPEC section 3.2: store, set received, append job_finished, at once). */
+  /** Also appends job_finished { outcome: "delivered" } at `at`, in the same step (SPEC section 3.2). */
   storeDelivery(
     job_id: OtfJobId,
     builder_id: string,
     parts: readonly (OtfArtifactRecord & { bytes: Uint8Array })[],
     patch: JobPatch,
+    at: string,
   ): Promise<"stored" | "replayed" | "conflict" | "finished" | "wrong_builder" | "not_found"> {
     const stored = this.jobs.get(job_id);
     if (stored === undefined) return Promise.resolve("not_found");
@@ -270,8 +316,7 @@ export class MemoryOtfStore implements OtfStore {
     if (record.claimed_by !== builder_id) return Promise.resolve("wrong_builder");
     for (const part of parts) stored.artifacts.set(part.part, { ...structuredClone(part), bytes: new Uint8Array(part.bytes) });
     Object.assign(record, structuredClone(patch));
-    const at = record.finished_at ?? new Date().toISOString();
-    stored.events.push({ seq: stored.events.length + 1, at, type: "job_finished", lane_id: null, data: { outcome: record.outcome ?? "delivered", reason: record.reason } });
+    stored.events.push({ seq: stored.events.length + 1, at, type: "job_finished", lane_id: null, data: { outcome: "delivered", reason: null } });
     return Promise.resolve("stored");
   }
 
@@ -286,7 +331,7 @@ export class MemoryOtfStore implements OtfStore {
   }
 
   createValidation(job_id: OtfJobId, validation_id: string, at: string): Promise<OtfValidationRecord> {
-    const record: OtfValidationRecord = { validation_id, job_id, state: "queued", cells: null, started_at: at, finished_at: null, claimed_by: null };
+    const record: OtfValidationRecord = { validation_id, job_id, state: "queued", cells: null, admission: null, started_at: at, finished_at: null, claimed_by: null };
     this.validations.set(validation_id, record);
     return Promise.resolve(structuredClone(record));
   }
@@ -305,7 +350,7 @@ export class MemoryOtfStore implements OtfStore {
   updateValidation(
     validation_id: string,
     whenStates: readonly OtfValidationState[],
-    patch: Partial<Pick<OtfValidationRecord, "state" | "cells" | "finished_at">>,
+    patch: Partial<Pick<OtfValidationRecord, "state" | "cells" | "admission" | "finished_at">>,
   ): Promise<OtfValidationRecord | null> {
     const found = this.validations.get(validation_id);
     if (found === undefined || !whenStates.includes(found.state)) return Promise.resolve(null);
@@ -434,19 +479,34 @@ export interface DeliveryInput {
   builder_id: string;
   claimed_at_ms: number;
   speed: number;
-  script: Pick<ScenarioScript, "lanes" | "steps" | "result" | "winner">;
+  script: Pick<ScenarioScript, "host_id" | "lanes" | "steps" | "result" | "winner">;
 }
 
-function winnerCells(steps: readonly ScriptStep[], lane: string): { cells: SixCells; confirmation_cells: SixCells } {
+/** The winner's qualifying cells and admission result, and its confirmation cells (null when none ran). */
+function winnerRounds(steps: readonly ScriptStep[], lane: string): { cells: SixCells; confirmation_cells: SixCells | null; admission: OtfAdmissionResult | null } {
   let cells: SixCells | null = null;
   let confirmation: SixCells | null = null;
+  let admission: OtfAdmissionResult | null = null;
   for (const { event } of steps) {
     if (event.type !== "round_finished" || event.lane_id !== lane || event.data.result !== "qualified") continue;
-    if (event.data.kind === "qualification") cells = event.data.cells;
+    if (event.data.kind === "qualification") {
+      cells = event.data.cells;
+      admission = event.data.admission;
+    }
     if (event.data.kind === "confirmation") confirmation = event.data.cells;
   }
-  return { cells: structuredClone(cells ?? EXPECTED_CELLS), confirmation_cells: structuredClone(confirmation ?? EXPECTED_CELLS) };
+  return { cells: structuredClone(cells ?? EXPECTED_CELLS), confirmation_cells: structuredClone(confirmation), admission: structuredClone(admission) };
 }
+
+/** Invented bundle text per host: no application source, no checks, no fix and no spec in the agent bundle. */
+const INCIDENT: Readonly<Record<OtfHostId, string>> = {
+  "task-report": "# Synthetic incident\n\nInvented for test mode: after two quick saves, one saved value is missing from the list.\n",
+  umami: "# Synthetic incident\n\nInvented for test mode: a visit just after midnight in a far time zone is counted on the wrong day of a daily report.\n",
+};
+const GRADER_CHECK: Readonly<Record<OtfHostId, string>> = {
+  "task-report": "rbw-otf-grader/checks/synthetic-overlap-write.txt",
+  umami: "rbw-otf-grader/checks/synthetic-day-boundary-total.txt",
+};
 
 /** The invented certificate, the two invented bundles and the certificate part, and the result post that carries them. */
 export function syntheticDelivery(input: DeliveryInput): SyntheticDelivery {
@@ -454,34 +514,27 @@ export function syntheticDelivery(input: DeliveryInput): SyntheticDelivery {
   const winner = script.winner;
   if (winner === null) throw new Error("otf test mode: a delivery needs a winner");
   const job8 = job_id.slice(0, 8);
+  const host = script.host_id;
   const agent = syntheticTarGz([
     ["rbw-otf-agent/SYNTHETIC-TEST-MODE.txt", `Synthetic OTF test-mode agent bundle for job ${job_id}.\nIt holds no application source, no checks, no fix and no spec.\n`],
-    ["rbw-otf-agent/INCIDENT.md", "# Synthetic incident\n\nInvented for test mode: after two quick saves, one saved value is missing from the list.\n"],
+    ["rbw-otf-agent/INCIDENT.md", INCIDENT[host]],
   ]);
   const grader = syntheticTarGz([
     ["rbw-otf-grader/SYNTHETIC-TEST-MODE.txt", `Synthetic OTF test-mode grader bundle for job ${job_id}.\nIn a real grader bundle the checks are model-written code.\n`],
-    ["rbw-otf-grader/checks/synthetic-overlap-write.txt", `Invented check placeholder.\n${OTF_TEST_GRADER_SENTINEL}\n`],
+    [GRADER_CHECK[host], `Invented check placeholder.\n${OTF_TEST_GRADER_SENTINEL}\n`],
   ]);
   const meters = [...lastMeters(script.steps.filter((step) => step.at_ms <= script.result.at_ms)).values()];
   const at = (ms: number): string => iso(input.claimed_at_ms + ms / input.speed);
-  const certificate: OtfCertificate = {
+  // Every hash below is of an invented string: none names a real kit, image or commit.
+  const invented = (name: string): string => sha256(`synthetic-otf-test-mode-${host}-${name}`);
+  const common = {
     format: CERTIFICATE_FORMAT,
     job_id,
-    host_id: "task-report",
-    app_base_commit: createHash("sha1").update("synthetic-otf-test-mode-app-base").digest("hex"),
+    app_base_commit: createHash("sha1").update(`synthetic-otf-test-mode-${host}-app-base`).digest("hex"),
     criterion: { criterion_id: input.criterion_id, version: "1", failure_code: "synthetic-failure-code" },
     spec_sha256: input.spec_sha256,
     designer: { model: "synthetic/designer-model", route: "bug-spec" },
     implementer: { lane_id: winner.lane_id, agent: AGENT_LABEL, provider: TOKEN_FACTORY_PROVIDER, model: winner.model, rounds_used: winner.rounds_used },
-    qualification: { ...winnerCells(script.steps, winner.lane_id), result: "qualified" },
-    harness: {
-      tier: "B",
-      kit_image_id: `sha256:${sha256("synthetic-otf-test-mode-kit-image")}`,
-      copy_limits: COPY_LIMITS,
-      instances: { clean: 1, buggy: 3, fixed: 3 },
-      runner: CERTIFICATE_RUNNER,
-      harness_sha256: sha256("synthetic-otf-test-mode-harness"),
-    },
     bundles: { agent_sha256: sha256(agent), grader_sha256: sha256(grader) },
     spend: {
       model_microusd: meters.reduce((sum, meter) => sum + meter.cost_microusd, 0),
@@ -493,7 +546,43 @@ export function syntheticDelivery(input: DeliveryInput): SyntheticDelivery {
     issued_at: at(script.result.at_ms),
     builder_revision: TEST_BUILDER_REVISION,
     received: null,
-  };
+  } as const;
+  const rounds = winnerRounds(script.steps, winner.lane_id);
+  const certificate: OtfCertificate =
+    host === "umami"
+      ? {
+          ...common,
+          host_id: "umami",
+          // confirm_rounds 0: no confirmation round, so confirmation_cells is null.
+          qualification: { cells: rounds.cells, confirmation_cells: null, admission: structuredClone(QUALIFIED_ADMISSION), result: "qualified" },
+          harness: {
+            tier: "admission",
+            kit_sha256: invented("kit"),
+            kit_image_id: `sha256:${invented("kit-image")}`,
+            added_suite_sha256: invented("added-suite"),
+            runtime_image_digest: `sha256:${invented("runtime-image")}`,
+            original_suite: { test_count: 120, sha256: invented("original-suite") },
+            copy_limits: COPY_LIMITS,
+            copies: { kit_check_clean: 5, observe_planted: 1, clean: 1, planted: 5, fixed: 5, partial: 1, stub: 1 },
+            repetitions: 20,
+            evidence: ADMISSION_EVIDENCE,
+            runner: CERTIFICATE_RUNNER,
+            harness_sha256: invented("harness"),
+          },
+        }
+      : {
+          ...common,
+          host_id: "task-report",
+          qualification: { cells: rounds.cells, confirmation_cells: rounds.confirmation_cells ?? structuredClone(EXPECTED_CELLS), admission: null, result: "qualified" },
+          harness: {
+            tier: "B",
+            kit_image_id: `sha256:${sha256("synthetic-otf-test-mode-kit-image")}`,
+            copy_limits: COPY_LIMITS,
+            instances: { clean: 1, buggy: 3, fixed: 3 },
+            runner: CERTIFICATE_RUNNER,
+            harness_sha256: sha256("synthetic-otf-test-mode-harness"),
+          },
+        };
   const certificateBytes = encoder.encode(canonicalJson(certificate));
   const record = (part: OtfPart, filename: string, media_type: OtfArtifactRecord["media_type"], bytes: Uint8Array): OtfArtifactRecord & { bytes: Uint8Array } => ({
     job_id,
@@ -518,6 +607,7 @@ export function syntheticDelivery(input: DeliveryInput): SyntheticDelivery {
 interface Run {
   job: OtfJobRecord;
   claimedMs: number;
+  host_id: OtfHostId;
   steps: ScriptStep[];
   result: ScenarioScript["result"];
   winner: ScenarioScript["winner"];
@@ -546,8 +636,10 @@ export class FakeBuilder {
   private boot: { boot_id: string; booted_at: string } | null = null;
   private boots = 0;
   private readonly runs = new Map<OtfJobId, Run>();
-  /** Validation id to the clock time it finishes. */
-  private readonly validations = new Map<string, number>();
+  /** Validation id to the clock time it finishes and the host of its job. */
+  private readonly validations = new Map<string, { due: number; host: OtfHostId }>();
+  /** ClaimRequest.ready_hosts: the scenario's host only. */
+  readonly ready_hosts: readonly OtfHostId[];
 
   constructor(options: FakeBuilderOptions) {
     this.store = options.store;
@@ -556,6 +648,7 @@ export class FakeBuilder {
     this.scenario = options.scenario;
     this.speed = options.speed;
     this.builder_id = options.builder_id ?? "synthetic-builder-1";
+    this.ready_hosts = Object.freeze([SCENARIO_HOST[options.scenario]]);
   }
 
   /** Jobs this builder is playing now. */
@@ -578,14 +671,16 @@ export class FakeBuilder {
       this.boot = { boot_id: `synthetic-boot-${String(this.boots)}`, booted_at: iso(now) };
     }
     const at = iso(now);
-    await this.store.recordBuilderSeen({ builder_id: this.builder_id, builder_revision: TEST_BUILDER_REVISION, ...this.boot }, at);
+    await this.store.recordBuilderSeen({ builder_id: this.builder_id, builder_revision: TEST_BUILDER_REVISION, ...this.boot, ready_hosts: [...this.ready_hosts] }, at);
     await this.promoteWaiting(now);
     await this.claim(now);
     for (const run of [...this.runs.values()]) await this.play(run, now);
-    for (const [validation_id, due] of [...this.validations]) {
+    for (const [validation_id, { due, host }] of [...this.validations]) {
       if (due > now) continue;
       this.validations.delete(validation_id);
-      await this.store.updateValidation(validation_id, ["running"], { state: "passed", cells: structuredClone(EXPECTED_CELLS), finished_at: iso(due) });
+      // A passing validation repeats the qualified result: on Umami with its admission result, on task-report with none.
+      const admission = host === "umami" ? structuredClone(QUALIFIED_ADMISSION) as OtfAdmissionResult : null;
+      await this.store.updateValidation(validation_id, ["running"], { state: "passed", cells: structuredClone(EXPECTED_CELLS), admission, finished_at: iso(due) });
     }
   }
 
@@ -599,26 +694,27 @@ export class FakeBuilder {
   }
 
   private async claim(now: number): Promise<void> {
+    // A scenario without a job (the calendar block) takes no build: a job created anyway waits, and
+    // production finishes it builder_unavailable on read once its calendar window is closed.
+    const scenario = this.scenario;
+    const build = isOtfTestJobScenario(scenario);
     for (;;) {
-      const claimed = await this.store.claimNext(this.builder_id, iso(now), {
-        maxActiveBuilds: OTF_DEFAULTS.max_active,
-        deadlineMs: Math.round(OTF_DEFAULTS.deadline_ms / this.speed),
-        build: true,
-        validate: true,
-      });
+      const claimed = await this.store.claimNext(this.builder_id, iso(now), { hosts: claimHosts(this.ready_hosts, this.speed, build) });
       if (claimed === null) return;
       if (claimed.kind === "validate") {
-        this.validations.set(claimed.validation.validation_id, now + VALIDATION_MS / this.speed);
+        const parent = await this.store.getJob(claimed.validation.job_id);
+        this.validations.set(claimed.validation.validation_id, { due: now + VALIDATION_MS / this.speed, host: parent?.host_id ?? "task-report" });
         continue;
       }
+      if (!isOtfTestJobScenario(scenario)) return;
       await this.store.appendJobEvent(claimed.job.job_id, { type: "job_claimed", lane_id: null, data: { builder_revision: TEST_BUILDER_REVISION } }, iso(now));
-      const script = scenarioScript(this.scenario);
-      this.runs.set(claimed.job.job_id, { job: claimed.job, claimedMs: now, steps: script.steps, result: script.result, winner: script.winner, lanes: script.lanes, posted: 0, cut: false });
+      const script = scenarioScript(scenario);
+      this.runs.set(claimed.job.job_id, { job: claimed.job, claimedMs: now, host_id: script.host_id, steps: script.steps, result: script.result, winner: script.winner, lanes: script.lanes, posted: 0, cut: false });
     }
   }
 
   /** Replaces the rest of the script with every live lane stopping now and the given result. */
-  private cut(run: Run, atMs: number, lane: "cancelled", laneReason: string, result: ScenarioScript["result"]): void {
+  private cut(run: Run, atMs: number, lane: "cancelled" | "time_limit", laneReason: string, result: ScenarioScript["result"]): void {
     const posted = run.steps.slice(0, run.posted);
     run.steps = [...posted, ...stopSteps(posted, atMs, lane, laneReason)];
     run.result = result;
@@ -653,7 +749,7 @@ export class FakeBuilder {
       if (!selected) {
         const atMs = Math.max(limit.atMs, run.steps[run.posted - 1]?.at_ms ?? 0);
         if (limit.kind === "customer") this.cut(run, atMs, "cancelled", REASON_TEXT.customer_lane, { at_ms: atMs + 2_000, outcome: "cancelled", reason: REASON_TEXT.cancelled });
-        else this.cut(run, atMs, "cancelled", REASON_TEXT.deadline_lane, { at_ms: atMs + 2_000, outcome: "time_limit", reason: REASON_TEXT.time_limit });
+        else this.cut(run, atMs, "time_limit", REASON_TEXT.deadline_lane, { at_ms: atMs + 2_000, outcome: "time_limit", reason: timeLimitReason(run.host_id) });
       }
       if (!(await this.post(run, job, elapsed, now))) return;
       if (this.finishDue(run, elapsed)) return this.finish(run, job);
@@ -702,17 +798,23 @@ export class FakeBuilder {
       });
       // As production stores it: received set once the hashes check (they are this builder's own here).
       const certificate: OtfCertificate = { ...delivery.certificate, received: { at: finishedAt, sha256_verified: true } };
-      await this.store.storeDelivery(job.job_id, this.builder_id, delivery.parts, {
-        state: "finished",
-        outcome: "delivered",
-        reason: null,
-        winner_lane: run.winner.lane_id,
-        winner_model: run.winner.model,
-        model_microusd: certificate.spend.model_microusd,
-        certificate,
-        finished_at: finishedAt,
-        lease_until: null,
-      });
+      await this.store.storeDelivery(
+        job.job_id,
+        this.builder_id,
+        delivery.parts,
+        {
+          state: "finished",
+          outcome: "delivered",
+          reason: null,
+          winner_lane: run.winner.lane_id,
+          winner_model: run.winner.model,
+          model_microusd: certificate.spend.model_microusd,
+          certificate,
+          finished_at: finishedAt,
+          lease_until: null,
+        },
+        finishedAt,
+      );
       return;
     }
     const finished = await this.store.updateJob(job.job_id, ["building"], { state: "finished", outcome: run.result.outcome, reason: run.result.reason, finished_at: finishedAt, lease_until: null });
@@ -735,6 +837,8 @@ export interface OtfTestWorldOptions {
 interface WorldState {
   scenario: OtfTestScenario;
   speed: number;
+  /** The world's clock: the injected clock, moved by a fixed offset when the scenario needs a calendar day. */
+  clock: () => number;
   memory: MemoryOtfStore;
   power: FakeVmPower;
   builder: FakeBuilder;
@@ -764,6 +868,16 @@ export class OtfTestWorld {
     return this.current.scenario;
   }
 
+  /** The per-host config test mode runs with: every host enabled, the default profiles, invented lanes, typical null. */
+  get hosts(): Readonly<Record<OtfHostId, Readonly<OtfTestHost>>> {
+    return TEST_HOSTS;
+  }
+
+  /** What production must answer a create with in this scenario, or null when the create succeeds. */
+  get refusal(): OtfTestRefusal | null {
+    return scenarioRefusal(this.current.scenario);
+  }
+
   get speed(): number {
     return this.current.speed;
   }
@@ -773,8 +887,9 @@ export class OtfTestWorld {
     return this.current;
   }
 
+  /** The time the customer routes must use in place of the wall clock. */
   now(): Date {
-    return new Date(this.clock());
+    return new Date(this.current.clock());
   }
 
   /** Discards every job, the power state and the builder, and selects a scenario for the next jobs. */
@@ -793,11 +908,14 @@ export class OtfTestWorld {
 
   private build(scenario: OtfTestScenario, speed: number): WorldState {
     if (!(speed > 0) || !Number.isFinite(speed)) throw new RangeError("otf test mode: speed must be a positive number");
-    const script = scenarioScript(scenario);
-    const memory = new MemoryOtfStore(iso(this.clock()));
-    const power = new FakeVmPower(this.clock, { coldStartMs: script.cold_start_ms / speed, failure: script.start_failure });
-    const builder = new FakeBuilder({ store: memory, power, clock: this.clock, scenario, speed });
-    return { scenario, speed, memory, power, builder };
+    const base = this.clock;
+    const offset = clockOffset(scenario, base());
+    const clock = offset === 0 ? base : (): number => base() + offset;
+    const script = isOtfTestJobScenario(scenario) ? scenarioScript(scenario) : null;
+    const memory = new MemoryOtfStore(iso(clock()));
+    const power = new FakeVmPower(clock, { coldStartMs: (script?.cold_start_ms ?? TEST_COLD_START_MS) / speed, failure: script?.start_failure ?? null });
+    const builder = new FakeBuilder({ store: memory, power, clock, scenario, speed });
+    return { scenario, speed, clock, memory, power, builder };
   }
 
   private advancingStore(): OtfStore {
@@ -814,6 +932,27 @@ export class OtfTestWorld {
       },
     });
   }
+}
+
+const DAY_MS = 86_400_000;
+
+/**
+ * How far the world's clock moves from the injected one when the world is built:
+ * - umami_calendar_blocked: to TEST_CALENDAR_BLOCKED_AT (UTC day 3), so a Umami create is refused;
+ * - any other scenario whose host's create window [now, now + START_TIMEOUT_MS + deadline +
+ *   CALENDAR_MARGIN_MS] (production's check at create, on contract time, not test speed) is closed
+ *   now: whole days forward to the first open one, so the scenario plays on any real date;
+ * - otherwise 0.
+ */
+function clockOffset(scenario: OtfTestScenario, now: number): number {
+  if (scenario === "umami_calendar_blocked") return Date.parse(TEST_CALENDAR_BLOCKED_AT) - now;
+  const host = SCENARIO_HOST[scenario];
+  const window = START_TIMEOUT_MS + OTF_HOST_DEFAULTS[host].deadline_ms + CALENDAR_MARGIN_MS;
+  for (let days = 0; days < 31; days += 1) {
+    const at = now + days * DAY_MS;
+    if (hostCalendarOpen(host, at, at + window)) return days * DAY_MS;
+  }
+  return 0;
 }
 
 // ---- selection, as the factory's test mode

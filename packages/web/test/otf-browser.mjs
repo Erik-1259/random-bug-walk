@@ -7,10 +7,16 @@
 // against the component names and copy in docs/otf/SPEC.md and is marked TO CONFIRM; adjust them to
 // the components once that branch lands. The scenario reset route is a proposal too (TO CONFIRM).
 //
-// Server (a dedicated, single-process local server; the stub port must match the last argument):
+// In test mode the world (otfTestWorld()) supplies the store, the power port, the clock (now()) and
+// the per-host config (hosts: both hosts enabled, invented lanes, typical null), so no lane or host
+// variable is set below (TO CONFIRM against W2's test-mode wiring).
+//
+// Server (a dedicated, single-process local server; the stub port must match the last argument). The
+// builder secret is an invented, test-only value of the required length; no builder calls in:
 //   VERCEL_ENV=development RBW_FACTORY_TEST_MODE=1 RBW_JUDGE_PASSCODE=synthetic-factory-passcode \
 //   RBW_ASSIST_TOKEN_FACTORY_KEY=synthetic-key RBW_ASSIST_TAVILY_KEY=synthetic-key \
-//   RBW_ASSIST_TEST_PROVIDER_ORIGIN=http://127.0.0.1:4010 RBW_OTF_BUILDER_SECRET=synthetic-otf-secret \
+//   RBW_ASSIST_TEST_PROVIDER_ORIGIN=http://127.0.0.1:4010 \
+//   RBW_OTF_BUILDER_SECRET=synthetic-otf-test-mode-builder-secret-only \
 //   pnpm --filter @rbw/web dev --port 3033
 // Proof, from packages/web:
 //   node test/otf-browser.mjs <playwright-index.mjs> <chromium> http://localhost:3033 <output-dir> [stub-port]
@@ -23,9 +29,10 @@ import { join } from "node:path";
 import process from "node:process";
 import { pathToFileURL, URL } from "node:url";
 import { gunzipSync } from "node:zlib";
+import { specSha256 } from "../src/otf/canonical.ts";
 import { validateOtf } from "../src/otf/schemas.ts";
 import { OTF_TEST_GRADER_SENTINEL } from "../src/otf/test-mode/fake-builder.ts";
-import { REASON_TEXT } from "../src/otf/test-mode/timeline.ts";
+import { REASON_TEXT, UMAMI_CALENDAR_REASON } from "../src/otf/test-mode/timeline.ts";
 import { factoryJson, signInToFactory } from "./factory-browser-journey.mjs";
 
 const [modulePath, executablePath, origin, outputDir, stubPortArg = "4010"] = process.argv.slice(2);
@@ -39,17 +46,31 @@ if (address.protocol !== "http:" || !["localhost", "127.0.0.1"].includes(address
 const stubPort = Number(stubPortArg);
 assert(Number.isInteger(stubPort) && stubPort > 0 && stubPort < 65536, "the stub port is a TCP port");
 
-// ---- the loopback stub for the bug designer's provider calls (an invented, in-scope card)
+// ---- the loopback stub for the bug designer's provider calls (an invented, in-scope card per host)
 
-const STUB_CARD = {
-  in_scope: true,
-  title: "Synthetic: a saved value can go missing",
-  where: "An invented list component that saves values in the task-and-report service.",
-  change: "Two quick saves can drop one value.",
-  why_tests_miss: "The invented suite saves one value at a time.",
-  checks_to_add: ["Two overlapping saves both appear in the list."],
-  fix: "Apply the saves in order.",
+const STUB_CARDS = {
+  "task-report": {
+    in_scope: true,
+    title: "Synthetic: a saved value can go missing",
+    where: "An invented list component that saves values in the task-and-report service.",
+    change: "Two quick saves can drop one value.",
+    why_tests_miss: "The invented suite saves one value at a time.",
+    checks_to_add: ["Two overlapping saves both appear in the list."],
+    fix: "Apply the saves in order.",
+  },
+  umami: {
+    in_scope: true,
+    title: "Synthetic: a late visit lands on the next day",
+    where: "An invented daily report that groups visits by day.",
+    change: "A visit just after midnight in a far time zone is counted on the wrong day.",
+    why_tests_miss: "The invented suite only uses visits at noon UTC.",
+    checks_to_add: ["A visit at 00:30 in a far time zone appears on its own local day."],
+    fix: "Group the visits by the viewer's time zone.",
+  },
 };
+const SENTENCES = { "task-report": "Two quick saves in a row lose one of them.", umami: "A late visit lands on the next day in the daily report." };
+/** The card the stub answers with; each journey sets it for its host. */
+let STUB_CARD = STUB_CARDS["task-report"];
 const stubCalls = [];
 const stub = http.createServer((request, response) => {
   stubCalls.push(request.url);
@@ -89,6 +110,11 @@ const UI = {
   laneBoard: page => page.locator(".otf-lane-board"),
   laneCard: page => page.locator(".otf-lane-card"),
   sixCellGrid: page => page.locator(".otf-six-cell-grid"),
+  // TO CONFIRM: the Umami admission strip beside a round's grid, and the certificate's confirmation row.
+  admissionStrip: page => page.locator(".otf-admission-strip"),
+  confirmationRow: page => page.locator(".otf-certificate .otf-confirmation"),
+  // TO CONFIRM: an unavailable host's reason line in the picker.
+  hostReason: (page, label) => page.locator(".otf-behavior-picker .otf-host-unavailable").filter({ hasText: label }),
   // TO CONFIRM: the certificate and the failure view.
   certificate: page => page.locator(".otf-certificate"),
   failure: page => page.locator(".otf-failure"),
@@ -102,8 +128,23 @@ const COPY = {
   // SPEC section 6. The model label is the test lane's invented one.
   built: "Built for your request by Goose with Synthetic Model A on Nebius Token Factory. Spec card by Nemotron 3 Super.",
   certificate: "Qualified by the RBW harness on the RBW builder (Nebius VM): six cells, pinned task-report kit image, 4 vCPU / 8 GB per copy, then confirmed in a second round.",
+  umamiCertificate: "Qualified on the RBW builder (Nebius VM) with the local runner's admission sequence (docs/admission-rules.md) on the pinned Umami kit image with this build's checks, 4 vCPU / 8 GB per copy. Development evidence, not an RBW release.",
+  umamiPlacement: "The builder places the bug in one of Umami's date-grouped reports that its harness supports, chosen to match your card where it can. It may differ from the report your card describes.",
+  umamiCalendar: UMAMI_CALENDAR_REASON,
+  // Test mode measures no build time, so every host shows this (SPEC section 6, typical null).
+  notMeasured: label => `Build times for ${label} are not measured yet. The board shows each step as it runs.`,
   notQualified: "No lane produced a bug that passed all six cells in 3 rounds.",
   startCatalog: "Start the closest catalog bug",
+  // SPEC section 1.1: the admission strip labels.
+  admissionLabels: [
+    "Every copy ran every test",
+    "Fixed copies pass the added checks",
+    "Buggy copies fail as declared",
+    "Repeated runs agree",
+    "Partial and stub fixes are caught",
+    "The original suite misses the bug",
+    "A second, independent fix also passes",
+  ],
 };
 
 // ---- the proof
@@ -138,21 +179,33 @@ function checkBodies(bodies) {
   }
 }
 
-/** Picks a behavior, writes the sentence, gets the card and accepts it; answers the create response. */
-async function acceptCard(page) {
+/** Test mode's hosts: each appears once with no measured typical time. */
+function checkHosts(availability) {
+  assert.deepEqual(availability.hosts.map(entry => entry.host_id).sort(), ["task-report", "umami"]);
+  for (const entry of availability.hosts) assert.equal(entry.typical, null, `${entry.host_id} has no measured typical time in test mode`);
+}
+
+/** Picks the host's behavior, writes the sentence, gets the card and accepts it; answers the create response. */
+async function acceptCard(page, hostId = "task-report") {
   const availability = await json(page.context(), "get", "/api/factory/otf/availability");
   assert.equal(availability.enabled, true, "OTF is enabled in local test mode");
-  const behavior = availability.behaviors[0];
-  assert(behavior, "availability offers at least one behavior");
+  checkHosts(availability);
+  const behavior = availability.behaviors.find(option => option.host_id === hostId);
+  assert(behavior, `availability offers a ${hostId} behavior`);
+  STUB_CARD = STUB_CARDS[hostId];
   await UI.behaviorPicker(page).waitFor();
+  const label = availability.hosts.find(entry => entry.host_id === hostId).label;
   await UI.behaviorOption(page, behavior.label).check();
-  await UI.sentence(page).fill("Two quick saves in a row lose one of them.");
+  // TO CONFIRM: where W3 shows the time copy (picker or spec accept); typical is null in test mode.
+  await page.getByText(COPY.notMeasured(label), { exact: true }).first().waitFor();
+  await UI.sentence(page).fill(SENTENCES[hostId]);
   const [designed] = await Promise.all([
     page.waitForResponse(response => response.request().method() === "POST" && new URL(response.url()).pathname === "/api/factory/assist/bug-spec"),
     UI.writeCard(page).click(),
   ]);
   assert.equal(designed.status(), 200);
   await UI.specAccept(page).getByText(STUB_CARD.title).waitFor();
+  if (hostId === "umami") await UI.specAccept(page).getByText(COPY.umamiPlacement, { exact: true }).waitFor();
   const [created] = await Promise.all([
     page.waitForResponse(response => response.request().method() === "POST" && new URL(response.url()).pathname === "/api/factory/otf/jobs"),
     UI.accept(page).click(),
@@ -257,7 +310,53 @@ try {
     await UI.failure(page).waitFor();
     const done = await status(context, id);
     assert.equal(done.outcome, "time_limit");
-    assert(done.lanes.every(lane => lane.outcome === "cancelled"));
+    // A deadline ends the lanes time_limit; cancelled is a customer stop only.
+    assert(done.lanes.every(lane => lane.outcome === "time_limit"));
+  });
+
+  for (const width of [1440, 390]) await scenario("umami_delivered", width, async ({ context, page }) => {
+    // About 30 s at the default test speed: two lanes, an ADM-04 rejection, then a round-2 win.
+    const { job_id: id } = await acceptCard(page, "umami");
+    await UI.laneBoard(page).waitFor();
+    await UI.laneCard(page).nth(1).waitFor();
+    await UI.admissionStrip(page).first().waitFor();
+    for (const label of COPY.admissionLabels) await UI.admissionStrip(page).first().getByText(label, { exact: true }).waitFor();
+    await page.screenshot({ path: join(outputDir, `otf-umami-${width}-racing.png`), fullPage: true });
+    await UI.certificate(page).waitFor();
+    await page.getByText(COPY.umamiCertificate, { exact: true }).waitFor();
+    await page.getByText(COPY.built, { exact: true }).waitFor();
+    // No confirmation round ran, so the certificate shows no confirmation row.
+    assert.equal(await UI.confirmationRow(page).count(), 0);
+    for (const word of ["admitted", "released", "on Vercel Sandbox"]) assert.equal(await UI.certificate(page).getByText(word).count(), 0, `the certificate never says "${word}"`);
+    const done = await status(context, id);
+    assert.equal(done.host_id, "umami");
+    assert.equal(done.outcome, "delivered");
+    assert.equal(done.winner?.lane_id, "lane-1");
+    assert.deepEqual(done.lanes.map(lane => lane.outcome), ["won", "lost_race"]);
+    assert.equal(done.certificate?.harness.tier, "admission");
+    assert.equal(done.certificate?.qualification.confirmation_cells, null);
+    assert.deepEqual(done.lanes[0].rounds.map(round => round.admission?.decisions.adm_04), ["reject", "pass"]);
+    assert.equal(done.artifacts.length, 3);
+  });
+
+  await scenario("umami_calendar_blocked", 390, async ({ context, page }) => {
+    // The world's clock is on UTC day 3: Umami is not offered and a direct create is refused.
+    const availability = await json(context, "get", "/api/factory/otf/availability");
+    checkHosts(availability);
+    const umami = availability.hosts.find(entry => entry.host_id === "umami");
+    assert.equal(umami.offered, false);
+    assert.equal(umami.unavailable_reason, "calendar");
+    assert(availability.behaviors.every(option => option.host_id !== "umami"), "no Umami behavior is offered");
+    assert(availability.behaviors.some(option => option.host_id === "task-report"), "task-report stays offered");
+    await UI.behaviorPicker(page).waitFor();
+    await UI.hostReason(page, COPY.umamiCalendar).waitFor();
+    const spec = { ...STUB_CARDS.umami };
+    delete spec.in_scope;
+    const body = { client_key: "00000000-0000-4000-8000-000000000008", host_id: "umami", criterion_id: "date_time.time-zone-grouping", sentence: SENTENCES.umami, spec, spec_sha256: await specSha256(spec) };
+    const refused = await json(context, "post", "/api/factory/otf/jobs", body, 409);
+    assert.deepEqual(validateOtf("OtfErrorBody", refused), []);
+    assert.equal(refused.error.code, "host_unavailable");
+    assert(refused.error.message.includes(COPY.umamiCalendar), "the refusal names the calendar");
   });
 
   await scenario("delivered", 390, async ({ context, page }) => {
