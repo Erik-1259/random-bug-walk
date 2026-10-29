@@ -36,7 +36,7 @@ NVIDIA Nemotron 3.5 Lightning (`nvidia/Nemotron-3_5-Lightning`) on Nebius Token 
 - **In the factory.** Every Umami case that `/factory` delivers carries that report unchanged as its incident description. The Umami adapter pins it by SHA-256 in [`packages/host-umami/src/pins.ts`](packages/host-umami/src/pins.ts), and its mapping to the release refuses any other incident.
 - **Where Token Factory helped.** Writing is cheap and quick enough to run inside every attempt: the two calls together cost under a tenth of a cent, and their recordings are stamped 1.5 seconds apart (`recorded_at`). Strict JSON schema output means each answer is a JSON object that the writer validates against its schema, with nothing parsed out of free text. Because the endpoint is OpenAI-compatible, the writer uses the AI SDK's OpenAI-compatible provider rather than a custom client, and the same metered call serves other models through their own profiles.
 - **Other Token Factory components.** Two operator-run tools make that metered call with NVIDIA Nemotron 3 Super (`nvidia/nemotron-3-super-120b-a12b`): the static-headroom screen ([`packages/screen`](packages/screen/README.md), with Kimi-K2.7-Code as a fallback) and the harvest review ([`packages/harvest-review`](packages/harvest-review/README.md), where Super and Kimi-K2.7-Code each judge a harvested fix). The UC1 solver ([`packages/solver`](packages/solver/README.md)) is a tool-calling loop on Super, pre-registered with no result reported. Their run outputs are not in this repository or the results repository, so this README gives no figures for them; the committed screen records in `docs/uc1-screen/` are written judgments, made with no model probe.
-- **What uses no model and no Nebius service.** A `/factory` request and a judge replay make no model call: the factory matches a description against exact phrases, its only metered service is Vercel Sandbox, and the site's code reads no Token Factory key. The project does not use Token Factory Sandboxes or Nebius AI Cloud (Serverless Jobs, Serverless Endpoints or DevPods); app copies run on Vercel Sandbox.
+- **What uses a model, and which Nebius services run.** A catalog `/factory` request and a judge replay make no model call: the factory matches a description against exact phrases, its only metered service is Vercel Sandbox, and catalog app copies run there. The bug designer on `/factory` calls NVIDIA Nemotron 3 Super on Token Factory to draft a bug specification; where custom builds are enabled, that design is not built as written, and “Build a custom bug” writes its own spec card. On-the-fly custom builds use Nemotron 3 Super to write that spec card, then race Goose agents on Token Factory models; the lane board names each lane's model, and the certificate names the designer's model and the winning lane's model. They run on a Nebius AI Cloud VM that production starts per request and that stops when idle, at 4 vCPUs and 8 GB per copy: task-report builds are qualified by the RBW harness, Umami builds by the local runner's admission sequence. The project does not use Token Factory Sandboxes or the Nebius AI Cloud Serverless Jobs, Serverless Endpoints or DevPods.
 
 ## Repository map
 
@@ -159,7 +159,7 @@ What exists on main and how it is exercised:
 
 - **The worker's local mode.** `factory-worker --backend docker` runs a request or a validation run on one machine, against a local Postgres ledger, with each copy as a local Docker container. Its tests run a full local request with a validation run over the package tooling's synthetic host. See [Factory worker](tools/controller/README.md#factory-worker).
 - **Hosted preview.** On a hosted Vercel preview deployment of commit `269a22a` (October 26 and 27, 2026), the `/factory` page and the routes under `/api/factory/` run in live mode: a judge-passcode session, capabilities, interpretation, starting a request, status, stop, package downloads and validation runs of the delivered task-report and Umami cases, which both passed. Starting a request launches the factory worker in its own Vercel Sandbox from a pushed linux/amd64 worker image that carries the scanned prepared packages; the web service and the worker share the Neon ledger (the factory pool and the serial factory slot). A later preview deployment, with the worker image rebuilt at commit `ca6c77a`, also fulfilled a request. See [Factory service](packages/web/README.md#factory-service).
-- **Production.** The production site has served the `/factory` page and its routes in live mode since October 27, 2026, first from commit `ca6c77a`, then `d98d7d7`, and now `725f104`. It offers task-report for `concurrency` and Umami for `date_time`. Umami is unavailable on UTC days 2–5, including any request whose planned window touches those days ([calendar window](packages/host-umami/README.md#calendar-window)). On those days the request form says so, an Umami request cannot start, and task-report requests are not affected. The measured results below come from hosted preview deployments, not from production.
+- **Production.** The production site has served the `/factory` page and its routes in live mode since October 27, 2026, first from commit `ca6c77a`, then `d98d7d7` and `725f104`, and now `f7b1b56`, which adds on-the-fly custom builds (see [On-the-fly bugs](#on-the-fly-bugs-custom-builds)). Its catalog offers task-report for `concurrency` and Umami for `date_time`. Umami is unavailable on UTC days 2–5, including any request whose planned window touches those days ([calendar window](packages/host-umami/README.md#calendar-window)). On those days the request form says so, an Umami request cannot start, and task-report requests are not affected. The measured results below come from hosted preview deployments, not from production.
 - **Hosted preview results.** A task-report request, an Umami request and one request with both hosts were each fulfilled. In each delivered case all six behavior cells matched (the original suite and the verification checks on the clean, buggy and reference-fixed copies), and every delivered package part downloaded through the deployment matched its published sha256. A user stop ended a request as `cancelled` with nothing delivered. The worker's worst-case reservation (about $0.35) is settled in full on each request, so a request costs at least that much.
 - **Package scan.** The prepare scan blocks a package part with any private-pattern, attribution or credential finding. The only exceptions are two exact upstream lines of Umami's pinned source, named by hash (PR #166).
 
@@ -167,6 +167,32 @@ Planned:
 
 - The completed example's two package archives and their publication.
 - A request API acceptance runner (`tools/product-acceptance`).
+
+## On-the-fly bugs (custom builds)
+
+On `/factory`, the picker says “Build a custom non-security bug. Choose a behavior from an offered host.” Behaviors are grouped by host; choose one and describe it in a sentence. “Write my spec card” asks Nemotron 3 Super (`nvidia/nemotron-3-super-120b-a12b`) for a card you can edit. “Accept and build this custom bug” starts the build: Goose agents race on Nebius Token Factory models to implement the bug and its checks. Each build also includes a reference fix. The lane board shows their progress, round feedback, tokens and model spend. See the [judge guide](docs/otf/JUDGES.md) for the screens and the [OTF specification](docs/otf/SPEC.md) for the contract.
+
+| Host | Custom-build scope | Qualification |
+|---|---|---|
+| task-report service | Concurrency: a lost acknowledged change or a stale success response | The RBW harness's tier-B round, followed by a confirmation round |
+| Umami | The time-zone date/time criterion only | The local runner's admission sequence, including repeated runs and an alternative fix; no separate confirmation round |
+
+The six-cell grid compares the original suite and added checks on clean, buggy and fixed copies. Umami also shows an admission strip. Its result is development evidence, not an RBW release. For Umami, the builder chooses among supported date-grouped reports to match the card where it can; the placement may differ from the card's description.
+
+A delivered build has a certificate bound by hashes to its bundles, with the qualification results, models, spend and timings. Give the **agent bundle** to the debugging agent: it contains the buggy app and a symptom-level incident, without checks, fix or spec. Keep the **grader bundle** separate: it contains evaluator material, including the model-written checks and reference fix. Optional validation re-runs the host's qualification on the RBW builder from the stored bundles.
+
+The builder is a Nebius VM started per request and stopped when idle. A cold start adds machine start-up time; the UI shows “Starting the Nebius machine.” as its own step and gives a minute estimate only when one is configured.
+
+The [development timing evidence](docs/otf/evidence/build-time-2026-10-29.json) records these wall times for **qualifying development attempts, not finished customer builds**:
+
+| Host | Median (minutes) | p90 (minutes) |
+|---|---:|---:|
+| task-report | 15.5 | 30.9 |
+| Umami | 21.0 | 34.2 |
+
+The spec card uses the selected host's time estimate. An estimate based on this evidence is labeled as development runs and includes its sample count and measurement date. If a host has no measurement, the UI says its build times are not measured yet. These attempt times include any wait for a qualification slot. They exclude the OTF job queue, cold start, confirmation and packaging. Your bug may take longer or not qualify.
+
+Custom builds depend on current availability. A host that is not offered has a disabled group with a reason. Umami is unavailable on UTC days 2–5. With no availability response and no saved job, the custom-build section is hidden. A capacity failure offers the catalog fallback. Caps apply per lane and per job; model spend is metered as an upper bound, separately from the catalog's shared judge budget. Starting the closest catalog bug is an explicit choice, never an automatic charge.
 
 ## Deployment
 
