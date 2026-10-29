@@ -7,6 +7,7 @@
 //
 // The Postgres implementation takes a connection pool through OtfSqlPool, so this module imports no
 // driver: otfPoolFromPg adapts a node-postgres Pool, and the tests adapt PGlite.
+import { AsyncLocalStorage } from "node:async_hooks";
 import { builderEventBytes } from "./canonical.ts";
 import {
   LEASE_MS,
@@ -53,17 +54,31 @@ export interface PgPoolLike {
   connect(): Promise<{ query(text: string, params?: unknown[]): Promise<{ rows: Record<string, unknown>[] }>; release(destroy?: boolean): void }>;
 }
 
-/** Adapts a node-postgres Pool: each transaction takes a connection of its own. */
+/**
+ * Adapts a node-postgres Pool: each outermost transaction takes a connection of its own. Store calls
+ * made inside a transaction's callback (directly or through other store calls, such as a job insert
+ * under the power lock) run on that transaction's connection, as on PGlite in the tests; otherwise a
+ * few requests waiting on the power row lock could hold every pooled connection while the lock holder
+ * waits for one more.
+ */
 export function otfPoolFromPg(pool: PgPoolLike): OtfSqlPool {
+  const inTx = new AsyncLocalStorage<{ sql: OtfSql; open: boolean }>();
+  const current = (): OtfSql => {
+    const open = inTx.getStore();
+    return open?.open === true ? open.sql : pool;
+  };
   return {
-    query: (text, params) => pool.query(text, params),
+    query: (text, params) => current().query(text, params),
     async transaction(fn) {
+      const outer = inTx.getStore();
+      if (outer?.open === true) return fn(outer.sql);
       const client = await pool.connect();
+      const scope = { sql: { query: (text: string, params?: unknown[]) => client.query(text, params) }, open: true };
       let healthy = true;
       try {
         await client.query("BEGIN");
         try {
-          const result = await fn(client);
+          const result = await inTx.run(scope, () => fn(scope.sql));
           await client.query("COMMIT");
           return result;
         } catch (error) {
@@ -75,6 +90,8 @@ export function otfPoolFromPg(pool: PgPoolLike): OtfSqlPool {
           throw error;
         }
       } finally {
+        // A continuation left running from the callback goes back to the pool, never to a released connection.
+        scope.open = false;
         client.release(!healthy);
       }
     },
