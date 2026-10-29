@@ -106,6 +106,12 @@ describe("bug designer steps", () => {
     expect(blocked).toContain("A request is in progress on this page.");
     expect(blocked).toMatch(/disabled="">Use this plan/);
     expect(render(designerReducer(written, { type: "applied", appliedFor: specKey(shape.id, "umami") }))).toContain("The request form below now holds this plan.");
+    const closest = run({ type: "query", query: "date/time bugs" }, { type: "search" }, { type: "shapes", result: SHAPES }, { type: "pick_shape", shapeId: shape.id }, { type: "pick_host", hostId: "task-report" },
+      { type: "write" }, { type: "spec", result: SPEC, specFor: specKey(shape.id, "task-report") });
+    const applied = render(designerReducer(closest, { type: "applied", appliedFor: specKey(shape.id, "task-report") }));
+    expect(applied).toContain("now starts from");
+    expect(applied).toContain("the closest proven bug on this application. Your design&#x27;s own text is not copied, and the design itself is not built.");
+    expect(applied).not.toContain("now holds this plan");
   });
 });
 
@@ -127,6 +133,8 @@ describe("Use this plan", () => {
     expect(html).toContain('<option value="date_time" selected="">');
     expect(html).toContain(">daily totals use the wrong time zone</textarea>");
     expect(html).toContain("Filled from your bug design.");
+    const closestHtml = renderToStaticMarkup(<FactoryRequestForm capabilities={capabilities} disabled={false} plan={planFromShape(shape, "task-report", capabilities, 8)} onInterpret={() => undefined} onChange={() => undefined} />);
+    expect(closestHtml).toContain("Filled from your bug design with the closest proven bug on this application. Your design&#x27;s own text is not copied, so the description is empty.");
     // Without a plan the form keeps its usual default.
     expect(startingSelection(capabilities, null)).toMatchObject({ hosts: ["task-report"], bugTypeId: "concurrency", fromPlan: false });
   });

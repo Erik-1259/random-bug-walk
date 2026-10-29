@@ -79,7 +79,10 @@ function ConnectedWorkspace({ controller }: { controller: FactoryController }) {
   const [plan, setPlan] = useState<FactoryPlan | null>(null);
   useEffect(() => {
     // After "Use this plan", move to the refilled request form so keyboard and screen reader users land on it.
-    if (plan !== null) document.getElementById("factory-draft-heading")?.focus();
+    if (plan === null) return;
+    const heading = document.getElementById("factory-draft-heading");
+    heading?.scrollIntoView({ block: "start" });
+    heading?.focus({ preventScroll: true });
   }, [plan]);
   useEffect(() => {
     if (view.busy || !controller.needsPoll()) return;
