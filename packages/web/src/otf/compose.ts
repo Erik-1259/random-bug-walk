@@ -13,15 +13,15 @@
 // Fail closed: when DATABASE_URL, RBW_OTF_BUILDER_SECRET, RBW_JUDGE_PASSCODE, every host's lanes or
 // any RBW_NEBIUS_* variable is unset, the loader throws and every customer route (availability
 // included) answers unavailable; the builder routes answer unavailable on their own check.
-import { criteriaCatalogV1, criterionOf } from "@rbw/factory";
+import { criteriaCatalogV1, criterionOf, type CriteriaCatalog } from "@rbw/factory";
 import pg from "pg";
 import { loadFactoryConfig, loadOtfConfig, otfConfigured, type OtfConfig } from "../config.ts";
 import { microusd } from "./builder-handlers.ts";
 import {
   CRITERION_HOST,
   LANE_IDS,
-  OTF_CRITERION_IDS,
   OTF_HOST_IDS,
+  PROVEN_CRITERION_IDS,
   type OtfBehaviorOption,
   type OtfHostId,
   type OtfHostProfile,
@@ -76,13 +76,21 @@ export function openOtfPool(databaseUrl: string): PgPoolLike {
 
 let behaviorsCache: OtfBehaviorOption[] | null = null;
 
-/** Every OTF criterion with its label and example phrases from the factory's criteria catalog. */
+/**
+ * Every proven OTF criterion with its label and example phrases from the factory's criteria catalog.
+ * The open criterion is left out until RBW_OTF_OPEN_BEHAVIORS exists (SPEC section 8).
+ */
 export function otfBehaviors(): OtfBehaviorOption[] {
-  behaviorsCache ??= OTF_CRITERION_IDS.flatMap((criterion_id) => {
-    const found = criterionOf(criteriaCatalogV1(), criterion_id);
-    return found === null ? [] : [{ criterion_id, host_id: CRITERION_HOST[criterion_id], label: found.criterion.label, example_phrases: [...found.criterion.example_phrases] }];
-  });
+  behaviorsCache ??= otfBehaviorsFrom(criteriaCatalogV1());
   return structuredClone(behaviorsCache);
+}
+
+/** otfBehaviors over a given catalog: only proven criteria, even when the catalog names the open one. */
+export function otfBehaviorsFrom(catalog: CriteriaCatalog): OtfBehaviorOption[] {
+  return PROVEN_CRITERION_IDS.flatMap((criterion_id) => {
+    const found = criterionOf(catalog, criterion_id);
+    return found === null ? [] : [{ criterion_id, host_id: CRITERION_HOST[criterion_id], label: found.criterion.label, example_phrases: [...found.criterion.example_phrases], measured: true }];
+  });
 }
 
 function hostConfig(enabled: boolean, lanes: readonly { model: string; model_label: string }[], profile: Readonly<OtfHostProfile>, typical: OtfTypical | null): OtfCustomerHostConfig {

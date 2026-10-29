@@ -15,7 +15,7 @@ const input = {
 };
 const availability: OtfAvailability = {
   enabled: true, builder: "stopped", active_jobs: 0, queued_jobs: 0, max_queued: 4,
-  behaviors: [{ criterion_id: input.criterion_id, host_id: "task-report", label: "Synthetic lost change", example_phrases: ["An edit disappears."] }],
+  behaviors: [{ criterion_id: input.criterion_id, host_id: "task-report", label: "Synthetic lost change", example_phrases: ["An edit disappears."], measured: true }],
   hosts: [
     { host_id: "task-report", label: "task-report service", offered: true, unavailable_reason: null, active_jobs: 0, queued_jobs: 0, max_active: 2, lanes: [{ lane_id: "lane-1", model_label: "Synthetic model" }], deadline_min: 45, typical: null },
     { host_id: "umami", label: "Umami", offered: false, unavailable_reason: "calendar", active_jobs: 0, queued_jobs: 0, max_active: 1, lanes: [{ lane_id: "lane-1", model_label: "Synthetic model" }], deadline_min: 60, typical: null },

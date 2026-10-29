@@ -4,6 +4,7 @@
 // requests. Every value is invented: models, lanes, builder ids, spec text and bundle bytes.
 import { createHash } from "node:crypto";
 import { gzipSync } from "node:zlib";
+import { criteriaCatalogV1, criterionOf } from "@rbw/factory";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { GET as availabilityRoute } from "../../app/api/factory/otf/availability/route.ts";
 import { GET as artifactRoute } from "../../app/api/factory/otf/jobs/[id]/artifacts/[part]/route.ts";
@@ -13,12 +14,13 @@ import { loadOtfConfig, type OtfConfig } from "../../src/config.ts";
 import { factorySessionCookie } from "../../src/factory-server/session.ts";
 import { builderHeaders } from "../../src/otf/builder-auth.ts";
 import { postClaim, postEvents, postResult, type OtfBuilderDeps } from "../../src/otf/builder-handlers.ts";
-import { specSha256 } from "../../src/otf/canonical.ts";
+import { ruleSha256, specSha256 } from "../../src/otf/canonical.ts";
 import {
   OTF_LIFECYCLE,
   OtfNotConfiguredError,
   liveOtfCustomerDependencies,
   otfBehaviors,
+  otfBehaviorsFrom,
   otfCustomerDependencies,
   otfCustomerLoader,
 } from "../../src/otf/compose.ts";
@@ -28,16 +30,19 @@ import {
   CERTIFICATE_RUNNER,
   COPY_LIMITS,
   EXPECTED_CELLS,
+  OTF_OPEN_CRITERION_ID,
+  PROVEN_CRITERION_IDS,
   TOKEN_FACTORY_PROVIDER,
   type BuilderEventIn,
   type NebiusInstanceState,
+  type OtfBehaviorOption,
   type OtfCertificate,
   type OtfCreateJob,
   type OtfSpecCard,
   type ResultPost,
   type VmPower,
 } from "../../src/otf/contract.ts";
-import { calendarReason, setOtfCustomerDependencies } from "../../src/otf/handlers.ts";
+import { calendarReason, cardInScope, setOtfCustomerDependencies } from "../../src/otf/handlers.ts";
 import { requestStart as lifecycleRequestStart } from "../../src/otf/power/lifecycle.ts";
 import { parseOtf, type OtfBodies, type OtfSchemaName } from "../../src/otf/schemas.ts";
 import { createMemoryOtfStore, type MemoryOtfStore } from "../../src/otf/store.ts";
@@ -326,6 +331,40 @@ describe("the composed OTF server", () => {
       expect(behavior.label.length).toBeGreaterThan(0);
       expect(behavior.example_phrases.length).toBeGreaterThan(0);
     }
+  });
+
+  it("neither offers nor accepts the open behavior: availability lists the three proven behaviors and an open create answers invalid_spec", async () => {
+    const w = world("2026-10-29T12:00:00.000Z");
+    const availability = await parsed("OtfAvailability", await availabilityRoute(customer("/api/factory/otf/availability")));
+    expect(availability.behaviors.map((behavior) => behavior.criterion_id)).toEqual([...PROVEN_CRITERION_IDS]);
+    expect(availability.behaviors.every((behavior) => behavior.measured)).toBe(true);
+    const rule = { family: "data_handling" as const, observable_failure: "The synthetic report total omits a task completed through the API.", failure_code: "synthetic_total_mismatch" };
+    const open = { ...(await createBody()), criterion_id: OTF_OPEN_CRITERION_ID, rule, rule_sha256: await ruleSha256(rule) };
+    const refused = await createRoute(customer("/api/factory/otf/jobs", open));
+    expect(refused.status).toBe(422);
+    expect(await errorCode(refused)).toBe("invalid_spec");
+    expect(await w.store.listJobs(["queued", "starting_builder", "building", "finished"])).toEqual([]);
+    expect(w.requestStart).not.toHaveBeenCalled();
+  });
+
+  it("leaves the open behavior out even when the catalog and the offered behaviors name it", async () => {
+    // The factory catalog has no open criterion, so the test above cannot tell the exclusion from its absence.
+    // A copy, so the catalog the other tests read stays unchanged.
+    const catalog = structuredClone(criteriaCatalogV1());
+    const bugType = catalog.bug_types[0];
+    const template = bugType?.criteria[0];
+    if (bugType === undefined || template === undefined) throw new Error("the factory catalog has no criteria");
+    bugType.criteria.push({ ...structuredClone(template), criterion_id: OTF_OPEN_CRITERION_ID });
+    expect(criterionOf(catalog, OTF_OPEN_CRITERION_ID)).not.toBeNull();
+    expect(otfBehaviorsFrom(catalog).map((behavior) => behavior.criterion_id)).toEqual([...PROVEN_CRITERION_IDS]);
+    expect(otfBehaviorsFrom(criteriaCatalogV1())).toEqual(otfBehaviors());
+
+    const behaviors: OtfBehaviorOption[] = [...otfBehaviors(), { criterion_id: OTF_OPEN_CRITERION_ID, host_id: "task-report", label: "Synthetic open behavior", example_phrases: [], measured: false }];
+    const offered = { behaviors };
+    const proven = await createBody();
+    expect(cardInScope(offered, proven)).toBe(true);
+    const rule = { family: "data_handling" as const, observable_failure: "The synthetic report total omits a task completed through the API.", failure_code: "synthetic_total_mismatch" };
+    expect(cardInScope(offered, { ...proven, criterion_id: OTF_OPEN_CRITERION_ID, rule, rule_sha256: await ruleSha256(rule) })).toBe(false);
   });
 
   it("fails closed: with a required variable unset every customer route answers unavailable", async () => {

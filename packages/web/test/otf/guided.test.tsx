@@ -8,11 +8,11 @@ import { FactoryController, REQUEST_KEY, type Capabilities, type FactoryClient, 
 import type { OtfBehaviorOption, OtfHostAvailability, OtfSpecCard } from "../../src/otf/contract.ts";
 import { UMAMI_CALENDAR_REASON } from "../../src/factory/format.ts";
 
-const behavior: OtfBehaviorOption = { criterion_id: "concurrency.lost-acknowledged-change", host_id: "task-report", label: "Synthetic overlapping edits", example_phrases: ["A synthetic edit disappears."] };
+const behavior: OtfBehaviorOption = { criterion_id: "concurrency.lost-acknowledged-change", host_id: "task-report", label: "Synthetic overlapping edits", example_phrases: ["A synthetic edit disappears."], measured: true };
 const spec: OtfSpecCard = { title: "Synthetic edit", where: "Synthetic save handler", change: "An overlapping edit is lost.", why_tests_miss: "Existing tests save one edit.", checks_to_add: ["Save two synthetic edits."], fix: "Keep both edits." };
 const capabilities = JSON.parse(readFileSync(new URL("../fixtures/factory-v1/capabilities.json", import.meta.url), "utf8")) as Capabilities;
 const noop = () => undefined;
-const umamiBehavior: OtfBehaviorOption = { criterion_id: "date_time.time-zone-grouping", host_id: "umami", label: "Synthetic time-zone grouping", example_phrases: ["A synthetic day lands in the wrong bucket."] };
+const umamiBehavior: OtfBehaviorOption = { criterion_id: "date_time.time-zone-grouping", host_id: "umami", label: "Synthetic time-zone grouping", example_phrases: ["A synthetic day lands in the wrong bucket."], measured: true };
 const taskReport: OtfHostAvailability = { host_id: "task-report", label: "task-report service", offered: true, unavailable_reason: null, active_jobs: 0, queued_jobs: 0, max_active: 2, lanes: [{ lane_id: "lane-1", model_label: "Synthetic model" }], deadline_min: 45, typical: null };
 const umami: OtfHostAvailability = { host_id: "umami", label: "Umami", offered: true, unavailable_reason: null, active_jobs: 0, queued_jobs: 0, max_active: 1, lanes: [{ lane_id: "lane-1", model_label: "Synthetic model" }], deadline_min: 60, typical: null };
 const hosts = [taskReport, umami];
