@@ -5,8 +5,8 @@
 // enums and event union are closed, and OTF does not revise them.
 //
 // This module holds types and constants only, plus small pure helpers (the signing string, the
-// criterion-to-host lookup, the lane stage order and the host calendar), so the browser bundle can
-// import it. Runtime validators live in schemas.ts and canonical hashing in canonical.ts.
+// criterion-to-host lookup, the proven-criterion check, the lane stage order and the host calendar),
+// so the browser bundle can import it. Runtime validators live in schemas.ts and canonical hashing in canonical.ts.
 // docs/otf/SPEC.md explains the behavior around these types.
 
 export const OTF_CONTRACT_VERSION = "otf/0";
@@ -28,12 +28,23 @@ export const OTF_HOST_LABELS: Readonly<Record<OtfHostId, string>> = Object.freez
   umami: "Umami",
 });
 
-/** The criteria the contract knows. Availability lists the ones offered right now. */
-export const OTF_CRITERION_IDS = [
+/**
+ * The open criterion: any other non-security behavior on the task-report host, graded by the rule
+ * the customer submits (OtfOpenRule) instead of a catalog criterion. SPEC section 8. Production
+ * neither offers nor accepts it until the server branch adds RBW_OTF_OPEN_BEHAVIORS.
+ */
+export const OTF_OPEN_CRITERION_ID = "open.task-report-behavior";
+
+/** The criteria with a catalog definition and a fixed failure code. Their build times can be measured. */
+export const PROVEN_CRITERION_IDS = [
   "concurrency.lost-acknowledged-change",
   "concurrency.stale-success-response",
   "date_time.time-zone-grouping",
 ] as const;
+export type ProvenCriterionId = (typeof PROVEN_CRITERION_IDS)[number];
+
+/** The criteria the contract knows: the proven ones, then the open one. Availability lists the ones offered right now. */
+export const OTF_CRITERION_IDS = [...PROVEN_CRITERION_IDS, OTF_OPEN_CRITERION_ID] as const;
 export type OtfCriterionId = (typeof OTF_CRITERION_IDS)[number];
 
 /** The one host each criterion is built on. A create names both; production refuses a mismatch. */
@@ -41,7 +52,66 @@ export const CRITERION_HOST: Readonly<Record<OtfCriterionId, OtfHostId>> = Objec
   "concurrency.lost-acknowledged-change": "task-report",
   "concurrency.stale-success-response": "task-report",
   "date_time.time-zone-grouping": "umami",
+  [OTF_OPEN_CRITERION_ID]: "task-report",
 });
+
+/** The failure code each proven criterion's checks report. An open rule may not reuse one. */
+export const PROVEN_FAILURE_CODE: Readonly<Record<ProvenCriterionId, string>> = Object.freeze({
+  "concurrency.lost-acknowledged-change": "acknowledged_completion_not_counted",
+  "concurrency.stale-success-response": "stale_success_response",
+  "date_time.time-zone-grouping": "local_day_counts_mismatch",
+});
+/** The proven failure codes, in PROVEN_CRITERION_IDS order. */
+export const PROVEN_FAILURE_CODES = [
+  "acknowledged_completion_not_counted",
+  "stale_success_response",
+  "local_day_counts_mismatch",
+] as const;
+/**
+ * Codes the builder's harness uses as its own markers when it judges a round. A rule reporting one
+ * could never qualify, so an open rule may not use them either.
+ */
+export const OTF_RESERVED_FAILURE_CODES = ["control_failed", "detection_inconsistent"] as const;
+
+/** True for the three proven criteria, false for the open one. */
+export function isProvenCriterion(id: OtfCriterionId): id is ProvenCriterionId {
+  return (PROVEN_CRITERION_IDS as readonly string[]).includes(id);
+}
+
+/** The open behavior's picker label. */
+export const OTF_OPEN_LABEL = "Another non-security behavior (not measured yet)";
+/** The time copy an open behavior shows in place of any time figure (SPEC section 8.7). */
+export const OTF_OPEN_TIME_COPY = "Build times for this kind of behavior are not measured yet. The board shows each step as it runs.";
+
+/** The bug families an open rule names. */
+export const OTF_OPEN_FAMILIES = ["concurrency", "date_time", "data_handling", "state_ui"] as const;
+export type OtfOpenFamily = (typeof OTF_OPEN_FAMILIES)[number];
+
+/**
+ * observable_failure limits, in Unicode code points (as Ajv's minLength/maxLength count). A UI must
+ * count the same way ([...text].length), not UTF-16 code units (text.length or an input's maxlength),
+ * or an emoji or other astral character counts twice there.
+ */
+export const OBSERVABLE_FAILURE_MIN_CHARS = 40;
+export const OBSERVABLE_FAILURE_MAX_CHARS = 600;
+/** An open rule's failure_code (JSON-schema pattern source); it also may not be one of PROVEN_FAILURE_CODES or OTF_RESERVED_FAILURE_CODES. */
+export const OPEN_FAILURE_CODE_PATTERN = "^[a-z][a-z0-9_]{2,47}$";
+
+/**
+ * The grading rule of an open behavior: what the added checks observe and the failure code they
+ * report on the buggy copy. The classifier proposes it; the customer may edit it; production
+ * validates what is submitted.
+ */
+export interface OtfOpenRule {
+  family: OtfOpenFamily;
+  /**
+   * OBSERVABLE_FAILURE_MIN_CHARS..OBSERVABLE_FAILURE_MAX_CHARS code points of plain text (no control,
+   * line or paragraph separator, or format characters): what a check observes through the app's routes.
+   */
+  observable_failure: string;
+  /** Matches OPEN_FAILURE_CODE_PATTERN and is none of PROVEN_FAILURE_CODES or OTF_RESERVED_FAILURE_CODES. */
+  failure_code: string;
+}
 
 /** The criteria of one host, in OTF_CRITERION_IDS order. */
 export function criteriaOf(host: OtfHostId): OtfCriterionId[] {
@@ -151,9 +221,11 @@ export type BuilderState = (typeof BUILDER_STATES)[number];
 export interface OtfBehaviorOption {
   criterion_id: OtfCriterionId;
   host_id: OtfHostId;
-  /** The capabilities criteria label. */
+  /** The capabilities criteria label; OTF_OPEN_LABEL for the open behavior. */
   label: string;
   example_phrases: string[];
+  /** true for the proven behaviors, false for the open one (its build times are not measured). */
+  measured: boolean;
 }
 
 /**
@@ -186,7 +258,54 @@ export interface OtfCreateJob {
   spec_sha256: string;
   /** The catalog request the customer also started, when there is one. */
   catalog_request_id?: string;
+  /** Required when criterion_id is OTF_OPEN_CRITERION_ID, forbidden otherwise. */
+  rule?: OtfOpenRule;
+  /** ruleSha256(rule) from canonical.ts, exactly when rule is set; production recomputes it and refuses a mismatch. */
+  rule_sha256?: string;
 }
+
+/** POST /api/factory/otf/classify: the same judge session as /api/factory/assist/bug-spec. */
+export const OTF_CLASSIFY_PATH = "/api/factory/otf/classify";
+
+export interface OtfClassifyRequest {
+  /** The customer's own words, SENTENCE_MIN_CHARS..SENTENCE_MAX_CHARS. */
+  sentence: string;
+  spec: OtfSpecCard;
+  /** The host the customer picked, when they picked one. */
+  host_id?: OtfHostId;
+}
+
+export const OTF_CLASSIFY_REFUSAL_KINDS = ["security", "out_of_scope"] as const;
+export type OtfClassifyRefusalKind = (typeof OTF_CLASSIFY_REFUSAL_KINDS)[number];
+export const CLASSIFY_REASON_MAX_CHARS = 300;
+
+/** A host and criterion pair the customer may build (host_id equals CRITERION_HOST[criterion_id]). */
+export interface OtfBuildableOption {
+  host_id: OtfHostId;
+  criterion_id: OtfCriterionId;
+}
+
+/**
+ * The classifier's answer: advisory, so the customer may edit the rule and production validates what
+ * is submitted. Invariants (enforced by validateOtf): a refusal means buildable is empty and rule
+ * and proven_criterion_id are null; no refusal means a family and at least one buildable entry; the
+ * open criterion in buildable means rule is non-null; a non-null proven_criterion_id means buildable
+ * includes it.
+ */
+export interface OtfClassification {
+  /** null only on a refusal. */
+  family: OtfOpenFamily | null;
+  /** The proven criterion the card matches, or null. */
+  proven_criterion_id: ProvenCriterionId | null;
+  buildable: OtfBuildableOption[];
+  rule: OtfOpenRule | null;
+  refusal: { kind: OtfClassifyRefusalKind; reason: string } | null;
+  /** The classifier model. */
+  model: string;
+}
+
+/** The error codes the classify route answers with, in the shared OtfErrorBody. */
+export const OTF_CLASSIFY_ERRORS = ["signed_out", "invalid_request", "refused_topic", "unavailable"] as const satisfies readonly OtfErrorCode[];
 
 /** 201 on a new job, 200 on an idempotent replay. */
 export interface OtfCreateResponse {
@@ -440,6 +559,8 @@ export interface OtfJobStatus {
   criterion_id: OtfCriterionId;
   spec: OtfSpecCard;
   spec_sha256: string;
+  /** The submitted rule, exactly when criterion_id is OTF_OPEN_CRITERION_ID. */
+  rule?: OtfOpenRule;
   /** null until claimed: the deadline runs from the claim. */
   deadline_at: string | null;
   elapsed_ms: number;
@@ -541,7 +662,13 @@ interface OtfCertificateBase {
   job_id: OtfJobId;
   /** The clean host app's source commit (40 hex): the task-report app, or upstream Umami. */
   app_base_commit: string;
-  criterion: { criterion_id: OtfCriterionId; version: "1"; failure_code: string };
+  /**
+   * version "1" for a proven criterion; "open-1" exactly for OTF_OPEN_CRITERION_ID, whose
+   * failure_code then equals rule.failure_code.
+   */
+  criterion: { criterion_id: OtfCriterionId; version: "1" | "open-1"; failure_code: string };
+  /** The job's rule, exactly when the criterion is the open one. */
+  rule?: OtfOpenRule;
   /** The customer's accepted card. The certificate never names the planted file, line or check ids. */
   spec_sha256: string;
   designer: { model: string; route: "bug-spec" };
@@ -706,6 +833,8 @@ export interface BuildJob {
   spec: OtfSpecCard;
   spec_sha256: string;
   sentence: string;
+  /** The job's rule, present only for OTF_OPEN_CRITERION_ID jobs, so a proven job is unchanged. */
+  rule?: OtfOpenRule;
   lanes: BuildJobLane[];
   limits: {
     max_rounds: 3;
@@ -881,6 +1010,8 @@ export interface OtfJobRecord {
   sentence: string;
   spec: OtfSpecCard;
   spec_sha256: string;
+  /** The open rule (column rule, otf-migrations/0002_otf_open.sql); absent or null on proven jobs. */
+  rule?: OtfOpenRule | null;
   state: OtfJobState;
   outcome: OtfOutcome | null;
   reason: string | null;
@@ -911,6 +1042,8 @@ export interface OtfNewJob {
   sentence: string;
   spec: OtfSpecCard;
   spec_sha256: string;
+  /** The open rule; absent or null on proven jobs. */
+  rule?: OtfOpenRule | null;
   state: "queued" | "starting_builder";
   catalog_request_id: string | null;
 }
@@ -1007,8 +1140,11 @@ export interface OtfStore {
   /**
    * Applies the patch only when the job's state is one of `whenStates` (a compare-and-set, so two
    * finishes cannot both win). Returns the updated record, or null when the state did not match.
+   * With `when.quietSince`, it also applies only while the job's last builder post (its claim, before
+   * any post) is at or before that time, checked in the same statement, so a builder_lost finish
+   * cannot overtake a post that lands after the job was read.
    */
-  updateJob(job_id: OtfJobId, whenStates: readonly OtfJobState[], patch: JobPatch): Promise<OtfJobRecord | null>;
+  updateJob(job_id: OtfJobId, whenStates: readonly OtfJobState[], patch: JobPatch, when?: { quietSince: string }): Promise<OtfJobRecord | null>;
 
   /** Appends one production event with the next seq; returns the stored event. */
   appendJobEvent(job_id: OtfJobId, event: ProductionEvent, at: string): Promise<OtfEvent>;

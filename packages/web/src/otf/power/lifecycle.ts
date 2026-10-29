@@ -14,7 +14,8 @@
 // - Claims share the power row lock and claim nothing while it reads stopping, so a claim never
 //   starts work between a stop decision and its Stop call.
 // - A watchdog stop finishes the building jobs with no recent post builder_lost and every running
-//   validation error, since the builder they ran on is stopping.
+//   validation error, since the builder they ran on is stopping. A watchdog Get that finds the
+//   instance stopped finishes every running validation error too, under the power lock.
 // - A start error finishes every waiting job builder_start_failed with its reason; so does a start
 //   that brought no healthy claim within START_TIMEOUT_MS.
 // - A stopped or starting builder starts for a job of any host. Once a fresh heartbeat leaves a
@@ -490,21 +491,28 @@ export async function runWatchdog(deps: PowerDeps): Promise<WatchdogResult> {
       }
     }
 
+    let got: Awaited<ReturnType<VmPower["get"]>>;
     try {
-      const got = await deps.power.get();
-      const observed = observe(current, got.state, got.preset, at, heartbeatFresh);
-      const extra: Partial<OtfPowerRecord> = { ...observed, last_api_call_at: iso };
-      let followUp: FollowUp | null = null;
-      // A start the instance never followed: count it as a failed start.
-      const lastStart = ms(current.last_start_at);
-      if (got.state === "STOPPED" && current.state === "starting" && lastStart !== null && at - lastStart >= START_SETTLE_MS) {
-        extra.start_failures = current.start_failures + 1;
-        followUp = { kind: "start_failed", reason: "api_error" };
-      }
-      return finish("get", held ? "hold" : "refresh", extra, [log(at, "watchdog", "get", current.instance_state, got.state, null)], followUp);
+      got = await deps.power.get();
     } catch {
       return finish("get", "error", { last_api_call_at: iso }, [log(at, "watchdog", "get", current.instance_state, "error", null)]);
     }
+    const observed = observe(current, got.state, got.preset, at, heartbeatFresh);
+    const extra: Partial<OtfPowerRecord> = { ...observed, last_api_call_at: iso };
+    let followUp: FollowUp | null = null;
+    // A start the instance never followed: count it as a failed start.
+    const lastStart = ms(current.last_start_at);
+    if (got.state === "STOPPED" && current.state === "starting" && lastStart !== null && at - lastStart >= START_SETTLE_MS) {
+      extra.start_failures = current.start_failures + 1;
+      followUp = { kind: "start_failed", reason: "api_error" };
+    }
+    if (got.state === "STOPPED" && (extra.state ?? current.state) === "stopped") {
+      // The machine stopped without a stop from this module (a watchdog Stop already ends them), so a
+      // validation still running on it can never post its result. This runs under the lock: claimNext
+      // waits for it, so a validation claimed after a later start is never ended here.
+      await finishRunningValidations(deps.store, iso);
+    }
+    return finish("get", held ? "hold" : "refresh", extra, [log(at, "watchdog", "get", current.instance_state, got.state, null)], followUp);
   });
 
   await applyFollowUp(deps.store, outcome.followUp, iso);

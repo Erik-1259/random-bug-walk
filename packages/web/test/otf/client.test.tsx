@@ -15,7 +15,7 @@ const input = {
 };
 const availability: OtfAvailability = {
   enabled: true, builder: "stopped", active_jobs: 0, queued_jobs: 0, max_queued: 4,
-  behaviors: [{ criterion_id: input.criterion_id, host_id: "task-report", label: "Synthetic lost change", example_phrases: ["An edit disappears."] }],
+  behaviors: [{ criterion_id: input.criterion_id, host_id: "task-report", label: "Synthetic lost change", example_phrases: ["An edit disappears."], measured: true }],
   hosts: [
     { host_id: "task-report", label: "task-report service", offered: true, unavailable_reason: null, active_jobs: 0, queued_jobs: 0, max_active: 2, lanes: [{ lane_id: "lane-1", model_label: "Synthetic model" }], deadline_min: 45, typical: null },
     { host_id: "umami", label: "Umami", offered: false, unavailable_reason: "calendar", active_jobs: 0, queued_jobs: 0, max_active: 1, lanes: [{ lane_id: "lane-1", model_label: "Synthetic model" }], deadline_min: 60, typical: null },
@@ -413,6 +413,32 @@ describe("OTF review fixes and host refusals", () => {
     await c.controller.poll(); expect(c.api.status).toHaveBeenCalledTimes(1);
     pending.resolve(await status({ events: [], next_after: 1 })); await polling;
     expect(c.controller.snapshot()).toMatchObject({ busy: false, polling: false });
+  });
+  it("does not stop a replacement job that another tab saved after this tab showed the earlier one", async () => {
+    const c = await setup(); await c.controller.create(input); serveStatus(c.api, await status());
+    const stale = new OtfController(c.api, c.storage, c.uuid, c.lock); await stale.initialize();
+    expect(stale.snapshot()).toMatchObject({ jobId: JOB, status: { state: "queued" } });
+    const done = await status({ state: "finished", outcome: "cancelled" }); const next = await status({ job_id: OTHER });
+    c.api.status.mockImplementation((id, after = 0) => { const value = id === JOB ? done : next; return Promise.resolve({ ...value, events: value.events.filter(event => event.seq > after) }); });
+    await c.controller.initialize(); await c.controller.newDraft();
+    c.uuid.mockReturnValue("00000000-0000-4000-8000-000000000004"); c.api.create.mockResolvedValue({ job_id: OTHER, status: await status({ job_id: OTHER }) });
+    await c.controller.create(input); expect(c.controller.snapshot().jobId).toBe(OTHER);
+    await stale.stop();
+    expect(c.api.stop).not.toHaveBeenCalled();
+    expect(stale.snapshot()).toMatchObject({ jobId: OTHER, stopRequested: false, status: { job_id: OTHER, state: "queued" } });
+  });
+  it("does not stop a replacement job that an awaited poll adopts after the click", async () => {
+    vi.useFakeTimers(); const c = await setup(); await c.controller.create(input); serveStatus(c.api, await status());
+    const stale = new OtfController(c.api, c.storage, c.uuid, c.lock); await stale.initialize();
+    const done = await status({ state: "finished", outcome: "cancelled" }); const next = await status({ job_id: OTHER });
+    c.api.status.mockImplementation((id, after = 0) => { const value = id === JOB ? done : next; return Promise.resolve({ ...value, events: value.events.filter(event => event.seq > after) }); });
+    await c.controller.initialize(); await c.controller.newDraft();
+    c.uuid.mockReturnValue("00000000-0000-4000-8000-000000000004"); c.api.create.mockResolvedValue({ job_id: OTHER, status: await status({ job_id: OTHER }) });
+    await c.controller.create(input); await vi.advanceTimersByTimeAsync(2000);
+    expect(stale.snapshot()).toMatchObject({ jobId: JOB, status: { job_id: JOB, state: "queued" } });
+    const polling = stale.poll(); const stopping = stale.stop(); await Promise.all([polling, stopping]);
+    expect(c.api.stop).not.toHaveBeenCalled();
+    expect(stale.snapshot()).toMatchObject({ jobId: OTHER, stopRequested: false, status: { job_id: OTHER } });
   });
   it("records a stop sent from this tab", async () => {
     const c = await setup(); await c.controller.create(input); c.api.stop.mockResolvedValue(await status({ state: "finished", outcome: "delivered" }));

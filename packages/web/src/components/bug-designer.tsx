@@ -10,6 +10,8 @@ import { CALENDAR_HINT, calendarClosedHosts, calendarFallback, formatDateTime } 
 export const DESIGNER_EXAMPLES: readonly string[] = ["date/time bugs", "race conditions", "lost updates"];
 export const DESIGNER_CREDIT = "Designed by NVIDIA Nemotron 3 Super on Nebius Token Factory · sources found with Tavily";
 export const CATALOG_HONESTY = "Today Random Bug Walk delivers the closest proven bug from its catalog, re-verified live on fresh clean, buggy and fixed copies.";
+/** Where custom builds are enabled: this design is a starting point, and "Build a custom bug" writes the card that is built. */
+export const OTF_DESIGNER_NOTE = "A catalog request delivers the closest proven bug from the catalog, re-verified live on fresh clean, buggy and fixed copies. This design is not built as written. To have a new bug built, use \u201cBuild a custom bug\u201d above: it writes its own spec card from one sentence, and you can edit that card before you accept it.";
 
 const FALLBACK_HOST_LABELS: Readonly<Record<string, string>> = { umami: "Umami", "task-report": "Task and report service" };
 
@@ -131,7 +133,7 @@ export function BugDesignerView({ signedIn, capabilities, closedHosts = calendar
       <button type="button" disabled={state.busy !== null || state.hostId === null} onClick={onWrite}>Write the bug specification</button>
     </fieldset>}
     {shape !== null && spec !== null && state.hostId !== null && <SpecCard state={state} capabilities={capabilities} closedHosts={closedHosts} applyBlocked={applyBlocked} onUsePlan={onUsePlan} dispatch={dispatch} />}
-    <p className="factory-note">{CATALOG_HONESTY}{otfEnabled && <> For a task-report design, custom builds are available above. Building this exact design is the next step.</>}</p>
+    <p className="factory-note">{otfEnabled ? OTF_DESIGNER_NOTE : CATALOG_HONESTY}</p>
   </section>;
 }
 
@@ -173,7 +175,9 @@ function SpecCard({ state, capabilities, closedHosts = [], applyBlocked, onUsePl
           dispatch({ type: "applied", appliedFor: key });
           onUsePlan(plan);
         }}>Use this plan</button>
-        <p role="status" aria-live="polite">{state.appliedFor === key ? "The request form below now holds this plan. Review it there." : ""}</p>
+        <p role="status" aria-live="polite">{state.appliedFor !== key ? "" : preview.exact
+          ? "The request form below now holds this plan. Review it there."
+          : `The request form below now starts from ${hostLabel(capabilities, preview.host_id)}, ${bugTypeLabel(capabilities, preview.bug_type_id)}: the closest proven bug on this application. Your design's own text is not copied, and the design itself is not built. Review it there.`}</p>
       </>}
   </article>;
 }

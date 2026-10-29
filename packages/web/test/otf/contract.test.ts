@@ -2,7 +2,7 @@
 // schema against synthetic examples (invented values; no real job, model output or check content).
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { builderEventBytes, canonicalJson, createSha256, sha256Hex, specSha256 } from "../../src/otf/canonical.ts";
+import { builderEventBytes, canonicalJson, createSha256, ruleCanonical, ruleSha256, sha256Hex, specSha256 } from "../../src/otf/canonical.ts";
 import * as contract from "../../src/otf/contract.ts";
 import {
   BUILDER_EVENT_TYPES,
@@ -10,8 +10,20 @@ import {
   EXPECTED_CELLS,
   LANE_STAGE_NEXT,
   LANE_STAGES,
+  OTF_CLASSIFY_ERRORS,
+  OTF_CLASSIFY_PATH,
+  OTF_CONTRACT_VERSION,
   OTF_CRITERION_IDS,
   OTF_HOST_DEFAULTS,
+  OTF_OPEN_CRITERION_ID,
+  OTF_OPEN_FAMILIES,
+  OTF_OPEN_LABEL,
+  OTF_OPEN_TIME_COPY,
+  PROVEN_CRITERION_IDS,
+  PROVEN_FAILURE_CODE,
+  OTF_RESERVED_FAILURE_CODES,
+  PROVEN_FAILURE_CODES,
+  isProvenCriterion,
   OTF_HOST_IDS,
   PART_MAX_BYTES_BY_PART,
   RESULT_BODY_MAX_BYTES,
@@ -29,9 +41,11 @@ import {
   type BuilderEventIn,
   type OtfAvailability,
   type OtfCertificate,
+  type OtfClassification,
   type OtfCreateJob,
   type OtfEvent,
   type OtfJobStatus,
+  type OtfOpenRule,
   type OtfSpecCard,
   type ResultPost,
   type SixCells,
@@ -160,7 +174,7 @@ const availability = (): OtfAvailability => ({
   active_jobs: 0,
   queued_jobs: 0,
   max_queued: 4,
-  behaviors: [{ criterion_id: "concurrency.lost-acknowledged-change", host_id: "task-report", label: "Lost change", example_phrases: ["my edit vanished"] }],
+  behaviors: [{ criterion_id: "concurrency.lost-acknowledged-change", host_id: "task-report", label: "Lost change", example_phrases: ["my edit vanished"], measured: true }],
   hosts: [
     {
       host_id: "task-report",
@@ -396,7 +410,7 @@ describe("hosts and the Umami profile", () => {
   it("pairs every criterion with one host and lists each host's criteria", () => {
     expect(Object.keys(CRITERION_HOST)).toEqual([...OTF_CRITERION_IDS]);
     expect(criteriaOf("umami")).toEqual(["date_time.time-zone-grouping"]);
-    expect(criteriaOf("task-report")).toEqual(["concurrency.lost-acknowledged-change", "concurrency.stale-success-response"]);
+    expect(criteriaOf("task-report")).toEqual(["concurrency.lost-acknowledged-change", "concurrency.stale-success-response", "open.task-report-behavior"]);
     expect(Object.keys(OTF_HOST_DEFAULTS).sort()).toEqual([...OTF_HOST_IDS].sort());
     expect(OTF_HOST_DEFAULTS.umami.deadline_ms).toBeGreaterThan(OTF_HOST_DEFAULTS.umami.round_min_remaining_ms);
   });
@@ -469,5 +483,253 @@ describe("hosts and the Umami profile", () => {
     expect(validateOtf("BuilderEventIn", finished)).toEqual([]);
     expect(validateOtf("ResultReply", { job_id: JOB, state: "finished", outcome: "delivered" })).toEqual([]);
     expect(validateOtf("ResultReply", { job_id: JOB, state: "building", outcome: "delivered" })).not.toEqual([]);
+  });
+});
+
+// ---- open behaviors (SPEC section 8)
+
+const RULE: OtfOpenRule = {
+  family: "data_handling",
+  observable_failure: "The synthetic weekly report omits a task that was completed through the API.",
+  failure_code: "synthetic_report_omits_task",
+};
+const openCreate = async (extra: Partial<OtfCreateJob> = {}): Promise<OtfCreateJob> =>
+  create({ criterion_id: OTF_OPEN_CRITERION_ID, rule: RULE, rule_sha256: await ruleSha256(RULE), ...extra });
+const without = (value: object, key: string): Record<string, unknown> => Object.fromEntries(Object.entries(value).filter(([member]) => member !== key));
+
+const OPEN_CERTIFICATE: OtfCertificate = {
+  ...CERTIFICATE,
+  criterion: { criterion_id: OTF_OPEN_CRITERION_ID, version: "open-1", failure_code: RULE.failure_code },
+  rule: RULE,
+};
+
+const CLASSIFIED: OtfClassification = {
+  family: "concurrency",
+  proven_criterion_id: "concurrency.stale-success-response",
+  buildable: [
+    { host_id: "task-report", criterion_id: "concurrency.stale-success-response" },
+    { host_id: "task-report", criterion_id: OTF_OPEN_CRITERION_ID },
+  ],
+  rule: { ...RULE, family: "concurrency", failure_code: "synthetic_stale_answer" },
+  refusal: null,
+  model: "synthetic/classifier",
+};
+
+describe("open behaviors: constants", () => {
+  it("adds the open criterion on task-report after the three proven ones, and keeps the contract version", () => {
+    expect(OTF_OPEN_CRITERION_ID).toBe("open.task-report-behavior");
+    expect(OTF_CRITERION_IDS).toEqual([...PROVEN_CRITERION_IDS, OTF_OPEN_CRITERION_ID]);
+    expect(PROVEN_CRITERION_IDS).toEqual(["concurrency.lost-acknowledged-change", "concurrency.stale-success-response", "date_time.time-zone-grouping"]);
+    expect(CRITERION_HOST[OTF_OPEN_CRITERION_ID]).toBe("task-report");
+    expect(criteriaOf("umami")).not.toContain(OTF_OPEN_CRITERION_ID);
+    expect(OTF_CRITERION_IDS.filter(isProvenCriterion)).toEqual([...PROVEN_CRITERION_IDS]);
+    expect(OTF_CONTRACT_VERSION).toBe("otf/0");
+  });
+  it("names the proven failure codes, the label, the time copy, the families and the classify route", () => {
+    expect(PROVEN_FAILURE_CODE).toEqual({
+      "concurrency.lost-acknowledged-change": "acknowledged_completion_not_counted",
+      "concurrency.stale-success-response": "stale_success_response",
+      "date_time.time-zone-grouping": "local_day_counts_mismatch",
+    });
+    expect(PROVEN_FAILURE_CODES).toEqual(PROVEN_CRITERION_IDS.map((id) => PROVEN_FAILURE_CODE[id]));
+    expect(OTF_OPEN_LABEL).toBe("Another non-security behavior (not measured yet)");
+    expect(OTF_OPEN_TIME_COPY).toBe("Build times for this kind of behavior are not measured yet. The board shows each step as it runs.");
+    expect(OTF_OPEN_FAMILIES).toEqual(["concurrency", "date_time", "data_handling", "state_ui"]);
+    expect(OTF_CLASSIFY_PATH).toBe("/api/factory/otf/classify");
+    expect([...OTF_CLASSIFY_ERRORS].sort()).toEqual(["invalid_request", "refused_topic", "signed_out", "unavailable"]);
+    for (const code of OTF_CLASSIFY_ERRORS) expect(OTF_ERROR_CODES).toContain(code);
+  });
+});
+
+describe("open behaviors: hashes", () => {
+  it("keeps the create hash of a body without a rule byte-identical to the pre-change contract", async () => {
+    const body = await create();
+    expect(body.spec_sha256).toBe("4d271c364a3f98f4e8215bdc54d2f69772513614305eae2756d1c254b2f81b85");
+    expect(await createSha256(body)).toBe("7f10da12b91b07ada8b1c98e3b7111a674d9db3f8b6649126537a75f67d4bcdb");
+    expect(await createSha256(await create({ catalog_request_id: VID }))).toBe("5112fef9f079793b389bf9b6eed6c1ca88cb4572e0e73c4501b145b18c2c44dc");
+  });
+  it("hashes the three rule fields only, in any key order", async () => {
+    const reordered = { failure_code: RULE.failure_code, observable_failure: RULE.observable_failure, family: RULE.family };
+    const extra = { ...RULE, note: "synthetic" } as OtfOpenRule;
+    expect(ruleCanonical(RULE)).toBe(canonicalJson(RULE));
+    expect(await ruleSha256(RULE)).toBe(node256(canonicalJson(RULE)));
+    expect(await ruleSha256(reordered)).toBe(await ruleSha256(RULE));
+    expect(await ruleSha256(extra)).toBe(await ruleSha256(RULE));
+    expect(await ruleSha256({ ...RULE, failure_code: "synthetic_other_code" })).not.toBe(await ruleSha256(RULE));
+  });
+  it("includes rule and rule_sha256 in the create hash when set, and leaves spec_sha256 over the spec only", async () => {
+    const open = await openCreate();
+    expect(open.spec_sha256).toBe((await create()).spec_sha256);
+    const base = await createSha256(open);
+    expect(base).not.toBe(await createSha256({ ...open, rule: undefined, rule_sha256: undefined }));
+    expect(await createSha256({ ...open, rule: { ...RULE, observable_failure: RULE.observable_failure + " Again." } })).not.toBe(base);
+    expect(await createSha256({ ...open, rule_sha256: H })).not.toBe(base);
+    expect(await createSha256({ ...open, rule: { ...RULE, note: "synthetic" } as OtfOpenRule })).toBe(base);
+  });
+});
+
+describe("open behaviors: the rule", () => {
+  it("accepts every family and the observable_failure length bounds", () => {
+    for (const family of OTF_OPEN_FAMILIES) expect(validateOtf("OtfOpenRule", { ...RULE, family })).toEqual([]);
+    expect(validateOtf("OtfOpenRule", { ...RULE, observable_failure: "x".repeat(40) })).toEqual([]);
+    expect(validateOtf("OtfOpenRule", { ...RULE, observable_failure: "é".repeat(600) })).toEqual([]);
+    expect(validateOtf("OtfOpenRule", { ...RULE, observable_failure: "x".repeat(39) })).not.toEqual([]);
+    expect(validateOtf("OtfOpenRule", { ...RULE, observable_failure: "x".repeat(601) })).not.toEqual([]);
+  });
+  it("counts observable_failure in code points, not UTF-16 units", () => {
+    expect("\u{1F600}".repeat(600).length).toBe(1200);
+    expect(validateOtf("OtfOpenRule", { ...RULE, observable_failure: "\u{1F600}".repeat(600) })).toEqual([]);
+    expect(validateOtf("OtfOpenRule", { ...RULE, observable_failure: "\u{1F600}".repeat(601) })).not.toEqual([]);
+    expect(validateOtf("OtfOpenRule", { ...RULE, observable_failure: "\u{1F600}".repeat(39) + "x" })).toEqual([]);
+  });
+  it("refuses an unknown family, control characters, unknown members and a missing member", () => {
+    expect(validateOtf("OtfOpenRule", { ...RULE, family: "security" })).not.toEqual([]);
+    for (const control of ["\n", "\t", "\u0000", "\u007f", "\u0085", "\u2028", "\u2029", "\u202e", "\u200b", "\u200d", "\ufeff"]) {
+      expect(validateOtf("OtfOpenRule", { ...RULE, observable_failure: `${RULE.observable_failure}${control}more synthetic text` })).not.toEqual([]);
+    }
+    expect(validateOtf("OtfOpenRule", { ...RULE, extra: 1 })).not.toEqual([]);
+    expect(validateOtf("OtfOpenRule", without(RULE, "failure_code"))).not.toEqual([]);
+  });
+  it("takes a lower-case failure code of 3 to 48 characters that is none of the proven codes", () => {
+    expect(validateOtf("OtfOpenRule", { ...RULE, failure_code: "abc" })).toEqual([]);
+    expect(validateOtf("OtfOpenRule", { ...RULE, failure_code: "a" + "b".repeat(47) })).toEqual([]);
+    for (const failure_code of ["ab", "a" + "b".repeat(48), "Synthetic_code", "1synthetic", "_synthetic", "synthetic-code", "synthetic code"]) {
+      expect(validateOtf("OtfOpenRule", { ...RULE, failure_code })).not.toEqual([]);
+    }
+    for (const failure_code of PROVEN_FAILURE_CODES) expect(validateOtf("OtfOpenRule", { ...RULE, failure_code })).not.toEqual([]);
+  });
+  it("refuses the failure codes the builder's harness reserves for its own markers", () => {
+    expect([...OTF_RESERVED_FAILURE_CODES]).toEqual(["control_failed", "detection_inconsistent"]);
+    for (const failure_code of OTF_RESERVED_FAILURE_CODES) expect(validateOtf("OtfOpenRule", { ...RULE, failure_code })).not.toEqual([]);
+  });
+});
+
+describe("open behaviors: create, availability, claim and status", () => {
+  it("requires rule and rule_sha256 exactly on the open criterion", async () => {
+    const open = await openCreate();
+    expect(validateOtf("OtfCreateJob", open)).toEqual([]);
+    expect(validateOtf("OtfCreateJob", { ...open, catalog_request_id: VID })).toEqual([]);
+    expect(validateOtf("OtfCreateJob", without(open, "rule"))).not.toEqual([]);
+    expect(validateOtf("OtfCreateJob", without(open, "rule_sha256"))).not.toEqual([]);
+    expect(validateOtf("OtfCreateJob", { ...open, host_id: "umami" })).not.toEqual([]);
+    expect(validateOtf("OtfCreateJob", { ...open, rule: { ...RULE, failure_code: PROVEN_FAILURE_CODES[0] } })).not.toEqual([]);
+    const proven = await create();
+    expect(validateOtf("OtfCreateJob", { ...proven, rule: RULE, rule_sha256: open.rule_sha256 })).not.toEqual([]);
+    expect(validateOtf("OtfCreateJob", { ...proven, rule: RULE })).not.toEqual([]);
+    expect(validateOtf("OtfCreateJob", { ...proven, rule_sha256: open.rule_sha256 })).not.toEqual([]);
+  });
+  it("requires measured on every behavior: true for a proven one, false for the open one", () => {
+    const value = availability();
+    const proven = value.behaviors[0];
+    const open = { criterion_id: OTF_OPEN_CRITERION_ID, host_id: "task-report", label: OTF_OPEN_LABEL, example_phrases: ["A synthetic report total is off."], measured: false };
+    expect(validateOtf("OtfAvailability", { ...value, behaviors: [proven, open] })).toEqual([]);
+    expect(validateOtf("OtfAvailability", { ...value, behaviors: [{ ...open, measured: true }] })).not.toEqual([]);
+    expect(validateOtf("OtfAvailability", { ...value, behaviors: [{ ...proven, measured: false }] })).not.toEqual([]);
+    expect(validateOtf("OtfAvailability", { ...value, behaviors: [without(proven ?? {}, "measured")] })).not.toEqual([]);
+    expect(validateOtf("OtfAvailability", { ...value, behaviors: [{ ...open, host_id: "umami" }] })).not.toEqual([]);
+  });
+  it("hands a rule to the builder only on an open build job, and keeps a proven claim reply in today's shape", () => {
+    const build = {
+      kind: "build",
+      job_id: JOB,
+      host_id: "task-report",
+      criterion_id: "concurrency.lost-acknowledged-change",
+      spec: SPEC,
+      spec_sha256: H,
+      sentence: "My edit disappears when I save twice.",
+      lanes: [{ lane_id: "lane-1", model: "synthetic/model-a", model_label: "Model A", price_in_usd_per_m: "0.10", price_out_usd_per_m: "0.40" }],
+      limits: BUILD_LIMITS,
+    };
+    expect(validateOtf("ClaimReply", { job: build })).toEqual([]);
+    expect(validateOtf("ClaimReply", { job: { ...build, rule: RULE } })).not.toEqual([]);
+    const open = { ...build, criterion_id: OTF_OPEN_CRITERION_ID, rule: RULE };
+    expect(validateOtf("ClaimReply", { job: open })).toEqual([]);
+    expect(validateOtf("ClaimReply", { job: without(open, "rule") })).not.toEqual([]);
+    expect(validateOtf("ClaimReply", { job: { ...open, host_id: "umami" } })).not.toEqual([]);
+  });
+  it("carries the rule on an open job's status only", () => {
+    const proven = status();
+    expect(validateOtf("OtfJobStatus", { ...proven, rule: RULE })).not.toEqual([]);
+    const open = { ...proven, criterion_id: OTF_OPEN_CRITERION_ID, rule: RULE, certificate: { ...OPEN_CERTIFICATE, received: { at: T, sha256_verified: true } } };
+    expect(validateOtf("OtfJobStatus", open)).toEqual([]);
+    expect(validateOtf("OtfCreateResponse", { job_id: JOB, status: open })).toEqual([]);
+    expect(validateOtf("OtfJobStatus", without(open, "rule"))).not.toEqual([]);
+  });
+});
+
+describe("open behaviors: the certificate", () => {
+  it("still accepts a proven certificate in today's exact shape, as posted and as received", () => {
+    expect(CERTIFICATE.criterion.version).toBe("1");
+    expect("rule" in CERTIFICATE).toBe(false);
+    expect(validateOtf("OtfCertificate", CERTIFICATE)).toEqual([]);
+    expect(validateOtf("OtfCertificate", { ...CERTIFICATE, received: { at: T, sha256_verified: true } })).toEqual([]);
+    expect(validateOtf("OtfCertificate", UMAMI_CERTIFICATE)).toEqual([]);
+  });
+  it("accepts an open certificate with version open-1, the rule and its failure code", () => {
+    expect(validateOtf("OtfCertificate", OPEN_CERTIFICATE)).toEqual([]);
+    const part = (name: "agent" | "grader" | "certificate") => ({ part: name, filename: `rbw-otf-${name}-00000000.tar.gz`, sha256: H, size: 3, base64: "H4sI" });
+    expect(validateOtf("ResultPost", { builder_id: "builder-1", outcome: "delivered", reason: null, certificate: OPEN_CERTIFICATE, parts: [part("agent"), part("grader"), part("certificate")] })).toEqual([]);
+  });
+  it("ties version open-1 and the rule to the open criterion, and the failure code to the rule", () => {
+    expect(validateOtf("OtfCertificate", { ...OPEN_CERTIFICATE, criterion: { ...OPEN_CERTIFICATE.criterion, failure_code: "synthetic_other_code" } })).not.toEqual([]);
+    expect(validateOtf("OtfCertificate", without(OPEN_CERTIFICATE, "rule"))).not.toEqual([]);
+    expect(validateOtf("OtfCertificate", { ...OPEN_CERTIFICATE, criterion: { ...OPEN_CERTIFICATE.criterion, version: "1" } })).not.toEqual([]);
+    expect(validateOtf("OtfCertificate", { ...CERTIFICATE, rule: RULE })).not.toEqual([]);
+    expect(validateOtf("OtfCertificate", { ...CERTIFICATE, criterion: { ...CERTIFICATE.criterion, version: "open-1" } })).not.toEqual([]);
+    expect(validateOtf("OtfCertificate", { ...UMAMI_CERTIFICATE, criterion: OPEN_CERTIFICATE.criterion, rule: RULE })).not.toEqual([]);
+    expect(validateOtf("OtfCertificate", { ...OPEN_CERTIFICATE, rule: { ...RULE, extra: 1 } })).not.toEqual([]);
+  });
+});
+
+describe("open behaviors: classify", () => {
+  it("accepts a classify request with and without a host", () => {
+    const request = { sentence: "The weekly total looks wrong.", spec: SPEC };
+    expect(validateOtf("OtfClassifyRequest", request)).toEqual([]);
+    expect(validateOtf("OtfClassifyRequest", { ...request, host_id: "umami" })).toEqual([]);
+    expect(validateOtf("OtfClassifyRequest", { ...request, sentence: "hi" })).not.toEqual([]);
+    expect(validateOtf("OtfClassifyRequest", { ...request, sentence: "x".repeat(301) })).not.toEqual([]);
+    expect(validateOtf("OtfClassifyRequest", { ...request, host_id: "elsewhere" })).not.toEqual([]);
+    expect(validateOtf("OtfClassifyRequest", { ...request, criterion_id: OTF_OPEN_CRITERION_ID })).not.toEqual([]);
+  });
+  it("accepts a proven match, an open-only answer and both refusals", () => {
+    expect(validateOtf("OtfClassification", CLASSIFIED)).toEqual([]);
+    const openOnly = { ...CLASSIFIED, proven_criterion_id: null, buildable: [{ host_id: "task-report", criterion_id: OTF_OPEN_CRITERION_ID }] };
+    expect(validateOtf("OtfClassification", openOnly)).toEqual([]);
+    const provenOnly = { ...CLASSIFIED, buildable: [CLASSIFIED.buildable[0]], rule: null };
+    expect(validateOtf("OtfClassification", provenOnly)).toEqual([]);
+    for (const kind of ["security", "out_of_scope"]) {
+      const refusal = { family: null, proven_criterion_id: null, buildable: [], rule: null, refusal: { kind, reason: "Synthetic reason." }, model: "synthetic/classifier" };
+      expect(validateOtf("OtfClassification", refusal)).toEqual([]);
+    }
+  });
+  it("enforces the invariants: a refusal builds nothing, an open entry needs a rule, a proven match is buildable", () => {
+    const refusal = { kind: "out_of_scope", reason: "Synthetic reason." };
+    expect(validateOtf("OtfClassification", { ...CLASSIFIED, refusal })).not.toEqual([]);
+    expect(validateOtf("OtfClassification", { ...CLASSIFIED, family: null })).not.toEqual([]);
+    expect(validateOtf("OtfClassification", { ...CLASSIFIED, rule: null })).not.toEqual([]);
+    expect(validateOtf("OtfClassification", { ...CLASSIFIED, buildable: [CLASSIFIED.buildable[1]] })).not.toEqual([]);
+    expect(validateOtf("OtfClassification", { ...CLASSIFIED, proven_criterion_id: "date_time.time-zone-grouping" })).not.toEqual([]);
+  });
+  it("leaves no dead end: no refusal needs a buildable entry, and a refusal carries no rule or proven match", () => {
+    expect(validateOtf("OtfClassification", { ...CLASSIFIED, proven_criterion_id: null, buildable: [], rule: null })).not.toEqual([]);
+    expect(validateOtf("OtfClassification", { ...CLASSIFIED, proven_criterion_id: null, buildable: [] })).not.toEqual([]);
+    const refused = { family: null, proven_criterion_id: null, buildable: [], rule: null, refusal: { kind: "out_of_scope", reason: "Synthetic reason." }, model: "synthetic/classifier" };
+    expect(validateOtf("OtfClassification", refused)).toEqual([]);
+    expect(validateOtf("OtfClassification", { ...refused, family: "data_handling" })).toEqual([]);
+    expect(validateOtf("OtfClassification", { ...refused, rule: RULE })).not.toEqual([]);
+    expect(validateOtf("OtfClassification", { ...refused, proven_criterion_id: "concurrency.stale-success-response" })).not.toEqual([]);
+    expect(validateOtf("OtfClassification", { ...refused, refusal: { kind: "security", reason: "Synthetic reason." }, rule: RULE })).not.toEqual([]);
+  });
+  it("refuses bad members: a host mismatch, a repeat, the open id as a proven match, a long reason and unknown members", () => {
+    const open = { host_id: "task-report", criterion_id: OTF_OPEN_CRITERION_ID };
+    expect(validateOtf("OtfClassification", { ...CLASSIFIED, buildable: [CLASSIFIED.buildable[0], { ...open, host_id: "umami" }] })).not.toEqual([]);
+    expect(validateOtf("OtfClassification", { ...CLASSIFIED, buildable: [...CLASSIFIED.buildable, open] })).not.toEqual([]);
+    expect(validateOtf("OtfClassification", { ...CLASSIFIED, proven_criterion_id: OTF_OPEN_CRITERION_ID })).not.toEqual([]);
+    const refused = { family: null, proven_criterion_id: null, buildable: [], rule: null, model: "synthetic/classifier" };
+    expect(validateOtf("OtfClassification", { ...refused, refusal: { kind: "security", reason: "x".repeat(301) } })).not.toEqual([]);
+    expect(validateOtf("OtfClassification", { ...refused, refusal: { kind: "security", reason: "" } })).not.toEqual([]);
+    expect(validateOtf("OtfClassification", { ...refused, refusal: { kind: "policy", reason: "Synthetic reason." } })).not.toEqual([]);
+    expect(validateOtf("OtfClassification", { ...CLASSIFIED, confidence: 0.9 })).not.toEqual([]);
+    expect(validateOtf("OtfClassification", without(CLASSIFIED, "model"))).not.toEqual([]);
   });
 });

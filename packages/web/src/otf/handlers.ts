@@ -7,7 +7,7 @@ import { hasFactorySession } from "../factory-server/session.ts";
 import { createSha256, sha256Hex, specSha256 } from "./canonical.ts";
 import {
   BUILDER_LOST_MS, CALENDAR_MARGIN_MS, CRITERION_HOST, HOST_CALENDAR_BLOCKS, HOST_SCOPE_EXCLUDED,
-  OTF_CONTRACT_VERSION, OTF_ERROR_STATUS, OTF_HOST_DEFAULTS, OTF_HOST_IDS, OTF_HOST_LABELS, OTF_JOB_STATES,
+  OTF_CONTRACT_VERSION, OTF_ERROR_STATUS, OTF_HOST_DEFAULTS, OTF_OPEN_CRITERION_ID, OTF_HOST_IDS, OTF_HOST_LABELS, OTF_JOB_STATES,
   OTF_PARTS, PART_MAX_BYTES, POLL_FINISHED_MS, POLL_RUNNING_MS, SAFE_FILENAME, SPEND_SOURCE,
   START_TIMEOUT_MS, VALIDATION_WHERE, hostCalendarOpen,
   type BuilderState, type HostUnavailableReason, type LaneId, type OtfArtifact, type OtfBehaviorOption,
@@ -136,6 +136,8 @@ export function calendarReason(host: OtfHostId): string {
  * HOST_SCOPE_EXCLUDED topics. Whether the host is offered right now is step 6a, not this check.
  */
 export function cardInScope(config: Pick<OtfCustomerConfig, "behaviors">, input: OtfCreateJob): boolean {
+  // Open behaviors are not accepted until RBW_OTF_OPEN_BEHAVIORS exists (SPEC section 8).
+  if (input.criterion_id === OTF_OPEN_CRITERION_ID) return false;
   const host = CRITERION_HOST[input.criterion_id];
   if (input.host_id !== host) return false;
   if (!config.behaviors.some((behavior) => behavior.criterion_id === input.criterion_id && behavior.host_id === host)) return false;
@@ -176,9 +178,9 @@ export function createCustomerHandlers(deps: OtfCustomerDependencies) {
     }
   }
   /** Compare-and-set finish from the job's current phase; a lost race returns the stored job unchanged. */
-  async function finish(job: OtfJobRecord, outcome: OtfOutcome, reason: string, at: string): Promise<OtfJobRecord> {
+  async function finish(job: OtfJobRecord, outcome: OtfOutcome, reason: string, at: string, when?: { quietSince: string }): Promise<OtfJobRecord> {
     const updated = await store.updateJob(job.job_id, job.state === "building" ? ["building"] : WAITING,
-      { state: "finished", outcome, reason, finished_at: at });
+      { state: "finished", outcome, reason, finished_at: at }, when);
     if (updated !== null) {
       await store.appendJobEvent(job.job_id, { type: "job_finished", lane_id: null, data: { outcome, reason } }, at);
       return updated;
@@ -204,7 +206,10 @@ export function createCustomerHandlers(deps: OtfCustomerDependencies) {
     if (job.state === "building") {
       if (job.deadline_at !== null && Date.parse(at) >= Date.parse(job.deadline_at)) return finish(job, "time_limit", "The job deadline was reached.", at);
       const last = job.last_builder_post_at ?? job.claimed_at;
-      if (last !== null && Date.parse(at) - Date.parse(last) >= BUILDER_LOST_MS) return finish(job, "builder_lost", "The builder stopped reporting progress.", at);
+      if (last !== null && Date.parse(at) - Date.parse(last) >= BUILDER_LOST_MS) {
+        // Finish only while the job is still quiet: a builder post that lands after the read above wins.
+        return finish(job, "builder_lost", "The builder stopped reporting progress.", at, { quietSince: new Date(Date.parse(at) - BUILDER_LOST_MS).toISOString() });
+      }
       return job;
     }
     const block = await waitingBlock(job, at, builder, seen);

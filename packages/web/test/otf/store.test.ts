@@ -6,7 +6,7 @@ import { readFileSync } from "node:fs";
 import { PGlite } from "@electric-sql/pglite";
 import { describe, expect, it } from "vitest";
 import { builderEventBytes } from "../../src/otf/canonical.ts";
-import { MAX_UPTIME_MS, WATCHDOG_MIN_INTERVAL_MS, type BuilderEventIn, type OtfAdmissionResult, type OtfHostId, type OtfNewJob, type OtfSpecCard, type OtfStore, type VmPower } from "../../src/otf/contract.ts";
+import { BUILDER_LOST_MS, MAX_UPTIME_MS, WATCHDOG_MIN_INTERVAL_MS, type BuilderEventIn, type OtfAdmissionResult, type OtfHostId, type OtfNewJob, type OtfSpecCard, type OtfStore, type VmPower } from "../../src/otf/contract.ts";
 import { runWatchdog } from "../../src/otf/power/lifecycle.ts";
 import { createMemoryOtfStore, createPgOtfStore, type OtfSql, type OtfSqlPool } from "../../src/otf/store.ts";
 
@@ -138,6 +138,23 @@ describe.each(STORES)("OtfStore (%s)", (_name, open) => {
     await store.createJob(newJob(2));
     await expect(store.updateJob(uuid(2), ["queued"], { state: "finished" })).rejects.toThrow();
     expect((await store.getJob(uuid(2)))?.state).toBe("queued");
+  });
+
+  it("finishes a quiet job builder_lost only while no builder post has landed since the read", async () => {
+    const store = await open();
+    const job = await claimed(store, 1);
+    const read = await store.getJob(job);
+    expect(read?.last_builder_post_at).toBe(at(100_000));
+    // A status read sees the job quiet for BUILDER_LOST_MS; the builder's heartbeat commits before its finish.
+    const readAt = 100_000 + BUILDER_LOST_MS;
+    expect(await store.appendBuilderEvents(job, "builder-a", [], at(readAt))).toEqual({ kind: "ok", accepted_through: 0 });
+    const lost = { state: "finished", outcome: "builder_lost", reason: "synthetic", finished_at: at(readAt) } as const;
+    expect(await store.updateJob(job, ["building"], lost, { quietSince: at(readAt - BUILDER_LOST_MS) })).toBeNull();
+    expect(await store.getJob(job)).toMatchObject({ state: "building", outcome: null, last_builder_post_at: at(readAt) });
+    expect(await store.appendBuilderEvents(job, "builder-a", [stage(1)], at(readAt + 1000))).toEqual({ kind: "ok", accepted_through: 1 });
+    // With no newer post, the same guarded finish wins, at the boundary too.
+    expect(await store.updateJob(job, ["building"], { ...lost, finished_at: at(readAt + 1000 + BUILDER_LOST_MS) }, { quietSince: at(readAt + 1000) })).toMatchObject({ state: "finished", outcome: "builder_lost" });
+    expect(await store.appendBuilderEvents(job, "builder-a", [stage(2)], at(readAt + 2000 + BUILDER_LOST_MS))).toEqual({ kind: "finished" });
   });
 
   it("gives production and builder events one gap-free seq stream", async () => {
@@ -417,5 +434,66 @@ describe.each(STORES)("OtfStore (%s)", (_name, open) => {
     expect(await claim).toBeNull();
     expect((await store.getJob(uuid(1)))?.state).toBe("queued");
     expect((await store.getPower()).state).toBe("stopping");
+  });
+  it("ends a running validation error when a watchdog Get finds the machine stopped, sparing one claimed after it", async () => {
+    const store = await open();
+    const nowMs = Date.parse(at(600_000));
+    const up = new Date(nowMs - 20 * 60_000).toISOString();
+    await store.withPowerLock(() =>
+      Promise.resolve({
+        patch: { state: "running", since: up, instance_state: "RUNNING", running_since: up, last_start_at: up, last_api_call_at: new Date(nowMs - WATCHDOG_MIN_INTERVAL_MS - 1000).toISOString(), vm_day: T0.slice(0, 10) },
+        log: [],
+        result: null,
+      }),
+    );
+    // A delivered job with its parts, and a validation of it running on the builder.
+    const job = await claimed(store, 1);
+    const part = { job_id: job, part: "agent" as const, filename: "a.tar.gz", media_type: "application/gzip" as const, size: 1, sha256: "0".repeat(64), bytes: new Uint8Array([1]) };
+    expect(await store.storeDelivery(job, "builder-a", [part], { state: "finished", outcome: "delivered", reason: null, finished_at: at(200_000) }, at(200_000))).toBe("stored");
+    await store.createValidation(job, uuid(500), at(300_000));
+    expect(await store.claimNext("builder-a", at(301_000), hosts({ build: false }))).toMatchObject({ kind: "validate", validation: { validation_id: uuid(500), state: "running" } });
+    await store.recordBuilderSeen({ builder_id: "builder-a", builder_revision: "rev-1", boot_id: "boot-1", booted_at: up, ready_hosts: ["task-report"] }, new Date(nowMs - 120_000).toISOString());
+    // Another delivered job's validation, still queued.
+    await store.createJob(newJob(2));
+    await store.updateJob(uuid(2), ["queued"], { state: "finished", outcome: "delivered", reason: null, finished_at: at(310_000) });
+    await store.createValidation(uuid(2), uuid(501), at(320_000));
+    // The machine stopped on its own (no stop from production); the watchdog's Get sees it.
+    let release = (): void => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let getCalled = (): void => undefined;
+    const getting = new Promise<void>((resolve) => {
+      getCalled = resolve;
+    });
+    const power: VmPower = {
+      get: async () => {
+        getCalled();
+        await gate;
+        return { state: "STOPPED", preset: "synthetic-preset" };
+      },
+      start: () => Promise.reject(new Error("synthetic: no Start expected")),
+      stop: () => Promise.reject(new Error("synthetic: no Stop expected")),
+    };
+    const watchdog = runWatchdog({ store, power, now: () => new Date(nowMs) });
+    await getting;
+    // A claim from a later boot waits for the power lock, so it is not ended with the stopped boot's work.
+    let settled = false;
+    const claim = store.claimNext("builder-a", new Date(nowMs + 1000).toISOString(), hosts({ build: false })).finally(() => {
+      settled = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(settled).toBe(false);
+    release();
+    expect(await watchdog).toMatchObject({ action: "get", reason: "refresh" });
+    expect(await claim).toMatchObject({ kind: "validate", validation: { validation_id: uuid(501), state: "running" } });
+    expect(await store.getValidation(uuid(500))).toMatchObject({ state: "error", finished_at: new Date(nowMs).toISOString() });
+    expect(await store.getValidation(uuid(501))).toMatchObject({ state: "running", finished_at: null });
+    expect((await store.getPower()).state).toBe("stopped");
+    expect(await store.getJob(job)).toMatchObject({ state: "finished", outcome: "delivered" });
+    expect((await store.listArtifacts(job)).map((item) => item.part)).toEqual(["agent"]);
+    // The judge can validate the first job again.
+    await store.createValidation(job, uuid(502), new Date(nowMs + 2000).toISOString());
+    expect(await store.latestValidation(job)).toMatchObject({ validation_id: uuid(502), state: "queued" });
   });
 });

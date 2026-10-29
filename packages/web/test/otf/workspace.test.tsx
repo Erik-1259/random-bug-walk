@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { OtfWorkspaceView, type OtfWorkspaceViewProps } from "../../src/components/otf/workspace.tsx";
-import { BugDesignerView, CATALOG_HONESTY } from "../../src/components/bug-designer.tsx";
+import { BugDesignerView, CATALOG_HONESTY, OTF_DESIGNER_NOTE } from "../../src/components/bug-designer.tsx";
 import { INITIAL_DESIGNER } from "../../src/assist/designer-state.ts";
 import { specSha256 } from "../../src/otf/canonical.ts";
 import type { OtfAvailability, OtfCreateJob, OtfHostAvailability, OtfJobStatus } from "../../src/otf/contract.ts";
@@ -10,7 +10,7 @@ const noop = () => undefined;
 const taskReport: OtfHostAvailability = { host_id: "task-report", label: "task-report service", offered: true, unavailable_reason: null, active_jobs: 0, queued_jobs: 0, max_active: 2, lanes: [{ lane_id: "lane-1", model_label: "Synthetic model" }], deadline_min: 45, typical: null };
 const umami: OtfHostAvailability = { host_id: "umami", label: "Umami", offered: false, unavailable_reason: "calendar", active_jobs: 0, queued_jobs: 0, max_active: 1, lanes: [{ lane_id: "lane-1", model_label: "Synthetic model" }], deadline_min: 60, typical: null };
 const availability: OtfAvailability = { enabled: true, builder: "stopped", active_jobs: 0, queued_jobs: 0, max_queued: 4,
-  behaviors: [{ criterion_id: "concurrency.lost-acknowledged-change", host_id: "task-report", label: "Synthetic overlapping writes", example_phrases: ["A synthetic edit is lost."] }],
+  behaviors: [{ criterion_id: "concurrency.lost-acknowledged-change", host_id: "task-report", label: "Synthetic overlapping writes", example_phrases: ["A synthetic edit is lost."], measured: true }],
   hosts: [taskReport, umami], cold_start_min: null, spend_left_microusd: 1000000 };
 const NOV_3 = Date.UTC(2026, 10, 3, 12);
 const spec = { title: "Synthetic grouping card", where: "Synthetic report", change: "A synthetic day shifts.", why_tests_miss: "Synthetic tests use UTC.", checks_to_add: ["Group a synthetic late event."], fix: "Group by the chosen zone." };
@@ -111,7 +111,9 @@ describe("custom workspace boundary", () => {
     expect(offline).toContain(CATALOG_HONESTY);
     expect(offline).not.toContain("Building this exact design is the next step");
     const online = renderToStaticMarkup(<BugDesignerView {...common} otfEnabled />);
-    expect(online).toContain("Building this exact design is the next step");
-    expect(online).toContain("task-report");
+    expect(online).toContain(OTF_DESIGNER_NOTE);
+    expect(online).toContain("This design is not built as written.");
+    expect(online).not.toContain("Building this exact design is the next step");
+    expect(online).not.toContain(CATALOG_HONESTY);
   });
 });

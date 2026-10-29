@@ -1,7 +1,7 @@
-// Canonical JSON and the hashes OTF compares: spec_sha256 (client and server must agree), the
-// create-body hash for idempotent creates, and the canonical bytes of a builder event for the
+// Canonical JSON and the hashes OTF compares: spec_sha256 and rule_sha256 (client and server must
+// agree), the create-body hash for idempotent creates, and the canonical bytes of a builder event for the
 // duplicate check. Hashing uses Web Crypto, so the browser and the server share this module.
-import type { BuilderEventIn, OtfCreateJob, OtfSpecCard } from "./contract.ts";
+import type { BuilderEventIn, OtfCreateJob, OtfOpenRule, OtfSpecCard } from "./contract.ts";
 
 /**
  * JSON with object keys sorted by UTF-16 code unit, no whitespace, and undefined members left out.
@@ -53,7 +53,25 @@ export function specSha256(spec: OtfSpecCard): Promise<string> {
   return sha256Hex(specCanonical(spec));
 }
 
-/** The idempotency hash of a create body: every member, catalog_request_id included when set. */
+/** The three rule fields only, so an extra member can never change the hash. */
+export function ruleCanonical(rule: OtfOpenRule): string {
+  return canonicalJson({
+    family: rule.family,
+    observable_failure: rule.observable_failure,
+    failure_code: rule.failure_code,
+  });
+}
+
+/** rule_sha256: sha256 of the open rule's canonical JSON. spec_sha256 stays over the spec only. */
+export function ruleSha256(rule: OtfOpenRule): Promise<string> {
+  return sha256Hex(ruleCanonical(rule));
+}
+
+/**
+ * The idempotency hash of a create body: every member, catalog_request_id, rule and rule_sha256
+ * included when set. A member that is not set is left out, so a body without a rule hashes exactly
+ * as it did before open behaviors existed.
+ */
 export function createSha256(body: OtfCreateJob): Promise<string> {
   return sha256Hex(
     canonicalJson({
@@ -64,6 +82,8 @@ export function createSha256(body: OtfCreateJob): Promise<string> {
       spec: JSON.parse(specCanonical(body.spec)) as unknown,
       spec_sha256: body.spec_sha256,
       catalog_request_id: body.catalog_request_id,
+      rule: body.rule === undefined ? undefined : (JSON.parse(ruleCanonical(body.rule)) as unknown),
+      rule_sha256: body.rule_sha256,
     }),
   );
 }

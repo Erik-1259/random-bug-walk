@@ -27,6 +27,7 @@ it.each(["not_qualified","time_limit","spend_limit","cancelled"] as const)("expl
 it("does not show failure for delivered or active jobs",()=>{expect(render(<FailureView status={status()}/>)).toBe("");expect(render(<FailureView status={delivered()}/>)).toBe("");});
 it("hides artifacts until delivered even when metadata is present",()=>{const s=delivered();s.outcome=null;s.state="building";expect(render(<CertificateView status={s} onValidate={noop} disabled={false}/>)).toBe("");});
 it("shows both certificate rounds, binding hashes, models and distinct downloads",()=>{const html=render(<CertificateView status={delivered()} onValidate={noop} disabled={false}/>);for(const text of ["Qualification","Confirmation",hash,"synthetic-designer","synthetic-model","Model-written","Agent bundle","Grader bundle","Certificate","120"])expect(html).toContain(text);expect(html.match(/download=/g)).toHaveLength(3);expect(html).not.toContain("Vercel Sandbox");});
+it("names the winning lane once and counts rounds in the singular for one",()=>{const s=delivered();expect(render(<CertificateView status={s} onValidate={noop} disabled={false}/>)).toContain("lane-4, 2 rounds.");const one=structuredClone(s);if(one.certificate===null)throw new Error("no certificate");one.certificate.implementer.rounds_used=1;const html=render(<CertificateView status={one} onValidate={noop} disabled={false}/>);expect(html).toContain("lane-4, 1 round.");expect(html).not.toContain("lane lane-4");});
 it.each(["queued","running","failed","error","passed"] as const)("keeps validation %s explicit",state=>{const s=delivered();s.validation={validation_id:"00000000-0000-4000-8000-000000000002",state,cells:null,admission:null,started_at:s.created_at,finished_at:null,where:"RBW builder (Nebius VM)"};const html=render(<CertificateView status={s} onValidate={noop} disabled={false}/>);expect(html).toContain(`Validation: ${state}`);if(state!=="passed")expect(html).not.toContain("Validation: passed");if(state==="queued"||state==="running")expect(html).toContain("disabled");});
 it("keeps catalog spend opt-in and readiness explicit",()=>{const props={onStart:noop,disabled:false,requestId:null,ready:false,message:null};const initial=render(<CatalogOffer {...props}/>);expect(initial).toContain("about $0.40");expect(initial).toContain("Start the closest catalog bug");expect(initial).not.toContain("Your catalog bug is ready");expect(render(<CatalogOffer {...props} requestId="synthetic-request"/>)).not.toContain("Your catalog bug is ready");expect(render(<CatalogOffer {...props} requestId="synthetic-request" ready/>)).toContain("Your catalog bug is ready");});
 
@@ -96,6 +97,14 @@ it("words a waiting Umami job stopped by the calendar as not started, with the o
   expect(html).toContain("This custom build did not start: Umami is unavailable on UTC days 2–5.");
   expect(html).toContain("They open again on November 6 (UTC).");
   expect(html).not.toContain("Error"); expect(html).not.toContain("lane board shows");
+});
+it("shows the open-again date for a past calendar stop only while the calendar is still closed", () => {
+  const s = umamiStatus(); s.state = "finished"; s.outcome = "builder_unavailable"; s.reason = "Umami is unavailable on UTC days 2–5.";
+  const blocked = render(<FailureView status={s} nowMs={NOV_3}/>);
+  expect(blocked).toContain("This custom build did not start: Umami is unavailable on UTC days 2–5."); expect(blocked).toContain("They open again on November 6 (UTC).");
+  const reopened = render(<FailureView status={s} availability={availability(host())} nowMs={Date.UTC(2026, 10, 6, 12)}/>);
+  expect(reopened).toContain("This custom build did not start: Umami is unavailable on UTC days 2–5."); expect(reopened).toContain("The closest catalog bug is offered below.");
+  expect(reopened).not.toContain("They open again"); expect(reopened).not.toContain("November 7");
 });
 it("keeps the error copy for other builder_unavailable reasons and for a claimed job", () => {
   const s = umamiStatus(); s.state = "finished"; s.outcome = "builder_unavailable"; s.reason = "OTF was put on hold.";
