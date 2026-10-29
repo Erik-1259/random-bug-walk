@@ -456,8 +456,10 @@ describe("hosts and the Umami profile", () => {
   it("accepts a measured typical time and refuses a basis string or too few samples", () => {
     const value = availability();
     const withTypical = (typical: unknown) => ({ ...value, hosts: [{ ...value.hosts[0], typical }, value.hosts[1]] });
-    const typical = { median_min: 20, p90_min: 40, samples: 5, measured_on: "2026-10-30" };
+    const typical = { source: "otf_jobs", median_min: 20, p90_min: 40, samples: 5, measured_on: "2026-10-30" };
     expect(validateOtf("OtfAvailability", withTypical(typical))).toEqual([]);
+    expect(validateOtf("OtfAvailability", withTypical({ ...typical, source: "development_attempts" }))).toEqual([]);
+    expect(validateOtf("OtfAvailability", withTypical({ ...typical, source: "estimate" }))).not.toEqual([]);
     expect(validateOtf("OtfAvailability", withTypical({ ...typical, samples: 4 }))).not.toEqual([]);
     expect(validateOtf("OtfAvailability", withTypical({ ...typical, basis: "synthetic basis" }))).not.toEqual([]);
     expect("TYPICAL_BASIS" in contract).toBe(false);

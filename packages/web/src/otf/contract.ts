@@ -206,7 +206,7 @@ export const OTF_CREATE_REFUSALS = [
   "invalid_spec", // the body fails its schema, the spec hash does not match, host and criterion do not pair, or the card is out of the host's scope
   "idempotency_conflict", // the client_key was used before with a different body
   "signed_out", // no judge session
-  "host_unavailable", // the criterion's host is disabled, not ready on the builder, or its calendar window would be touched
+  "host_unavailable", // the criterion's host is disabled, left out of a running builder's ready_hosts, or its calendar window would be touched
   "unavailable", // OTF disabled or unconfigured, an operator hold, the VM-hours day cap, or a server fault
 ] as const;
 export type OtfCreateRefusal = (typeof OTF_CREATE_REFUSALS)[number];
@@ -589,18 +589,28 @@ export interface OtfValidation {
 export const TYPICAL_MIN_SAMPLES = 5;
 
 /**
- * A host's typical build time (claim to finish of its finished OTF jobs), set by the operator, or
- * null when not measured. Copy renders it only when present, always with samples and measured_on.
+ * What a typical time measured. otf_jobs: claim to finish of finished OTF jobs. development_attempts:
+ * qualified single-lane experiment attempts (docs/otf/evidence), which leave out the queue, the cold
+ * start, the confirmation round and packaging. Each source has its own copy (SPEC section 6).
+ */
+export const TYPICAL_SOURCES = ["otf_jobs", "development_attempts"] as const;
+export type TypicalSource = (typeof TYPICAL_SOURCES)[number];
+
+/**
+ * A host's typical build time, set by the operator from a committed results file, or null when not
+ * measured. Copy renders it only when present, always with its source, samples and measured_on.
  */
 export interface OtfTypical {
+  source: TypicalSource;
   median_min: number;
   p90_min: number;
-  /** Finished jobs measured, at least TYPICAL_MIN_SAMPLES. */
+  /** Finished jobs or qualified attempts measured, at least TYPICAL_MIN_SAMPLES. */
   samples: number;
-  /** YYYY-MM-DD (UTC) of the last measured job. */
+  /** YYYY-MM-DD (UTC) of the last measurement. */
   measured_on: string;
 }
 
+/** builder_not_ready: the builder is running and its fresh heartbeat leaves the host out of ready_hosts. */
 export const HOST_UNAVAILABLE_REASONS = ["disabled", "calendar", "builder_not_ready"] as const;
 export type HostUnavailableReason = (typeof HOST_UNAVAILABLE_REASONS)[number];
 
@@ -672,8 +682,10 @@ export interface ClaimRequest {
   free: { build: Record<OtfHostId, number>; validate: Record<OtfHostId, number> };
   /**
    * Hosts whose lane profile is installed and checked on this boot and that can take a new build
-   * (Umami: its pinned harness files match and an eligible target remains). Production offers a
-   * host only while the last fresh heartbeat lists it.
+   * (Umami: its pinned harness files match and an eligible target remains). While the builder is
+   * running, production offers a host only when the last fresh heartbeat lists it. A stopped or
+   * starting builder has no fresh heartbeat; then readiness is not checked at create, and a job
+   * whose host the next fresh heartbeat leaves out finishes builder_unavailable on read.
    */
   ready_hosts: OtfHostId[];
 }

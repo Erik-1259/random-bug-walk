@@ -95,16 +95,16 @@ In this order:
    - `designSecurityTopic` and `holdsCode` on every spec field, because the customer may edit the card.
    - Any hit answers `refused_topic`.
 3. Recompute `spec_sha256` with `specSha256`. A mismatch answers `invalid_spec`.
-4. Check that `host_id` equals `CRITERION_HOST[criterion_id]`, that the criterion is offered, and that no card field matches the host's `HOST_SCOPE_EXCLUDED`. Otherwise answer `invalid_spec`.
+4. Check that `host_id` equals `CRITERION_HOST[criterion_id]` and that no card field matches the host's `HOST_SCOPE_EXCLUDED`. Otherwise answer `invalid_spec`. Whether the host is offered right now is step 6a.
 5. Idempotency. The same `client_key` with the same `createSha256` replays the stored job (200). The same key with a different body answers `idempotency_conflict`.
 6. Check the caps, in this order: `unavailable` (OTF disabled or unconfigured, operator hold, or the VM-hours day cap), `busy` (active plus queued jobs at the limit), `daily_cap`, `spend_cap`.
 
    6a. **Host check.** Answer `host_unavailable` when:
    - the host is disabled in config;
-   - the last fresh heartbeat's `ready_hosts` lacks it; or
+   - the builder is `running` and its last fresh heartbeat's `ready_hosts` lacks it; or
    - `hostCalendarOpen(host, now, now + START_TIMEOUT_MS + deadline + CALENDAR_MARGIN_MS)` is false.
 
-   A waiting job whose host becomes unavailable, or whose window `[now, now + deadline + CALENDAR_MARGIN_MS]` is no longer open, finishes `builder_unavailable` on the next status read. The reason names the host and the cause; for Umami's calendar it is "Umami builds are not offered on the 2nd to the 5th of a month (UTC): on those days two of Umami's own tests fail on an unmodified copy."
+   A stopped or starting builder has no fresh heartbeat, so readiness is not checked then: the job is created and starts the machine (steps 7 and 8). A waiting job whose host becomes unavailable (including a host that the first fresh heartbeat after the start leaves out of `ready_hosts`), or whose window `[now, now + deadline + CALENDAR_MARGIN_MS]` is no longer open, finishes `builder_unavailable` on the next status read. The reason names the host and the cause; for Umami's calendar it is "Umami builds are not offered on the 2nd to the 5th of a month (UTC): on those days two of Umami's own tests fail on an unmodified copy."
 7. Insert the job, with its `host_id`:
    - `queued` when the builder is `running`;
    - `starting_builder` otherwise.
@@ -179,7 +179,7 @@ All builder routes sit under `/api/factory/otf/builder/`.
 - A claim with `images_ok: true` marks the builder `running`. It moves every `starting_builder` job to `queued` and appends `builder_ready { cold_start_ms }` to each. `cold_start_ms` runs from the later of the last start request and the job's creation to this claim.
   - This holds for a claim from a new boot and from the same boot, so a builder that recovers from a stale heartbeat without a reboot still picks up the jobs that waited.
 - `images_ok: false` (a pinned-image mismatch after boot) hands out no job and promotes none.
-- The claim carries free capacity per host (`free.build[host]`, `free.validate[host]`) and `ready_hosts`, the hosts whose lane profile is installed and checked on this boot. Production stores `ready_hosts` with the heartbeat and offers a host only while the last fresh heartbeat lists it.
+- The claim carries free capacity per host (`free.build[host]`, `free.validate[host]`) and `ready_hosts`, the hosts whose lane profile is installed and checked on this boot. Production stores `ready_hosts` with the heartbeat. While the builder is `running`, it offers a host only when the last fresh heartbeat lists it (`unavailable_reason: builder_not_ready` otherwise); while it is stopped or starting, readiness does not block a create (section 2.1, step 6a).
 - Validations are handed out first, then the oldest queued build whose host has free build capacity in `free.build[host]` and fewer than that host's `max_active` building. A saturated host never blocks another host's jobs.
 - A build claim sets `building`, appends `job_claimed`, sets `deadline_at = claim + the host's deadline`, and sets `lease_until = now + LEASE_MS` (90 s). The build job's `limits` come from the host profile.
 
@@ -300,7 +300,7 @@ Global caps: queued jobs 4, jobs per UTC day 30, total OTF model spend set by th
 | Umami placement (spec accept and lane board) | "The builder places the bug in one of Umami's date-grouped reports that its harness supports, chosen to match your card where it can. It may differ from the report your card describes." |
 | Umami calendar | "Umami builds are not offered on the 2nd to the 5th of a month (UTC): on those days two of Umami's own tests fail on an unmodified copy." |
 | Catalog bug | Today's wording, unchanged: "pre-qualified catalog bug, re-verified for your request". |
-| Time estimate | Only when the host's `typical` is present: "Usually about {median_min} minutes; 9 in 10 finished within {p90_min} minutes ({samples} builds measured, last on {measured_on}). Your bug may take longer or not qualify." When `typical` is null: "Build times for {host label} are not measured yet. The board shows each step as it runs." |
+| Time estimate | Only when the host's `typical` is present. With `source: "otf_jobs"`: "Usually about {median_min} minutes; 9 in 10 finished within {p90_min} minutes ({samples} builds measured, last on {measured_on}). Your bug may take longer or not qualify." With `source: "development_attempts"`: "In development runs, a qualifying build attempt took about {median_min} minutes, and 9 in 10 took at most {p90_min} minutes ({samples} attempts, measured {measured_on}). Waiting, machine start-up and packaging add to that. Your bug may take longer or not qualify." When `typical` is null: "Build times for {host label} are not measured yet. The board shows each step as it runs." |
 | Queued | "Another build is running. Yours is number {n} in line." The typical-time clause is added only when `typical` is present. |
 | Cold start (only when `cold_start_min` is set) | "Starting the Nebius machine usually takes about N minutes." |
 | Spend | "Model spend so far: $X (metered by the builder; an upper bound)." Shown apart from the Sandbox budget line. |
@@ -311,8 +311,8 @@ Global caps: queued jobs 4, jobs per UTC day 30, total OTF model spend set by th
 
 **Where time figures come from.** Each host's `typical` is set by the operator from config, or is null, and copy shows a time only from it. The UI hard-codes no minutes. Every value set there points to a committed results file:
 - [`evidence/build-time-2026-10-29.json`](evidence/build-time-2026-10-29.json) holds the development measurements per host: the wall time of each qualified experiment attempt (one lane, one model, one spec), at 4 vCPU / 8 GB per copy, with its sample counts, per-model counts and method.
-- Those attempts are not OTF jobs: the times leave out the queue, the cold start, the confirmation round and packaging. A `typical` taken from that file uses its `qualified_wall_min.median` and `p90`, `samples` = its `qualified`, and `measured_on` = its `measured_on`.
-- Once finished OTF jobs are measured (claim to finish), they replace it, in a new committed file.
+- Those attempts are not OTF jobs: the times leave out the queue, the cold start, the confirmation round and packaging. A `typical` taken from that file has `source: "development_attempts"` and uses its `qualified_wall_min.median` and `p90`, `samples` = its `qualified`, and `measured_on` = its `measured_on`.
+- Once finished OTF jobs are measured (claim to finish), they replace it, in a new committed file, with `source: "otf_jobs"`.
 
 - Infrastructure errors (`error`, `builder_start_failed`, `builder_lost`, `builder_unavailable`) are worded as errors, never as "the models could not build it".
 - **Copy that becomes conditional:**

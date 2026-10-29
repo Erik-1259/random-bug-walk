@@ -42,6 +42,7 @@ import {
   STOP_REASONS,
   TOKEN_FACTORY_PROVIDER,
   TYPICAL_MIN_SAMPLES,
+  TYPICAL_SOURCES,
   VALIDATION_STATES,
   VALIDATION_WHERE,
   criteriaOf,
@@ -363,6 +364,7 @@ const RESULT_PART: Schema = {
 };
 
 const TYPICAL = object({
+  source: oneOf(TYPICAL_SOURCES),
   median_min: { type: "number", minimum: 0, maximum: 600 },
   p90_min: { type: "number", minimum: 0, maximum: 600 },
   samples: { type: "integer", minimum: TYPICAL_MIN_SAMPLES, maximum: 100_000 },
