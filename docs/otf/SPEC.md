@@ -381,11 +381,11 @@ Open behaviors let a customer build a non-security behavior on the task-report h
 ### 8.2 The flag, and production at this commit
 
 - `RBW_OTF_OPEN_BEHAVIORS=1` turns open behaviors on. Unset (or any other value) means off. The server branch adds the flag; it does not exist yet.
-- While it is off (and at this commit), production behaves exactly as before:
+- While it is off (and at this commit), production behaves as before, apart from the `measured` member in availability (section 8.1):
   - availability lists only the proven behaviors (`compose.ts` builds them from `PROVEN_CRITERION_IDS`);
   - a create naming the open criterion answers `invalid_spec` (`cardInScope` refuses it);
   - no claim hands out an open job, since none can be created;
-  - the classify route does not exist.
+  - the classify route does not exist at this commit; once the server branch adds it, it answers `unavailable` while the flag is off.
 - With the flag on, availability adds the open behavior on task-report (when that host is offered), with `label: OTF_OPEN_LABEL` and `measured: false`.
 - Set `RBW_OTF_OPEN_BEHAVIORS=1` in an environment only after the builder that reads `BuildJob.rule` is installed and pointed at that environment. A claim does not tell production whether the builder supports open jobs, so an earlier builder would claim an open job and build it without its rule.
 
