@@ -125,7 +125,7 @@ function RequestFields({ capabilities, disabled, onInterpret, onChange, plan }: 
             onChange(); setHosts((current) => event.target.checked ? [...current, host.host_id] : current.filter((id) => id !== host.host_id));
           }} /> {host.label} — {host.description}
         </label>)}
-        {capabilities.hosts.some((host) => host.host_id === "umami") && <p className="factory-note">Umami cases include the bug report that NVIDIA Nemotron 3.5 Lightning wrote on Nebius Token Factory for the completed example. A request itself makes no model call.</p>}
+        {capabilities.hosts.some((host) => host.host_id === "umami") && <p className="factory-note">For catalog requests: Umami cases include the bug report that NVIDIA Nemotron 3.5 Lightning wrote on Nebius Token Factory for the completed example. A request itself makes no model call.</p>}
         {capabilities.hosts.filter((host) => closedByCalendar(capabilities, host.host_id)).map((host) => <p key={host.host_id} className="factory-badge">{CALENDAR_HINT}</p>)}
       </fieldset>
       {rows.map((row, index) => <fieldset className="factory-request-row" key={row.item_key}>

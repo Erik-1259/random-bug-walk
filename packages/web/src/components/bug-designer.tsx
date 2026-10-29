@@ -9,7 +9,7 @@ import { formatDateTime } from "../factory/format.ts";
 
 export const DESIGNER_EXAMPLES: readonly string[] = ["date/time bugs", "race conditions", "lost updates"];
 export const DESIGNER_CREDIT = "Designed by NVIDIA Nemotron 3 Super on Nebius Token Factory · sources found with Tavily";
-export const CATALOG_HONESTY = "Today Random Bug Walk delivers the closest proven bug from its catalog, re-verified live on fresh clean, buggy and fixed copies. Building this exact design is the next step.";
+export const CATALOG_HONESTY = "Today Random Bug Walk delivers the closest proven bug from its catalog, re-verified live on fresh clean, buggy and fixed copies.";
 
 const FALLBACK_HOST_LABELS: Readonly<Record<string, string>> = { umami: "Umami", "task-report": "Task and report service" };
 
@@ -38,6 +38,7 @@ export interface BugDesignerProps {
   applyBlocked: string | null;
   onUsePlan: (plan: FactoryPlan) => void;
   client?: AssistClient;
+  otfEnabled?: boolean;
 }
 
 export function BugDesigner({ client = assistClient, ...props }: BugDesignerProps) {
@@ -67,7 +68,7 @@ export interface BugDesignerViewProps extends Omit<BugDesignerProps, "client"> {
 }
 
 /** Everything the designer shows, from its state; BugDesigner supplies the state and the calls. */
-export function BugDesignerView({ signedIn, capabilities, applyBlocked, onUsePlan, state, dispatch, onSearch, onWrite }: BugDesignerViewProps) {
+export function BugDesignerView({ signedIn, capabilities, applyBlocked, onUsePlan, state, dispatch, onSearch, onWrite, otfEnabled = false }: BugDesignerViewProps) {
   const header = <>
     <h2 id="designer-heading">Find a bug for your agent evaluation</h2>
     <p>Describe a kind of bug. The designer searches the public web for real bug reports of that kind, sums them up as a few bug shapes, and writes a bug specification for one of the two applications. Non-security bugs only: date and time, concurrency, data handling, state and UI logic.</p>
@@ -128,7 +129,7 @@ export function BugDesignerView({ signedIn, capabilities, applyBlocked, onUsePla
       <button type="button" disabled={state.busy !== null || state.hostId === null} onClick={onWrite}>Write the bug specification</button>
     </fieldset>}
     {shape !== null && spec !== null && state.hostId !== null && <SpecCard state={state} capabilities={capabilities} applyBlocked={applyBlocked} onUsePlan={onUsePlan} dispatch={dispatch} />}
-    <p className="factory-note">{CATALOG_HONESTY}</p>
+    <p className="factory-note">{CATALOG_HONESTY}{otfEnabled && <> For a task-report design, custom builds are available above. Building this exact design is the next step.</>}</p>
   </section>;
 }
 
