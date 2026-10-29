@@ -26,7 +26,8 @@ import {
   type OtfSpecCard,
 } from "../../src/otf/contract.ts";
 import { validateOtf } from "../../src/otf/schemas.ts";
-import { MemoryOtfStore, OTF_TEST_GRADER_SENTINEL, OtfTestModeRefusedError, OtfTestWorld, claimHosts, otfTestMode, otfTestWorld, syntheticDelivery } from "../../src/otf/test-mode/fake-builder.ts";
+import { createMemoryOtfStore } from "../../src/otf/store.ts";
+import { OTF_TEST_GRADER_SENTINEL, OtfTestModeRefusedError, OtfTestWorld, claimHosts, otfTestMode, otfTestWorld, syntheticDelivery } from "../../src/otf/test-mode/fake-builder.ts";
 import {
   OTF_TEST_JOB_SCENARIOS,
   OTF_TEST_SCENARIOS,
@@ -413,7 +414,8 @@ describe("the fake builder through the store and power ports", () => {
     expect(job?.outcome).toBe(events.at(-1)?.type === "job_finished" ? (events.at(-1) as Extract<OtfEvent, { type: "job_finished" }>).data.outcome : null);
     const artifacts = await world.store.listArtifacts(JOB);
     if (scenario === "delivered" || scenario === "umami_delivered") {
-      expect(artifacts.map((artifact) => artifact.part)).toEqual(["agent", "grader", "certificate"]);
+      // The production store lists parts by name, as Postgres orders them.
+      expect(artifacts.map((artifact) => artifact.part)).toEqual(["agent", "certificate", "grader"]);
       expect(job?.certificate?.received?.sha256_verified).toBe(true);
       expect(job?.certificate?.host_id).toBe(SCENARIO_HOST[scenario]);
       expect(validateOtf("OtfCertificate", job?.certificate)).toEqual([]);
@@ -454,7 +456,7 @@ describe("the fake builder through the store and power ports", () => {
   });
 
   it("the memory store skips a byte-identical repeat and refuses a changed repeat or a gap", async () => {
-    const store = new MemoryOtfStore(T0);
+    const store = createMemoryOtfStore({ now: () => new Date(T0) });
     const body = { job_id: JOB, client_key: "00000000-0000-4000-8000-000000000003", create_sha256: "b".repeat(64), created_at: T0, host_id: "task-report" as const, criterion_id: "concurrency.lost-acknowledged-change" as const, sentence: "Two quick saves lose one.", spec: SPEC, spec_sha256: "a".repeat(64), state: "queued" as const, catalog_request_id: null };
     await store.createJob(body);
     expect((await store.createJob(body)).kind).toBe("replayed");
@@ -470,7 +472,7 @@ describe("the fake builder through the store and power ports", () => {
   });
 
   it("the memory store claims per host: a saturated Umami never blocks a queued task-report build", async () => {
-    const store = new MemoryOtfStore(T0);
+    const store = createMemoryOtfStore({ now: () => new Date(T0) });
     const id = (n: number): string => `00000000-0000-4000-8000-00000000000${String(n)}`;
     const base = { create_sha256: "b".repeat(64), sentence: "An invented sentence.", spec: SPEC, spec_sha256: "a".repeat(64), state: "queued" as const, catalog_request_id: null };
     const at = (s: number): string => new Date(Date.parse(T0) + s * 1_000).toISOString();

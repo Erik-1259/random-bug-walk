@@ -12,7 +12,8 @@
 //   certificate and two tiny invented gzip bundles, or another outcome). It honors a customer stop
 //   (stop_requested_at) and the job deadline at the moment each took effect, after replaying what
 //   the script holds before it, so a late poll or a clock jump never changes the stream.
-// - MemoryOtfStore is an in-memory OtfStore, so test mode needs no database.
+// - The store is the production store's in-memory twin (store.ts createMemoryOtfStore), so test mode
+//   needs no database and runs the same claim, event and delivery rules as Postgres.
 // - OtfTestWorld ties them together on one clock. Its `store` advances the fake builder before
 //   every call, so the customer routes need nothing special: they get `store` and `power` from the
 //   world in place of Postgres and the cloud SDK, `now()` in place of the wall clock, and `hosts`
@@ -30,7 +31,8 @@
 import { createHash } from "node:crypto";
 import { gzipSync } from "node:zlib";
 import { loadFactoryConfig } from "../../config.ts";
-import { builderEventBytes, canonicalJson } from "../canonical.ts";
+import { canonicalJson } from "../canonical.ts";
+import { createMemoryOtfStore, type MemoryOtfStore } from "../store.ts";
 import {
   ADMISSION_EVIDENCE,
   AGENT_LABEL,
@@ -38,7 +40,6 @@ import {
   CERTIFICATE_RUNNER,
   COPY_LIMITS,
   EXPECTED_CELLS,
-  LEASE_MS,
   OTF_HOST_DEFAULTS,
   OTF_HOST_IDS,
   START_TIMEOUT_MS,
@@ -46,29 +47,16 @@ import {
   StartError,
   hostCalendarOpen,
   TOKEN_FACTORY_PROVIDER,
-  type AppendBuilderEventsResult,
-  type BuilderEventIn,
-  type CreateJobResult,
-  type JobPatch,
   type NebiusInstanceState,
   type OtfArtifactRecord,
-  type OtfBuilderInfo,
   type OtfCertificate,
   type OtfCriterionId,
   type OtfAdmissionResult,
-  type OtfEvent,
   type OtfHostId,
   type OtfJobId,
   type OtfJobRecord,
-  type OtfJobState,
-  type OtfNewJob,
   type OtfPart,
-  type OtfPowerLogEntry,
-  type OtfPowerRecord,
   type OtfStore,
-  type OtfValidationRecord,
-  type OtfValidationState,
-  type ProductionEvent,
   type QualifiedAdmission,
   type ResultPart,
   type ResultPost,
@@ -123,262 +111,6 @@ export function claimHosts(ready: readonly OtfHostId[], speed: number, build = t
 
 /** Stands for grader material: it is in the grader bundle only, so a test can check no JSON body carries it. */
 export const OTF_TEST_GRADER_SENTINEL = "synthetic-otf-test-mode-grader-material-7c41";
-
-// ---- the in-memory store
-
-interface StoredJob {
-  record: OtfJobRecord;
-  events: OtfEvent[];
-  /** builderEventBytes of each stored builder event, by builder_seq - 1. */
-  builderBytes: string[];
-  artifacts: Map<OtfPart, OtfArtifactRecord & { bytes: Uint8Array }>;
-}
-
-const byCreated = (a: OtfJobRecord, b: OtfJobRecord): number => Date.parse(a.created_at) - Date.parse(b.created_at);
-
-/** OtfStore in one process's memory. Every read returns a copy, so a caller can never change stored state. */
-export class MemoryOtfStore implements OtfStore {
-  private readonly jobs = new Map<OtfJobId, StoredJob>();
-  private readonly keys = new Map<string, OtfJobId>();
-  private readonly validations = new Map<string, OtfValidationRecord>();
-  private readonly boots = new Set<string>();
-  private seen: (OtfBuilderInfo & { last_seen_at: string }) | null = null;
-  private power: OtfPowerRecord;
-  readonly powerLog: OtfPowerLogEntry[] = [];
-  private powerQueue: Promise<unknown> = Promise.resolve();
-
-  constructor(at: string = new Date().toISOString()) {
-    this.power = {
-      state: "stopped",
-      since: at,
-      preset: TEST_PRESET,
-      instance_state: "STOPPED",
-      last_api_call_at: null,
-      last_start_at: null,
-      last_stop_at: null,
-      start_failures: 0,
-      running_since: null,
-      last_job_finished_at: null,
-      vm_seconds_today: 0,
-      vm_day: at.slice(0, 10),
-      hold_until: null,
-    };
-  }
-
-  createJob(job: OtfNewJob): Promise<CreateJobResult> {
-    const existing = this.keys.get(job.client_key);
-    if (existing !== undefined) {
-      const stored = this.stored(existing);
-      return Promise.resolve(stored.record.create_sha256 === job.create_sha256 ? { kind: "replayed", job: structuredClone(stored.record) } : { kind: "conflict" });
-    }
-    const record: OtfJobRecord = {
-      ...structuredClone(job),
-      outcome: null,
-      reason: null,
-      claimed_by: null,
-      claimed_at: null,
-      lease_until: null,
-      deadline_at: null,
-      last_builder_post_at: null,
-      stop_requested_at: null,
-      stop_reason: null,
-      winner_lane: null,
-      winner_model: null,
-      model_microusd: 0,
-      certificate: null,
-      finished_at: null,
-    };
-    this.jobs.set(job.job_id, { record, events: [], builderBytes: [], artifacts: new Map() });
-    this.keys.set(job.client_key, job.job_id);
-    return Promise.resolve({ kind: "created", job: structuredClone(record) });
-  }
-
-  getJob(job_id: OtfJobId): Promise<OtfJobRecord | null> {
-    const stored = this.jobs.get(job_id);
-    return Promise.resolve(stored === undefined ? null : structuredClone(stored.record));
-  }
-
-  listJobs(states: readonly OtfJobState[]): Promise<OtfJobRecord[]> {
-    const list = [...this.jobs.values()].map((stored) => stored.record).filter((record) => states.includes(record.state));
-    return Promise.resolve(list.sort(byCreated).map((record) => structuredClone(record)));
-  }
-
-  countJobsCreatedSince(at: string): Promise<number> {
-    const since = Date.parse(at);
-    return Promise.resolve([...this.jobs.values()].filter((stored) => Date.parse(stored.record.created_at) >= since).length);
-  }
-
-  totalModelMicrousd(): Promise<number> {
-    return Promise.resolve([...this.jobs.values()].reduce((sum, stored) => sum + stored.record.model_microusd, 0));
-  }
-
-  updateJob(job_id: OtfJobId, whenStates: readonly OtfJobState[], patch: JobPatch): Promise<OtfJobRecord | null> {
-    const stored = this.jobs.get(job_id);
-    if (stored === undefined || !whenStates.includes(stored.record.state)) return Promise.resolve(null);
-    Object.assign(stored.record, structuredClone(patch));
-    return Promise.resolve(structuredClone(stored.record));
-  }
-
-  appendJobEvent(job_id: OtfJobId, event: ProductionEvent, at: string): Promise<OtfEvent> {
-    const stored = this.stored(job_id);
-    const appended = { seq: stored.events.length + 1, at, ...structuredClone(event) } as OtfEvent;
-    stored.events.push(appended);
-    return Promise.resolve(structuredClone(appended));
-  }
-
-  appendBuilderEvents(job_id: OtfJobId, builder_id: string, events: readonly BuilderEventIn[], at: string): Promise<AppendBuilderEventsResult> {
-    const stored = this.jobs.get(job_id);
-    if (stored === undefined) return Promise.resolve({ kind: "not_found" });
-    if (stored.record.state === "finished") return Promise.resolve({ kind: "finished" });
-    if (stored.record.claimed_by !== builder_id) return Promise.resolve({ kind: "wrong_builder" });
-    const accepted = stored.builderBytes.length;
-    const fresh: BuilderEventIn[] = [];
-    for (const event of events) {
-      const bytes = builderEventBytes(event);
-      if (event.builder_seq <= accepted) {
-        if (stored.builderBytes[event.builder_seq - 1] !== bytes) return Promise.resolve({ kind: "conflict", accepted_through: accepted, builder_seq: event.builder_seq });
-        continue;
-      }
-      if (event.builder_seq !== accepted + fresh.length + 1) return Promise.resolve({ kind: "conflict", accepted_through: accepted, builder_seq: event.builder_seq });
-      fresh.push(event);
-    }
-    for (const event of fresh) {
-      stored.builderBytes.push(builderEventBytes(event));
-      // The public event: production's seq in place of the builder's own builder_seq.
-      stored.events.push({ seq: stored.events.length + 1, at: event.at, type: event.type, lane_id: event.lane_id, data: structuredClone(event.data) } as OtfEvent);
-    }
-    stored.record.lease_until = iso(Date.parse(at) + LEASE_MS);
-    stored.record.last_builder_post_at = at;
-    return Promise.resolve({ kind: "ok", accepted_through: stored.builderBytes.length });
-  }
-
-  listEvents(job_id: OtfJobId, after: number): Promise<OtfEvent[]> {
-    const stored = this.jobs.get(job_id);
-    return Promise.resolve(stored === undefined ? [] : structuredClone(stored.events.filter((event) => event.seq > after)));
-  }
-
-  recordBuilderSeen(info: OtfBuilderInfo, at: string): Promise<{ first_of_boot: boolean }> {
-    const key = `${info.builder_id}\n${info.boot_id}`;
-    const first = !this.boots.has(key);
-    this.boots.add(key);
-    this.seen = { ...info, last_seen_at: at };
-    return Promise.resolve({ first_of_boot: first });
-  }
-
-  lastBuilderSeen(): Promise<(OtfBuilderInfo & { last_seen_at: string }) | null> {
-    return Promise.resolve(this.seen === null ? null : { ...this.seen });
-  }
-
-  /** As the contract's claimNext: validations first, then the oldest queued build of a host with room; a saturated host never blocks another. */
-  claimNext(
-    builder_id: string,
-    at: string,
-    opts: { hosts: ClaimHosts },
-  ): Promise<{ kind: "build"; job: OtfJobRecord } | { kind: "validate"; validation: OtfValidationRecord } | null> {
-    const hostOf = (job_id: OtfJobId): OtfHostId | undefined => this.jobs.get(job_id)?.record.host_id;
-    const waiting = [...this.validations.values()]
-      .filter((run) => {
-        const host = hostOf(run.job_id);
-        return run.state === "queued" && host !== undefined && opts.hosts[host].validate;
-      })
-      .sort((a, b) => Date.parse(a.started_at) - Date.parse(b.started_at))[0];
-    if (waiting !== undefined) {
-      waiting.state = "running";
-      waiting.claimed_by = builder_id;
-      return Promise.resolve({ kind: "validate", validation: structuredClone(waiting) });
-    }
-    const records = [...this.jobs.values()].map((stored) => stored.record);
-    const building = (host: OtfHostId): number => records.filter((record) => record.state === "building" && record.host_id === host).length;
-    const next = records.filter((record) => record.state === "queued" && opts.hosts[record.host_id].build && building(record.host_id) < opts.hosts[record.host_id].maxActiveBuilds).sort(byCreated)[0];
-    if (next === undefined) return Promise.resolve(null);
-    const now = Date.parse(at);
-    Object.assign(next, { state: "building", claimed_by: builder_id, claimed_at: at, deadline_at: iso(now + opts.hosts[next.host_id].deadlineMs), lease_until: iso(now + LEASE_MS) } satisfies Partial<OtfJobRecord>);
-    return Promise.resolve({ kind: "build", job: structuredClone(next) });
-  }
-
-  /** Also appends job_finished { outcome: "delivered" } at `at`, in the same step (SPEC section 3.2). */
-  storeDelivery(
-    job_id: OtfJobId,
-    builder_id: string,
-    parts: readonly (OtfArtifactRecord & { bytes: Uint8Array })[],
-    patch: JobPatch,
-    at: string,
-  ): Promise<"stored" | "replayed" | "conflict" | "finished" | "wrong_builder" | "not_found"> {
-    const stored = this.jobs.get(job_id);
-    if (stored === undefined) return Promise.resolve("not_found");
-    const { record } = stored;
-    if (record.state === "finished") {
-      if (record.outcome !== "delivered") return Promise.resolve("finished");
-      const same = parts.length === stored.artifacts.size && parts.every((part) => stored.artifacts.get(part.part)?.sha256 === part.sha256);
-      return Promise.resolve(same ? "replayed" : "conflict");
-    }
-    if (record.state !== "building") return Promise.resolve("finished");
-    if (record.claimed_by !== builder_id) return Promise.resolve("wrong_builder");
-    for (const part of parts) stored.artifacts.set(part.part, { ...structuredClone(part), bytes: new Uint8Array(part.bytes) });
-    Object.assign(record, structuredClone(patch));
-    stored.events.push({ seq: stored.events.length + 1, at, type: "job_finished", lane_id: null, data: { outcome: "delivered", reason: null } });
-    return Promise.resolve("stored");
-  }
-
-  listArtifacts(job_id: OtfJobId): Promise<OtfArtifactRecord[]> {
-    const stored = this.jobs.get(job_id);
-    return Promise.resolve(stored === undefined ? [] : [...stored.artifacts.values()].map((found) => ({ job_id: found.job_id, part: found.part, filename: found.filename, media_type: found.media_type, size: found.size, sha256: found.sha256 })));
-  }
-
-  getArtifact(job_id: OtfJobId, part: OtfPart): Promise<(OtfArtifactRecord & { bytes: Uint8Array }) | null> {
-    const found = this.jobs.get(job_id)?.artifacts.get(part);
-    return Promise.resolve(found === undefined ? null : { ...found, bytes: new Uint8Array(found.bytes) });
-  }
-
-  createValidation(job_id: OtfJobId, validation_id: string, at: string): Promise<OtfValidationRecord> {
-    const record: OtfValidationRecord = { validation_id, job_id, state: "queued", cells: null, admission: null, started_at: at, finished_at: null, claimed_by: null };
-    this.validations.set(validation_id, record);
-    return Promise.resolve(structuredClone(record));
-  }
-
-  getValidation(validation_id: string): Promise<OtfValidationRecord | null> {
-    const found = this.validations.get(validation_id);
-    return Promise.resolve(found === undefined ? null : structuredClone(found));
-  }
-
-  latestValidation(job_id: OtfJobId): Promise<OtfValidationRecord | null> {
-    const runs = [...this.validations.values()].filter((run) => run.job_id === job_id);
-    const latest = runs.sort((a, b) => Date.parse(b.started_at) - Date.parse(a.started_at))[0];
-    return Promise.resolve(latest === undefined ? null : structuredClone(latest));
-  }
-
-  updateValidation(
-    validation_id: string,
-    whenStates: readonly OtfValidationState[],
-    patch: Partial<Pick<OtfValidationRecord, "state" | "cells" | "admission" | "finished_at">>,
-  ): Promise<OtfValidationRecord | null> {
-    const found = this.validations.get(validation_id);
-    if (found === undefined || !whenStates.includes(found.state)) return Promise.resolve(null);
-    Object.assign(found, structuredClone(patch));
-    return Promise.resolve(structuredClone(found));
-  }
-
-  getPower(): Promise<OtfPowerRecord> {
-    return Promise.resolve(structuredClone(this.power));
-  }
-
-  withPowerLock<T>(fn: (power: OtfPowerRecord) => Promise<{ patch: Partial<OtfPowerRecord> | null; log: OtfPowerLogEntry[]; result: T }>): Promise<T> {
-    const run = this.powerQueue.then(async () => {
-      const { patch, log, result } = await fn(structuredClone(this.power));
-      if (patch !== null) this.power = { ...this.power, ...structuredClone(patch) };
-      this.powerLog.push(...structuredClone(log));
-      return result;
-    });
-    this.powerQueue = run.catch(() => undefined);
-    return run;
-  }
-
-  private stored(job_id: OtfJobId): StoredJob {
-    const stored = this.jobs.get(job_id);
-    if (stored === undefined) throw new Error(`otf test mode: no job ${job_id}`);
-    return stored;
-  }
-}
 
 // ---- the fake power port
 
@@ -912,7 +644,7 @@ export class OtfTestWorld {
     const offset = clockOffset(scenario, base());
     const clock = offset === 0 ? base : (): number => base() + offset;
     const script = isOtfTestJobScenario(scenario) ? scenarioScript(scenario) : null;
-    const memory = new MemoryOtfStore(iso(clock()));
+    const memory = createMemoryOtfStore({ now: () => new Date(clock()) });
     const power = new FakeVmPower(clock, { coldStartMs: (script?.cold_start_ms ?? TEST_COLD_START_MS) / speed, failure: script?.start_failure ?? null });
     const builder = new FakeBuilder({ store: memory, power, clock, scenario, speed });
     return { scenario, speed, clock, memory, power, builder };

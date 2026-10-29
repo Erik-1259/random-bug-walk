@@ -78,7 +78,7 @@ const STORES: [string, () => Promise<OtfStore>][] = [
   ["postgres (PGlite)", pgliteStore],
 ];
 
-type HostClaim = { build: boolean; validate: boolean; maxActiveBuilds: number; deadlineMs: number };
+interface HostClaim { build: boolean; validate: boolean; maxActiveBuilds: number; deadlineMs: number }
 
 /** Claim options: task-report with the given overrides, Umami with its own (closed by default). */
 function hosts(taskReport: Partial<HostClaim> = {}, umami: Partial<HostClaim> = {}): { hosts: Record<OtfHostId, HostClaim> } {
