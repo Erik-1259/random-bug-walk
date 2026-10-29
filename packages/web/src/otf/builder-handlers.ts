@@ -135,7 +135,8 @@ async function authed<N extends OtfSchemaName>(request: Request, deps: OtfBuilde
   return { ok: true, builder_id, at, body: parsed.value };
 }
 
-function microusd(usd: string): number {
+/** A USD amount as the config holds it ("8.00") in micro-USD. */
+export function microusd(usd: string): number {
   const [whole = "0", fraction = ""] = usd.split(".");
   return Number(whole) * 1_000_000 + Number(fraction.padEnd(6, "0").slice(0, 6));
 }

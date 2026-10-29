@@ -1,3 +1,4 @@
+import "../../../../../../src/otf/compose.ts";
 import { handleOtfTestReset } from "../../../../../../src/otf/handlers.ts";
 
 export const dynamic = "force-dynamic";

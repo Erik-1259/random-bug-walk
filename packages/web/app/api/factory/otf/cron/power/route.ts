@@ -1,5 +1,6 @@
 // GET /api/factory/otf/cron/power: the builder machine's watchdog pass for Vercel Cron, every 5 min
 // (vercel.json). Vercel sends Authorization: Bearer <CRON_SECRET> (docs/otf/SPEC.md section 4).
+import "../../../../../../src/otf/compose.ts";
 import { loadOtfConfig } from "../../../../../../src/config.ts";
 import { powerCron } from "../../../../../../src/otf/power/lifecycle.ts";
 import { nebiusPowerFrom } from "../../../../../../src/otf/power/nebius.ts";

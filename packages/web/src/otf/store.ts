@@ -933,10 +933,8 @@ export function createMemoryOtfStore(options: { now?: () => Date } = {}): Memory
 // ---- the live store
 
 /**
- * Opens a node-postgres pool for DATABASE_URL. packages/web does not depend on the pg driver yet
- * (its lockfile entry belongs to another branch), so none is set here; until one is, otfStoreFor
- * answers null and every OTF route answers unavailable. The wiring is one call at module load:
- * setOtfPoolOpener((url) => new pg.Pool({ connectionString: url, max: 3 })).
+ * Opens a node-postgres pool for DATABASE_URL. compose.ts sets it when an OTF route bundle loads;
+ * until it is set, otfStoreFor answers null and every OTF route answers unavailable.
  */
 let poolOpener: ((databaseUrl: string) => PgPoolLike) | null = null;
 

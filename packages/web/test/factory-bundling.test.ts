@@ -45,8 +45,11 @@ describe("the factory routes' traced files", () => {
 
   it("hold the prepared packages directory in every factory route", () => {
     const factory = routes.filter((route) => route.startsWith("/api/factory/"));
-    // The factory contract's 13 routes and the bug designer's 3 under the factory session's path.
-    expect(factory.length).toBe(16);
+    // The factory contract's 13 routes and the bug designer's 3 under the factory session's path,
+    // and the on-the-fly builds' 14: 7 customer routes (with the test-mode reset), 6 builder routes
+    // and the power cron.
+    expect(factory.length).toBe(30);
+    expect(factory.filter((route) => route.startsWith("/api/factory/otf/")).length).toBe(14);
     for (const route of factory) expect(tracedFor(route), route).toEqual(["./factory-packages/**/*"]);
   });
 

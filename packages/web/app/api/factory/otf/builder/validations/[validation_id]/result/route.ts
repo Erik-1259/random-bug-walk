@@ -1,4 +1,5 @@
 // POST /api/factory/otf/builder/validations/{validation_id}/result: a validation's six cells (docs/otf/SPEC.md section 3.2).
+import "../../../../../../../../src/otf/compose.ts";
 import { handleOtfBuilder, postValidationResult } from "../../../../../../../../src/otf/builder-handlers.ts";
 
 export const dynamic = "force-dynamic";
