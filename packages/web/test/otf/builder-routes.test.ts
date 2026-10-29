@@ -589,6 +589,23 @@ describe("builder artifacts and validations", () => {
     expect(await w.store.getValidation(uuid(500))).toMatchObject({ state: "passed", admission: QUALIFIED });
     expect((await post({ state: "passed", cells: EXPECTED_CELLS, admission: QUALIFIED })).status).toBe(200);
   });
+
+  it("takes a failed Umami validation whose first-copy cells match but whose admission does not qualify", async () => {
+    const w = world(undefined, testConfig({ RBW_OTF_UMAMI_LANES: JSON.stringify(UMAMI_LANES) }));
+    await w.store.createJob(newJob(1, "queued", iso(1_000), "umami"));
+    await w.store.updateJob(uuid(1), ["queued"], { state: "finished", outcome: "delivered", reason: null, finished_at: iso(2) });
+    await w.store.createValidation(uuid(1), uuid(500), iso(10));
+    const free = { build: { "task-report": 0, umami: 0 }, validate: { "task-report": 0, umami: 1 } };
+    await w.store.claimNext(BUILDER, iso(11), { hosts: claimHosts(w.deps.config, { free, ready_hosts: ["umami"] }) });
+    const path = `/api/factory/otf/builder/validations/${uuid(500)}/result`;
+    const post = (body: Record<string, unknown>): Promise<Response> =>
+      postValidationResult(signed(w, path, { builder_id: BUILDER, finished_at: iso(20), ...body }), w.deps, { validation_id: uuid(500) });
+    expect(await errorCode(await post({ state: "failed", cells: EXPECTED_CELLS, admission: QUALIFIED }))).toBe("invalid_request");
+    const rejected: OtfAdmissionResult = { ...QUALIFIED, decisions: { ...QUALIFIED.decisions, adm_05: "reject" } };
+    const failed = await post({ state: "failed", cells: EXPECTED_CELLS, admission: rejected });
+    expect(failed.status).toBe(200);
+    expect(await w.store.getValidation(uuid(500))).toMatchObject({ state: "failed", cells: EXPECTED_CELLS, admission: rejected });
+  });
 });
 
 describe("builder stop intent", () => {

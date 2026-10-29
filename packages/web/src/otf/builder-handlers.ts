@@ -497,14 +497,26 @@ function admissionQualified(admission: OtfAdmissionResult): boolean {
 }
 
 /**
- * Why a validation result does not fit its job's host, or null. Tier-B hosts send admission null;
- * an admission host sends it on passed and failed, and a passed one qualifies.
+ * Why a validation result does not fit its job's host, or null.
+ * - passed: the expected six cells; an admission host also sends a qualifying admission result.
+ * - failed: task-report sends six cells that differ from the expected ones. An admission host sends
+ *   its admission result, and either cells that differ (or none, when the copies did not run) or an
+ *   admission result that does not qualify: a later copy, repetition or probe can fail while the
+ *   first copies' cells still match.
+ * - Tier-B hosts always send admission null.
  */
-function admissionProblem(host: OtfHostId, body: { state: "passed" | "failed" | "error"; admission: OtfAdmissionResult | null }): string | null {
-  if (host === "task-report") return body.admission === null ? null : "A task-report validation carries no admission result.";
+function validationProblem(host: OtfHostId, body: { state: "passed" | "failed" | "error"; cells: SixCells | null; admission: OtfAdmissionResult | null }): string | null {
+  if (body.state === "passed" && !sameCells(body.cells, EXPECTED_CELLS)) return "A passed validation must carry the expected six cells.";
+  if (host === "task-report") {
+    if (body.admission !== null) return "A task-report validation carries no admission result.";
+    if (body.state === "failed" && (body.cells === null || sameCells(body.cells, EXPECTED_CELLS))) return "A failed validation must carry six cells that differ from the expected ones.";
+    return null;
+  }
   if (body.state === "error") return null;
   if (body.admission === null) return "An Umami validation that passed or failed must carry its admission result.";
-  if (body.state === "passed" && !admissionQualified(body.admission)) return "A passed Umami validation must carry a qualifying admission result.";
+  const qualified = admissionQualified(body.admission);
+  if (body.state === "passed" && !qualified) return "A passed Umami validation must carry a qualifying admission result.";
+  if (body.state === "failed" && qualified && sameCells(body.cells, EXPECTED_CELLS)) return "A failed Umami validation must carry differing cells or an admission result that does not qualify.";
   return null;
 }
 
@@ -513,14 +525,12 @@ export async function postValidationResult(request: Request, deps: OtfBuilderDep
   const parsed = await authed(request, deps, "ValidationResultPost", BODY_LIMITS.validation);
   if (!parsed.ok) return parsed.response;
   const { body, builder_id } = parsed;
-  if (body.state === "passed" && !sameCells(body.cells, EXPECTED_CELLS)) return otfError("invalid_request", "A passed validation must carry the expected six cells.");
-  if (body.state === "failed" && (body.cells === null || sameCells(body.cells, EXPECTED_CELLS))) return otfError("invalid_request", "A failed validation must carry six cells that differ from the expected ones.");
   const found = await deps.store.getValidation(params.validation_id);
   if (found === null) return otfError("not_found");
   if (found.claimed_by !== builder_id) return otfError("unauthorized", "This validation is not claimed by this builder.");
   const owner = await deps.store.getJob(found.job_id);
   if (owner === null) return otfError("not_found");
-  const problem = admissionProblem(owner.host_id, body);
+  const problem = validationProblem(owner.host_id, body);
   if (problem !== null) return otfError("invalid_request", problem);
   const patch = { state: body.state, cells: body.cells, admission: body.admission, finished_at: body.finished_at };
   const updated = found.state === "running" ? await deps.store.updateValidation(params.validation_id, ["running"], patch) : null;
