@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { OTF_JOB_KEY, calendarWindowMs, createOtfClient, formatUtcDate, nextCalendarOpen, OtfClientError, OtfController, browserOtfIdentityLock, type AcceptedOtfInput, type OtfClient, type OtfIdentityLock } from "../../src/otf/client.ts";
+import { OTF_CLASSIFY_TIMEOUT_MS, OTF_JOB_KEY, calendarWindowMs, createOtfClient, formatUtcDate, nextCalendarOpen, OtfClientError, OtfController, browserOtfIdentityLock, type AcceptedOtfInput, type OtfClient, type OtfIdentityLock } from "../../src/otf/client.ts";
 import { ruleSha256, specSha256 } from "../../src/otf/canonical.ts";
 import { OTF_CLASSIFY_PATH, OTF_ERROR_STATUS, OTF_OPEN_CRITERION_ID, hostCalendarOpen, type OtfAvailability, type OtfClassification, type OtfCreateJob, type OtfJobStatus, type OtfOpenRule, type OtfValidation } from "../../src/otf/contract.ts";
 
@@ -149,6 +149,24 @@ describe("OTF classification client", () => {
     };
     const response = responses[kind]; if (response === undefined) throw new Error("Missing synthetic response.");
     await expect(createOtfClient(vi.fn<typeof fetch>().mockResolvedValue(response)).classify({ sentence: input.sentence, spec: input.spec })).rejects.toMatchObject({ code: "unavailable" });
+  });
+  it("gives only classify the 65-second timeout; other customer routes keep 15 seconds", async () => {
+    vi.useFakeTimers();
+    expect(OTF_CLASSIFY_TIMEOUT_MS).toBe(65_000);
+    const signals: AbortSignal[] = [];
+    const fetcher = vi.fn<typeof fetch>().mockImplementation((_path, options) => new Promise((_resolve, reject) => {
+      if (options?.signal) { signals.push(options.signal); options.signal.addEventListener("abort", () => { reject(new Error("Synthetic abort.")); }); }
+    }));
+    const client = createOtfClient(fetcher);
+    const classified = client.classify({ sentence: input.sentence, spec: input.spec });
+    const read = client.availability();
+    const classifyAssertion = expect(classified).rejects.toMatchObject({ code: "unavailable" });
+    const readAssertion = expect(read).rejects.toMatchObject({ code: "unavailable" });
+    await vi.advanceTimersByTimeAsync(15_000); await readAssertion;
+    expect(signals.map(signal => signal.aborted)).toEqual([false, true]);
+    await vi.advanceTimersByTimeAsync(49_999); expect(signals[0]?.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(1); await classifyAssertion;
+    expect(signals[0]?.aborted).toBe(true);
   });
   it("does not send a malformed classify request", async () => {
     const fetcher = vi.fn<typeof fetch>();

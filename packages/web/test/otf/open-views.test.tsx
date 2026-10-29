@@ -1,6 +1,7 @@
 import { renderToStaticMarkup as render } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { BehaviorPickerView, SpecAcceptView, ruleProblem } from "../../src/components/otf/guided.tsx";
+import { OpenRuleFields, holdEnter, ruleFieldProblems } from "../../src/components/otf/classification.tsx";
 import { CertificateView } from "../../src/components/otf/certificate.tsx";
 import { LaneBoard } from "../../src/components/otf/lane-board.tsx";
 import { EXPECTED_CELLS, OTF_OPEN_CRITERION_ID, OTF_OPEN_LABEL, OTF_OPEN_TIME_COPY, OTF_RESERVED_FAILURE_CODES, PROVEN_FAILURE_CODES, type OtfAvailability, type OtfBehaviorOption, type OtfClassification, type OtfHostAvailability, type OtfJobStatus, type OtfOpenRule, type OtfSpecCard } from "../../src/otf/contract.ts";
@@ -94,6 +95,30 @@ describe("editable open-rule validation", () => {
   });
   it.each(["\n", "\t", "\u0085", "\u2028", "\u2029", "\u202e", "\u200b", "\u200d", "\ufeff"])("rejects prohibited plain-text character %j", character => { expect(ruleProblem({ ...rule, observable_failure: rule.observable_failure + character })).not.toBeNull(); });
   it.each([...PROVEN_FAILURE_CODES, ...OTF_RESERVED_FAILURE_CODES, "ab", "123_code", "Synthetic_code", "has-hyphen", "a".repeat(49)])("rejects forbidden failure code %s", failure_code => { expect(ruleProblem({ ...rule, failure_code })).not.toBeNull(); });
+  it("shows every rule problem beside its own field, not only the first", () => {
+    const invalid = { ...rule, observable_failure: "Too short\u0007", failure_code: "Bad-Code" };
+    expect(Object.keys(ruleFieldProblems(invalid))).toEqual(["observable_failure", "failure_code"]);
+    expect(ruleFieldProblems(invalid).observable_failure).toHaveLength(2);
+    const html = render(<SpecAcceptView {...acceptProps} rule={invalid}/>);
+    expect(html).toContain('id="otf-rule-observable_failure" aria-invalid="true" aria-describedby="otf-rule-count otf-rule-observable_failure-error"');
+    expect(html).toContain('id="otf-rule-failure_code" aria-invalid="true" aria-describedby="otf-rule-failure_code-error"');
+    expect(html).toContain('<p id="otf-rule-observable_failure-error">The observable failure must contain 40 to 600 characters. Use plain text without control, separator or format characters for the observable failure.</p>');
+    expect(html).toContain('<p id="otf-rule-failure_code-error">Use 3 to 48 lowercase letters, digits or underscores for the failure code, starting with a letter.</p>');
+    expect(html).not.toContain('otf-rule-family-error'); expect(html).not.toMatch(/id="otf-rule-family"[^>]*aria-invalid/);
+    expect(html).toMatch(blocked);
+  });
+  it("marks no field invalid for a valid rule", () => {
+    const html = render(<SpecAcceptView {...acceptProps}/>);
+    expect(html).not.toContain("aria-invalid"); expect(html).not.toContain("-error");
+  });
+  it("keeps Enter in every rule field from submitting the Accept form", () => {
+    const fieldset = OpenRuleFields({ rule, disabled: false, onChange: noop }) as { props: { onKeyDown: typeof holdEnter } };
+    expect(fieldset.props.onKeyDown).toBe(holdEnter);
+    const enter = { key: "Enter", preventDefault: vi.fn() };
+    holdEnter(enter); expect(enter.preventDefault).toHaveBeenCalledOnce();
+    const letter = { key: "a", preventDefault: vi.fn() };
+    holdEnter(letter); expect(letter.preventDefault).not.toHaveBeenCalled();
+  });
   it("accepts a valid edited code and shows the code-point count", () => {
     const edited = { ...rule, failure_code: "another_synthetic_failure", observable_failure: "🙂".repeat(40) };
     expect(ruleProblem(edited)).toBeNull(); expect(render(<SpecAcceptView {...acceptProps} rule={edited}/>)).toContain("40 / 600 characters");

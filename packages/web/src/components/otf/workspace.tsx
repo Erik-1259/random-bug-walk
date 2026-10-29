@@ -13,7 +13,7 @@ import { CatalogOffer, type CatalogOfferProps } from "./catalog-offer.tsx";
 import { CatalogStartPending, closestCatalogInput, startCatalogRequest } from "./catalog-start.tsx";
 import { CertificateView } from "./certificate.tsx";
 import { FailureView } from "./failure.tsx";
-import { BehaviorPickerView, SpecAcceptView } from "./guided.tsx";
+import { BehaviorPickerView, SpecAcceptView, type ClassifyPrompt } from "./guided.tsx";
 import { hostRefusalLines, validationRefusalLines } from "./host-copy.tsx";
 import { LaneBoard } from "./lane-board.tsx";
 
@@ -42,6 +42,11 @@ export interface OtfWorkspaceViewProps {
   rule?: OtfOpenRule | null;
   classificationRequired?: boolean;
   onRule?: (rule: OtfOpenRule) => void;
+  /** The card or sentence changed after classification. */
+  stale?: boolean;
+  /** Why the last classify call gave no answer. */
+  classifyError?: string | null;
+  onClassify?: () => void;
   canRetryCreate: boolean;
   canNewDraft: boolean;
   onBehavior: (criterion: OtfCriterionId) => void;
@@ -57,6 +62,8 @@ export interface OtfWorkspaceViewProps {
   catalog: Omit<CatalogOfferProps, "building" | "fallback">;
 }
 
+export const STALE_CLASSIFICATION = "The card or sentence changed after it was classified. Classify it again before you accept it.";
+
 export function OtfWorkspaceView(props: OtfWorkspaceViewProps) {
   const { availability, status, pending, busy, designing, signedIn } = props;
   const { pendingRequest = null, refusal = null, stopRequested = false, validationPending = false, validationRefused = false, nowMs = Date.now() } = props;
@@ -70,8 +77,10 @@ export function OtfWorkspaceView(props: OtfWorkspaceViewProps) {
   const fallback = props.classification?.refusal != null || hostRefused || (status?.state === "finished" && status.outcome !== "delivered");
   const picked = availability?.behaviors.find(behavior => behavior.criterion_id === props.criterionId);
   const pickedHost = availability?.hosts.find(host => host.offered && host.host_id === picked?.host_id) ?? null;
+  const classifyPrompt: ClassifyPrompt | null = props.classifyError != null ? { text: props.classifyError, action: "Try again", alert: true }
+    : props.stale === true ? { text: STALE_CLASSIFICATION, action: "Classify again", alert: false } : null;
   return <section aria-labelledby="otf-heading">
-    <div className="factory-panel"><h2 id="otf-heading" tabIndex={-1}>Build a custom bug</h2>
+    <div className="factory-panel"><h2 id="otf-heading" tabIndex={classificationAvailable(availability) ? -1 : undefined}>Build a custom bug</h2>
       {!enabled && <p role="status">{availability === null ? "Custom build availability has not been confirmed. No new work has started." : "Custom builds are offline right now. The catalog is available."}</p>}
       {props.message !== null && <p role="alert">{props.message}</p>}
       <button type="button" disabled={busy || designing} onClick={props.onRefresh}>Refresh custom build</button>
@@ -82,7 +91,7 @@ export function OtfWorkspaceView(props: OtfWorkspaceViewProps) {
           acceptBlocked={pickedHost === null || (props.classificationRequired === true && props.classification == null)}
           provenLabel={availability.behaviors.find(option => option.criterion_id === props.classification?.proven_criterion_id)?.label}
           openAvailable={availability.behaviors.some(option => option.criterion_id === OTF_OPEN_CRITERION_ID && availability.hosts.some(host => host.offered && host.host_id === option.host_id))}
-          onOpen={() => { props.onBehavior(OTF_OPEN_CRITERION_ID); }} /> }
+          onOpen={() => { props.onBehavior(OTF_OPEN_CRITERION_ID); }} classifyPrompt={classifyPrompt} onClassify={props.onClassify} /> }
       </>}
       {designing && props.spec === null && <p role="status">Writing your spec card with Nemotron 3 Super. No custom build has started.</p>}
       {hostRefused ? <section aria-label="Custom build not started">
@@ -108,14 +117,39 @@ export function revealCustomBuild(doc: Pick<Document, "getElementById">): void {
   heading?.scrollIntoView({ block: "start" });
   heading?.focus({ preventScroll: true });
 }
+
+/** Starts a designer handoff and reveals the panel at once, with its "Classifying" status, not after classify answers. */
+export function startHandoff(draft: OtfDraftController, design: CustomBuildDesign, availability: OtfAvailability | null, signedIn: boolean, reveal: () => void): Promise<void> {
+  const work = draft.handoff(design, availability, signedIn);
+  if (draft.snapshot().busy) reveal();
+  return work;
+}
+
+export interface CustomBuildHandoffState {
+  /** The open behavior is offered to this signed-in judge, so the designer shows "Build this as a custom bug". */
+  offered: boolean;
+  /** A short reason the handoff is held for now, or null when it is ready. */
+  blocked: string | null;
+}
+
+/** Whether the designer may hand a card to this panel. Without the open behavior there is no handoff at all. */
+export function customBuildHandoff({ availability, signedIn, panelBusy, drafting, classifying, jobSaved }: { availability: OtfAvailability | null; signedIn: boolean; panelBusy: boolean; drafting: boolean; classifying: boolean; jobSaved: boolean }): CustomBuildHandoffState {
+  if (!signedIn || !classificationAvailable(availability)) return { offered: false, blocked: null };
+  const blocked = drafting ? (classifying ? "The custom-build panel is classifying a card. Wait for it to finish." : "The custom-build panel is writing a spec card. Wait for it to finish.")
+    : jobSaved ? "A custom build is saved on this page. Finish or clear it in the custom-build panel first."
+    : panelBusy ? "The custom-build panel is updating. Try again in a moment." : null;
+  return { offered: true, blocked };
+}
+
 interface OtfWorkspaceProps {
   catalogController: FactoryController;
   onAvailability: (enabled: boolean) => void;
   designer?: AssistClient;
   handoff?: CustomBuildDesign | null;
-  onCanDesign?: (enabled: boolean) => void;
+  onCustomOffered?: (offered: boolean) => void;
+  onCustomBlocked?: (reason: string | null) => void;
 }
-export function OtfWorkspace({ catalogController, onAvailability, designer = assistClient, handoff = null, onCanDesign }: OtfWorkspaceProps) {
+export function OtfWorkspace({ catalogController, onAvailability, designer = assistClient, handoff = null, onCustomOffered, onCustomBlocked }: OtfWorkspaceProps) {
   const [controller, setController] = useState<OtfController | null>(null);
   useEffect(() => {
     const instance = new OtfController(otfClient, {
@@ -128,10 +162,10 @@ export function OtfWorkspace({ catalogController, onAvailability, designer = ass
     setController(instance);
   }, [catalogController]);
   if (controller === null) return null;
-  return <ConnectedOtf controller={controller} catalogController={catalogController} onAvailability={onAvailability} designer={designer} handoff={handoff} onCanDesign={onCanDesign} />;
+  return <ConnectedOtf controller={controller} catalogController={catalogController} onAvailability={onAvailability} designer={designer} handoff={handoff} onCustomOffered={onCustomOffered} onCustomBlocked={onCustomBlocked} />;
 }
 
-function ConnectedOtf({ controller, catalogController, onAvailability, designer, handoff, onCanDesign }: OtfWorkspaceProps & { controller: OtfController; designer: AssistClient }) {
+function ConnectedOtf({ controller, catalogController, onAvailability, designer, handoff, onCustomOffered, onCustomBlocked }: OtfWorkspaceProps & { controller: OtfController; designer: AssistClient }) {
   const view = useSyncExternalStore(controller.subscribe, controller.snapshot, controller.snapshot);
   const catalog = useSyncExternalStore(catalogController.subscribe, catalogController.snapshot, catalogController.snapshot);
   const [draft] = useState(() => new OtfDraftController(designer, otfClient, () => { void catalogController.initialize(); }));
@@ -139,12 +173,15 @@ function ConnectedOtf({ controller, catalogController, onAvailability, designer,
   const { criterionId, sentence, spec } = editing;
   const consumedHandoff = useRef<CustomBuildDesign | null>(null);
   const canDesign = catalog.signedIn && view.availability?.enabled === true && !view.busy && !editing.busy && view.jobId === null && view.pendingRequest === null;
-  const canHandoff = canDesign && classificationAvailable(view.availability);
-  useEffect(() => { onCanDesign?.(canHandoff); }, [onCanDesign, canHandoff]);
+  const { offered: customOffered, blocked: customBlocked } = customBuildHandoff({ availability: view.availability, signedIn: catalog.signedIn, panelBusy: view.busy,
+    drafting: editing.busy, classifying: editing.spec !== null, jobSaved: view.jobId !== null || view.pendingRequest !== null });
+  const canHandoff = customOffered && customBlocked === null;
+  useEffect(() => { onCustomOffered?.(customOffered); }, [onCustomOffered, customOffered]);
+  useEffect(() => { onCustomBlocked?.(customBlocked); }, [onCustomBlocked, customBlocked]);
   useEffect(() => {
     if (handoff == null || handoff === consumedHandoff.current || !canHandoff) return;
     consumedHandoff.current = handoff;
-    void draft.handoff(handoff, view.availability, catalog.signedIn).then(() => { revealCustomBuild(document); });
+    void startHandoff(draft, handoff, view.availability, catalog.signedIn, () => { revealCustomBuild(document); });
   }, [handoff, canHandoff, draft, view.availability, catalog.signedIn]);
   const [catalogError, setCatalogError] = useState<string | null>(null);
   const [draftCatalogId, setDraftCatalogId] = useState<string | null>(null);
@@ -200,6 +237,7 @@ function ConnectedOtf({ controller, catalogController, onAvailability, designer,
     pendingRequest={view.pendingRequest} refusal={view.refusal} stopRequested={view.stopRequested} validationRefused={view.validationRefused} nowMs={Date.now()}
     busy={view.busy} validationPending={view.validationPending} designing={editing.busy} signedIn={catalog.signedIn} criterionId={selected} sentence={sentence} spec={spec}
     classification={editing.classification} rule={editing.rule} classificationRequired={editing.classificationRequired} onRule={value => { draft.setRule(value); }}
+    stale={editing.stale} classifyError={editing.classifyError} onClassify={() => { if (!view.busy) void draft.reclassify(view.availability, catalog.signedIn); }}
     message={editing.message ?? view.message} canRetryCreate={view.canRetryCreate} canNewDraft={view.canNewDraft}
     onBehavior={value => { draft.pick(value); }} onSentence={value => { draft.setSentence(value); }} onSpec={value => { draft.setSpec(value); }}
     onDesign={() => { if (canDesign) void draft.design(view.availability, catalog.signedIn); }} onAccept={() => { void accept(); }} onRetry={() => { void controller.retryCreate(); }} onRefresh={() => { void controller.initialize(); }}

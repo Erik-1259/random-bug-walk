@@ -31,11 +31,13 @@ async function checkRequest(body: OtfCreateJob): Promise<void> {
   if (!isOtf("OtfCreateJob", body) || await specSha256(body.spec) !== body.spec_sha256
     || (body.rule !== undefined && await ruleSha256(body.rule) !== body.rule_sha256)) throw new OtfClientError("invalid_spec", "The accepted spec is invalid. Review the card before creating a job.");
 }
+/** The classify route may make a model call and one repair, 20 s each, within its 60 s maxDuration; wait past that. */
+export const OTF_CLASSIFY_TIMEOUT_MS = 65_000;
 /** Customer routes only. A malformed envelope never becomes a successful job or a definite refusal. */
-export function createOtfClient(fetcher: typeof fetch = fetch, timeoutMs = 15_000): OtfClient {
-  async function call<N extends OtfSchemaName>(schema: N, path: string, method: "GET" | "POST", success: readonly number[], body?: OtfCreateJob | OtfClassifyRequest): Promise<OtfBodies[N]> {
+export function createOtfClient(fetcher: typeof fetch = fetch, timeoutMs = 15_000, classifyTimeoutMs = OTF_CLASSIFY_TIMEOUT_MS): OtfClient {
+  async function call<N extends OtfSchemaName>(schema: N, path: string, method: "GET" | "POST", success: readonly number[], body?: OtfCreateJob | OtfClassifyRequest, limitMs = timeoutMs): Promise<OtfBodies[N]> {
     const abort = new AbortController();
-    const timeout = setTimeout(() => { abort.abort(); }, timeoutMs);
+    const timeout = setTimeout(() => { abort.abort(); }, limitMs);
     try {
       const response = await fetcher(path === OTF_CLASSIFY_PATH ? path : `/api/factory/otf/${path}`, { method, credentials: "same-origin", cache: "no-store", signal: abort.signal,
         ...(body === undefined ? {} : { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }) });
@@ -58,7 +60,7 @@ export function createOtfClient(fetcher: typeof fetch = fetch, timeoutMs = 15_00
     availability: () => call("OtfAvailability", "availability", "GET", [200]),
     classify: body => {
       if (!isOtf("OtfClassifyRequest", body)) return Promise.reject(new OtfClientError("invalid_request", "The classification request is invalid. Review the sentence and card."));
-      return call("OtfClassification", OTF_CLASSIFY_PATH, "POST", [200], body);
+      return call("OtfClassification", OTF_CLASSIFY_PATH, "POST", [200], body, classifyTimeoutMs);
     },
     create: async body => {
       await checkRequest(body);

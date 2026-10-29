@@ -93,12 +93,22 @@ export interface SpecAcceptProps {
   onOpen?: () => void;
   openAvailable?: boolean;
   provenLabel?: string;
+  /** Why the card needs classifying again (a failure or an edit), with the button that does it. */
+  classifyPrompt?: ClassifyPrompt | null;
+  onClassify?: () => void;
 }
 
-export function SpecAcceptView({ spec, host, busy, signedIn, onChange, onAccept, behavior, rule = null, onRule, classification = null, classificationPending = false, acceptBlocked = false, onOpen, openAvailable, provenLabel }: SpecAcceptProps) {
+export interface ClassifyPrompt {
+  text: string;
+  action: "Try again" | "Classify again";
+  alert: boolean;
+}
+
+export function SpecAcceptView({ spec, host, busy, signedIn, onChange, onAccept, behavior, rule = null, onRule, classification = null, classificationPending = false, acceptBlocked = false, onOpen, openAvailable, provenLabel, classifyPrompt = null, onClassify }: SpecAcceptProps) {
   const open = behavior?.criterion_id === OTF_OPEN_CRITERION_ID;
-  const problem = specProblem(spec) ?? (open ? ruleProblem(rule) : null);
-  const blocked = acceptBlocked || busy || !signedIn || problem !== null || classificationPending || classification?.refusal != null;
+  const problem = specProblem(spec);
+  const ruleBlocked = open && ruleProblem(rule) !== null;
+  const blocked = acceptBlocked || busy || !signedIn || problem !== null || ruleBlocked || classificationPending || classification?.refusal != null;
   return <form className="factory-form designer-card" aria-label="Accept custom spec" onSubmit={event => { event.preventDefault(); if (!blocked) onAccept(); }}>
     <h3>Edit or accept your spec card</h3>
     <p className="factory-badge">Design, not a built bug</p>
@@ -113,8 +123,12 @@ export function SpecAcceptView({ spec, host, busy, signedIn, onChange, onAccept,
       </label>
     </fieldset>
     <ClassificationView classification={classification} criterionId={behavior?.criterion_id ?? null} provenLabel={provenLabel} openAvailable={openAvailable} disabled={busy || !signedIn || classificationPending} onOpen={onOpen}/>
-    {open && classification?.refusal == null && <OpenRuleFields rule={rule} disabled={busy || !signedIn || classificationPending} onChange={onRule}/>}
+    {open && classification?.refusal == null && classifyPrompt === null && !classificationPending && <OpenRuleFields rule={rule} disabled={busy || !signedIn} onChange={onRule}/>}
     {classificationPending && <p role="status">Classifying this spec card. No custom build has started.</p>}
+    {classifyPrompt !== null && !classificationPending && <>
+      <p role={classifyPrompt.alert ? "alert" : "status"}>{classifyPrompt.text}</p>
+      {onClassify !== undefined && <button type="button" disabled={busy || !signedIn} onClick={onClassify}>{classifyPrompt.action}</button>}
+    </>}
     {problem !== null && <p role="status">{problem}</p>}
     {host?.host_id === "umami" && <p>{UMAMI_PLACEMENT}</p>}
     {behavior?.measured === false ? <p>{OTF_OPEN_TIME_COPY}</p> : host !== null && <p>{typicalSentence(host)}</p>}

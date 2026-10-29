@@ -1,10 +1,10 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import { OtfWorkspaceView, revealCustomBuild, type OtfWorkspaceViewProps } from "../../src/components/otf/workspace.tsx";
+import { OtfWorkspaceView, revealCustomBuild, STALE_CLASSIFICATION, type OtfWorkspaceViewProps } from "../../src/components/otf/workspace.tsx";
 import { BugDesignerView, CATALOG_HONESTY, OTF_DESIGNER_NOTE } from "../../src/components/bug-designer.tsx";
 import { INITIAL_DESIGNER } from "../../src/assist/designer-state.ts";
 import { specSha256 } from "../../src/otf/canonical.ts";
-import type { OtfAvailability, OtfCreateJob, OtfHostAvailability, OtfJobStatus } from "../../src/otf/contract.ts";
+import { OTF_OPEN_CRITERION_ID, type OtfAvailability, type OtfCreateJob, type OtfHostAvailability, type OtfJobStatus } from "../../src/otf/contract.ts";
 
 const noop = () => undefined;
 const taskReport: OtfHostAvailability = { host_id: "task-report", label: "task-report service", offered: true, unavailable_reason: null, active_jobs: 0, queued_jobs: 0, max_active: 2, lanes: [{ lane_id: "lane-1", model_label: "Synthetic model" }], deadline_min: 45, typical: null };
@@ -12,6 +12,7 @@ const umami: OtfHostAvailability = { host_id: "umami", label: "Umami", offered: 
 const availability: OtfAvailability = { enabled: true, builder: "stopped", active_jobs: 0, queued_jobs: 0, max_queued: 4,
   behaviors: [{ criterion_id: "concurrency.lost-acknowledged-change", host_id: "task-report", label: "Synthetic overlapping writes", example_phrases: ["A synthetic edit is lost."], measured: true }],
   hosts: [taskReport, umami], cold_start_min: null, spend_left_microusd: 1000000 };
+const withOpen: OtfAvailability = { ...availability, behaviors: [...availability.behaviors, { criterion_id: OTF_OPEN_CRITERION_ID, host_id: "task-report", label: "Synthetic open behavior", example_phrases: [], measured: false }] };
 const NOV_3 = Date.UTC(2026, 10, 3, 12);
 const spec = { title: "Synthetic grouping card", where: "Synthetic report", change: "A synthetic day shifts.", why_tests_miss: "Synthetic tests use UTC.", checks_to_add: ["Group a synthetic late event."], fix: "Group by the chosen zone." };
 async function umamiRequest(): Promise<OtfCreateJob> {
@@ -35,6 +36,20 @@ describe("custom workspace boundary", () => {
     const html = renderToStaticMarkup(<OtfWorkspaceView {...props} spec={spec} classificationRequired message="unavailable: Synthetic classifier is offline." />);
     expect(html).toMatch(/disabled=""[^>]*>Accept and build this custom bug/);
     expect(html).toContain("Synthetic classifier is offline."); expect(html).not.toContain("Classifying this spec card");
+  });
+  it("makes the heading a focus target only while the open behavior is offered", () => {
+    expect(renderToStaticMarkup(<OtfWorkspaceView {...props} />)).toContain('<h2 id="otf-heading">Build a custom bug</h2>');
+    expect(renderToStaticMarkup(<OtfWorkspaceView {...props} availability={withOpen} />)).toContain('<h2 id="otf-heading" tabindex="-1">Build a custom bug</h2>');
+  });
+  it("offers Try again after a classify failure and Classify again after an edit, without the rule fields", () => {
+    const failed = renderToStaticMarkup(<OtfWorkspaceView {...props} spec={spec} classificationRequired classifyError="The classifier did not answer. No custom build has started. Try again in a moment." onClassify={noop} />);
+    expect(failed).toContain('<p role="alert">The classifier did not answer. No custom build has started. Try again in a moment.</p><button type="button">Try again</button>');
+    expect(failed).toMatch(/disabled=""[^>]*>Accept and build this custom bug/);
+    const edited = renderToStaticMarkup(<OtfWorkspaceView {...props} criterionId={OTF_OPEN_CRITERION_ID} spec={spec} classificationRequired stale onClassify={noop} availability={withOpen} />);
+    expect(edited).toContain(`<p role="status">${STALE_CLASSIFICATION}</p><button type="button">Classify again</button>`);
+    expect(edited).not.toContain('id="otf-rule-family"'); expect(edited).toMatch(/disabled=""[^>]*>Accept and build this custom bug/);
+    const pending = renderToStaticMarkup(<OtfWorkspaceView {...props} spec={spec} classificationRequired designing classifyError="Synthetic failure." onClassify={noop} />);
+    expect(pending).toContain("Classifying this spec card. No custom build has started."); expect(pending).not.toContain("Try again");
   });
   it("reveals and focuses the custom panel after a handoff and tolerates an absent panel", () => {
     const heading = { scrollIntoView: vi.fn(), focus: vi.fn() };

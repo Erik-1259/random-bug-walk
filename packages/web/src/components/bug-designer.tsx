@@ -58,7 +58,10 @@ export interface BugDesignerProps {
   client?: AssistClient;
   otfEnabled?: boolean;
   onBuildCustom?: (design: CustomBuildDesign) => void;
-  customBuildBlocked?: boolean;
+  /** The open behavior is offered, so a card may be handed to the custom-build panel; false shows no handoff at all. */
+  customBuildOffered?: boolean;
+  /** A short reason the handoff is held for now (the panel is busy or a custom build is saved), or null. */
+  customBuildBlocked?: string | null;
 }
 
 export function BugDesigner({ client = assistClient, ...props }: BugDesignerProps) {
@@ -88,7 +91,7 @@ export interface BugDesignerViewProps extends Omit<BugDesignerProps, "client"> {
 }
 
 /** Everything the designer shows, from its state; BugDesigner supplies the state and the calls. */
-export function BugDesignerView({ signedIn, capabilities, closedHosts = calendarClosedHosts(capabilities), applyBlocked, onUsePlan, state, dispatch, onSearch, onWrite, otfEnabled = false, onBuildCustom, customBuildBlocked = false }: BugDesignerViewProps) {
+export function BugDesignerView({ signedIn, capabilities, closedHosts = calendarClosedHosts(capabilities), applyBlocked, onUsePlan, state, dispatch, onSearch, onWrite, otfEnabled = false, onBuildCustom, customBuildOffered = false, customBuildBlocked = null }: BugDesignerViewProps) {
   const header = <>
     <h2 id="designer-heading">Find a bug for your agent evaluation</h2>
     <p>Describe a kind of bug. The designer searches the public web for real bug reports of that kind, sums them up as a few bug shapes, and writes a bug specification for one of the two applications. Non-security bugs only: date and time, concurrency, data handling, state and UI logic.</p>
@@ -108,7 +111,8 @@ export function BugDesignerView({ signedIn, capabilities, closedHosts = calendar
   const shapes = state.shapes;
   const shape = shapes?.shapes.find((item) => item.id === state.shapeId) ?? null;
   const spec = currentSpec(state);
-  const canHandoff = otfEnabled && onBuildCustom !== undefined && !customBuildBlocked && state.busy === null && shape !== null && spec !== null && state.hostId !== null;
+  // The note follows whether the handoff is offered for this card, not a brief busy state, so it stays put while a card is classified.
+  const handoffShown = otfEnabled && customBuildOffered && onBuildCustom !== undefined && state.busy === null && shape !== null && spec !== null && state.hostId !== null;
   const busyText = state.busy === "shapes" ? "Searching public bug reports and summing them up as bug shapes. This can take up to a minute."
     : state.busy === "spec" ? "Writing the bug specification. This can take up to a minute." : null;
   return <section className="factory-panel designer" aria-labelledby="designer-heading" aria-busy={state.busy !== null}>
@@ -150,14 +154,14 @@ export function BugDesignerView({ signedIn, capabilities, closedHosts = calendar
       <button type="button" disabled={state.busy !== null || state.hostId === null} onClick={onWrite}>Write the bug specification</button>
     </fieldset>}
     {shape !== null && spec !== null && state.hostId !== null && <SpecCard state={state} capabilities={capabilities} closedHosts={closedHosts} applyBlocked={applyBlocked} onUsePlan={onUsePlan} dispatch={dispatch}
-      otfEnabled={otfEnabled} onBuildCustom={onBuildCustom} customBuildBlocked={customBuildBlocked} />}
-    <p className="factory-note">{canHandoff ? CUSTOM_BUILD_DESIGNER_NOTE : otfEnabled ? OTF_DESIGNER_NOTE : CATALOG_HONESTY}</p>
+      onBuildCustom={otfEnabled && customBuildOffered ? onBuildCustom : undefined} customBuildBlocked={customBuildBlocked} />}
+    <p className="factory-note">{handoffShown ? CUSTOM_BUILD_DESIGNER_NOTE : otfEnabled ? OTF_DESIGNER_NOTE : CATALOG_HONESTY}</p>
   </section>;
 }
 
 let planCounter = 0;
 
-function SpecCard({ state, capabilities, closedHosts = [], applyBlocked, onUsePlan, dispatch, otfEnabled, onBuildCustom, customBuildBlocked }: Pick<BugDesignerViewProps, "state" | "capabilities" | "closedHosts" | "applyBlocked" | "onUsePlan" | "dispatch" | "otfEnabled" | "onBuildCustom" | "customBuildBlocked">) {
+function SpecCard({ state, capabilities, closedHosts = [], applyBlocked, onUsePlan, dispatch, onBuildCustom, customBuildBlocked = null }: Pick<BugDesignerViewProps, "state" | "capabilities" | "closedHosts" | "applyBlocked" | "onUsePlan" | "dispatch" | "onBuildCustom" | "customBuildBlocked">) {
   const result = currentSpec(state);
   const shape = state.shapes?.shapes.find((item) => item.id === state.shapeId);
   const hostId = state.hostId;
@@ -178,8 +182,11 @@ function SpecCard({ state, capabilities, closedHosts = [], applyBlocked, onUsePl
       <dt>The fix</dt><dd>{spec.fix}</dd>
     </dl>
     <p className="factory-note">Written by <code>{model.model_id}</code> on <time dateTime={model.at}>{formatDateTime(model.at)}</time>.</p>
-    {otfEnabled && <button type="button" className="factory-button" disabled={state.busy !== null || customBuildBlocked === true || onBuildCustom === undefined}
-      onClick={() => { if (customBuildBlocked !== true && onBuildCustom !== undefined) handoffDesignerSpec(state, onBuildCustom); }}>Build this as a custom bug</button>}
+    {onBuildCustom !== undefined && <>
+      <button type="button" className="factory-button" disabled={state.busy !== null || customBuildBlocked !== null} aria-describedby={customBuildBlocked === null ? undefined : "designer-custom-blocked"}
+        onClick={() => { if (customBuildBlocked === null) handoffDesignerSpec(state, onBuildCustom); }}>Build this as a custom bug</button>
+      {customBuildBlocked !== null && <p id="designer-custom-blocked" className="factory-note">{customBuildBlocked}</p>}
+    </>}
     {closedHosts.includes(hostId)
       ? <p className="factory-badge">{CALENDAR_HINT}{fallback !== null && <> {fallback}</>}</p>
       : preview === null

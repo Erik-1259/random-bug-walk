@@ -13,9 +13,28 @@ export interface OtfDraftView {
   busy: boolean;
   classificationRequired: boolean;
   message: string | null;
+  /** The host the card was written or handed off for; classify again uses it. */
+  hostId: OtfHostId | null;
+  /** The card or sentence changed after classification, so the shown classification was cleared. */
+  stale: boolean;
+  /** Why the last classify call gave no answer, in plain language. */
+  classifyError: string | null;
 }
-const emptyDraft = (): OtfDraftView => ({ criterionId: null, sentence: "", spec: null, classification: null, rule: null, busy: false, classificationRequired: false, message: null });
+const emptyDraft = (): OtfDraftView => ({ criterionId: null, sentence: "", spec: null, classification: null, rule: null, busy: false, classificationRequired: false, message: null, hostId: null, stale: false, classifyError: null });
 const offered = (availability: OtfAvailability, criterion: OtfCriterionId | null) => availability.behaviors.find(option => option.criterion_id === criterion && availability.hosts.some(host => host.offered && host.host_id === option.host_id));
+
+export const CLASSIFY_REVIEW_MESSAGE = "Review the card and sentence before classifying this custom design.";
+/** SPEC 8.5: the classify route answers refused_topic for a security topic found before any model call. */
+export const SECURITY_TOPIC_REASON = "This card or sentence names a security topic. Custom builds cover non-security bugs only.";
+const NO_ANSWER = "The classifier did not answer. No custom build has started. Try again in a moment.";
+
+/** A classify failure in plain language; a refused_topic answer is a refusal instead, never a failure. */
+export function classifyFailureText(error: unknown): string {
+  if (!(error instanceof OtfClientError)) return NO_ANSWER;
+  if (error.code === "signed_out") return "Your judge sign-in has ended. Sign in again, then try again. No custom build has started.";
+  if (error.code === "invalid_request") return "The classifier could not read this card and sentence. Review them, then try again. No custom build has started.";
+  return NO_ANSWER;
+}
 
 /** Availability is the browser's feature signal; an absent open option cannot promise classify. */
 export function classificationAvailable(availability: OtfAvailability | null): boolean {
@@ -40,14 +59,26 @@ export class OtfDraftController {
   snapshot = (): OtfDraftView => this.view;
   subscribe = (listener: () => void): (() => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
   private update(next: Partial<OtfDraftView>): void { this.view = { ...this.view, ...next }; for (const listener of this.listeners) listener(); }
+  /** A card that needs classification keeps its card on an edit, but its classification and rule no longer apply. */
+  private edited(next: Partial<OtfDraftView>): void {
+    const { classificationRequired, spec } = this.view;
+    this.update(classificationRequired && spec !== null ? { ...next, classification: null, rule: null, stale: true, classifyError: null, message: null } : next);
+  }
   pick(criterionId: OtfCriterionId): void {
     if (this.view.busy) return;
-    if (this.view.spec !== null && this.view.classification !== null && criterionId === OTF_OPEN_CRITERION_ID) {
-      this.update({ criterionId, rule: this.view.rule ?? { family: this.view.classification.family ?? "data_handling", observable_failure: "", failure_code: "" } });
-    } else if (criterionId !== this.view.criterionId) this.update({ ...emptyDraft(), criterionId, sentence: this.view.sentence });
+    const { spec, classification, classificationRequired, rule } = this.view;
+    if (spec !== null && classification !== null && (criterionId === OTF_OPEN_CRITERION_ID || classification.buildable.some(option => option.criterion_id === criterionId))) {
+      // Switching between the classified options keeps the card, the classification and any rule edits.
+      this.update({ criterionId, rule: criterionId === OTF_OPEN_CRITERION_ID ? rule ?? { family: classification.family ?? "data_handling", observable_failure: "", failure_code: "" } : rule });
+    } else if (spec !== null && classification === null && classificationRequired) this.update({ criterionId });
+    else if (criterionId !== this.view.criterionId) this.update({ ...emptyDraft(), criterionId, sentence: this.view.sentence });
   }
-  setSentence(sentence: string): void { if (!this.view.busy) this.update({ ...emptyDraft(), criterionId: this.view.criterionId, sentence }); }
-  setSpec(spec: OtfSpecCard): void { if (!this.view.busy) this.update({ spec: structuredClone(spec) }); }
+  setSentence(sentence: string): void {
+    if (this.view.busy) return;
+    if (this.view.classificationRequired && this.view.spec !== null) this.edited({ sentence });
+    else this.update({ ...emptyDraft(), criterionId: this.view.criterionId, sentence });
+  }
+  setSpec(spec: OtfSpecCard): void { if (!this.view.busy) this.edited({ spec: structuredClone(spec) }); }
   setRule(rule: OtfOpenRule): void { if (!this.view.busy) this.update({ rule: { ...rule } }); }
   restore(request: OtfCreateJob | null): void {
     if (this.view.busy) return;
@@ -56,16 +87,30 @@ export class OtfDraftController {
   private async classify(availability: OtfAvailability, hostId: OtfHostId): Promise<void> {
     const spec = this.view.spec;
     if (spec === null) return;
-    const classification = await this.classifier.classify({ sentence: this.view.sentence.trim(), spec: structuredClone(spec), host_id: hostId });
+    let classification: OtfClassification;
+    try {
+      classification = await this.classifier.classify({ sentence: this.view.sentence.trim(), spec: structuredClone(spec), host_id: hostId });
+    } catch (error) {
+      if (error instanceof OtfClientError && error.code === "refused_topic") {
+        // The same outcome as a model's security refusal: the reason, and the closest catalog bug.
+        this.update({ classification: { family: null, proven_criterion_id: null, buildable: [], rule: null, refusal: { kind: "security", reason: SECURITY_TOPIC_REASON }, model: "" }, rule: null });
+        return;
+      }
+      if (error instanceof OtfClientError && error.code === "signed_out") this.onSignedOut();
+      this.update({ classifyError: classifyFailureText(error) });
+      return;
+    }
     if (classification.refusal !== null) { this.update({ classification, rule: null }); return; }
     const buildable = classification.buildable.filter(option => offered(availability, option.criterion_id) !== undefined);
     const criterionId = buildable.find(option => option.criterion_id === classification.proven_criterion_id)?.criterion_id ?? buildable[0]?.criterion_id ?? null;
     this.update({ classification, criterionId, rule: classification.rule === null ? null : { ...classification.rule },
       message: criterionId === null ? "The classified behavior is not offered right now. The catalog remains available." : null });
   }
-  private failure(error: unknown): void {
-    if (error instanceof OtfClientError && error.code === "signed_out") this.onSignedOut();
-    this.update({ message: error instanceof OtfClientError ? `${error.code}: ${error.message}` : "The spec designer could not respond. No custom build has started." });
+  /** Classify the current card and sentence; the card stays on screen whatever the answer. */
+  private async classifyCard(availability: OtfAvailability, hostId: OtfHostId): Promise<void> {
+    const { spec, sentence } = this.view;
+    if (spec === null || specProblem(spec) !== null || sentenceProblem(sentence) !== null) { this.update({ classifyError: CLASSIFY_REVIEW_MESSAGE }); return; }
+    await this.classify(availability, hostId);
   }
   async design(availability: OtfAvailability | null, signedIn: boolean): Promise<void> {
     if (this.view.busy || !signedIn || !availability?.enabled || sentenceProblem(this.view.sentence) !== null) return;
@@ -73,29 +118,34 @@ export class OtfDraftController {
     if (behavior === undefined) return;
     // With the open feature off, SPEC 8.2 preserves the existing proven design flow.
     const classificationRequired = classificationAvailable(availability);
-    this.update({ busy: true, message: null, spec: null, classification: null, rule: null, classificationRequired });
+    this.update({ busy: true, message: null, spec: null, classification: null, rule: null, classificationRequired, hostId: behavior.host_id, stale: false, classifyError: null });
     try {
       const result = await this.designer.bugSpec({ title: behavior.label, summary: this.view.sentence.trim(), sources: [] }, behavior.host_id);
       if (!result.ok) {
-        if (result.failure.code === "signed_out") this.onSignedOut();
+        // The proven-only flow shows the designer's failure only, as before the open behavior.
+        if (classificationRequired && result.failure.code === "signed_out") this.onSignedOut();
         this.update({ message: describeAssistFailure(result.failure) }); return;
       }
       this.update({ spec: specFromDesigner(result.value.spec) });
       if (classificationRequired) await this.classify(availability, behavior.host_id);
-    } catch (error) { this.failure(error); }
+    } catch { this.update({ message: "The spec designer could not respond. No custom build has started." }); }
     finally { this.update({ busy: false }); }
   }
   async handoff(design: CustomBuildDesign, availability: OtfAvailability | null, signedIn: boolean): Promise<void> {
     if (this.view.busy || !signedIn || !availability?.enabled || !classificationAvailable(availability)) return;
     const spec = specFromDesigner(design.spec);
-    const sentence = designerSentence(design.query, spec.title);
-    this.update({ ...emptyDraft(), busy: true, classificationRequired: true, spec, sentence });
-    try {
-      if (specProblem(spec) !== null || sentenceProblem(sentence) !== null) {
-        this.update({ message: "Review the card and sentence before classifying this custom design." }); return;
-      }
-      await this.classify(availability, design.hostId);
-    } catch (error) { this.failure(error); }
+    this.update({ ...emptyDraft(), busy: true, classificationRequired: true, spec, sentence: designerSentence(design.query, spec.title), hostId: design.hostId });
+    try { await this.classifyCard(availability, design.hostId); }
+    catch (error) { this.update({ classifyError: classifyFailureText(error) }); }
+    finally { this.update({ busy: false }); }
+  }
+  /** "Try again" or "Classify again": the same card and sentence, as they are now. */
+  async reclassify(availability: OtfAvailability | null, signedIn: boolean): Promise<void> {
+    const { busy, spec, hostId, classificationRequired } = this.view;
+    if (busy || !signedIn || !classificationRequired || spec === null || hostId === null || availability === null || !classificationAvailable(availability)) return;
+    this.update({ busy: true, classification: null, rule: null, stale: false, classifyError: null, message: null });
+    try { await this.classifyCard(availability, hostId); }
+    catch (error) { this.update({ classifyError: classifyFailureText(error) }); }
     finally { this.update({ busy: false }); }
   }
   acceptedInput(availability: OtfAvailability | null, signedIn: boolean): AcceptedOtfInput | null {

@@ -2,7 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import type { AssistClient, BugSpec } from "../../src/assist/client.ts";
 import { OtfClientError, OtfController, type OtfClient } from "../../src/otf/client.ts";
 import { ruleSha256 } from "../../src/otf/canonical.ts";
-import { OtfDraftController, designerSentence } from "../../src/components/otf/draft.ts";
+import { CLASSIFY_REVIEW_MESSAGE, OtfDraftController, SECURITY_TOPIC_REASON, designerSentence } from "../../src/components/otf/draft.ts";
+import { customBuildHandoff, startHandoff } from "../../src/components/otf/workspace.tsx";
 import { OTF_OPEN_CRITERION_ID, type OtfAvailability, type OtfClassification, type OtfOpenRule, type OtfJobStatus } from "../../src/otf/contract.ts";
 
 const proven = "concurrency.lost-acknowledged-change";
@@ -20,6 +21,11 @@ function setup(result: OtfClassification = open) {
   const draft = new OtfDraftController(designer, { classify }, signedOut);
   draft.pick(OTF_OPEN_CRITERION_ID); draft.setSentence("Synthetic task updates lose a saved value.");
   return { draft, designer, classify, signedOut };
+}
+
+function specFromDraft(draft: OtfDraftController) {
+  const card = draft.snapshot().spec; if (card === null) throw new Error("Synthetic draft has no card.");
+  return card;
 }
 
 describe("open custom draft before Accept", () => {
@@ -96,8 +102,119 @@ describe("open custom draft before Accept", () => {
     const { draft, classify, signedOut } = setup();
     classify.mockRejectedValue(new OtfClientError("signed_out", "Sign in again.", 401));
     await draft.design(availability, true);
-    expect(signedOut).toHaveBeenCalledOnce(); expect(draft.snapshot().message).toContain("signed_out");
+    expect(signedOut).toHaveBeenCalledOnce();
+    expect(draft.snapshot().classifyError).toBe("Your judge sign-in has ended. Sign in again, then try again. No custom build has started.");
+    expect(draft.snapshot().spec?.title).toBe(spec.title);
     expect(draft.acceptedInput(availability, true)).toBeNull();
+  });
+  it.each([
+    ["network", new Error("Synthetic network failure."), "The classifier did not answer. No custom build has started. Try again in a moment."],
+    ["timeout", new OtfClientError("unavailable", "The custom build service did not return a usable response. Saved job identity is retained.", 0, true), "The classifier did not answer. No custom build has started. Try again in a moment."],
+    ["503 unavailable", new OtfClientError("unavailable", "Classification is unavailable right now.", 503, true), "The classifier did not answer. No custom build has started. Try again in a moment."],
+    ["400 invalid_request", new OtfClientError("invalid_request", "Synthetic invalid request.", 400), "The classifier could not read this card and sentence. Review them, then try again. No custom build has started."],
+    ["401 signed_out", new OtfClientError("signed_out", "Synthetic sign-in ended.", 401), "Your judge sign-in has ended. Sign in again, then try again. No custom build has started."],
+  ])("explains a %s classify failure in plain language and tries the same card again", async (_kind, error, text) => {
+    const { draft, classify } = setup();
+    classify.mockRejectedValueOnce(error);
+    await draft.handoff({ spec, query: "Synthetic handoff", hostId: "task-report" }, availability, true);
+    const failed = draft.snapshot();
+    expect(failed.classifyError).toBe(text); expect(failed.message).toBeNull();
+    for (const raw of ["unavailable", "invalid_request", "signed_out", "Saved job identity is retained"]) expect(failed.classifyError).not.toContain(raw);
+    expect(draft.acceptedInput(availability, true)).toBeNull();
+    await draft.reclassify(availability, true);
+    expect(classify).toHaveBeenCalledTimes(2);
+    expect(classify.mock.calls[1]?.[0]).toEqual(classify.mock.calls[0]?.[0]);
+    expect(draft.snapshot()).toMatchObject({ classifyError: null, classification: open, criterionId: OTF_OPEN_CRITERION_ID });
+    expect(draft.acceptedInput(availability, true)?.rule).toEqual(rule);
+  });
+  it("shows a 422 refused_topic answer as a security refusal, like a model's security refusal", async () => {
+    const { draft, classify } = setup();
+    classify.mockRejectedValueOnce(new OtfClientError("refused_topic", "This request is outside the supported design topics.", 422));
+    await draft.handoff({ spec, query: "Synthetic handoff", hostId: "task-report" }, availability, true);
+    expect(draft.snapshot().classification?.refusal).toEqual({ kind: "security", reason: SECURITY_TOPIC_REASON });
+    expect(draft.snapshot()).toMatchObject({ classifyError: null, message: null });
+    expect(draft.acceptedInput(availability, true)).toBeNull();
+  });
+  it.each(["card", "sentence"] as const)("clears the classification and rule after a %s edit and classifies the edited card again", async edit => {
+    const { draft, classify } = setup(); await draft.design(availability, true);
+    expect(draft.acceptedInput(availability, true)).not.toBeNull();
+    const changed = "A synthetic task loses a saved change after two updates.";
+    if (edit === "card") draft.setSpec({ ...specFromDraft(draft), change: changed });
+    else draft.setSentence("Synthetic edited sentence about saved values.");
+    expect(draft.snapshot()).toMatchObject({ classification: null, rule: null, stale: true });
+    expect(draft.snapshot().spec?.title).toBe(spec.title);
+    expect(draft.acceptedInput(availability, true)).toBeNull();
+    await draft.reclassify(availability, true);
+    expect(classify).toHaveBeenCalledTimes(2);
+    if (edit === "card") expect(classify.mock.calls[1]?.[0].spec.change).toBe(changed);
+    else expect(classify.mock.calls[1]?.[0].sentence).toBe("Synthetic edited sentence about saved values.");
+    expect(draft.snapshot().stale).toBe(false); expect(draft.acceptedInput(availability, true)).not.toBeNull();
+  });
+  it("recovers from a refusal by editing the card and classifying again", async () => {
+    const refusal: OtfClassification = { ...open, family: null, rule: null, buildable: [], refusal: { kind: "out_of_scope", reason: "Synthetic behavior is outside this application." } };
+    const { draft, classify } = setup(refusal); await draft.design(availability, true);
+    draft.setSpec({ ...specFromDraft(draft), where: "Synthetic report route" });
+    expect(draft.snapshot()).toMatchObject({ classification: null, stale: true });
+    classify.mockResolvedValueOnce(open); await draft.reclassify(availability, true);
+    expect(draft.acceptedInput(availability, true)?.criterion_id).toBe(OTF_OPEN_CRITERION_ID);
+  });
+  it("keeps the card, classification and rule edits when switching between the open option and the proven match", async () => {
+    const { draft } = setup({ ...match, buildable: [...match.buildable, { host_id: "task-report", criterion_id: OTF_OPEN_CRITERION_ID }], rule });
+    await draft.design(availability, true);
+    expect(draft.snapshot().criterionId).toBe(proven);
+    draft.pick(OTF_OPEN_CRITERION_ID);
+    const edited = { ...rule, failure_code: "synthetic_switch_rule" }; draft.setRule(edited);
+    draft.pick(proven);
+    expect(draft.snapshot()).toMatchObject({ criterionId: proven, classification: { proven_criterion_id: proven } });
+    expect(draft.snapshot().spec?.title).toBe(spec.title);
+    expect(draft.acceptedInput(availability, true)).not.toHaveProperty("rule");
+    draft.pick(OTF_OPEN_CRITERION_ID);
+    expect(draft.snapshot().rule).toEqual(edited); expect(draft.acceptedInput(availability, true)?.rule).toEqual(edited);
+  });
+  it("keeps the handed-off card when a behavior is picked after a failed classification", async () => {
+    const { draft, classify } = setup();
+    classify.mockRejectedValueOnce(new Error("Synthetic network failure."));
+    await draft.handoff({ spec, query: "Synthetic handoff", hostId: "task-report" }, availability, true);
+    draft.pick(proven);
+    expect(draft.snapshot().spec?.title).toBe(spec.title); expect(draft.snapshot().criterionId).toBe(proven);
+  });
+  it("asks for a review instead of classifying an invalid handed-off card, and offers the retry", async () => {
+    const { draft, classify } = setup();
+    await draft.handoff({ spec: { ...spec, fix: " " }, query: "Synthetic handoff", hostId: "task-report" }, availability, true);
+    expect(classify).not.toHaveBeenCalled(); expect(draft.snapshot().classifyError).toBe(CLASSIFY_REVIEW_MESSAGE);
+  });
+  it("reveals the custom panel as soon as a handoff starts, while classify is still running", async () => {
+    const { draft, classify } = setup(); let resolve!: (value: OtfClassification) => void;
+    classify.mockImplementation(() => new Promise(done => { resolve = done; }));
+    const reveal = vi.fn();
+    const work = startHandoff(draft, { spec, query: "Synthetic handoff", hostId: "task-report" }, availability, true, reveal);
+    expect(reveal).toHaveBeenCalledOnce(); expect(draft.snapshot()).toMatchObject({ busy: true, classification: null });
+    expect(customBuildHandoff({ availability, signedIn: true, panelBusy: false, drafting: draft.snapshot().busy, classifying: draft.snapshot().spec !== null, jobSaved: false }))
+      .toEqual({ offered: true, blocked: "The custom-build panel is classifying a card. Wait for it to finish." });
+    resolve(open); await work;
+    expect(reveal).toHaveBeenCalledOnce();
+  });
+  it("does not reveal the panel for a handoff that cannot start", async () => {
+    const { draft } = setup(); const reveal = vi.fn();
+    await startHandoff(draft, { spec, query: "Synthetic handoff", hostId: "task-report" }, { ...availability, behaviors: availability.behaviors.slice(0, 1) }, true, reveal);
+    expect(reveal).not.toHaveBeenCalled();
+  });
+  it("offers no handoff while only proven behaviors are offered, and gives a reason for a held one", () => {
+    const base = { availability, signedIn: true, panelBusy: false, drafting: false, classifying: false, jobSaved: false };
+    expect(customBuildHandoff({ ...base, availability: { ...availability, behaviors: availability.behaviors.slice(0, 1) } })).toEqual({ offered: false, blocked: null });
+    expect(customBuildHandoff({ ...base, availability: { ...availability, enabled: false } })).toEqual({ offered: false, blocked: null });
+    expect(customBuildHandoff({ ...base, signedIn: false })).toEqual({ offered: false, blocked: null });
+    expect(customBuildHandoff(base)).toEqual({ offered: true, blocked: null });
+    expect(customBuildHandoff({ ...base, jobSaved: true }).blocked).toContain("A custom build is saved on this page.");
+    expect(customBuildHandoff({ ...base, drafting: true }).blocked).toContain("writing a spec card");
+  });
+  it("keeps the proven-only designer's signed_out from re-checking the shared session", async () => {
+    const signedOut = vi.fn();
+    const draft = new OtfDraftController({ bugSpec: () => Promise.resolve({ ok: false as const, failure: { code: "signed_out" as const, message: null, retryAfterS: null } }) }, { classify: vi.fn() }, signedOut);
+    draft.setSentence("Synthetic task updates lose a saved value.");
+    const provenOnly = { ...availability, behaviors: availability.behaviors.slice(0, 1) };
+    draft.pick(proven); await draft.design(provenOnly, true);
+    expect(signedOut).not.toHaveBeenCalled(); expect(draft.snapshot().message).not.toBeNull();
   });
   it("does not call either model while signed out or availability is disabled", async () => {
     const { draft, designer, classify } = setup();
@@ -138,6 +255,14 @@ describe("open custom draft before Accept", () => {
   it("clears stale classification when the sentence changes", async () => {
     const { draft } = setup(); await draft.design(availability, true);
     draft.setSentence("A different synthetic sentence.");
-    expect(draft.snapshot().classification).toBeNull(); expect(draft.snapshot().spec).toBeNull(); expect(draft.acceptedInput(availability, true)).toBeNull();
+    expect(draft.snapshot().classification).toBeNull(); expect(draft.snapshot().stale).toBe(true); expect(draft.acceptedInput(availability, true)).toBeNull();
+  });
+  it("keeps the proven-only flow's sentence edit clearing the card, as before the open behavior", async () => {
+    const { draft } = setup(); const provenOnly = { ...availability, behaviors: availability.behaviors.slice(0, 1) };
+    draft.pick(proven); await draft.design(provenOnly, true);
+    draft.setSpec({ ...specFromDraft(draft), fix: "An edited synthetic fix." });
+    expect(draft.snapshot().stale).toBe(false); expect(draft.acceptedInput(provenOnly, true)?.spec.fix).toBe("An edited synthetic fix.");
+    draft.setSentence("A different synthetic sentence.");
+    expect(draft.snapshot().spec).toBeNull();
   });
 });
