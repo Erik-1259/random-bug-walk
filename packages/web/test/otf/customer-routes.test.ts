@@ -644,6 +644,21 @@ describe("OTF customer routes", () => {
       expect(response.status).toBe(201);
       expect(await parsedResponse("OtfValidation", response)).toMatchObject({ state: "error", finished_at: FAKE_AT });
     });
+    it("asks again on read for a validation start that was deferred", async () => {
+      const s = setup(); const jobId = await delivered(s);
+      s.store.power.state = "stopping";
+      const start = vi.spyOn(s.deps.lifecycle, "requestStart");
+      expect(await parsedResponse("OtfValidation", await s.handlers.validate(request(), jobId))).toMatchObject({ state: "queued" });
+      expect(await requiredElement(start.mock.results, 0).value).toEqual({ kind: "deferred" });
+      s.store.power.state = "stopped"; s.power.state = "STOPPED";
+      const startsBefore = s.power.startCalls;
+      expect((await parsedResponse("OtfJobStatus", await s.handlers.status(request(), jobId))).validation).toMatchObject({ state: "queued" });
+      expect(start).toHaveBeenCalledTimes(2); expect(await requiredElement(start.mock.results, 1).value).toMatchObject({ kind: "started" });
+      expect(s.power.startCalls).toBe(startsBefore + 1);
+      s.store.power.state = "running";
+      await s.handlers.status(request(), jobId);
+      expect(start).toHaveBeenCalledTimes(2);
+    });
     it("finishes an unclaimed validation error on read after the start timeout", async () => {
       const s = setup(); const jobId = await delivered(s);
       const first = await parsedResponse("OtfValidation", await s.handlers.validate(request(), jobId));

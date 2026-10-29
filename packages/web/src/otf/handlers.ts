@@ -216,6 +216,18 @@ export function createCustomerHandlers(deps: OtfCustomerDependencies) {
     return await store.updateValidation(value.validation_id, ["queued"], { state: "error", finished_at: at })
       ?? await store.getValidation(value.validation_id);
   }
+  /**
+   * Asks W5 to start the builder for a queued validation (outside the power lock). A start that is
+   * refused ends the validation error; a deferred one is asked for again on the next read, since the
+   * watchdog only starts the machine for waiting jobs.
+   */
+  async function wakeForValidation(value: OtfValidationRecord): Promise<OtfValidationRecord> {
+    if (value.state !== "queued") return value;
+    const started = await deps.lifecycle.requestStart(lifecycleInput());
+    if (started.kind !== "failed" && started.kind !== "unavailable") return value;
+    return await store.updateValidation(value.validation_id, ["queued"], { state: "error", finished_at: now().toISOString() })
+      ?? await store.getValidation(value.validation_id) ?? value;
+  }
   async function status(job: OtfJobRecord, builder: BuilderState, after: number, at: string): Promise<OtfJobStatus> {
     const events = await store.listEvents(job.job_id, 0);
     const waiting = (await store.listJobs(WAITING)).filter((item) => item.host_id === job.host_id);
@@ -246,7 +258,12 @@ export function createCustomerHandlers(deps: OtfCustomerDependencies) {
     await deps.lifecycle.runWatchdog(lifecycleInput());
     const at = now().toISOString(); const { builder, seen } = await currentBuilder(at);
     const job = await store.getJob(jobId);
-    return job === null ? null : status(await finishOnRead(job, at, builder, seen), builder, after, at);
+    if (job === null) return null;
+    if (job.outcome === "delivered" && builder !== "running") {
+      const latest = await settleValidation(await store.latestValidation(job.job_id), at);
+      if (latest !== null) await wakeForValidation(latest);
+    }
+    return status(await finishOnRead(job, at, builder, seen), builder, after, at);
   }
 
   return {
@@ -383,16 +400,8 @@ export function createCustomerHandlers(deps: OtfCustomerDependencies) {
           return { patch: null, log: [], result: { value: await store.createValidation(jobId, id(), at), status: 201 } };
         });
         if ("code" in result) return failure(result.code);
-        let value = result.value;
-        if (result.status === 201) {
-          // Wake a stopped builder for the new validation, outside the power lock (W5 takes it).
-          const started = await deps.lifecycle.requestStart(lifecycleInput());
-          if (started.kind === "failed" || started.kind === "unavailable") {
-            value = await store.updateValidation(value.validation_id, ["queued"], { state: "error", finished_at: now().toISOString() })
-              ?? await store.getValidation(value.validation_id) ?? value;
-          }
-        }
-        const view = validationView(value);
+        // Wake a stopped builder for a new or still queued validation, outside the power lock (W5 takes it).
+        const view = validationView(await wakeForValidation(result.value));
         return view === null ? failure("unavailable") : json("OtfValidation", view, result.status);
       });
     },
