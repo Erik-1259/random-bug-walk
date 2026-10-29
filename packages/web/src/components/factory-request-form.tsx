@@ -117,7 +117,9 @@ function RequestFields({ capabilities, disabled, onInterpret, onChange, plan, cl
     event.preventDefault();
     if (!disabled && prepared.input !== null) onInterpret(prepared.input);
   }}>
-    {plan != null && initial.fromPlan && <p className="factory-note" role="status">Filled from your bug design{plan.exact ? "" : ": the closest proven bug on this application, with no description"}. Check it, change anything, then review.</p>}
+    {plan != null && initial.fromPlan && <p role="status">{plan.exact
+      ? "Filled from your bug design."
+      : "Filled from your bug design with the closest proven bug on this application. Your design's own text is not copied, so the description is empty."} Check it, change anything, then review.</p>}
     <p>Pick an application and the kind of bug you want, then review. Reviewing is free and starts no work. Each item keeps its own description and quantity.</p>
     <fieldset disabled={disabled}>
       <legend>Applications and request items</legend>

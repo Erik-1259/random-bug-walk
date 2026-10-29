@@ -175,7 +175,9 @@ function SpecCard({ state, capabilities, closedHosts = [], applyBlocked, onUsePl
           dispatch({ type: "applied", appliedFor: key });
           onUsePlan(plan);
         }}>Use this plan</button>
-        <p role="status" aria-live="polite">{state.appliedFor === key ? "The request form below now holds this plan. Review it there." : ""}</p>
+        <p role="status" aria-live="polite">{state.appliedFor !== key ? "" : preview.exact
+          ? "The request form below now holds this plan. Review it there."
+          : `The request form below now starts from ${hostLabel(capabilities, preview.host_id)}, ${bugTypeLabel(capabilities, preview.bug_type_id)}: the closest proven bug on this application. Your design's own text is not copied, and the design itself is not built. Review it there.`}</p>
       </>}
   </article>;
 }
