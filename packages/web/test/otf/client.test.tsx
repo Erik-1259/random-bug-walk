@@ -1,28 +1,32 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createOtfClient, OtfClientError, OtfController, browserOtfIdentityLock, type OtfClient, type OtfIdentityLock } from "../../src/otf/client.ts";
+import { calendarWindowMs, createOtfClient, formatUtcDate, nextCalendarOpen, OtfClientError, OtfController, browserOtfIdentityLock, type OtfClient, type OtfIdentityLock } from "../../src/otf/client.ts";
 import { specSha256 } from "../../src/otf/canonical.ts";
-import { OTF_ERROR_STATUS, type OtfAvailability, type OtfCreateJob, type OtfJobStatus, type OtfValidation } from "../../src/otf/contract.ts";
+import { OTF_ERROR_STATUS, hostCalendarOpen, type OtfAvailability, type OtfCreateJob, type OtfJobStatus, type OtfValidation } from "../../src/otf/contract.ts";
 
 const JOB = "00000000-0000-4000-8000-000000000001";
 const KEY = "00000000-0000-4000-8000-000000000002";
 const OTHER = "00000000-0000-4000-8000-000000000003";
 const T = "2026-10-29T10:00:00.000Z";
 const input = {
+  host_id: "task-report" as const,
   criterion_id: "concurrency.lost-acknowledged-change" as const,
   sentence: "Synthetic overlapping edits lose a saved change.",
   spec: { title: "Synthetic lost edit", where: "The edit handler.", change: "Overlapping edits overwrite a saved change.", why_tests_miss: "The suite edits in sequence.", checks_to_add: ["Both saved changes remain."], fix: "Serialize writes." },
 };
 const availability: OtfAvailability = {
-  enabled: true, builder: "stopped", active_jobs: 0, queued_jobs: 0, max_active: 2, max_queued: 4,
-  behaviors: [{ criterion_id: input.criterion_id, label: "Synthetic lost change", example_phrases: ["An edit disappears."] }],
-  lanes: [{ lane_id: "lane-1", model_label: "Synthetic model" }],
-  typical: { median_min: 11.8, p90_min: 21.3, cold_start_min: null, basis: "measured on 13 sample specs, Oct 29" }, spend_left_microusd: 8_000_000,
+  enabled: true, builder: "stopped", active_jobs: 0, queued_jobs: 0, max_queued: 4,
+  behaviors: [{ criterion_id: input.criterion_id, host_id: "task-report", label: "Synthetic lost change", example_phrases: ["An edit disappears."] }],
+  hosts: [
+    { host_id: "task-report", label: "task-report service", offered: true, unavailable_reason: null, active_jobs: 0, queued_jobs: 0, max_active: 2, lanes: [{ lane_id: "lane-1", model_label: "Synthetic model" }], deadline_min: 45, typical: null },
+    { host_id: "umami", label: "Umami", offered: false, unavailable_reason: "calendar", active_jobs: 0, queued_jobs: 0, max_active: 1, lanes: [{ lane_id: "lane-1", model_label: "Synthetic model" }], deadline_min: 60, typical: null },
+  ],
+  cold_start_min: null, spend_left_microusd: 8_000_000,
 };
-const validation: OtfValidation = { validation_id: OTHER, state: "queued", cells: null, started_at: T, finished_at: null, where: "RBW builder (Nebius VM)" };
+const validation: OtfValidation = { validation_id: OTHER, state: "queued", cells: null, admission: null, started_at: T, finished_at: null, where: "RBW builder (Nebius VM)" };
 async function request(): Promise<OtfCreateJob> { return { ...structuredClone(input), client_key: KEY, spec_sha256: await specSha256(input.spec) }; }
 async function status(change: Partial<OtfJobStatus> = {}): Promise<OtfJobStatus> {
   return {
-    job_id: JOB, created_at: T, state: "queued", queue_position: 1, builder: "running", outcome: null, reason: null,
+    job_id: JOB, created_at: T, state: "queued", host_id: "task-report", queue_position: 1, builder: "running", outcome: null, reason: null,
     criterion_id: input.criterion_id, spec: structuredClone(input.spec), spec_sha256: await specSha256(input.spec), deadline_at: null,
     elapsed_ms: 0, lanes: [], events: [{ seq: 1, at: T, type: "job_queued", lane_id: null, data: { position: 1 } }], next_after: 1,
     poll_after_ms: 2000, spend: { model_microusd: 0, cap_microusd: 8_000_000, source: "builder proxy meter (upper bound)" },
@@ -79,7 +83,7 @@ describe("OTF HTTP client", () => {
     expect((await client.create(await request())).job_id).toBe(JOB);
     expect(await client.validate(JOB)).toEqual(validation);
   });
-  it.each(["busy", "daily_cap", "spend_cap", "refused_topic", "invalid_spec", "idempotency_conflict", "signed_out", "unavailable"] as const)("preserves the validated %s refusal", async code => {
+  it.each(["busy", "daily_cap", "spend_cap", "refused_topic", "invalid_spec", "idempotency_conflict", "signed_out", "host_unavailable", "unavailable"] as const)("preserves the validated %s refusal", async code => {
     const client = createOtfClient(vi.fn<typeof fetch>().mockResolvedValue(Response.json({ contract_version: "otf/0", error: { code, message: "Synthetic refusal.", retryable: false } }, { status: OTF_ERROR_STATUS[code] })));
     await expect(client.create(await request())).rejects.toMatchObject({ code, status: OTF_ERROR_STATUS[code], retryable: false });
   });
@@ -313,5 +317,86 @@ describe("OTF persisted controller", () => {
     const stopping = c.controller.stop(); const finished = await status({ state: "finished", outcome: "cancelled" }); c.api.stop.mockResolvedValue(finished);
     pending.resolve(await status({ events: [], next_after: 1 })); await Promise.all([polling, stopping]);
     expect(c.api.stop).toHaveBeenCalledWith(JOB); expect(c.controller.snapshot().status?.state).toBe("finished");
+  });
+});
+
+describe("OTF review fixes and host refusals", () => {
+  it.each(["unavailable", "network"] as const)("hides OTF on a failed %s availability read without an alert", async mode => {
+    const c = await setup();
+    if (mode === "unavailable") c.api.availability.mockRejectedValue(new OtfClientError("unavailable", "Synthetic unconfigured.", 503));
+    else c.api.availability.mockRejectedValue(new Error("Synthetic network failure."));
+    await c.controller.initialize();
+    expect(c.controller.snapshot()).toMatchObject({ availability: null, message: null });
+  });
+  it("clears earlier availability when a refresh fails", async () => {
+    const c = await setup(); expect(c.controller.snapshot().availability).toEqual(availability);
+    c.api.availability.mockRejectedValue(new OtfClientError("unavailable", "Synthetic hold.", 503));
+    await c.controller.initialize(); expect(c.controller.snapshot().availability).toBeNull();
+  });
+  it.each(["busy", "daily_cap", "spend_cap", "host_unavailable"] as const)("never re-sends a definite %s refusal on reload, refresh or sign-in change", async code => {
+    const c = await setup(); c.api.create.mockRejectedValue(new OtfClientError(code, "Synthetic refusal.", OTF_ERROR_STATUS[code]));
+    await c.controller.create(input); expect(c.api.create).toHaveBeenCalledTimes(1);
+    await c.controller.initialize();
+    const reloaded = new OtfController(c.api, c.storage, c.uuid, c.lock); await reloaded.initialize(); await reloaded.initialize();
+    expect(c.api.create).toHaveBeenCalledTimes(1);
+    expect(reloaded.snapshot()).toMatchObject({ canRetryCreate: true, canNewDraft: true, jobId: null });
+  });
+  it("lets only the explicit retry send a refused create again", async () => {
+    const c = await setup(); c.api.create.mockRejectedValueOnce(new OtfClientError("busy", "Synthetic refusal.", 409));
+    await c.controller.create(input); await c.controller.retryCreate();
+    expect(c.api.create).toHaveBeenCalledTimes(2); expect(c.api.create.mock.calls[1]?.[0]).toEqual(c.api.create.mock.calls[0]?.[0]);
+    expect(c.controller.snapshot().jobId).toBe(JOB);
+  });
+  it("does not send a refused create from another tab's accept click", async () => {
+    const c = await setup(); c.api.create.mockRejectedValueOnce(new OtfClientError("daily_cap", "Synthetic refusal.", 409));
+    await c.controller.create(input);
+    const other = new OtfController(c.api, c.storage, c.uuid, c.lock); await other.initialize();
+    await other.create({ ...input, sentence: "Synthetic sentence from another tab." });
+    expect(c.api.create).toHaveBeenCalledTimes(1); expect(c.uuid).toHaveBeenCalledTimes(1);
+  });
+  it("treats host_unavailable as a refusal, refreshes availability and keeps the accepted request", async () => {
+    const c = await setup(); c.api.create.mockRejectedValueOnce(new OtfClientError("host_unavailable", "Synthetic host refusal.", 409));
+    const closed: OtfAvailability = { ...availability, behaviors: [], hosts: availability.hosts.map(host => ({ ...host, offered: false, unavailable_reason: host.host_id === "umami" ? "calendar" : "disabled" })) };
+    c.api.availability.mockResolvedValue(closed);
+    await c.controller.create(input);
+    expect(c.api.availability).toHaveBeenCalledTimes(2);
+    expect(c.controller.snapshot()).toMatchObject({ refusal: "host_unavailable", message: null, availability: closed, canNewDraft: true, canRetryCreate: true, pendingRequest: await request() });
+  });
+  it("calls the sign-out hook on a signed_out answer", async () => {
+    const c = await setup(); const signedOut = vi.fn(); c.controller.onSignedOut = signedOut;
+    await c.controller.create(input); c.api.status.mockRejectedValue(new OtfClientError("signed_out", "Sign in again.", 401));
+    await c.controller.initialize(); expect(signedOut).toHaveBeenCalledTimes(1);
+    c.api.status.mockRejectedValue(new OtfClientError("unavailable", "Synthetic.", 503)); await c.controller.initialize(); expect(signedOut).toHaveBeenCalledTimes(1);
+  });
+  it("polls without the shared busy flag so Stop stays clickable", async () => {
+    vi.useFakeTimers(); const c = await setup(); await c.controller.create(input); await vi.advanceTimersByTimeAsync(2000);
+    const pending = Promise.withResolvers<OtfJobStatus>(); c.api.status.mockReturnValueOnce(pending.promise);
+    const polling = c.controller.poll(); await vi.waitFor(() => { expect(c.api.status).toHaveBeenCalledTimes(1); });
+    expect(c.controller.snapshot()).toMatchObject({ busy: false, polling: true });
+    await c.controller.poll(); expect(c.api.status).toHaveBeenCalledTimes(1);
+    pending.resolve(await status({ events: [], next_after: 1 })); await polling;
+    expect(c.controller.snapshot()).toMatchObject({ busy: false, polling: false });
+  });
+  it("records a stop sent from this tab", async () => {
+    const c = await setup(); await c.controller.create(input); c.api.stop.mockResolvedValue(await status({ state: "finished", outcome: "delivered" }));
+    expect(c.controller.snapshot().stopRequested).toBe(false); await c.controller.stop();
+    expect(c.controller.snapshot()).toMatchObject({ stopRequested: true, status: { outcome: "delivered" } });
+  });
+});
+
+describe("Umami calendar hint", () => {
+  const windowMs = calendarWindowMs(60);
+  const NOV_6 = Date.UTC(2026, 10, 6);
+  it("adds the start timeout and margin to the host deadline", () => { expect(windowMs).toBe((8 + 60 + 15) * 60_000); });
+  it.each([["Nov 1 23:00Z", Date.UTC(2026, 10, 1, 23)], ["Nov 3 12:00Z", Date.UTC(2026, 10, 3, 12)], ["Nov 5 23:59Z", Date.UTC(2026, 10, 5, 23, 59)], ["Nov 6 00:00Z", NOV_6]])("opens again on Nov 6 00:00Z from %s", (_label, now) => {
+    expect(nextCalendarOpen("umami", now, windowMs)).toBe(NOV_6);
+    expect(formatUtcDate(NOV_6)).toBe("November 6");
+  });
+  it("agrees with the contract's calendar on either side of the open time", () => {
+    expect(hostCalendarOpen("umami", Date.UTC(2026, 10, 1, 23), Date.UTC(2026, 10, 1, 23) + windowMs)).toBe(false);
+    expect(hostCalendarOpen("umami", NOV_6, NOV_6 + windowMs)).toBe(true);
+  });
+  it("returns the next midnight for a host without a calendar", () => {
+    expect(nextCalendarOpen("task-report", Date.UTC(2026, 10, 3, 12), windowMs)).toBe(Date.UTC(2026, 10, 4));
   });
 });

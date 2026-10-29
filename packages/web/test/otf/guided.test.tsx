@@ -2,19 +2,27 @@ import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { BehaviorPickerView, SpecAcceptView, sentenceProblem, specProblem, specFromDesigner } from "../../src/components/otf/guided.tsx";
-import { closestCatalogInput, startCatalogRequest } from "../../src/components/otf/catalog-start.tsx";
+import { CatalogStartPending, closestCatalogInput, startCatalogRequest } from "../../src/components/otf/catalog-start.tsx";
+import { hostQueueSentence, hostReasonLines, typicalSentence } from "../../src/components/otf/host-copy.tsx";
 import { FactoryController, REQUEST_KEY, type Capabilities, type FactoryClient, type Interpretation, type RequestInput, type RequestStatus } from "../../src/factory/client.ts";
-import type { OtfBehaviorOption, OtfSpecCard } from "../../src/otf/contract.ts";
+import type { OtfBehaviorOption, OtfHostAvailability, OtfSpecCard } from "../../src/otf/contract.ts";
 
-const behavior: OtfBehaviorOption = { criterion_id: "concurrency.lost-acknowledged-change", label: "Synthetic overlapping edits", example_phrases: ["A synthetic edit disappears."] };
+const behavior: OtfBehaviorOption = { criterion_id: "concurrency.lost-acknowledged-change", host_id: "task-report", label: "Synthetic overlapping edits", example_phrases: ["A synthetic edit disappears."] };
 const spec: OtfSpecCard = { title: "Synthetic edit", where: "Synthetic save handler", change: "An overlapping edit is lost.", why_tests_miss: "Existing tests save one edit.", checks_to_add: ["Save two synthetic edits."], fix: "Keep both edits." };
 const capabilities = JSON.parse(readFileSync(new URL("../fixtures/factory-v1/capabilities.json", import.meta.url), "utf8")) as Capabilities;
 const noop = () => undefined;
+const umamiBehavior: OtfBehaviorOption = { criterion_id: "date_time.time-zone-grouping", host_id: "umami", label: "Synthetic time-zone grouping", example_phrases: ["A synthetic day lands in the wrong bucket."] };
+const taskReport: OtfHostAvailability = { host_id: "task-report", label: "task-report service", offered: true, unavailable_reason: null, active_jobs: 0, queued_jobs: 0, max_active: 2, lanes: [{ lane_id: "lane-1", model_label: "Synthetic model" }], deadline_min: 45, typical: null };
+const umami: OtfHostAvailability = { host_id: "umami", label: "Umami", offered: true, unavailable_reason: null, active_jobs: 0, queued_jobs: 0, max_active: 1, lanes: [{ lane_id: "lane-1", model_label: "Synthetic model" }], deadline_min: 60, typical: null };
+const hosts = [taskReport, umami];
+const NOW = Date.UTC(2026, 9, 29, 10);
+const NOV_3 = Date.UTC(2026, 10, 3, 12);
+const picker = { behaviors: [behavior, umamiBehavior], hosts, nowMs: NOW, criterionId: behavior.criterion_id, sentence: "Synthetic overlap", signedIn: true, busy: false, onBehavior: noop, onSentence: noop, onDesign: noop };
 
 describe("guided custom design", () => {
   it("renders offered behaviors and examples without starting work", () => {
     const design = vi.fn();
-    const html = renderToStaticMarkup(<BehaviorPickerView behaviors={[behavior]} criterionId={behavior.criterion_id} sentence="Synthetic overlap" signedIn busy={false} onBehavior={noop} onSentence={noop} onDesign={design} />);
+    const html = renderToStaticMarkup(<BehaviorPickerView behaviors={[behavior]} hosts={hosts} nowMs={NOW} criterionId={behavior.criterion_id} sentence="Synthetic overlap" signedIn busy={false} onBehavior={noop} onSentence={noop} onDesign={design} />);
     expect(html).toContain(behavior.label);
     expect(html).toContain(behavior.example_phrases[0]);
     expect(html).toContain("task-report");
@@ -22,12 +30,12 @@ describe("guided custom design", () => {
     expect(design).not.toHaveBeenCalled();
   });
   it("requires sign-in before invoking the designer", () => {
-    const html = renderToStaticMarkup(<BehaviorPickerView behaviors={[behavior]} criterionId={behavior.criterion_id} sentence="Synthetic overlap" signedIn={false} busy={false} onBehavior={noop} onSentence={noop} onDesign={noop} />);
+    const html = renderToStaticMarkup(<BehaviorPickerView behaviors={[behavior]} hosts={hosts} nowMs={NOW} criterionId={behavior.criterion_id} sentence="Synthetic overlap" signedIn={false} busy={false} onBehavior={noop} onSentence={noop} onDesign={noop} />);
     expect(html).toContain("Sign in");
     expect(html).toMatch(/disabled=""[^>]*>Write my spec card/);
   });
   it("requires an offered selection", () => {
-    const html = renderToStaticMarkup(<BehaviorPickerView behaviors={[behavior]} criterionId={null} sentence="Synthetic overlap" signedIn busy={false} onBehavior={noop} onSentence={noop} onDesign={noop} />);
+    const html = renderToStaticMarkup(<BehaviorPickerView behaviors={[behavior]} hosts={hosts} nowMs={NOW} criterionId={null} sentence="Synthetic overlap" signedIn busy={false} onBehavior={noop} onSentence={noop} onDesign={noop} />);
     expect(html).toMatch(/disabled=""[^>]*>Write my spec card/);
   });
   it("validates the trimmed sentence length as Unicode code points", () => {
@@ -41,14 +49,14 @@ describe("guided custom design", () => {
     expect(specFromDesigner({ ...spec, target_app: "task-report" }).checks_to_add).not.toBe(spec.checks_to_add);
   });
   it("shows all editable fields and the explicit accept action", () => {
-    const html = renderToStaticMarkup(<SpecAcceptView spec={spec} busy={false} signedIn onChange={noop} onAccept={noop} />);
+    const html = renderToStaticMarkup(<SpecAcceptView spec={spec} host={taskReport} busy={false} signedIn onChange={noop} onAccept={noop} />);
     for (const field of ["title", "where", "change", "why_tests_miss", "checks_to_add", "fix"]) expect(html).toContain(`id="otf-spec-${field}"`);
     expect(html).toContain("Spec card by Nemotron 3 Super");
     expect(html).toContain("Accept and build this custom bug");
     expect(html).not.toContain("Qualified by");
   });
   it("escapes edited text and keeps it as a design until accepted", () => {
-    const html = renderToStaticMarkup(<SpecAcceptView spec={{ ...spec, title: "<synthetic>" }} busy={false} signedIn onChange={noop} onAccept={noop} />);
+    const html = renderToStaticMarkup(<SpecAcceptView spec={{ ...spec, title: "<synthetic>" }} host={taskReport} busy={false} signedIn onChange={noop} onAccept={noop} />);
     expect(html).toContain("&lt;synthetic&gt;");
     expect(html).toContain("Design, not a built bug");
   });
@@ -67,9 +75,59 @@ describe("guided custom design", () => {
     expect(specProblem({ ...spec, checks_to_add: Array<string>(7).fill("Synthetic check") })).not.toBeNull();
   });
   it("locks card editing and acceptance while a request is being sent", () => {
-    const html = renderToStaticMarkup(<SpecAcceptView spec={spec} busy signedIn onChange={noop} onAccept={noop} />);
+    const html = renderToStaticMarkup(<SpecAcceptView spec={spec} host={taskReport} busy signedIn onChange={noop} onAccept={noop} />);
     expect(html).toContain('<fieldset disabled="">');
     expect(html).toMatch(/disabled=""[^>]*>Accept and build this custom bug/);
+  });
+});
+
+describe("hosts in the guided picker", () => {
+  it("groups behaviors by host with a host-neutral intro", () => {
+    const html = renderToStaticMarkup(<BehaviorPickerView {...picker} />);
+    expect(html).not.toContain("on the task-report service");
+    expect(html).toContain("Build a custom non-security bug.");
+    expect(html.indexOf("<legend>task-report service</legend>")).toBeLessThan(html.indexOf(behavior.label));
+    expect(html.indexOf("<legend>Umami</legend>")).toBeLessThan(html.indexOf(umamiBehavior.label));
+    expect(html.indexOf(behavior.label)).toBeLessThan(html.indexOf("<legend>Umami</legend>"));
+  });
+  it("shows a calendar-closed host as a disabled group with one reason line and the open-again date", () => {
+    const closed = { ...umami, offered: false, unavailable_reason: "calendar" as const };
+    const html = renderToStaticMarkup(<BehaviorPickerView {...picker} behaviors={[behavior]} hosts={[taskReport, closed]} nowMs={NOV_3} />);
+    expect(html).toContain("Umami is unavailable on UTC days 2–5. They open again on November 6 (UTC). Task-report builds and the catalog are still available.");
+    expect(html).toMatch(/<fieldset disabled="" aria-label="Umami behaviors">/);
+    expect(html).not.toContain(umamiBehavior.label);
+    for (const word of ["upstream", "revenue", "test"]) expect(html.toLowerCase()).not.toContain(word);
+  });
+  it.each(["disabled", "builder_not_ready"] as const)("says only that builds are offline for %s", reason => {
+    const html = renderToStaticMarkup(<BehaviorPickerView {...picker} behaviors={[behavior]} hosts={[taskReport, { ...umami, offered: false, unavailable_reason: reason }]} />);
+    expect(html).toContain("Umami builds are offline right now.");
+    expect(html).not.toContain("UTC days");
+  });
+  it("does not offer task-report builds in the calendar line when that host is closed too", () => {
+    expect(hostReasonLines({ ...umami, offered: false, unavailable_reason: "calendar" }, [{ ...taskReport, offered: false, unavailable_reason: "disabled" }, umami], NOV_3)).toEqual(["Umami is unavailable on UTC days 2–5.", "They open again on November 6 (UTC).", "The catalog is still available."]);
+  });
+  it("does not accept a pick on a host that is not offered", () => {
+    const html = renderToStaticMarkup(<BehaviorPickerView {...picker} criterionId={umamiBehavior.criterion_id} hosts={[taskReport, { ...umami, offered: false, unavailable_reason: "disabled" }]} />);
+    expect(html).toMatch(/disabled=""[^>]*>Write my spec card/);
+  });
+  it("shows each host's own queue", () => {
+    expect(hostQueueSentence(umami)).toBeNull();
+    const html = renderToStaticMarkup(<BehaviorPickerView {...picker} hosts={[taskReport, { ...umami, active_jobs: 1, queued_jobs: 2 }]} />);
+    expect(html).toContain("Umami builds now: 1 running, 2 waiting.");
+    expect(html).not.toContain("Task-report builds now");
+  });
+  it("adds the placement note to an Umami spec card only", () => {
+    const note = "The builder places the bug in one of Umami&#x27;s date-grouped reports that its harness supports, chosen to match your card where it can. It may differ from the report your card describes.";
+    expect(renderToStaticMarkup(<SpecAcceptView spec={spec} host={umami} busy={false} signedIn onChange={noop} onAccept={noop} />)).toContain(note);
+    expect(renderToStaticMarkup(<SpecAcceptView spec={spec} host={taskReport} busy={false} signedIn onChange={noop} onAccept={noop} />)).not.toContain("date-grouped");
+  });
+  it("words time copy from the host's typical and its source, with no fixed minutes", () => {
+    expect(typicalSentence({ ...umami, typical: { source: "otf_jobs", median_min: 7, p90_min: 19, samples: 12, measured_on: "2026-10-28" } })).toBe("Usually about 7 minutes; 9 in 10 finished within 19 minutes (12 builds measured, last on 2026-10-28). Your bug may take longer or not qualify.");
+    expect(typicalSentence({ ...taskReport, typical: { source: "development_attempts", median_min: 6.5, p90_min: 14, samples: 20, measured_on: "2026-10-27" } })).toBe("In development runs, a qualifying build attempt took about 6.5 minutes, and 9 in 10 took at most 14 minutes (20 attempts, measured 2026-10-27). Waiting, machine start-up and packaging add to that. Your bug may take longer or not qualify.");
+    expect(typicalSentence(umami)).toBe("Build times for Umami are not measured yet. The board shows each step as it runs.");
+    const html = renderToStaticMarkup(<SpecAcceptView spec={spec} host={taskReport} busy={false} signedIn onChange={noop} onAccept={noop} />);
+    expect(html).toContain("Build times for task-report service are not measured yet.");
+    expect(html).not.toMatch(/5–35|13 sample/);
   });
 });
 
@@ -99,7 +157,10 @@ describe("one-click catalog fallback", () => {
     const values = new Map<string, string>();
     const controller = new FactoryController(client, { getItem: key => values.get(key) ?? null, setItem: (key, value) => { values.set(key, value); }, removeItem: key => { values.delete(key); } }, () => "00000000-0000-4000-8000-000000000001", Date.now, async action => { await action(); });
     await controller.initialize();
-    await expect(startCatalogRequest(controller, behavior.criterion_id)).rejects.toThrow("not yet confirmed");
+    const pending = startCatalogRequest(controller, behavior.criterion_id);
+    await expect(pending).rejects.toThrow("not yet confirmed");
+    await expect(pending).rejects.toBeInstanceOf(CatalogStartPending);
+    await expect(pending).rejects.toMatchObject({ requestId: "00000000-0000-4000-8000-000000000001" });
     expect(interpret).toHaveBeenCalledWith(input);
     expect(start).toHaveBeenCalledOnce();
     expect(start.mock.calls[0]).toBeDefined();

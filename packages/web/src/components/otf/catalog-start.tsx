@@ -15,6 +15,12 @@ export function closestCatalogInput(capabilities: Capabilities | null, criterion
   return { hosts: ["task-report"], items: [{ item_key: "otf-catalog", bug_type_id: type.bug_type_id, quantity: 1, description: behavior.example_phrases[0] ?? behavior.label, difficulty: difficulty.option_id }], budget_microusd: capabilities.limits.default_budget_microusd };
 }
 
+/** The catalog request was saved but its start is not confirmed. requestId is the saved identity to link locally. */
+export class CatalogStartPending extends Error {
+  readonly requestId: string;
+  constructor(requestId: string, message: string) { super(message); this.name = "CatalogStartPending"; this.requestId = requestId; }
+}
+
 type CatalogController = Pick<FactoryController, "interpret" | "start"> & {
   snapshot(): Pick<FactoryView, "signedIn" | "busy" | "requestId" | "capabilities" | "message" | "status"> & { interpretation: Pick<NonNullable<FactoryView["interpretation"]>, "input" | "startable"> | null };
 };
@@ -32,7 +38,7 @@ export async function startCatalogRequest(controller: CatalogController, criteri
   await controller.start();
   const after = controller.snapshot();
   if (after.requestId === null) throw new Error(after.message ?? "The catalog request could not start.");
-  if (after.status?.request_id !== after.requestId) throw new Error("The saved catalog request is not yet confirmed. Check its status below before trying again.");
+  if (after.status?.request_id !== after.requestId) throw new CatalogStartPending(after.requestId, "The saved catalog request is not yet confirmed. Check its status below before trying again.");
   if (canonicalJson(after.status.interpretation.input) !== canonicalJson(input)) throw new Error("Another tab started a different catalog request. Resume that request below; it is not linked to this custom build.");
   return after.requestId;
 }

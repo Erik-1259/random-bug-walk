@@ -1,5 +1,5 @@
 import { canonicalJson, specSha256 } from "./canonical.ts";
-import { OTF_CREATE_REFUSALS, OTF_ERROR_STATUS, POLL_FINISHED_MS, POLL_RUNNING_MS, type OtfAvailability, type OtfCreateJob, type OtfCreateResponse, type OtfErrorCode, type OtfJobStatus, type OtfValidation } from "./contract.ts";
+import { CALENDAR_MARGIN_MS, OTF_CREATE_REFUSALS, OTF_ERROR_STATUS, POLL_FINISHED_MS, POLL_RUNNING_MS, START_TIMEOUT_MS, hostCalendarOpen, type OtfAvailability, type OtfCreateJob, type OtfCreateRefusal, type OtfCreateResponse, type OtfErrorCode, type OtfHostId, type OtfJobStatus, type OtfValidation } from "./contract.ts";
 import { isOtf, type OtfBodies, type OtfSchemaName } from "./schemas.ts";
 
 export interface OtfClient {
@@ -67,6 +67,17 @@ export function createOtfClient(fetcher: typeof fetch = fetch, timeoutMs = 15_00
   };
 }
 export const otfClient = createOtfClient();
+
+const DAY_MS = 86_400_000;
+/** The calendar window production checks on create: START_TIMEOUT_MS + the host's deadline + CALENDAR_MARGIN_MS. */
+export function calendarWindowMs(deadlineMin: number): number { return START_TIMEOUT_MS + deadlineMin * 60_000 + CALENDAR_MARGIN_MS; }
+/** A hint only: the earliest UTC midnight at or after nowMs whose window is open for the host. The server decides. */
+export function nextCalendarOpen(host: OtfHostId, nowMs: number, windowMs: number): number | null {
+  for (let t = Math.ceil(nowMs / DAY_MS) * DAY_MS, end = nowMs + 62 * DAY_MS; t <= end; t += DAY_MS) if (hostCalendarOpen(host, t, t + windowMs)) return t;
+  return null;
+}
+/** "November 6": a UTC calendar date in US English. */
+export function formatUtcDate(ms: number): string { return new Date(ms).toLocaleDateString("en-US", { month: "long", day: "numeric", timeZone: "UTC" }); }
 export const OTF_JOB_KEY = "rbw.otf.job";
 export type OtfIdentityLock = (operation: () => Promise<void>) => Promise<void>;
 export const browserOtfIdentityLock: OtfIdentityLock = async operation => {
@@ -97,16 +108,23 @@ export interface OtfView {
   catalogRequestId: string | null;
   polling: boolean;
   validationPending: boolean;
+  /** The definite create refusal seen in this tab for the saved identity; cleared with that identity. */
+  refusal: OtfCreateRefusal | null;
+  /** This tab sent a stop for the current job. */
+  stopRequested: boolean;
 }
 type StoragePort = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 type CreateInput = Omit<OtfCreateJob, "client_key" | "spec_sha256">;
 function record(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }
 function uuid(value: unknown): value is string { return typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value); }
+/** Refusals that prove no job was created. Each marks the saved identity, and only retryCreate may send it again. */
+const DEFINITE_REFUSALS = ["busy", "daily_cap", "spend_cap", "refused_topic", "invalid_spec", "signed_out", "host_unavailable"] as const satisfies readonly OtfCreateRefusal[];
+function definiteRefusal(code: OtfErrorCode): code is (typeof DEFINITE_REFUSALS)[number] { return (DEFINITE_REFUSALS as readonly string[]).includes(code); }
 function validationOpen(validation: OtfValidation | null): boolean { return validation?.state === "queued" || validation?.state === "running"; }
 
 /** External store for the browser. Only an explicit create/validation action can begin new work. */
 export class OtfController {
-  private view: OtfView = { availability: null, status: null, busy: false, message: null, canRetryCreate: false, canNewDraft: false, jobId: null, pendingRequest: null, catalogRequestId: null, polling: false, validationPending: false };
+  private view: OtfView = { availability: null, status: null, busy: false, message: null, canRetryCreate: false, canNewDraft: false, jobId: null, pendingRequest: null, catalogRequestId: null, polling: false, validationPending: false, refusal: null, stopRequested: false };
   private listeners = new Set<() => void>();
   private client: OtfClient;
   private storage: StoragePort;
@@ -118,6 +136,8 @@ export class OtfController {
   private activePoll: Promise<void> | null = null;
   private activeAction: Promise<void> | null = null;
   private stopping = false;
+  /** Called when an OTF route answers signed_out, so the page can show its sign-in form again. */
+  onSignedOut: (() => void) | null = null;
   constructor(client: OtfClient, storage: StoragePort, uuid: () => string, identityLock: OtfIdentityLock = browserOtfIdentityLock) {
     this.client = client; this.storage = storage; this.uuid = uuid; this.identityLock = identityLock;
   }
@@ -132,7 +152,9 @@ export class OtfController {
     const failure = error instanceof OtfClientError ? error : unavailable();
     const minimum = this.view.status?.state === "finished" ? POLL_FINISHED_MS : POLL_RUNNING_MS;
     this.nextPollAt = Date.now() + Math.max(minimum, [15000, 30000, 60000][Math.min(this.failures++, 2)] ?? 60000);
-    this.update({ message: `${failure.code}: ${failure.message}`, canRetryCreate: this.saved !== null && this.saved.job_id === null });
+    // A host refusal is shown as the host's reason line, never as an error message.
+    this.update({ message: failure.code === "host_unavailable" ? null : `${failure.code}: ${failure.message}`, canRetryCreate: this.saved !== null && this.saved.job_id === null });
+    if (failure.code === "signed_out") this.onSignedOut?.();
   }
   private save(value: StoredJob): void { this.storage.setItem(OTF_JOB_KEY, JSON.stringify(value)); this.saved = value; }
   private async restore(): Promise<boolean> {
@@ -154,15 +176,16 @@ export class OtfController {
     this.update({ jobId: value?.job_id ?? null, pendingRequest: value?.request ?? null,
       catalogRequestId: value?.catalog_request_id ?? value?.request.catalog_request_id ?? null,
       validationPending: value?.validation_before !== undefined, canRetryCreate: value !== null && value.job_id === null,
-      ...(changed ? { status: null } : {}) });
+      ...(changed ? { status: null, refusal: null, stopRequested: false } : {}) });
     return changed;
+  }
+  private locked(operation: () => Promise<void>): Promise<void> {
+    return Promise.resolve().then(() => this.identityLock(operation)).catch((error: unknown) => { this.failure(error); });
   }
   private action(operation: () => Promise<void>): Promise<void> {
     if (this.view.busy) return Promise.resolve();
     this.update({ busy: true });
-    const pending = Promise.resolve().then(() => this.identityLock(operation))
-      .catch((error: unknown) => { this.failure(error); })
-      .finally(() => { this.activeAction = null; this.update({ busy: false }); });
+    const pending = this.locked(operation).finally(() => { this.activeAction = null; this.update({ busy: false }); });
     this.activeAction = pending;
     return pending;
   }
@@ -201,34 +224,47 @@ export class OtfController {
     if (saved?.job_id !== null) return;
     const mayDiscardRefusal = firstAttempt || saved.create_refused === true;
     if (saved.create_refused === true) {
-      saved = { ...saved }; delete saved.create_refused; this.save(saved);
+      saved = { ...saved }; delete saved.create_refused; this.save(saved); this.update({ refusal: null });
     }
     let result: OtfCreateResponse;
     try { result = await this.client.create(structuredClone(saved.request)); }
     catch (error) {
       if (mayDiscardRefusal && error instanceof OtfClientError && OTF_ERROR_STATUS[error.code] === error.status
-        && ["busy", "daily_cap", "spend_cap", "refused_topic", "invalid_spec", "signed_out"].includes(error.code)) this.save({ ...saved, create_refused: true });
+        && definiteRefusal(error.code)) {
+        this.save({ ...saved, create_refused: true }); this.update({ refusal: error.code });
+        if (error.code === "host_unavailable") await this.readAvailability();
+      }
       throw error;
     }
     if (!isOtf("OtfCreateResponse", result)) throw unavailable();
     jobMatches(result.status, result.job_id, saved.request);
     this.save({ ...saved, job_id: result.job_id });
-    this.update({ jobId: result.job_id });
+    this.update({ jobId: result.job_id, refusal: null });
     this.accept(result.status, 0);
+  }
+  /** A failed read hides OTF (availability null) rather than raising an alert: an unconfigured service answers unavailable. */
+  private async readAvailability(): Promise<void> {
+    try { const value = await this.client.availability(); this.update({ availability: isOtf("OtfAvailability", value) ? value : null }); }
+    catch { this.update({ availability: null }); }
+  }
+  /** Reads a known job, or replays an ambiguous create. A definite refusal is sent again only by retryCreate. */
+  private async resume(): Promise<void> {
+    await this.restore();
+    if (this.saved?.job_id !== null) await this.readStatus();
+    else if (this.saved.create_refused !== true) await this.sendCreate();
   }
   async initialize(): Promise<void> {
     if (this.view.busy) return;
     // Availability remains useful even when the browser cannot access saved job storage.
-    try { const value = await this.client.availability(); if (!isOtf("OtfAvailability", value)) throw unavailable(); this.update({ availability: value }); }
-    catch (error) { this.failure(error); }
-    await this.action(async () => { await this.restore(); if (this.saved?.job_id === null) await this.sendCreate(); else await this.readStatus(); });
+    await this.readAvailability();
+    await this.action(() => this.resume());
   }
   async create(input: CreateInput): Promise<void> {
     // Clone before hashing or waiting for a lock; later edits cannot change an accepted card.
     const accepted = structuredClone(input);
     await this.action(async () => {
       await this.restore();
-      if (this.saved !== null) { if (this.saved.job_id === null) await this.sendCreate(); else await this.readStatus(); return; }
+      if (this.saved !== null) { if (this.saved.job_id !== null) await this.readStatus(); else if (this.saved.create_refused !== true) await this.sendCreate(); return; }
       if (this.view.availability?.enabled !== true) throw new OtfClientError("unavailable", "Custom builds are offline right now. The catalog is available.");
       const body = { ...accepted, client_key: this.uuid(), spec_sha256: await specSha256(accepted.spec) };
       await checkRequest(body);
@@ -240,10 +276,11 @@ export class OtfController {
   async retryCreate(): Promise<void> { await this.action(async () => { await this.restore(); if (this.saved?.job_id === null) await this.sendCreate(); else await this.readStatus(); }); }
   needsPoll(): boolean { return this.view.jobId !== null; }
   pollAfter(): number { return Math.max(1000, this.nextPollAt - Date.now()); }
+  /** Polls without the shared busy flag, so Stop, Refresh and Validate stay usable; the identity lock still orders the reads. */
   async poll(): Promise<void> {
-    if (this.view.busy || this.stopping || !this.needsPoll() || Date.now() < this.nextPollAt) return;
+    if (this.view.busy || this.stopping || this.activePoll !== null || !this.needsPoll() || Date.now() < this.nextPollAt) return;
     this.update({ polling: true });
-    const pending = this.action(async () => { await this.restore(); await this.readStatus(); });
+    const pending = this.locked(async () => { await this.restore(); await this.readStatus(); });
     this.activePoll = pending;
     try { await pending; } finally { this.activePoll = null; this.update({ polling: false }); }
   }
@@ -256,6 +293,7 @@ export class OtfController {
         const changed = await this.restore(); if (changed) await this.readStatus();
         const id = this.saved?.job_id;
         if (id === null || id === undefined || this.view.status === null || this.view.status.state === "finished") return;
+        this.update({ stopRequested: true });
         this.accept(await this.client.stop(id), 0);
       });
     } finally { this.stopping = false; }
@@ -302,7 +340,7 @@ export class OtfController {
       if (this.view.status?.state === "finished") await this.readStatus();
       if (!this.view.canNewDraft) return;
       this.storage.removeItem(OTF_JOB_KEY); this.saved = null;
-      this.update({ status: null, jobId: null, pendingRequest: null, catalogRequestId: null, validationPending: false, canRetryCreate: false, message: null });
+      this.update({ status: null, jobId: null, pendingRequest: null, catalogRequestId: null, validationPending: false, canRetryCreate: false, message: null, refusal: null, stopRequested: false });
     });
   }
 }

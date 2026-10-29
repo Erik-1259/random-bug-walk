@@ -3,12 +3,20 @@ import { describe, expect, it, vi } from "vitest";
 import { OtfWorkspaceView, type OtfWorkspaceViewProps } from "../../src/components/otf/workspace.tsx";
 import { BugDesignerView, CATALOG_HONESTY } from "../../src/components/bug-designer.tsx";
 import { INITIAL_DESIGNER } from "../../src/assist/designer-state.ts";
-import type { OtfAvailability } from "../../src/otf/contract.ts";
+import { specSha256 } from "../../src/otf/canonical.ts";
+import type { OtfAvailability, OtfCreateJob, OtfHostAvailability, OtfJobStatus } from "../../src/otf/contract.ts";
 
 const noop = () => undefined;
-const availability: OtfAvailability = { enabled: true, builder: "stopped", active_jobs: 0, queued_jobs: 0, max_active: 2, max_queued: 4,
-  behaviors: [{ criterion_id: "concurrency.lost-acknowledged-change", label: "Synthetic overlapping writes", example_phrases: ["A synthetic edit is lost."] }],
-  lanes: [{ lane_id: "lane-1", model_label: "Synthetic model" }], typical: { median_min: 10, p90_min: 35, cold_start_min: null, basis: "measured on 13 sample specs, Oct 29" }, spend_left_microusd: 1000000 };
+const taskReport: OtfHostAvailability = { host_id: "task-report", label: "task-report service", offered: true, unavailable_reason: null, active_jobs: 0, queued_jobs: 0, max_active: 2, lanes: [{ lane_id: "lane-1", model_label: "Synthetic model" }], deadline_min: 45, typical: null };
+const umami: OtfHostAvailability = { host_id: "umami", label: "Umami", offered: false, unavailable_reason: "calendar", active_jobs: 0, queued_jobs: 0, max_active: 1, lanes: [{ lane_id: "lane-1", model_label: "Synthetic model" }], deadline_min: 60, typical: null };
+const availability: OtfAvailability = { enabled: true, builder: "stopped", active_jobs: 0, queued_jobs: 0, max_queued: 4,
+  behaviors: [{ criterion_id: "concurrency.lost-acknowledged-change", host_id: "task-report", label: "Synthetic overlapping writes", example_phrases: ["A synthetic edit is lost."] }],
+  hosts: [taskReport, umami], cold_start_min: null, spend_left_microusd: 1000000 };
+const NOV_3 = Date.UTC(2026, 10, 3, 12);
+const spec = { title: "Synthetic grouping card", where: "Synthetic report", change: "A synthetic day shifts.", why_tests_miss: "Synthetic tests use UTC.", checks_to_add: ["Group a synthetic late event."], fix: "Group by the chosen zone." };
+async function umamiRequest(): Promise<OtfCreateJob> {
+  return { client_key: "00000000-0000-4000-8000-000000000002", host_id: "umami", criterion_id: "date_time.time-zone-grouping", sentence: "Synthetic late events land on the wrong day.", spec, spec_sha256: await specSha256(spec) };
+}
 const props: OtfWorkspaceViewProps = { availability, status: null, pending: false, busy: false, designing: false, signedIn: true,
   criterionId: "concurrency.lost-acknowledged-change", sentence: "Synthetic overlapping writes", spec: null, message: null, canRetryCreate: false, canNewDraft: false,
   onBehavior: noop, onSentence: noop, onSpec: noop, onDesign: noop, onAccept: noop, onRetry: noop, onRefresh: noop, onStop: noop, onValidate: noop, onNew: noop,
@@ -29,7 +37,7 @@ describe("custom workspace boundary", () => {
     expect(html).not.toContain("Starting the Nebius machine");
   });
   it("keeps unavailable and signed-out failures visible with an explicit refresh", () => {
-    const html = renderToStaticMarkup(<OtfWorkspaceView {...props} availability={null} message="signed_out: Sign in again." />);
+    const html = renderToStaticMarkup(<OtfWorkspaceView {...props} availability={null} pending message="signed_out: Sign in again." />);
     expect(html).toContain("signed_out: Sign in again.");
     expect(html).toContain("Refresh custom build");
     expect(html).toContain("Start the closest catalog bug");
@@ -52,6 +60,36 @@ describe("custom workspace boundary", () => {
     expect(refused).toContain("Edit custom design");
     const uncertain = renderToStaticMarkup(<OtfWorkspaceView {...props} pending canRetryCreate message="The response was lost." />);
     expect(uncertain).not.toContain("Edit custom design");
+  });
+  it("renders nothing when availability is unavailable or failed and nothing is saved", () => {
+    const html = renderToStaticMarkup(<OtfWorkspaceView {...props} availability={null} message="unavailable: Synthetic unconfigured." />);
+    expect(html).toBe("");
+  });
+  it("still shows a saved job while availability is unknown", () => {
+    const html = renderToStaticMarkup(<OtfWorkspaceView {...props} availability={null} pending />);
+    expect(html).toContain("Your accepted custom build is saved");
+  });
+  it("keeps the card and sentence after a host refusal, with the host's reason and the catalog fallback, never an error", async () => {
+    const request = await umamiRequest();
+    const html = renderToStaticMarkup(<OtfWorkspaceView {...props} pending pendingRequest={request} refusal="host_unavailable" canRetryCreate canNewDraft nowMs={NOV_3} />);
+    expect(html).toContain("This custom build was not started. Umami is unavailable on UTC days 2–5. They open again on November 6 (UTC). Task-report builds and the catalog are still available.");
+    expect(html).toContain("Card: Synthetic grouping card."); expect(html).toContain("Sentence: Synthetic late events land on the wrong day.");
+    expect(html).toContain("Edit custom design"); expect(html).toContain("Retry the same custom build");
+    expect(html).toContain("<h2>Start the closest catalog bug</h2>"); expect(html).not.toContain("While this builds");
+    expect(html).not.toMatch(/error/i); expect(html).not.toContain('role="alert"');
+  });
+  it("says While this builds only while a custom build is pending or running", async () => {
+    expect(renderToStaticMarkup(<OtfWorkspaceView {...props} />)).not.toContain("While this builds");
+    expect(renderToStaticMarkup(<OtfWorkspaceView {...props} pending canRetryCreate />)).toContain("While this builds");
+    const running: OtfJobStatus = { job_id: "00000000-0000-4000-8000-000000000001", created_at: "2026-10-29T00:00:00Z", state: "building", host_id: "task-report", queue_position: null, builder: "running", outcome: null, reason: null, criterion_id: "concurrency.lost-acknowledged-change", spec, spec_sha256: await specSha256(spec), deadline_at: null, elapsed_ms: 0, lanes: [], events: [], next_after: 0, poll_after_ms: 2000, spend: { model_microusd: 0, cap_microusd: 8000000, source: "builder proxy meter (upper bound)" }, winner: null, artifacts: [], certificate: null, validation: null, catalog_request_id: null };
+    expect(renderToStaticMarkup(<OtfWorkspaceView {...props} pending status={running} />)).toContain("While this builds");
+    const failed = renderToStaticMarkup(<OtfWorkspaceView {...props} pending status={{ ...running, state: "finished", outcome: "time_limit" }} />);
+    expect(failed).not.toContain("While this builds"); expect(failed).toContain("<h2>Start the closest catalog bug</h2>");
+  });
+  it("hides the spec card when the picked behavior's host is not offered", () => {
+    const html = renderToStaticMarkup(<OtfWorkspaceView {...props} criterionId="date_time.time-zone-grouping" spec={spec} />);
+    expect(html).not.toContain("Accept and build this custom bug");
+    expect(renderToStaticMarkup(<OtfWorkspaceView {...props} spec={spec} />)).toContain("Accept and build this custom bug");
   });
   it("scopes the existing designer's next-step copy to enabled custom builds", () => {
     const common = { signedIn: true, capabilities: null, applyBlocked: null, onUsePlan: noop, state: INITIAL_DESIGNER, dispatch: noop, onSearch: noop, onWrite: noop };

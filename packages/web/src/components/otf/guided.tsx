@@ -1,5 +1,6 @@
 import type { BugSpec } from "../../assist/client.ts";
-import { SENTENCE_MAX_CHARS, SENTENCE_MIN_CHARS, type OtfBehaviorOption, type OtfCriterionId, type OtfSpecCard } from "../../otf/contract.ts";
+import { SENTENCE_MAX_CHARS, SENTENCE_MIN_CHARS, type OtfBehaviorOption, type OtfCriterionId, type OtfHostAvailability, type OtfSpecCard } from "../../otf/contract.ts";
+import { HostReason, UMAMI_PLACEMENT, hostQueueSentence, orderedHosts, typicalSentence } from "./host-copy.tsx";
 
 const length = (text: string) => Array.from(text).length;
 export function sentenceProblem(sentence: string): string | null {
@@ -26,6 +27,9 @@ export function specProblem(spec: OtfSpecCard): string | null {
 
 export interface BehaviorPickerProps {
   behaviors: OtfBehaviorOption[];
+  hosts: OtfHostAvailability[];
+  /** The clock for the calendar hint. */
+  nowMs: number;
   criterionId: OtfCriterionId | null;
   sentence: string;
   signedIn: boolean;
@@ -35,18 +39,26 @@ export interface BehaviorPickerProps {
   onDesign: () => void;
 }
 
-export function BehaviorPickerView({ behaviors, criterionId, sentence, signedIn, busy, onBehavior, onSentence, onDesign }: BehaviorPickerProps) {
-  const selected = behaviors.find(behavior => behavior.criterion_id === criterionId);
+export function BehaviorPickerView({ behaviors, hosts, nowMs, criterionId, sentence, signedIn, busy, onBehavior, onSentence, onDesign }: BehaviorPickerProps) {
+  const offered = new Set(hosts.filter(host => host.offered).map(host => host.host_id));
+  const selected = behaviors.find(behavior => behavior.criterion_id === criterionId && offered.has(behavior.host_id));
   const problem = sentenceProblem(sentence);
   return <form className="factory-form" aria-label="Custom bug behavior" onSubmit={event => { event.preventDefault(); onDesign(); }}>
-    <p>Build a custom non-security bug on the task-report service.</p>
+    <p>Build a custom non-security bug. Choose a behavior from an offered host.</p>
     {!signedIn && <p role="status">Sign in to write a spec card or start a custom build.</p>}
     <fieldset disabled={busy || !signedIn}>
       <legend>Choose a behavior</legend>
-      {behaviors.map(behavior => <label key={behavior.criterion_id}>
-        <input type="radio" name="otf-behavior" checked={criterionId === behavior.criterion_id} onChange={() => { onBehavior(behavior.criterion_id); }} /> {behavior.label}
-        <small>{behavior.example_phrases.join(" · ")}</small>
-      </label>)}
+      {orderedHosts(hosts).map(host => {
+        const queue = host.offered ? hostQueueSentence(host) : null;
+        return <fieldset key={host.host_id} disabled={!host.offered} aria-label={`${host.label} behaviors`}>
+          <legend>{host.label}</legend>
+          {host.offered ? behaviors.filter(behavior => behavior.host_id === host.host_id).map(behavior => <label key={behavior.criterion_id}>
+            <input type="radio" name="otf-behavior" checked={criterionId === behavior.criterion_id} onChange={() => { onBehavior(behavior.criterion_id); }} /> {behavior.label}
+            <small>{behavior.example_phrases.join(" · ")}</small>
+          </label>) : <HostReason host={host} hosts={hosts} nowMs={nowMs} />}
+          {queue !== null && <p className="factory-note">{queue}</p>}
+        </fieldset>;
+      })}
       <label htmlFor="otf-sentence">Describe it in one sentence</label>
       <textarea id="otf-sentence" value={sentence} onChange={event => { onSentence(event.target.value); }} aria-describedby="otf-sentence-help" />
       <p id="otf-sentence-help" className="factory-note">3 to 300 characters. Nemotron 3 Super will write a spec card for you to edit or accept.</p>
@@ -58,13 +70,15 @@ export function BehaviorPickerView({ behaviors, criterionId, sentence, signedIn,
 
 export interface SpecAcceptProps {
   spec: OtfSpecCard;
+  /** The picked behavior's host, for its time copy and placement note. */
+  host: OtfHostAvailability | null;
   busy: boolean;
   signedIn: boolean;
   onChange: (spec: OtfSpecCard) => void;
   onAccept: () => void;
 }
 
-export function SpecAcceptView({ spec, busy, signedIn, onChange, onAccept }: SpecAcceptProps) {
+export function SpecAcceptView({ spec, host, busy, signedIn, onChange, onAccept }: SpecAcceptProps) {
   const problem = specProblem(spec);
   return <form className="factory-form designer-card" aria-label="Accept custom spec" onSubmit={event => { event.preventDefault(); onAccept(); }}>
     <h3>Edit or accept your spec card</h3>
@@ -80,7 +94,8 @@ export function SpecAcceptView({ spec, busy, signedIn, onChange, onAccept }: Spe
       </label>
     </fieldset>
     {problem !== null && <p role="status">{problem}</p>}
-    <p>Usually 5–35 minutes (measured on 13 sample specs, Oct 29). Your bug may take longer or not qualify.</p>
+    {host?.host_id === "umami" && <p>{UMAMI_PLACEMENT}</p>}
+    {host !== null && <p>{typicalSentence(host)}</p>}
     <button type="submit" disabled={busy || !signedIn || problem !== null}>Accept and build this custom bug</button>
   </form>;
 }
