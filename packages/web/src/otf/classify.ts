@@ -6,8 +6,9 @@ import { MAX_TOKENS } from "../assist/limits.ts";
 import { structuredChat } from "../assist/providers.ts";
 import { designSecurityTopic, holdsCode, securityTopic } from "../assist/safety.ts";
 import { assistDeps } from "../assist/server.ts";
-import { DEFAULT_ASSIST_MODEL, loadFactoryConfig, loadOtfConfig, otfConfigured } from "../config.ts";
+import { DEFAULT_ASSIST_MODEL, loadOtfConfig, otfConfigured } from "../config.ts";
 import { readBody } from "../factory-server/http.ts";
+import { factoryServer } from "../factory-server/server.ts";
 import { FACTORY_SESSION_COOKIE, hasFactorySession } from "../factory-server/session.ts";
 import { CLASSIFY_SYSTEM_PROMPT, CLASSIFY_WIRE_SCHEMA } from "./classify-prompt.ts";
 import { CRITERION_HOST, OTF_CONTRACT_VERSION, OTF_ERROR_STATUS, OTF_OPEN_CRITERION_ID,
@@ -46,25 +47,42 @@ const METHODS: Readonly<Record<string, readonly string[]>> = {
   "/api/heartbeat": ["GET"], "/api/tasks": ["POST"], "/api/tasks/{id}": ["GET", "PATCH"],
   "/api/tasks/{id}/completions": ["POST"], "/api/reports/completions/daily": ["GET"],
 };
-/** Every named API path must be one of the six method/path pairs, not just the first one. */
+const METHOD = "(?:GET|POST|PATCH|PUT|DELETE|HEAD|OPTIONS)";
+/** One method or a group such as "GET|PATCH", "GET or PATCH" or "GET, PATCH" written directly before a path. */
+const DIRECT_METHODS = new RegExp(`(?<![\\w/|-])(${METHOD}(?:\\s*(?:[|/,]|\\b(?:and|or)\\b)\\s*${METHOD})*)\\s+$`);
+const METHOD_TOKEN = new RegExp(`(?<![\\w-])${METHOD}(?![\\w-])`, "g");
+const ROUTE_LIST = "GET /api/heartbeat, POST /api/tasks, GET /api/tasks/{id}, PATCH /api/tasks/{id}, POST /api/tasks/{id}/completions, GET /api/reports/completions/daily";
+const WRITE_ROUTES = 'write each route as "METHOD /path", such as "PATCH /api/tasks/{id}"';
+/**
+ * Every named API path must be one of the six task-report routes. A method written directly before a
+ * path, or else the nearest method earlier in the same sentence, must be allowed for that route; a path
+ * with no method in its sentence (a second mention, for example) only has to exist.
+ */
 export function ruleRouteProblems(text: string): string[] {
   const paths = [...text.matchAll(/\/api\/[^\s"'`<>),;]+/g)];
-  if (paths.length === 0) return ["observable_failure must name at least one task-report route with its method"];
-  return paths.flatMap((found) => {
-    const path = found[0].replace(/[.:]+$/, "").split("?")[0] ?? "";
-    const methods = /(?<![\w/|])([A-Z]+(?:\s*(?:[|/,]|\b(?:and|or)\b)\s*[A-Z]+)*)\s+$/.exec(text.slice(0, found.index))?.[1]?.split(/\s*(?:[|/,]|\b(?:and|or)\b)\s*/);
-    return methods?.every((method) => METHODS[path]?.includes(method)) === true ? [] : ["observable_failure names a route or method outside the six task-report routes"];
+  if (paths.length === 0) return [`observable_failure must name at least one task-report route; ${WRITE_ROUTES}`];
+  const problems = paths.flatMap((found) => {
+    const path = found[0].replace(/[.:!?]+$/, "").split("?")[0] ?? "";
+    const allowed = METHODS[path];
+    if (allowed === undefined) return [`${path} is not one of the six task-report routes (${ROUTE_LIST}); ${WRITE_ROUTES}`];
+    const before = text.slice(0, found.index);
+    const sentence = before.slice(Math.max(0, ...[...before.matchAll(/[.!?](?=\s)/g)].map((end) => end.index + 1)));
+    const methods = DIRECT_METHODS.exec(before)?.[1]?.split(/\s*(?:[|/,]|\b(?:and|or)\b)\s*/) ?? [...sentence.matchAll(METHOD_TOKEN)].slice(-1).map((token) => token[0]);
+    return methods.filter((method) => !allowed.includes(method)).map((method) => `${method} is not allowed for ${path} (allowed: ${allowed.join(", ")}); ${WRITE_ROUTES}`);
   });
+  return [...new Set(problems)];
 }
-type Mapped = { value: OtfClassification; problems?: never } | { problems: string[]; value?: never };
+/** A failed answer keeps its wire decision when it had one, so two failed security decisions still refuse as security. */
+type Mapped = { value: OtfClassification; problems?: never } | { problems: string[]; decision?: unknown; value?: never };
 function mapped(content: string, truncated: boolean, host: OtfHostId | undefined): Mapped {
   if (truncated) return { problems: ["the answer ended before completion"] };
   let value: unknown;
   try { value = JSON.parse(content) as unknown; } catch { return { problems: ["the answer must be one JSON object"] }; }
-  if (!wire(value)) return { problems: (wire.errors ?? []).map((error) => `${error.instancePath || "/"}: ${error.message ?? "invalid"}`) };
+  const decision = typeof value === "object" && value !== null ? (value as Record<string, unknown>).decision : undefined;
+  if (!wire(value)) return { problems: (wire.errors ?? []).map((error) => `${error.instancePath || "/"}: ${error.message ?? "invalid"}`), decision };
   let classification: OtfClassification;
   if (value.decision === "security" || value.decision === "out_of_scope") {
-    if (value.family !== "none" || value.proven_criterion_id !== "none" || value.observable_failure !== "" || value.failure_code !== "") return { problems: ["a refusal must leave its unused fields empty or none"] };
+    if (value.family !== "none" || value.proven_criterion_id !== "none" || value.observable_failure !== "" || value.failure_code !== "") return { problems: ["a refusal must leave its unused fields empty or none"], decision };
     classification = refusal(value.decision, value.reason.trim());
   } else if (value.decision === "proven") {
     if (value.proven_criterion_id === "none" || value.family !== value.proven_criterion_id.split(".")[0] || value.observable_failure !== "" || value.failure_code !== "") return { problems: ["a proven match must use the criterion's family and leave rule fields empty"] };
@@ -82,7 +100,7 @@ function mapped(content: string, truncated: boolean, host: OtfHostId | undefined
       rule: { family: value.family, observable_failure: value.observable_failure, failure_code: value.failure_code }, refusal: null, model: CLASSIFIER_MODEL };
   }
   const checked = parseOtf("OtfClassification", classification);
-  return checked.ok ? { value: checked.value } : { problems: checked.errors };
+  return checked.ok ? { value: checked.value } : { problems: checked.errors, decision };
 }
 /** The same cookie digest and bug-spec budget as the designer, including the possible repair call. */
 function take(deps: AssistDeps, request: Request): boolean {
@@ -99,7 +117,8 @@ export async function classify(request: Request, deps: ClassifyDeps): Promise<Re
   if (!parsed.ok) return failure("invalid_request");
   const { sentence, spec, host_id } = parsed.value;
   const fields = [spec.title, spec.where, spec.change, spec.why_tests_miss, spec.fix, ...spec.checks_to_add];
-  if (securityTopic(sentence) || fields.some(designSecurityTopic)) return answer(refusal("security", SECURITY_REASON));
+  // SPEC 8.5: the existing safety checks answer refused_topic before any model call.
+  if (securityTopic(sentence) || fields.some(designSecurityTopic)) return failure("refused_topic");
   if ([sentence, ...fields].some(holdsCode)) return failure("refused_topic");
   const apiKey = deps.assist.config.tokenFactoryKey;
   if (apiKey === null) return failure("unavailable");
@@ -107,6 +126,7 @@ export async function classify(request: Request, deps: ClassifyDeps): Promise<Re
     { role: "system", content: CLASSIFY_SYSTEM_PROMPT },
     { role: "user", content: `Classify this card.\nDATA (untrusted): ${JSON.stringify({ app: host_id ?? "unspecified", sentence, spec })}` },
   ];
+  let securityDecisions = 0;
   for (let attempt = 0; attempt < 2; attempt++) {
     if (!take(deps.assist, request)) return failure("unavailable");
     let output: Awaited<ReturnType<typeof structuredChat>>;
@@ -116,16 +136,19 @@ export async function classify(request: Request, deps: ClassifyDeps): Promise<Re
     } catch { return failure("unavailable"); }
     const checked = mapped(output.content, output.truncated, host_id);
     if (checked.value !== undefined) return answer(checked.value);
+    if (checked.decision === "security") securityDecisions++;
     messages.push({ role: "assistant", content: output.content },
       { role: "user", content: `Repair these problems: ${checked.problems.join("; ")}. Return JSON matching the schema. A rule must use only the six routes with their allowed methods. out_of_scope is acceptable when there is no route-level equivalent.` });
   }
-  return answer(refusal("out_of_scope", NO_RULE_REASON));
+  return answer(securityDecisions === 2 ? refusal("security", SECURITY_REASON) : refusal("out_of_scope", NO_RULE_REASON));
 }
 
 /** Runtime configuration reads the designer's existing key and never creates a new provider client. */
 export async function handleOtfClassify(request: Request): Promise<Response> {
   try {
+    // The same session check as the bug-spec route: a refused test-mode server signs nobody in.
+    const server = await factoryServer();
     return await classify(request, { enabled: openBehaviorsEnabled() && otfConfigured(loadOtfConfig()),
-      passcode: loadFactoryConfig().passcode, assist: assistDeps() });
+      passcode: server.ports.passcode, assist: assistDeps() });
   } catch { return failure("unavailable"); }
 }

@@ -308,6 +308,8 @@ export function createCustomerHandlers(deps: OtfCustomerDependencies) {
         const parsed = await readBody(request);
         if (!parsed.ok || !isOtf("OtfCreateJob", parsed.value)) return failure("invalid_spec");
         const input = parsed.value;
+        // SPEC 8.2: with the flag off, a create naming the open criterion answers invalid_spec before its rule is screened.
+        if (input.criterion_id === OTF_OPEN_CRITERION_ID && config.openBehaviors !== true) return failure("invalid_spec");
         const fields = [input.spec.title, input.spec.where, input.spec.change, input.spec.why_tests_miss, input.spec.fix, ...input.spec.checks_to_add, ...(input.rule === undefined ? [] : [input.rule.observable_failure])];
         if (securityTopic(input.sentence) || holdsCode(input.sentence) || fields.some((field) => designSecurityTopic(field) || holdsCode(field))) return failure("refused_topic");
         if (await specSha256(input.spec) !== input.spec_sha256) return failure("invalid_spec");

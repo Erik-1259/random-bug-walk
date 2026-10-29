@@ -236,6 +236,17 @@ describe("OTF customer routes", () => {
     }
     expect(scope).not.toHaveBeenCalled(); expect(s.store.jobs.size).toBe(0); expect(s.power.startCalls).toBe(0);
   });
+  it("answers invalid_spec for an open rule with security or code text while the flag is off, before screening it", async () => {
+    const s = setup();
+    s.deps.config.behaviors.push({ criterion_id: OTF_OPEN_CRITERION_ID, host_id: "task-report", label: OTF_OPEN_LABEL, example_phrases: [], measured: false });
+    const scope = vi.spyOn(s.deps, "inScope");
+    for (const text of ["GET /api/tasks/{id} returns credentials after a task title is changed.", "const syntheticTaskTitle = 'This synthetic title is returned incorrectly';"]) {
+      const rule: OtfOpenRule = { family: "data_handling", observable_failure: text, failure_code: "synthetic_title_mismatch" };
+      const response = await s.handlers.create(request(await body({ criterion_id: OTF_OPEN_CRITERION_ID, rule, rule_sha256: await ruleSha256(rule) })));
+      expect(response.status).toBe(422); expect((await parsedResponse("OtfErrorBody", response)).error.code).toBe("invalid_spec");
+    }
+    expect(scope).not.toHaveBeenCalled(); expect(s.store.jobs.size).toBe(0); expect(s.power.startCalls).toBe(0);
+  });
   it("passes the edited rule to the trusted scope check and honors its refusal", async () => {
     const s = setup(); s.deps.config.openBehaviors = true;
     s.deps.config.behaviors.push({ criterion_id: OTF_OPEN_CRITERION_ID, host_id: "task-report", label: OTF_OPEN_LABEL, example_phrases: [], measured: false });
