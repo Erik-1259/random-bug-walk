@@ -6,6 +6,7 @@ import { CatalogStartPending, closestCatalogInput, startCatalogRequest } from ".
 import { hostQueueSentence, hostReasonLines, typicalSentence } from "../../src/components/otf/host-copy.tsx";
 import { FactoryController, REQUEST_KEY, type Capabilities, type FactoryClient, type Interpretation, type RequestInput, type RequestStatus } from "../../src/factory/client.ts";
 import type { OtfBehaviorOption, OtfHostAvailability, OtfSpecCard } from "../../src/otf/contract.ts";
+import { UMAMI_CALENDAR_REASON } from "../../src/factory/format.ts";
 
 const behavior: OtfBehaviorOption = { criterion_id: "concurrency.lost-acknowledged-change", host_id: "task-report", label: "Synthetic overlapping edits", example_phrases: ["A synthetic edit disappears."] };
 const spec: OtfSpecCard = { title: "Synthetic edit", where: "Synthetic save handler", change: "An overlapping edit is lost.", why_tests_miss: "Existing tests save one edit.", checks_to_add: ["Save two synthetic edits."], fix: "Keep both edits." };
@@ -138,6 +139,11 @@ describe("one-click catalog fallback", () => {
   });
   it("offers the closest supported catalog behavior instead of sending an unsupported custom criterion", () => {
     expect(closestCatalogInput(capabilities, "concurrency.stale-success-response")?.items[0]?.description).toBe("an acknowledged change is lost when requests overlap");
+  });
+  it("prefers an exact catalog match on another offered host and skips a calendar-closed host", () => {
+    expect(closestCatalogInput(capabilities, "date_time.time-zone-grouping")).toMatchObject({ hosts: ["umami"], items: [{ bug_type_id: "date_time" }] });
+    const closed: Capabilities = { ...capabilities, combinations: capabilities.combinations.map(option => option.host_id === "umami" ? { ...option, reason: UMAMI_CALENDAR_REASON } : option) };
+    expect(closestCatalogInput(closed, "date_time.time-zone-grouping")).toMatchObject({ hosts: ["task-report"], items: [{ bug_type_id: "concurrency" }] });
   });
   it("does not invent a catalog entry when none is available", () => {
     expect(closestCatalogInput(null, behavior.criterion_id)).toBeNull();

@@ -3,7 +3,7 @@ import { formatExactUsd } from "../../factory/format.ts";
 import { AdmissionStrip } from "./admission-strip.tsx";
 import { validationSentence } from "./host-copy.tsx";
 import { SixCellGrid } from "./six-cell-grid.tsx";
-export function CertificateView({ status, onValidate, disabled, refusalLines = null }: { status: OtfJobStatus; onValidate: () => void; disabled: boolean; refusalLines?: readonly string[] | null }) {
+export function CertificateView({ status, onValidate, disabled, unconfirmed = false, refusalLines = null }: { status: OtfJobStatus; onValidate: () => void; disabled: boolean; unconfirmed?: boolean; refusalLines?: readonly string[] | null }) {
   if (status.state !== "finished" || status.outcome !== "delivered") return null;
   const certificate = status.certificate;
   const validation = status.validation;
@@ -28,6 +28,7 @@ export function CertificateView({ status, onValidate, disabled, refusalLines = n
     <p>Model-written checks: the grader bundle contains evaluator code, the answer key, reference fix and accepted card. Keep it separate from the agent bundle.</p>
     <p>{validationSentence(status.host_id)}</p>
     <button type="button" onClick={onValidate} disabled={disabled || validation?.state === "queued" || validation?.state === "running"}>Validate stored bundles</button>
+    {unconfirmed && <p role="status">Your validation request has no answer yet. Refresh to check it, or validate again: a validation already queued is answered, not repeated.</p>}
     {refusalLines !== null && <p role="status">Validation was not started. {refusalLines.join(" ")}</p>}
     {validation !== null && <section aria-label="Bundle validation"><p role="status">Validation: {validation.state}</p><p>{validation.where}</p><SixCellGrid cells={validation.cells} label="Validation cells"/><AdmissionStrip admission={validation.admission} label="Validation admission result"/></section>}
   </section>;

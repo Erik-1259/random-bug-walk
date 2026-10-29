@@ -93,6 +93,13 @@ describe("custom workspace boundary", () => {
     expect(html).toContain("Validate stored bundles"); expect(html).not.toContain('role="alert"');
     expect(renderToStaticMarkup(<OtfWorkspaceView {...props} pending status={delivered} nowMs={NOV_3} />)).not.toContain("Validation was not started");
   });
+  it("keeps Refresh and Validate usable while a validation request has no answer, and holds the job", async () => {
+    const delivered: OtfJobStatus = { job_id: "00000000-0000-4000-8000-000000000001", created_at: "2026-10-29T00:00:00Z", state: "finished", host_id: "task-report", queue_position: null, builder: "running", outcome: "delivered", reason: null, criterion_id: "concurrency.lost-acknowledged-change", spec, spec_sha256: await specSha256(spec), deadline_at: null, elapsed_ms: 0, lanes: [], events: [], next_after: 0, poll_after_ms: 30000, spend: { model_microusd: 0, cap_microusd: 8000000, source: "builder proxy meter (upper bound)" }, winner: null, artifacts: [], certificate: null, validation: null, catalog_request_id: null };
+    const html = renderToStaticMarkup(<OtfWorkspaceView {...props} pending status={delivered} validationPending />);
+    expect(html).toContain("Your validation request has no answer yet.");
+    expect(html).toMatch(/<button type="button">Refresh custom build/); expect(html).toMatch(/<button type="button">Validate stored bundles/);
+    expect(html).toMatch(/disabled=""[^>]*>Design another custom bug/);
+  });
   it("hides the spec card when the picked behavior's host is not offered", () => {
     const html = renderToStaticMarkup(<OtfWorkspaceView {...props} criterionId="date_time.time-zone-grouping" spec={spec} />);
     expect(html).not.toContain("Accept and build this custom bug");

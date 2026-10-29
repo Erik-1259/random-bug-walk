@@ -254,13 +254,25 @@ describe("OTF persisted controller", () => {
     c.api.status.mockResolvedValue(await status({ state: "finished", outcome: "delivered", events: [], validation: { ...validation, state: "error", finished_at: T } }));
     await vi.advanceTimersByTimeAsync(30000); await c.controller.poll(); expect(c.controller.snapshot().status?.validation?.state).toBe("error");
   });
-  it("does not automatically repeat validation after a lost response, including reload", async () => {
+  it("does not automatically repeat validation after a lost response, including reload; only an explicit click sends it again", async () => {
     const c = await setup(); c.api.create.mockResolvedValue({ job_id: JOB, status: await status({ state: "finished", outcome: "delivered" }) });
     serveStatus(c.api, await status({ state: "finished", outcome: "delivered" }));
     c.api.validate.mockRejectedValue(new Error("Synthetic lost validation response.")); await c.controller.create(input); await c.controller.validate();
-    c.api.status.mockResolvedValue(await status({ state: "finished", outcome: "delivered" }));
-    const reloaded = new OtfController(c.api, c.storage, c.uuid, c.lock); await reloaded.initialize(); await reloaded.validate(); await reloaded.newDraft();
-    expect(c.api.validate).toHaveBeenCalledTimes(1); expect(reloaded.snapshot()).toMatchObject({ jobId: JOB, validationPending: true });
+    const reloaded = new OtfController(c.api, c.storage, c.uuid, c.lock); await reloaded.initialize(); await reloaded.newDraft();
+    expect(c.api.validate).toHaveBeenCalledTimes(1); expect(reloaded.snapshot()).toMatchObject({ jobId: JOB, validationPending: true, busy: false, canNewDraft: false });
+    c.api.validate.mockResolvedValueOnce(validation); await reloaded.validate();
+    expect(c.api.validate).toHaveBeenCalledTimes(2); expect(reloaded.snapshot()).toMatchObject({ validationPending: false });
+    expect(reloaded.snapshot().status?.validation?.state).toBe("queued");
+  });
+  it("adopts a validation that an unanswered POST created instead of sending another", async () => {
+    const c = await setup(); const finished = await status({ state: "finished", outcome: "delivered" });
+    c.api.create.mockResolvedValue({ job_id: JOB, status: finished }); serveStatus(c.api, finished);
+    c.api.validate.mockRejectedValueOnce(new Error("Synthetic lost validation response.")); await c.controller.create(input); await c.controller.validate();
+    expect(c.controller.snapshot().validationPending).toBe(true);
+    c.api.status.mockResolvedValue({ ...finished, events: [], validation: { ...validation, state: "passed", finished_at: T } });
+    await c.controller.validate();
+    expect(c.api.validate).toHaveBeenCalledTimes(1);
+    expect(c.controller.snapshot()).toMatchObject({ validationPending: false, canNewDraft: true }); expect(c.controller.snapshot().status?.validation?.state).toBe("passed");
   });
   it("retains a local catalog association without changing the immutable replay body", async () => {
     const c = await setup(); c.api.create.mockRejectedValueOnce(new Error("Synthetic lost response.")); await c.controller.create(input);

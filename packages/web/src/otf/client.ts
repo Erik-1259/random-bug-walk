@@ -306,10 +306,13 @@ export class OtfController {
       const changed = await this.restore(); if (changed) { await this.readStatus(); return; }
       if (this.view.status?.state !== "finished" || this.view.status.outcome !== "delivered") return;
       // Another tab may have validated since this view was rendered. Observe it before another POST.
+      // A validation created by an earlier unanswered POST shows here and clears its pending marker. A marker
+      // that survives this read means that POST queued nothing yet, so this explicit click may send it again;
+      // the server answers a still-queued validation instead of creating a second one.
       await this.readStatus();
       const saved = this.saved; const status = this.view.status;
       if (saved?.job_id === null || saved === null || status.outcome !== "delivered" || status.state !== "finished"
-        || saved.validation_before !== undefined || validationOpen(status.validation)
+        || validationOpen(status.validation)
         || (status.validation?.validation_id ?? null) !== seenValidation) return;
       this.save({ ...saved, validation_before: status.validation?.validation_id ?? null });
       this.update({ validationPending: true, validationRefused: false });

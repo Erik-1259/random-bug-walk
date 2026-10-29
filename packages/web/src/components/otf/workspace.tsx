@@ -24,6 +24,8 @@ export interface OtfWorkspaceViewProps {
   pendingRequest?: OtfCreateJob | null;
   refusal?: OtfCreateRefusal | null;
   stopRequested?: boolean;
+  /** A validation request was sent but no answer or new validation has been seen yet. */
+  validationPending?: boolean;
   /** The last validation request from this tab was refused host_unavailable. */
   validationRefused?: boolean;
   /** The clock for calendar hints. */
@@ -52,7 +54,7 @@ export interface OtfWorkspaceViewProps {
 
 export function OtfWorkspaceView(props: OtfWorkspaceViewProps) {
   const { availability, status, pending, busy, designing, signedIn } = props;
-  const { pendingRequest = null, refusal = null, stopRequested = false, validationRefused = false, nowMs = Date.now() } = props;
+  const { pendingRequest = null, refusal = null, stopRequested = false, validationPending = false, validationRefused = false, nowMs = Date.now() } = props;
   // OTF is hidden when it is not configured: an unavailable or failed availability read with nothing saved.
   if (availability === null && status === null && !pending) return null;
   const enabled = availability?.enabled === true;
@@ -83,8 +85,8 @@ export function OtfWorkspaceView(props: OtfWorkspaceViewProps) {
     {status !== null && <>
       <LaneBoard status={status} availability={availability} disabled={busy || !signedIn} onStop={props.onStop} stopRequested={stopRequested} />
       <FailureView status={status} availability={availability} nowMs={nowMs} />
-      <CertificateView status={status} disabled={busy || !signedIn} onValidate={props.onValidate} refusalLines={validationRefused ? validationRefusalLines(status.host_id, availability, nowMs) : null} />
-      {status.state === "finished" && <button type="button" disabled={busy || validationOpen} onClick={props.onNew}>Design another custom bug</button>}
+      <CertificateView status={status} disabled={busy || !signedIn} onValidate={props.onValidate} unconfirmed={validationPending && !validationOpen} refusalLines={validationRefused ? validationRefusalLines(status.host_id, availability, nowMs) : null} />
+      {status.state === "finished" && <button type="button" disabled={busy || validationOpen || validationPending} onClick={props.onNew}>Design another custom bug</button>}
     </>}
     <CatalogOffer {...props.catalog} building={building} fallback={fallback} />
   </section>;
@@ -177,7 +179,7 @@ function ConnectedOtf({ controller, catalogController, onAvailability, designer 
   };
   return <OtfWorkspaceView availability={view.availability} status={view.status} pending={view.pendingRequest !== null || view.jobId !== null}
     pendingRequest={view.pendingRequest} refusal={view.refusal} stopRequested={view.stopRequested} validationRefused={view.validationRefused} nowMs={Date.now()}
-    busy={view.busy || view.validationPending} designing={designing} signedIn={catalog.signedIn} criterionId={selected} sentence={sentence} spec={spec}
+    busy={view.busy} validationPending={view.validationPending} designing={designing} signedIn={catalog.signedIn} criterionId={selected} sentence={sentence} spec={spec}
     message={designError ?? view.message} canRetryCreate={view.canRetryCreate} canNewDraft={view.canNewDraft}
     onBehavior={value => { setCriterion(value); setSpec(null); setDesignError(null); }} onSentence={value => { setSentence(value); setSpec(null); setDesignError(null); }} onSpec={setSpec}
     onDesign={() => { void design(); }} onAccept={() => { void accept(); }} onRetry={() => { void controller.retryCreate(); }} onRefresh={() => { void controller.initialize(); }}
