@@ -378,14 +378,15 @@ Open behaviors let a customer build a non-security behavior on the task-report h
 - `OTF_CONTRACT_VERSION` stays `otf/0`. Not every addition is optional: `OtfBehaviorOption.measured` is a new required member of availability (section 8.4). Every other addition is optional or applies to the open criterion only, and the builder-facing bodies of a proven job (claim, events, result, validation and certificate) validate exactly as before.
 - A browser tab still open on the bundle before this change does not know `measured`; its strict availability check refuses the new answer, so that tab shows OTF as unavailable until it is reloaded.
 
-### 8.2 The flag, and production at this commit
+### 8.2 The flag
 
-- `RBW_OTF_OPEN_BEHAVIORS=1` turns open behaviors on. Unset (or any other value) means off. The server branch adds the flag; it does not exist yet.
-- While it is off (and at this commit), production behaves as before, apart from the `measured` member in availability (section 8.1):
-  - availability lists only the proven behaviors (`compose.ts` builds them from `PROVEN_CRITERION_IDS`);
-  - a create naming the open criterion answers `invalid_spec` (`cardInScope` refuses it);
+- `RBW_OTF_OPEN_BEHAVIORS=1` turns open behaviors on. Unset (or any other value) means off.
+- While it is off, the deployment behaves as before open behaviors existed, apart from the `measured` member in availability (section 8.1):
+  - availability lists only the proven behaviors;
+  - a create naming the open criterion answers `invalid_spec`, after the usual safety checks on the sentence and card;
   - no claim hands out an open job, since none can be created;
-  - the classify route does not exist at this commit; once the server branch adds it, it answers `unavailable` while the flag is off.
+  - the classify route answers `unavailable` to a signed-in judge;
+  - the bug designer's card shows no "Build this as a custom bug" button, and the picker has no open option.
 - With the flag on, availability adds the open behavior on task-report (when that host is offered), with `label: OTF_OPEN_LABEL` and `measured: false`.
 - Set `RBW_OTF_OPEN_BEHAVIORS=1` in an environment only after the builder that reads `BuildJob.rule` is installed and pointed at that environment. A claim does not tell production whether the builder supports open jobs, so an earlier builder would claim an open job and build it without its rule.
 
