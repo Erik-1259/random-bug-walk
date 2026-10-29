@@ -2,13 +2,37 @@
 
 import { useEffect, useState, useSyncExternalStore } from "react";
 import type { FactoryPlan } from "../assist/plan.ts";
-import { FactoryController, factoryClient } from "../factory/client.ts";
-import { describeFactoryMessage, describeServiceState, formatExactUsd, formatUsd } from "../factory/format.ts";
+import { FactoryController, factoryClient, type Capabilities, type Interpretation } from "../factory/client.ts";
+import { CALENDAR_HINT, calendarClockDelay, calendarClosedHosts, calendarClosesPair, calendarFallback, describeFactoryMessage, describeServiceState, formatExactUsd, formatUsd } from "../factory/format.ts";
 import { BugDesigner } from "./bug-designer.tsx";
 import { CopyButton } from "./copy-button.tsx";
 import { DeliveryBriefs } from "./delivery-brief.tsx";
 import { FactoryRequestForm } from "./factory-request-form.tsx";
 import { FactoryProgress, type FactoryLabels } from "./factory-progress.tsx";
+
+/**
+ * Under an item the service refuses because no selected host supports its bug type: the calendar
+ * cause when the request includes Umami and the calendar closes that pair now, or nothing.
+ */
+export function CalendarCause({ capabilities, requestedHosts, item, nowMs }: { capabilities: Capabilities | null; requestedHosts: readonly string[]; item: Interpretation["items"][number]; nowMs: number }) {
+  if (capabilities === null || !item.problems.some((problem) => problem.code === "unsupported_combination" && problem.severity === "blocking")) return null;
+  const requested = (hostId: string) => requestedHosts.includes(hostId);
+  if (!requested("umami") || !calendarClosesPair(capabilities, "umami", item.bug_type_id, nowMs)) return null;
+  const fallback = requested("task-report") ? null : calendarFallback(capabilities);
+  return <p className="factory-badge">{CALENDAR_HINT}{fallback !== null && <> {fallback}</>}</p>;
+}
+
+/** This browser's clock, reread at each calendar boundary so a page left open updates its hints. */
+function useCalendarClock(capabilities: Capabilities | null): number {
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    const delay = calendarClockDelay(capabilities, nowMs);
+    if (delay === null) return;
+    const timer = setTimeout(() => { setNowMs(Date.now()); }, delay);
+    return () => { clearTimeout(timer); };
+  }, [capabilities, nowMs]);
+  return nowMs;
+}
 
 function FactoryAlert({ message }: { message: string }) {
   const friendly = describeFactoryMessage(message);
@@ -53,6 +77,10 @@ function ConnectedWorkspace({ controller }: { controller: FactoryController }) {
     bugTypes: Object.fromEntries((view.capabilities?.bug_types ?? []).map((type) => [type.bug_type_id, type.label])),
   };
   const serviceMessage = view.capabilities?.service.message ?? null;
+  // A UI hint only, from the capabilities and this browser's clock; the service decides.
+  const nowMs = useCalendarClock(view.capabilities);
+  const closedHosts = calendarClosedHosts(view.capabilities, nowMs);
+  const requestedHosts = view.interpretation?.hosts.map((host) => host.host_id) ?? [];
   return <>
     <aside className={unavailable ? "factory-availability factory-availability-closed" : "factory-availability"} aria-label="Request availability">
       <strong>{unavailable ? "Live requests unavailable" : "Request service available"}</strong>
@@ -68,10 +96,10 @@ function ConnectedWorkspace({ controller }: { controller: FactoryController }) {
       <input id="factory-passcode" type="password" autoComplete="current-password" value={passcode} onChange={(event) => { setPasscode(event.target.value); }} />
       <button type="submit" disabled={view.busy || passcode.length === 0}>Sign in to the request service</button>
     </form>}
-    <BugDesigner signedIn={view.signedIn} capabilities={view.capabilities}
+    <BugDesigner signedIn={view.signedIn} capabilities={view.capabilities} closedHosts={closedHosts}
       applyBlocked={view.requestId !== null ? "A request is in progress on this page. When it finishes, prepare another request, then use this plan." : view.capabilities === null ? "The request form is not loaded, so this plan cannot fill it." : null}
       onUsePlan={(next) => { controller.invalidateInterpretation(); setPlan(next); }} />
-    <div hidden={view.requestId !== null}><FactoryRequestForm key={plan?.key ?? 0} plan={plan} capabilities={view.capabilities} disabled={view.busy || view.requestId !== null || unavailable}
+    <div hidden={view.requestId !== null}><FactoryRequestForm key={plan?.key ?? 0} plan={plan} capabilities={view.capabilities} closedHosts={closedHosts} disabled={view.busy || view.requestId !== null || unavailable}
       onChange={() => { controller.invalidateInterpretation(); }} onInterpret={(input) => { void controller.interpret(input); }} /></div>
     {view.interpretation !== null && <section className="factory-panel" aria-labelledby="factory-interpretation">
       <h2 id="factory-interpretation">Service interpretation</h2>
@@ -83,6 +111,7 @@ function ConnectedWorkspace({ controller }: { controller: FactoryController }) {
         <ul>{item.criteria.map(criterion => <li key={criterion.criterion_id}>{criterion.label}</li>)}</ul>
         {item.unmatched_text.length > 0 && <p>Unrecognized description: {item.unmatched_text.join(", ")}</p>}
         <ul>{item.problems.map((problem, index) => <li key={index}>{problem.severity === "blocking" ? "Must fix" : "Note"}: {problem.message}</li>)}</ul>
+        <CalendarCause capabilities={view.capabilities} requestedHosts={requestedHosts} item={item} nowMs={nowMs} />
       </li>)}</ul>
       <ul>{view.interpretation.problems.map((problem, index) => <li key={index}>{problem.severity === "blocking" ? "Must fix" : "Note"}: {problem.message}</li>)}</ul>
       <p>Applications: {view.interpretation.hosts.map(host => `${labels.hosts[host.host_id] ?? host.host_id} (${host.used ? "used" : "not used"})`).join(", ")}.</p>
@@ -108,7 +137,7 @@ function ConnectedWorkspace({ controller }: { controller: FactoryController }) {
       {view.canRetryValidation && <button type="button" disabled={view.busy || !view.signedIn} onClick={() => { void controller.retryValidation(); }}>Retry the same validation</button>}
       {view.status?.state === "finished" && <button type="button" disabled={view.busy || view.status.attention !== null || (view.validation !== null && view.validation.state !== "finished") || view.status.cases.some((item) => item.validation !== null && item.validation.state !== "finished") || view.canRetryValidation} onClick={() => { void controller.newDraft(); }}>Prepare another request</button>}
     </section>}
-    <FactoryProgress status={view.status} busy={view.busy || view.canRetryValidation} polling={view.polling} stopPending={view.stopPending} disabled={!view.signedIn} validation={view.validation} labels={labels}
+    <FactoryProgress status={view.status} busy={view.busy || view.canRetryValidation} polling={view.polling} stopPending={view.stopPending} disabled={!view.signedIn} validation={view.validation} labels={labels} closedHosts={closedHosts}
       onStop={() => { void controller.stop(); }} onValidate={(caseId) => { void controller.validate(caseId); }} />
     {view.requestId !== null && view.status?.state === "finished" && <DeliveryBriefs key={view.requestId} requestId={view.requestId} cases={view.status.cases} signedIn={view.signedIn} />}
   </>;

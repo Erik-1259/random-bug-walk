@@ -5,7 +5,7 @@ import { ASSIST_HOSTS, assistClient, queryProblem, type AssistClient, type Assis
 import { currentSpec, designerReducer, INITIAL_DESIGNER, specKey, type DesignerAction, type DesignerState } from "../assist/designer-state.ts";
 import { planFromShape, type FactoryPlan } from "../assist/plan.ts";
 import type { Capabilities } from "../factory/client.ts";
-import { formatDateTime } from "../factory/format.ts";
+import { CALENDAR_HINT, calendarClosedHosts, calendarFallback, formatDateTime } from "../factory/format.ts";
 
 export const DESIGNER_EXAMPLES: readonly string[] = ["date/time bugs", "race conditions", "lost updates"];
 export const DESIGNER_CREDIT = "Designed by NVIDIA Nemotron 3 Super on Nebius Token Factory · sources found with Tavily";
@@ -34,6 +34,8 @@ export function describeAssistFailure(failure: AssistFailure): string {
 export interface BugDesignerProps {
   signedIn: boolean;
   capabilities: Capabilities | null;
+  /** Hosts the calendar closes now (a UI hint): a plan cannot fill the form with them. Without it, the ones the capabilities report closed. */
+  closedHosts?: readonly string[];
   /** Why "Use this plan" cannot fill the form now (for example a request in progress), or null. */
   applyBlocked: string | null;
   onUsePlan: (plan: FactoryPlan) => void;
@@ -67,7 +69,7 @@ export interface BugDesignerViewProps extends Omit<BugDesignerProps, "client"> {
 }
 
 /** Everything the designer shows, from its state; BugDesigner supplies the state and the calls. */
-export function BugDesignerView({ signedIn, capabilities, applyBlocked, onUsePlan, state, dispatch, onSearch, onWrite }: BugDesignerViewProps) {
+export function BugDesignerView({ signedIn, capabilities, closedHosts = calendarClosedHosts(capabilities), applyBlocked, onUsePlan, state, dispatch, onSearch, onWrite }: BugDesignerViewProps) {
   const header = <>
     <h2 id="designer-heading">Find a bug for your agent evaluation</h2>
     <p>Describe a kind of bug. The designer searches the public web for real bug reports of that kind, sums them up as a few bug shapes, and writes a bug specification for one of the two applications. Non-security bugs only: date and time, concurrency, data handling, state and UI logic.</p>
@@ -127,14 +129,14 @@ export function BugDesignerView({ signedIn, capabilities, applyBlocked, onUsePla
         onChange={() => { dispatch({ type: "pick_host", hostId }); }} /> {hostLabel(capabilities, hostId)}</label>)}
       <button type="button" disabled={state.busy !== null || state.hostId === null} onClick={onWrite}>Write the bug specification</button>
     </fieldset>}
-    {shape !== null && spec !== null && state.hostId !== null && <SpecCard state={state} capabilities={capabilities} applyBlocked={applyBlocked} onUsePlan={onUsePlan} dispatch={dispatch} />}
+    {shape !== null && spec !== null && state.hostId !== null && <SpecCard state={state} capabilities={capabilities} closedHosts={closedHosts} applyBlocked={applyBlocked} onUsePlan={onUsePlan} dispatch={dispatch} />}
     <p className="factory-note">{CATALOG_HONESTY}</p>
   </section>;
 }
 
 let planCounter = 0;
 
-function SpecCard({ state, capabilities, applyBlocked, onUsePlan, dispatch }: Pick<BugDesignerViewProps, "state" | "capabilities" | "applyBlocked" | "onUsePlan" | "dispatch">) {
+function SpecCard({ state, capabilities, closedHosts = [], applyBlocked, onUsePlan, dispatch }: Pick<BugDesignerViewProps, "state" | "capabilities" | "closedHosts" | "applyBlocked" | "onUsePlan" | "dispatch">) {
   const result = currentSpec(state);
   const shape = state.shapes?.shapes.find((item) => item.id === state.shapeId);
   const hostId = state.hostId;
@@ -142,6 +144,7 @@ function SpecCard({ state, capabilities, applyBlocked, onUsePlan, dispatch }: Pi
   const { spec, model } = result;
   const preview = planFromShape(shape, hostId, capabilities, 0);
   const key = specKey(shape.id, hostId);
+  const fallback = hostId === "task-report" ? null : calendarFallback(capabilities);
   return <article className="designer-card designer-spec" aria-labelledby="designer-spec-title">
     <p className="factory-badge">Design, not a built bug</p>
     <h3 id="designer-spec-title">{spec.title}</h3>
@@ -154,7 +157,9 @@ function SpecCard({ state, capabilities, applyBlocked, onUsePlan, dispatch }: Pi
       <dt>The fix</dt><dd>{spec.fix}</dd>
     </dl>
     <p className="factory-note">Written by <code>{model.model_id}</code> on <time dateTime={model.at}>{formatDateTime(model.at)}</time>.</p>
-    {preview === null
+    {closedHosts.includes(hostId)
+      ? <p className="factory-badge">{CALENDAR_HINT}{fallback !== null && <> {fallback}</>}</p>
+      : preview === null
       ? <p>No proven bug on {hostLabel(capabilities, hostId)} can fill the request form yet.</p>
       : <>
         <p>“Use this plan” fills the request form below with {hostLabel(capabilities, preview.host_id)}, {bugTypeLabel(capabilities, preview.bug_type_id)}
