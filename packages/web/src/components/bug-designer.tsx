@@ -1,7 +1,7 @@
 "use client";
 
 import { useReducer, type Dispatch } from "react";
-import { ASSIST_HOSTS, assistClient, queryProblem, type AssistClient, type AssistFailure } from "../assist/client.ts";
+import { ASSIST_HOSTS, assistClient, queryProblem, type AssistClient, type AssistFailure, type AssistHostId, type BugSpec } from "../assist/client.ts";
 import { currentSpec, designerReducer, INITIAL_DESIGNER, specKey, type DesignerAction, type DesignerState } from "../assist/designer-state.ts";
 import { planFromShape, type FactoryPlan } from "../assist/plan.ts";
 import type { Capabilities } from "../factory/client.ts";
@@ -12,6 +12,7 @@ export const DESIGNER_CREDIT = "Designed by NVIDIA Nemotron 3 Super on Nebius To
 export const CATALOG_HONESTY = "Today Random Bug Walk delivers the closest proven bug from its catalog, re-verified live on fresh clean, buggy and fixed copies.";
 /** Where custom builds are enabled: this design is a starting point, and "Build a custom bug" writes the card that is built. */
 export const OTF_DESIGNER_NOTE = "A catalog request delivers the closest proven bug from the catalog, re-verified live on fresh clean, buggy and fixed copies. This design is not built as written. To have a new bug built, use \u201cBuild a custom bug\u201d above: it writes its own spec card from one sentence, and you can edit that card before you accept it.";
+export const CUSTOM_BUILD_DESIGNER_NOTE = "“Build this as a custom bug” sends this card to the custom-build panel for classification. Review its classification and any open rule there before accepting; no build starts until you accept it. The catalog option still delivers the closest proven bug from the catalog, re-verified live on fresh clean, buggy and fixed copies.";
 
 const FALLBACK_HOST_LABELS: Readonly<Record<string, string>> = { umami: "Umami", "task-report": "Task and report service" };
 
@@ -33,6 +34,19 @@ export function describeAssistFailure(failure: AssistFailure): string {
   }
 }
 
+export interface CustomBuildDesign {
+  spec: BugSpec;
+  query: string;
+  hostId: AssistHostId;
+}
+
+/** Copies only the current finished card into the custom-build draft; accepting that draft is separate. */
+export function handoffDesignerSpec(state: DesignerState, onBuild: (design: CustomBuildDesign) => void): void {
+  const result = currentSpec(state);
+  if (state.busy !== null || result === null || state.hostId === null) return;
+  onBuild({ spec: { ...result.spec, checks_to_add: [...result.spec.checks_to_add] }, query: state.query, hostId: state.hostId });
+}
+
 export interface BugDesignerProps {
   signedIn: boolean;
   capabilities: Capabilities | null;
@@ -43,6 +57,11 @@ export interface BugDesignerProps {
   onUsePlan: (plan: FactoryPlan) => void;
   client?: AssistClient;
   otfEnabled?: boolean;
+  onBuildCustom?: (design: CustomBuildDesign) => void;
+  /** The open behavior is offered, so a card may be handed to the custom-build panel; false shows no handoff at all. */
+  customBuildOffered?: boolean;
+  /** A short reason the handoff is held for now (the panel is busy or a custom build is saved), or null. */
+  customBuildBlocked?: string | null;
 }
 
 export function BugDesigner({ client = assistClient, ...props }: BugDesignerProps) {
@@ -72,7 +91,7 @@ export interface BugDesignerViewProps extends Omit<BugDesignerProps, "client"> {
 }
 
 /** Everything the designer shows, from its state; BugDesigner supplies the state and the calls. */
-export function BugDesignerView({ signedIn, capabilities, closedHosts = calendarClosedHosts(capabilities), applyBlocked, onUsePlan, state, dispatch, onSearch, onWrite, otfEnabled = false }: BugDesignerViewProps) {
+export function BugDesignerView({ signedIn, capabilities, closedHosts = calendarClosedHosts(capabilities), applyBlocked, onUsePlan, state, dispatch, onSearch, onWrite, otfEnabled = false, onBuildCustom, customBuildOffered = false, customBuildBlocked = null }: BugDesignerViewProps) {
   const header = <>
     <h2 id="designer-heading">Find a bug for your agent evaluation</h2>
     <p>Describe a kind of bug. The designer searches the public web for real bug reports of that kind, sums them up as a few bug shapes, and writes a bug specification for one of the two applications. Non-security bugs only: date and time, concurrency, data handling, state and UI logic.</p>
@@ -92,6 +111,8 @@ export function BugDesignerView({ signedIn, capabilities, closedHosts = calendar
   const shapes = state.shapes;
   const shape = shapes?.shapes.find((item) => item.id === state.shapeId) ?? null;
   const spec = currentSpec(state);
+  // The note follows whether the handoff is offered for this card, not a brief busy state, so it stays put while a card is classified.
+  const handoffShown = otfEnabled && customBuildOffered && onBuildCustom !== undefined && state.busy === null && shape !== null && spec !== null && state.hostId !== null;
   const busyText = state.busy === "shapes" ? "Searching public bug reports and summing them up as bug shapes. This can take up to a minute."
     : state.busy === "spec" ? "Writing the bug specification. This can take up to a minute." : null;
   return <section className="factory-panel designer" aria-labelledby="designer-heading" aria-busy={state.busy !== null}>
@@ -132,14 +153,15 @@ export function BugDesignerView({ signedIn, capabilities, closedHosts = calendar
         onChange={() => { dispatch({ type: "pick_host", hostId }); }} /> {hostLabel(capabilities, hostId)}</label>)}
       <button type="button" disabled={state.busy !== null || state.hostId === null} onClick={onWrite}>Write the bug specification</button>
     </fieldset>}
-    {shape !== null && spec !== null && state.hostId !== null && <SpecCard state={state} capabilities={capabilities} closedHosts={closedHosts} applyBlocked={applyBlocked} onUsePlan={onUsePlan} dispatch={dispatch} />}
-    <p className="factory-note">{otfEnabled ? OTF_DESIGNER_NOTE : CATALOG_HONESTY}</p>
+    {shape !== null && spec !== null && state.hostId !== null && <SpecCard state={state} capabilities={capabilities} closedHosts={closedHosts} applyBlocked={applyBlocked} onUsePlan={onUsePlan} dispatch={dispatch}
+      onBuildCustom={otfEnabled && customBuildOffered ? onBuildCustom : undefined} customBuildBlocked={customBuildBlocked} />}
+    <p className="factory-note">{handoffShown ? CUSTOM_BUILD_DESIGNER_NOTE : otfEnabled ? OTF_DESIGNER_NOTE : CATALOG_HONESTY}</p>
   </section>;
 }
 
 let planCounter = 0;
 
-function SpecCard({ state, capabilities, closedHosts = [], applyBlocked, onUsePlan, dispatch }: Pick<BugDesignerViewProps, "state" | "capabilities" | "closedHosts" | "applyBlocked" | "onUsePlan" | "dispatch">) {
+function SpecCard({ state, capabilities, closedHosts = [], applyBlocked, onUsePlan, dispatch, onBuildCustom, customBuildBlocked = null }: Pick<BugDesignerViewProps, "state" | "capabilities" | "closedHosts" | "applyBlocked" | "onUsePlan" | "dispatch" | "onBuildCustom" | "customBuildBlocked">) {
   const result = currentSpec(state);
   const shape = state.shapes?.shapes.find((item) => item.id === state.shapeId);
   const hostId = state.hostId;
@@ -160,6 +182,11 @@ function SpecCard({ state, capabilities, closedHosts = [], applyBlocked, onUsePl
       <dt>The fix</dt><dd>{spec.fix}</dd>
     </dl>
     <p className="factory-note">Written by <code>{model.model_id}</code> on <time dateTime={model.at}>{formatDateTime(model.at)}</time>.</p>
+    {onBuildCustom !== undefined && <>
+      <button type="button" className="factory-button" disabled={state.busy !== null || customBuildBlocked !== null} aria-describedby={customBuildBlocked === null ? undefined : "designer-custom-blocked"}
+        onClick={() => { if (customBuildBlocked === null) handoffDesignerSpec(state, onBuildCustom); }}>Build this as a custom bug</button>
+      {customBuildBlocked !== null && <p id="designer-custom-blocked" className="factory-note">{customBuildBlocked}</p>}
+    </>}
     {closedHosts.includes(hostId)
       ? <p className="factory-badge">{CALENDAR_HINT}{fallback !== null && <> {fallback}</>}</p>
       : preview === null
