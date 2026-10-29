@@ -308,10 +308,13 @@ export function createCustomerHandlers(deps: OtfCustomerDependencies) {
         const parsed = await readBody(request);
         if (!parsed.ok || !isOtf("OtfCreateJob", parsed.value)) return failure("invalid_spec");
         const input = parsed.value;
-        // SPEC 8.2: with the flag off, a create naming the open criterion answers invalid_spec before its rule is screened.
+        const fields = [input.spec.title, input.spec.where, input.spec.change, input.spec.why_tests_miss, input.spec.fix, ...input.spec.checks_to_add];
+        const unsafe = (field: string): boolean => designSecurityTopic(field) || holdsCode(field);
+        if (securityTopic(input.sentence) || holdsCode(input.sentence) || fields.some(unsafe)) return failure("refused_topic");
+        // SPEC 2.1 step 4 and 8.2: with the flag off, the open criterion answers invalid_spec, and its rule is never screened.
         if (input.criterion_id === OTF_OPEN_CRITERION_ID && config.openBehaviors !== true) return failure("invalid_spec");
-        const fields = [input.spec.title, input.spec.where, input.spec.change, input.spec.why_tests_miss, input.spec.fix, ...input.spec.checks_to_add, ...(input.rule === undefined ? [] : [input.rule.observable_failure])];
-        if (securityTopic(input.sentence) || holdsCode(input.sentence) || fields.some((field) => designSecurityTopic(field) || holdsCode(field))) return failure("refused_topic");
+        // SPEC 8.3 step 2: with the flag on, the safety checks also run on the rule text.
+        if (input.rule !== undefined && unsafe(input.rule.observable_failure)) return failure("refused_topic");
         if (await specSha256(input.spec) !== input.spec_sha256) return failure("invalid_spec");
         if (input.rule !== undefined && await ruleSha256(input.rule) !== input.rule_sha256) return failure("invalid_spec");
         if (!cardInScope(config, input) || (deps.inScope !== undefined && !await deps.inScope(input))) return failure("invalid_spec");

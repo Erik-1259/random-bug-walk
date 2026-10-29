@@ -247,6 +247,15 @@ describe("OTF customer routes", () => {
     }
     expect(scope).not.toHaveBeenCalled(); expect(s.store.jobs.size).toBe(0); expect(s.power.startCalls).toBe(0);
   });
+  it("keeps the card safety checks ahead of the open criterion's flag-off refusal", async () => {
+    const s = setup();
+    s.deps.config.behaviors.push({ criterion_id: OTF_OPEN_CRITERION_ID, host_id: "task-report", label: OTF_OPEN_LABEL, example_phrases: [], measured: false });
+    const rule: OtfOpenRule = { family: "data_handling", observable_failure: "POST /api/tasks saves a title, but GET /api/tasks/{id} returns a different title after the create completes.", failure_code: "synthetic_title_mismatch" };
+    const spec = { ...SPEC, fix: "const syntheticValue = 1;" };
+    const response = await s.handlers.create(request(await body({ criterion_id: OTF_OPEN_CRITERION_ID, spec, spec_sha256: await specSha256(spec), rule, rule_sha256: await ruleSha256(rule) })));
+    expect(response.status).toBe(422); expect((await parsedResponse("OtfErrorBody", response)).error.code).toBe("refused_topic");
+    expect(s.store.jobs.size).toBe(0); expect(s.power.startCalls).toBe(0);
+  });
   it("passes the edited rule to the trusted scope check and honors its refusal", async () => {
     const s = setup(); s.deps.config.openBehaviors = true;
     s.deps.config.behaviors.push({ criterion_id: OTF_OPEN_CRITERION_ID, host_id: "task-report", label: OTF_OPEN_LABEL, example_phrases: [], measured: false });

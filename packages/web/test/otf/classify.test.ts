@@ -76,13 +76,22 @@ describe("task-report route check", () => {
     "PATCH /api/tasks/{id} changes the note and returns 200, but a later read of /api/tasks/{id} returns the earlier note.",
     "Read /api/tasks/{id} returns altered text that differs from the saved original note.",
     "A task saved through POST /api/tasks keeps its title. Reading /api/tasks/{id} afterward shows a title with its commas removed.",
-  ])("accepts a method earlier in the sentence or a bare mention of an existing route: %s", (rule) => {
+    "After POST /api/tasks/{id}/completions, the daily report /api/reports/completions/daily still shows the old count.",
+    "POST /api/tasks creates a task, and later reading /api/tasks/{id} differs.",
+    "A PATCH to /api/tasks/{id} returns 200, but the next read of [/api/tasks/{id}] shows the earlier title.",
+    "GET /api/reports/completions/daily?date=2026-01-01&time_zone=UTC omits a completion recorded at 23:30 in that zone.",
+    "Two overlapping PATCH requests to /api/tasks/{id} both return 200, but only one note is kept.",
+  ])("accepts an attached allowed method or a bare mention of an existing route: %s", (rule) => {
     expect(ruleRouteProblems(rule)).toEqual([]);
   });
   it.each([
     ["DELETE /api/tasks/{id} returns 200 but GET /api/tasks/{id} still returns the saved task afterward.", "DELETE is not allowed for /api/tasks/{id} (allowed: GET, PATCH)"],
     ["Sending a DELETE request to /api/tasks/{id} returns 200 but the task can still be read afterward.", "DELETE is not allowed for /api/tasks/{id} (allowed: GET, PATCH)"],
-    ["POST /api/tasks/{id}/completions succeeds, but a later report from /api/reports/completions/daily omits it.", "POST is not allowed for /api/reports/completions/daily (allowed: GET)"],
+    ["A POST request to /api/reports/completions/daily returns 200, but the next daily report omits the completion.", "POST is not allowed for /api/reports/completions/daily (allowed: GET)"],
+    ["Send a DELETE request and then read /api/tasks/{id}; the task is still returned afterward.", "the task-report service has no DELETE route"],
+    ["Calling PUT on /api/tasks/{id} returns 200, but the title is unchanged afterward.", "PUT is not allowed for /api/tasks/{id} (allowed: GET, PATCH)"],
+    ["GET /v2/api/tasks/{id} returns a title that differs from the saved title.", "/v2/api/tasks/{id} is not one of the six task-report routes"],
+    ["GET https://synthetic.invalid/api/tasks/{id} returns a title that differs from the saved title.", "https://synthetic.invalid/api/tasks/{id} is not one of the six task-report routes"],
     ["GET /api/websites/x/stats returns a page view count that is one lower than the number of recorded views.", "/api/websites/x/stats is not one of the six task-report routes"],
     ["After saving a note through the task route, the returned note has silently lost its commas.", "observable_failure must name at least one task-report route"],
   ])("refuses a disallowed method, an unknown route or no route: %s", (rule, problem) => {
