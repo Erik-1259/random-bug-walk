@@ -6,7 +6,7 @@ import { readFileSync } from "node:fs";
 import { PGlite } from "@electric-sql/pglite";
 import { describe, expect, it } from "vitest";
 import { builderEventBytes } from "../../src/otf/canonical.ts";
-import type { BuilderEventIn, OtfNewJob, OtfSpecCard, OtfStore } from "../../src/otf/contract.ts";
+import type { BuilderEventIn, OtfAdmissionResult, OtfHostId, OtfNewJob, OtfSpecCard, OtfStore } from "../../src/otf/contract.ts";
 import { createMemoryOtfStore, createPgOtfStore, type OtfSql, type OtfSqlPool } from "../../src/otf/store.ts";
 
 const MIGRATION = readFileSync(new URL("../../otf-migrations/0001_otf.sql", import.meta.url), "utf8");
@@ -34,6 +34,7 @@ function newJob(n: number, overrides: Partial<OtfNewJob> = {}): OtfNewJob {
     client_key: uuid(1000 + n),
     create_sha256: "a".repeat(64),
     created_at: at(n * 1000),
+    host_id: "task-report",
     criterion_id: "concurrency.lost-acknowledged-change",
     sentence: "A synthetic sentence",
     spec: SPEC,
@@ -77,11 +78,23 @@ const STORES: [string, () => Promise<OtfStore>][] = [
   ["postgres (PGlite)", pgliteStore],
 ];
 
-const CLAIM = { maxActiveBuilds: 2, deadlineMs: 45 * 60_000, build: true, validate: true };
+type HostClaim = { build: boolean; validate: boolean; maxActiveBuilds: number; deadlineMs: number };
+
+/** Claim options: task-report with the given overrides, Umami with its own (closed by default). */
+function hosts(taskReport: Partial<HostClaim> = {}, umami: Partial<HostClaim> = {}): { hosts: Record<OtfHostId, HostClaim> } {
+  return {
+    hosts: {
+      "task-report": { build: true, validate: true, maxActiveBuilds: 2, deadlineMs: 45 * 60_000, ...taskReport },
+      umami: { build: false, validate: false, maxActiveBuilds: 1, deadlineMs: 60 * 60_000, ...umami },
+    },
+  };
+}
+
+const CLAIM = hosts();
 
 async function claimed(store: OtfStore, n: number, builder = "builder-a"): Promise<string> {
   await store.createJob(newJob(n));
-  const claim = await store.claimNext(builder, at(100_000), { ...CLAIM, validate: false });
+  const claim = await store.claimNext(builder, at(100_000), hosts({ validate: false }));
   if (claim?.kind !== "build") throw new Error("expected a build claim");
   return claim.job.job_id;
 }
@@ -183,11 +196,12 @@ describe.each(STORES)("OtfStore (%s)", (_name, open) => {
   it("records the builder heartbeat, with first_of_boot once per boot", async () => {
     const store = await open();
     expect(await store.lastBuilderSeen()).toBeNull();
-    const info = { builder_id: "builder-a", builder_revision: "rev-1", boot_id: "boot-1", booted_at: at(0) };
+    const info = { builder_id: "builder-a", builder_revision: "rev-1", boot_id: "boot-1", booted_at: at(0), ready_hosts: [] as OtfHostId[] };
     expect(await store.recordBuilderSeen(info, at(1000))).toEqual({ first_of_boot: true });
-    expect(await store.recordBuilderSeen(info, at(2000))).toEqual({ first_of_boot: false });
-    expect(await store.recordBuilderSeen({ ...info, boot_id: "boot-2" }, at(3000))).toEqual({ first_of_boot: true });
-    expect(await store.lastBuilderSeen()).toEqual({ ...info, boot_id: "boot-2", last_seen_at: at(3000) });
+    expect(await store.lastBuilderSeen()).toEqual({ ...info, last_seen_at: at(1000) });
+    expect(await store.recordBuilderSeen({ ...info, ready_hosts: ["task-report", "umami"] }, at(2000))).toEqual({ first_of_boot: false });
+    expect(await store.recordBuilderSeen({ ...info, boot_id: "boot-2", ready_hosts: ["umami"] }, at(3000))).toEqual({ first_of_boot: true });
+    expect(await store.lastBuilderSeen()).toEqual({ ...info, boot_id: "boot-2", ready_hosts: ["umami"], last_seen_at: at(3000) });
   });
 
   it("claims validations first, then the oldest queued build while fewer than the limit are building", async () => {
@@ -201,10 +215,41 @@ describe.each(STORES)("OtfStore (%s)", (_name, open) => {
     await store.updateJob(uuid(1), ["building"], { state: "finished", outcome: "delivered", reason: null, finished_at: at(11_000) });
     await store.createValidation(uuid(1), uuid(500), at(12_000));
     const validation = await store.claimNext("builder-a", at(13_000), CLAIM);
-    expect(validation).toEqual({ kind: "validate", validation: { validation_id: uuid(500), job_id: uuid(1), state: "running", cells: null, started_at: at(12_000), finished_at: null, claimed_by: "builder-a" } });
-    expect(await store.claimNext("builder-a", at(14_000), { ...CLAIM, maxActiveBuilds: 1, build: true })).toMatchObject({ kind: "build", job: { job_id: uuid(2) } });
-    expect(await store.claimNext("builder-a", at(15_000), { ...CLAIM, maxActiveBuilds: 1 })).toBeNull();
-    expect(await store.claimNext("builder-a", at(15_000), { ...CLAIM, build: false })).toBeNull();
+    expect(validation).toEqual({
+      kind: "validate",
+      validation: { validation_id: uuid(500), job_id: uuid(1), state: "running", cells: null, admission: null, started_at: at(12_000), finished_at: null, claimed_by: "builder-a" },
+    });
+    expect(await store.claimNext("builder-a", at(14_000), hosts({ maxActiveBuilds: 1 }))).toMatchObject({ kind: "build", job: { job_id: uuid(2) } });
+    expect(await store.claimNext("builder-a", at(15_000), hosts({ maxActiveBuilds: 1 }))).toBeNull();
+    expect(await store.claimNext("builder-a", at(15_000), hosts({ build: false }))).toBeNull();
+  });
+
+  it("claims per host: a saturated Umami never blocks a queued task-report build, and each host keeps its own deadline", async () => {
+    const store = await open();
+    await store.createJob(newJob(1, { host_id: "umami", criterion_id: "date_time.time-zone-grouping" }));
+    await store.createJob(newJob(2, { host_id: "umami", criterion_id: "date_time.time-zone-grouping" }));
+    await store.createJob(newJob(3));
+    const both = hosts({}, { build: true, validate: true });
+    const first = await store.claimNext("builder-a", at(10_000), both);
+    expect(first).toMatchObject({ kind: "build", job: { job_id: uuid(1), host_id: "umami", deadline_at: at(10_000 + 60 * 60_000) } });
+    // Umami is at its limit of 1, so the older Umami job waits and the task-report job is claimed.
+    const second = await store.claimNext("builder-a", at(11_000), both);
+    expect(second).toMatchObject({ kind: "build", job: { job_id: uuid(3), host_id: "task-report", deadline_at: at(11_000 + 45 * 60_000) } });
+    expect(await store.claimNext("builder-a", at(12_000), both)).toBeNull();
+    expect(await store.getJob(uuid(2))).toMatchObject({ state: "queued" });
+    // A host with no free build slot gets no build, even when it has room.
+    await store.updateJob(uuid(1), ["building"], { state: "finished", outcome: "not_qualified", reason: null, finished_at: at(13_000) });
+    expect(await store.claimNext("builder-a", at(14_000), hosts({}, { build: false, validate: true }))).toBeNull();
+    expect(await store.claimNext("builder-a", at(15_000), both)).toMatchObject({ kind: "build", job: { job_id: uuid(2) } });
+  });
+
+  it("hands out a validation only to a host with a free validate slot", async () => {
+    const store = await open();
+    await store.createJob(newJob(1, { host_id: "umami", criterion_id: "date_time.time-zone-grouping" }));
+    await store.updateJob(uuid(1), ["queued"], { state: "finished", outcome: "delivered", reason: null, finished_at: at(2000) });
+    await store.createValidation(uuid(1), uuid(500), at(3000));
+    expect(await store.claimNext("builder-a", at(4000), hosts({ build: false }))).toBeNull();
+    expect(await store.claimNext("builder-a", at(5000), hosts({ build: false }, { validate: true }))).toMatchObject({ kind: "validate", validation: { validation_id: uuid(500) } });
   });
 
   it("never hands out more builds than the limit to concurrent claims", async () => {
@@ -229,17 +274,17 @@ describe.each(STORES)("OtfStore (%s)", (_name, open) => {
       bytes: new Uint8Array([index, 1, 2]),
     }));
     const patch = { state: "finished", outcome: "delivered", reason: null, finished_at: at(200_000), winner_lane: "lane-2", winner_model: "synthetic/model" } as const;
-    expect(await store.storeDelivery(job, "builder-b", parts, patch)).toBe("wrong_builder");
-    expect(await store.storeDelivery(job, "builder-a", parts, patch)).toBe("stored");
+    expect(await store.storeDelivery(job, "builder-b", parts, patch, at(200_000))).toBe("wrong_builder");
+    expect(await store.storeDelivery(job, "builder-a", parts, patch, at(200_000))).toBe("stored");
     expect(await store.getJob(job)).toMatchObject({ state: "finished", outcome: "delivered", winner_lane: "lane-2", finished_at: at(200_000) });
     expect((await store.listEvents(job, 0)).at(-1)).toMatchObject({ type: "job_finished", at: at(200_000), data: { outcome: "delivered", reason: null } });
-    expect(await store.storeDelivery(job, "builder-a", parts, patch)).toBe("replayed");
-    expect(await store.storeDelivery(job, "builder-a", parts.map((part) => ({ ...part, sha256: "f".repeat(64) })), patch)).toBe("conflict");
+    expect(await store.storeDelivery(job, "builder-a", parts, patch, at(200_000))).toBe("replayed");
+    expect(await store.storeDelivery(job, "builder-a", parts.map((part) => ({ ...part, sha256: "f".repeat(64) })), patch, at(200_000))).toBe("conflict");
     expect((await store.listArtifacts(job)).map((item) => item.part)).toEqual(["agent", "certificate", "grader"]);
     const agent = await store.getArtifact(job, "agent");
     expect(agent).toMatchObject({ part: "agent", size: 3, sha256: "0".repeat(64), media_type: "application/gzip" });
     expect(Array.from(agent?.bytes ?? [])).toEqual([0, 1, 2]);
-    expect(await store.storeDelivery(uuid(77), "builder-a", parts, patch)).toBe("not_found");
+    expect(await store.storeDelivery(uuid(77), "builder-a", parts, patch, at(200_000))).toBe("not_found");
   });
 
   it("does not let a late delivery overwrite a job that a status read already finished", async () => {
@@ -247,13 +292,13 @@ describe.each(STORES)("OtfStore (%s)", (_name, open) => {
     const job = await claimed(store, 1);
     await store.updateJob(job, ["building"], { state: "finished", outcome: "time_limit", reason: null, finished_at: at(150_000) });
     const part = { job_id: job, part: "agent" as const, filename: "a.tar.gz", media_type: "application/gzip" as const, size: 1, sha256: "0".repeat(64), bytes: new Uint8Array([1]) };
-    expect(await store.storeDelivery(job, "builder-a", [part], { state: "finished", outcome: "delivered", reason: null, finished_at: at(160_000) })).toBe("finished");
+    expect(await store.storeDelivery(job, "builder-a", [part], { state: "finished", outcome: "delivered", reason: null, finished_at: at(160_000) }, at(160_000))).toBe("finished");
     expect(await store.getJob(job)).toMatchObject({ outcome: "time_limit" });
     expect(await store.listArtifacts(job)).toEqual([]);
     // With no parts the same call finishes a claimed job with another outcome.
     const other = await claimed(store, 2);
-    expect(await store.storeDelivery(other, "builder-a", [], { state: "finished", outcome: "not_qualified", reason: "synthetic", finished_at: at(170_000) })).toBe("stored");
-    expect((await store.listEvents(other, 0)).at(-1)).toMatchObject({ type: "job_finished", data: { outcome: "not_qualified", reason: "synthetic" } });
+    expect(await store.storeDelivery(other, "builder-a", [], { state: "finished", outcome: "not_qualified", reason: "synthetic", finished_at: at(170_000) }, at(171_000))).toBe("stored");
+    expect((await store.listEvents(other, 0)).at(-1)).toMatchObject({ type: "job_finished", at: at(171_000), data: { outcome: "not_qualified", reason: "synthetic" } });
   });
 
   it("keeps validations with a compare-and-set update and finds the latest per job", async () => {
@@ -266,8 +311,15 @@ describe.each(STORES)("OtfStore (%s)", (_name, open) => {
     expect(await store.updateValidation(uuid(501), ["running"], { state: "passed" })).toBeNull();
     const cells = { clean: { original_suite: "pass", added_checks: "pass" }, buggy: { original_suite: "pass", added_checks: "fail" }, fixed: { original_suite: "pass", added_checks: "pass" } } as const;
     expect(await store.updateValidation(uuid(501), ["queued"], { state: "passed", cells, finished_at: at(3000) })).toMatchObject({ state: "passed", cells, finished_at: at(3000) });
-    expect(await store.getValidation(uuid(501))).toMatchObject({ state: "passed", cells });
+    expect(await store.getValidation(uuid(501))).toMatchObject({ state: "passed", cells, admission: null });
     expect(await store.getValidation(uuid(999))).toBeNull();
+    const admission: OtfAdmissionResult = {
+      decisions: { adm_02: "pass", adm_03: "pass", adm_04: "reject", adm_05: "not_run", adm_06: "not_run" },
+      comparison: "not_run",
+      alternative_fix: "not_run",
+    };
+    expect(await store.updateValidation(uuid(500), ["queued"], { state: "failed", cells, admission, finished_at: at(4000) })).toMatchObject({ state: "failed", admission });
+    expect(await store.getValidation(uuid(500))).toMatchObject({ admission });
   });
 
   it("runs power changes one at a time under the lock, logs them, and keeps the operator hold out of reach", async () => {

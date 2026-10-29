@@ -3,7 +3,7 @@
 // judge and factory routes' server variables are read here too, in the route handlers only, so none
 // of them reaches the client bundle.
 import { resolve } from "node:path";
-import { OTF_DEFAULTS } from "./otf/contract.ts";
+import { OTF_DEFAULTS, OTF_HOST_DEFAULTS, OTF_HOST_IDS, TYPICAL_MIN_SAMPLES, TYPICAL_SOURCES, type OtfHostId, type OtfHostProfile, type OtfTypical, type TypicalSource } from "./otf/contract.ts";
 
 export const DEFAULT_RESULTS_DIR = "fixtures/development-2026-10-06";
 
@@ -207,6 +207,11 @@ export function assistTestProviderOrigin(env: Env = process.env): string | null 
 
 // ---- On-the-fly bug creation (OTF). Every OTF variable is read here, the power and cron ones too,
 // so the route modules share one reading of them. docs/otf/SPEC.md describes what each one does.
+//
+// Each host has its own lanes, caps, deadline and typical time. The unprefixed variables are
+// task-report's (RBW_OTF_LANES, RBW_OTF_MAX_ACTIVE, RBW_OTF_MAX_USD_LANE, RBW_OTF_MAX_USD_JOB,
+// RBW_OTF_DEADLINE_MIN); Umami's carry RBW_OTF_UMAMI_. A host without valid lanes is disabled
+// (fail closed per host). Unset caps take OTF_HOST_DEFAULTS.
 
 /** One build lane as configured: the lane IDs are assigned lane-1, lane-2, ... in order. */
 export interface OtfLaneConfig {
@@ -214,6 +219,23 @@ export interface OtfLaneConfig {
   model_label: string;
   price_in_usd_per_m: string;
   price_out_usd_per_m: string;
+}
+
+/** One host's configuration. */
+export interface OtfHostConfig {
+  /** True exactly when its lanes parsed. */
+  enabled: boolean;
+  /** The host's lanes variable (RBW_OTF_LANES or RBW_OTF_UMAMI_LANES): 1 to 4 lanes; null when unset or invalid. */
+  lanes: OtfLaneConfig[] | null;
+  /** Why the lanes variable was refused, for the log (never its value); null when it parsed or is unset. */
+  lanesError: string | null;
+  /**
+   * OTF_HOST_DEFAULTS[host] with the configured max_active (..._MAX_ACTIVE), max_usd_lane
+   * (..._MAX_USD_LANE), max_usd_job (..._MAX_USD_JOB) and deadline_ms (..._DEADLINE_MIN).
+   */
+  profile: OtfHostProfile;
+  /** RBW_OTF_TYPICAL_TASK_REPORT or RBW_OTF_TYPICAL_UMAMI: a JSON OtfTypical; null when unset or invalid. */
+  typical: OtfTypical | null;
 }
 
 export interface OtfConfig {
@@ -224,25 +246,18 @@ export interface OtfConfig {
   builderSecret: string | null;
   /** DATABASE_URL: the database whose `otf` schema holds the jobs; null leaves OTF unavailable. */
   databaseUrl: string | null;
-  /** RBW_OTF_LANES: a JSON array of 1 to 4 lanes; null when unset or invalid, which leaves OTF unavailable. */
-  lanes: OtfLaneConfig[] | null;
-  /** Why RBW_OTF_LANES was refused, for the log (never its value); null when it parsed or is unset. */
-  lanesError: string | null;
-  /** RBW_OTF_MAX_ACTIVE: build jobs running at once. */
-  maxActive: number;
+  /** Every host once. */
+  hosts: Record<OtfHostId, OtfHostConfig>;
   /** RBW_OTF_MAX_QUEUED: jobs waiting beyond the active ones. */
   maxQueued: number;
   /** RBW_OTF_MAX_PER_DAY: jobs created per UTC day. */
   maxPerDay: number;
   /** RBW_OTF_SPEND_CAP_MICROUSD: total reported OTF model spend before creates are refused and builds stopped. */
   spendCapMicrousd: number;
-  /** RBW_OTF_MAX_USD_LANE and RBW_OTF_MAX_USD_JOB: the model spend caps sent with each build job. */
-  maxUsdLane: string;
-  maxUsdJob: string;
-  /** RBW_OTF_DEADLINE_MIN: minutes from claim to the job deadline. */
-  deadlineMs: number;
   /** RBW_OTF_VM_HOURS_PER_DAY: builder machine hours per UTC day. */
   vmHoursPerDay: number;
+  /** RBW_OTF_COLD_START_MIN: the measured builder cold start in minutes; null when unset or invalid. */
+  coldStartMin: number | null;
   /**
    * RBW_NEBIUS_SA_ID, RBW_NEBIUS_SA_KEY_ID, RBW_NEBIUS_SA_PRIVATE_KEY and RBW_NEBIUS_VM_ID: the
    * power-only service-account key and the one instance it may start and stop; null unless all four are set.
@@ -258,6 +273,28 @@ export const DEFAULT_OTF_SPEND_CAP_MICROUSD = 40_000_000;
 const OTF_LANES_MAX = 4;
 const OTF_MODEL = /^[A-Za-z0-9][A-Za-z0-9._:/+@-]{0,199}$/;
 const OTF_USD = /^\d{1,6}(?:\.\d{1,6})?$/;
+const OTF_MINUTES = /^\d{1,3}(?:\.\d{1,2})?$/;
+const OTF_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+/** The variable names of each host: the unprefixed ones are task-report's. */
+export const OTF_HOST_ENV: Readonly<Record<OtfHostId, { lanes: string; maxActive: string; maxUsdLane: string; maxUsdJob: string; deadlineMin: string; typical: string }>> = Object.freeze({
+  "task-report": {
+    lanes: "RBW_OTF_LANES",
+    maxActive: "RBW_OTF_MAX_ACTIVE",
+    maxUsdLane: "RBW_OTF_MAX_USD_LANE",
+    maxUsdJob: "RBW_OTF_MAX_USD_JOB",
+    deadlineMin: "RBW_OTF_DEADLINE_MIN",
+    typical: "RBW_OTF_TYPICAL_TASK_REPORT",
+  },
+  umami: {
+    lanes: "RBW_OTF_UMAMI_LANES",
+    maxActive: "RBW_OTF_UMAMI_MAX_ACTIVE",
+    maxUsdLane: "RBW_OTF_UMAMI_MAX_USD_LANE",
+    maxUsdJob: "RBW_OTF_UMAMI_MAX_USD_JOB",
+    deadlineMin: "RBW_OTF_UMAMI_DEADLINE_MIN",
+    typical: "RBW_OTF_TYPICAL_UMAMI",
+  },
+});
 
 /** A whole number in [min, max] from the variable, or the fallback when it is unset or not one. */
 function wholeNumber(env: Env, name: string, fallback: number, min: number, max: number): number {
@@ -272,15 +309,22 @@ function usd(env: Env, name: string, fallback: string): string {
   return found !== null && OTF_USD.test(found) ? found : fallback;
 }
 
-/** Parses RBW_OTF_LANES: [{model, model_label, price_in_usd_per_m, price_out_usd_per_m}, ...], 1 to 4 lanes. */
-export function parseOtfLanes(text: string): { ok: true; lanes: OtfLaneConfig[] } | { ok: false; error: string } {
+/** Minutes in [0, 600] with at most two decimals, or null. */
+function minutes(text: string | null): number | null {
+  if (text === null || !OTF_MINUTES.test(text)) return null;
+  const parsed = Number(text);
+  return parsed <= 600 ? parsed : null;
+}
+
+/** Parses one lanes variable: [{model, model_label, price_in_usd_per_m, price_out_usd_per_m}, ...], 1 to 4 lanes. */
+export function parseOtfLanes(text: string, name = "RBW_OTF_LANES"): { ok: true; lanes: OtfLaneConfig[] } | { ok: false; error: string } {
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
   } catch {
-    return { ok: false, error: "RBW_OTF_LANES is not JSON" };
+    return { ok: false, error: `${name} is not JSON` };
   }
-  if (!Array.isArray(parsed) || parsed.length === 0 || parsed.length > OTF_LANES_MAX) return { ok: false, error: `RBW_OTF_LANES must be an array of 1 to ${String(OTF_LANES_MAX)} lanes` };
+  if (!Array.isArray(parsed) || parsed.length === 0 || parsed.length > OTF_LANES_MAX) return { ok: false, error: `${name} must be an array of 1 to ${String(OTF_LANES_MAX)} lanes` };
   const lanes: OtfLaneConfig[] = [];
   for (const [index, item] of (parsed as unknown[]).entries()) {
     const lane = item as Partial<Record<keyof OtfLaneConfig, unknown>> | null;
@@ -297,39 +341,99 @@ export function parseOtfLanes(text: string): { ok: true; lanes: OtfLaneConfig[] 
       OTF_USD.test(lane.price_in_usd_per_m) &&
       typeof lane.price_out_usd_per_m === "string" &&
       OTF_USD.test(lane.price_out_usd_per_m);
-    if (!ok) return { ok: false, error: `RBW_OTF_LANES lane ${String(index + 1)} is not {model, model_label, price_in_usd_per_m, price_out_usd_per_m}` };
+    if (!ok) return { ok: false, error: `${name} lane ${String(index + 1)} is not {model, model_label, price_in_usd_per_m, price_out_usd_per_m}` };
     lanes.push({ model: lane.model as string, model_label: lane.model_label as string, price_in_usd_per_m: lane.price_in_usd_per_m as string, price_out_usd_per_m: lane.price_out_usd_per_m as string });
   }
   return { ok: true, lanes };
 }
 
+/** Whether text is a real calendar date, YYYY-MM-DD. */
+function calendarDate(text: string): boolean {
+  const match = OTF_DATE.exec(text);
+  if (match === null) return false;
+  const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
+  return date.toISOString().slice(0, 10) === text;
+}
+
+function minuteValue(item: unknown): item is number {
+  return typeof item === "number" && Number.isFinite(item) && item >= 0 && item <= 600;
+}
+
+/**
+ * Parses a typical-time variable: a JSON OtfTypical { source, median_min, p90_min, samples,
+ * measured_on }, with exactly those members, samples >= TYPICAL_MIN_SAMPLES, median_min <= p90_min
+ * and a real measured_on date. Anything else, or unset, gives null.
+ */
+export function parseOtfTypical(text: string | null): OtfTypical | null {
+  if (text === null) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
+  const item = parsed as Partial<Record<keyof OtfTypical, unknown>>;
+  const keys = Object.keys(parsed).sort().join(",");
+  const ok =
+    keys === "measured_on,median_min,p90_min,samples,source" &&
+    typeof item.source === "string" &&
+    (TYPICAL_SOURCES as readonly string[]).includes(item.source) &&
+    minuteValue(item.median_min) &&
+    minuteValue(item.p90_min) &&
+    item.median_min <= item.p90_min &&
+    typeof item.samples === "number" &&
+    Number.isInteger(item.samples) &&
+    item.samples >= TYPICAL_MIN_SAMPLES &&
+    item.samples <= 100_000 &&
+    typeof item.measured_on === "string" &&
+    calendarDate(item.measured_on);
+  if (!ok) return null;
+  return { source: item.source as TypicalSource, median_min: item.median_min as number, p90_min: item.p90_min as number, samples: item.samples as number, measured_on: item.measured_on as string };
+}
+
+function loadOtfHost(env: Env, host: OtfHostId): OtfHostConfig {
+  const names = OTF_HOST_ENV[host];
+  const defaults = OTF_HOST_DEFAULTS[host];
+  const lanesText = value(env, names.lanes);
+  const lanes = lanesText === null ? null : parseOtfLanes(lanesText, names.lanes);
+  return {
+    enabled: lanes?.ok === true,
+    lanes: lanes?.ok === true ? lanes.lanes : null,
+    lanesError: lanes?.ok === false ? lanes.error : null,
+    profile: {
+      ...defaults,
+      max_active: wholeNumber(env, names.maxActive, defaults.max_active, 1, 16),
+      max_usd_lane: usd(env, names.maxUsdLane, defaults.max_usd_lane),
+      max_usd_job: usd(env, names.maxUsdJob, defaults.max_usd_job),
+      deadline_ms: wholeNumber(env, names.deadlineMin, defaults.deadline_ms / 60_000, 5, 180) * 60_000,
+    },
+    typical: parseOtfTypical(value(env, names.typical)),
+  };
+}
+
 export function loadOtfConfig(env: Env = process.env): OtfConfig {
   const secret = value(env, "RBW_OTF_BUILDER_SECRET");
-  const lanesText = value(env, "RBW_OTF_LANES");
-  const lanes = lanesText === null ? null : parseOtfLanes(lanesText);
   const saId = value(env, "RBW_NEBIUS_SA_ID");
   const keyId = value(env, "RBW_NEBIUS_SA_KEY_ID");
   const privateKey = value(env, "RBW_NEBIUS_SA_PRIVATE_KEY");
   const instanceId = value(env, "RBW_NEBIUS_VM_ID");
+  const hosts = Object.fromEntries(OTF_HOST_IDS.map((host) => [host, loadOtfHost(env, host)])) as Record<OtfHostId, OtfHostConfig>;
   return {
     builderSecret: secret !== null && secret.length >= OTF_SECRET_MIN_CHARS ? secret : null,
     databaseUrl: value(env, "DATABASE_URL"),
-    lanes: lanes?.ok === true ? lanes.lanes : null,
-    lanesError: lanes?.ok === false ? lanes.error : null,
-    maxActive: wholeNumber(env, "RBW_OTF_MAX_ACTIVE", OTF_DEFAULTS.max_active, 1, 16),
+    hosts,
     maxQueued: wholeNumber(env, "RBW_OTF_MAX_QUEUED", OTF_DEFAULTS.max_queued, 0, 100),
     maxPerDay: wholeNumber(env, "RBW_OTF_MAX_PER_DAY", OTF_DEFAULTS.max_per_day, 0, 1000),
     spendCapMicrousd: wholeNumber(env, "RBW_OTF_SPEND_CAP_MICROUSD", DEFAULT_OTF_SPEND_CAP_MICROUSD, 0, 1_000_000_000_000),
-    maxUsdLane: usd(env, "RBW_OTF_MAX_USD_LANE", OTF_DEFAULTS.max_usd_lane),
-    maxUsdJob: usd(env, "RBW_OTF_MAX_USD_JOB", OTF_DEFAULTS.max_usd_job),
-    deadlineMs: wholeNumber(env, "RBW_OTF_DEADLINE_MIN", OTF_DEFAULTS.deadline_ms / 60_000, 5, 180) * 60_000,
     vmHoursPerDay: wholeNumber(env, "RBW_OTF_VM_HOURS_PER_DAY", OTF_DEFAULTS.vm_hours_per_day, 0, 24),
+    coldStartMin: minutes(value(env, "RBW_OTF_COLD_START_MIN")),
     nebius: saId === null || keyId === null || privateKey === null || instanceId === null ? null : { serviceAccountId: saId, keyId, privateKey, instanceId },
     cronSecret: value(env, "CRON_SECRET"),
   };
 }
 
-/** Whether the OTF routes can run at all: a builder secret, a database and the lanes. */
+/** Whether the OTF routes can run at all: a builder secret, a database and at least one enabled host. */
 export function otfConfigured(config: OtfConfig): boolean {
-  return config.builderSecret !== null && config.databaseUrl !== null && config.lanes !== null;
+  return config.builderSecret !== null && config.databaseUrl !== null && OTF_HOST_IDS.some((host) => config.hosts[host].enabled);
 }

@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS otf.jobs (
   client_key uuid NOT NULL UNIQUE,
   create_sha256 text NOT NULL CHECK (create_sha256 ~ '^[0-9a-f]{64}$'),
   created_at timestamptz NOT NULL,
+  host_id text NOT NULL CHECK (host_id IN ('task-report', 'umami')),
   criterion_id text NOT NULL,
   sentence text NOT NULL,
   spec jsonb NOT NULL,
@@ -37,6 +38,7 @@ CREATE TABLE IF NOT EXISTS otf.jobs (
   CHECK ((state = 'finished') = (outcome IS NOT NULL))
 );
 CREATE INDEX IF NOT EXISTS jobs_state_created ON otf.jobs (state, created_at);
+CREATE INDEX IF NOT EXISTS jobs_state_host ON otf.jobs (state, host_id, created_at);
 CREATE INDEX IF NOT EXISTS jobs_created ON otf.jobs (created_at);
 
 CREATE TABLE IF NOT EXISTS otf.events (
@@ -72,6 +74,8 @@ CREATE TABLE IF NOT EXISTS otf.validations (
   job_id uuid NOT NULL REFERENCES otf.jobs (job_id),
   state text NOT NULL CHECK (state IN ('queued', 'running', 'passed', 'failed', 'error')),
   cells jsonb,
+  -- Admission hosts (Umami): the validation's admission result; null on tier-B hosts and while open.
+  admission jsonb,
   started_at timestamptz NOT NULL,
   finished_at timestamptz,
   claimed_by text
@@ -84,6 +88,8 @@ CREATE TABLE IF NOT EXISTS otf.builders (
   builder_revision text NOT NULL,
   boot_id text NOT NULL,
   booted_at text NOT NULL,
+  -- The hosts the last heartbeat (ClaimRequest.ready_hosts) said this boot can build.
+  ready_hosts text[] NOT NULL DEFAULT '{}',
   last_seen_at timestamptz NOT NULL
 );
 

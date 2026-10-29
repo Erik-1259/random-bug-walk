@@ -16,7 +16,9 @@ import {
   type JobPatch,
   type OtfArtifactRecord,
   type OtfBuilderInfo,
+  type OtfAdmissionResult,
   type OtfEvent,
+  type OtfHostId,
   type OtfJobId,
   type OtfJobRecord,
   type OtfJobState,
@@ -87,6 +89,14 @@ function addMs(at: string, ms: number): string {
 
 function clone<T>(value: T): T {
   return structuredClone(value);
+}
+
+/** The per-host claim options of OtfStore.claimNext. */
+type ClaimHosts = Parameters<OtfStore["claimNext"]>[2]["hosts"];
+
+/** The hosts whose entry passes `test`, in a stable order. */
+function hostsWhere(hosts: ClaimHosts, test: (entry: ClaimHosts[OtfHostId]) => boolean): OtfHostId[] {
+  return (Object.keys(hosts) as OtfHostId[]).filter((host) => test(hosts[host])).sort();
 }
 
 /** The job_finished event a finishing patch implies. */
@@ -202,6 +212,7 @@ function jobFromRow(row: Record<string, unknown>): OtfJobRecord {
     client_key: str(row.client_key),
     create_sha256: str(row.create_sha256),
     created_at: isoRequired(row.created_at),
+    host_id: str(row.host_id) as OtfHostId,
     criterion_id: str(row.criterion_id) as OtfJobRecord["criterion_id"],
     sentence: str(row.sentence),
     spec: json(row.spec) as OtfSpecCard,
@@ -246,6 +257,7 @@ function validationFromRow(row: Record<string, unknown>): OtfValidationRecord {
     job_id: str(row.job_id),
     state: str(row.state) as OtfValidationState,
     cells: row.cells === null || row.cells === undefined ? null : (json(row.cells) as SixCells),
+    admission: row.admission === null || row.admission === undefined ? null : (json(row.admission) as OtfAdmissionResult),
     started_at: isoRequired(row.started_at),
     finished_at: iso(row.finished_at),
     claimed_by: strOrNull(row.claimed_by),
@@ -286,6 +298,13 @@ const JOB_PATCH_COLUMNS: Record<keyof JobPatch, "text" | "timestamptz" | "jsonb"
   finished_at: "timestamptz",
   lease_until: "timestamptz",
   last_builder_post_at: "timestamptz",
+};
+
+const VALIDATION_PATCH_COLUMNS: Record<"state" | "cells" | "admission" | "finished_at", "text" | "jsonb" | "timestamptz"> = {
+  state: "text",
+  cells: "jsonb",
+  admission: "jsonb",
+  finished_at: "timestamptz",
 };
 
 const POWER_PATCH_COLUMNS: Record<keyof OtfPowerRecord, "text" | "timestamptz" | "integer" | "date"> = {
@@ -340,10 +359,10 @@ export function createPgOtfStore(pool: OtfSqlPool): OtfStore {
   return {
     async createJob(job: OtfNewJob): Promise<CreateJobResult> {
       const inserted = await pool.query(
-        `INSERT INTO otf.jobs (job_id, client_key, create_sha256, created_at, criterion_id, sentence, spec, spec_sha256, state, catalog_request_id)
-         VALUES ($1::uuid, $2::uuid, $3, $4::timestamptz, $5, $6, $7::jsonb, $8, $9, $10::uuid)
+        `INSERT INTO otf.jobs (job_id, client_key, create_sha256, created_at, host_id, criterion_id, sentence, spec, spec_sha256, state, catalog_request_id)
+         VALUES ($1::uuid, $2::uuid, $3, $4::timestamptz, $5, $6, $7, $8::jsonb, $9, $10, $11::uuid)
          ON CONFLICT (client_key) DO NOTHING RETURNING *`,
-        [job.job_id, job.client_key, job.create_sha256, job.created_at, job.criterion_id, job.sentence, JSON.stringify(job.spec), job.spec_sha256, job.state, job.catalog_request_id],
+        [job.job_id, job.client_key, job.create_sha256, job.created_at, job.host_id, job.criterion_id, job.sentence, JSON.stringify(job.spec), job.spec_sha256, job.state, job.catalog_request_id],
       );
       const created = inserted.rows[0];
       if (created !== undefined) return { kind: "created", job: jobFromRow(created) };
@@ -435,16 +454,17 @@ export function createPgOtfStore(pool: OtfSqlPool): OtfStore {
       return pool.transaction(async (tx) => {
         // A placeholder row first, so the row lock below serializes even the very first heartbeats.
         await tx.query(
-          "INSERT INTO otf.builders (builder_id, builder_revision, boot_id, booted_at, last_seen_at) VALUES ($1, $2, '', '', $3::timestamptz) ON CONFLICT (builder_id) DO NOTHING",
+          "INSERT INTO otf.builders (builder_id, builder_revision, boot_id, booted_at, ready_hosts, last_seen_at) VALUES ($1, $2, '', '', '{}', $3::timestamptz) ON CONFLICT (builder_id) DO NOTHING",
           [info.builder_id, info.builder_revision, at],
         );
         const { rows } = await tx.query("SELECT boot_id FROM otf.builders WHERE builder_id = $1 FOR UPDATE", [info.builder_id]);
         const previous = rows[0]?.boot_id;
-        await tx.query("UPDATE otf.builders SET builder_revision = $2, boot_id = $3, booted_at = $4, last_seen_at = $5::timestamptz WHERE builder_id = $1", [
+        await tx.query("UPDATE otf.builders SET builder_revision = $2, boot_id = $3, booted_at = $4, ready_hosts = $5::text[], last_seen_at = $6::timestamptz WHERE builder_id = $1", [
           info.builder_id,
           info.builder_revision,
           info.boot_id,
           info.booted_at,
+          [...info.ready_hosts],
           at,
         ]);
         return { first_of_boot: previous !== info.boot_id };
@@ -455,15 +475,28 @@ export function createPgOtfStore(pool: OtfSqlPool): OtfStore {
       const { rows } = await pool.query("SELECT * FROM otf.builders WHERE boot_id <> '' ORDER BY last_seen_at DESC, builder_id LIMIT 1");
       const row = rows[0];
       if (row === undefined) return null;
-      return { builder_id: str(row.builder_id), builder_revision: str(row.builder_revision), boot_id: str(row.boot_id), booted_at: str(row.booted_at), last_seen_at: isoRequired(row.last_seen_at) };
+      const ready = Array.isArray(row.ready_hosts) ? (row.ready_hosts as unknown[]).map(str) : [];
+      return {
+        builder_id: str(row.builder_id),
+        builder_revision: str(row.builder_revision),
+        boot_id: str(row.boot_id),
+        booted_at: str(row.booted_at),
+        ready_hosts: ready as OtfHostId[],
+        last_seen_at: isoRequired(row.last_seen_at),
+      };
     },
 
     claimNext(builder_id, at, opts) {
       return pool.transaction(async (tx) => {
         // One claim at a time, so the active-build count cannot be read twice before either claim lands.
         await tx.query("SELECT pg_advisory_xact_lock(hashtext('otf'), hashtext('claim'))");
-        if (opts.validate) {
-          const { rows } = await tx.query("SELECT validation_id FROM otf.validations WHERE state = 'queued' ORDER BY started_at, validation_id LIMIT 1 FOR UPDATE");
+        const validating = hostsWhere(opts.hosts, (entry) => entry.validate);
+        if (validating.length > 0) {
+          const { rows } = await tx.query(
+            `SELECT v.validation_id FROM otf.validations v JOIN otf.jobs j ON j.job_id = v.job_id
+             WHERE v.state = 'queued' AND j.host_id = ANY($1::text[]) ORDER BY v.started_at, v.validation_id LIMIT 1 FOR UPDATE OF v`,
+            [validating],
+          );
           const found = rows[0];
           if (found !== undefined) {
             const updated = await tx.query("UPDATE otf.validations SET state = 'running', claimed_by = $2 WHERE validation_id = $1 RETURNING *", [found.validation_id, builder_id]);
@@ -471,23 +504,26 @@ export function createPgOtfStore(pool: OtfSqlPool): OtfStore {
             if (row !== undefined) return { kind: "validate" as const, validation: validationFromRow(row) };
           }
         }
-        if (!opts.build) return null;
-        const active = await tx.query("SELECT count(*)::int AS n FROM otf.jobs WHERE state = 'building'");
-        if (num(active.rows[0]?.n ?? 0) >= opts.maxActiveBuilds) return null;
-        const { rows } = await tx.query("SELECT job_id FROM otf.jobs WHERE state = 'queued' ORDER BY created_at, job_id LIMIT 1 FOR UPDATE");
+        // Each host is checked against its own limit, so a saturated host never blocks another.
+        const active = await tx.query("SELECT host_id, count(*)::int AS n FROM otf.jobs WHERE state = 'building' GROUP BY host_id");
+        const building = new Map(active.rows.map((row) => [str(row.host_id), num(row.n)]));
+        const open = hostsWhere(opts.hosts, (entry) => entry.build).filter((host) => (building.get(host) ?? 0) < opts.hosts[host].maxActiveBuilds);
+        if (open.length === 0) return null;
+        const { rows } = await tx.query("SELECT job_id, host_id FROM otf.jobs WHERE state = 'queued' AND host_id = ANY($1::text[]) ORDER BY created_at, job_id LIMIT 1 FOR UPDATE", [open]);
         const found = rows[0];
         if (found === undefined) return null;
+        const host = str(found.host_id) as OtfHostId;
         const updated = await tx.query(
           `UPDATE otf.jobs SET state = 'building', claimed_by = $2, claimed_at = $3::timestamptz, deadline_at = $4::timestamptz,
              lease_until = $5::timestamptz, last_builder_post_at = $3::timestamptz WHERE job_id = $1 RETURNING *`,
-          [found.job_id, builder_id, at, addMs(at, opts.deadlineMs), addMs(at, LEASE_MS)],
+          [found.job_id, builder_id, at, addMs(at, opts.hosts[host].deadlineMs), addMs(at, LEASE_MS)],
         );
         const row = updated.rows[0];
         return row === undefined ? null : { kind: "build" as const, job: jobFromRow(row) };
       });
     },
 
-    async storeDelivery(job_id, builder_id, parts, patch) {
+    async storeDelivery(job_id, builder_id, parts, patch, at) {
       if (!UUID_TEXT.test(job_id)) return "not_found";
       return pool.transaction(async (tx) => {
         const job = await lockedJob(tx, job_id);
@@ -518,7 +554,7 @@ export function createPgOtfStore(pool: OtfSqlPool): OtfStore {
         }
         const { sql, params } = setClauses(patch, JOB_PATCH_COLUMNS, 2);
         if (sql.length > 0) await tx.query(`UPDATE otf.jobs SET ${sql.join(", ")} WHERE job_id = $1::uuid`, [job_id, ...params]);
-        if (patch.state === "finished") await insertJobEvent(tx, job_id, finishedEvent(patch), patch.finished_at ?? new Date().toISOString());
+        if (patch.state === "finished") await insertJobEvent(tx, job_id, finishedEvent(patch), at);
         return "stored";
       });
     },
@@ -563,7 +599,7 @@ export function createPgOtfStore(pool: OtfSqlPool): OtfStore {
 
     async updateValidation(validation_id, whenStates, patch) {
       if (!UUID_TEXT.test(validation_id)) return null;
-      const { sql, params } = setClauses(patch, { state: "text", cells: "jsonb", finished_at: "timestamptz" }, 3);
+      const { sql, params } = setClauses(patch, VALIDATION_PATCH_COLUMNS, 3);
       const sets = sql.length === 0 ? "validation_id = validation_id" : sql.join(", ");
       const { rows } = await pool.query(`UPDATE otf.validations SET ${sets} WHERE validation_id = $1::uuid AND state = ANY($2::text[]) RETURNING *`, [validation_id, [...whenStates], ...params]);
       const row = rows[0];
@@ -772,18 +808,23 @@ export function createMemoryOtfStore(options: { now?: () => Date } = {}): Memory
     },
 
     claimNext(builder_id, at, opts) {
-      if (opts.validate) {
-        const queued = [...validations.values()].filter((item) => item.state === "queued").sort((a, b) => (a.started_at < b.started_at ? -1 : a.started_at > b.started_at ? 1 : a.validation_id < b.validation_id ? -1 : 1))[0];
+      const validating = hostsWhere(opts.hosts, (entry) => entry.validate);
+      if (validating.length > 0) {
+        const claimable = (item: OtfValidationRecord): boolean => {
+          const host = jobs.get(item.job_id)?.record.host_id;
+          return item.state === "queued" && host !== undefined && validating.includes(host);
+        };
+        const queued = [...validations.values()].filter(claimable).sort((a, b) => (a.started_at < b.started_at ? -1 : a.started_at > b.started_at ? 1 : a.validation_id < b.validation_id ? -1 : 1))[0];
         if (queued !== undefined) {
           const next: OtfValidationRecord = { ...queued, state: "running", claimed_by: builder_id };
           validations.set(next.validation_id, next);
           return Promise.resolve({ kind: "validate", validation: clone(next) });
         }
       }
-      if (!opts.build) return Promise.resolve(null);
       const all = [...jobs.values()];
-      if (all.filter((job) => job.record.state === "building").length >= opts.maxActiveBuilds) return Promise.resolve(null);
-      const next = ordered(all.filter((job) => job.record.state === "queued").map((job) => job.record))[0];
+      const building = (host: OtfHostId): number => all.filter((job) => job.record.state === "building" && job.record.host_id === host).length;
+      const open = hostsWhere(opts.hosts, (entry) => entry.build).filter((host) => building(host) < opts.hosts[host].maxActiveBuilds);
+      const next = ordered(all.filter((job) => job.record.state === "queued" && open.includes(job.record.host_id)).map((job) => job.record))[0];
       if (next === undefined) return Promise.resolve(null);
       const job = jobs.get(next.job_id);
       if (job === undefined) return Promise.resolve(null);
@@ -792,14 +833,14 @@ export function createMemoryOtfStore(options: { now?: () => Date } = {}): Memory
         state: "building",
         claimed_by: builder_id,
         claimed_at: at,
-        deadline_at: addMs(at, opts.deadlineMs),
+        deadline_at: addMs(at, opts.hosts[next.host_id].deadlineMs),
         lease_until: addMs(at, LEASE_MS),
         last_builder_post_at: at,
       };
       return Promise.resolve({ kind: "build", job: clone(job.record) });
     },
 
-    storeDelivery(job_id, builder_id, parts, patch) {
+    storeDelivery(job_id, builder_id, parts, patch, at) {
       const job = jobs.get(job_id);
       if (job === undefined) return Promise.resolve("not_found");
       if (job.record.state === "finished") {
@@ -813,7 +854,7 @@ export function createMemoryOtfStore(options: { now?: () => Date } = {}): Memory
       if (!jobInvariantHolds(next)) return Promise.reject(new Error(INVARIANT));
       for (const part of parts) job.artifacts.set(part.part, { ...clone(part), job_id, bytes: new Uint8Array(part.bytes) });
       job.record = next;
-      if (patch.state === "finished") pushJobEvent(job, finishedEvent(patch), patch.finished_at ?? now().toISOString());
+      if (patch.state === "finished") pushJobEvent(job, finishedEvent(patch), at);
       return Promise.resolve("stored");
     },
 
@@ -835,7 +876,7 @@ export function createMemoryOtfStore(options: { now?: () => Date } = {}): Memory
     createValidation(job_id, validation_id, at) {
       if (!jobs.has(job_id)) return Promise.reject(new Error("otf store: no job for this validation"));
       if (validations.has(validation_id)) return Promise.reject(new Error("otf store: duplicate validation_id"));
-      const record: OtfValidationRecord = { validation_id, job_id, state: "queued", cells: null, started_at: at, finished_at: null, claimed_by: null };
+      const record: OtfValidationRecord = { validation_id, job_id, state: "queued", cells: null, admission: null, started_at: at, finished_at: null, claimed_by: null };
       validations.set(validation_id, record);
       return Promise.resolve(clone(record));
     },
@@ -853,6 +894,7 @@ export function createMemoryOtfStore(options: { now?: () => Date } = {}): Memory
     updateValidation(validation_id, whenStates, patch) {
       const found = validations.get(validation_id);
       if (found === undefined || !whenStates.includes(found.state)) return Promise.resolve(null);
+      for (const key of Object.keys(patch)) if (!(key in VALIDATION_PATCH_COLUMNS)) return Promise.reject(new Error(`otf store: ${key} cannot be patched`));
       const next = { ...found, ...clone(patch) };
       validations.set(validation_id, next);
       return Promise.resolve(clone(next));

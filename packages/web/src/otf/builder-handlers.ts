@@ -4,26 +4,32 @@
 // its dependencies (store, config, clock), so the tests run them against the in-memory store and
 // PGlite. Every request is HMAC-checked first (builder-auth.ts), and every JSON answer passes its
 // schema before it leaves (an answer that does not is sent as unavailable).
-import { loadOtfConfig, otfConfigured, type OtfConfig } from "../config.ts";
+import { OTF_HOST_ENV, loadOtfConfig, otfConfigured, type OtfConfig } from "../config.ts";
 import { verifyBuilderRequest } from "./builder-auth.ts";
 import { canonicalJson } from "./canonical.ts";
 import {
   CLAIM_HOLD_MS,
   EXPECTED_CELLS,
   LANE_IDS,
+  ADMISSION_RULES,
   OTF_CONTRACT_VERSION,
   OTF_ERROR_STATUS,
-  PART_MAX_BYTES,
+  OTF_HOST_IDS,
+  PART_MAX_BYTES_BY_PART,
+  RESULT_BODY_MAX_BYTES,
   SAFE_FILENAME,
   VALIDATION_WHERE,
   type BuildJob,
   type ClaimReply,
+  type ClaimRequest,
   type EventsReply,
   type LaneId,
   type OtfArtifactRecord,
   type OtfCertificate,
   type OtfErrorBody,
+  type OtfAdmissionResult,
   type OtfErrorCode,
+  type OtfHostId,
   type OtfJobRecord,
   type OtfOutcome,
   type OtfPart,
@@ -55,11 +61,14 @@ export interface OtfBuilderDeps {
 /** How often a held claim looks for work again. */
 export const CLAIM_POLL_MS = 2_000;
 
-/** Request body limits per route: a result carries three base64 parts of at most PART_MAX_BYTES. */
+/**
+ * Request body limits per route. A result is read up to RESULT_BODY_MAX_BYTES, under the hosting
+ * platform's own body limit; its parts are capped by PART_MAX_BYTES_BY_PART.
+ */
 export const BODY_LIMITS = {
   claim: 16 * 1024,
   events: 1024 * 1024,
-  result: Math.ceil(PART_MAX_BYTES / 3) * 4 * 3 + 256 * 1024,
+  result: RESULT_BODY_MAX_BYTES,
   validation: 16 * 1024,
   stopIntent: 16 * 1024,
   artifact: 0,
@@ -77,6 +86,7 @@ const ERROR_TEXT: Record<OtfErrorCode, string> = {
   refused_topic: "This request is outside what custom builds cover.",
   invalid_spec: "The spec card does not match what custom builds accept.",
   idempotency_conflict: "This client key was already used with a different body.",
+  host_unavailable: "Custom builds for this host are not available right now.",
   signed_out: "Sign in with the judges' passcode to use this endpoint.",
   unavailable: "Custom builds are not available right now. Try again later.",
   invalid_request: "The request does not match the OTF contract.",
@@ -130,34 +140,59 @@ function microusd(usd: string): number {
   return Number(whole) * 1_000_000 + Number(fraction.padEnd(6, "0").slice(0, 6));
 }
 
-function laneModel(config: OtfConfig, lane_id: LaneId): string | null {
-  return config.lanes?.[LANE_IDS.indexOf(lane_id)]?.model ?? null;
+function laneModel(config: OtfConfig, host: OtfHostId, lane_id: LaneId): string | null {
+  return config.hosts[host].lanes?.[LANE_IDS.indexOf(lane_id)]?.model ?? null;
 }
 
 // ---- claim
 
+/** The build job for a claimed job: its host's lanes, and limits from that host's profile. */
 function buildJob(job: OtfJobRecord, config: OtfConfig): BuildJob {
+  const host = config.hosts[job.host_id];
   return {
     kind: "build",
     job_id: job.job_id,
-    host_id: "task-report",
+    host_id: job.host_id,
     criterion_id: job.criterion_id,
     spec: job.spec,
     spec_sha256: job.spec_sha256,
     sentence: job.sentence,
-    lanes: (config.lanes ?? []).flatMap((lane, index) => {
+    lanes: (host.lanes ?? []).flatMap((lane, index) => {
       const lane_id = LANE_IDS[index];
       return lane_id === undefined ? [] : [{ lane_id, ...lane }];
     }),
     limits: {
-      max_rounds: 3,
-      max_usd_lane: config.maxUsdLane,
-      max_usd_job: config.maxUsdJob,
+      max_rounds: host.profile.max_rounds,
+      max_usd_lane: host.profile.max_usd_lane,
+      max_usd_job: host.profile.max_usd_job,
       goose_max_tokens: 32768,
       deadline_at: job.deadline_at ?? job.created_at,
-      confirm_rounds: 1,
+      confirm_rounds: host.profile.confirm_rounds,
+      round_min_remaining_ms: host.profile.round_min_remaining_ms,
     },
   };
+}
+
+/**
+ * The per-host claim options. A host gets builds only when it is enabled in config, the builder
+ * lists it in ready_hosts and has a free build slot for it; validations need a free validate slot.
+ * Limits and deadlines come from the host's profile.
+ */
+export function claimHosts(config: OtfConfig, claim: Pick<ClaimRequest, "free" | "ready_hosts">): Parameters<OtfStore["claimNext"]>[2]["hosts"] {
+  return Object.fromEntries(
+    OTF_HOST_IDS.map((host) => {
+      const profile = config.hosts[host].profile;
+      return [
+        host,
+        {
+          build: config.hosts[host].enabled && claim.ready_hosts.includes(host) && claim.free.build[host] > 0,
+          validate: claim.free.validate[host] > 0,
+          maxActiveBuilds: profile.max_active,
+          deadlineMs: profile.deadline_ms,
+        },
+      ];
+    }),
+  ) as Parameters<OtfStore["claimNext"]>[2]["hosts"];
 }
 
 /**
@@ -202,20 +237,17 @@ async function stopAllowedSince(deps: OtfBuilderDeps, since: number): Promise<bo
 
 type Claimed = { kind: "reply"; reply: ClaimReply } | { kind: "none" };
 
-async function claimOnce(deps: OtfBuilderDeps, builder_id: string, revision: string, free: { build: number; validate: number }): Promise<Claimed> {
+async function claimOnce(deps: OtfBuilderDeps, builder_id: string, revision: string, hosts: Parameters<OtfStore["claimNext"]>[2]["hosts"]): Promise<Claimed> {
   const at = deps.now().toISOString();
-  const claim = await deps.store.claimNext(builder_id, at, {
-    maxActiveBuilds: deps.config.maxActive,
-    deadlineMs: deps.config.deadlineMs,
-    build: free.build > 0,
-    validate: free.validate > 0,
-  });
+  const claim = await deps.store.claimNext(builder_id, at, { hosts });
   if (claim === null) return { kind: "none" };
   if (claim.kind === "validate") {
     const artifacts = (await deps.store.listArtifacts(claim.validation.job_id)).filter((item): item is OtfArtifactRecord & { part: "agent" | "grader" } => item.part !== "certificate");
+    const owner = await deps.store.getJob(claim.validation.job_id);
     const job: ValidateJob = {
       kind: "validate",
       job_id: claim.validation.job_id,
+      host_id: owner?.host_id ?? ("" as OtfHostId),
       validation_id: claim.validation.validation_id,
       artifacts: artifacts.map((item) => ({ part: item.part, sha256: item.sha256, size: item.size })),
     };
@@ -245,17 +277,22 @@ export async function postClaim(request: Request, deps: OtfBuilderDeps): Promise
   const { body, builder_id } = parsed;
   const started = parsed.at.getTime();
   const at = parsed.at.toISOString();
-  const { first_of_boot } = await deps.store.recordBuilderSeen({ builder_id, builder_revision: body.builder_revision, boot_id: body.boot_id, booted_at: body.booted_at }, at);
+  const { first_of_boot } = await deps.store.recordBuilderSeen(
+    { builder_id, builder_revision: body.builder_revision, boot_id: body.boot_id, booted_at: body.booted_at, ready_hosts: body.ready_hosts },
+    at,
+  );
   const healthy = body.images_ok && (await markRunning(deps, at, first_of_boot));
   const hold = deps.claimHoldMs ?? CLAIM_HOLD_MS;
   const poll = deps.claimPollMs ?? CLAIM_POLL_MS;
+  const hosts = claimHosts(deps.config, body);
+  const wantsWork = OTF_HOST_IDS.some((host) => hosts[host].build || hosts[host].validate);
   for (;;) {
     // A stop allowed while this claim is held ends it: the machine is about to stop.
     if (healthy && (await stopAllowedSince(deps, started))) return new Response(null, { status: 204, headers: { "cache-control": "no-store" } });
     // Jobs that started waiting during the hold are promoted on its next look, not the next claim.
     if (healthy) await promoteWaiting(deps, deps.now().toISOString());
-    if (healthy && (body.free.build > 0 || body.free.validate > 0)) {
-      const claimed = await claimOnce(deps, builder_id, body.builder_revision, body.free);
+    if (healthy && wantsWork) {
+      const claimed = await claimOnce(deps, builder_id, body.builder_revision, hosts);
       if (claimed.kind === "reply") return sendOtf(deps.log, 200, "ClaimReply", claimed.reply);
     }
     const left = started + hold - deps.now().getTime();
@@ -270,7 +307,7 @@ async function stopControl(deps: OtfBuilderDeps, job: OtfJobRecord, at: number):
   const stop = (reason: StopReason): EventsReply["control"] => ({ stop: true, reason });
   if (job.stop_requested_at !== null) return stop(job.stop_reason ?? "customer");
   if (job.deadline_at !== null && Date.parse(job.deadline_at) <= at) return stop("deadline");
-  if (job.model_microusd >= microusd(deps.config.maxUsdJob)) return stop("spend_cap");
+  if (job.model_microusd >= microusd(deps.config.hosts[job.host_id].profile.max_usd_job)) return stop("spend_cap");
   if ((await deps.store.totalModelMicrousd()) >= deps.config.spendCapMicrousd) return stop("spend_cap");
   return { stop: false, reason: null };
 }
@@ -293,15 +330,15 @@ export async function postEvents(request: Request, deps: OtfBuilderDeps, params:
     case "ok":
       break;
   }
+  let job = await deps.store.getJob(params.job_id);
+  if (job === null) return otfError("not_found");
   const winner = parsed.body.events.findLast((event) => event.type === "winner_selected");
   if (winner?.type === "winner_selected") {
     const lane = winner.data.lane_id;
     const started = (await deps.store.listEvents(params.job_id, 0)).find((event) => event.type === "lane_started" && event.lane_id === lane);
-    const model = started?.type === "lane_started" ? started.data.model : laneModel(deps.config, lane);
-    await deps.store.updateJob(params.job_id, ["building"], { winner_lane: lane, winner_model: model });
+    const model = started?.type === "lane_started" ? started.data.model : laneModel(deps.config, job.host_id, lane);
+    job = (await deps.store.updateJob(params.job_id, ["building"], { winner_lane: lane, winner_model: model })) ?? job;
   }
-  const job = await deps.store.getJob(params.job_id);
-  if (job === null) return otfError("not_found");
   const reply: EventsReply = { accepted_through: appended.accepted_through, control: await stopControl(deps, job, parsed.at.getTime()) };
   return sendOtf(deps.log, 200, "EventsReply", reply);
 }
@@ -329,13 +366,15 @@ async function checkDelivery(job: OtfJobRecord, certificate: OtfCertificate, pos
     const bytes = decodeBase64(part.base64);
     if (bytes === null) return { ok: false, message: `The ${part.part} part is not canonical base64.` };
     if (bytes.byteLength !== part.size) return { ok: false, message: `The ${part.part} part's size does not match its bytes.` };
-    if (bytes.byteLength > PART_MAX_BYTES) return { ok: false, message: `The ${part.part} part is larger than ${String(PART_MAX_BYTES)} bytes.` };
+    const cap = PART_MAX_BYTES_BY_PART[part.part];
+    if (bytes.byteLength > cap) return { ok: false, message: `The ${part.part} part is larger than ${String(cap)} bytes.` };
     if ((await sha256Hex(bytes)) !== part.sha256) return { ok: false, message: `The ${part.part} part's sha256 does not match its bytes.` };
     if (part.part !== "certificate" && (bytes[0] !== 0x1f || bytes[1] !== 0x8b)) return { ok: false, message: `The ${part.part} part is not gzip.` };
     parts.push({ job_id: job.job_id, part: part.part, filename: part.filename, media_type: MEDIA_TYPE[part.part], size: part.size, sha256: part.sha256, bytes });
   }
   const sha = (name: OtfPart): string | undefined => parts.find((item) => item.part === name)?.sha256;
   if (certificate.bundles.agent_sha256 !== sha("agent") || certificate.bundles.grader_sha256 !== sha("grader")) return { ok: false, message: "The certificate's bundle hashes do not match the parts." };
+  if (certificate.host_id !== job.host_id) return { ok: false, message: "The certificate's host_id does not match the job's." };
   if (certificate.spec_sha256 !== job.spec_sha256) return { ok: false, message: "The certificate's spec_sha256 does not match the job." };
   if (certificate.job_id !== job.job_id || certificate.criterion.criterion_id !== job.criterion_id) return { ok: false, message: "The certificate names another job or criterion." };
   if (certificate.received !== null) return { ok: false, message: "The certificate's received member is set by production; send null." };
@@ -386,7 +425,7 @@ export async function postResult(request: Request, deps: OtfBuilderDeps, params:
       model_microusd: Math.max(job.model_microusd, certificate.spend.model_microusd),
     };
   }
-  const stored = await deps.store.storeDelivery(params.job_id, builder_id, parts, patch);
+  const stored = await deps.store.storeDelivery(params.job_id, builder_id, parts, patch, at);
   switch (stored) {
     case "stored":
       await noteJobFinished(deps, at);
@@ -433,11 +472,40 @@ export async function getBuilderArtifact(request: Request, deps: OtfBuilderDeps,
 // ---- validation result
 
 function validationView(record: OtfValidationRecord): OtfValidation {
-  return { validation_id: record.validation_id, state: record.state, cells: record.cells, started_at: record.started_at, finished_at: record.finished_at, where: VALIDATION_WHERE };
+  return {
+    validation_id: record.validation_id,
+    state: record.state,
+    cells: record.cells,
+    admission: record.admission,
+    started_at: record.started_at,
+    finished_at: record.finished_at,
+    where: VALIDATION_WHERE,
+  };
 }
 
 function sameCells(a: SixCells | null, b: SixCells | null): boolean {
   return canonicalJson(a) === canonicalJson(b);
+}
+
+function sameAdmission(a: OtfAdmissionResult | null, b: OtfAdmissionResult | null): boolean {
+  return canonicalJson(a) === canonicalJson(b);
+}
+
+/** Every rule passed, the blind spot was demonstrated and the alternative fix passed. */
+function admissionQualified(admission: OtfAdmissionResult): boolean {
+  return ADMISSION_RULES.every((rule) => admission.decisions[rule] === "pass") && admission.comparison === "blind_spot_demonstrated" && admission.alternative_fix === "pass";
+}
+
+/**
+ * Why a validation result does not fit its job's host, or null. Tier-B hosts send admission null;
+ * an admission host sends it on passed and failed, and a passed one qualifies.
+ */
+function admissionProblem(host: OtfHostId, body: { state: "passed" | "failed" | "error"; admission: OtfAdmissionResult | null }): string | null {
+  if (host === "task-report") return body.admission === null ? null : "A task-report validation carries no admission result.";
+  if (body.state === "error") return null;
+  if (body.admission === null) return "An Umami validation that passed or failed must carry its admission result.";
+  if (body.state === "passed" && !admissionQualified(body.admission)) return "A passed Umami validation must carry a qualifying admission result.";
+  return null;
 }
 
 /** POST /api/factory/otf/builder/validations/{vid}/result */
@@ -450,11 +518,18 @@ export async function postValidationResult(request: Request, deps: OtfBuilderDep
   const found = await deps.store.getValidation(params.validation_id);
   if (found === null) return otfError("not_found");
   if (found.claimed_by !== builder_id) return otfError("unauthorized", "This validation is not claimed by this builder.");
-  const updated = found.state === "running" ? await deps.store.updateValidation(params.validation_id, ["running"], { state: body.state, cells: body.cells, finished_at: body.finished_at }) : null;
+  const owner = await deps.store.getJob(found.job_id);
+  if (owner === null) return otfError("not_found");
+  const problem = admissionProblem(owner.host_id, body);
+  if (problem !== null) return otfError("invalid_request", problem);
+  const patch = { state: body.state, cells: body.cells, admission: body.admission, finished_at: body.finished_at };
+  const updated = found.state === "running" ? await deps.store.updateValidation(params.validation_id, ["running"], patch) : null;
   const record = updated ?? (await deps.store.getValidation(params.validation_id));
   if (record === null) return otfError("not_found");
   // A repeat of the stored result is a retry; a different result for a finished validation came too late.
-  if (updated === null && (record.state !== body.state || !sameCells(record.cells, body.cells))) return otfError("job_finished", "This validation has already finished.");
+  if (updated === null && (record.state !== body.state || !sameCells(record.cells, body.cells) || !sameAdmission(record.admission, body.admission))) {
+    return otfError("job_finished", "This validation has already finished.");
+  }
   return sendOtf(deps.log, 200, "OtfValidation", validationView(record));
 }
 
@@ -551,14 +626,16 @@ function notConfigured(config: OtfConfig): string {
   const missing = [
     config.builderSecret === null ? "RBW_OTF_BUILDER_SECRET" : null,
     config.databaseUrl === null ? "DATABASE_URL" : null,
-    config.lanes === null ? (config.lanesError ?? "RBW_OTF_LANES") : null,
+    OTF_HOST_IDS.every((host) => !config.hosts[host].enabled)
+      ? OTF_HOST_IDS.map((host) => config.hosts[host].lanesError ?? `${OTF_HOST_ENV[host].lanes} (unset)`).join(", ")
+      : null,
   ].filter((item) => item !== null);
   return missing.join(", ");
 }
 
 /**
  * Runs a builder route's handler with the live dependencies. OTF unconfigured (no builder secret,
- * database or lanes) or a store that cannot open answers unavailable, as does a handler that throws;
+ * database or enabled host) or a store that cannot open answers unavailable, as does a handler that throws;
  * the log names only the error's class.
  */
 export async function handleOtfBuilder(run: (deps: OtfBuilderDeps) => Promise<Response>): Promise<Response> {

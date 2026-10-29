@@ -9,16 +9,19 @@ import { PGlite } from "@electric-sql/pglite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { loadOtfConfig, otfConfigured, type OtfConfig } from "../../src/config.ts";
 import { builderHeaders } from "../../src/otf/builder-auth.ts";
-import { STOP_GRACE_MS, getBuilderArtifact, handleOtfBuilder, postClaim, postEvents, postResult, postStopIntent, postValidationResult, type OtfBuilderDeps } from "../../src/otf/builder-handlers.ts";
+import { BODY_LIMITS, STOP_GRACE_MS, claimHosts, getBuilderArtifact, handleOtfBuilder, postClaim, postEvents, postResult, postStopIntent, postValidationResult, type OtfBuilderDeps } from "../../src/otf/builder-handlers.ts";
 import {
   AGENT_LABEL,
   CERTIFICATE_FORMAT,
   CERTIFICATE_RUNNER,
   COPY_LIMITS,
   EXPECTED_CELLS,
-  OTF_DEFAULTS,
+  OTF_HOST_DEFAULTS,
+  PART_MAX_BYTES_BY_PART,
+  RESULT_BODY_MAX_BYTES,
   TOKEN_FACTORY_PROVIDER,
   type BuilderEventIn,
+  type OtfAdmissionResult,
   type OtfCertificate,
   type OtfNewJob,
   type OtfSpecCard,
@@ -53,6 +56,11 @@ function iso(offsetMs: number): string {
 function uuid(n: number): string {
   return `00000000-0000-4000-8000-${n.toString(16).padStart(12, "0")}`;
 }
+
+const UMAMI_LANES = [
+  { model: "synthetic/model-d", model_label: "Synthetic D", price_in_usd_per_m: "0.10", price_out_usd_per_m: "0.40" },
+  { model: "synthetic/model-e", model_label: "Synthetic E", price_in_usd_per_m: "0.05", price_out_usd_per_m: "0.20" },
+];
 
 function testConfig(env: Record<string, string> = {}): OtfConfig {
   return loadOtfConfig({ RBW_OTF_BUILDER_SECRET: SECRET, DATABASE_URL: "postgres://synthetic.invalid/otf", RBW_OTF_LANES: JSON.stringify(LANES), ...env });
@@ -91,13 +99,14 @@ function world(store: OtfStore = createMemoryOtfStore({ now: () => new Date(T0) 
   return self;
 }
 
-function newJob(n: number, state: OtfNewJob["state"] = "queued", createdAt = iso(n * 1000)): OtfNewJob {
+function newJob(n: number, state: OtfNewJob["state"] = "queued", createdAt = iso(n * 1000), host: "task-report" | "umami" = "task-report"): OtfNewJob {
   return {
     job_id: uuid(n),
     client_key: uuid(1000 + n),
     create_sha256: "a".repeat(64),
     created_at: createdAt,
-    criterion_id: "concurrency.lost-acknowledged-change",
+    host_id: host,
+    criterion_id: host === "umami" ? "date_time.time-zone-grouping" : "concurrency.lost-acknowledged-change",
     sentence: "A synthetic sentence",
     spec: SPEC,
     spec_sha256: SPEC_SHA,
@@ -115,7 +124,16 @@ function signed(w: World, path: string, body: unknown, options: { method?: strin
 }
 
 function claimBody(overrides: Record<string, unknown> = {}): Record<string, unknown> {
-  return { builder_id: BUILDER, builder_revision: "rev-1", boot_id: "boot-1", booted_at: iso(-60_000), images_ok: true, free: { build: 1, validate: 1 }, ...overrides };
+  return {
+    builder_id: BUILDER,
+    builder_revision: "rev-1",
+    boot_id: "boot-1",
+    booted_at: iso(-60_000),
+    images_ok: true,
+    free: { build: { "task-report": 1, umami: 1 }, validate: { "task-report": 1, umami: 1 } },
+    ready_hosts: ["task-report", "umami"],
+    ...overrides,
+  };
 }
 
 function claim(w: World, overrides: Record<string, unknown> = {}, builder = BUILDER): Promise<Response> {
@@ -152,9 +170,12 @@ function sha(bytes: Uint8Array): string {
 }
 
 /** A synthetic delivery for job: gzip bundles, a certificate bound to them, and the result post. */
-function delivery(job: string, overrides: { certificate?: Partial<OtfCertificate>; certificateBytes?: Uint8Array } = {}): { post: ResultPost; agent: Uint8Array; certificate: OtfCertificate } {
+function delivery(
+  job: string,
+  overrides: { certificate?: Partial<OtfCertificate>; certificateBytes?: Uint8Array; grader?: Uint8Array } = {},
+): { post: ResultPost; agent: Uint8Array; certificate: OtfCertificate } {
   const agent = new Uint8Array(gzipSync("synthetic agent bundle"));
-  const grader = new Uint8Array(gzipSync("synthetic grader bundle"));
+  const grader = overrides.grader ?? new Uint8Array(gzipSync("synthetic grader bundle"));
   const certificate: OtfCertificate = {
     format: CERTIFICATE_FORMAT,
     job_id: job,
@@ -164,7 +185,7 @@ function delivery(job: string, overrides: { certificate?: Partial<OtfCertificate
     spec_sha256: SPEC_SHA,
     designer: { model: "synthetic/designer", route: "bug-spec" },
     implementer: { lane_id: "lane-2", agent: AGENT_LABEL, provider: TOKEN_FACTORY_PROVIDER, model: "synthetic/model-b", rounds_used: 2 },
-    qualification: { cells: EXPECTED_CELLS, confirmation_cells: EXPECTED_CELLS, result: "qualified" },
+    qualification: { cells: EXPECTED_CELLS, confirmation_cells: EXPECTED_CELLS, admission: null, result: "qualified" },
     harness: { tier: "B", kit_image_id: "sha256:synthetic", copy_limits: COPY_LIMITS, instances: { clean: 1, buggy: 3, fixed: 3 }, runner: CERTIFICATE_RUNNER, harness_sha256: "d".repeat(64) },
     bundles: { agent_sha256: sha(agent), grader_sha256: sha(grader) },
     spend: { model_microusd: 900_000, tokens_in: 10, tokens_out: 20, lanes: 3 },
@@ -173,7 +194,7 @@ function delivery(job: string, overrides: { certificate?: Partial<OtfCertificate
     builder_revision: "rev-1",
     received: null,
     ...overrides.certificate,
-  };
+  } as OtfCertificate;
   const certificateBytes = overrides.certificateBytes ?? new TextEncoder().encode(JSON.stringify(certificate));
   const job8 = job.slice(0, 8);
   const part = (name: "agent" | "grader" | "certificate", filename: string, bytes: Uint8Array) => ({ part: name, filename, sha256: sha(bytes), size: bytes.byteLength, base64: Buffer.from(bytes).toString("base64") });
@@ -234,7 +255,7 @@ describe("builder claim", () => {
         spec_sha256: SPEC_SHA,
         sentence: "A synthetic sentence",
         lanes: LANES.map((lane, index) => ({ lane_id: `lane-${String(index + 1)}`, ...lane })),
-        limits: { max_rounds: 3, max_usd_lane: "3.00", max_usd_job: "8.00", goose_max_tokens: 32768, deadline_at: iso(60_000 + 45 * 60_000), confirm_rounds: 1 },
+        limits: { max_rounds: 3, max_usd_lane: "3.00", max_usd_job: "8.00", goose_max_tokens: 32768, deadline_at: iso(60_000 + 45 * 60_000), confirm_rounds: 1, round_min_remaining_ms: 0 },
       },
     });
     // cold_start_ms runs from the later of the last start request and the job's creation.
@@ -245,7 +266,7 @@ describe("builder claim", () => {
     expect(await w.store.listEvents(uuid(2), 0)).toMatchObject([{ type: "builder_ready", data: { cold_start_ms: 51_000 } }]);
     expect(await w.store.getJob(uuid(2))).toMatchObject({ state: "queued" });
     expect(await w.store.getPower()).toMatchObject({ state: "running", since: iso(60_000) });
-    expect(await w.store.lastBuilderSeen()).toMatchObject({ builder_id: BUILDER, boot_id: "boot-1", last_seen_at: iso(60_000) });
+    expect(await w.store.lastBuilderSeen()).toMatchObject({ builder_id: BUILDER, boot_id: "boot-1", ready_hosts: ["task-report", "umami"], last_seen_at: iso(60_000) });
   });
 
   it("promotes nothing and hands out nothing after a pinned-image mismatch, answering 204 after the hold", async () => {
@@ -283,8 +304,43 @@ describe("builder claim", () => {
     await result(w, uuid(1), delivery(uuid(1)).post);
     await w.store.createValidation(uuid(1), uuid(500), iso(2));
     expect(await claim(w).then((response) => response.json())).toMatchObject({ job: { kind: "validate", validation_id: uuid(500) } });
-    expect(await claim(w, { free: { build: 0, validate: 1 } }).then((response) => response.status)).toBe(204);
+    expect(await claim(w, { free: { build: { "task-report": 0, umami: 1 }, validate: { "task-report": 1, umami: 1 } } }).then((response) => response.status)).toBe(204);
     expect((await w.store.listJobs(["queued"])).length).toBe(2);
+  });
+
+  it("hands an Umami build its own lanes and profile, and a saturated Umami never blocks a queued task-report build", async () => {
+    const w = world(undefined, testConfig({ RBW_OTF_UMAMI_LANES: JSON.stringify(UMAMI_LANES) }));
+    await w.store.createJob(newJob(1, "queued", iso(1_000), "umami"));
+    await w.store.createJob(newJob(2, "queued", iso(2_000), "umami"));
+    await w.store.createJob(newJob(3, "queued", iso(3_000)));
+    const umami = (await claim(w).then((response) => response.json())) as { job: unknown };
+    expect(isOtf("ClaimReply", umami)).toBe(true);
+    expect(umami.job).toMatchObject({
+      job_id: uuid(1),
+      host_id: "umami",
+      criterion_id: "date_time.time-zone-grouping",
+      lanes: UMAMI_LANES.map((lane, index) => ({ lane_id: `lane-${String(index + 1)}`, ...lane })),
+      limits: { max_usd_lane: "3.00", max_usd_job: "6.00", deadline_at: iso(60 * 60_000), confirm_rounds: 0, round_min_remaining_ms: 11 * 60_000 },
+    });
+    expect(await claim(w).then((response) => response.json())).toMatchObject({ job: { job_id: uuid(3), host_id: "task-report" } });
+    expect(await w.store.getJob(uuid(2))).toMatchObject({ state: "queued" });
+  });
+
+  it("gives no build to a disabled host, a host missing from ready_hosts, or a host without a free build slot", async () => {
+    const w = world();
+    await w.store.createJob(newJob(1, "queued", iso(1_000), "umami"));
+    // RBW_OTF_UMAMI_LANES is unset, so Umami is disabled.
+    expect(testConfig().hosts.umami).toMatchObject({ enabled: false, lanes: null });
+    expect((await claim(w)).status).toBe(204);
+    const enabled = testConfig({ RBW_OTF_UMAMI_LANES: JSON.stringify(UMAMI_LANES) });
+    const full = { "task-report": 1, umami: 1 };
+    expect(claimHosts(enabled, { free: { build: full, validate: full }, ready_hosts: ["task-report"] }).umami).toMatchObject({ build: false, validate: true });
+    expect(claimHosts(enabled, { free: { build: { "task-report": 1, umami: 0 }, validate: full }, ready_hosts: ["task-report", "umami"] }).umami).toMatchObject({ build: false });
+    expect(claimHosts(enabled, { free: { build: full, validate: full }, ready_hosts: ["umami"] })).toEqual({
+      "task-report": { build: false, validate: true, maxActiveBuilds: 2, deadlineMs: 45 * 60_000 },
+      umami: { build: true, validate: true, maxActiveBuilds: 1, deadlineMs: 60 * 60_000 },
+    });
+    expect(await w.store.getJob(uuid(1))).toMatchObject({ state: "queued" });
   });
 
   it("ends a validation as error, and hands out nothing for it, when its job holds no bundles", async () => {
@@ -292,7 +348,7 @@ describe("builder claim", () => {
     await w.store.createJob(newJob(1));
     await w.store.updateJob(uuid(1), ["queued"], { state: "finished", outcome: "delivered", reason: null, finished_at: iso(1) });
     await w.store.createValidation(uuid(1), uuid(500), iso(2));
-    expect((await claim(w, { free: { build: 0, validate: 1 } })).status).toBe(204);
+    expect((await claim(w, { free: { build: { "task-report": 0, umami: 0 }, validate: { "task-report": 1, umami: 1 } } })).status).toBe(204);
     expect(await w.store.getValidation(uuid(500))).toMatchObject({ state: "error", finished_at: iso(0) });
     expect(w.logs).toEqual(["otf: a validation's job has no stored agent and grader bundles; the validation ends as error"]);
   });
@@ -303,7 +359,7 @@ describe("builder claim", () => {
     expect(await errorCode(await postClaim(new Request(`https://otf.test${path}`, { method: "POST", body: JSON.stringify(claimBody()) }), w.deps))).toBe("unauthorized");
     expect(await errorCode(await postClaim(signed(w, path, claimBody(), { secret: `${SECRET}-other` }), w.deps))).toBe("unauthorized");
     expect(await errorCode(await postClaim(signed(w, path, claimBody({ builder_id: "builder-b" })), w.deps))).toBe("unauthorized");
-    const bad = await postClaim(signed(w, path, claimBody({ free: { build: -1, validate: 0 } })), w.deps);
+    const bad = await postClaim(signed(w, path, claimBody({ free: { build: { "task-report": -1, umami: 0 }, validate: { "task-report": 0, umami: 0 } } })), w.deps);
     expect(bad.status).toBe(400);
     expect(await errorCode(bad)).toBe("invalid_request");
     const closed = world(undefined, { ...testConfig(), builderSecret: null });
@@ -331,7 +387,7 @@ describe("builder events", () => {
 
     const late = world();
     const lateJob = await claimedJob(late);
-    late.advance(OTF_DEFAULTS.deadline_ms);
+    late.advance(OTF_HOST_DEFAULTS["task-report"].deadline_ms);
     expect(await events(late, lateJob, []).then((r) => r.json())).toMatchObject({ control: { stop: true, reason: "deadline" } });
 
     const spent = world();
@@ -412,11 +468,29 @@ describe("builder result", () => {
       ["certificate part", delivery(job, { certificateBytes: new TextEncoder().encode(JSON.stringify({ ...good.certificate, issued_at: iso(1) })) }).post],
       ["received", delivery(job, { certificate: { received: { at: iso(1), sha256_verified: true } } }).post],
       ["other job", delivery(job, { certificate: { job_id: uuid(5) } }).post],
+      ["other host", delivery(job, { certificate: { host_id: "umami" } as Partial<OtfCertificate> }).post],
     ];
     for (const [name, post] of cases) {
       const response = await result(w, job, post);
       expect([name, response.status, await errorCode(response)]).toEqual([name, 400, "invalid_request"]);
     }
+    expect(await w.store.listArtifacts(job)).toEqual([]);
+    expect(await w.store.getJob(job)).toMatchObject({ state: "building" });
+  });
+
+  it("refuses a grader part over its 512 KiB cap and a result body over RESULT_BODY_MAX_BYTES", async () => {
+    const w = world();
+    const job = await claimedJob(w);
+    expect(BODY_LIMITS.result).toBe(RESULT_BODY_MAX_BYTES);
+    // Stored uncompressed inside a gzip member, so the part is just over the cap.
+    const big = new Uint8Array(gzipSync(new Uint8Array(PART_MAX_BYTES_BY_PART.grader), { level: 0 }));
+    expect(big.byteLength).toBeGreaterThan(PART_MAX_BYTES_BY_PART.grader);
+    const grader = await result(w, job, delivery(job, { grader: big }).post);
+    expect([grader.status, await errorCode(grader)]).toEqual([400, "invalid_request"]);
+    const good = delivery(job).post;
+    // The body is refused by size before it is parsed, so the extra member never reaches the schema.
+    const tooLarge = await result(w, job, { ...good, pad: "x".repeat(RESULT_BODY_MAX_BYTES) } as unknown as ResultPost);
+    expect([tooLarge.status, await errorCode(tooLarge)]).toEqual([400, "invalid_request"]);
     expect(await w.store.listArtifacts(job)).toEqual([]);
     expect(await w.store.getJob(job)).toMatchObject({ state: "building" });
   });
@@ -446,6 +520,12 @@ describe("builder result", () => {
   });
 });
 
+const QUALIFIED: OtfAdmissionResult = {
+  decisions: { adm_02: "pass", adm_03: "pass", adm_04: "pass", adm_05: "pass", adm_06: "pass" },
+  comparison: "blind_spot_demonstrated",
+  alternative_fix: "pass",
+};
+
 describe("builder artifacts and validations", () => {
   it("serves a delivered bundle's bytes to the builder, and refuses the certificate part, an undelivered job and an unsigned fetch", async () => {
     const w = world();
@@ -470,21 +550,44 @@ describe("builder artifacts and validations", () => {
     const job = await claimedJob(w);
     await result(w, job, delivery(job).post);
     await w.store.createValidation(job, uuid(500), iso(10));
-    const claimed = (await claim(w, { free: { build: 0, validate: 1 } }).then((r) => r.json())) as { job: { kind: string; artifacts: { part: string }[] } };
+    const claimed = (await claim(w, { free: { build: { "task-report": 0, umami: 0 }, validate: { "task-report": 1, umami: 1 } } }).then((r) => r.json())) as { job: { kind: string; artifacts: { part: string }[] } };
     expect(claimed.job.kind).toBe("validate");
     expect(claimed.job.artifacts.map((item) => item.part).sort()).toEqual(["agent", "grader"]);
     const path = `/api/factory/otf/builder/validations/${uuid(500)}/result`;
     const post = (body: Record<string, unknown>, builder = BUILDER): Promise<Response> =>
-      postValidationResult(signed(w, path, { builder_id: builder, finished_at: iso(20), ...body }, { builder }), w.deps, { validation_id: uuid(500) });
+      postValidationResult(signed(w, path, { builder_id: builder, finished_at: iso(20), admission: null, ...body }, { builder }), w.deps, { validation_id: uuid(500) });
     const failedCells = { ...EXPECTED_CELLS, buggy: { original_suite: "pass", added_checks: "pass" } };
     expect(await errorCode(await post({ state: "passed", cells: failedCells }))).toBe("invalid_request");
     expect(await errorCode(await post({ state: "failed", cells: EXPECTED_CELLS }))).toBe("invalid_request");
     expect(await errorCode(await post({ state: "passed", cells: EXPECTED_CELLS }, "builder-b"))).toBe("unauthorized");
+    expect(await errorCode(await post({ state: "passed", cells: EXPECTED_CELLS, admission: QUALIFIED }))).toBe("invalid_request");
     const passed = await post({ state: "passed", cells: EXPECTED_CELLS });
     expect(passed.status).toBe(200);
-    expect(await passed.json()).toEqual({ validation_id: uuid(500), state: "passed", cells: EXPECTED_CELLS, started_at: iso(10), finished_at: iso(20), where: "RBW builder (Nebius VM)" });
+    expect(await passed.json()).toEqual({ validation_id: uuid(500), state: "passed", cells: EXPECTED_CELLS, admission: null, started_at: iso(10), finished_at: iso(20), where: "RBW builder (Nebius VM)" });
     expect((await post({ state: "passed", cells: EXPECTED_CELLS })).status).toBe(200);
     expect(await errorCode(await post({ state: "error", cells: null }))).toBe("job_finished");
+  });
+
+  it("stores an Umami validation's admission result and refuses one that does not fit", async () => {
+    const w = world(undefined, testConfig({ RBW_OTF_UMAMI_LANES: JSON.stringify(UMAMI_LANES) }));
+    await w.store.createJob(newJob(1, "queued", iso(1_000), "umami"));
+    await w.store.updateJob(uuid(1), ["queued"], { state: "finished", outcome: "delivered", reason: null, finished_at: iso(2) });
+    await w.store.createValidation(uuid(1), uuid(500), iso(10));
+    const free = { build: { "task-report": 0, umami: 0 }, validate: { "task-report": 0, umami: 1 } };
+    expect(await w.store.claimNext(BUILDER, iso(11), { hosts: claimHosts(w.deps.config, { free, ready_hosts: ["umami"] }) })).toMatchObject({
+      kind: "validate",
+      validation: { validation_id: uuid(500) },
+    });
+    const path = `/api/factory/otf/builder/validations/${uuid(500)}/result`;
+    const post = (body: Record<string, unknown>): Promise<Response> =>
+      postValidationResult(signed(w, path, { builder_id: BUILDER, finished_at: iso(20), admission: null, ...body }), w.deps, { validation_id: uuid(500) });
+    expect(await errorCode(await post({ state: "passed", cells: EXPECTED_CELLS }))).toBe("invalid_request");
+    expect(await errorCode(await post({ state: "passed", cells: EXPECTED_CELLS, admission: { ...QUALIFIED, comparison: "not_demonstrated" } }))).toBe("invalid_request");
+    const passed = await post({ state: "passed", cells: EXPECTED_CELLS, admission: QUALIFIED });
+    expect(passed.status).toBe(200);
+    expect(await passed.json()).toMatchObject({ state: "passed", admission: QUALIFIED });
+    expect(await w.store.getValidation(uuid(500))).toMatchObject({ state: "passed", admission: QUALIFIED });
+    expect((await post({ state: "passed", cells: EXPECTED_CELLS, admission: QUALIFIED })).status).toBe(200);
   });
 });
 
@@ -582,18 +685,63 @@ describe("builder stop intent", () => {
 describe("OTF config and wiring", () => {
   it("reads the OTF variables with defaults, refuses a short secret and malformed lanes, and needs all four power variables", () => {
     const config = testConfig();
-    expect(config).toMatchObject({ builderSecret: SECRET, maxActive: 2, maxQueued: 4, maxPerDay: 30, maxUsdLane: "3.00", maxUsdJob: "8.00", deadlineMs: 45 * 60_000, vmHoursPerDay: 12, nebius: null, cronSecret: null });
-    expect(config.lanes).toEqual(LANES);
+    expect(config).toMatchObject({ builderSecret: SECRET, maxQueued: 4, maxPerDay: 30, vmHoursPerDay: 12, coldStartMin: null, nebius: null, cronSecret: null });
+    expect(config.hosts["task-report"]).toEqual({ enabled: true, lanes: LANES, lanesError: null, profile: OTF_HOST_DEFAULTS["task-report"], typical: null });
     expect(otfConfigured(config)).toBe(true);
     expect(loadOtfConfig({ RBW_OTF_BUILDER_SECRET: "short" }).builderSecret).toBeNull();
-    const badLanes = loadOtfConfig({ RBW_OTF_LANES: JSON.stringify([{ ...LANES[0], extra: 1 }]) });
-    expect([badLanes.lanes, badLanes.lanesError]).toEqual([null, "RBW_OTF_LANES lane 1 is not {model, model_label, price_in_usd_per_m, price_out_usd_per_m}"]);
-    expect(loadOtfConfig({ RBW_OTF_LANES: "[]" }).lanesError).toMatch(/1 to 4/);
+    const badLanes = loadOtfConfig({ RBW_OTF_LANES: JSON.stringify([{ ...LANES[0], extra: 1 }]) }).hosts["task-report"];
+    expect([badLanes.enabled, badLanes.lanes, badLanes.lanesError]).toEqual([false, null, "RBW_OTF_LANES lane 1 is not {model, model_label, price_in_usd_per_m, price_out_usd_per_m}"]);
+    expect(loadOtfConfig({ RBW_OTF_LANES: "[]" }).hosts["task-report"].lanesError).toMatch(/1 to 4/);
     expect(otfConfigured(loadOtfConfig({ RBW_OTF_BUILDER_SECRET: SECRET, DATABASE_URL: "postgres://synthetic.invalid/otf" }))).toBe(false);
-    expect(testConfig({ RBW_OTF_MAX_ACTIVE: "0", RBW_OTF_MAX_QUEUED: "x", RBW_OTF_MAX_USD_JOB: "3.5", RBW_OTF_DEADLINE_MIN: "30" })).toMatchObject({ maxActive: 2, maxQueued: 4, maxUsdJob: "3.5", deadlineMs: 30 * 60_000 });
+    expect(testConfig({ RBW_OTF_MAX_ACTIVE: "0", RBW_OTF_MAX_QUEUED: "x", RBW_OTF_MAX_USD_JOB: "3.5", RBW_OTF_DEADLINE_MIN: "30" })).toMatchObject({
+      maxQueued: 4,
+      hosts: { "task-report": { profile: { max_active: 2, max_usd_job: "3.5", deadline_ms: 30 * 60_000 } } },
+    });
     const power = { RBW_NEBIUS_SA_ID: "synthetic-sa", RBW_NEBIUS_SA_KEY_ID: "synthetic-key", RBW_NEBIUS_SA_PRIVATE_KEY: "synthetic-private", RBW_NEBIUS_VM_ID: "synthetic-vm" };
     expect(testConfig(power).nebius).toEqual({ serviceAccountId: "synthetic-sa", keyId: "synthetic-key", privateKey: "synthetic-private", instanceId: "synthetic-vm" });
     expect(testConfig({ ...power, RBW_NEBIUS_VM_ID: "" }).nebius).toBeNull();
+  });
+
+  it("reads Umami's own variables, keeps Umami disabled while RBW_OTF_UMAMI_LANES is unset, and reads typical times and the cold start", () => {
+    const off = testConfig();
+    expect(off.hosts.umami).toEqual({ enabled: false, lanes: null, lanesError: null, profile: OTF_HOST_DEFAULTS.umami, typical: null });
+    const typical = { source: "development_attempts", median_min: 21.5, p90_min: 34, samples: 7, measured_on: "2026-10-29" };
+    const on = testConfig({
+      RBW_OTF_UMAMI_LANES: JSON.stringify(UMAMI_LANES),
+      RBW_OTF_UMAMI_MAX_ACTIVE: "2",
+      RBW_OTF_UMAMI_MAX_USD_LANE: "2.50",
+      RBW_OTF_UMAMI_MAX_USD_JOB: "5",
+      RBW_OTF_UMAMI_DEADLINE_MIN: "75",
+      RBW_OTF_TYPICAL_UMAMI: JSON.stringify(typical),
+      RBW_OTF_COLD_START_MIN: "3.5",
+    });
+    expect(on.hosts.umami).toEqual({
+      enabled: true,
+      lanes: UMAMI_LANES,
+      lanesError: null,
+      profile: { ...OTF_HOST_DEFAULTS.umami, max_active: 2, max_usd_lane: "2.50", max_usd_job: "5", deadline_ms: 75 * 60_000 },
+      typical,
+    });
+    // The unprefixed variables stay task-report's.
+    expect(on.hosts["task-report"]).toMatchObject({ lanes: LANES, profile: OTF_HOST_DEFAULTS["task-report"], typical: null });
+    expect(on.coldStartMin).toBe(3.5);
+    expect(testConfig({ RBW_OTF_UMAMI_LANES: "not json" }).hosts.umami).toMatchObject({ enabled: false, lanesError: "RBW_OTF_UMAMI_LANES is not JSON" });
+    const typicalOf = (text: string): unknown => testConfig({ RBW_OTF_TYPICAL_TASK_REPORT: text }).hosts["task-report"].typical;
+    expect(typicalOf(JSON.stringify({ ...typical, source: "otf_jobs" }))).toEqual({ ...typical, source: "otf_jobs" });
+    for (const bad of [
+      { ...typical, samples: 4 },
+      { ...typical, source: "guess" },
+      { ...typical, measured_on: "2026-02-30" },
+      { ...typical, median_min: 40 },
+      { ...typical, extra: 1 },
+      { median_min: 20, p90_min: 30, samples: 5, measured_on: "2026-10-29" },
+    ]) {
+      expect(typicalOf(JSON.stringify(bad))).toBeNull();
+    }
+    expect(typicalOf("[]")).toBeNull();
+    expect(testConfig({ RBW_OTF_COLD_START_MIN: "soon" }).coldStartMin).toBeNull();
+    // With task-report's lanes unset, Umami alone keeps OTF configured.
+    expect(otfConfigured(loadOtfConfig({ RBW_OTF_BUILDER_SECRET: SECRET, DATABASE_URL: "postgres://synthetic.invalid/otf", RBW_OTF_UMAMI_LANES: JSON.stringify(UMAMI_LANES) }))).toBe(true);
   });
 
   it("answers unavailable from every builder route while OTF is not configured or has no database driver", async () => {
