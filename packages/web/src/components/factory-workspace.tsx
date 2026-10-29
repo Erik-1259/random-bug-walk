@@ -48,6 +48,13 @@ function useCalendarClock(capabilities: Capabilities | null, controller: Factory
   return nowMs;
 }
 
+/** Scrolls the request form's heading into view, then focuses it without scrolling again; does nothing when the heading is absent. */
+export function revealRequestForm(doc: Pick<Document, "getElementById">): void {
+  const heading = doc.getElementById("factory-draft-heading");
+  heading?.scrollIntoView({ block: "start" });
+  heading?.focus({ preventScroll: true });
+}
+
 function FactoryAlert({ message }: { message: string }) {
   const friendly = describeFactoryMessage(message);
   return <div role="alert" className="factory-alert">
@@ -80,9 +87,7 @@ function ConnectedWorkspace({ controller }: { controller: FactoryController }) {
   useEffect(() => {
     // After "Use this plan", move to the refilled request form so keyboard and screen reader users land on it.
     if (plan === null) return;
-    const heading = document.getElementById("factory-draft-heading");
-    heading?.scrollIntoView({ block: "start" });
-    heading?.focus({ preventScroll: true });
+    revealRequestForm(document);
   }, [plan]);
   useEffect(() => {
     if (view.busy || !controller.needsPoll()) return;
