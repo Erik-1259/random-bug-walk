@@ -1,9 +1,10 @@
-import { canonicalJson, specSha256 } from "./canonical.ts";
-import { CALENDAR_MARGIN_MS, OTF_CREATE_REFUSALS, OTF_ERROR_STATUS, POLL_FINISHED_MS, POLL_RUNNING_MS, START_TIMEOUT_MS, hostCalendarOpen, type OtfAvailability, type OtfCreateJob, type OtfCreateRefusal, type OtfCreateResponse, type OtfErrorCode, type OtfHostId, type OtfJobStatus, type OtfValidation } from "./contract.ts";
+import { canonicalJson, ruleSha256, specSha256 } from "./canonical.ts";
+import { CALENDAR_MARGIN_MS, OTF_CLASSIFY_ERRORS, OTF_CLASSIFY_PATH, OTF_CREATE_REFUSALS, OTF_ERROR_STATUS, POLL_FINISHED_MS, POLL_RUNNING_MS, START_TIMEOUT_MS, hostCalendarOpen, type OtfAvailability, type OtfClassification, type OtfClassifyRequest, type OtfCreateJob, type OtfCreateRefusal, type OtfCreateResponse, type OtfErrorCode, type OtfHostId, type OtfJobStatus, type OtfValidation } from "./contract.ts";
 import { isOtf, type OtfBodies, type OtfSchemaName } from "./schemas.ts";
 
 export interface OtfClient {
   availability(): Promise<OtfAvailability>;
+  classify(body: OtfClassifyRequest): Promise<OtfClassification>;
   create(body: OtfCreateJob): Promise<OtfCreateResponse>;
   status(jobId: string, after?: number): Promise<OtfJobStatus>;
   stop(jobId: string): Promise<OtfJobStatus>;
@@ -22,23 +23,27 @@ function jobMatches(status: OtfJobStatus, jobId: string, request?: OtfCreateJob)
   if (status.job_id !== jobId || (status.certificate !== null && status.certificate.job_id !== jobId)
     || status.artifacts.some(artifact => artifact.download_path !== `/api/factory/otf/jobs/${jobId}/artifacts/${artifact.part}`)) throw unavailable();
   if (request !== undefined && (status.criterion_id !== request.criterion_id || status.spec_sha256 !== request.spec_sha256
-    || canonicalJson(status.spec) !== canonicalJson(request.spec) || status.catalog_request_id !== (request.catalog_request_id ?? null))) throw unavailable();
+    || canonicalJson(status.spec) !== canonicalJson(request.spec) || status.catalog_request_id !== (request.catalog_request_id ?? null)
+    || canonicalJson(status.rule ?? null) !== canonicalJson(request.rule ?? null)
+    || (status.certificate !== null && canonicalJson(status.certificate.rule ?? null) !== canonicalJson(request.rule ?? null)))) throw unavailable();
 }
 async function checkRequest(body: OtfCreateJob): Promise<void> {
-  if (!isOtf("OtfCreateJob", body) || await specSha256(body.spec) !== body.spec_sha256) throw new OtfClientError("invalid_spec", "The accepted spec is invalid. Review the card before creating a job.");
+  if (!isOtf("OtfCreateJob", body) || await specSha256(body.spec) !== body.spec_sha256
+    || (body.rule !== undefined && await ruleSha256(body.rule) !== body.rule_sha256)) throw new OtfClientError("invalid_spec", "The accepted spec is invalid. Review the card before creating a job.");
 }
 /** Customer routes only. A malformed envelope never becomes a successful job or a definite refusal. */
 export function createOtfClient(fetcher: typeof fetch = fetch, timeoutMs = 15_000): OtfClient {
-  async function call<N extends OtfSchemaName>(schema: N, path: string, method: "GET" | "POST", success: readonly number[], body?: OtfCreateJob): Promise<OtfBodies[N]> {
+  async function call<N extends OtfSchemaName>(schema: N, path: string, method: "GET" | "POST", success: readonly number[], body?: OtfCreateJob | OtfClassifyRequest): Promise<OtfBodies[N]> {
     const abort = new AbortController();
     const timeout = setTimeout(() => { abort.abort(); }, timeoutMs);
     try {
-      const response = await fetcher(`/api/factory/otf/${path}`, { method, credentials: "same-origin", cache: "no-store", signal: abort.signal,
+      const response = await fetcher(path === OTF_CLASSIFY_PATH ? path : `/api/factory/otf/${path}`, { method, credentials: "same-origin", cache: "no-store", signal: abort.signal,
         ...(body === undefined ? {} : { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }) });
       const data: unknown = await response.json();
       if (!response.ok) {
         if (!isOtf("OtfErrorBody", data) || OTF_ERROR_STATUS[data.error.code] !== response.status
-          || (path === "jobs" && !(OTF_CREATE_REFUSALS as readonly string[]).includes(data.error.code))) throw unavailable();
+          || (path === "jobs" && !(OTF_CREATE_REFUSALS as readonly string[]).includes(data.error.code))
+          || (path === OTF_CLASSIFY_PATH && !(OTF_CLASSIFY_ERRORS as readonly string[]).includes(data.error.code))) throw unavailable();
         throw new OtfClientError(data.error.code, data.error.message, response.status, data.error.retryable);
       }
       if (!success.includes(response.status) || !isOtf(schema, data)) throw unavailable();
@@ -51,6 +56,10 @@ export function createOtfClient(fetcher: typeof fetch = fetch, timeoutMs = 15_00
   const path = (id: string) => `jobs/${encodeURIComponent(id)}`;
   return {
     availability: () => call("OtfAvailability", "availability", "GET", [200]),
+    classify: body => {
+      if (!isOtf("OtfClassifyRequest", body)) return Promise.reject(new OtfClientError("invalid_request", "The classification request is invalid. Review the sentence and card."));
+      return call("OtfClassification", OTF_CLASSIFY_PATH, "POST", [200], body);
+    },
     create: async body => {
       await checkRequest(body);
       const response = await call("OtfCreateResponse", "jobs", "POST", [200, 201], body);
@@ -116,7 +125,7 @@ export interface OtfView {
   validationRefused: boolean;
 }
 type StoragePort = Pick<Storage, "getItem" | "setItem" | "removeItem">;
-type CreateInput = Omit<OtfCreateJob, "client_key" | "spec_sha256">;
+export type AcceptedOtfInput = Omit<OtfCreateJob, "client_key" | "spec_sha256" | "rule_sha256">;
 function record(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }
 function uuid(value: unknown): value is string { return typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value); }
 /** Refusals that prove no job was created. Each marks the saved identity, and only retryCreate may send it again. */
@@ -261,14 +270,15 @@ export class OtfController {
     await this.readAvailability();
     await this.action(() => this.resume());
   }
-  async create(input: CreateInput): Promise<void> {
+  async create(input: AcceptedOtfInput): Promise<void> {
     // Clone before hashing or waiting for a lock; later edits cannot change an accepted card.
     const accepted = structuredClone(input);
     await this.action(async () => {
       await this.restore();
       if (this.saved !== null) { if (this.saved.job_id !== null) await this.readStatus(); else if (this.saved.create_refused !== true) await this.sendCreate(); return; }
       if (this.view.availability?.enabled !== true) throw new OtfClientError("unavailable", "Custom builds are offline right now. The catalog is available.");
-      const body = { ...accepted, client_key: this.uuid(), spec_sha256: await specSha256(accepted.spec) };
+      const body: OtfCreateJob = { ...accepted, client_key: this.uuid(), spec_sha256: await specSha256(accepted.spec),
+        ...(accepted.rule === undefined ? {} : { rule_sha256: await ruleSha256(accepted.rule) }) };
       await checkRequest(body);
       this.save({ request: body, job_id: null, catalog_request_id: body.catalog_request_id ?? null });
       this.update({ pendingRequest: body, catalogRequestId: body.catalog_request_id ?? null });

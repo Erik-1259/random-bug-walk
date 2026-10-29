@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { calendarWindowMs, createOtfClient, formatUtcDate, nextCalendarOpen, OtfClientError, OtfController, browserOtfIdentityLock, type OtfClient, type OtfIdentityLock } from "../../src/otf/client.ts";
-import { specSha256 } from "../../src/otf/canonical.ts";
-import { OTF_ERROR_STATUS, hostCalendarOpen, type OtfAvailability, type OtfCreateJob, type OtfJobStatus, type OtfValidation } from "../../src/otf/contract.ts";
+import { OTF_JOB_KEY, calendarWindowMs, createOtfClient, formatUtcDate, nextCalendarOpen, OtfClientError, OtfController, browserOtfIdentityLock, type AcceptedOtfInput, type OtfClient, type OtfIdentityLock } from "../../src/otf/client.ts";
+import { ruleSha256, specSha256 } from "../../src/otf/canonical.ts";
+import { OTF_CLASSIFY_PATH, OTF_ERROR_STATUS, OTF_OPEN_CRITERION_ID, hostCalendarOpen, type OtfAvailability, type OtfClassification, type OtfCreateJob, type OtfJobStatus, type OtfOpenRule, type OtfValidation } from "../../src/otf/contract.ts";
 
 const JOB = "00000000-0000-4000-8000-000000000001";
 const KEY = "00000000-0000-4000-8000-000000000002";
@@ -22,6 +22,8 @@ const availability: OtfAvailability = {
   ],
   cold_start_min: null, spend_left_microusd: 8_000_000,
 };
+const openRule: OtfOpenRule = { family: "data_handling", observable_failure: "The report omits a saved item when the page is refreshed.", failure_code: "saved_item_missing" };
+const classification: OtfClassification = { family: "data_handling", proven_criterion_id: null, buildable: [{ host_id: "task-report", criterion_id: OTF_OPEN_CRITERION_ID }], rule: openRule, refusal: null, model: "synthetic-classifier" };
 const validation: OtfValidation = { validation_id: OTHER, state: "queued", cells: null, admission: null, started_at: T, finished_at: null, where: "RBW builder (Nebius VM)" };
 async function request(): Promise<OtfCreateJob> { return { ...structuredClone(input), client_key: KEY, spec_sha256: await specSha256(input.spec) }; }
 async function status(change: Partial<OtfJobStatus> = {}): Promise<OtfJobStatus> {
@@ -43,6 +45,7 @@ async function setup() {
     return next;
   };
   const api = {
+    classify: vi.fn<OtfClient["classify"]>().mockResolvedValue(classification),
     availability: vi.fn<OtfClient["availability"]>().mockResolvedValue(availability),
     create: vi.fn<OtfClient["create"]>().mockResolvedValue({ job_id: JOB, status: await status() }),
     status: vi.fn<OtfClient["status"]>().mockResolvedValue(await status({ events: [], next_after: 1 })),
@@ -120,6 +123,45 @@ describe("OTF HTTP client", () => {
   });
 });
 
+describe("OTF classification client", () => {
+  it.each(["open", "proven", "refusal"] as const)("reads the validated %s classification without creating a job", async outcome => {
+    const answer: OtfClassification = outcome === "open" ? classification : outcome === "proven"
+      ? { ...classification, family: "concurrency", proven_criterion_id: input.criterion_id, buildable: [{ host_id: "task-report", criterion_id: input.criterion_id }], rule: null }
+      : { ...classification, family: null, buildable: [], rule: null, refusal: { kind: "out_of_scope", reason: "Synthetic unsupported behavior." } };
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(Response.json(answer));
+    const body = { sentence: input.sentence, spec: input.spec, host_id: input.host_id };
+    expect(await createOtfClient(fetcher).classify(body)).toEqual(answer);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(fetcher.mock.calls[0]?.[0]).toBe(OTF_CLASSIFY_PATH);
+    expect(fetcher.mock.calls[0]?.[1]).toMatchObject({ method: "POST", credentials: "same-origin", cache: "no-store", body: JSON.stringify(body) });
+  });
+  it.each(["signed_out", "invalid_request", "refused_topic", "unavailable"] as const)("preserves the classify %s error", async code => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ contract_version: "otf/0", error: { code, message: "Synthetic classification refusal.", retryable: false } }, { status: OTF_ERROR_STATUS[code] }));
+    await expect(createOtfClient(fetcher).classify({ sentence: input.sentence, spec: input.spec })).rejects.toMatchObject({ code, status: OTF_ERROR_STATUS[code] });
+  });
+  it.each(["wrong-error", "wrong-status", "missing-rule", "mixed-refusal", "unknown-member"])("rejects a %s classification answer", async kind => {
+    const responses: Record<string, Response> = {
+      "wrong-error": Response.json({ contract_version: "otf/0", error: { code: "busy", message: "Synthetic wrong endpoint.", retryable: false } }, { status: 409 }),
+      "wrong-status": Response.json(classification, { status: 201 }),
+      "missing-rule": Response.json({ ...classification, rule: null }),
+      "mixed-refusal": Response.json({ ...classification, refusal: { kind: "security", reason: "Synthetic refusal." } }),
+      "unknown-member": Response.json({ ...classification, extra: true }),
+    };
+    const response = responses[kind]; if (response === undefined) throw new Error("Missing synthetic response.");
+    await expect(createOtfClient(vi.fn<typeof fetch>().mockResolvedValue(response)).classify({ sentence: input.sentence, spec: input.spec })).rejects.toMatchObject({ code: "unavailable" });
+  });
+  it("does not send a malformed classify request", async () => {
+    const fetcher = vi.fn<typeof fetch>();
+    await expect(createOtfClient(fetcher).classify({ sentence: "", spec: input.spec })).rejects.toMatchObject({ code: "invalid_request" });
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+  it("checks the open rule hash before posting a create", async () => {
+    const fetcher = vi.fn<typeof fetch>();
+    await expect(createOtfClient(fetcher).create({ ...await request(), criterion_id: OTF_OPEN_CRITERION_ID, rule: openRule, rule_sha256: "0".repeat(64) })).rejects.toMatchObject({ code: "invalid_spec" });
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+});
+
 describe("OTF persisted controller", () => {
   it("reads availability without creating work or writing factory storage", async () => {
     const c = await setup();
@@ -139,6 +181,43 @@ describe("OTF persisted controller", () => {
     const stored: unknown = JSON.parse(c.storage.getItem("rbw.otf.job") ?? "null");
     expect(stored).toMatchObject({ job_id: JOB });
     expect([...c.memory.keys()]).toEqual(["rbw.otf.job"]);
+  });
+  it("hashes and saves the edited open rule and replays the same accepted bytes", async () => {
+    const c = await setup();
+    const editedRule: OtfOpenRule = { ...openRule, observable_failure: "The refreshed report omits the last item that was saved.", failure_code: "last_saved_item_missing" };
+    const expected = structuredClone(editedRule);
+    const expectedHash = await ruleSha256(expected);
+    c.api.create.mockRejectedValueOnce(new Error("Synthetic lost response."));
+    const accepted: AcceptedOtfInput = { ...input, criterion_id: OTF_OPEN_CRITERION_ID, rule: editedRule };
+    const pending = c.controller.create(accepted);
+    editedRule.failure_code = "changed_after_accept";
+    await pending;
+    const sent = c.api.create.mock.calls[0]?.[0];
+    expect(sent).toMatchObject({ criterion_id: OTF_OPEN_CRITERION_ID, rule: expected, rule_sha256: expectedHash });
+    expect(JSON.parse(c.storage.getItem(OTF_JOB_KEY) ?? "null")).toMatchObject({ request: sent });
+    c.api.create.mockResolvedValue({ job_id: JOB, status: await status({ criterion_id: OTF_OPEN_CRITERION_ID, rule: expected }) });
+    await c.controller.retryCreate();
+    expect(c.api.create.mock.calls[1]?.[0]).toEqual(sent);
+    expect(c.controller.snapshot().status?.rule).toEqual(expected);
+    expect(c.uuid).toHaveBeenCalledTimes(1);
+  });
+  it("retains the accepted identity when an open status returns a different rule", async () => {
+    const c = await setup();
+    c.api.create.mockResolvedValue({ job_id: JOB, status: await status({ criterion_id: OTF_OPEN_CRITERION_ID, rule: { ...openRule, failure_code: "different_failure" } }) });
+    await c.controller.create({ ...input, criterion_id: OTF_OPEN_CRITERION_ID, rule: openRule });
+    expect(c.controller.snapshot()).toMatchObject({ status: null, canRetryCreate: true });
+    expect(c.controller.snapshot().pendingRequest?.rule).toEqual(openRule);
+  });
+  it("does not replay a stored open rule whose hash no longer matches", async () => {
+    const c = await setup();
+    const accepted = { ...await request(), criterion_id: OTF_OPEN_CRITERION_ID, rule: openRule, rule_sha256: await ruleSha256(openRule) };
+    const tampered = { ...accepted, rule: { ...openRule, failure_code: "different_failure" } };
+    c.storage.setItem(OTF_JOB_KEY, JSON.stringify({ request: tampered, job_id: null, catalog_request_id: null }));
+    const saved = c.storage.getItem(OTF_JOB_KEY);
+    await c.controller.initialize();
+    expect(c.api.create).not.toHaveBeenCalled();
+    expect(c.storage.getItem(OTF_JOB_KEY)).toBe(saved);
+    expect(c.controller.snapshot().message).toContain("invalid_spec");
   });
   it("retains the body and key after an ambiguous create and retries exactly those bytes", async () => {
     const c = await setup(); c.api.create.mockRejectedValueOnce(new Error("Synthetic lost response."));

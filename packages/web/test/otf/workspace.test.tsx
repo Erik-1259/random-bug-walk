@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import { OtfWorkspaceView, type OtfWorkspaceViewProps } from "../../src/components/otf/workspace.tsx";
+import { OtfWorkspaceView, revealCustomBuild, type OtfWorkspaceViewProps } from "../../src/components/otf/workspace.tsx";
 import { BugDesignerView, CATALOG_HONESTY, OTF_DESIGNER_NOTE } from "../../src/components/bug-designer.tsx";
 import { INITIAL_DESIGNER } from "../../src/assist/designer-state.ts";
 import { specSha256 } from "../../src/otf/canonical.ts";
@@ -23,6 +23,28 @@ const props: OtfWorkspaceViewProps = { availability, status: null, pending: fals
   catalog: { onStart: noop, disabled: false, requestId: null, ready: false, message: null } };
 
 describe("custom workspace boundary", () => {
+  it("shows a classifier refusal below the card with the catalog fallback even without a selection", () => {
+    const html = renderToStaticMarkup(<OtfWorkspaceView {...props} spec={spec} criterionId={null} classificationRequired
+      classification={{ family: null, proven_criterion_id: null, buildable: [], rule: null, refusal: { kind: "out_of_scope", reason: "Synthetic behavior is not supported." }, model: "synthetic-classifier" }} />);
+    expect(html).toContain("Synthetic behavior is not supported.");
+    expect(html).toContain("Edit or accept your spec card");
+    expect(html).toMatch(/disabled=""[^>]*>Accept and build this custom bug/);
+    expect(html).toContain("<h2>Start the closest catalog bug</h2>");
+  });
+  it("does not offer acceptance after a failed classification or pretend it is still running", () => {
+    const html = renderToStaticMarkup(<OtfWorkspaceView {...props} spec={spec} classificationRequired message="unavailable: Synthetic classifier is offline." />);
+    expect(html).toMatch(/disabled=""[^>]*>Accept and build this custom bug/);
+    expect(html).toContain("Synthetic classifier is offline."); expect(html).not.toContain("Classifying this spec card");
+  });
+  it("reveals and focuses the custom panel after a handoff and tolerates an absent panel", () => {
+    const heading = { scrollIntoView: vi.fn(), focus: vi.fn() };
+    const getElementById = vi.fn().mockReturnValue(heading);
+    revealCustomBuild({ getElementById });
+    expect(getElementById).toHaveBeenCalledWith("otf-heading");
+    expect(heading.scrollIntoView).toHaveBeenCalledWith({ block: "start" });
+    expect(heading.focus).toHaveBeenCalledWith({ preventScroll: true });
+    expect(() => { revealCustomBuild({ getElementById: () => null }); }).not.toThrow();
+  });
   it("renders the guided picker only after availability enables it", () => {
     const html = renderToStaticMarkup(<OtfWorkspaceView {...props} />);
     expect(html).toContain("Synthetic overlapping writes");
