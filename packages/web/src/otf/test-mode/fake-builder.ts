@@ -9,7 +9,8 @@
 //   starting_builder jobs to queued with builder_ready, claims with job_claimed, posts the builder
 //   events with a gap-free builder_seq, and posts the result (a delivery with an invented
 //   certificate and two tiny invented gzip bundles, or another outcome). It honors a customer stop
-//   (stop_requested_at) and the job deadline on its next post.
+//   (stop_requested_at) and the job deadline at the moment each took effect, after replaying what
+//   the script holds before it, so a late poll or a clock jump never changes the stream.
 // - MemoryOtfStore is an in-memory OtfStore, so test mode needs no database.
 // - OtfTestWorld ties them together on one clock. Its `store` advances the fake builder before
 //   every call, so the customer routes need nothing special: they get `store` and `power` from the
@@ -632,36 +633,58 @@ export class FakeBuilder {
       return;
     }
     const elapsed = (now - run.claimedMs) * this.speed;
-    const lastPosted = run.steps[run.posted - 1]?.at_ms ?? 0;
-    const selected = run.steps.slice(0, run.posted).some((step) => step.event.type === "winner_selected");
-    // A stop reaches the builder on its next post. Once a winner is selected the delivery goes ahead.
-    if (!run.cut && !selected) {
-      const atMs = Math.max(elapsed, lastPosted);
-      if (job.stop_requested_at !== null) {
-        this.cut(run, atMs, "cancelled", REASON_TEXT.customer_lane, { at_ms: atMs + 2_000, outcome: "cancelled", reason: REASON_TEXT.cancelled });
-      } else if (job.deadline_at !== null && now >= Date.parse(job.deadline_at) && run.result.outcome !== "time_limit") {
-        this.cut(run, atMs, "cancelled", REASON_TEXT.deadline_lane, { at_ms: atMs + 2_000, outcome: "time_limit", reason: REASON_TEXT.time_limit });
+    // A stop or a passed deadline takes effect at its own moment on script time, not at the moment this
+    // post happens: everything scripted before it is replayed first, so a late or skipped poll (a clock
+    // jump) never changes the stream. The earlier of the two wins.
+    let limit: { atMs: number; kind: "customer" | "deadline" } | null = null;
+    if (!run.cut) {
+      const toScript = (at: string): number => Math.max(0, (Date.parse(at) - run.claimedMs) * this.speed);
+      if (job.stop_requested_at !== null) limit = { atMs: Math.min(toScript(job.stop_requested_at), elapsed), kind: "customer" };
+      if (job.deadline_at !== null && now >= Date.parse(job.deadline_at) && run.result.outcome !== "time_limit") {
+        const atMs = toScript(job.deadline_at);
+        if (limit === null || atMs < limit.atMs) limit = { atMs, kind: "deadline" };
       }
     }
+    if (!(await this.post(run, job, limit === null ? elapsed : limit.atMs, now))) return;
+    if (this.finishDue(run, limit === null ? elapsed : limit.atMs)) return this.finish(run, job);
+    if (limit !== null) {
+      // Once a winner is selected the delivery goes ahead; otherwise every live lane stops at the limit.
+      const selected = run.steps.slice(0, run.posted).some((step) => step.event.type === "winner_selected");
+      if (!selected) {
+        const atMs = Math.max(limit.atMs, run.steps[run.posted - 1]?.at_ms ?? 0);
+        if (limit.kind === "customer") this.cut(run, atMs, "cancelled", REASON_TEXT.customer_lane, { at_ms: atMs + 2_000, outcome: "cancelled", reason: REASON_TEXT.cancelled });
+        else this.cut(run, atMs, "cancelled", REASON_TEXT.deadline_lane, { at_ms: atMs + 2_000, outcome: "time_limit", reason: REASON_TEXT.time_limit });
+      }
+      if (!(await this.post(run, job, elapsed, now))) return;
+      if (this.finishDue(run, elapsed)) return this.finish(run, job);
+    }
+  }
+
+  private finishDue(run: Run, upTo: number): boolean {
+    return run.posted === run.steps.length && run.result.at_ms <= upTo;
+  }
+
+  /** Posts every step due up to `upTo` (script time); an empty post is the heartbeat. False when the job is gone. */
+  private async post(run: Run, job: OtfJobRecord, upTo: number, now: number): Promise<boolean> {
     const due: ScriptStep[] = [];
     for (let k = run.posted; k < run.steps.length; k += 1) {
       const step = run.steps[k];
-      if (step === undefined || step.at_ms > elapsed) break;
+      if (step === undefined || step.at_ms > upTo) break;
       due.push(step);
     }
     const events = due.map((step, k) => ({ ...structuredClone(step.event), builder_seq: run.posted + k + 1, at: iso(run.claimedMs + step.at_ms / this.speed) }));
-    // An empty post is the heartbeat; every post extends the lease.
+    // Every post extends the lease.
     const reply = await this.store.appendBuilderEvents(job.job_id, this.builder_id, events, iso(now));
     if (reply.kind !== "ok") {
       this.runs.delete(job.job_id);
-      return;
+      return false;
     }
     run.posted += due.length;
     if (due.some((step) => step.event.type === "lane_meter")) {
       const spend = [...lastMeters(run.steps.slice(0, run.posted)).values()].reduce((sum, meter) => sum + meter.cost_microusd, 0);
       await this.store.updateJob(job.job_id, ["building"], { model_microusd: spend });
     }
-    if (run.posted === run.steps.length && run.result.at_ms <= elapsed) await this.finish(run, job);
+    return true;
   }
 
   private async finish(run: Run, job: OtfJobRecord): Promise<void> {

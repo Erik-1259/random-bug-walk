@@ -150,7 +150,7 @@ describe("the invented delivery", () => {
 });
 
 /** A clock the test moves, a world on it at speed 1, and a create as the customer route would do it. */
-async function playJob(scenario: OtfTestScenario, options: { stopAtMs?: number } = {}) {
+async function playJob(scenario: OtfTestScenario, options: { stopAtMs?: number; jumpAfterClaimMs?: number } = {}) {
   let now = Date.parse(T0);
   const world = new OtfTestWorld({ scenario, clock: () => now, speed: 1 });
   const body: OtfCreateJob = { client_key: "00000000-0000-4000-8000-000000000003", criterion_id: "concurrency.lost-acknowledged-change", sentence: "Two quick saves lose one.", spec: SPEC, spec_sha256: await specSha256(SPEC) };
@@ -168,8 +168,16 @@ async function playJob(scenario: OtfTestScenario, options: { stopAtMs?: number }
     await world.store.updateJob(JOB, ["starting_builder"], { state: "finished", outcome: "builder_start_failed", reason: REASON_TEXT.capacity, finished_at: created });
     await world.store.appendJobEvent(JOB, { type: "job_finished", lane_id: null, data: { outcome: "builder_start_failed", reason: REASON_TEXT.capacity } }, created);
   }
+  let jumped = false;
   for (let tick = 0; tick < 4 * 3600; tick += 1) {
-    if ((await world.store.getJob(JOB))?.state === "finished") break;
+    const current = await world.store.getJob(JOB);
+    if (current?.state === "finished") break;
+    if (options.jumpAfterClaimMs !== undefined && !jumped && current?.state === "building") {
+      // The clock jumps (a browser that stopped polling): the next read sees it all at once.
+      jumped = true;
+      now += options.jumpAfterClaimMs;
+      continue;
+    }
     if (options.stopAtMs !== undefined && now - Date.parse(T0) === options.stopAtMs) {
       await world.store.updateJob(JOB, ["building"], { stop_requested_at: new Date(now).toISOString(), stop_reason: "customer" });
     }
@@ -206,6 +214,13 @@ describe("the fake builder through the store and power ports", () => {
       expect(failure).toBeNull();
       expect(await world.store.lastBuilderSeen()).toMatchObject({ builder_id: "synthetic-builder-1" });
     }
+  });
+
+  it.each(["delivered", "not_qualified"] as const)("%s: a clock jump past the deadline after the claim keeps the stream and the outcome", async (scenario) => {
+    const { job, events } = await playJob(scenario, { jumpAfterClaimMs: 3 * 3_600_000 });
+    expect(events).toEqual(scenarioEvents(scenario, T0));
+    expect(job?.outcome).toBe(scenario);
+    expect(checkOtfSequence(events)).toEqual([]);
   });
 
   it("a customer stop ends every lane cancelled and the job cancelled", async () => {
