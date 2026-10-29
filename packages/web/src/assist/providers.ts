@@ -30,6 +30,16 @@ export interface ChatCall<K extends ModelSchemaName> {
   maxTokens: number;
 }
 
+/** The designer transport with a caller-owned strict schema and conversation. No automatic retry. */
+export interface StructuredChatCall {
+  apiKey: string;
+  model: string;
+  schemaName: string;
+  schema: unknown;
+  messages: readonly { role: "system" | "user" | "assistant"; content: string }[];
+  maxTokens: number;
+}
+
 async function post(fetchFn: Fetch, url: string, apiKey: string, body: unknown, what: string): Promise<unknown> {
   let response: Response;
   try {
@@ -62,18 +72,15 @@ function parseContent(content: string): unknown {
   return JSON.parse(fenced?.[1] ?? text) as unknown;
 }
 
-/** One chat completion whose answer must match the named schema; anything else is unavailable. */
-export async function chat<K extends ModelSchemaName>(fetchFn: Fetch, call: ChatCall<K>, now: () => Date): Promise<{ output: ModelOutputs[K]; model: ModelInfo }> {
+/** One structured completion; callers validate the content and decide whether a repair is allowed. */
+export async function structuredChat(fetchFn: Fetch, call: StructuredChatCall): Promise<{ content: string; truncated: boolean }> {
   const body = {
     model: call.model,
-    messages: [
-      { role: "system", content: call.system },
-      { role: "user", content: call.user },
-    ],
+    messages: call.messages,
     max_tokens: call.maxTokens,
     temperature: 0.2,
     stream: false,
-    response_format: { type: "json_schema", json_schema: { name: call.schema, strict: true, schema: wireSchema(call.schema) } },
+    response_format: { type: "json_schema", json_schema: { name: call.schemaName, strict: true, schema: call.schema } },
     chat_template_kwargs: { enable_thinking: false },
   };
   const answer = record(await post(fetchFn, CHAT_COMPLETIONS_URL, call.apiKey, body, "token factory"));
@@ -81,8 +88,16 @@ export async function chat<K extends ModelSchemaName>(fetchFn: Fetch, call: Chat
   const choice = Array.isArray(choices) ? record(choices[0]) : null;
   const message = record(choice?.message);
   const content = message?.content;
-  if (choice?.finish_reason === "length") throw new AssistUnavailable("token factory: the answer reached max_tokens");
   if (typeof content !== "string") throw new AssistUnavailable("token factory: the answer has no message content");
+  return { content, truncated: choice?.finish_reason === "length" };
+}
+
+/** One chat completion whose answer must match the named schema; anything else is unavailable. */
+export async function chat<K extends ModelSchemaName>(fetchFn: Fetch, call: ChatCall<K>, now: () => Date): Promise<{ output: ModelOutputs[K]; model: ModelInfo }> {
+  const { content, truncated } = await structuredChat(fetchFn, { apiKey: call.apiKey, model: call.model,
+    schemaName: call.schema, schema: wireSchema(call.schema), maxTokens: call.maxTokens,
+    messages: [{ role: "system", content: call.system }, { role: "user", content: call.user }] });
+  if (truncated) throw new AssistUnavailable("token factory: the answer reached max_tokens");
   let parsed: unknown;
   try {
     parsed = parseContent(content);

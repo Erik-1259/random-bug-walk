@@ -31,6 +31,7 @@ import {
   COPY_LIMITS,
   EXPECTED_CELLS,
   OTF_OPEN_CRITERION_ID,
+  OTF_OPEN_LABEL,
   PROVEN_CRITERION_IDS,
   TOKEN_FACTORY_PROVIDER,
   type BuilderEventIn,
@@ -365,6 +366,18 @@ describe("the composed OTF server", () => {
     expect(cardInScope(offered, proven)).toBe(true);
     const rule = { family: "data_handling" as const, observable_failure: "The synthetic report total omits a task completed through the API.", failure_code: "synthetic_total_mismatch" };
     expect(cardInScope(offered, { ...proven, criterion_id: OTF_OPEN_CRITERION_ID, rule, rule_sha256: await ruleSha256(rule) })).toBe(false);
+  });
+
+  it("offers the unmeasured open behavior only with the flag and an offered task-report host", async () => {
+    const w = world("2026-10-29T12:00:00.000Z");
+    const enabled = otfCustomerDependencies({ otf: w.otf, passcode: PASSCODE, store: w.store, power: w.power, now: () => w.now(), openBehaviors: true });
+    setOtfCustomerDependencies(() => Promise.resolve(enabled));
+    const availability = await parsed("OtfAvailability", await availabilityRoute(customer("/api/factory/otf/availability")));
+    expect(availability.behaviors).toEqual([...otfBehaviors(), { criterion_id: OTF_OPEN_CRITERION_ID, host_id: "task-report", label: OTF_OPEN_LABEL, example_phrases: [], measured: false }]);
+    expect(otfBehaviorsFrom(criteriaCatalogV1(), true)).toEqual(availability.behaviors);
+    enabled.config.hosts["task-report"].enabled = false;
+    const disabled = await parsed("OtfAvailability", await availabilityRoute(customer("/api/factory/otf/availability")));
+    expect(disabled.behaviors.map((behavior) => behavior.criterion_id)).toEqual(["date_time.time-zone-grouping"]);
   });
 
   it("fails closed: with a required variable unset every customer route answers unavailable", async () => {
