@@ -10,7 +10,7 @@ const noop = () => undefined;
 const taskReport: OtfHostAvailability = { host_id: "task-report", label: "task-report service", offered: true, unavailable_reason: null, active_jobs: 0, queued_jobs: 0, max_active: 2, lanes: [{ lane_id: "lane-1", model_label: "Synthetic model" }], deadline_min: 45, typical: null };
 const umami: OtfHostAvailability = { host_id: "umami", label: "Umami", offered: false, unavailable_reason: "calendar", active_jobs: 0, queued_jobs: 0, max_active: 1, lanes: [{ lane_id: "lane-1", model_label: "Synthetic model" }], deadline_min: 60, typical: null };
 const availability: OtfAvailability = { enabled: true, builder: "stopped", active_jobs: 0, queued_jobs: 0, max_queued: 4,
-  behaviors: [{ criterion_id: "concurrency.lost-acknowledged-change", host_id: "task-report", label: "Synthetic overlapping writes", example_phrases: ["A synthetic edit is lost."] }],
+  behaviors: [{ criterion_id: "concurrency.lost-acknowledged-change", host_id: "task-report", label: "Synthetic overlapping writes", example_phrases: ["A synthetic edit is lost."], measured: true }],
   hosts: [taskReport, umami], cold_start_min: null, spend_left_microusd: 1000000 };
 const NOV_3 = Date.UTC(2026, 10, 3, 12);
 const spec = { title: "Synthetic grouping card", where: "Synthetic report", change: "A synthetic day shifts.", why_tests_miss: "Synthetic tests use UTC.", checks_to_add: ["Group a synthetic late event."], fix: "Group by the chosen zone." };

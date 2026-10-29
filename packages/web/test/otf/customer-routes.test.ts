@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { factorySessionCookie } from "../../src/factory-server/session.ts";
-import { sha256Hex, specSha256 } from "../../src/otf/canonical.ts";
-import { BUILDER_LOST_MS, START_TIMEOUT_MS, StartError, type OtfCreateJob, type OtfHostId, type OtfSpecCard } from "../../src/otf/contract.ts";
+import { ruleSha256, sha256Hex, specSha256 } from "../../src/otf/canonical.ts";
+import { BUILDER_LOST_MS, OTF_OPEN_CRITERION_ID, OTF_OPEN_LABEL, START_TIMEOUT_MS, StartError, type OtfCreateJob, type OtfOpenRule, type OtfHostId, type OtfSpecCard } from "../../src/otf/contract.ts";
 import { createCustomerHandlers, handleOtfTestReset, setOtfCustomerDependencies, setOtfTestReset, type OtfCustomerDependencies, type OtfStartResult } from "../../src/otf/handlers.ts";
 import { parseOtf, type OtfBodies, type OtfSchemaName } from "../../src/otf/schemas.ts";
 import { FAKE_AT, FakeOtfStore, FakeVmPower } from "./customer-fakes.ts";
@@ -54,8 +54,8 @@ function setup() {
     config: { enabled: true, builderSecretConfigured: true, passcode: PASSCODE,
       maxQueued: 4, maxPerDay: 30, totalSpendCapMicrousd: 100_000_000, vmHoursPerDay: 12,
       behaviors: [
-        { criterion_id: "concurrency.lost-acknowledged-change", host_id: "task-report", label: "Overlapping saves", example_phrases: ["An edit disappears."] },
-        { criterion_id: "date_time.time-zone-grouping", host_id: "umami", label: "Time-zone grouping", example_phrases: ["A late event lands on the wrong day."] },
+        { criterion_id: "concurrency.lost-acknowledged-change", host_id: "task-report", label: "Overlapping saves", example_phrases: ["An edit disappears."], measured: true },
+        { criterion_id: "date_time.time-zone-grouping", host_id: "umami", label: "Time-zone grouping", example_phrases: ["A late event lands on the wrong day."], measured: true },
       ],
       hosts: {
         "task-report": { enabled: true, lanes: [{ lane_id: "lane-1", model: "synthetic-model", model_label: "Synthetic model" }],
@@ -172,6 +172,16 @@ describe("OTF customer routes", () => {
     s.deps.inScope = () => Promise.resolve(false);
     expect((await parsedResponse("OtfErrorBody", (await s.handlers.create(request(await body()))))).error.code).toBe("invalid_spec");
     expect(s.store.jobs.size).toBe(0);
+  });
+  it("refuses the open criterion invalid_spec even when a behavior lists it, before storage or power", async () => {
+    const s = setup();
+    s.deps.config.behaviors.push({ criterion_id: OTF_OPEN_CRITERION_ID, host_id: "task-report", label: OTF_OPEN_LABEL, example_phrases: ["A synthetic report total is off."], measured: false });
+    const rule: OtfOpenRule = { family: "data_handling", observable_failure: "The synthetic report total omits a task completed through the API.", failure_code: "synthetic_total_mismatch" };
+    for (const value of [await body({ criterion_id: OTF_OPEN_CRITERION_ID, rule, rule_sha256: await ruleSha256(rule) }), await body({ criterion_id: OTF_OPEN_CRITERION_ID })]) {
+      const response = await s.handlers.create(request(value));
+      expect(response.status).toBe(422); expect((await parsedResponse("OtfErrorBody", response)).error.code).toBe("invalid_spec");
+    }
+    expect(s.store.jobs.size).toBe(0); expect(s.power.startCalls).toBe(0);
   });
   it("replays before all admission caps and refuses a changed body", async () => {
     const s = setup(); const input = await body();

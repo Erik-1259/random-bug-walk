@@ -17,6 +17,7 @@ import {
   START_TIMEOUT_MS,
   StartError,
   criteriaOf,
+  isProvenCriterion,
   hostCalendarOpen,
   type BuilderEventIn,
   type OtfAvailability,
@@ -261,7 +262,7 @@ describe("the test-mode host config", () => {
       active_jobs: 0,
       queued_jobs: 0,
       max_queued: OTF_DEFAULTS.max_queued,
-      behaviors: OTF_HOST_IDS.filter(offered).flatMap((h) => criteriaOf(h).map((criterion_id) => ({ criterion_id, host_id: h, label: `Synthetic behavior ${criterion_id}`, example_phrases: ["an invented phrase"] }))),
+      behaviors: OTF_HOST_IDS.filter(offered).flatMap((h) => criteriaOf(h).filter(isProvenCriterion).map((criterion_id) => ({ criterion_id, host_id: h, label: `Synthetic behavior ${criterion_id}`, example_phrases: ["an invented phrase"], measured: true }))),
       hosts: OTF_HOST_IDS.map((h) => ({
         host_id: h,
         label: TEST_HOSTS[h].label,

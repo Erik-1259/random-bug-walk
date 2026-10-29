@@ -14,6 +14,7 @@ OTF builds on two hosts in v0. Each host offers its own criteria (`CRITERION_HOS
 | Umami | `date_time.time-zone-grouping` | the local runner's admission sequence ([docs/admission-rules.md](../admission-rules.md) ADM-02 to ADM-06 and ADM-08), with no separate confirmation round |
 
 - Umami OTF covers the time-zone grouping class only. Its sign-in, identity, permission and race areas are out of scope (`HOST_SCOPE_EXCLUDED`).
+- The contract also knows one **open criterion**, `open.task-report-behavior`: any other non-security behavior on the task-report host, graded by a rule the customer submits. Production neither offers nor accepts it until the `RBW_OTF_OPEN_BEHAVIORS` flag exists (section 8).
 - The customer describes a bug, and models on Nebius Token Factory race to build it. The RBW harness qualifies the result, and the customer downloads it.
 
 1. **Guided input.**
@@ -82,6 +83,7 @@ The client polls only: every `POLL_RUNNING_MS` (2 s) while a job runs, and every
 | `POST /jobs/{id}/stop` | — | 202 `OtfJobStatus`. The builder sees the stop on its next events post (at most 15 s). |
 | `GET /jobs/{id}/artifacts/{part}` | — | The bytes. The server re-checks sha256 and size before sending. `not_delivered` before delivery. |
 | `POST /jobs/{id}/validations` | — | 201 `OtfValidation`, or 200 with the open one. Delivered jobs only. |
+| `POST /classify` | `OtfClassifyRequest` | 200 `OtfClassification`. Open behaviors only (section 8.5); the server branch adds the route. |
 
 **Errors.** Every error is an `OtfErrorBody`. A response body that fails its own schema is answered `unavailable` instead, so no member outside the contract can leave a route.
 
@@ -95,7 +97,7 @@ In this order:
    - `designSecurityTopic` and `holdsCode` on every spec field, because the customer may edit the card.
    - Any hit answers `refused_topic`.
 3. Recompute `spec_sha256` with `specSha256`. A mismatch answers `invalid_spec`.
-4. Check that `host_id` equals `CRITERION_HOST[criterion_id]` and that no card field matches the host's `HOST_SCOPE_EXCLUDED`. Otherwise answer `invalid_spec`. Whether the host is offered right now is step 6a.
+4. Check that `host_id` equals `CRITERION_HOST[criterion_id]` and that no card field matches the host's `HOST_SCOPE_EXCLUDED`. Otherwise answer `invalid_spec`. Whether the host is offered right now is step 6a. Until `RBW_OTF_OPEN_BEHAVIORS` exists, a create naming the open criterion answers `invalid_spec` here; section 8.3 has the checks that replace this.
 5. Idempotency. The same `client_key` with the same `createSha256` replays the stored job (200). The same key with a different body answers `idempotency_conflict`.
 6. Check the caps, in this order: `unavailable` (OTF disabled or unconfigured, operator hold, or the VM-hours day cap), `busy` (active plus queued jobs at the limit), `daily_cap`, `spend_cap`.
 
@@ -300,7 +302,7 @@ Global caps: queued jobs 4, jobs per UTC day 30, total OTF model spend set by th
 | Umami placement (spec accept and lane board) | "The builder places the bug in one of Umami's date-grouped reports that its harness supports, chosen to match your card where it can. It may differ from the report your card describes." |
 | Umami calendar | "Umami is unavailable on UTC days 2–5." |
 | Catalog bug | Today's wording, unchanged: "pre-qualified catalog bug, re-verified for your request". |
-| Time estimate | Only when the host's `typical` is present. With `source: "otf_jobs"`: "Usually about {median_min} minutes; 9 in 10 finished within {p90_min} minutes ({samples} builds measured, last on {measured_on}). Your bug may take longer or not qualify." With `source: "development_attempts"`: "In development runs, a qualifying build attempt took about {median_min} minutes, and 9 in 10 took at most {p90_min} minutes ({samples} attempts, measured {measured_on}). Waiting, machine start-up and packaging add to that. Your bug may take longer or not qualify." When `typical` is null: "Build times for {host label} are not measured yet. The board shows each step as it runs." |
+| Time estimate | Only when the host's `typical` is present. With `source: "otf_jobs"`: "Usually about {median_min} minutes; 9 in 10 finished within {p90_min} minutes ({samples} builds measured, last on {measured_on}). Your bug may take longer or not qualify." With `source: "development_attempts"`: "In development runs, a qualifying build attempt took about {median_min} minutes, and 9 in 10 took at most {p90_min} minutes ({samples} attempts, measured {measured_on}). Waiting, machine start-up and packaging add to that. Your bug may take longer or not qualify." When `typical` is null: "Build times for {host label} are not measured yet. The board shows each step as it runs." An open behavior always shows the section 8.7 copy instead. |
 | Queued | "Another build is running. Yours is number {n} in line." The typical-time clause is added only when `typical` is present. |
 | Cold start (only when `cold_start_min` is set) | "Starting the Nebius machine usually takes about N minutes." |
 | Spend | "Model spend so far: $X (metered by the builder; an upper bound)." Shown apart from the Sandbox budget line. |
@@ -353,4 +355,118 @@ Global caps: queued jobs 4, jobs per UTC day 30, total OTF model spend set by th
 - Route directories are disjoint.
 - If an interface must change, it changes in W0 first.
 
+The open-behavior branches are listed in section 8.10.
+
 **Merge order:** W0, then W1, W2, W4 and W5 (in any order), then W3. Only W5 edits `package.json`, `pnpm-lock.yaml`, `next.config.ts` and `vercel.json`. Integration follows on a preview deployment, with the builder pointed at that preview.
+
+## 8. Open behaviors
+
+Open behaviors let a customer build a non-security behavior on the task-report host that none of the three proven criteria covers. A classifier model reads the customer's spec card and names the bug family, any proven match, and a grading rule. This section is the contract the server branch and the UI branch code against; neither edits `contract.ts`, `schemas.ts` or `canonical.ts`.
+
+### 8.1 The open criterion
+
+- `OTF_OPEN_CRITERION_ID` is `open.task-report-behavior`. It is the last entry of `OTF_CRITERION_IDS`, and `CRITERION_HOST` puts it on `task-report`. Umami has no open criterion.
+- `PROVEN_CRITERION_IDS` lists the three proven criteria, and `isProvenCriterion` tells them apart. `PROVEN_FAILURE_CODE` gives each its failure code, and `PROVEN_FAILURE_CODES` lists them:
+
+| Criterion | Host | Failure code |
+|---|---|---|
+| `concurrency.lost-acknowledged-change` | task-report | `acknowledged_completion_not_counted` |
+| `concurrency.stale-success-response` | task-report | `stale_success_response` |
+| `date_time.time-zone-grouping` | Umami | `local_day_counts_mismatch` |
+
+- The open behavior's picker label is `OTF_OPEN_LABEL`: "Another non-security behavior (not measured yet)".
+- `OTF_CONTRACT_VERSION` stays `otf/0`. Every addition is optional or applies to the open criterion only, so every body of a proven job validates exactly as before.
+
+### 8.2 The flag, and production at this commit
+
+- `RBW_OTF_OPEN_BEHAVIORS=1` turns open behaviors on. Unset (or any other value) means off. The server branch adds the flag; it does not exist yet.
+- While it is off (and at this commit), production behaves exactly as before:
+  - availability lists only the proven behaviors (`compose.ts` builds them from `PROVEN_CRITERION_IDS`);
+  - a create naming the open criterion answers `invalid_spec` (`cardInScope` refuses it);
+  - no claim hands out an open job, since none can be created;
+  - the classify route does not exist.
+- With the flag on, availability adds the open behavior on task-report (when that host is offered), with `label: OTF_OPEN_LABEL` and `measured: false`.
+
+### 8.3 The rule and the create body
+
+**`OtfOpenRule`** `{ family, observable_failure, failure_code }`:
+- `family`: one of `OTF_OPEN_FAMILIES` (`concurrency`, `date_time`, `data_handling`, `state_ui`);
+- `observable_failure`: 40 to 600 characters of plain text with no control characters (no line breaks): what a check observes through the app's routes;
+- `failure_code`: matches `OPEN_FAILURE_CODE_PATTERN` (`^[a-z][a-z0-9_]{2,47}$`) and is none of `PROVEN_FAILURE_CODES`.
+- The schema refuses unknown members, as every OTF schema does.
+
+**Create.** `OtfCreateJob` gains `rule` and `rule_sha256`. Both are required when `criterion_id` is the open criterion and forbidden otherwise (the `OtfCreateJob` schema enforces this).
+- `rule_sha256` is `ruleSha256(rule)`: sha256 of `ruleCanonical(rule)`, the canonical JSON of the three rule fields only.
+- `spec_sha256` stays over the spec only.
+- `createSha256` (the idempotency hash) includes `rule` (as `ruleCanonical`) and `rule_sha256` when set. A body without a rule hashes byte-identically to the hash before open behaviors existed, so stored `create_sha256` values and replays are unchanged.
+
+**Server checks for an open create** (the server branch; added to section 2.1 with the flag on):
+1. The schema check (step 1) covers the rule's shape and its presence.
+2. The safety checks (step 2) also run on `rule.observable_failure`: a security topic or code answers `refused_topic`.
+3. Production recomputes `rule_sha256` with `ruleSha256` next to the spec hash (step 3). A mismatch answers `invalid_spec`.
+4. The scope check (step 4) runs over the card fields and the rule text. The open criterion must be offered (flag on); otherwise `invalid_spec`.
+5. The job stores the rule (section 8.8), and every other step is unchanged.
+
+The classifier's answer is advisory. The customer may edit the rule before submitting, and production validates what is submitted, never the classifier's answer.
+
+### 8.4 Behaviors, claims, status and the certificate
+
+- **`OtfBehaviorOption.measured`** (required): `true` for the proven behaviors, `false` for the open one. The availability schema ties it to the criterion.
+- **Build claim.** A `BuildJob` gains `rule`, present only for open-criterion jobs and copied from the stored job. A proven `BuildJob` has no `rule`, so a builder deployed at the earlier contract keeps validating every claim, event post and result of a proven job.
+- **Status.** `OtfJobStatus` gains `rule`, present exactly when `criterion_id` is the open criterion (the server branch passes the stored rule through).
+- **Certificate.** `criterion` is `{ criterion_id, version: "1" | "open-1", failure_code }`, and the certificate gains `rule`.
+  - Proven criterion: `version: "1"` and no `rule`, which is today's exact shape.
+  - Open criterion: `version: "open-1"`, `rule` present, and `criterion.failure_code` equal to `rule.failure_code`.
+  - Only the task-report variant has an open form. The server branch also checks that the certificate's rule equals the job's stored rule before it stores a delivery, and passes the certificate through unchanged.
+
+### 8.5 The classify route
+
+`POST /api/factory/otf/classify` (`OTF_CLASSIFY_PATH`). Signed-in judges only, with the same session as `/api/factory/assist/bug-spec`.
+
+- **Request** `OtfClassifyRequest`: `{ sentence, spec: OtfSpecCard, host_id? }`. The sentence has the create limits (3 to 300 characters).
+- **Answer** `OtfClassification`:
+  - `family`: an `OTF_OPEN_FAMILIES` value, or null only on a refusal;
+  - `proven_criterion_id`: one of the proven criteria, or null;
+  - `buildable`: a list of `{ host_id, criterion_id }` pairs whose host matches `CRITERION_HOST`, each at most once;
+  - `rule`: an `OtfOpenRule`, or null;
+  - `refusal`: null, or `{ kind: "security" | "out_of_scope", reason }` with a reason of 1 to 300 characters;
+  - `model`: the classifier model.
+- **Invariants**, enforced by `validateOtf("OtfClassification", …)`:
+  - a refusal means `buildable` is empty, and no refusal means `family` is set;
+  - the open criterion in `buildable` means `rule` is non-null;
+  - a non-null `proven_criterion_id` means `buildable` includes it.
+- **Errors** use the shared `OtfErrorBody` and the codes in `OTF_CLASSIFY_ERRORS`: `signed_out` (no session), `invalid_request` (a malformed body), `refused_topic` (a security topic or code in the sentence or card, found by the existing safety checks before any model call), and `unavailable` (OTF or the flag off, the model unreachable, or an answer that fails its schema).
+
+### 8.6 Scope rules (the server branch implements them)
+
+- A security topic answers `refusal.kind = "security"` with `buildable` empty.
+- Umami stays time-zone grouping only. An Umami card about anything else answers `buildable: [{ host_id: "task-report", criterion_id: "open.task-report-behavior" }]` only when the behavior could plausibly exist in a task-and-report service; otherwise `refusal.kind = "out_of_scope"`.
+- A card that matches a proven criterion names it in `proven_criterion_id` and lists it in `buildable`; the open criterion may be listed beside it.
+- The answer is advisory: the customer may edit the rule, and production validates what is submitted, including the existing scope check over the rule text (section 8.3).
+
+### 8.7 Copy
+
+- **Time.** An open behavior always shows: "Build times for this kind of behavior are not measured yet. The board shows each step as it runs." (`OTF_OPEN_TIME_COPY`). It never shows a host's `typical`, development figures or any other time estimate, because none was measured for open behaviors.
+- **No success rate.** No copy claims a success rate, a qualification rate or a typical outcome for open behaviors.
+- The certificate copy of section 6 applies unchanged (an open job runs the task-report tier-B qualification); it adds the rule's family and failure code, and it does not call the rule a catalog criterion.
+- Every rule of section 6 still applies, including "never claim novelty".
+
+### 8.8 Storage
+
+`packages/web/otf-migrations/0002_otf_open.sql` adds a nullable `rule jsonb` column to `otf.jobs` (`ADD COLUMN IF NOT EXISTS`). It is additive and idempotent, and apply it after `0001_otf.sql`. Every proven job, including all existing rows, keeps `rule` null. `OtfNewJob` and `OtfJobRecord` carry an optional `rule`; the store reads and writes it in the server branch, and this commit leaves the store unchanged.
+
+### 8.9 What stays the same
+
+- The proven criteria, their availability, create checks, idempotency hashes, claims, events, results and certificates.
+- The builder routes, their auth and `OTF_CONTRACT_VERSION`.
+- Every existing UI label.
+
+### 8.10 Branches
+
+The contract above is on `otf/open-contract`. The two later branches do not edit `contract.ts`, `schemas.ts` or `canonical.ts`.
+
+| Branch | Owns |
+|---|---|
+| `otf/open-server` | the classify route (section 8.5) and its scope rules (8.6); open create validation (8.3) and storage (8.8); the `rule` in the claim payload (8.4); the `RBW_OTF_OPEN_BEHAVIORS` availability flag (8.2); status projection and certificate pass-through of the rule (8.4) |
+| `otf/open-ui` | the picker's open option; the classify call and its outcomes (proven match, open rule, refusal); the bug designer's "Build this as a custom bug" handoff; the time copy (8.7); the open certificate view |
+| builder (separate repository) | reads `BuildJob.rule` on open jobs, grades the added checks by `rule.failure_code`, and issues the `open-1` certificate |

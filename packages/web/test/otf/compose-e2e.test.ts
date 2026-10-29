@@ -13,7 +13,7 @@ import { loadOtfConfig, type OtfConfig } from "../../src/config.ts";
 import { factorySessionCookie } from "../../src/factory-server/session.ts";
 import { builderHeaders } from "../../src/otf/builder-auth.ts";
 import { postClaim, postEvents, postResult, type OtfBuilderDeps } from "../../src/otf/builder-handlers.ts";
-import { specSha256 } from "../../src/otf/canonical.ts";
+import { ruleSha256, specSha256 } from "../../src/otf/canonical.ts";
 import {
   OTF_LIFECYCLE,
   OtfNotConfiguredError,
@@ -28,6 +28,8 @@ import {
   CERTIFICATE_RUNNER,
   COPY_LIMITS,
   EXPECTED_CELLS,
+  OTF_OPEN_CRITERION_ID,
+  PROVEN_CRITERION_IDS,
   TOKEN_FACTORY_PROVIDER,
   type BuilderEventIn,
   type NebiusInstanceState,
@@ -326,6 +328,20 @@ describe("the composed OTF server", () => {
       expect(behavior.label.length).toBeGreaterThan(0);
       expect(behavior.example_phrases.length).toBeGreaterThan(0);
     }
+  });
+
+  it("neither offers nor accepts the open behavior: availability lists the three proven behaviors and an open create answers invalid_spec", async () => {
+    const w = world("2026-10-29T12:00:00.000Z");
+    const availability = await parsed("OtfAvailability", await availabilityRoute(customer("/api/factory/otf/availability")));
+    expect(availability.behaviors.map((behavior) => behavior.criterion_id)).toEqual([...PROVEN_CRITERION_IDS]);
+    expect(availability.behaviors.every((behavior) => behavior.measured)).toBe(true);
+    const rule = { family: "data_handling" as const, observable_failure: "The synthetic report total omits a task completed through the API.", failure_code: "synthetic_total_mismatch" };
+    const open = { ...(await createBody()), criterion_id: OTF_OPEN_CRITERION_ID, rule, rule_sha256: await ruleSha256(rule) };
+    const refused = await createRoute(customer("/api/factory/otf/jobs", open));
+    expect(refused.status).toBe(422);
+    expect(await errorCode(refused)).toBe("invalid_spec");
+    expect(await w.store.listJobs(["queued", "starting_builder", "building", "finished"])).toEqual([]);
+    expect(w.requestStart).not.toHaveBeenCalled();
   });
 
   it("fails closed: with a required variable unset every customer route answers unavailable", async () => {

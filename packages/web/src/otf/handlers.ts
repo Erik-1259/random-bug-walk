@@ -7,7 +7,7 @@ import { hasFactorySession } from "../factory-server/session.ts";
 import { createSha256, sha256Hex, specSha256 } from "./canonical.ts";
 import {
   BUILDER_LOST_MS, CALENDAR_MARGIN_MS, CRITERION_HOST, HOST_CALENDAR_BLOCKS, HOST_SCOPE_EXCLUDED,
-  OTF_CONTRACT_VERSION, OTF_ERROR_STATUS, OTF_HOST_DEFAULTS, OTF_HOST_IDS, OTF_HOST_LABELS, OTF_JOB_STATES,
+  OTF_CONTRACT_VERSION, OTF_ERROR_STATUS, OTF_HOST_DEFAULTS, OTF_OPEN_CRITERION_ID, OTF_HOST_IDS, OTF_HOST_LABELS, OTF_JOB_STATES,
   OTF_PARTS, PART_MAX_BYTES, POLL_FINISHED_MS, POLL_RUNNING_MS, SAFE_FILENAME, SPEND_SOURCE,
   START_TIMEOUT_MS, VALIDATION_WHERE, hostCalendarOpen,
   type BuilderState, type HostUnavailableReason, type LaneId, type OtfArtifact, type OtfBehaviorOption,
@@ -136,6 +136,8 @@ export function calendarReason(host: OtfHostId): string {
  * HOST_SCOPE_EXCLUDED topics. Whether the host is offered right now is step 6a, not this check.
  */
 export function cardInScope(config: Pick<OtfCustomerConfig, "behaviors">, input: OtfCreateJob): boolean {
+  // Open behaviors are not accepted until RBW_OTF_OPEN_BEHAVIORS exists (SPEC section 8).
+  if (input.criterion_id === OTF_OPEN_CRITERION_ID) return false;
   const host = CRITERION_HOST[input.criterion_id];
   if (input.host_id !== host) return false;
   if (!config.behaviors.some((behavior) => behavior.criterion_id === input.criterion_id && behavior.host_id === host)) return false;

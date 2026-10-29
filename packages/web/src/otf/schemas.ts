@@ -2,6 +2,8 @@
 // use it. Every object forbids unknown members, so nothing outside the contract can leave a route;
 // a response that fails its schema should be answered as `unavailable` instead (as the factory's
 // sendContract does). The enums come from contract.ts, so types and schemas share one source.
+// Cross-member rules (a host and its criterion, the open rule present exactly on the open criterion,
+// the classification invariants) are JSON-schema rules too, so they hold wherever a body is nested.
 import { Ajv2020 } from "ajv/dist/2020.js";
 import type { ErrorObject, ValidateFunction } from "ajv";
 import {
@@ -16,6 +18,7 @@ import {
   CELL_VALUES,
   CERTIFICATE_FORMAT,
   CERTIFICATE_RUNNER,
+  CLASSIFY_REASON_MAX_CHARS,
   COPY_LIMITS,
   FEEDBACK_LINE_MAX_CHARS,
   HOST_UNAVAILABLE_REASONS,
@@ -23,15 +26,23 @@ import {
   LANE_OUTCOMES,
   LANE_STAGES,
   MEDIA_TYPES,
+  OBSERVABLE_FAILURE_MAX_CHARS,
+  OBSERVABLE_FAILURE_MIN_CHARS,
+  OPEN_FAILURE_CODE_PATTERN,
+  OTF_CLASSIFY_REFUSAL_KINDS,
   OTF_CONTRACT_VERSION,
   OTF_CRITERION_IDS,
   OTF_ERROR_CODES,
   OTF_HOST_IDS,
   OTF_JOB_STATES,
+  OTF_OPEN_CRITERION_ID,
+  OTF_OPEN_FAMILIES,
   OTF_OUTCOMES,
   OTF_PARTS,
   PART_MAX_BYTES,
   PART_MAX_BYTES_BY_PART,
+  PROVEN_CRITERION_IDS,
+  PROVEN_FAILURE_CODES,
   REASON_MAX_CHARS,
   ROUND_KINDS,
   ROUND_RESULTS,
@@ -46,6 +57,7 @@ import {
   VALIDATION_STATES,
   VALIDATION_WHERE,
   criteriaOf,
+  isProvenCriterion,
   type BuilderEventIn,
   type ClaimReply,
   type ClaimRequest,
@@ -53,12 +65,15 @@ import {
   type EventsReply,
   type OtfAvailability,
   type OtfCertificate,
+  type OtfClassification,
+  type OtfClassifyRequest,
   type OtfCreateJob,
   type OtfCreateResponse,
   type OtfErrorBody,
   type OtfEvent,
   type OtfHostId,
   type OtfJobStatus,
+  type OtfOpenRule,
   type OtfSpecCard,
   type OtfValidation,
   type ResultPost,
@@ -117,8 +132,19 @@ const HOST_CRITERION_PAIR: Schema = {
     required: ["host_id", "criterion_id"],
   })),
 };
-/** An object schema that also requires the host and criterion to pair. */
-const paired = (schema: Schema): Schema => ({ ...schema, allOf: [HOST_CRITERION_PAIR] });
+/** An object schema that also requires the host and criterion to pair, plus any further rules (all must hold). */
+const paired = (schema: Schema, ...rules: Schema[]): Schema => ({ ...schema, allOf: [HOST_CRITERION_PAIR, ...rules] });
+/** The object's criterion_id is the open criterion (an if condition). */
+const IS_OPEN: Schema = { type: "object", properties: { criterion_id: { const: OTF_OPEN_CRITERION_ID } }, required: ["criterion_id"] };
+/** These members are present exactly when criterion_id is the open criterion (used inside allOf). */
+const presentWhenOpen = (members: readonly string[]): Schema => ({
+  if: IS_OPEN,
+  then: { type: "object", properties: Object.fromEntries(members.map((member) => [member, true])), required: [...members] },
+  else: { not: { anyOf: members.map((member) => ({ type: "object", properties: { [member]: true }, required: [member] })) } },
+});
+/** The proven criteria of one host, and its open ones. */
+const provenOf = (host: OtfHostId) => criteriaOf(host).filter(isProvenCriterion);
+const openOf = (host: OtfHostId) => criteriaOf(host).filter((id) => !isProvenCriterion(id));
 const OUTCOME = oneOf(OTF_OUTCOMES);
 const CELL = oneOf(CELL_VALUES);
 const CELL_PAIR = object({ original_suite: CELL, added_checks: CELL });
@@ -132,6 +158,15 @@ const SPEC_CARD = object({
   why_tests_miss: text(1200),
   checks_to_add: array(text(400), 6, 1),
   fix: text(1200),
+});
+
+/** Plain text: no control characters (C0, DEL or C1), so no line breaks either. */
+const plainText = (maxLength: number, minLength = 1): Schema => ({ ...text(maxLength, minLength), pattern: "^\\P{Cc}*$" });
+const FAILURE_CODE: Schema = { type: "string", pattern: OPEN_FAILURE_CODE_PATTERN, not: { enum: [...PROVEN_FAILURE_CODES] } };
+const OPEN_RULE = object({
+  family: oneOf(OTF_OPEN_FAMILIES),
+  observable_failure: plainText(OBSERVABLE_FAILURE_MAX_CHARS, OBSERVABLE_FAILURE_MIN_CHARS),
+  failure_code: FAILURE_CODE,
 });
 
 const LANE_FILES = object({ change: { type: "boolean" }, checks: count(1000), fix: { type: "boolean" } });
@@ -225,7 +260,10 @@ const CERT_COMMON = {
   builder_revision: TOKEN(),
   received: nullable(object({ at: TIME, sha256_verified: literal(true) })),
 };
-const criterionOf = (host: OtfHostId): Schema => object({ criterion_id: oneOf(criteriaOf(host)), version: literal("1"), failure_code: TOKEN() });
+const provenCriterion = (host: OtfHostId): Schema => object({ criterion_id: oneOf(provenOf(host)), version: literal("1"), failure_code: TOKEN() });
+/** The open criterion: version open-1, and failure_code equal to the certificate's rule.failure_code. */
+const openCriterion = (host: OtfHostId): Schema =>
+  object({ criterion_id: oneOf(openOf(host)), version: literal("open-1"), failure_code: { ...FAILURE_CODE, const: { $data: "2/rule/failure_code" } } });
 
 const TIER_B_HARNESS = object({
   tier: literal("B"),
@@ -258,20 +296,22 @@ const ADMISSION_HARNESS = object({
   harness_sha256: SHA256,
 });
 
-/** One variant per host: the host decides the qualification and harness shapes. */
+/**
+ * One proven variant per host (the host decides the qualification and harness shapes, and a proven
+ * certificate has no rule), plus an open variant for each host with an open criterion, which
+ * carries the rule.
+ */
+const certificateVariants = (host: OtfHostId, shapes: { qualification: Schema; harness: Schema }): Schema[] => [
+  object({ ...CERT_COMMON, host_id: literal(host), criterion: provenCriterion(host), ...shapes }),
+  ...(openOf(host).length === 0 ? [] : [object({ ...CERT_COMMON, host_id: literal(host), criterion: openCriterion(host), rule: OPEN_RULE, ...shapes })]),
+];
 const CERTIFICATE: Schema = {
   oneOf: [
-    object({
-      ...CERT_COMMON,
-      host_id: literal("task-report"),
-      criterion: criterionOf("task-report"),
+    ...certificateVariants("task-report", {
       qualification: object({ cells: SIX_CELLS, confirmation_cells: SIX_CELLS, admission: { type: "null" }, result: literal("qualified") }),
       harness: TIER_B_HARNESS,
     }),
-    object({
-      ...CERT_COMMON,
-      host_id: literal("umami"),
-      criterion: criterionOf("umami"),
+    ...certificateVariants("umami", {
       qualification: object({ cells: SIX_CELLS, confirmation_cells: nullable(SIX_CELLS), admission: QUALIFIED_ADMISSION, result: literal("qualified") }),
       harness: ADMISSION_HARNESS,
     }),
@@ -300,6 +340,7 @@ const JOB_STATUS = paired(object({
   criterion_id: CRITERION_ID,
   spec: SPEC_CARD,
   spec_sha256: SHA256,
+  rule: OPEN_RULE,
   deadline_at: nullable(TIME),
   elapsed_ms: count(),
   lanes: array(LANE_VIEW, LANE_IDS.length),
@@ -312,7 +353,7 @@ const JOB_STATUS = paired(object({
   certificate: nullable(CERTIFICATE),
   validation: nullable(VALIDATION),
   catalog_request_id: nullable(UUID),
-}));
+}, ["rule"]), presentWhenOpen(["rule"]));
 
 const SPEC_LANE = object({ lane_id: LANE_ID, model: TOKEN(), model_label: LABEL, price_in_usd_per_m: USD, price_out_usd_per_m: USD });
 const BUILD_JOB = paired(object({
@@ -323,6 +364,7 @@ const BUILD_JOB = paired(object({
   spec: SPEC_CARD,
   spec_sha256: SHA256,
   sentence: text(SENTENCE_MAX_CHARS, SENTENCE_MIN_CHARS),
+  rule: OPEN_RULE,
   lanes: array(SPEC_LANE, LANE_IDS.length, 1),
   limits: object({
     max_rounds: literal(3),
@@ -333,7 +375,7 @@ const BUILD_JOB = paired(object({
     confirm_rounds: oneOf([0, 1]),
     round_min_remaining_ms: count(3_600_000),
   }),
-}));
+}, ["rule"]), presentWhenOpen(["rule"]));
 const VALIDATE_JOB = object({
   kind: literal("validate"),
   job_id: UUID,
@@ -383,8 +425,48 @@ const HOST_AVAILABILITY = object({
   typical: nullable(TYPICAL),
 });
 
+/** A behavior option: measured exactly when its criterion is proven. */
+const BEHAVIOR = paired(
+  object({ criterion_id: CRITERION_ID, host_id: HOST_ID, label: LABEL, example_phrases: array(text(200), 10), measured: { type: "boolean" } }),
+  { if: IS_OPEN, then: { type: "object", properties: { measured: { const: false } } }, else: { type: "object", properties: { measured: { const: true } } } },
+);
+
+/** The object's member `key` is not null (an if condition). */
+const isSet = (key: string): Schema => ({ type: "object", properties: { [key]: { not: { type: "null" } } }, required: [key] });
+/** An array that holds a buildable entry for this criterion. */
+const listsCriterion = (criterion: string): Schema => ({ type: "array", contains: { type: "object", properties: { criterion_id: { const: criterion } }, required: ["criterion_id"] } });
+const CLASSIFICATION: Schema = {
+  ...object({
+    family: nullable(oneOf(OTF_OPEN_FAMILIES)),
+    proven_criterion_id: nullable(oneOf(PROVEN_CRITERION_IDS)),
+    buildable: { ...array(paired(object({ host_id: HOST_ID, criterion_id: CRITERION_ID })), OTF_CRITERION_IDS.length), uniqueItems: true },
+    rule: nullable(OPEN_RULE),
+    refusal: nullable(object({ kind: oneOf(OTF_CLASSIFY_REFUSAL_KINDS), reason: text(CLASSIFY_REASON_MAX_CHARS) })),
+    model: TOKEN(),
+  }),
+  allOf: [
+    // A refusal means nothing is buildable; no refusal means a family.
+    {
+      if: isSet("refusal"),
+      then: { type: "object", properties: { buildable: { type: "array", maxItems: 0 } } },
+      else: { type: "object", properties: { family: { type: "string" } } },
+    },
+    // The open criterion in buildable means a rule.
+    {
+      if: { type: "object", properties: { buildable: listsCriterion(OTF_OPEN_CRITERION_ID) }, required: ["buildable"] },
+      then: { type: "object", properties: { rule: { type: "object" } } },
+    },
+    // A proven match is buildable.
+    ...PROVEN_CRITERION_IDS.map((criterion) => ({
+      if: { type: "object", properties: { proven_criterion_id: { const: criterion } }, required: ["proven_criterion_id"] },
+      then: { type: "object", properties: { buildable: listsCriterion(criterion) } },
+    })),
+  ],
+};
+
 const SCHEMAS = {
   OtfSpecCard: SPEC_CARD,
+  OtfOpenRule: OPEN_RULE,
   OtfCreateJob: paired(
     object(
       {
@@ -395,10 +477,15 @@ const SCHEMAS = {
         spec: SPEC_CARD,
         spec_sha256: SHA256,
         catalog_request_id: UUID,
+        rule: OPEN_RULE,
+        rule_sha256: SHA256,
       },
-      ["catalog_request_id"],
+      ["catalog_request_id", "rule", "rule_sha256"],
     ),
+    presentWhenOpen(["rule", "rule_sha256"]),
   ),
+  OtfClassifyRequest: object({ sentence: text(SENTENCE_MAX_CHARS, SENTENCE_MIN_CHARS), spec: SPEC_CARD, host_id: HOST_ID }, ["host_id"]),
+  OtfClassification: CLASSIFICATION,
   OtfCreateResponse: object({ job_id: UUID, status: JOB_STATUS }),
   OtfJobStatus: JOB_STATUS,
   OtfAvailability: object({
@@ -407,10 +494,7 @@ const SCHEMAS = {
     active_jobs: count(1000),
     queued_jobs: count(1000),
     max_queued: count(1000),
-    behaviors: array(
-      paired(object({ criterion_id: CRITERION_ID, host_id: HOST_ID, label: LABEL, example_phrases: array(text(200), 10) })),
-      OTF_CRITERION_IDS.length,
-    ),
+    behaviors: array(BEHAVIOR, OTF_CRITERION_IDS.length),
     hosts: { ...array(HOST_AVAILABILITY, OTF_HOST_IDS.length, 1), ...onceEachBy("host_id", OTF_HOST_IDS) },
     cold_start_min: nullable({ type: "number", minimum: 0, maximum: 600 }),
     spend_left_microusd: count(),
@@ -459,7 +543,10 @@ export type OtfSchemaName = keyof typeof SCHEMAS;
 /** The TypeScript type each schema checks. */
 export interface OtfBodies {
   OtfSpecCard: OtfSpecCard;
+  OtfOpenRule: OtfOpenRule;
   OtfCreateJob: OtfCreateJob;
+  OtfClassifyRequest: OtfClassifyRequest;
+  OtfClassification: OtfClassification;
   OtfCreateResponse: OtfCreateResponse;
   OtfJobStatus: OtfJobStatus;
   OtfAvailability: OtfAvailability;
@@ -479,7 +566,8 @@ export interface OtfBodies {
   StopIntentReply: StopIntentReply;
 }
 
-const ajv = new Ajv2020({ strict: true, allErrors: true, unicodeRegExp: true });
+// $data: an open certificate's criterion.failure_code must equal its rule.failure_code.
+const ajv = new Ajv2020({ strict: true, allErrors: true, unicodeRegExp: true, $data: true });
 const validators = new Map<string, ValidateFunction>(Object.entries(SCHEMAS).map(([name, schema]) => [name, ajv.compile(schema)]));
 
 function messages(errors: ErrorObject[] | null | undefined): string[] {
