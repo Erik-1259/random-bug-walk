@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { factorySessionCookie } from "../../src/factory-server/session.ts";
 import { sha256Hex, specSha256 } from "../../src/otf/canonical.ts";
 import { BUILDER_LOST_MS, START_TIMEOUT_MS, TYPICAL_BASIS, StartError, type OtfCreateJob, type OtfSpecCard } from "../../src/otf/contract.ts";
-import { createCustomerHandlers, setOtfCustomerDependencies, type OtfCustomerDependencies } from "../../src/otf/handlers.ts";
+import { createCustomerHandlers, setOtfCustomerDependencies, type OtfCustomerDependencies, type OtfStartResult } from "../../src/otf/handlers.ts";
 import { parseOtf, type OtfBodies, type OtfSchemaName } from "../../src/otf/schemas.ts";
 import { FAKE_AT, FakeOtfStore, FakeVmPower } from "./customer-fakes.ts";
 import { GET as availabilityRoute } from "../../app/api/factory/otf/availability/route.ts";
@@ -62,11 +62,32 @@ function setup() {
       return store.updateJob(expected.job_id, ["building"], { state: "finished", outcome: finish.outcome, reason: finish.reason, finished_at: finish.at });
     },
     lifecycle: {
-      observe: () => Promise.resolve(store.power.state),
-      ensureStarted: ({ at }) => store.withPowerLock(async (current) => {
-        if (current.state === "running" || current.state === "starting" || current.state === "stopping") return { patch: null, log: [], result: { preset: "synthetic-preset" } };
-        await power.start();
-        return { patch: { state: "starting", since: at, last_start_at: at }, log: [], result: { preset: "synthetic-preset" } };
+      // These effects are scripted fixtures, not a replacement for W5's lifecycle tests.
+      builderState: (current) => current.state,
+      runWatchdog: () => Promise.resolve({ action: "none", reason: null, timed_out: 0 }),
+      requestStart: (input) => store.withPowerLock<OtfStartResult>(async (current) => {
+        if (input.power === null) return { patch: null, log: [], result: { kind: "unavailable", block: "unconfigured" } };
+        if (current.state === "running") return { patch: null, log: [], result: { kind: "running" } };
+        if (current.state === "starting") return { patch: null, log: [], result: { kind: "starting" } };
+        if (current.state === "stopping") return { patch: null, log: [], result: { kind: "deferred" } };
+        const at = input.now().toISOString();
+        try {
+          await input.power.start();
+          for (const job of await store.listJobs(["starting_builder"])) {
+            await store.appendJobEvent(job.job_id, { type: "builder_starting", lane_id: null,
+              data: { preset: "synthetic-preset", requested_at: at } }, at);
+          }
+          return { patch: { state: "starting", since: at, last_start_at: at }, log: [], result: { kind: "started", requested_at: at } };
+        } catch (error) {
+          if (!(error instanceof StartError)) throw error;
+          for (const job of await store.listJobs(["starting_builder"])) {
+            await store.updateJob(job.job_id, ["starting_builder"], { state: "finished", outcome: "builder_start_failed", reason: error.reason, finished_at: at });
+            await store.appendJobEvent(job.job_id, { type: "builder_start_failed", lane_id: null, data: { reason: error.reason } }, at);
+            await store.appendJobEvent(job.job_id, { type: "job_finished", lane_id: null,
+              data: { outcome: "builder_start_failed", reason: error.reason } }, at);
+          }
+          return { patch: null, log: [], result: { kind: "failed", reason: error.reason } };
+        }
       }),
     },
   };
@@ -80,11 +101,15 @@ describe("OTF customer routes", () => {
   });
   it("starts a stopped builder once and preserves idempotent identity", async () => {
     const s = setup(); const input = await body();
+    const start = vi.spyOn(s.deps.lifecycle, "requestStart");
     const first = await s.handlers.create(request(input)); const firstBody = await parsedResponse("OtfCreateResponse", first);
     const repeated = await s.handlers.create(request(input));
     expect(first.status).toBe(201); expect(firstBody.status.state).toBe("starting_builder");
     expect(repeated.status).toBe(200); expect((await parsedResponse("OtfCreateResponse", repeated)).job_id).toBe(firstBody.job_id);
     expect(s.store.jobs.size).toBe(1); expect(s.power.startCalls).toBe(1);
+    expect(start).toHaveBeenCalledOnce();
+    expect(firstBody.status.events.filter((event) => event.type === "builder_starting")).toHaveLength(1);
+    expect(await requiredElement(start.mock.results, 0).value).toEqual({ kind: "started", requested_at: FAKE_AT });
   });
   it("rejects edited code before scope, storage or power", async () => {
     const s = setup(); const spec = { ...SPEC, fix: "const syntheticValue = 1;" };
@@ -168,21 +193,35 @@ describe("OTF customer routes", () => {
     expect(results.map((r) => r.status).sort()).toEqual([201, 409]); expect(s.store.jobs.size).toBe(1); expect(s.power.startCalls).toBe(1);
   });
   it("queues concurrent creates while only one power start is issued", async () => {
-    const s = setup();
+    const s = setup(); const start = vi.spyOn(s.deps.lifecycle, "requestStart");
     const results = await Promise.all([s.handlers.create(request(await body())), s.handlers.create(request(await body({ client_key: "00000000-0000-4000-8000-000000000002" })))]);
     expect(results.map((r) => r.status)).toEqual([201, 201]); expect(s.power.startCalls).toBe(1);
     expect((await Promise.all(results.map((r) => parsedResponse("OtfCreateResponse", r)))).map((r) => r.status.queue_position).sort()).toEqual([1, 2]);
+    expect(start).toHaveBeenCalledTimes(2);
+    const outcomes = await Promise.all(start.mock.results.map((call) => {
+      if (call.type !== "return") throw new Error("Synthetic start did not return a result");
+      return call.value;
+    }));
+    expect(outcomes.map((result) => result.kind)).toEqual(["started", "starting"]);
   });
   it("queues for a fresh running builder without starting it", async () => {
     const s = setup(); s.store.power.state = "running";
+    const start = vi.spyOn(s.deps.lifecycle, "requestStart").mockImplementation(() => {
+      expect(s.store.jobs.size).toBe(1);
+      return Promise.resolve({ kind: "running" });
+    });
     await s.store.recordBuilderSeen({ builder_id: "synthetic-builder", builder_revision: "synthetic-revision", boot_id: "synthetic-boot", booted_at: FAKE_AT }, FAKE_AT);
     const response = await s.handlers.create(request(await body()));
     expect((await parsedResponse("OtfCreateResponse", response)).status.state).toBe("queued"); expect(s.power.startCalls).toBe(0);
+    expect(start).toHaveBeenCalledOnce();
   });
   it("waits during stopping instead of requesting another power start", async () => {
     const s = setup(); s.store.power.state = "stopping";
+    const start = vi.spyOn(s.deps.lifecycle, "requestStart");
     const response = await s.handlers.create(request(await body()));
     expect((await parsedResponse("OtfCreateResponse", response)).status.state).toBe("starting_builder"); expect(s.power.startCalls).toBe(0);
+    expect(start).toHaveBeenCalledOnce();
+    expect(await requiredElement(start.mock.results, 0).value).toEqual({ kind: "deferred" });
   });
   it.each(["capacity", "api_error"] as const)("records %s start failure without exposing the provider error", async (reason) => {
     const s = setup(); s.power.startError = new StartError(reason, "synthetic-provider-detail");
@@ -190,14 +229,23 @@ describe("OTF customer routes", () => {
     expect(response.status).toBe(201); expect(value.status).toMatchObject({ state: "finished", outcome: "builder_start_failed", reason });
     expect(JSON.stringify(value)).not.toContain("synthetic-provider-detail");
     expect(value.status.events.map((e: { type: string }) => e.type)).toContain("builder_start_failed");
+    expect(value.status.events.filter((event) => event.type === "builder_start_failed")).toHaveLength(1);
+    expect(value.status.events.filter((event) => event.type === "job_finished")).toHaveLength(1);
   });
   it("finishes an unclaimed start at the eight-minute boundary on read", async () => {
     const s = setup(); const created = await parsedResponse("OtfCreateResponse", (await s.handlers.create(request(await body()))));
     s.advance(START_TIMEOUT_MS - 1);
     expect((await parsedResponse("OtfJobStatus", (await s.handlers.status(request(), created.job_id)))).state).toBe("starting_builder");
     s.advance(1);
+    const watchdog = vi.spyOn(s.deps.lifecycle, "runWatchdog").mockImplementationOnce(async (input) => {
+      const at = input.now().toISOString();
+      await input.store.updateJob(created.job_id, ["starting_builder"], { state: "finished", outcome: "builder_start_failed", reason: "timeout", finished_at: at });
+      await input.store.appendJobEvent(created.job_id, { type: "builder_start_failed", lane_id: null, data: { reason: "timeout" } }, at);
+      await input.store.appendJobEvent(created.job_id, { type: "job_finished", lane_id: null, data: { outcome: "builder_start_failed", reason: "timeout" } }, at);
+      return { action: "none", reason: "synthetic-start-timeout", timed_out: 1 };
+    });
     expect(await parsedResponse("OtfJobStatus", (await s.handlers.status(request(), created.job_id)))).toMatchObject({ state: "finished", outcome: "builder_start_failed", reason: "timeout" });
-    expect(s.power.startCalls).toBe(1);
+    expect(s.power.startCalls).toBe(1); expect(watchdog).toHaveBeenCalledOnce();
   });
   it("uses the last builder post and the 180-second boundary, not lease expiry", async () => {
     const s = setup(); const created = await parsedResponse("OtfCreateResponse", (await s.handlers.create(request(await body()))));
@@ -361,6 +409,86 @@ describe("OTF customer routes", () => {
     expect(response.status).toBe(202);
     expect(await parsedResponse("OtfJobStatus", response)).toMatchObject({ state: "finished", outcome: "cancelled" });
     expect(requiredValue(s.store.jobs, created.job_id).state).toBe("finished");
+  });
+
+  it.each(["unconfigured", "hold", "day_cap", "start_backoff"] as const)("returns unavailable for W5 start block %s without local power effects", async (block) => {
+    const s = setup();
+    const start = vi.spyOn(s.deps.lifecycle, "requestStart").mockResolvedValue({ kind: "unavailable", block });
+    const response = await s.handlers.create(request(await body()));
+    expect(response.status).toBe(503);
+    expect((await parsedResponse("OtfErrorBody", response)).error.code).toBe("unavailable");
+    expect(start).toHaveBeenCalledOnce(); expect(s.store.jobs.size).toBe(1); expect(s.power.startCalls).toBe(0);
+    expect([...s.store.events.values()].flat().map((event) => event.type)).toEqual(["job_queued"]);
+  });
+  it("leaves a waiting start unchanged when W5 has not timed it out", async () => {
+    const s = setup(); const created = await parsedResponse("OtfCreateResponse", await s.handlers.create(request(await body())));
+    s.advance(START_TIMEOUT_MS + 1);
+    const watchdog = vi.spyOn(s.deps.lifecycle, "runWatchdog");
+    const value = await parsedResponse("OtfJobStatus", await s.handlers.status(request(), created.job_id));
+    expect(value.state).toBe("starting_builder"); expect(value.outcome).toBeNull();
+    expect(watchdog).toHaveBeenCalledOnce();
+    expect(value.events.some((event) => event.type === "builder_start_failed" || event.type === "job_finished")).toBe(false);
+  });
+  it.each(["status", "availability"] as const)("runs W5 watchdog before loading %s state", async (method) => {
+    const s = setup(); const created = await parsedResponse("OtfCreateResponse", await s.handlers.create(request(await body())));
+    const watchdog = vi.spyOn(s.deps.lifecycle, "runWatchdog").mockImplementationOnce(async (input) => {
+      await input.store.updateJob(created.job_id, ["starting_builder"], { state: "finished", outcome: "builder_start_failed", reason: "timeout", finished_at: input.now().toISOString() });
+      s.store.power.state = "stopped";
+      return { action: "none", reason: "synthetic-timeout-effect", timed_out: 1 };
+    });
+    const getJob = vi.spyOn(s.store, "getJob"); const getPower = vi.spyOn(s.store, "getPower");
+    const response = await s.handlers[method](request(), created.job_id);
+    expect(response.status).toBe(200); expect(watchdog).toHaveBeenCalledOnce();
+    const watchdogOrder = requiredElement(watchdog.mock.invocationCallOrder, 0);
+    expect(watchdogOrder).toBeLessThan(requiredElement(getPower.mock.invocationCallOrder, 0));
+    if (method === "status") {
+      expect(watchdogOrder).toBeLessThan(requiredElement(getJob.mock.invocationCallOrder, 0));
+      expect(await parsedResponse("OtfJobStatus", response)).toMatchObject({ state: "finished", outcome: "builder_start_failed", builder: "stopped" });
+    } else {
+      expect(await parsedResponse("OtfAvailability", response)).toMatchObject({ queued_jobs: 0, builder: "stopped" });
+    }
+  });
+  it("uses W5 builder state when a fresh heartbeat overrides the stored state", async () => {
+    const s = setup(); s.store.power.state = "stopped";
+    await s.store.recordBuilderSeen({ builder_id: "synthetic-builder", builder_revision: "synthetic-revision", boot_id: "synthetic-boot", booted_at: FAKE_AT }, FAKE_AT);
+    const state = vi.spyOn(s.deps.lifecycle, "builderState").mockReturnValue("running");
+    const start = vi.spyOn(s.deps.lifecycle, "requestStart").mockResolvedValue({ kind: "running" });
+    const response = await s.handlers.create(request(await body()));
+    expect((await parsedResponse("OtfCreateResponse", response)).status).toMatchObject({ state: "queued", builder: "running" });
+    expect(state).toHaveBeenCalledWith(expect.objectContaining({ state: "stopped" }), FAKE_AT, new Date(FAKE_AT));
+    expect(start).toHaveBeenCalledOnce(); expect(s.power.startCalls).toBe(0);
+  });
+  it("fails closed with a null power port before any insertion or lifecycle call", async () => {
+    const s = setup(); s.deps.power = null;
+    const start = vi.spyOn(s.deps.lifecycle, "requestStart"); const watchdog = vi.spyOn(s.deps.lifecycle, "runWatchdog");
+    for (const method of ["availability", "create", "status", "stop", "artifact", "validate"] as const) {
+      const response = await s.handlers[method](request(await body()), CLIENT, "agent");
+      expect(response.status).toBe(503); expect((await parsedResponse("OtfErrorBody", response)).error.code).toBe("unavailable");
+    }
+    expect(s.store.jobs.size).toBe(0); expect(s.power.startCalls).toBe(0);
+    expect(start).not.toHaveBeenCalled(); expect(watchdog).not.toHaveBeenCalled();
+  });
+
+  it("counts the open VM interval before availability and admission", async () => {
+    const s = setup(); s.store.power.running_since = FAKE_AT; s.store.power.vm_seconds_today = 0;
+    s.advance(12 * 3600_000);
+    expect((await parsedResponse("OtfAvailability", await s.handlers.availability(request()))).enabled).toBe(false);
+    const response = await s.handlers.create(request(await body()));
+    expect(response.status).toBe(503); expect((await parsedResponse("OtfErrorBody", response)).error.code).toBe("unavailable");
+    expect(s.store.jobs.size).toBe(0); expect(s.power.startCalls).toBe(0);
+  });
+  it("counts only today's open VM interval across midnight and ignores yesterday's closed counter", async () => {
+    const s = setup(); s.deps.config.vmHoursPerDay = 2;
+    s.store.power.running_since = "2026-01-01T23:30:00.000Z";
+    s.store.power.vm_day = "2026-01-01"; s.store.power.vm_seconds_today = 12 * 3600;
+    s.advance(25 * 3600_000);
+    expect((await parsedResponse("OtfAvailability", await s.handlers.availability(request()))).enabled).toBe(true);
+    expect((await s.handlers.create(request(await body()))).status).toBe(201);
+    s.advance(3600_000);
+    expect((await parsedResponse("OtfAvailability", await s.handlers.availability(request()))).enabled).toBe(false);
+    const response = await s.handlers.create(request(await body({ client_key: "00000000-0000-4000-8000-000000000002" })));
+    expect(response.status).toBe(503); expect((await parsedResponse("OtfErrorBody", response)).error.code).toBe("unavailable");
+    expect(s.store.jobs.size).toBe(1);
   });
 
 });
