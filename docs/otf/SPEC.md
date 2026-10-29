@@ -396,7 +396,7 @@ Open behaviors let a customer build a non-security behavior on the task-report h
 - `observable_failure`: 40 to 600 characters of plain text: what a check observes through the app's routes.
   - The limits (`OBSERVABLE_FAILURE_MIN_CHARS`, `OBSERVABLE_FAILURE_MAX_CHARS`) count Unicode code points, as Ajv does. A UI must count the same way (`[...text].length`), not in UTF-16 code units (`text.length` or an input's `maxlength`), where an emoji counts twice.
   - Plain text refuses control characters (`\p{Cc}`: C0, DEL and C1, so tab, line feed, carriage return and U+0085), line and paragraph separators (`\p{Zl}` U+2028, `\p{Zp}` U+2029) and format characters (`\p{Cf}`: bidi controls such as U+202E, zero-width characters such as U+200B, U+200D and U+FEFF). Everything else is accepted.
-- `failure_code`: matches `OPEN_FAILURE_CODE_PATTERN` (`^[a-z][a-z0-9_]{2,47}$`) and is none of `PROVEN_FAILURE_CODES`.
+- `failure_code`: matches `OPEN_FAILURE_CODE_PATTERN` (`^[a-z][a-z0-9_]{2,47}$`) and is none of `PROVEN_FAILURE_CODES` or `OTF_RESERVED_FAILURE_CODES` (`control_failed`, `detection_inconsistent`: the builder's harness uses these as its own markers, so a rule reporting one could never qualify).
 - The schema refuses unknown members, as every OTF schema does.
 
 **Create.** `OtfCreateJob` gains `rule` and `rule_sha256`. Both are required when `criterion_id` is the open criterion and forbidden otherwise (the `OtfCreateJob` schema enforces this).

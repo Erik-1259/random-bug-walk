@@ -67,6 +67,11 @@ export const PROVEN_FAILURE_CODES = [
   "stale_success_response",
   "local_day_counts_mismatch",
 ] as const;
+/**
+ * Codes the builder's harness uses as its own markers when it judges a round. A rule reporting one
+ * could never qualify, so an open rule may not use them either.
+ */
+export const OTF_RESERVED_FAILURE_CODES = ["control_failed", "detection_inconsistent"] as const;
 
 /** True for the three proven criteria, false for the open one. */
 export function isProvenCriterion(id: OtfCriterionId): id is ProvenCriterionId {
@@ -89,7 +94,7 @@ export type OtfOpenFamily = (typeof OTF_OPEN_FAMILIES)[number];
  */
 export const OBSERVABLE_FAILURE_MIN_CHARS = 40;
 export const OBSERVABLE_FAILURE_MAX_CHARS = 600;
-/** An open rule's failure_code (JSON-schema pattern source); it also may not be one of PROVEN_FAILURE_CODES. */
+/** An open rule's failure_code (JSON-schema pattern source); it also may not be one of PROVEN_FAILURE_CODES or OTF_RESERVED_FAILURE_CODES. */
 export const OPEN_FAILURE_CODE_PATTERN = "^[a-z][a-z0-9_]{2,47}$";
 
 /**
@@ -104,7 +109,7 @@ export interface OtfOpenRule {
    * line or paragraph separator, or format characters): what a check observes through the app's routes.
    */
   observable_failure: string;
-  /** Matches OPEN_FAILURE_CODE_PATTERN and is none of PROVEN_FAILURE_CODES. */
+  /** Matches OPEN_FAILURE_CODE_PATTERN and is none of PROVEN_FAILURE_CODES or OTF_RESERVED_FAILURE_CODES. */
   failure_code: string;
 }
 

@@ -42,6 +42,7 @@ import {
   PART_MAX_BYTES,
   PART_MAX_BYTES_BY_PART,
   PROVEN_CRITERION_IDS,
+  OTF_RESERVED_FAILURE_CODES,
   PROVEN_FAILURE_CODES,
   REASON_MAX_CHARS,
   ROUND_KINDS,
@@ -166,7 +167,7 @@ const SPEC_CARD = object({
  * (\p{Cf}: bidi controls such as U+202E, zero-width characters such as U+200B, U+200D and U+FEFF).
  */
 const plainText = (maxLength: number, minLength = 1): Schema => ({ ...text(maxLength, minLength), pattern: "^[^\\p{Cc}\\p{Zl}\\p{Zp}\\p{Cf}]*$" });
-const FAILURE_CODE: Schema = { type: "string", pattern: OPEN_FAILURE_CODE_PATTERN, not: { enum: [...PROVEN_FAILURE_CODES] } };
+const FAILURE_CODE: Schema = { type: "string", pattern: OPEN_FAILURE_CODE_PATTERN, not: { enum: [...PROVEN_FAILURE_CODES, ...OTF_RESERVED_FAILURE_CODES] } };
 const OPEN_RULE = object({
   family: oneOf(OTF_OPEN_FAMILIES),
   observable_failure: plainText(OBSERVABLE_FAILURE_MAX_CHARS, OBSERVABLE_FAILURE_MIN_CHARS),

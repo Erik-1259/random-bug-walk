@@ -21,6 +21,7 @@ import {
   OTF_OPEN_TIME_COPY,
   PROVEN_CRITERION_IDS,
   PROVEN_FAILURE_CODE,
+  OTF_RESERVED_FAILURE_CODES,
   PROVEN_FAILURE_CODES,
   isProvenCriterion,
   OTF_HOST_IDS,
@@ -596,6 +597,10 @@ describe("open behaviors: the rule", () => {
       expect(validateOtf("OtfOpenRule", { ...RULE, failure_code })).not.toEqual([]);
     }
     for (const failure_code of PROVEN_FAILURE_CODES) expect(validateOtf("OtfOpenRule", { ...RULE, failure_code })).not.toEqual([]);
+  });
+  it("refuses the failure codes the builder's harness reserves for its own markers", () => {
+    expect([...OTF_RESERVED_FAILURE_CODES]).toEqual(["control_failed", "detection_inconsistent"]);
+    for (const failure_code of OTF_RESERVED_FAILURE_CODES) expect(validateOtf("OtfOpenRule", { ...RULE, failure_code })).not.toEqual([]);
   });
 });
 
