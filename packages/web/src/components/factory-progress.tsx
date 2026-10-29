@@ -1,7 +1,7 @@
 "use client";
 
 import type { FactoryCase, RequestStatus, ValidationRun } from "../factory/client.ts";
-import { describeEvent, describeStopReason, formatClock, formatDuration, formatExactUsd, formatOffset, formatUsd } from "../factory/format.ts";
+import { CALENDAR_HINT, describeEvent, describeStopReason, formatClock, formatDuration, formatExactUsd, formatOffset, formatUsd } from "../factory/format.ts";
 
 const OUTCOMES: Record<string, string> = {
   fulfilled: "Fulfilled",
@@ -43,7 +43,7 @@ function PackageLinks({ item }: { item: FactoryCase }) {
 }
 
 /** Contract bug-request/1, revision 2: render service facts; never infer qualification or completion. */
-export function FactoryProgress({ status, busy, onStop, onValidate, validation = null, disabled = false, polling = false, stopPending = false, labels = NO_LABELS }: {
+export function FactoryProgress({ status, busy, onStop, onValidate, validation = null, disabled = false, polling = false, stopPending = false, labels = NO_LABELS, closedHosts = [] }: {
   status: RequestStatus | null;
   busy: boolean;
   polling?: boolean;
@@ -53,6 +53,8 @@ export function FactoryProgress({ status, busy, onStop, onValidate, validation =
   validation?: ValidationRun | null;
   disabled?: boolean;
   labels?: FactoryLabels;
+  /** Hosts the calendar closes now (a UI hint): their cases cannot be validated. */
+  closedHosts?: readonly string[];
 }) {
   if (status === null) return <section className="factory-panel" aria-labelledby="factory-progress">
     <h2 id="factory-progress">Request progress and results</h2>
@@ -131,7 +133,8 @@ export function FactoryProgress({ status, busy, onStop, onValidate, validation =
       const run = validation?.case_id === item.case_id ? validation : item.validation;
       const cost = status.interpretation.budget.worst_case_per_validation_microusd.find((entry) => entry.host_id === item.host_id)?.microusd;
       const insufficientBudget = cost !== undefined && status.budget.remaining_microusd < cost;
-      const canValidate = !busy && !disabled && !validationActive && status.state === "finished" && status.attention === null && !insufficientBudget && item.packages.bug_case.ready && !!item.packages.bug_case.download_path && item.packages.validator.ready && !!item.packages.validator.download_path;
+      const calendarClosed = closedHosts.includes(item.host_id);
+      const canValidate = !calendarClosed && !busy && !disabled && !validationActive && status.state === "finished" && status.attention === null && !insufficientBudget && item.packages.bug_case.ready && !!item.packages.bug_case.download_path && item.packages.validator.ready && !!item.packages.validator.download_path;
       return <li className="factory-case-card" key={item.case_id}>
         <h4>{item.title}</h4>
         <p>{item.host_label} <small>(app version {item.baseline_id})</small></p>
@@ -144,7 +147,8 @@ export function FactoryProgress({ status, busy, onStop, onValidate, validation =
           <p>Validation runs the harness on both exported packages and uses this request’s remaining budget. Clicking alone does not establish execution.</p>
         </details>
         {insufficientBudget && <p>The remaining budget cannot cover validation.</p>}
-        <button type="button" disabled={!canValidate} onClick={() => { onValidate(item.case_id); }}>Validate case</button>
+        {calendarClosed && <p id={`factory-calendar-${item.case_id}`} className="factory-badge">{CALENDAR_HINT}</p>}
+        <button type="button" disabled={!canValidate} aria-describedby={calendarClosed ? `factory-calendar-${item.case_id}` : undefined} onClick={() => { onValidate(item.case_id); }}>Validate case</button>
       </li>;
     })}</ul>}
   </section>;
