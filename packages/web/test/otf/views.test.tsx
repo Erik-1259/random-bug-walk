@@ -97,6 +97,14 @@ it("words a waiting Umami job stopped by the calendar as not started, with the o
   expect(html).toContain("They open again on November 6 (UTC).");
   expect(html).not.toContain("Error"); expect(html).not.toContain("lane board shows");
 });
+it("shows the open-again date for a past calendar stop only while the calendar is still closed", () => {
+  const s = umamiStatus(); s.state = "finished"; s.outcome = "builder_unavailable"; s.reason = "Umami is unavailable on UTC days 2–5.";
+  const blocked = render(<FailureView status={s} nowMs={NOV_3}/>);
+  expect(blocked).toContain("This custom build did not start: Umami is unavailable on UTC days 2–5."); expect(blocked).toContain("They open again on November 6 (UTC).");
+  const reopened = render(<FailureView status={s} availability={availability(host())} nowMs={Date.UTC(2026, 10, 6, 12)}/>);
+  expect(reopened).toContain("This custom build did not start: Umami is unavailable on UTC days 2–5."); expect(reopened).toContain("The closest catalog bug is offered below.");
+  expect(reopened).not.toContain("They open again"); expect(reopened).not.toContain("November 7");
+});
 it("keeps the error copy for other builder_unavailable reasons and for a claimed job", () => {
   const s = umamiStatus(); s.state = "finished"; s.outcome = "builder_unavailable"; s.reason = "OTF was put on hold.";
   expect(render(<FailureView status={s} nowMs={NOV_3}/>)).toContain("Error: the builder became unavailable.");
