@@ -231,7 +231,7 @@ function ConnectedOtf({ controller, catalogController, onAvailability, designer,
     const refused = view.status === null ? view.pendingRequest : null;
     await controller.newDraft();
     if (controller.snapshot().pendingRequest !== null) return;
-    draft.restore(refused); setDraftCatalogId(catalogId);
+    draft.restore(refused, controller.snapshot().availability); setDraftCatalogId(catalogId);
   };
   return <OtfWorkspaceView availability={view.availability} status={view.status} pending={view.pendingRequest !== null || view.jobId !== null}
     pendingRequest={view.pendingRequest} refusal={view.refusal} stopRequested={view.stopRequested} validationRefused={view.validationRefused} nowMs={Date.now()}

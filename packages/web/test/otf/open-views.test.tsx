@@ -107,6 +107,11 @@ describe("editable open-rule validation", () => {
     expect(html).not.toContain('otf-rule-family-error'); expect(html).not.toMatch(/id="otf-rule-family"[^>]*aria-invalid/);
     expect(html).toMatch(blocked);
   });
+  it("sizes the failure code field for its 48-character maximum", () => {
+    const html = render(<SpecAcceptView {...acceptProps} rule={{ ...rule, failure_code: "a".repeat(48) }}/>);
+    const size = /id="otf-rule-failure_code"[^>]*size="(\d+)"/.exec(html)?.[1];
+    expect(Number(size)).toBeGreaterThanOrEqual(48);
+  });
   it("marks no field invalid for a valid rule", () => {
     const html = render(<SpecAcceptView {...acceptProps}/>);
     expect(html).not.toContain("aria-invalid"); expect(html).not.toContain("-error");

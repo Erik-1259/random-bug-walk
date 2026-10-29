@@ -3,8 +3,9 @@ import type { AssistClient, BugSpec } from "../../src/assist/client.ts";
 import { OtfClientError, OtfController, type OtfClient } from "../../src/otf/client.ts";
 import { ruleSha256 } from "../../src/otf/canonical.ts";
 import { CLASSIFY_REVIEW_MESSAGE, OtfDraftController, SECURITY_TOPIC_REASON, designerSentence } from "../../src/components/otf/draft.ts";
+import { specFromDesigner } from "../../src/components/otf/guided.tsx";
 import { customBuildHandoff, startHandoff } from "../../src/components/otf/workspace.tsx";
-import { OTF_OPEN_CRITERION_ID, type OtfAvailability, type OtfClassification, type OtfOpenRule, type OtfJobStatus } from "../../src/otf/contract.ts";
+import { OTF_ERROR_STATUS, OTF_OPEN_CRITERION_ID, type OtfAvailability, type OtfClassification, type OtfOpenRule, type OtfJobStatus } from "../../src/otf/contract.ts";
 
 const proven = "concurrency.lost-acknowledged-change";
 const spec: BugSpec = { title: "Synthetic task update", target_app: "task-report", where: "Task update route", change: "A saved synthetic change disappears.", why_tests_miss: "Tests save only one change.", checks_to_add: ["Read the saved change again."], fix: "Keep the stored change." };
@@ -26,6 +27,26 @@ function setup(result: OtfClassification = open) {
 function specFromDraft(draft: OtfDraftController) {
   const card = draft.snapshot().spec; if (card === null) throw new Error("Synthetic draft has no card.");
   return card;
+}
+
+/** A job controller whose first create is refused busy; later creates are recorded only. */
+async function refusingJobs() {
+  const create = vi.fn<OtfClient["create"]>(() => Promise.reject(new OtfClientError("busy", "Synthetic refusal.", OTF_ERROR_STATUS.busy)));
+  const api: OtfClient = { availability: () => Promise.resolve(availability), classify: () => Promise.resolve(open), create, status: vi.fn(), stop: vi.fn(), validate: vi.fn() };
+  const saved = new Map<string, string>(); let key = 0;
+  const jobs = new OtfController(api, { getItem: name => saved.get(name) ?? null, setItem: (name, value) => { saved.set(name, value); }, removeItem: name => { saved.delete(name); } },
+    () => `00000000-0000-4000-8000-00000000001${String(key++)}`, operation => operation());
+  await jobs.initialize();
+  return { jobs, create };
+}
+
+/** Accept, a busy refusal, then "Edit custom design", as the workspace runs them. */
+async function refuseThenEdit(draft: OtfDraftController, jobs: OtfController) {
+  const input = draft.acceptedInput(availability, true); if (input === null) throw new Error("Synthetic draft unexpectedly refused");
+  await jobs.create(input);
+  const refused = jobs.snapshot().pendingRequest; expect(jobs.snapshot()).toMatchObject({ refusal: "busy", canNewDraft: true });
+  await jobs.newDraft(); expect(jobs.snapshot().pendingRequest).toBeNull();
+  draft.restore(refused, jobs.snapshot().availability);
 }
 
 describe("open custom draft before Accept", () => {
@@ -256,6 +277,36 @@ describe("open custom draft before Accept", () => {
     const { draft } = setup(); await draft.design(availability, true);
     draft.setSentence("A different synthetic sentence.");
     expect(draft.snapshot().classification).toBeNull(); expect(draft.snapshot().stale).toBe(true); expect(draft.acceptedInput(availability, true)).toBeNull();
+  });
+  it("re-sends the same rule and rule hash after a refused create and Edit custom design without edits", async () => {
+    const { draft } = setup(); const { jobs, create } = await refusingJobs();
+    await draft.handoff({ spec, query: "Synthetic handoff", hostId: "task-report" }, availability, true);
+    const edited = { ...rule, failure_code: "synthetic_restored_rule" }; draft.setRule(edited);
+    await refuseThenEdit(draft, jobs);
+    expect(draft.snapshot()).toMatchObject({ classificationRequired: true, hostId: "task-report", classification: open, rule: edited, stale: false, criterionId: OTF_OPEN_CRITERION_ID });
+    const again = draft.acceptedInput(availability, true); if (again === null) throw new Error("Synthetic restored draft unexpectedly refused");
+    await jobs.create(again);
+    expect(create).toHaveBeenCalledTimes(2);
+    expect(create.mock.calls[1]?.[0]).toMatchObject({ rule: edited, rule_sha256: await ruleSha256(edited), spec_sha256: create.mock.calls[0]?.[0].spec_sha256 });
+  });
+  it.each(["card", "sentence"] as const)("requires classifying again after a %s edit to a restored custom design", async edit => {
+    const { draft, classify } = setup(); const { jobs } = await refusingJobs();
+    await draft.handoff({ spec, query: "Synthetic handoff", hostId: "task-report" }, availability, true);
+    await refuseThenEdit(draft, jobs);
+    if (edit === "card") draft.setSpec({ ...specFromDraft(draft), where: "Synthetic edited route" });
+    else draft.setSentence("Synthetic edited sentence about saved values.");
+    expect(draft.snapshot()).toMatchObject({ classification: null, rule: null, stale: true, classificationRequired: true });
+    expect(draft.acceptedInput(availability, true)).toBeNull();
+    await draft.reclassify(availability, true);
+    expect(classify).toHaveBeenCalledTimes(2); expect(classify.mock.calls[1]?.[0].host_id).toBe("task-report");
+    expect(draft.acceptedInput(availability, true)?.rule).toEqual(rule);
+  });
+  it("asks to classify a restored open design again when its classification is no longer at hand", () => {
+    const draft = new OtfDraftController({ bugSpec: vi.fn() }, { classify: vi.fn() });
+    draft.restore({ client_key: "00000000-0000-4000-8000-000000000003", host_id: "task-report", criterion_id: OTF_OPEN_CRITERION_ID, sentence: "Synthetic saved sentence.",
+      spec: specFromDesigner(spec), spec_sha256: "0".repeat(64), rule, rule_sha256: "0".repeat(64) }, availability);
+    expect(draft.snapshot()).toMatchObject({ classificationRequired: true, hostId: "task-report", classification: null, stale: true });
+    expect(draft.acceptedInput(availability, true)).toBeNull();
   });
   it("keeps the proven-only flow's sentence edit clearing the card, as before the open behavior", async () => {
     const { draft } = setup(); const provenOnly = { ...availability, behaviors: availability.behaviors.slice(0, 1) };

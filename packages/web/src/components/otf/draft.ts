@@ -1,4 +1,5 @@
 import type { AssistClient } from "../../assist/client.ts";
+import { canonicalJson } from "../../otf/canonical.ts";
 import { OtfClientError, type AcceptedOtfInput, type OtfClient } from "../../otf/client.ts";
 import { OTF_OPEN_CRITERION_ID, SENTENCE_MAX_CHARS, SENTENCE_MIN_CHARS, type OtfAvailability, type OtfClassification, type OtfCreateJob, type OtfCriterionId, type OtfHostId, type OtfOpenRule, type OtfSpecCard } from "../../otf/contract.ts";
 import { describeAssistFailure, type CustomBuildDesign } from "../bug-designer.tsx";
@@ -80,9 +81,21 @@ export class OtfDraftController {
   }
   setSpec(spec: OtfSpecCard): void { if (!this.view.busy) this.edited({ spec: structuredClone(spec) }); }
   setRule(rule: OtfOpenRule): void { if (!this.view.busy) this.update({ rule: { ...rule } }); }
-  restore(request: OtfCreateJob | null): void {
+  /**
+   * "Edit custom design" after a refused create: the accepted card comes back tied to its host and, when
+   * classification applies, to the classification it was accepted with. An edit then needs classifying again.
+   */
+  restore(request: OtfCreateJob | null, availability: OtfAvailability | null): void {
     if (this.view.busy) return;
-    this.update(request === null ? emptyDraft() : { ...emptyDraft(), criterionId: request.criterion_id, sentence: request.sentence, spec: structuredClone(request.spec), rule: request.rule === undefined ? null : { ...request.rule } });
+    if (request === null) { this.update(emptyDraft()); return; }
+    const before = this.view;
+    const rule = request.rule === undefined ? null : { ...request.rule };
+    const classificationRequired = (request.criterion_id === OTF_OPEN_CRITERION_ID && rule !== null) || classificationAvailable(availability);
+    // The classification still applies only to the unchanged card and sentence it was given for.
+    const unchanged = before.spec !== null && canonicalJson(before.spec) === canonicalJson(request.spec) && before.sentence.trim() === request.sentence;
+    const classification = classificationRequired && unchanged && before.classification?.refusal === null ? before.classification : null;
+    this.update({ ...emptyDraft(), criterionId: request.criterion_id, sentence: request.sentence, spec: structuredClone(request.spec), rule, classificationRequired,
+      hostId: unchanged && before.hostId !== null ? before.hostId : request.host_id, classification, stale: classificationRequired && classification === null });
   }
   private async classify(availability: OtfAvailability, hostId: OtfHostId): Promise<void> {
     const spec = this.view.spec;

@@ -58,6 +58,8 @@ export function ClassificationView({ classification, criterionId, provenLabel, o
   </section>;
 }
 
+/** Room for the 48-character maximum failure code, with a little to spare for wide letters. */
+const FAILURE_CODE_SIZE = 52;
 const BLANK_RULE: OtfOpenRule = { family: "data_handling", observable_failure: "", failure_code: "" };
 
 export function OpenRuleFields({ rule, disabled, onChange }: { rule: OtfOpenRule | null; disabled: boolean; onChange?: (rule: OtfOpenRule) => void }) {
@@ -84,7 +86,7 @@ export function OpenRuleFields({ rule, disabled, onChange }: { rule: OtfOpenRule
     <p id="otf-rule-count">{codePoints(value.observable_failure)} / {OBSERVABLE_FAILURE_MAX_CHARS} characters; at least {OBSERVABLE_FAILURE_MIN_CHARS}.</p>
     {error("observable_failure")}
     <label htmlFor="otf-rule-failure_code">Failure code
-      <input id="otf-rule-failure_code" value={value.failure_code} aria-invalid={invalid("failure_code")} aria-describedby={described("failure_code")} onChange={event => { onChange?.({ ...value, failure_code: event.target.value }); }}/>
+      <input id="otf-rule-failure_code" value={value.failure_code} aria-invalid={invalid("failure_code")} aria-describedby={described("failure_code")} size={FAILURE_CODE_SIZE} onChange={event => { onChange?.({ ...value, failure_code: event.target.value }); }}/>
     </label>
     {error("failure_code")}
   </fieldset>;
