@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { OtfWorkspaceView, type OtfWorkspaceViewProps } from "../../src/components/otf/workspace.tsx";
-import { BugDesignerView, CATALOG_HONESTY } from "../../src/components/bug-designer.tsx";
+import { BugDesignerView, CATALOG_HONESTY, OTF_DESIGNER_NOTE } from "../../src/components/bug-designer.tsx";
 import { INITIAL_DESIGNER } from "../../src/assist/designer-state.ts";
 import { specSha256 } from "../../src/otf/canonical.ts";
 import type { OtfAvailability, OtfCreateJob, OtfHostAvailability, OtfJobStatus } from "../../src/otf/contract.ts";
@@ -111,8 +111,9 @@ describe("custom workspace boundary", () => {
     expect(offline).toContain(CATALOG_HONESTY);
     expect(offline).not.toContain("Building this exact design is the next step");
     const online = renderToStaticMarkup(<BugDesignerView {...common} otfEnabled />);
-    expect(online).toContain("Building this exact design is the next step");
-    expect(online).toContain("Custom builds are available above.");
-    expect(online).not.toContain("For a task-report design");
+    expect(online).toContain(OTF_DESIGNER_NOTE);
+    expect(online).toContain("This design is not built as written.");
+    expect(online).not.toContain("Building this exact design is the next step");
+    expect(online).not.toContain(CATALOG_HONESTY);
   });
 });

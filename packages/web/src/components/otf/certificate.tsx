@@ -12,7 +12,7 @@ export function CertificateView({ status, onValidate, disabled, unconfirmed = fa
       {certificate.host_id === "umami"
         ? <><p>Qualified on the RBW builder (Nebius VM) with the local runner&apos;s admission sequence (docs/admission-rules.md) on the pinned Umami kit image with this build&apos;s checks, 4 vCPU / 8 GB per copy. Development evidence, not an RBW release.</p><p>{ADMISSION_EVIDENCE}</p></>
         : <p>Qualified by the RBW harness on the RBW builder (Nebius VM): six cells, pinned task-report kit image, 4 vCPU / 8 GB per copy, then confirmed in a second round.</p>}
-      <p>Designer model: {certificate.designer.model}. Implementer: {certificate.implementer.agent}, {certificate.implementer.model} on Nebius Token Factory; lane {certificate.implementer.lane_id}, {certificate.implementer.rounds_used} rounds.</p>
+      <p>Designer model: {certificate.designer.model}. Implementer: {certificate.implementer.agent}, {certificate.implementer.model} on Nebius Token Factory; {certificate.implementer.lane_id}, {certificate.implementer.rounds_used} {certificate.implementer.rounds_used === 1 ? "round" : "rounds"}.</p>
       <SixCellGrid cells={certificate.qualification.cells} label="Qualification cells"/>
       {certificate.qualification.confirmation_cells !== null && <SixCellGrid cells={certificate.qualification.confirmation_cells} label="Confirmation cells"/>}
       {certificate.host_id === "umami" && <AdmissionStrip admission={certificate.qualification.admission} label="Admission result"/>}
