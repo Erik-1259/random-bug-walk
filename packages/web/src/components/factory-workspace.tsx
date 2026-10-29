@@ -3,7 +3,7 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import type { FactoryPlan } from "../assist/plan.ts";
 import { FactoryController, factoryClient, type Capabilities, type Interpretation } from "../factory/client.ts";
-import { CALENDAR_HINT, calendarClockDelay, calendarClosedHosts, calendarClosesPair, calendarFallback, describeFactoryMessage, describeServiceState, formatExactUsd, formatUsd } from "../factory/format.ts";
+import { CALENDAR_HINT, calendarClockDelay, calendarClosedHosts, calendarClosesPair, calendarFallback, calendarReopened, describeFactoryMessage, describeServiceState, formatExactUsd, formatUsd } from "../factory/format.ts";
 import { BugDesigner } from "./bug-designer.tsx";
 import { CopyButton } from "./copy-button.tsx";
 import { DeliveryBriefs } from "./delivery-brief.tsx";
@@ -22,15 +22,23 @@ export function CalendarCause({ capabilities, requestedHosts, item, nowMs }: { c
   return <p className="factory-badge">{CALENDAR_HINT}{fallback !== null && <> {fallback}</>}</p>;
 }
 
-/** This browser's clock, reread at each calendar boundary so a page left open updates its hints. */
-function useCalendarClock(capabilities: Capabilities | null): number {
+/**
+ * This browser's clock, reread at each calendar boundary so a page left open updates its hints. At a
+ * boundary where capabilities read during the window are out of date, it asks for a fresh read.
+ */
+function useCalendarClock(capabilities: Capabilities | null, controller: FactoryController): number {
   const [nowMs, setNowMs] = useState(() => Date.now());
   useEffect(() => {
     const delay = calendarClockDelay(capabilities, nowMs);
     if (delay === null) return;
-    const timer = setTimeout(() => { setNowMs(Date.now()); }, delay);
+    const timer = setTimeout(() => {
+      const next = Date.now();
+      setNowMs(next);
+      // The same read as "Refresh service availability".
+      if (calendarReopened(capabilities, next)) void controller.initialize();
+    }, delay);
     return () => { clearTimeout(timer); };
-  }, [capabilities, nowMs]);
+  }, [capabilities, nowMs, controller]);
   return nowMs;
 }
 
@@ -78,7 +86,7 @@ function ConnectedWorkspace({ controller }: { controller: FactoryController }) {
   };
   const serviceMessage = view.capabilities?.service.message ?? null;
   // A UI hint only, from the capabilities and this browser's clock; the service decides.
-  const nowMs = useCalendarClock(view.capabilities);
+  const nowMs = useCalendarClock(view.capabilities, controller);
   const closedHosts = calendarClosedHosts(view.capabilities, nowMs);
   const requestedHosts = view.interpretation?.hosts.map((host) => host.host_id) ?? [];
   return <>

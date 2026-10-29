@@ -9,7 +9,7 @@ import { FactoryProgress } from "../src/components/factory-progress.tsx";
 import { FactoryRequestForm } from "../src/components/factory-request-form.tsx";
 import { CalendarCause } from "../src/components/factory-workspace.tsx";
 import type { Capabilities, Interpretation } from "../src/factory/client.ts";
-import { CALENDAR_HINT, calendarBlocks, calendarClockDelay, calendarClosedHosts, calendarClosesPair, hostClosedByCalendar, nextCalendarChange, UMAMI_CALENDAR_REASON } from "../src/factory/format.ts";
+import { CALENDAR_HINT, calendarBlocks, calendarClockDelay, calendarClosedHosts, calendarClosesPair, calendarReopened, hostClosedByCalendar, nextCalendarChange, UMAMI_CALENDAR_REASON } from "../src/factory/format.ts";
 import { SHAPES, SPEC } from "./support/assist-fixtures.ts";
 
 function fixture(name: string): string {
@@ -159,6 +159,29 @@ describe("the calendar clock on a page left open", () => {
     const after = render(clock);
     expect(after).toContain(HINT);
     expect(after).toMatch(/<button type="button" disabled="" aria-describedby="factory-calendar-[^"]+">Validate case<\/button>/);
+  });
+
+  it("asks for fresh capabilities when the calendar reopens on a page loaded during the window", () => {
+    vi.useFakeTimers({ now: at("2026-11-03T12:00:00Z") });
+    const loaded = closed();
+    const refresh = vi.fn();
+    let clock = Date.now();
+    expect(calendarReopened(loaded, clock)).toBe(false);
+    const delay = calendarClockDelay(loaded, clock);
+    if (delay === null) throw new Error("no tick scheduled");
+    // What useCalendarClock does when its timer fires.
+    setTimeout(() => { clock = Date.now(); if (calendarReopened(loaded, clock)) refresh(); }, delay);
+    vi.advanceTimersByTime(delay - 1);
+    expect(refresh).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(clock).toBe(CLOCKS.sixth);
+    expect(refresh).toHaveBeenCalledTimes(1);
+    // A service still behind this clock is read again a minute later; fresh capabilities reopen the controls.
+    expect(calendarClockDelay(loaded, clock)).toBe(60_000);
+    expect(calendarReopened(open(), clock)).toBe(false);
+    const html = renderToStaticMarkup(<FactoryProgress status={parseContract("RequestStatus", fixture("status-fulfilled"))} busy={false} onStop={() => undefined} onValidate={() => undefined} closedHosts={calendarClosedHosts(open(), clock)} />);
+    expect(html).not.toContain(HINT);
+    expect(html).not.toMatch(/disabled=""[^>]*>Validate case/);
   });
 });
 

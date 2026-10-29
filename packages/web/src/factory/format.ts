@@ -207,11 +207,23 @@ export function nextCalendarChange(nowMs: number, windowMs: number): number | nu
 /** The longest delay setTimeout accepts. */
 const MAX_TIMEOUT_MS = 2_147_483_647;
 
+/** How long a page waits before a service still closed by the calendar is read again, past the window by this clock. */
+const REOPEN_RETRY_MS = 60_000;
+
 /** How long a page waits before it rereads its clock for the calendar, or null when it need not. */
 export function calendarClockDelay(capabilities: Capabilities | null, nowMs: number): number | null {
   if (capabilities === null) return null;
+  if (calendarReopened(capabilities, nowMs)) return REOPEN_RETRY_MS;
   const next = nextCalendarChange(nowMs, capabilities.limits.max_wall_clock_s * 1000);
   return next === null ? null : Math.min(next - nowMs, MAX_TIMEOUT_MS);
+}
+
+/**
+ * True when the capabilities say the calendar closes Umami but this browser's clock says it is open
+ * again: capabilities read during the window, on a page left open past it. They need a fresh read.
+ */
+export function calendarReopened(capabilities: Capabilities | null, nowMs: number): boolean {
+  return capabilities !== null && closedByCalendar(capabilities, "umami") && !calendarBlocks(nowMs, nowMs + capabilities.limits.max_wall_clock_s * 1000);
 }
 
 /** The line that offers the task-and-report service while Umami is closed, or null when it offers nothing either. */
