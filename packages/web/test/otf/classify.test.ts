@@ -50,26 +50,28 @@ async function errorCode(response: Response): Promise<string> {
   return parsed.value.error.code;
 }
 
-// Every observable_failure the real classifier model wrote in the direct classifier check (runs v3 and v4).
-const REAL_RULES = [
-  "Create a task with title 'a,b' using POST /api/tasks. Read it back with GET /api/tasks/{id}. The title field returns 'a,b' correctly. If an external process exports this task to CSV without quoting fields, the comma in the title splits the field into two columns, causing a row-count mismatch and potential row dropping during parsing. The buggy behavior is that the service allows titles with commas but does not protect against CSV misinterpretation when exported naively.",
-  "PATCH /api/tasks/{id} with a due date set to the start of next week causes the task to appear in the due-this-week report when queried via a hypothetical filter, but since no such filter exists in the six routes, the observable failure is that the task's due date is stored correctly yet a report-like computation (if it existed) would incorrectly include it due to an eight-day week range.",
-  "POST /api/tasks with a title of length 250 succeeds (201) but GET /api/tasks/{id} returns a title truncated to 100 characters.",
-  "Submit a PATCH to /api/tasks/{id} updating title or note, then immediately GET /api/tasks/{id}; the returned task shows the pre-PATCH values despite the PATCH returning 200.",
-  "PATCH /api/tasks/{id} with only title set saves successfully but clears the note field; subsequent GET /api/tasks/{id} returns the cleared note instead of the previously stored note.",
-  "POST /api/tasks with a title of length 250 results in a 201 response containing a task where the title field is truncated to exactly 100 characters.",
-  "Submit a PATCH /api/tasks/{id} with title 'Updated Title' and note 'Note', then immediately GET /api/tasks/{id}; the returned task shows the old title before the patch.",
-  "PATCH /api/tasks/{id} with {title:\"new\"} succeeds, returning the patched task with title \"new\"; a subsequent GET /api/tasks/{id} returns the task with title reverted to the previous value.",
+// Invented rules in the phrasings the classifier model tends to use: a method right before the path,
+// "Submit a PATCH to /path", a sentence that reads a second path with no method, quoted values and
+// inline JSON. All values are synthetic.
+const MODEL_STYLE_RULES = [
+  "Create a task with title 'x,y' using POST /api/tasks. Read it back with GET /api/tasks/{id}. The title comes back as 'x' only, so the part after the comma is lost.",
+  "PATCH /api/tasks/{id} with a new note leaves the stored note unchanged when read back, while the PATCH answer shows the new note.",
+  "POST /api/tasks with a title of length 180 succeeds (201) but GET /api/tasks/{id} returns a title cut to 64 characters.",
+  "Submit a PATCH to /api/tasks/{id} changing the title, then immediately GET /api/tasks/{id}; the returned task still shows the earlier title although the PATCH answered 200.",
+  "PATCH /api/tasks/{id} with only a note set saves successfully but empties the title; a later GET /api/tasks/{id} shows an empty title.",
+  "POST /api/tasks/{id}/completions answers 201, yet GET /api/reports/completions/daily for that local day reports one fewer completion.",
+  "Submit a PATCH /api/tasks/{id} with title 'Synthetic' and note 'Value', then GET /api/tasks/{id}; the returned task shows the previous title.",
+  "PATCH /api/tasks/{id} with {title:\"synthetic\"} succeeds and returns that title; a subsequent GET /api/tasks/{id} returns the previous title.",
 ] as const;
-/** The one real rule that reads GET /api/tasks, which the service does not have (only POST /api/tasks). */
-const REAL_GET_TASKS = "GET /api/tasks returns a task where the 'created_at' timestamp falls outside the expected seven-day window for the current week, specifically appearing when its timestamp equals the start of the next week (e.g., Monday 00:00:00 of the following week), indicating the report incorrectly uses an eight-day inclusive range instead of a half-open [start, end) interval.";
+/** An invented rule that reads GET /api/tasks, which the service does not have (only POST /api/tasks). */
+const GET_TASKS_RULE = "GET /api/tasks returns a task whose created_at falls outside the requested day, showing the listing uses the wrong day boundary.";
 
 describe("task-report route check", () => {
-  it.each(REAL_RULES)("accepts the real model's rule: %s", (rule) => {
+  it.each(MODEL_STYLE_RULES)("accepts a rule in the model's phrasing: %s", (rule) => {
     expect(ruleRouteProblems(rule)).toEqual([]);
   });
-  it("refuses the real model's GET /api/tasks and names the allowed method", () => {
-    expect(ruleRouteProblems(REAL_GET_TASKS)).toEqual(['GET is not allowed for /api/tasks (allowed: POST); write each route as "METHOD /path", such as "PATCH /api/tasks/{id}"']);
+  it("refuses a rule that reads GET /api/tasks and names the allowed method", () => {
+    expect(ruleRouteProblems(GET_TASKS_RULE)).toEqual(['GET is not allowed for /api/tasks (allowed: POST); write each route as "METHOD /path", such as "PATCH /api/tasks/{id}"']);
   });
   it.each([
     "Overlapping PATCH requests to /api/tasks/{id} both return 200, but a later GET /api/tasks/{id} shows only one of the two saved notes.",
@@ -226,8 +228,8 @@ describe("OTF classifier", () => {
       expect(s.calls).toHaveLength(1);
     }
   });
-  it("accepts the acceptance card's rule, which names PATCH earlier in the sentence than its path", async () => {
-    const observable_failure = REAL_RULES[3];
+  it("accepts 'Submit a PATCH to /path', which names PATCH before a filler word and its path", async () => {
+    const observable_failure = MODEL_STYLE_RULES[3];
     const s = setup({ ...OPEN, observable_failure });
     expect((await result(await classify(request(), s.deps))).rule?.observable_failure).toBe(observable_failure);
     expect(s.calls).toHaveLength(1);
