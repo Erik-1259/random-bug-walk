@@ -1051,7 +1051,8 @@ export interface OtfStore {
    * row lock, so a concurrent finish on read cannot be overwritten). "replayed" when the job already
    * delivered with the same sha256s; "conflict" when it delivered with different ones; "finished"
    * when it finished with another outcome (nothing is changed); "wrong_builder" when another builder
-   * holds the claim.
+   * holds the claim. With no parts, the same call finishes a claimed job with another outcome
+   * (patch.outcome and patch.reason), appending that job_finished at `at` the same way.
    */
   storeDelivery(
     job_id: OtfJobId,
