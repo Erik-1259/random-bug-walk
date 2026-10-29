@@ -316,7 +316,7 @@ Global caps: queued jobs 4, jobs per UTC day 30, total OTF model spend set by th
 
 - Infrastructure errors (`error`, `builder_start_failed`, `builder_lost`, `builder_unavailable`) are worded as errors, never as "the models could not build it".
 - **Copy that becomes conditional:**
-  - the designer's "Building this exact design is the next step" note is true only where OTF is enabled;
+  - the designer's catalog note ("Today Random Bug Walk delivers the closest proven bug from its catalog…") shows only where OTF is not enabled; where it is, the note says the design is not built as written and points to "Build a custom bug", which writes its own card;
   - "One runs at a time" now applies to catalog requests only;
   - "A request itself makes no model call" is scoped to catalog requests;
   - the catalog novelty caveat does not apply to OTF bugs.
