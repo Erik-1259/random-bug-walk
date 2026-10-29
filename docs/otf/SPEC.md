@@ -104,7 +104,7 @@ In this order:
    - the builder is `running` and its last fresh heartbeat's `ready_hosts` lacks it; or
    - `hostCalendarOpen(host, now, now + START_TIMEOUT_MS + deadline + CALENDAR_MARGIN_MS)` is false.
 
-   A stopped or starting builder has no fresh heartbeat, so readiness is not checked then: the job is created and starts the machine (steps 7 and 8). A waiting job whose host becomes unavailable (including a host that the first fresh heartbeat after the start leaves out of `ready_hosts`), or whose window `[now, now + deadline + CALENDAR_MARGIN_MS]` is no longer open, finishes `builder_unavailable` on the next status read. The reason names the host and the cause; for Umami's calendar it is "Umami builds are not offered on the 2nd to the 5th of a month (UTC): on those days two of Umami's own tests fail on an unmodified copy."
+   A stopped or starting builder has no fresh heartbeat, so readiness is not checked then: the job is created and starts the machine (steps 7 and 8). A waiting job whose host becomes unavailable (including a host that the first fresh heartbeat after the start leaves out of `ready_hosts`), or whose window `[now, now + deadline + CALENDAR_MARGIN_MS]` is no longer open, finishes `builder_unavailable` on the next status read. The reason names the host and the cause; for Umami's calendar it is "Umami is unavailable on UTC days 2–5."
 7. Insert the job, with its `host_id`:
    - `queued` when the builder is `running`;
    - `starting_builder` otherwise.
@@ -298,7 +298,7 @@ Global caps: queued jobs 4, jobs per UTC day 30, total OTF model spend set by th
 | Certificate (task-report) | "Qualified by the RBW harness on the RBW builder (Nebius VM): six cells, pinned task-report kit image, 4 vCPU / 8 GB per copy, then confirmed in a second round." Never "on Vercel Sandbox", and never "verified by the factory worker". |
 | Certificate (Umami) | "Qualified on the RBW builder (Nebius VM) with the local runner's admission sequence (docs/admission-rules.md) on the pinned Umami kit image with this build's checks, 4 vCPU / 8 GB per copy. Development evidence, not an RBW release." Never "admitted", "released" or "on Vercel Sandbox". |
 | Umami placement (spec accept and lane board) | "The builder places the bug in one of Umami's date-grouped reports that its harness supports, chosen to match your card where it can. It may differ from the report your card describes." |
-| Umami calendar | "Umami builds are not offered on the 2nd to the 5th of a month (UTC): on those days two of Umami's own tests fail on an unmodified copy." |
+| Umami calendar | "Umami is unavailable on UTC days 2–5." |
 | Catalog bug | Today's wording, unchanged: "pre-qualified catalog bug, re-verified for your request". |
 | Time estimate | Only when the host's `typical` is present. With `source: "otf_jobs"`: "Usually about {median_min} minutes; 9 in 10 finished within {p90_min} minutes ({samples} builds measured, last on {measured_on}). Your bug may take longer or not qualify." With `source: "development_attempts"`: "In development runs, a qualifying build attempt took about {median_min} minutes, and 9 in 10 took at most {p90_min} minutes ({samples} attempts, measured {measured_on}). Waiting, machine start-up and packaging add to that. Your bug may take longer or not qualify." When `typical` is null: "Build times for {host label} are not measured yet. The board shows each step as it runs." |
 | Queued | "Another build is running. Yours is number {n} in line." The typical-time clause is added only when `typical` is present. |
