@@ -168,6 +168,32 @@ Planned:
 - The completed example's two package archives and their publication.
 - A request API acceptance runner (`tools/product-acceptance`).
 
+## On-the-fly bugs (custom builds)
+
+On `/factory`, choose an offered behavior and describe it in a sentence. Nemotron 3 Super (`nvidia/nemotron-3-super-120b-a12b`) writes a spec card that you can edit or accept. Accepting it starts a custom build: Goose agents race on Nebius Token Factory models to implement the bug and its checks. Each build also includes a reference fix. The lane board shows their progress, round feedback, tokens and model spend. See the [judge guide](docs/otf/JUDGES.md) for the screens and the [OTF specification](docs/otf/SPEC.md) for the contract.
+
+| Host | Custom-build scope | Qualification |
+|---|---|---|
+| task-report service | Concurrency: a lost acknowledged change or a stale success response | The RBW harness's tier-B round, followed by a confirmation round |
+| Umami | The time-zone date/time criterion only | The local runner's admission sequence, including repeated runs and an alternative fix; no separate confirmation round |
+
+The six-cell grid compares the original suite and added checks on clean, buggy and fixed copies. Umami also shows an admission strip. Its result is development evidence, not an RBW release. For Umami, the builder chooses among supported date-grouped reports to match the card where it can; the placement may differ from the card's description.
+
+A delivered build has a certificate bound by hashes to its bundles, with the qualification results, models, spend and timings. Give the **agent bundle** to the debugging agent: it contains the buggy app and a symptom-level incident, without checks, fix or spec. Keep the **grader bundle** separate: it contains evaluator material, including the model-written checks and reference fix. Optional validation re-runs the host's qualification on the RBW builder from the stored bundles.
+
+The builder is a Nebius VM started per request and stopped when idle. A cold start can add a few minutes; the UI shows startup as its own step and gives a minute estimate only when one is configured.
+
+The [development timing evidence](docs/otf/evidence/build-time-2026-10-29.json) records these wall times for **qualifying development attempts, not finished customer builds**:
+
+| Host | Median (minutes) | p90 (minutes) |
+|---|---:|---:|
+| task-report | 15.5 | 30.9 |
+| Umami | 21.0 | 34.2 |
+
+These attempt times include any wait for a qualification slot. They exclude the OTF job queue, cold start, confirmation and packaging. Your bug may take longer or not qualify.
+
+Custom builds depend on current availability. Umami is unavailable on UTC days 2–5. A capacity failure offers the catalog fallback. Caps apply per lane and per job; model spend is metered as an upper bound, separately from the catalog's shared judge budget. Starting the closest catalog bug is an explicit choice, never an automatic charge.
+
 ## Deployment
 
 The site is deployed on Vercel from a tree of this repository plus a results directory assembled from the public results repository and the public store with `packages/web/scripts/assemble-results.mjs`. The steps and project settings are in [Deploying on Vercel](packages/web/README.md#deploying-on-vercel).
