@@ -25,7 +25,7 @@ const offered = (availability: OtfAvailability, criterion: OtfCriterionId | null
 
 export const CLASSIFY_REVIEW_MESSAGE = "Review the card and sentence before classifying this custom design.";
 /** SPEC 8.5: the classify route answers refused_topic for a security topic found before any model call. */
-export const SECURITY_TOPIC_REASON = "This card or sentence names a security topic. Custom builds cover non-security bugs only.";
+export const SECURITY_TOPIC_REASON = "This card or sentence names a security topic or holds code. Custom builds cover non-security bugs described in plain words only.";
 const NO_ANSWER = "The classifier did not answer. No custom build has started. Try again in a moment.";
 
 /** A classify failure in plain language; a refused_topic answer is a refusal instead, never a failure. */
