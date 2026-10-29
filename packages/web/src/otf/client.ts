@@ -288,13 +288,17 @@ export class OtfController {
   }
   async stop(): Promise<void> {
     if (this.stopping || (this.view.busy && this.activePoll === null)) return;
+    // The job this tab showed when Stop was clicked. Another tab may save a replacement job before the
+    // POST; that job is shown here instead and is never stopped by this click.
+    const shown = this.view.jobId;
     this.stopping = true;
     try {
       if (this.activePoll !== null) await this.activePoll;
       await this.action(async () => {
-        const changed = await this.restore(); if (changed) await this.readStatus();
+        const changed = await this.restore();
         const id = this.saved?.job_id;
-        if (id === null || id === undefined || this.view.status === null || this.view.status.state === "finished") return;
+        if (changed || id !== shown) await this.readStatus();
+        if (id === null || id === undefined || id !== shown || this.view.status === null || this.view.status.state === "finished") return;
         this.update({ stopRequested: true });
         this.accept(await this.client.stop(id), 0);
       });
