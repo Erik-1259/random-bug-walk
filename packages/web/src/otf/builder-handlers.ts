@@ -194,6 +194,12 @@ async function markRunning(deps: OtfBuilderDeps, at: string, firstOfBoot: boolea
   });
 }
 
+/** Whether a stop was allowed at or after `since` (Unix ms), so a claim held since then hands out nothing more. */
+async function stopAllowedSince(deps: OtfBuilderDeps, since: number): Promise<boolean> {
+  const power = await deps.store.getPower();
+  return power.state === "stopping" && Date.parse(power.since) >= since;
+}
+
 type Claimed = { kind: "reply"; reply: ClaimReply } | { kind: "none" };
 
 async function claimOnce(deps: OtfBuilderDeps, builder_id: string, revision: string, free: { build: number; validate: number }): Promise<Claimed> {
@@ -244,6 +250,8 @@ export async function postClaim(request: Request, deps: OtfBuilderDeps): Promise
   const hold = deps.claimHoldMs ?? CLAIM_HOLD_MS;
   const poll = deps.claimPollMs ?? CLAIM_POLL_MS;
   for (;;) {
+    // A stop allowed while this claim is held ends it: the machine is about to stop.
+    if (healthy && (await stopAllowedSince(deps, started))) return new Response(null, { status: 204, headers: { "cache-control": "no-store" } });
     // Jobs that started waiting during the hold are promoted on its next look, not the next claim.
     if (healthy) await promoteWaiting(deps, deps.now().toISOString());
     if (healthy && (body.free.build > 0 || body.free.validate > 0)) {

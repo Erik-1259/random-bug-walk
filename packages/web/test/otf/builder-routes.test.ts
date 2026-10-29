@@ -234,7 +234,7 @@ describe("builder claim", () => {
         spec_sha256: SPEC_SHA,
         sentence: "A synthetic sentence",
         lanes: LANES.map((lane, index) => ({ lane_id: `lane-${String(index + 1)}`, ...lane })),
-        limits: { max_rounds: 3, max_usd_lane: "2.00", max_usd_job: "5.00", goose_max_tokens: 32768, deadline_at: iso(60_000 + 45 * 60_000), confirm_rounds: 1 },
+        limits: { max_rounds: 3, max_usd_lane: "3.00", max_usd_job: "8.00", goose_max_tokens: 32768, deadline_at: iso(60_000 + 45 * 60_000), confirm_rounds: 1 },
       },
     });
     // cold_start_ms runs from the later of the last start request and the job's creation.
@@ -336,7 +336,7 @@ describe("builder events", () => {
 
     const spent = world();
     const spentJob = await claimedJob(spent);
-    const meter: BuilderEventIn = { type: "lane_meter", lane_id: "lane-1", data: { tokens_in: 1, tokens_out: 1, requests: 1, cost_microusd: 5_000_000 }, builder_seq: 1, at: iso(1) };
+    const meter: BuilderEventIn = { type: "lane_meter", lane_id: "lane-1", data: { tokens_in: 1, tokens_out: 1, requests: 1, cost_microusd: 8_000_000 }, builder_seq: 1, at: iso(1) };
     expect(await events(spent, spentJob, [meter]).then((r) => r.json())).toMatchObject({ control: { stop: true, reason: "spend_cap" } });
 
     const capped = world(undefined, testConfig({ RBW_OTF_SPEND_CAP_MICROUSD: "1000" }));
@@ -528,6 +528,23 @@ describe("builder stop intent", () => {
     expect((await w.store.getPower()).state).toBe("running");
   });
 
+  it("ends a held claim without work once a stop is allowed during its hold", async () => {
+    const w = world();
+    expect((await claim(w)).status).toBe(204);
+    let sleeps = 0;
+    w.onSleep = async () => {
+      sleeps += 1;
+      if (sleeps !== 1) return;
+      expect(await intent(w, "max_uptime").then((r) => r.json())).toEqual({ allow: true, reason: "ok" });
+      await w.store.createJob(newJob(1, "starting_builder"));
+      await w.store.createJob(newJob(2));
+    };
+    expect((await claim(w)).status).toBe(204);
+    expect(sleeps).toBe(1);
+    expect(await w.store.getJob(uuid(1))).toMatchObject({ state: "starting_builder" });
+    expect(await w.store.getJob(uuid(2))).toMatchObject({ state: "queued" });
+  });
+
   it("gives a boot whose allowed stop never happened work again after the grace period", async () => {
     const w = world();
     expect((await claim(w)).status).toBe(204);
@@ -565,7 +582,7 @@ describe("builder stop intent", () => {
 describe("OTF config and wiring", () => {
   it("reads the OTF variables with defaults, refuses a short secret and malformed lanes, and needs all four power variables", () => {
     const config = testConfig();
-    expect(config).toMatchObject({ builderSecret: SECRET, maxActive: 2, maxQueued: 4, maxPerDay: 15, maxUsdLane: "2.00", maxUsdJob: "5.00", deadlineMs: 45 * 60_000, vmHoursPerDay: 8, nebius: null, cronSecret: null });
+    expect(config).toMatchObject({ builderSecret: SECRET, maxActive: 2, maxQueued: 4, maxPerDay: 30, maxUsdLane: "3.00", maxUsdJob: "8.00", deadlineMs: 45 * 60_000, vmHoursPerDay: 12, nebius: null, cronSecret: null });
     expect(config.lanes).toEqual(LANES);
     expect(otfConfigured(config)).toBe(true);
     expect(loadOtfConfig({ RBW_OTF_BUILDER_SECRET: "short" }).builderSecret).toBeNull();
