@@ -194,6 +194,14 @@ The spec card uses the selected host's time estimate. An estimate based on this 
 
 Custom builds depend on current availability. A host that is not offered has a disabled group with a reason. Umami is unavailable on UTC days 2–5. With no availability response and no saved job, the custom-build section is hidden. A capacity failure offers the catalog fallback. Caps apply per lane and per job; model spend is metered as an upper bound, separately from the catalog's shared judge budget. Starting the closest catalog bug is an explicit choice, never an automatic charge.
 
+### Open behaviors (not available yet)
+
+<!-- TODO-SHIP: open behaviors ship only if they pass acceptance before 2026-10-30 10:00Z. If they ship, replace the availability sentence below with the production commit; if they do not, remove this subsection. -->
+
+Open behaviors are in development and not available on production; until they ship, only the three proven behaviors above can be built. An open behavior is any other non-security behavior of the task-report service. From a bug designer card, the custom-build handoff asks Nemotron 3 Super to classify the card. <!-- TODO-UI: the specification names this handoff "Build this as a custom bug"; check the label against the built UI. --> The answer is a proven match, an open behavior with a grading rule you can edit (the observable failure and the failure code the added checks report), or a refusal. You then accept the card and rule. The classification is advisory: production checks the submitted rule, not the classifier's answer.
+
+Open behaviors are built only on the task-report service. The picker labels them “Another non-security behavior (not measured yet)”, and in place of a time estimate they show “Build times for this kind of behavior are not measured yet. The board shows each step as it runs.” <!-- TODO-UI: the open picker option and time copy are not built yet; check OTF_OPEN_LABEL and OTF_OPEN_TIME_COPY against the built UI. --> No success rate is claimed. They are qualified on the same six-cell grid as the task-report proven behaviors, with a confirmation round, and the certificate shows the rule and the criterion version `open-1`. <!-- TODO-UI: the open certificate view is not built yet. --> See the [judge guide](docs/otf/JUDGES.md#open-behaviors-not-available-yet).
+
 ## Deployment
 
 The site is deployed on Vercel from a tree of this repository plus a results directory assembled from the public results repository and the public store with `packages/web/scripts/assemble-results.mjs`. The steps and project settings are in [Deploying on Vercel](packages/web/README.md#deploying-on-vercel).

@@ -28,6 +28,27 @@ Use the `/factory` page with a judge-passcode session. This guide follows the [m
 
 7. **Optionally validate the stored bundles.** Choose “Validate stored bundles”. For task-report: “Optional validation re-runs the six cells on the RBW builder.” For Umami: “Optional validation re-runs the admission sequence on the RBW builder from the stored bundles.” `queued` and `running` are pending states. Read the completed cells and admission result: `passed`, `failed` and `error` are distinct outcomes. A validation error is not a pass. If the builder machine stops while a validation runs, that validation ends as `error`; you can validate again. A host refusal says “Validation was not started.” followed by the host's reason. With no answer to a validation request, the page says “Your validation request has no answer yet. Refresh to check it, or validate again: a validation already queued is answered, not repeated.” Use “Refresh custom build” to check its status. The unanswered request is not a successful validation.
 
+## Open behaviors (not available yet)
+
+<!-- TODO-SHIP: open behaviors ship only if they pass acceptance before 2026-10-30 10:00Z. If they ship, replace the availability paragraph below with the production commit; if they do not, remove this section. -->
+
+Open behaviors are not available yet. Until they ship, the picker offers only the three proven behaviors above. This section describes the design in the [OTF specification](SPEC.md#8-open-behaviors).
+
+An open behavior is any other non-security behavior of the task-report service. Open behaviors are built only on the task-report service; Umami stays limited to the time-zone date/time criterion.
+
+1. **Start from a bug designer card.** After the bug designer drafts a card, choose its custom-build handoff to have that card built. <!-- TODO-UI: the specification names this handoff "Build this as a custom bug"; check the label against the built UI. --> In the picker, the open behavior appears under the task-report service as “Another non-security behavior (not measured yet)”. <!-- TODO-UI: the picker's open option is not built yet; check that it shows OTF_OPEN_LABEL. -->
+
+2. **Read the classification.** Nemotron 3 Super classifies the card. Its answer takes one of three forms: <!-- TODO-UI: the classification outcomes are not built yet; check this wording against the built UI. -->
+   - **Proven match.** The card matches one of the three proven behaviors, and you can build it as that behavior. The open behavior may be offered beside it.
+   - **Open behavior with a rule.** The answer names a bug family (`concurrency`, `date_time`, `data_handling` or `state_ui`) and proposes a grading rule: the observable failure that the added checks look for through the app's routes (40 to 600 characters) and the failure code they report on the buggy copy. You can edit the rule before you accept it.
+   - **Refusal.** A security topic, or a behavior that could not plausibly exist in a task-and-report service, is refused with a reason, and that card cannot be built. An Umami card about anything other than time-zone grouping is offered as a task-report open behavior only when the behavior could plausibly exist there.
+
+   The classification is advisory. Production checks what you submit, including the rule: a security topic in the rule is refused, and a rule outside the host's scope is rejected.
+
+3. **Accept the card and rule.** Accepting starts the build, which runs on the same lane board as a proven behavior. <!-- TODO-UI: check the accept button label for an open behavior against the built UI. --> In place of any time estimate, the card shows “Build times for this kind of behavior are not measured yet. The board shows each step as it runs.” <!-- TODO-UI: the open time copy is not built yet; check that it shows OTF_OPEN_TIME_COPY. --> No build time, success rate or typical outcome has been measured for open behaviors, and none is shown.
+
+4. **Read the grid and the certificate.** An open behavior is qualified on the same six-cell grid as a task-report proven behavior, then confirmed in a second round. On the buggy copy, the added checks must fail with the rule's failure code. The certificate uses the task-report wording from step 5 and records the criterion version `open-1`. It shows the rule: its family, observable failure and failure code. The rule grades this build only; it is not a catalog criterion. Qualification does not establish novelty. <!-- TODO-UI: the open certificate view is not built yet; check that it shows the rule and open-1. -->
+
 ## If the build does not deliver
 
 Keep the lane feedback and model spend in view. These job outcomes come from the contract:
