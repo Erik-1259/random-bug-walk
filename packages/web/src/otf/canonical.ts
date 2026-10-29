@@ -58,6 +58,7 @@ export function createSha256(body: OtfCreateJob): Promise<string> {
   return sha256Hex(
     canonicalJson({
       client_key: body.client_key,
+      host_id: body.host_id,
       criterion_id: body.criterion_id,
       sentence: body.sentence,
       spec: JSON.parse(specCanonical(body.spec)) as unknown,
