@@ -165,8 +165,14 @@ class FakeStore implements OtfStore {
     return Promise.resolve({ ...this.power });
   }
 
+  /** Runs once when the lock is next taken, before the locked work: a claim racing the watchdog. */
+  beforeLock: (() => void) | null = null;
+
   async withPowerLock<T>(fn: (power: OtfPowerRecord) => Promise<{ patch: Partial<OtfPowerRecord> | null; log: OtfPowerLogEntry[]; result: T }>): Promise<T> {
     if (this.lockDepth > 0) throw new Error("the power lock is not reentrant");
+    const hook = this.beforeLock;
+    this.beforeLock = null;
+    hook?.();
     this.lockDepth += 1;
     this.lockCount += 1;
     try {
@@ -206,8 +212,13 @@ class FakePower implements VmPower {
   constructor(state: NebiusInstanceState = "STOPPED") {
     this.state = state;
   }
+  /** Runs during the next Get: a builder post that lands while the cloud call is in flight. */
+  duringGet: (() => void) | null = null;
   get(): Promise<{ state: NebiusInstanceState; preset: string }> {
     this.calls.push("get");
+    const hook = this.duringGet;
+    this.duringGet = null;
+    hook?.();
     if (this.getFailure !== null) return Promise.reject(this.getFailure);
     return Promise.resolve({ state: this.state, preset: "synthetic-preset" });
   }
@@ -357,7 +368,7 @@ describe("requestStart", () => {
     power.startFailure = new StartError("capacity", "synthetic capacity failure");
     expect(await requestStart(deps(store, power, clock))).toEqual({ kind: "failed", reason: "capacity" });
     expect(store.jobById(waiting.job_id)).toMatchObject({ state: "finished", outcome: "builder_start_failed", reason: "capacity", finished_at: clock.iso() });
-    expect(store.eventsOf(waiting.job_id)).toEqual(["builder_start_failed", "job_finished"]);
+    expect(store.eventsOf(waiting.job_id)).toEqual(["builder_starting", "builder_start_failed", "job_finished"]);
     expect(store.power).toMatchObject({ start_failures: 1, state: "stopped" });
     expect(store.log[0]).toMatchObject({ actor: "create", action: "start", after: "error:capacity" });
 
@@ -449,6 +460,19 @@ describe("runWatchdog", () => {
     expect(await runWatchdog(deps(store, power, clock))).toMatchObject({ action: "get" });
     expect(power.calls).toEqual(["get"]);
     expect(store.jobById(building.job_id).state).toBe("building");
+  });
+
+  it("does not stop for a job claimed between the watchdog's job listing and its lock", async () => {
+    const clock = new Clock();
+    const queued = job("queued", { created_at: clock.iso(-MIN) });
+    const store = new FakeStore(runningRow(clock, MAX_UPTIME_MS + HOUR, MIN), [queued], clock.iso(-10_000));
+    store.beforeLock = () => {
+      Object.assign(store.jobById(queued.job_id), { state: "building", claimed_by: "synthetic-builder", claimed_at: clock.iso() });
+    };
+    const power = new FakePower("RUNNING");
+    expect(await runWatchdog(deps(store, power, clock))).toMatchObject({ action: "get" });
+    expect(power.calls).toEqual(["get"]);
+    expect(store.jobById(queued.job_id).state).toBe("building");
   });
 
   it("stops at MAX_UPTIME_MS when no job is building", async () => {
@@ -567,6 +591,22 @@ describe("runWatchdog", () => {
     expect(power.calls).toEqual(["get"]);
   });
 
+  it("judges readiness by the heartbeat of the claim that promoted a job during the pass", async () => {
+    const clock = new Clock();
+    const waiting = job("starting_builder", { host_id: "umami", criterion_id: "date_time.time-zone-grouping", created_at: clock.iso(-MIN) });
+    const store = new FakeStore(powerRow({ state: "starting", instance_state: "RUNNING", last_start_at: clock.iso(-2 * MIN), running_since: clock.iso(-2 * MIN), last_api_call_at: clock.iso(-MIN) }), [waiting], clock.iso(-5000));
+    store.readyHosts = [];
+    const power = new FakePower("RUNNING");
+    power.duringGet = () => {
+      // A recovered builder heartbeats with umami ready and its claim promotes the job.
+      store.readyHosts = ["task-report", "umami"];
+      store.lastSeen = clock.iso();
+      store.jobById(waiting.job_id).state = "queued";
+    };
+    expect(await runWatchdog(deps(store, power, clock))).toMatchObject({ action: "get", timed_out: 0 });
+    expect(store.jobById(waiting.job_id).state).toBe("queued");
+  });
+
   it("checks readiness only against a fresh heartbeat, and leaves a starting_builder job to the start timeout", async () => {
     const clock = new Clock();
     const queued = job("queued", { host_id: "umami", criterion_id: "date_time.time-zone-grouping", created_at: clock.iso(-MIN) });
@@ -641,7 +681,7 @@ describe("runWatchdog", () => {
     power.startFailure = new StartError("capacity", "synthetic capacity failure");
     expect(await runWatchdog(deps(store, power, clock))).toMatchObject({ action: "start", reason: "jobs_waiting" });
     expect(store.jobById(queued.job_id)).toMatchObject({ state: "finished", outcome: "builder_start_failed", reason: "capacity" });
-    expect(store.eventsOf(queued.job_id)).toEqual(["builder_start_failed", "job_finished"]);
+    expect(store.eventsOf(queued.job_id)).toEqual(["builder_starting", "builder_start_failed", "job_finished"]);
   });
 
   it("marks the builder running on a fresh heartbeat and clears the start failures", async () => {

@@ -204,7 +204,11 @@ function freshPost(job: OtfJobRecord, at: number): boolean {
 // ---- follow-up job changes (made after the power lock is released)
 
 /** started: builder_starting to every starting_builder job; start_failed: finish every waiting job; lost: finish building jobs with no recent post. */
-type FollowUp = { kind: "started"; requested_at: string; preset: string } | { kind: "start_failed"; reason: StartFailureReason } | { kind: "lost" };
+type FollowUp =
+  | { kind: "started"; requested_at: string; preset: string }
+  /** starting: set when this pass's own Start threw, so builder_starting is appended before the failure. */
+  | { kind: "start_failed"; reason: StartFailureReason; starting?: { requested_at: string; preset: string } }
+  | { kind: "lost" };
 
 type Finish =
   | { outcome: "builder_start_failed"; reason: StartFailureReason }
@@ -224,9 +228,19 @@ export function freshReadyHosts(seen: { ready_hosts: readonly OtfHostId[]; last_
 }
 
 /** Finishes one job (compare-and-set on its state) and appends its events; false when another finish won. */
-async function finishJob(store: OtfStore, job: OtfJobRecord, whenStates: readonly OtfJobRecord["state"][], finish: Finish, at: string): Promise<boolean> {
+async function finishJob(
+  store: OtfStore,
+  job: OtfJobRecord,
+  whenStates: readonly OtfJobRecord["state"][],
+  finish: Finish,
+  at: string,
+  starting?: { requested_at: string; preset: string },
+): Promise<boolean> {
   const done = await store.updateJob(job.job_id, whenStates, { state: "finished", outcome: finish.outcome, reason: finish.reason, finished_at: at });
   if (done === null) return false;
+  if (starting !== undefined) {
+    await store.appendJobEvent(job.job_id, { type: "builder_starting", lane_id: null, data: { preset: starting.preset, requested_at: starting.requested_at } }, at);
+  }
   if (finish.outcome === "builder_start_failed") {
     await store.appendJobEvent(job.job_id, { type: "builder_start_failed", lane_id: null, data: { reason: finish.reason } }, at);
   }
@@ -252,7 +266,7 @@ async function applyFollowUp(store: OtfStore, followUp: FollowUp | null, at: str
   // A failed start fails every job that needed the machine: the ones waiting for it to start, and
   // queued ones whose machine stopped (an uptime or day-cap stop) and could not be restarted.
   for (const job of await store.listJobs(WAITING_STATES)) {
-    await finishJob(store, job, [job.state], { outcome: "builder_start_failed", reason: followUp.reason }, at);
+    await finishJob(store, job, [job.state], { outcome: "builder_start_failed", reason: followUp.reason }, at, followUp.starting);
   }
 }
 
@@ -272,7 +286,7 @@ async function sendStart(
   } catch (error) {
     const reason = error instanceof StartError ? error.reason : "api_error";
     const patch: Partial<OtfPowerRecord> = { ...base, start_failures: row.start_failures + 1, state: row.instance_state === "STOPPED" ? "stopped" : "unknown", since: iso };
-    return { patch, entry: log(at, actor, "start", row.instance_state, `error:${reason}`, null), followUp: { kind: "start_failed", reason }, failure: reason };
+    return { patch, entry: log(at, actor, "start", row.instance_state, `error:${reason}`, null), followUp: { kind: "start_failed", reason, starting: { requested_at: iso, preset: row.preset ?? "unknown" } }, failure: reason };
   }
 }
 
@@ -374,8 +388,8 @@ export async function runWatchdog(deps: PowerDeps): Promise<WatchdogResult> {
   // without the job listings or the lock.
   const before = await deps.store.getPower();
   if (deps.power !== null && rateLimited(before, at)) {
-    const ready = freshReadyHosts(await deps.store.lastBuilderSeen(), at);
-    return { action: "none", reason: "rate_limited", timed_out: await finishStuckJobs(deps, before, at, ready !== null, ready) };
+    const seenAt = ms((await deps.store.lastBuilderSeen())?.last_seen_at);
+    return { action: "none", reason: "rate_limited", timed_out: await finishStuckJobs(deps, before, at, seenAt !== null && at - seenAt < BUILDER_FRESH_MS) };
   }
   const [open, finished, seen] = await Promise.all([deps.store.listJobs(OPEN_STATES), deps.store.listJobs(["finished"]), deps.store.lastBuilderSeen()]);
   const lastSignal = latest(ms(seen?.last_seen_at), ...open.map((job) => ms(job.last_builder_post_at)));
@@ -403,7 +417,13 @@ export async function runWatchdog(deps: PowerDeps): Promise<WatchdogResult> {
 
     if (known && !held) {
       if (current.instance_state === "RUNNING" || current.instance_state === "STARTING") {
-        const rule = stopRule(current, open, lastSignal, latest(lastFinished, ms(current.last_job_finished_at)), at, dayCapSeconds(deps));
+        const lastJobFinished = latest(lastFinished, ms(current.last_job_finished_at));
+        let rule = stopRule(current, open, lastSignal, lastJobFinished, at, dayCapSeconds(deps));
+        if (rule !== null) {
+          // The job listing above predates the lock: a claim since then may have started a build.
+          // Re-read the open jobs right before the Stop so a fresh claim is never cut off.
+          rule = stopRule(current, await deps.store.listJobs(OPEN_STATES), lastSignal, lastJobFinished, at, dayCapSeconds(deps));
+        }
         if (rule !== null) {
           try {
             const { operation_id } = await deps.power.stop();
@@ -441,7 +461,7 @@ export async function runWatchdog(deps: PowerDeps): Promise<WatchdogResult> {
   });
 
   await applyFollowUp(deps.store, outcome.followUp, iso);
-  const timedOut = await finishStuckJobs(deps, outcome.row, at, heartbeatFresh, freshReadyHosts(seen, at));
+  const timedOut = await finishStuckJobs(deps, outcome.row, at, heartbeatFresh);
   return { ...outcome.result, timed_out: timedOut };
 }
 
@@ -453,18 +473,21 @@ export async function runWatchdog(deps: PowerDeps): Promise<WatchdogResult> {
  * waiting for a start only when a start was requested after it was created and no builder
  * heartbeat is fresh, so an ordinary wait behind a healthy builder never times out here.
  *
- * A queued job whose host the fresh heartbeat (`readyHosts`, null without one) leaves out finishes
- * builder_unavailable at once: no claim can take it. A starting_builder job is left to the timeout,
- * because a claim with images_ok: false heartbeats without promoting it.
+ * A queued job whose host a fresh heartbeat leaves out of ready_hosts finishes builder_unavailable
+ * at once: no claim can take it. The heartbeat is read after the job listing, so a claim that
+ * promoted a job before the listing has already recorded its own ready_hosts. A starting_builder job
+ * is left to the timeout, because a claim with images_ok: false heartbeats without promoting it.
  */
-async function finishStuckJobs(deps: PowerDeps, row: OtfPowerRecord, at: number, heartbeatFresh: boolean, readyHosts: readonly OtfHostId[] | null): Promise<number> {
+async function finishStuckJobs(deps: PowerDeps, row: OtfPowerRecord, at: number, heartbeatFresh: boolean): Promise<number> {
   const iso = new Date(at).toISOString();
   const block = startBlock(row, new Date(at), deps);
   const unavailable: Finish | null = block === null || block === "start_backoff" ? null : { outcome: "builder_unavailable", reason: block };
   const timeout: Finish = { outcome: "builder_start_failed", reason: "timeout" };
   const lastStart = ms(row.last_start_at);
   let count = 0;
-  for (const job of await deps.store.listJobs(WAITING_STATES)) {
+  const waiting = await deps.store.listJobs(WAITING_STATES);
+  const readyHosts = waiting.some((job) => job.state === "queued") ? freshReadyHosts(await deps.store.lastBuilderSeen(), at) : null;
+  for (const job of waiting) {
     if (job.state === "queued" && readyHosts !== null && !readyHosts.includes(job.host_id)) {
       if (await finishJob(deps.store, job, ["queued"], { outcome: "builder_unavailable", reason: hostNotReadyReason(job.host_id) }, iso)) count += 1;
       continue;
