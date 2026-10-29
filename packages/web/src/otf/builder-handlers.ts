@@ -15,6 +15,7 @@ import {
   OTF_CONTRACT_VERSION,
   OTF_ERROR_STATUS,
   OTF_HOST_IDS,
+  OTF_OPEN_CRITERION_ID,
   PART_MAX_BYTES_BY_PART,
   RESULT_BODY_MAX_BYTES,
   SAFE_FILENAME,
@@ -156,6 +157,7 @@ function buildJob(job: OtfJobRecord, config: OtfConfig): BuildJob {
     job_id: job.job_id,
     host_id: job.host_id,
     criterion_id: job.criterion_id,
+    ...(job.criterion_id === OTF_OPEN_CRITERION_ID && job.rule != null ? { rule: job.rule } : {}),
     spec: job.spec,
     spec_sha256: job.spec_sha256,
     sentence: job.sentence,
@@ -379,6 +381,7 @@ async function checkDelivery(job: OtfJobRecord, certificate: OtfCertificate, pos
   if (certificate.host_id !== job.host_id) return { ok: false, message: "The certificate's host_id does not match the job's." };
   if (certificate.spec_sha256 !== job.spec_sha256) return { ok: false, message: "The certificate's spec_sha256 does not match the job." };
   if (certificate.job_id !== job.job_id || certificate.criterion.criterion_id !== job.criterion_id) return { ok: false, message: "The certificate names another job or criterion." };
+  if (job.criterion_id === OTF_OPEN_CRITERION_ID && (job.rule == null || canonicalJson(certificate.rule) !== canonicalJson(job.rule))) return { ok: false, message: "The certificate's rule does not match the job's." };
   if (certificate.received !== null) return { ok: false, message: "The certificate's received member is set by production; send null." };
   const certificatePart = parts.find((item) => item.part === "certificate");
   let stored: unknown;
