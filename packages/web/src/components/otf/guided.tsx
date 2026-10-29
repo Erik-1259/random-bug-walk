@@ -1,5 +1,7 @@
 import type { BugSpec } from "../../assist/client.ts";
-import { SENTENCE_MAX_CHARS, SENTENCE_MIN_CHARS, type OtfBehaviorOption, type OtfCriterionId, type OtfHostAvailability, type OtfSpecCard } from "../../otf/contract.ts";
+import { OTF_OPEN_CRITERION_ID, OTF_OPEN_TIME_COPY, SENTENCE_MAX_CHARS, SENTENCE_MIN_CHARS, type OtfClassification, type OtfOpenRule, type OtfBehaviorOption, type OtfCriterionId, type OtfHostAvailability, type OtfSpecCard } from "../../otf/contract.ts";
+import { ClassificationView, OpenRuleFields, ruleProblem } from "./classification.tsx";
+export { ruleProblem } from "./classification.tsx";
 import { HostReason, UMAMI_PLACEMENT, hostQueueSentence, orderedHosts, typicalSentence } from "./host-copy.tsx";
 
 const length = (text: string) => Array.from(text).length;
@@ -82,11 +84,32 @@ export interface SpecAcceptProps {
   signedIn: boolean;
   onChange: (spec: OtfSpecCard) => void;
   onAccept: () => void;
+  behavior?: OtfBehaviorOption;
+  rule?: OtfOpenRule | null;
+  onRule?: (rule: OtfOpenRule) => void;
+  classification?: OtfClassification | null;
+  classificationPending?: boolean;
+  acceptBlocked?: boolean;
+  onOpen?: () => void;
+  openAvailable?: boolean;
+  provenLabel?: string;
+  /** Why the card needs classifying again (a failure or an edit), with the button that does it. */
+  classifyPrompt?: ClassifyPrompt | null;
+  onClassify?: () => void;
 }
 
-export function SpecAcceptView({ spec, host, busy, signedIn, onChange, onAccept }: SpecAcceptProps) {
+export interface ClassifyPrompt {
+  text: string;
+  action: "Try again" | "Classify again";
+  alert: boolean;
+}
+
+export function SpecAcceptView({ spec, host, busy, signedIn, onChange, onAccept, behavior, rule = null, onRule, classification = null, classificationPending = false, acceptBlocked = false, onOpen, openAvailable, provenLabel, classifyPrompt = null, onClassify }: SpecAcceptProps) {
+  const open = behavior?.criterion_id === OTF_OPEN_CRITERION_ID;
   const problem = specProblem(spec);
-  return <form className="factory-form designer-card" aria-label="Accept custom spec" onSubmit={event => { event.preventDefault(); onAccept(); }}>
+  const ruleBlocked = open && ruleProblem(rule) !== null;
+  const blocked = acceptBlocked || busy || !signedIn || problem !== null || ruleBlocked || classificationPending || classification?.refusal != null;
+  return <form className="factory-form designer-card" aria-label="Accept custom spec" onSubmit={event => { event.preventDefault(); if (!blocked) onAccept(); }}>
     <h3>Edit or accept your spec card</h3>
     <p className="factory-badge">Design, not a built bug</p>
     <p>Spec card by Nemotron 3 Super. Read each field before starting the custom build.</p>
@@ -99,9 +122,16 @@ export function SpecAcceptView({ spec, host, busy, signedIn, onChange, onAccept 
         <textarea id="otf-spec-checks_to_add" value={spec.checks_to_add.join("\n")} onChange={event => { onChange({ ...spec, checks_to_add: event.target.value.split("\n") }); }} />
       </label>
     </fieldset>
+    <ClassificationView classification={classification} criterionId={behavior?.criterion_id ?? null} provenLabel={provenLabel} openAvailable={openAvailable} disabled={busy || !signedIn || classificationPending} onOpen={onOpen}/>
+    {open && classification?.refusal == null && classifyPrompt === null && !classificationPending && <OpenRuleFields rule={rule} disabled={busy || !signedIn} onChange={onRule}/>}
+    {classificationPending && <p role="status">Classifying this spec card. No custom build has started.</p>}
+    {classifyPrompt !== null && !classificationPending && <>
+      <p role={classifyPrompt.alert ? "alert" : "status"}>{classifyPrompt.text}</p>
+      {onClassify !== undefined && <button type="button" disabled={busy || !signedIn} onClick={onClassify}>{classifyPrompt.action}</button>}
+    </>}
     {problem !== null && <p role="status">{problem}</p>}
     {host?.host_id === "umami" && <p>{UMAMI_PLACEMENT}</p>}
-    {host !== null && <p>{typicalSentence(host)}</p>}
-    <button type="submit" disabled={busy || !signedIn || problem !== null}>Accept and build this custom bug</button>
+    {behavior?.measured === false ? <p>{OTF_OPEN_TIME_COPY}</p> : host !== null && <p>{typicalSentence(host)}</p>}
+    <button type="submit" disabled={blocked}>Accept and build this custom bug</button>
   </form>;
 }
