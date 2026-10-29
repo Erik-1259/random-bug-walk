@@ -17,6 +17,8 @@
     "publish-fixture": "node scripts/publish-fixture.ts"
   },
   "dependencies": {
+    "@grpc/grpc-js": "1.14.6",
+    "@nebius/js-sdk": "0.2.77",
     "@rbw/admission": "workspace:*",
     "@rbw/case-package": "workspace:*",
     "@rbw/case-validate": "workspace:*",
