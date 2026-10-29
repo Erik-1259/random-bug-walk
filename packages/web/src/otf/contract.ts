@@ -1038,6 +1038,9 @@ export interface OtfStore {
    * A saturated host never blocks another host's jobs. A build claim sets building, claimed_by,
    * claimed_at, deadline_at = at + that host's deadlineMs and lease_until = at + LEASE_MS.
    * A validation claim sets running.
+   * The claim waits for the power row lock (it takes the row FOR SHARE) and claims nothing while the
+   * power row reads stopping, so a stop decided under that lock and a claim never overlap. Never call
+   * it inside withPowerLock.
    */
   claimNext(
     builder_id: string,

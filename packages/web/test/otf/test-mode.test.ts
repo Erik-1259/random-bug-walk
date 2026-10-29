@@ -524,3 +524,19 @@ describe("the fake builder through the store and power ports", () => {
     expect(world.refusal).toBeNull();
   });
 });
+
+describe("the test world store", () => {
+  it("plays the fake builder from inside a power lock without waiting for that lock", async () => {
+    let now = Date.parse(T0);
+    const world = new OtfTestWorld({ scenario: "delivered", clock: () => now, speed: 1 });
+    await world.power.start();
+    now += 10 * 60_000;
+    const timeout = new Promise((resolve) => {
+      setTimeout(() => {
+        resolve("timed out");
+      }, 2000);
+    });
+    const inside = world.store.withPowerLock(async () => ({ patch: null, log: [], result: (await world.store.listJobs(["queued"])).length }));
+    expect(await Promise.race([inside, timeout])).toBe(0);
+  });
+});

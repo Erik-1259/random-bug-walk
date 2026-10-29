@@ -6,7 +6,8 @@ import { readFileSync } from "node:fs";
 import { PGlite } from "@electric-sql/pglite";
 import { describe, expect, it } from "vitest";
 import { builderEventBytes } from "../../src/otf/canonical.ts";
-import type { BuilderEventIn, OtfAdmissionResult, OtfHostId, OtfNewJob, OtfSpecCard, OtfStore } from "../../src/otf/contract.ts";
+import { MAX_UPTIME_MS, WATCHDOG_MIN_INTERVAL_MS, type BuilderEventIn, type OtfAdmissionResult, type OtfHostId, type OtfNewJob, type OtfSpecCard, type OtfStore, type VmPower } from "../../src/otf/contract.ts";
+import { runWatchdog } from "../../src/otf/power/lifecycle.ts";
 import { createMemoryOtfStore, createPgOtfStore, type OtfSql, type OtfSqlPool } from "../../src/otf/store.ts";
 
 const MIGRATION = readFileSync(new URL("../../otf-migrations/0001_otf.sql", import.meta.url), "utf8");
@@ -345,5 +346,76 @@ describe.each(STORES)("OtfStore (%s)", (_name, open) => {
     expect((await store.getPower()).start_failures).toBe(3);
     // The lock still works after a failure inside it.
     expect(await store.withPowerLock((power) => Promise.resolve({ patch: null, log: [], result: power.state }))).toBe("starting");
+  });
+
+  it("makes a claim wait for the power lock and hand out nothing once the row reads stopping", async () => {
+    const store = await open();
+    await store.createJob(newJob(1));
+    let release = (): void => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const stop = store.withPowerLock(async () => {
+      await gate;
+      return { patch: { state: "stopping", since: at(9000) }, log: [], result: null };
+    });
+    let settled = false;
+    const claim = store.claimNext("builder-a", at(10_000), CLAIM).finally(() => {
+      settled = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(settled).toBe(false);
+    release();
+    await stop;
+    expect(await claim).toBeNull();
+    expect((await store.getJob(uuid(1)))?.state).toBe("queued");
+    await store.withPowerLock(() => Promise.resolve({ patch: { state: "running", since: at(11_000) }, log: [], result: null }));
+    expect(await store.claimNext("builder-a", at(12_000), CLAIM)).toMatchObject({ kind: "build", job: { job_id: uuid(1) } });
+  });
+
+  it("starts no claimed work while a watchdog uptime stop waits for its Stop call", async () => {
+    const store = await open();
+    const nowMs = Date.parse(at(0));
+    const up = new Date(nowMs - MAX_UPTIME_MS - 60_000).toISOString();
+    await store.withPowerLock(() =>
+      Promise.resolve({
+        patch: { state: "running", since: up, instance_state: "RUNNING", running_since: up, last_start_at: up, last_api_call_at: at(-WATCHDOG_MIN_INTERVAL_MS - 1000), vm_day: T0.slice(0, 10) },
+        log: [],
+        result: null,
+      }),
+    );
+    await store.recordBuilderSeen({ builder_id: "builder-a", builder_revision: "rev-1", boot_id: "boot-1", booted_at: up, ready_hosts: ["task-report"] }, at(-5000));
+    await store.createJob(newJob(1, { created_at: at(-120_000) }));
+    let release = (): void => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let stopCalled = (): void => undefined;
+    const stopping = new Promise<void>((resolve) => {
+      stopCalled = resolve;
+    });
+    const power: VmPower = {
+      get: () => Promise.reject(new Error("synthetic: no Get expected")),
+      start: () => Promise.reject(new Error("synthetic: no Start expected")),
+      stop: async () => {
+        stopCalled();
+        await gate;
+        return { operation_id: "op-stop-1" };
+      },
+    };
+    const watchdog = runWatchdog({ store, power, now: () => new Date(nowMs) });
+    await stopping;
+    // A builder long poll claims while the Stop is in flight.
+    let settled = false;
+    const claim = store.claimNext("builder-a", at(1000), CLAIM).finally(() => {
+      settled = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(settled).toBe(false);
+    release();
+    expect(await watchdog).toMatchObject({ action: "stop", reason: "max_uptime" });
+    expect(await claim).toBeNull();
+    expect((await store.getJob(uuid(1)))?.state).toBe("queued");
+    expect((await store.getPower()).state).toBe("stopping");
   });
 });
