@@ -160,8 +160,12 @@ const SPEC_CARD = object({
   fix: text(1200),
 });
 
-/** Plain text: no control characters (C0, DEL or C1), so no line breaks either. */
-const plainText = (maxLength: number, minLength = 1): Schema => ({ ...text(maxLength, minLength), pattern: "^\\P{Cc}*$" });
+/**
+ * Plain text: no control characters (\p{Cc}: C0, DEL and C1, so no tab, line feed, carriage return or
+ * U+0085), no line or paragraph separators (\p{Zl} U+2028, \p{Zp} U+2029) and no format characters
+ * (\p{Cf}: bidi controls such as U+202E, zero-width characters such as U+200B, U+200D and U+FEFF).
+ */
+const plainText = (maxLength: number, minLength = 1): Schema => ({ ...text(maxLength, minLength), pattern: "^[^\\p{Cc}\\p{Zl}\\p{Zp}\\p{Cf}]*$" });
 const FAILURE_CODE: Schema = { type: "string", pattern: OPEN_FAILURE_CODE_PATTERN, not: { enum: [...PROVEN_FAILURE_CODES] } };
 const OPEN_RULE = object({
   family: oneOf(OTF_OPEN_FAMILIES),
@@ -445,11 +449,12 @@ const CLASSIFICATION: Schema = {
     model: TOKEN(),
   }),
   allOf: [
-    // A refusal means nothing is buildable; no refusal means a family.
+    // A refusal means nothing is buildable, no rule and no proven match; no refusal means a family
+    // and at least one buildable entry, so the UI always has a next step.
     {
       if: isSet("refusal"),
-      then: { type: "object", properties: { buildable: { type: "array", maxItems: 0 } } },
-      else: { type: "object", properties: { family: { type: "string" } } },
+      then: { type: "object", properties: { buildable: { type: "array", maxItems: 0 }, rule: { type: "null" }, proven_criterion_id: { type: "null" } } },
+      else: { type: "object", properties: { family: { type: "string" }, buildable: { type: "array", minItems: 1 } } },
     },
     // The open criterion in buildable means a rule.
     {

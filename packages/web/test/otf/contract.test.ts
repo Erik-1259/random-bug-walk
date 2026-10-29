@@ -575,9 +575,15 @@ describe("open behaviors: the rule", () => {
     expect(validateOtf("OtfOpenRule", { ...RULE, observable_failure: "x".repeat(39) })).not.toEqual([]);
     expect(validateOtf("OtfOpenRule", { ...RULE, observable_failure: "x".repeat(601) })).not.toEqual([]);
   });
+  it("counts observable_failure in code points, not UTF-16 units", () => {
+    expect("\u{1F600}".repeat(600).length).toBe(1200);
+    expect(validateOtf("OtfOpenRule", { ...RULE, observable_failure: "\u{1F600}".repeat(600) })).toEqual([]);
+    expect(validateOtf("OtfOpenRule", { ...RULE, observable_failure: "\u{1F600}".repeat(601) })).not.toEqual([]);
+    expect(validateOtf("OtfOpenRule", { ...RULE, observable_failure: "\u{1F600}".repeat(39) + "x" })).toEqual([]);
+  });
   it("refuses an unknown family, control characters, unknown members and a missing member", () => {
     expect(validateOtf("OtfOpenRule", { ...RULE, family: "security" })).not.toEqual([]);
-    for (const control of ["\n", "\t", "\u0000", "\u007f", "\u0085"]) {
+    for (const control of ["\n", "\t", "\u0000", "\u007f", "\u0085", "\u2028", "\u2029", "\u202e", "\u200b", "\u200d", "\ufeff"]) {
       expect(validateOtf("OtfOpenRule", { ...RULE, observable_failure: `${RULE.observable_failure}${control}more synthetic text` })).not.toEqual([]);
     }
     expect(validateOtf("OtfOpenRule", { ...RULE, extra: 1 })).not.toEqual([]);
@@ -698,6 +704,16 @@ describe("open behaviors: classify", () => {
     expect(validateOtf("OtfClassification", { ...CLASSIFIED, rule: null })).not.toEqual([]);
     expect(validateOtf("OtfClassification", { ...CLASSIFIED, buildable: [CLASSIFIED.buildable[1]] })).not.toEqual([]);
     expect(validateOtf("OtfClassification", { ...CLASSIFIED, proven_criterion_id: "date_time.time-zone-grouping" })).not.toEqual([]);
+  });
+  it("leaves no dead end: no refusal needs a buildable entry, and a refusal carries no rule or proven match", () => {
+    expect(validateOtf("OtfClassification", { ...CLASSIFIED, proven_criterion_id: null, buildable: [], rule: null })).not.toEqual([]);
+    expect(validateOtf("OtfClassification", { ...CLASSIFIED, proven_criterion_id: null, buildable: [] })).not.toEqual([]);
+    const refused = { family: null, proven_criterion_id: null, buildable: [], rule: null, refusal: { kind: "out_of_scope", reason: "Synthetic reason." }, model: "synthetic/classifier" };
+    expect(validateOtf("OtfClassification", refused)).toEqual([]);
+    expect(validateOtf("OtfClassification", { ...refused, family: "data_handling" })).toEqual([]);
+    expect(validateOtf("OtfClassification", { ...refused, rule: RULE })).not.toEqual([]);
+    expect(validateOtf("OtfClassification", { ...refused, proven_criterion_id: "concurrency.stale-success-response" })).not.toEqual([]);
+    expect(validateOtf("OtfClassification", { ...refused, refusal: { kind: "security", reason: "Synthetic reason." }, rule: RULE })).not.toEqual([]);
   });
   it("refuses bad members: a host mismatch, a repeat, the open id as a proven match, a long reason and unknown members", () => {
     const open = { host_id: "task-report", criterion_id: OTF_OPEN_CRITERION_ID };

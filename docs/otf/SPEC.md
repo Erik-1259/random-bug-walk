@@ -375,7 +375,8 @@ Open behaviors let a customer build a non-security behavior on the task-report h
 | `date_time.time-zone-grouping` | Umami | `local_day_counts_mismatch` |
 
 - The open behavior's picker label is `OTF_OPEN_LABEL`: "Another non-security behavior (not measured yet)".
-- `OTF_CONTRACT_VERSION` stays `otf/0`. Every addition is optional or applies to the open criterion only, so every body of a proven job validates exactly as before.
+- `OTF_CONTRACT_VERSION` stays `otf/0`. Not every addition is optional: `OtfBehaviorOption.measured` is a new required member of availability (section 8.4). Every other addition is optional or applies to the open criterion only, and the builder-facing bodies of a proven job (claim, events, result, validation and certificate) validate exactly as before.
+- A browser tab still open on the bundle before this change does not know `measured`; its strict availability check refuses the new answer, so that tab shows OTF as unavailable until it is reloaded.
 
 ### 8.2 The flag, and production at this commit
 
@@ -386,12 +387,15 @@ Open behaviors let a customer build a non-security behavior on the task-report h
   - no claim hands out an open job, since none can be created;
   - the classify route does not exist.
 - With the flag on, availability adds the open behavior on task-report (when that host is offered), with `label: OTF_OPEN_LABEL` and `measured: false`.
+- Set `RBW_OTF_OPEN_BEHAVIORS=1` in an environment only after the builder that reads `BuildJob.rule` is installed and pointed at that environment. A claim does not tell production whether the builder supports open jobs, so an earlier builder would claim an open job and build it without its rule.
 
 ### 8.3 The rule and the create body
 
 **`OtfOpenRule`** `{ family, observable_failure, failure_code }`:
 - `family`: one of `OTF_OPEN_FAMILIES` (`concurrency`, `date_time`, `data_handling`, `state_ui`);
-- `observable_failure`: 40 to 600 characters of plain text with no control characters (no line breaks): what a check observes through the app's routes;
+- `observable_failure`: 40 to 600 characters of plain text: what a check observes through the app's routes.
+  - The limits (`OBSERVABLE_FAILURE_MIN_CHARS`, `OBSERVABLE_FAILURE_MAX_CHARS`) count Unicode code points, as Ajv does. A UI must count the same way (`[...text].length`), not in UTF-16 code units (`text.length` or an input's `maxlength`), where an emoji counts twice.
+  - Plain text refuses control characters (`\p{Cc}`: C0, DEL and C1, so tab, line feed, carriage return and U+0085), line and paragraph separators (`\p{Zl}` U+2028, `\p{Zp}` U+2029) and format characters (`\p{Cf}`: bidi controls such as U+202E, zero-width characters such as U+200B, U+200D and U+FEFF). Everything else is accepted.
 - `failure_code`: matches `OPEN_FAILURE_CODE_PATTERN` (`^[a-z][a-z0-9_]{2,47}$`) and is none of `PROVEN_FAILURE_CODES`.
 - The schema refuses unknown members, as every OTF schema does.
 
@@ -432,7 +436,8 @@ The classifier's answer is advisory. The customer may edit the rule before submi
   - `refusal`: null, or `{ kind: "security" | "out_of_scope", reason }` with a reason of 1 to 300 characters;
   - `model`: the classifier model.
 - **Invariants**, enforced by `validateOtf("OtfClassification", …)`:
-  - a refusal means `buildable` is empty, and no refusal means `family` is set;
+  - a refusal means `buildable` is empty and `rule` and `proven_criterion_id` are null;
+  - no refusal means `family` is set and `buildable` has at least one entry, so the UI always has a next step;
   - the open criterion in `buildable` means `rule` is non-null;
   - a non-null `proven_criterion_id` means `buildable` includes it.
 - **Errors** use the shared `OtfErrorBody` and the codes in `OTF_CLASSIFY_ERRORS`: `signed_out` (no session), `invalid_request` (a malformed body), `refused_topic` (a security topic or code in the sentence or card, found by the existing safety checks before any model call), and `unavailable` (OTF or the flag off, the model unreachable, or an answer that fails its schema).
@@ -457,7 +462,8 @@ The classifier's answer is advisory. The customer may edit the rule before submi
 
 ### 8.9 What stays the same
 
-- The proven criteria, their availability, create checks, idempotency hashes, claims, events, results and certificates.
+- The proven criteria, their create checks, idempotency hashes, claims, events, results, validations and certificates: every builder-facing body of a proven job validates exactly as before.
+- Their availability, except the new required `measured` member (section 8.1): a browser tab open on the earlier bundle shows OTF as unavailable until it is reloaded.
 - The builder routes, their auth and `OTF_CONTRACT_VERSION`.
 - Every existing UI label.
 

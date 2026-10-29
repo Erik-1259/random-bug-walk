@@ -82,6 +82,11 @@ export const OTF_OPEN_TIME_COPY = "Build times for this kind of behavior are not
 export const OTF_OPEN_FAMILIES = ["concurrency", "date_time", "data_handling", "state_ui"] as const;
 export type OtfOpenFamily = (typeof OTF_OPEN_FAMILIES)[number];
 
+/**
+ * observable_failure limits, in Unicode code points (as Ajv's minLength/maxLength count). A UI must
+ * count the same way ([...text].length), not UTF-16 code units (text.length or an input's maxlength),
+ * or an emoji or other astral character counts twice there.
+ */
 export const OBSERVABLE_FAILURE_MIN_CHARS = 40;
 export const OBSERVABLE_FAILURE_MAX_CHARS = 600;
 /** An open rule's failure_code (JSON-schema pattern source); it also may not be one of PROVEN_FAILURE_CODES. */
@@ -94,7 +99,10 @@ export const OPEN_FAILURE_CODE_PATTERN = "^[a-z][a-z0-9_]{2,47}$";
  */
 export interface OtfOpenRule {
   family: OtfOpenFamily;
-  /** OBSERVABLE_FAILURE_MIN_CHARS..OBSERVABLE_FAILURE_MAX_CHARS of plain text (no control characters): what a check observes through the app's routes. */
+  /**
+   * OBSERVABLE_FAILURE_MIN_CHARS..OBSERVABLE_FAILURE_MAX_CHARS code points of plain text (no control,
+   * line or paragraph separator, or format characters): what a check observes through the app's routes.
+   */
   observable_failure: string;
   /** Matches OPEN_FAILURE_CODE_PATTERN and is none of PROVEN_FAILURE_CODES. */
   failure_code: string;
@@ -274,9 +282,10 @@ export interface OtfBuildableOption {
 
 /**
  * The classifier's answer: advisory, so the customer may edit the rule and production validates what
- * is submitted. Invariants (enforced by validateOtf): a refusal means buildable is empty, and no
- * refusal means a family; the open criterion in buildable means rule is non-null; a non-null
- * proven_criterion_id means buildable includes it.
+ * is submitted. Invariants (enforced by validateOtf): a refusal means buildable is empty and rule
+ * and proven_criterion_id are null; no refusal means a family and at least one buildable entry; the
+ * open criterion in buildable means rule is non-null; a non-null proven_criterion_id means buildable
+ * includes it.
  */
 export interface OtfClassification {
   /** null only on a refusal. */
