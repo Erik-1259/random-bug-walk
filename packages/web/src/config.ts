@@ -3,6 +3,7 @@
 // judge and factory routes' server variables are read here too, in the route handlers only, so none
 // of them reaches the client bundle.
 import { resolve } from "node:path";
+import { OTF_DEFAULTS } from "./otf/contract.ts";
 
 export const DEFAULT_RESULTS_DIR = "fixtures/development-2026-10-06";
 
@@ -202,4 +203,133 @@ export function assistTestProviderOrigin(env: Env = process.env): string | null 
   const environment = value(env, "VERCEL_ENV");
   const local = environment === null || environment === "development";
   return origin !== null && LOOPBACK_ORIGIN.test(origin) && value(env, "RBW_FACTORY_TEST_MODE") === "1" && local ? origin : null;
+}
+
+// ---- On-the-fly bug creation (OTF). Every OTF variable is read here, the power and cron ones too,
+// so the route modules share one reading of them. docs/otf/SPEC.md describes what each one does.
+
+/** One build lane as configured: the lane IDs are assigned lane-1, lane-2, ... in order. */
+export interface OtfLaneConfig {
+  model: string;
+  model_label: string;
+  price_in_usd_per_m: string;
+  price_out_usd_per_m: string;
+}
+
+export interface OtfConfig {
+  /**
+   * RBW_OTF_BUILDER_SECRET: the builder routes' HMAC secret, at least OTF_SECRET_MIN_CHARS long;
+   * null when unset or shorter. Without it every OTF route answers unavailable (fail closed).
+   */
+  builderSecret: string | null;
+  /** DATABASE_URL: the database whose `otf` schema holds the jobs; null leaves OTF unavailable. */
+  databaseUrl: string | null;
+  /** RBW_OTF_LANES: a JSON array of 1 to 4 lanes; null when unset or invalid, which leaves OTF unavailable. */
+  lanes: OtfLaneConfig[] | null;
+  /** Why RBW_OTF_LANES was refused, for the log (never its value); null when it parsed or is unset. */
+  lanesError: string | null;
+  /** RBW_OTF_MAX_ACTIVE: build jobs running at once. */
+  maxActive: number;
+  /** RBW_OTF_MAX_QUEUED: jobs waiting beyond the active ones. */
+  maxQueued: number;
+  /** RBW_OTF_MAX_PER_DAY: jobs created per UTC day. */
+  maxPerDay: number;
+  /** RBW_OTF_SPEND_CAP_MICROUSD: total reported OTF model spend before creates are refused and builds stopped. */
+  spendCapMicrousd: number;
+  /** RBW_OTF_MAX_USD_LANE and RBW_OTF_MAX_USD_JOB: the model spend caps sent with each build job. */
+  maxUsdLane: string;
+  maxUsdJob: string;
+  /** RBW_OTF_DEADLINE_MIN: minutes from claim to the job deadline. */
+  deadlineMs: number;
+  /** RBW_OTF_VM_HOURS_PER_DAY: builder machine hours per UTC day. */
+  vmHoursPerDay: number;
+  /**
+   * RBW_NEBIUS_SA_ID, RBW_NEBIUS_SA_KEY_ID, RBW_NEBIUS_SA_PRIVATE_KEY and RBW_NEBIUS_VM_ID: the
+   * power-only service-account key and the one instance it may start and stop; null unless all four are set.
+   */
+  nebius: { serviceAccountId: string; keyId: string; privateKey: string; instanceId: string } | null;
+  /** CRON_SECRET: the bearer token Vercel Cron sends to the power cron route; null disables that route. */
+  cronSecret: string | null;
+}
+
+export const OTF_SECRET_MIN_CHARS = 32;
+/** The default total OTF model spend cap: $40 (decision E15's recommendation), in micro-USD. */
+export const DEFAULT_OTF_SPEND_CAP_MICROUSD = 40_000_000;
+const OTF_LANES_MAX = 4;
+const OTF_MODEL = /^[A-Za-z0-9][A-Za-z0-9._:/+@-]{0,199}$/;
+const OTF_USD = /^\d{1,6}(?:\.\d{1,6})?$/;
+
+/** A whole number in [min, max] from the variable, or the fallback when it is unset or not one. */
+function wholeNumber(env: Env, name: string, fallback: number, min: number, max: number): number {
+  const found = value(env, name);
+  if (found === null || !/^\d{1,15}$/.test(found)) return fallback;
+  const parsed = Number(found);
+  return parsed >= min && parsed <= max ? parsed : fallback;
+}
+
+function usd(env: Env, name: string, fallback: string): string {
+  const found = value(env, name);
+  return found !== null && OTF_USD.test(found) ? found : fallback;
+}
+
+/** Parses RBW_OTF_LANES: [{model, model_label, price_in_usd_per_m, price_out_usd_per_m}, ...], 1 to 4 lanes. */
+export function parseOtfLanes(text: string): { ok: true; lanes: OtfLaneConfig[] } | { ok: false; error: string } {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return { ok: false, error: "RBW_OTF_LANES is not JSON" };
+  }
+  if (!Array.isArray(parsed) || parsed.length === 0 || parsed.length > OTF_LANES_MAX) return { ok: false, error: `RBW_OTF_LANES must be an array of 1 to ${String(OTF_LANES_MAX)} lanes` };
+  const lanes: OtfLaneConfig[] = [];
+  for (const [index, item] of (parsed as unknown[]).entries()) {
+    const lane = item as Partial<Record<keyof OtfLaneConfig, unknown>> | null;
+    const keys = typeof item === "object" && item !== null ? Object.keys(item).sort().join(",") : "";
+    const ok =
+      lane !== null &&
+      keys === "model,model_label,price_in_usd_per_m,price_out_usd_per_m" &&
+      typeof lane.model === "string" &&
+      OTF_MODEL.test(lane.model) &&
+      typeof lane.model_label === "string" &&
+      lane.model_label.length > 0 &&
+      lane.model_label.length <= 120 &&
+      typeof lane.price_in_usd_per_m === "string" &&
+      OTF_USD.test(lane.price_in_usd_per_m) &&
+      typeof lane.price_out_usd_per_m === "string" &&
+      OTF_USD.test(lane.price_out_usd_per_m);
+    if (!ok) return { ok: false, error: `RBW_OTF_LANES lane ${String(index + 1)} is not {model, model_label, price_in_usd_per_m, price_out_usd_per_m}` };
+    lanes.push({ model: lane.model as string, model_label: lane.model_label as string, price_in_usd_per_m: lane.price_in_usd_per_m as string, price_out_usd_per_m: lane.price_out_usd_per_m as string });
+  }
+  return { ok: true, lanes };
+}
+
+export function loadOtfConfig(env: Env = process.env): OtfConfig {
+  const secret = value(env, "RBW_OTF_BUILDER_SECRET");
+  const lanesText = value(env, "RBW_OTF_LANES");
+  const lanes = lanesText === null ? null : parseOtfLanes(lanesText);
+  const saId = value(env, "RBW_NEBIUS_SA_ID");
+  const keyId = value(env, "RBW_NEBIUS_SA_KEY_ID");
+  const privateKey = value(env, "RBW_NEBIUS_SA_PRIVATE_KEY");
+  const instanceId = value(env, "RBW_NEBIUS_VM_ID");
+  return {
+    builderSecret: secret !== null && secret.length >= OTF_SECRET_MIN_CHARS ? secret : null,
+    databaseUrl: value(env, "DATABASE_URL"),
+    lanes: lanes?.ok === true ? lanes.lanes : null,
+    lanesError: lanes?.ok === false ? lanes.error : null,
+    maxActive: wholeNumber(env, "RBW_OTF_MAX_ACTIVE", OTF_DEFAULTS.max_active, 1, 16),
+    maxQueued: wholeNumber(env, "RBW_OTF_MAX_QUEUED", OTF_DEFAULTS.max_queued, 0, 100),
+    maxPerDay: wholeNumber(env, "RBW_OTF_MAX_PER_DAY", OTF_DEFAULTS.max_per_day, 0, 1000),
+    spendCapMicrousd: wholeNumber(env, "RBW_OTF_SPEND_CAP_MICROUSD", DEFAULT_OTF_SPEND_CAP_MICROUSD, 0, 1_000_000_000_000),
+    maxUsdLane: usd(env, "RBW_OTF_MAX_USD_LANE", OTF_DEFAULTS.max_usd_lane),
+    maxUsdJob: usd(env, "RBW_OTF_MAX_USD_JOB", OTF_DEFAULTS.max_usd_job),
+    deadlineMs: wholeNumber(env, "RBW_OTF_DEADLINE_MIN", OTF_DEFAULTS.deadline_ms / 60_000, 5, 180) * 60_000,
+    vmHoursPerDay: wholeNumber(env, "RBW_OTF_VM_HOURS_PER_DAY", OTF_DEFAULTS.vm_hours_per_day, 0, 24),
+    nebius: saId === null || keyId === null || privateKey === null || instanceId === null ? null : { serviceAccountId: saId, keyId, privateKey, instanceId },
+    cronSecret: value(env, "CRON_SECRET"),
+  };
+}
+
+/** Whether the OTF routes can run at all: a builder secret, a database and the lanes. */
+export function otfConfigured(config: OtfConfig): boolean {
+  return config.builderSecret !== null && config.databaseUrl !== null && config.lanes !== null;
 }

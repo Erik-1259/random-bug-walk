@@ -120,7 +120,7 @@ All builder routes sit under `/api/factory/otf/builder/`.
 |---|---|---|
 | `POST /claim` | `ClaimRequest` | 200 `ClaimReply`, or 204. A long poll, held up to `CLAIM_HOLD_MS` (20 s). It is also the idle heartbeat. |
 | `POST /jobs/{id}/events` | `EventsPost` | 200 `EventsReply` |
-| `POST /jobs/{id}/result` | `ResultPost` | 200 `OtfJobStatus` |
+| `POST /jobs/{id}/result` | `ResultPost` | 200 `ResultReply` |
 | `GET /jobs/{id}/artifacts/{part}` | — | The stored bytes, for validate jobs, so validation survives the loss of the machine's storage |
 | `POST /validations/{vid}/result` | `ValidationResultPost` | 200 `OtfValidation` |
 | `POST /stop-intent` | `StopIntent` | 200 `StopIntentReply` |

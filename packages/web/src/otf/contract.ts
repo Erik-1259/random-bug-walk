@@ -487,7 +487,7 @@ export interface ResultPart {
  * POST /api/factory/otf/builder/jobs/{id}/result. Production checks: gzip magic for the tarballs,
  * size <= PART_MAX_BYTES each, sha256 of the decoded bytes, SAFE_FILENAME, one of each part, that
  * certificate.bundles equal the part hashes, and that the job's spec_sha256 equals the
- * certificate's. Idempotent on (job_id, part sha256s). The answer is 200 with the job's status.
+ * certificate's. Idempotent on (job_id, part sha256s). The answer is 200 with a ResultReply.
  */
 export interface ResultPost {
   builder_id: string;
@@ -497,6 +497,13 @@ export interface ResultPost {
   certificate?: OtfCertificate;
   /** Required when outcome is delivered (agent, grader, certificate), absent otherwise. */
   parts?: ResultPart[];
+}
+
+/** The answer to a result post, its first time and on an idempotent repeat. */
+export interface ResultReply {
+  job_id: OtfJobId;
+  state: "finished";
+  outcome: OtfOutcome;
 }
 
 /** GET /api/factory/otf/builder/jobs/{id}/artifacts/{part}: the stored bytes, for validate jobs. */
@@ -737,7 +744,8 @@ export interface OtfStore {
    * continue gap-free from the stored maximum; a repeat is skipped when canonicalJson of the event
    * (builderEventBytes) equals the stored bytes. Refuses a finished job, and a job claimed by
    * another builder_id. Extends the lease to
-   * at + LEASE_MS and sets last_builder_post_at = at, even for an empty list.
+   * at + LEASE_MS and sets last_builder_post_at = at, even for an empty list. When the post adds a
+   * lane_meter event, model_microusd becomes the sum of each lane's latest lane_meter cost (never lower).
    */
   appendBuilderEvents(job_id: OtfJobId, builder_id: string, events: readonly BuilderEventIn[], at: string): Promise<AppendBuilderEventsResult>;
   /** Events with seq > after, in seq order. */
@@ -764,7 +772,9 @@ export interface OtfStore {
    * claimed by builder_id (checked under the same row lock, so a concurrent finish on read cannot be
    * overwritten). "replayed" when the job already delivered with the same sha256s; "conflict" when
    * it delivered with different ones; "finished" when it finished with another outcome (nothing is
-   * changed); "wrong_builder" when another builder holds the claim.
+   * changed); "wrong_builder" when another builder holds the claim. When patch.state is finished,
+   * the job_finished event (patch.outcome, patch.reason, at patch.finished_at) is appended in the
+   * same transaction. With no parts it finishes a claimed job with another outcome the same way.
    */
   storeDelivery(
     job_id: OtfJobId,

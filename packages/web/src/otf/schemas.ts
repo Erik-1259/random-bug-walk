@@ -52,6 +52,7 @@ import {
   type OtfSpecCard,
   type OtfValidation,
   type ResultPost,
+  type ResultReply,
   type StopIntent,
   type StopIntentReply,
   type ValidationResultPost,
@@ -324,6 +325,7 @@ const SCHEMAS = {
     then: { type: "object", properties: { certificate: true, parts: true }, required: ["certificate", "parts"] },
     else: { not: { anyOf: [{ type: "object", properties: { certificate: true }, required: ["certificate"] }, { type: "object", properties: { parts: true }, required: ["parts"] }] } },
   },
+  ResultReply: object({ job_id: UUID, state: literal("finished"), outcome: OUTCOME }),
   ValidationResultPost: object({ builder_id: TOKEN(64), state: oneOf(["passed", "failed", "error"]), cells: nullable(SIX_CELLS), finished_at: TIME }),
   StopIntent: object({ builder_id: TOKEN(64), boot_id: TOKEN(64), reason: oneOf(["idle", "max_uptime", "builder_fault"]), idle_since: nullable(TIME) }),
   StopIntentReply: object({ allow: { type: "boolean" }, reason: oneOf(["ok", "jobs_waiting", "operator_hold"]) }),
@@ -348,6 +350,7 @@ export interface OtfBodies {
   EventsPost: EventsPost;
   EventsReply: EventsReply;
   ResultPost: ResultPost;
+  ResultReply: ResultReply;
   ValidationResultPost: ValidationResultPost;
   StopIntent: StopIntent;
   StopIntentReply: StopIntentReply;
