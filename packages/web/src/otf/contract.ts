@@ -1007,8 +1007,11 @@ export interface OtfStore {
   /**
    * Applies the patch only when the job's state is one of `whenStates` (a compare-and-set, so two
    * finishes cannot both win). Returns the updated record, or null when the state did not match.
+   * With `when.quietSince`, it also applies only while the job's last builder post (its claim, before
+   * any post) is at or before that time, checked in the same statement, so a builder_lost finish
+   * cannot overtake a post that lands after the job was read.
    */
-  updateJob(job_id: OtfJobId, whenStates: readonly OtfJobState[], patch: JobPatch): Promise<OtfJobRecord | null>;
+  updateJob(job_id: OtfJobId, whenStates: readonly OtfJobState[], patch: JobPatch, when?: { quietSince: string }): Promise<OtfJobRecord | null>;
 
   /** Appends one production event with the next seq; returns the stored event. */
   appendJobEvent(job_id: OtfJobId, event: ProductionEvent, at: string): Promise<OtfEvent>;

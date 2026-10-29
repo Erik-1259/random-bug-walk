@@ -176,9 +176,9 @@ export function createCustomerHandlers(deps: OtfCustomerDependencies) {
     }
   }
   /** Compare-and-set finish from the job's current phase; a lost race returns the stored job unchanged. */
-  async function finish(job: OtfJobRecord, outcome: OtfOutcome, reason: string, at: string): Promise<OtfJobRecord> {
+  async function finish(job: OtfJobRecord, outcome: OtfOutcome, reason: string, at: string, when?: { quietSince: string }): Promise<OtfJobRecord> {
     const updated = await store.updateJob(job.job_id, job.state === "building" ? ["building"] : WAITING,
-      { state: "finished", outcome, reason, finished_at: at });
+      { state: "finished", outcome, reason, finished_at: at }, when);
     if (updated !== null) {
       await store.appendJobEvent(job.job_id, { type: "job_finished", lane_id: null, data: { outcome, reason } }, at);
       return updated;
@@ -204,7 +204,10 @@ export function createCustomerHandlers(deps: OtfCustomerDependencies) {
     if (job.state === "building") {
       if (job.deadline_at !== null && Date.parse(at) >= Date.parse(job.deadline_at)) return finish(job, "time_limit", "The job deadline was reached.", at);
       const last = job.last_builder_post_at ?? job.claimed_at;
-      if (last !== null && Date.parse(at) - Date.parse(last) >= BUILDER_LOST_MS) return finish(job, "builder_lost", "The builder stopped reporting progress.", at);
+      if (last !== null && Date.parse(at) - Date.parse(last) >= BUILDER_LOST_MS) {
+        // Finish only while the job is still quiet: a builder post that lands after the read above wins.
+        return finish(job, "builder_lost", "The builder stopped reporting progress.", at, { quietSince: new Date(Date.parse(at) - BUILDER_LOST_MS).toISOString() });
+      }
       return job;
     }
     const block = await waitingBlock(job, at, builder, seen);

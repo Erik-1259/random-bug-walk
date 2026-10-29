@@ -1,4 +1,5 @@
-import { OTF_HOST_DEFAULTS, type OtfAvailability, type OtfJobStatus, type OtfOutcome } from "../../otf/contract.ts";
+import { OTF_HOST_DEFAULTS, hostCalendarOpen, type OtfAvailability, type OtfJobStatus, type OtfOutcome } from "../../otf/contract.ts";
+import { calendarWindowMs } from "../../otf/client.ts";
 import { calendarSentence, notQualifiedSentence, reopenSentence } from "./host-copy.tsx";
 const messages: Record<Exclude<OtfOutcome, "delivered" | "not_qualified">, string> = {
   time_limit: "The custom build reached its time limit.", spend_limit: "The custom build reached its model spend limit.", cancelled: "The custom build was cancelled.",
@@ -14,7 +15,8 @@ export function FailureView({ status, availability = null, nowMs = Date.now() }:
   const calendar = calendarStop(status);
   if (calendar !== null) {
     const deadlineMin = availability?.hosts.find(host => host.host_id === status.host_id)?.deadline_min ?? OTF_HOST_DEFAULTS[status.host_id].deadline_ms / 60_000;
-    const reopen = reopenSentence(status.host_id, deadlineMin, nowMs);
+    // The open-again date only while the calendar still blocks a new build; a past failure keeps its reason alone.
+    const reopen = hostCalendarOpen(status.host_id, nowMs, nowMs + calendarWindowMs(deadlineMin)) ? null : reopenSentence(status.host_id, deadlineMin, nowMs);
     return <section className="factory-panel" aria-label="Custom build outcome"><h2>This custom build did not start: {calendar}</h2>
       {reopen !== null && <p>{reopen}</p>}<p>The closest catalog bug is offered below.</p></section>;
   }

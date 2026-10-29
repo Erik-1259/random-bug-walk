@@ -73,9 +73,11 @@ export class FakeOtfStore implements OtfStore {
     return Promise.resolve([...this.jobs.values()].reduce((sum, job) => sum + job.model_microusd, 0));
   }
 
-  updateJob(job_id: string, whenStates: readonly OtfJobState[], patch: JobPatch): Promise<OtfJobRecord | null> {
+  updateJob(job_id: string, whenStates: readonly OtfJobState[], patch: JobPatch, when?: { quietSince: string }): Promise<OtfJobRecord | null> {
     const job = this.jobs.get(job_id);
     if (!job || !whenStates.includes(job.state)) return Promise.resolve(null);
+    const last = job.last_builder_post_at ?? job.claimed_at;
+    if (when && (last === null || Date.parse(last) > Date.parse(when.quietSince))) return Promise.resolve(null);
     const updated = { ...job, ...structuredClone(patch) };
     this.jobs.set(job_id, updated);
     return Promise.resolve(structuredClone(updated));
