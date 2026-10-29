@@ -61,8 +61,14 @@ const ROUTE_LIST = "GET /api/heartbeat, POST /api/tasks, GET /api/tasks/{id}, PA
 const WRITE_ROUTES = 'write each route as "METHOD /path", such as "PATCH /api/tasks/{id}"';
 const ROUTED_METHODS = new Set(Object.values(METHODS).flat());
 const METHOD_GROUP_SPLIT = /\s*(?:[|/,]|\b(?:and|or)\b)\s*/;
-/** Quoted text ("...", '...', “...”, `...`) is data, so a method word inside it is not a method. */
-const QUOTED = /"[^"]*"|“[^”]*”|`[^`]*`|(?<!\w)'[^'\n]*'(?!\w)/g;
+/**
+ * Quoted data: "...", “...” or '...', where a single quote opens or closes only with no letter or digit directly
+ * outside it (so the apostrophe in "task's" starts nothing). An unpaired quote matches nothing. Backticks are not
+ * data, because models format routes as code.
+ */
+const QUOTED = /"[^"]*"|“[^”]*”|(?<![\p{L}\p{N}])'(?:[^']|'(?=[\p{L}\p{N}]))*?'(?![\p{L}\p{N}])/gu;
+/** Every quoted span becomes spaces of the same length, so indexes still line up and nothing inside it is read. */
+function maskQuoted(text: string): string { return text.replace(QUOTED, (span) => " ".repeat(span.length)); }
 /** A sentence ends at ". ", "; ", "! ", "? " or the end of the text. */
 const SENTENCE_BREAK = /[.;!?] /g;
 type Span = readonly [start: number, end: number];
@@ -72,14 +78,15 @@ function inside(spans: readonly Span[], index: number): boolean { return spans.s
  * a group such as "GET|PATCH /path", or "a PATCH request to /path") must be allowed for that route; a path with
  * no attached method only has to exist. A method that no route allows at all is refused wherever it appears. A
  * GET, POST or PATCH that stands apart from any path must be allowed for at least one route named in its own
- * sentence (a sentence that names no route refers back and is not checked). Method words inside quotes are data.
+ * sentence (a sentence that names no route refers back and is not checked). Quoted data is masked before any of
+ * these checks, so a method, path or sentence break inside it counts for nothing; text inside backticks still counts.
  */
-export function ruleRouteProblems(text: string): string[] {
+export function ruleRouteProblems(rule: string): string[] {
+  const text = maskQuoted(rule);
   const tokens = [...text.matchAll(API_TOKEN)];
   if (tokens.length === 0) return [`observable_failure must name at least one task-report route; ${WRITE_ROUTES}`];
   const breaks = [...text.matchAll(SENTENCE_BREAK)].map((found) => found.index);
   const sentenceOf = (index: number): number => breaks.filter((end) => end < index).length;
-  const quoted: Span[] = [...text.matchAll(QUOTED)].map((found) => [found.index, found.index + found[0].length]);
   const attached: Span[] = [];
   const sentenceAllows = new Map<number, Set<string>>();
   const attachedRefusals = new Set<string>();
@@ -106,7 +113,6 @@ export function ruleRouteProblems(text: string): string[] {
   }
   for (const token of text.matchAll(METHOD_TOKEN)) {
     const method = token[0];
-    if (inside(quoted, token.index)) continue;
     if (!ROUTED_METHODS.has(method)) {
       if (!attachedRefusals.has(method)) problems.push(`the task-report service has no ${method} route (${ROUTE_LIST}); ${WRITE_ROUTES}`);
       continue;
