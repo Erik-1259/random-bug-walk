@@ -39,6 +39,12 @@ export interface BehaviorPickerProps {
   onDesign: () => void;
 }
 
+/** Example phrases worth showing under a behavior: the ones that do not repeat its label. */
+function examplePhrases(behavior: OtfBehaviorOption): string[] {
+  const label = behavior.label.trim().toLowerCase();
+  return behavior.example_phrases.filter(phrase => phrase.trim().toLowerCase() !== label);
+}
+
 export function BehaviorPickerView({ behaviors, hosts, nowMs, criterionId, sentence, signedIn, busy, onBehavior, onSentence, onDesign }: BehaviorPickerProps) {
   const offered = new Set(hosts.filter(host => host.offered).map(host => host.host_id));
   const selected = behaviors.find(behavior => behavior.criterion_id === criterionId && offered.has(behavior.host_id));
@@ -54,7 +60,7 @@ export function BehaviorPickerView({ behaviors, hosts, nowMs, criterionId, sente
           <legend>{host.label}</legend>
           {host.offered ? behaviors.filter(behavior => behavior.host_id === host.host_id).map(behavior => <label key={behavior.criterion_id}>
             <input type="radio" name="otf-behavior" checked={criterionId === behavior.criterion_id} onChange={() => { onBehavior(behavior.criterion_id); }} /> {behavior.label}
-            <small>{behavior.example_phrases.join(" · ")}</small>
+            {examplePhrases(behavior).length > 0 && <><br /><small>For example: {examplePhrases(behavior).join(" · ")}</small></>}
           </label>) : <HostReason host={host} hosts={hosts} nowMs={nowMs} />}
           {queue !== null && <p className="factory-note">{queue}</p>}
         </fieldset>;

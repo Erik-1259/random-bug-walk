@@ -105,7 +105,7 @@ export function describeFactoryMessage(raw: string): FriendlyMessage {
 /** A plain line for an unavailable service, keyed on its code; the service's own message is shown with it. */
 export function describeServiceState(service: Capabilities["service"] | null): string {
   if (service === null) return "The request service did not answer, so no request can start right now.";
-  if (service.state === "available") return "Reviewing your requirements is free. Starting a request spends from the shared judging budget, and one request runs at a time.";
+  if (service.state === "available") return "Reviewing your requirements is free. Starting a request spends from the shared judging budget, and one catalog request runs at a time.";
   switch (service.code) {
     case "halted": return "Paused for an operator check. No new requests can start right now.";
     case "maintenance": return "Live requests are closed for maintenance right now.";

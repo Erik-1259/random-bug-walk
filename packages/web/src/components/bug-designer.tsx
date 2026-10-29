@@ -131,7 +131,7 @@ export function BugDesignerView({ signedIn, capabilities, closedHosts = calendar
       <button type="button" disabled={state.busy !== null || state.hostId === null} onClick={onWrite}>Write the bug specification</button>
     </fieldset>}
     {shape !== null && spec !== null && state.hostId !== null && <SpecCard state={state} capabilities={capabilities} closedHosts={closedHosts} applyBlocked={applyBlocked} onUsePlan={onUsePlan} dispatch={dispatch} />}
-    <p className="factory-note">{CATALOG_HONESTY}{otfEnabled && <> For a task-report design, custom builds are available above. Building this exact design is the next step.</>}</p>
+    <p className="factory-note">{CATALOG_HONESTY}{otfEnabled && <> Custom builds are available above. Building this exact design is the next step.</>}</p>
   </section>;
 }
 
