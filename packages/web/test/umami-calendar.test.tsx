@@ -7,7 +7,7 @@ import { designerReducer, INITIAL_DESIGNER, specKey, type DesignerAction } from 
 import { BugDesignerView } from "../src/components/bug-designer.tsx";
 import { FactoryProgress } from "../src/components/factory-progress.tsx";
 import { FactoryRequestForm } from "../src/components/factory-request-form.tsx";
-import { CalendarCause } from "../src/components/factory-workspace.tsx";
+import { CalendarCause, scheduleCalendarTick } from "../src/components/factory-workspace.tsx";
 import type { Capabilities, Interpretation } from "../src/factory/client.ts";
 import { CALENDAR_HINT, calendarBlocks, calendarClockDelay, calendarClosedHosts, calendarClosesPair, calendarReopened, hostClosedByCalendar, nextCalendarChange, UMAMI_CALENDAR_REASON } from "../src/factory/format.ts";
 import { SHAPES, SPEC } from "./support/assist-fixtures.ts";
@@ -159,6 +159,19 @@ describe("the calendar clock on a page left open", () => {
     const after = render(clock);
     expect(after).toContain(HINT);
     expect(after).toMatch(/<button type="button" disabled="" aria-describedby="factory-calendar-[^"]+">Validate case<\/button>/);
+  });
+
+  it("counts the next tick from the clock now when a refresh reschedules it", () => {
+    vi.useFakeTimers({ now: CLOCKS.beforeWindow });
+    const ticks: number[] = [];
+    const cancel = scheduleCalendarTick(open(), (nowMs) => { ticks.push(nowMs); });
+    vi.advanceTimersByTime(70 * 60_000);
+    // "Refresh service availability" at 23:10Z: new capabilities replace the timer.
+    cancel();
+    const cancelRefreshed = scheduleCalendarTick(open(), (nowMs) => { ticks.push(nowMs); });
+    vi.advanceTimersByTime(5 * 60_000);
+    expect(ticks).toEqual([closure]);
+    cancelRefreshed();
   });
 
   it("asks for fresh capabilities when the calendar reopens on a page loaded during the window", () => {

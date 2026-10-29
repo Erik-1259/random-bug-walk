@@ -22,23 +22,28 @@ export function CalendarCause({ capabilities, requestedHosts, item, nowMs }: { c
   return <p className="factory-badge">{CALENDAR_HINT}{fallback !== null && <> {fallback}</>}</p>;
 }
 
+/** Sets one timer for the next calendar boundary, counted from this browser's clock now; returns its cancel. */
+export function scheduleCalendarTick(capabilities: Capabilities | null, onTick: (nowMs: number) => void): () => void {
+  const delay = calendarClockDelay(capabilities, Date.now());
+  if (delay === null) return () => undefined;
+  const timer = setTimeout(() => { onTick(Date.now()); }, delay);
+  return () => { clearTimeout(timer); };
+}
+
 /**
- * This browser's clock, reread at each calendar boundary so a page left open updates its hints. At a
- * boundary where capabilities read during the window are out of date, it asks for a fresh read.
+ * This browser's clock, reread at each calendar boundary and with each new capabilities read so a
+ * page left open updates its hints. At a boundary where capabilities read during the window are out
+ * of date, it asks for a fresh read.
  */
 function useCalendarClock(capabilities: Capabilities | null, controller: FactoryController): number {
   const [nowMs, setNowMs] = useState(() => Date.now());
-  useEffect(() => {
-    const delay = calendarClockDelay(capabilities, nowMs);
-    if (delay === null) return;
-    const timer = setTimeout(() => {
-      const next = Date.now();
-      setNowMs(next);
-      // The same read as "Refresh service availability".
-      if (calendarReopened(capabilities, next)) void controller.initialize();
-    }, delay);
-    return () => { clearTimeout(timer); };
-  }, [capabilities, nowMs, controller]);
+  const [clockFor, setClockFor] = useState(capabilities);
+  if (clockFor !== capabilities) { setClockFor(capabilities); setNowMs(Date.now()); }
+  useEffect(() => scheduleCalendarTick(capabilities, (next) => {
+    setNowMs(next);
+    // The same read as "Refresh service availability".
+    if (calendarReopened(capabilities, next)) void controller.initialize();
+  }), [capabilities, nowMs, controller]);
   return nowMs;
 }
 
