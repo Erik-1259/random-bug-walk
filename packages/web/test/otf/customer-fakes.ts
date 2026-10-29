@@ -127,7 +127,7 @@ export class FakeOtfStore implements OtfStore {
   createValidation(job_id: string, validation_id: string, at: string): Promise<OtfValidationRecord> {
     if (this.validations.has(validation_id)) return Promise.reject(new Error("Duplicate synthetic validation ID"));
     const validation: OtfValidationRecord = {
-      validation_id, job_id, state: "queued", cells: null, started_at: at, finished_at: null, claimed_by: null,
+      validation_id, job_id, state: "queued", cells: null, admission: null, started_at: at, finished_at: null, claimed_by: null,
     };
     this.validations.set(validation_id, validation);
     return Promise.resolve(structuredClone(validation));
@@ -146,7 +146,7 @@ export class FakeOtfStore implements OtfStore {
   updateValidation(
     validation_id: string,
     whenStates: readonly OtfValidationState[],
-    patch: Partial<Pick<OtfValidationRecord, "state" | "cells" | "finished_at">>,
+    patch: Partial<Pick<OtfValidationRecord, "state" | "cells" | "admission" | "finished_at">>,
   ): Promise<OtfValidationRecord | null> {
     const validation = this.validations.get(validation_id);
     if (!validation || !whenStates.includes(validation.state)) return Promise.resolve(null);

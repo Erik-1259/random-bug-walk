@@ -1,13 +1,15 @@
-import type { LaneId, LaneOutcome, LaneStage, LaneView, OtfEvent } from "./contract.ts";
+import { LANE_STAGE_NEXT, nextIteration, type LaneId, type LaneOutcome, type LaneStage, type LaneView, type OtfEvent } from "./contract.ts";
 
 const FINISHED_STAGES: Record<LaneOutcome, LaneStage> = {
   won: "won",
   lost_race: "stopped",
   not_qualified: "not_qualified",
   spend_cap: "stopped",
+  time_limit: "stopped",
   error: "error",
   cancelled: "stopped",
 };
+const MAX_ITERATION = 3;
 
 function emptyLane(lane: { lane_id: LaneId; model: string; model_label: string }): LaneView {
   return {
@@ -21,17 +23,30 @@ function emptyLane(lane: { lane_id: LaneId; model: string; model_label: string }
   };
 }
 
-/** SPEC §1/§2.2: project the complete event history, independently of the response's after cursor. */
+/** A legal stage move per the contract; qualifying -> won only on a job with confirm_rounds 0. */
+function legalMove(from: LaneStage, to: LaneStage, confirmRounds: 0 | 1): boolean {
+  if (from === "qualifying" && to === "won") return confirmRounds === 0;
+  return LANE_STAGE_NEXT[from].includes(to);
+}
+
+/**
+ * SPEC sections 1 and 2.2: project the complete event history, independently of the response's
+ * after cursor. A stage move the contract does not allow is ignored, and the iteration follows
+ * nextIteration. The selected winner stays won, so a customer stop after winner_selected still
+ * reads as a delivered win.
+ */
 export function projectLanes(
   events: readonly OtfEvent[],
   configuredLanes: readonly { lane_id: LaneId; model: string; model_label: string }[],
+  confirmRounds: 0 | 1,
 ): LaneView[] {
   const lanes = new Map(configuredLanes.map(lane => [lane.lane_id, emptyLane(lane)]));
+  let winner: LaneId | null = null;
   for (const event of [...events].sort((left, right) => left.seq - right.seq)) {
     if (event.type === "winner_selected") {
-      const lane = lanes.get(event.data.lane_id);
-      // Selection identifies a candidate; confirmation and lane_finished determine its outcome.
-      if (lane?.outcome === null) lane.stage = "confirming";
+      winner = event.data.lane_id;
+      const lane = lanes.get(winner);
+      if (lane !== undefined && (lane.outcome === null || lane.outcome === "won")) lane.stage = "won";
       continue;
     }
     if (event.lane_id === null) continue;
@@ -49,10 +64,13 @@ export function projectLanes(
     switch (event.type) {
       case "lane_started":
         break;
-      case "lane_stage":
-        lane.stage = event.data.stage;
-        lane.iteration = event.data.iteration;
+      case "lane_stage": {
+        const stage = event.data.stage;
+        if (lane.outcome !== null || stage === lane.stage || !legalMove(lane.stage, stage, confirmRounds)) break;
+        lane.stage = stage;
+        lane.iteration = Math.min(MAX_ITERATION, nextIteration(stage, lane.iteration));
         break;
+      }
       case "lane_files":
         lane.files = { ...event.data };
         break;
@@ -60,14 +78,17 @@ export function projectLanes(
         lane.meter = { ...event.data };
         break;
       case "round_finished":
+        // Admission hosts carry round_finished.admission; it is copied through with the round.
         lane.rounds.push(structuredClone(event.data));
-        lane.iteration = event.data.iteration;
-        if (event.data.kind === "qualification" && event.data.result === "qualified" && lane.outcome === null) lane.stage = "confirming";
         break;
-      case "lane_finished":
-        lane.outcome = event.data.outcome;
-        lane.stage = FINISHED_STAGES[event.data.outcome];
+      case "lane_finished": {
+        if (lane.outcome !== null) break;
+        // The selected winner delivers even when a stop reaches its lane afterwards.
+        const outcome: LaneOutcome = event.lane_id === winner ? "won" : event.data.outcome;
+        lane.outcome = outcome;
+        lane.stage = FINISHED_STAGES[outcome];
         break;
+      }
     }
   }
   return [...lanes.values()];

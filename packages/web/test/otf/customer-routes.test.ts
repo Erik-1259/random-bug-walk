@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { factorySessionCookie } from "../../src/factory-server/session.ts";
 import { sha256Hex, specSha256 } from "../../src/otf/canonical.ts";
-import { BUILDER_LOST_MS, START_TIMEOUT_MS, TYPICAL_BASIS, StartError, type OtfCreateJob, type OtfSpecCard } from "../../src/otf/contract.ts";
-import { createCustomerHandlers, setOtfCustomerDependencies, type OtfCustomerDependencies, type OtfStartResult } from "../../src/otf/handlers.ts";
+import { BUILDER_LOST_MS, START_TIMEOUT_MS, StartError, type OtfCreateJob, type OtfHostId, type OtfSpecCard } from "../../src/otf/contract.ts";
+import { createCustomerHandlers, handleOtfTestReset, setOtfCustomerDependencies, setOtfTestReset, type OtfCustomerDependencies, type OtfStartResult } from "../../src/otf/handlers.ts";
 import { parseOtf, type OtfBodies, type OtfSchemaName } from "../../src/otf/schemas.ts";
 import { FAKE_AT, FakeOtfStore, FakeVmPower } from "./customer-fakes.ts";
 import { GET as availabilityRoute } from "../../app/api/factory/otf/availability/route.ts";
@@ -11,6 +11,7 @@ import { GET as statusRoute } from "../../app/api/factory/otf/jobs/[id]/route.ts
 import { POST as stopRoute } from "../../app/api/factory/otf/jobs/[id]/stop/route.ts";
 import { GET as artifactRoute } from "../../app/api/factory/otf/jobs/[id]/artifacts/[part]/route.ts";
 import { POST as validateRoute } from "../../app/api/factory/otf/jobs/[id]/validations/route.ts";
+import { POST as testResetRoute } from "../../app/api/factory/otf/test/reset/route.ts";
 
 const PASSCODE = "synthetic-customer-passcode";
 const CLIENT = "00000000-0000-4000-8000-000000000001";
@@ -20,7 +21,7 @@ const SPEC: OtfSpecCard = {
   checks_to_add: ["Both overlapping saves remain visible."], fix: "Serialize overlapping saves.",
 };
 async function body(extra: Partial<OtfCreateJob> = {}): Promise<OtfCreateJob> {
-  return { client_key: CLIENT, criterion_id: "concurrency.lost-acknowledged-change", sentence: "Overlapping saves lose my edit.", spec: SPEC, spec_sha256: await specSha256(SPEC), ...extra };
+  return { client_key: CLIENT, host_id: "task-report", criterion_id: "concurrency.lost-acknowledged-change", sentence: "Overlapping saves lose my edit.", spec: SPEC, spec_sha256: await specSha256(SPEC), ...extra };
 }
 function request(value?: unknown, signedIn = true, query = ""): Request {
   return new Request(`https://synthetic.invalid/api/factory/otf/jobs${query}`, {
@@ -51,16 +52,20 @@ function setup() {
   const deps: OtfCustomerDependencies = {
     store, power, now: () => new Date(time), id: () => `00000000-0000-4000-8000-${String(serial++).padStart(12, "0")}`,
     config: { enabled: true, builderSecretConfigured: true, passcode: PASSCODE,
-      maxActive: 2, maxQueued: 4, maxPerDay: 30, totalSpendCapMicrousd: 100_000_000, jobSpendCapMicrousd: 8_000_000,
-      vmHoursPerDay: 12, behaviors: [{ criterion_id: "concurrency.lost-acknowledged-change", label: "Overlapping saves", example_phrases: ["An edit disappears."] }],
-      lanes: [{ lane_id: "lane-1", model: "synthetic-model", model_label: "Synthetic model" }], typical: { median_min: 5, p90_min: 35, cold_start_min: null, basis: TYPICAL_BASIS } },
+      maxQueued: 4, maxPerDay: 30, totalSpendCapMicrousd: 100_000_000, vmHoursPerDay: 12,
+      behaviors: [
+        { criterion_id: "concurrency.lost-acknowledged-change", host_id: "task-report", label: "Overlapping saves", example_phrases: ["An edit disappears."] },
+        { criterion_id: "date_time.time-zone-grouping", host_id: "umami", label: "Time-zone grouping", example_phrases: ["A late event lands on the wrong day."] },
+      ],
+      hosts: {
+        "task-report": { enabled: true, lanes: [{ lane_id: "lane-1", model: "synthetic-model", model_label: "Synthetic model" }],
+          maxActive: 2, jobSpendCapMicrousd: 8_000_000, deadlineMs: 45 * 60_000,
+          typical: { source: "development_attempts", median_min: 5, p90_min: 35, samples: 5, measured_on: "2026-01-01" } },
+        umami: { enabled: true, lanes: [{ lane_id: "lane-1", model: "synthetic-model-two", model_label: "Synthetic model two" }],
+          maxActive: 1, jobSpendCapMicrousd: 6_000_000, deadlineMs: 60 * 60_000, typical: null },
+      },
+      coldStartMin: null },
     inScope: () => Promise.resolve(true),
-    finishBuildingIfUnchanged: (expected, finish) => {
-      const current = store.jobs.get(expected.job_id);
-      if (current?.state !== "building" || current.last_builder_post_at !== expected.last_builder_post_at
-        || current.claimed_at !== expected.claimed_at || current.deadline_at !== expected.deadline_at) return Promise.resolve(null);
-      return store.updateJob(expected.job_id, ["building"], { state: "finished", outcome: finish.outcome, reason: finish.reason, finished_at: finish.at });
-    },
     lifecycle: {
       // These effects are scripted fixtures, not a replacement for W5's lifecycle tests.
       builderState: (current) => current.state,
@@ -91,7 +96,13 @@ function setup() {
       }),
     },
   };
-  return { store, power, deps, handlers: createCustomerHandlers(deps), advance: (ms: number) => { time = new Date(time.getTime() + ms); } };
+  return { store, power, deps, handlers: createCustomerHandlers(deps), advance: (ms: number) => { time = new Date(time.getTime() + ms); },
+    at: (iso: string) => { time = new Date(iso); } };
+}
+/** A fresh heartbeat from a running builder that lists these hosts as ready. */
+async function heartbeat(s: ReturnType<typeof setup>, ready: OtfHostId[] = ["task-report", "umami"], at = FAKE_AT): Promise<void> {
+  s.store.power.state = "running";
+  await s.store.recordBuilderSeen({ builder_id: "synthetic-builder", builder_revision: "synthetic-revision", boot_id: "synthetic-boot", booted_at: FAKE_AT, ready_hosts: ready }, at);
 }
 
 describe("OTF customer routes", () => {
@@ -173,7 +184,7 @@ describe("OTF customer routes", () => {
   it.each(["unavailable", "busy", "daily_cap", "spend_cap"] as const)("enforces %s before insertion", async (code) => {
     const s = setup();
     if (code === "unavailable") s.deps.config.enabled = false;
-    if (code === "busy") { s.deps.config.maxActive = 0; s.deps.config.maxQueued = 0; }
+    if (code === "busy") { s.deps.config.hosts["task-report"].maxActive = 0; s.deps.config.hosts.umami.maxActive = 0; s.deps.config.maxQueued = 0; }
     if (code === "daily_cap") s.deps.config.maxPerDay = 0;
     if (code === "spend_cap") s.deps.config.totalSpendCapMicrousd = 0;
     expect((await parsedResponse("OtfErrorBody", (await s.handlers.create(request(await body()))))).error.code).toBe(code);
@@ -188,7 +199,7 @@ describe("OTF customer routes", () => {
     expect((await s.handlers.create(request(await body()))).status).toBe(201);
   });
   it("serializes concurrent admission at the queue cap", async () => {
-    const s = setup(); s.deps.config.maxActive = 0; s.deps.config.maxQueued = 1;
+    const s = setup(); s.deps.config.hosts["task-report"].maxActive = 0; s.deps.config.hosts.umami.maxActive = 0; s.deps.config.maxQueued = 1;
     const results = await Promise.all([s.handlers.create(request(await body())), s.handlers.create(request(await body({ client_key: "00000000-0000-4000-8000-000000000002" })))]);
     expect(results.map((r) => r.status).sort()).toEqual([201, 409]); expect(s.store.jobs.size).toBe(1); expect(s.power.startCalls).toBe(1);
   });
@@ -210,7 +221,7 @@ describe("OTF customer routes", () => {
       expect(s.store.jobs.size).toBe(1);
       return Promise.resolve({ kind: "running" });
     });
-    await s.store.recordBuilderSeen({ builder_id: "synthetic-builder", builder_revision: "synthetic-revision", boot_id: "synthetic-boot", booted_at: FAKE_AT }, FAKE_AT);
+    await s.store.recordBuilderSeen({ builder_id: "synthetic-builder", builder_revision: "synthetic-revision", boot_id: "synthetic-boot", booted_at: FAKE_AT, ready_hosts: ["task-report", "umami"] }, FAKE_AT);
     const response = await s.handlers.create(request(await body()));
     expect((await parsedResponse("OtfCreateResponse", response)).status.state).toBe("queued"); expect(s.power.startCalls).toBe(0);
     expect(start).toHaveBeenCalledOnce();
@@ -278,11 +289,11 @@ describe("OTF customer routes", () => {
     const s = setup(); const created = await parsedResponse("OtfCreateResponse", (await s.handlers.create(request(await body()))));
     s.store.events.set(created.job_id, [
       { seq: 1, at: FAKE_AT, type: "lane_files", lane_id: "lane-1", data: { change: true, checks: 2, fix: true } },
-      { seq: 2, at: FAKE_AT, type: "lane_stage", lane_id: "lane-1", data: { stage: "qualifying", iteration: 1 } },
+      { seq: 2, at: FAKE_AT, type: "lane_stage", lane_id: "lane-1", data: { stage: "setting_up", iteration: 0 } },
     ]);
     const result = await parsedResponse("OtfJobStatus", (await s.handlers.status(request(undefined, true, "?after=1"), created.job_id)));
     expect(result.events).toHaveLength(1); expect(requiredElement(result.events, 0).seq).toBe(2); expect(result.next_after).toBe(2);
-    expect(result.lanes[0]).toMatchObject({ stage: "qualifying", files: { change: true, checks: 2, fix: true } });
+    expect(result.lanes[0]).toMatchObject({ stage: "setting_up", files: { change: true, checks: 2, fix: true } });
     const empty = await parsedResponse("OtfJobStatus", (await s.handlers.status(request(undefined, true, "?after=2"), created.job_id)));
     expect(empty.events).toEqual([]); expect(empty.next_after).toBe(2);
   });
@@ -322,7 +333,7 @@ describe("OTF customer routes", () => {
     expect((await s.handlers.validate(request(), created.job_id)).status).toBe(409);
     Object.assign(requiredValue(s.store.jobs, created.job_id), { state: "finished", outcome: "delivered", finished_at: FAKE_AT });
     s.store.power.state = "running";
-    await s.store.recordBuilderSeen({ builder_id: "synthetic-builder", builder_revision: "synthetic-revision", boot_id: "synthetic-boot", booted_at: FAKE_AT }, FAKE_AT);
+    await s.store.recordBuilderSeen({ builder_id: "synthetic-builder", builder_revision: "synthetic-revision", boot_id: "synthetic-boot", booted_at: FAKE_AT, ready_hosts: ["task-report", "umami"] }, FAKE_AT);
     const responses = await Promise.all([s.handlers.validate(request(), created.job_id), s.handlers.validate(request(), created.job_id)]);
     expect(responses.map((r) => r.status).sort()).toEqual([200, 201]);
     const values = await Promise.all(responses.map((r) => parsedResponse("OtfValidation", r)));
@@ -332,29 +343,27 @@ describe("OTF customer routes", () => {
     expect((await s.handlers.validate(request(), created.job_id)).status).toBe(201); expect(s.store.validations.size).toBe(2);
   });
   it("rejects invalid response data instead of exposing it", async () => {
-    const s = setup(); s.deps.config.maxActive = -1;
+    const s = setup(); s.deps.config.hosts["task-report"].maxActive = -1;
     const response = await s.handlers.availability(request());
     expect(response.status).toBe(503); expect((await parsedResponse("OtfErrorBody", response)).error.code).toBe("unavailable");
   });
 
-  it("preserves a fresh post that wins the atomic stale-job finish", async () => {
+  it("finishes a stale building job through the store's compare-and-set on building", async () => {
     const s = setup(); const created = await parsedResponse("OtfCreateResponse", (await s.handlers.create(request(await body()))));
     Object.assign(requiredValue(s.store.jobs, created.job_id), { state: "building", claimed_at: FAKE_AT, last_builder_post_at: FAKE_AT });
     s.advance(BUILDER_LOST_MS);
-    const conditional = s.deps.finishBuildingIfUnchanged.bind(s.deps);
-    vi.spyOn(s.deps, "finishBuildingIfUnchanged").mockImplementationOnce((expected, finish) => {
-      requiredValue(s.store.jobs, created.job_id).last_builder_post_at = finish.at;
-      return conditional(expected, finish);
-    });
-    expect((await parsedResponse("OtfJobStatus", (await s.handlers.status(request(), created.job_id)))).state).toBe("building");
-    expect((s.store.events.get(created.job_id) ?? []).some((event) => event.type === "job_finished")).toBe(false);
+    const update = vi.spyOn(s.store, "updateJob");
+    expect((await parsedResponse("OtfJobStatus", (await s.handlers.status(request(), created.job_id)))).outcome).toBe("builder_lost");
+    expect(update).toHaveBeenCalledWith(created.job_id, ["building"], expect.objectContaining({ state: "finished", outcome: "builder_lost" }));
   });
-  it("does not queue new validation work while the builder is stopped", async () => {
+  it("wakes a stopped builder for a new validation", async () => {
     const s = setup(); const created = await parsedResponse("OtfCreateResponse", (await s.handlers.create(request(await body()))));
     Object.assign(requiredValue(s.store.jobs, created.job_id), { state: "finished", outcome: "delivered", finished_at: FAKE_AT });
-    s.store.power.state = "stopped";
-    expect((await s.handlers.validate(request(), created.job_id)).status).toBe(503);
-    expect(s.store.validations.size).toBe(0);
+    s.store.power.state = "stopped"; s.power.state = "STOPPED";
+    const start = vi.spyOn(s.deps.lifecycle, "requestStart");
+    const response = await s.handlers.validate(request(), created.job_id);
+    expect(response.status).toBe(201); expect((await parsedResponse("OtfValidation", response))).toMatchObject({ state: "queued", admission: null });
+    expect(start).toHaveBeenCalledOnce(); expect(s.power.startCalls).toBe(2); expect(s.store.validations.size).toBe(1);
   });
 
   it.each(["status", "stop", "artifact", "validate"] as const)("checks the factory session on %s", async (method) => {
@@ -362,7 +371,7 @@ describe("OTF customer routes", () => {
     expect(s.store.jobs.size).toBe(0); expect(s.store.validations.size).toBe(0);
   });
   it("keeps the cap refusal order and resets the daily count at UTC midnight", async () => {
-    const s = setup(); s.deps.config.enabled = false; s.deps.config.maxActive = 0; s.deps.config.maxQueued = 0;
+    const s = setup(); s.deps.config.enabled = false; s.deps.config.hosts["task-report"].maxActive = 0; s.deps.config.hosts.umami.maxActive = 0; s.deps.config.maxQueued = 0;
     s.deps.config.maxPerDay = 0; s.deps.config.totalSpendCapMicrousd = 0;
     expect((await parsedResponse("OtfErrorBody", (await s.handlers.create(request(await body()))))).error.code).toBe("unavailable");
     s.deps.config.enabled = true;
@@ -411,13 +420,27 @@ describe("OTF customer routes", () => {
     expect(requiredValue(s.store.jobs, created.job_id).state).toBe("finished");
   });
 
-  it.each(["unconfigured", "hold", "day_cap", "start_backoff"] as const)("returns unavailable for W5 start block %s without local power effects", async (block) => {
+  it.each([["unconfigured", "builder_unavailable"], ["hold", "builder_unavailable"], ["day_cap", "builder_unavailable"], ["start_backoff", "builder_start_failed"]] as const)(
+    "finishes the inserted job for W5 start block %s and answers 201", async (block, outcome) => {
+      const s = setup();
+      const start = vi.spyOn(s.deps.lifecycle, "requestStart").mockResolvedValue({ kind: "unavailable", block });
+      const response = await s.handlers.create(request(await body()));
+      expect(response.status).toBe(201);
+      expect((await parsedResponse("OtfCreateResponse", response)).status).toMatchObject({ state: "finished", outcome });
+      expect(start).toHaveBeenCalledOnce(); expect(s.store.jobs.size).toBe(1); expect(s.power.startCalls).toBe(0);
+      expect([...s.store.events.values()].flat().map((event) => event.type)).toEqual(["job_queued", "job_finished"]);
+    });
+  it("answers 201 with the running job when a claim takes it before a start block finishes it", async () => {
     const s = setup();
-    const start = vi.spyOn(s.deps.lifecycle, "requestStart").mockResolvedValue({ kind: "unavailable", block });
+    vi.spyOn(s.deps.lifecycle, "requestStart").mockImplementation(() => {
+      const [job] = [...s.store.jobs.values()];
+      if (job === undefined) throw new Error("Expected the inserted synthetic job");
+      Object.assign(job, { state: "building", claimed_at: FAKE_AT, last_builder_post_at: FAKE_AT });
+      return Promise.resolve({ kind: "unavailable", block: "hold" });
+    });
     const response = await s.handlers.create(request(await body()));
-    expect(response.status).toBe(503);
-    expect((await parsedResponse("OtfErrorBody", response)).error.code).toBe("unavailable");
-    expect(start).toHaveBeenCalledOnce(); expect(s.store.jobs.size).toBe(1); expect(s.power.startCalls).toBe(0);
+    expect(response.status).toBe(201);
+    expect((await parsedResponse("OtfCreateResponse", response)).status).toMatchObject({ state: "building", outcome: null });
     expect([...s.store.events.values()].flat().map((event) => event.type)).toEqual(["job_queued"]);
   });
   it("leaves a waiting start unchanged when W5 has not timed it out", async () => {
@@ -450,7 +473,7 @@ describe("OTF customer routes", () => {
   });
   it("uses W5 builder state when a fresh heartbeat overrides the stored state", async () => {
     const s = setup(); s.store.power.state = "stopped";
-    await s.store.recordBuilderSeen({ builder_id: "synthetic-builder", builder_revision: "synthetic-revision", boot_id: "synthetic-boot", booted_at: FAKE_AT }, FAKE_AT);
+    await s.store.recordBuilderSeen({ builder_id: "synthetic-builder", builder_revision: "synthetic-revision", boot_id: "synthetic-boot", booted_at: FAKE_AT, ready_hosts: ["task-report", "umami"] }, FAKE_AT);
     const state = vi.spyOn(s.deps.lifecycle, "builderState").mockReturnValue("running");
     const start = vi.spyOn(s.deps.lifecycle, "requestStart").mockResolvedValue({ kind: "running" });
     const response = await s.handlers.create(request(await body()));
@@ -491,4 +514,170 @@ describe("OTF customer routes", () => {
     expect(s.store.jobs.size).toBe(1);
   });
 
+  describe("hosts", () => {
+    const UMAMI_SPEC: OtfSpecCard = {
+      title: "Synthetic late-evening grouping", where: "A date-grouped report.",
+      change: "An event late in the evening is grouped under the next day.", why_tests_miss: "The original suite uses midday times only.",
+      checks_to_add: ["A late-evening event stays on its own day."], fix: "Group by the viewer's time zone.",
+    };
+    async function umami(extra: Partial<OtfCreateJob> = {}): Promise<OtfCreateJob> {
+      return body({ host_id: "umami", criterion_id: "date_time.time-zone-grouping", sentence: "Late events land on the wrong day.",
+        spec: UMAMI_SPEC, spec_sha256: await specSha256(UMAMI_SPEC), ...extra });
+    }
+    it("stores host_id on create and status, with the host's spend cap and lanes", async () => {
+      const s = setup(); const response = await s.handlers.create(request(await umami()));
+      expect(response.status).toBe(201);
+      const created = await parsedResponse("OtfCreateResponse", response);
+      expect(created.status).toMatchObject({ host_id: "umami", spend: { cap_microusd: 6_000_000 } });
+      expect(created.status.lanes.map((lane) => lane.model)).toEqual(["synthetic-model-two"]);
+      expect(requiredValue(s.store.jobs, created.job_id).host_id).toBe("umami");
+    });
+    it("refuses a host that does not pair with the criterion", async () => {
+      const s = setup();
+      expect((await parsedResponse("OtfErrorBody", await s.handlers.create(request(await umami({ host_id: "task-report" }))))).error.code).toBe("invalid_spec");
+      expect(s.store.jobs.size).toBe(0);
+    });
+    it.each(["Concurrent report loads group an event on the wrong day.", "A race between two reports."])("refuses an Umami card outside the host's scope: %s", async (change) => {
+      const s = setup(); const spec = { ...UMAMI_SPEC, change };
+      const response = await s.handlers.create(request(await umami({ spec, spec_sha256: await specSha256(spec) })));
+      expect((await parsedResponse("OtfErrorBody", response)).error.code).toBe("invalid_spec");
+      expect(s.store.jobs.size).toBe(0); expect(s.power.startCalls).toBe(0);
+    });
+    it("refuses a disabled host with host_unavailable before insertion", async () => {
+      const s = setup(); s.deps.config.hosts.umami.enabled = false;
+      const response = await s.handlers.create(request(await umami()));
+      expect(response.status).toBe(409); expect((await parsedResponse("OtfErrorBody", response)).error.code).toBe("host_unavailable");
+      expect(s.store.jobs.size).toBe(0); expect(s.power.startCalls).toBe(0);
+      expect((await s.handlers.create(request(await body()))).status).toBe(201);
+    });
+    it("refuses a host left out of a running builder's fresh ready_hosts", async () => {
+      const s = setup(); await heartbeat(s, ["task-report"]);
+      expect((await parsedResponse("OtfErrorBody", await s.handlers.create(request(await umami())))).error.code).toBe("host_unavailable");
+      expect(s.store.jobs.size).toBe(0);
+    });
+    it("creates against a stopped builder whose last ready_hosts was empty", async () => {
+      const s = setup(); await heartbeat(s, []); s.store.power.state = "stopped";
+      const response = await s.handlers.create(request(await umami()));
+      expect(response.status).toBe(201);
+      const value = await parsedResponse("OtfCreateResponse", response);
+      expect(value.status.state).toBe("starting_builder");
+      expect(value.status.events.map((event) => event.type)).toEqual(["job_queued", "builder_starting"]);
+    });
+    it.each([["2026-01-01T22:37:00.000Z", 409], ["2026-01-01T22:36:59.999Z", 201], ["2026-01-03T12:00:00.000Z", 409], ["2026-01-06T00:00:00.000Z", 201]] as const)(
+      "checks the Umami calendar window at create (%s)", async (at, status) => {
+        const s = setup(); s.at(at); s.store.power.vm_day = at.slice(0, 10);
+        const response = await s.handlers.create(request(await umami()));
+        expect(response.status).toBe(status);
+        if (status === 409) expect((await parsedResponse("OtfErrorBody", response)).error.code).toBe("host_unavailable");
+        expect((await s.handlers.create(request(await body({ client_key: "00000000-0000-4000-8000-000000000002" })))).status).toBe(201);
+      });
+    it("finishes a waiting Umami job on read once its window touches a blocked day", async () => {
+      const s = setup(); s.at("2026-01-01T22:00:00.000Z");
+      const created = await parsedResponse("OtfCreateResponse", await s.handlers.create(request(await umami())));
+      s.at("2026-01-01T22:44:59.999Z");
+      expect((await parsedResponse("OtfJobStatus", await s.handlers.status(request(), created.job_id))).state).toBe("starting_builder");
+      s.at("2026-01-01T22:45:00.000Z");
+      const value = await parsedResponse("OtfJobStatus", await s.handlers.status(request(), created.job_id));
+      expect(value).toMatchObject({ state: "finished", outcome: "builder_unavailable", reason: "Umami is unavailable on UTC days 2–5." });
+      expect(value.events.filter((event) => event.type === "job_finished")).toHaveLength(1);
+    });
+    it("finishes a waiting job on read when the first fresh heartbeat leaves its host out", async () => {
+      const s = setup(); const created = await parsedResponse("OtfCreateResponse", await s.handlers.create(request(await umami())));
+      await heartbeat(s, ["task-report"]);
+      expect(await parsedResponse("OtfJobStatus", await s.handlers.status(request(), created.job_id)))
+        .toMatchObject({ state: "finished", outcome: "builder_unavailable", reason: "Umami is not ready on the builder machine." });
+    });
+    it("finishes a waiting job on read when its host is turned off", async () => {
+      const s = setup(); const created = await parsedResponse("OtfCreateResponse", await s.handlers.create(request(await body())));
+      s.deps.config.hosts["task-report"].enabled = false;
+      expect(await parsedResponse("OtfJobStatus", await s.handlers.status(request(), created.job_id)))
+        .toMatchObject({ state: "finished", outcome: "builder_unavailable", reason: "task-report service builds were turned off while this job waited." });
+    });
+    it("lists every host once with its reason, lanes, deadline and typical time", async () => {
+      const s = setup(); s.deps.config.coldStartMin = 4;
+      const value = await parsedResponse("OtfAvailability", await s.handlers.availability(request(undefined, false)));
+      expect(value.cold_start_min).toBe(4);
+      expect(value.hosts).toEqual([
+        { host_id: "task-report", label: "task-report service", offered: true, unavailable_reason: null, active_jobs: 0, queued_jobs: 0, max_active: 2,
+          lanes: [{ lane_id: "lane-1", model_label: "Synthetic model" }], deadline_min: 45,
+          typical: { source: "development_attempts", median_min: 5, p90_min: 35, samples: 5, measured_on: "2026-01-01" } },
+        { host_id: "umami", label: "Umami", offered: true, unavailable_reason: null, active_jobs: 0, queued_jobs: 0, max_active: 1,
+          lanes: [{ lane_id: "lane-1", model_label: "Synthetic model two" }], deadline_min: 60, typical: null },
+      ]);
+      expect(value.behaviors.map((behavior) => behavior.host_id)).toEqual(["task-report", "umami"]);
+    });
+    it("reports disabled, calendar and builder_not_ready and lists only offered behaviors", async () => {
+      const s = setup(); await s.handlers.create(request(await umami()));
+      const reasons = async () => (await parsedResponse("OtfAvailability", await s.handlers.availability(request())));
+      await heartbeat(s, ["task-report"]);
+      let value = await reasons();
+      expect(value.hosts.find((host) => host.host_id === "umami")).toMatchObject({ offered: false, unavailable_reason: "builder_not_ready", queued_jobs: 1 });
+      expect(value.behaviors.map((behavior) => behavior.host_id)).toEqual(["task-report"]);
+      s.store.power.state = "stopped"; s.advance(60_000);
+      expect((await reasons()).hosts.find((host) => host.host_id === "umami")).toMatchObject({ offered: true, unavailable_reason: null });
+      s.at("2026-01-02T00:00:00.000Z"); s.store.power.vm_day = "2026-01-02";
+      expect((await reasons()).hosts.find((host) => host.host_id === "umami")).toMatchObject({ offered: false, unavailable_reason: "calendar" });
+      s.deps.config.hosts.umami.enabled = false;
+      value = await reasons();
+      expect(value.hosts.find((host) => host.host_id === "umami")).toMatchObject({ offered: false, unavailable_reason: "disabled" });
+      expect(value.hosts.find((host) => host.host_id === "task-report")).toMatchObject({ offered: true, unavailable_reason: null });
+    });
+  });
+
+  describe("validations", () => {
+    async function delivered(s: ReturnType<typeof setup>): Promise<string> {
+      const created = await parsedResponse("OtfCreateResponse", await s.handlers.create(request(await body())));
+      Object.assign(requiredValue(s.store.jobs, created.job_id), { state: "finished", outcome: "delivered", finished_at: FAKE_AT });
+      return created.job_id;
+    }
+    it.each([{ kind: "failed", reason: "capacity" }, { kind: "unavailable", block: "start_backoff" }] as const)("marks a new validation error when its start is refused (%o)", async (result) => {
+      const s = setup(); const jobId = await delivered(s);
+      vi.spyOn(s.deps.lifecycle, "requestStart").mockResolvedValue(result);
+      const response = await s.handlers.validate(request(), jobId);
+      expect(response.status).toBe(201);
+      expect(await parsedResponse("OtfValidation", response)).toMatchObject({ state: "error", finished_at: FAKE_AT });
+    });
+    it("finishes an unclaimed validation error on read after the start timeout", async () => {
+      const s = setup(); const jobId = await delivered(s);
+      const first = await parsedResponse("OtfValidation", await s.handlers.validate(request(), jobId));
+      s.advance(START_TIMEOUT_MS - 1);
+      expect((await parsedResponse("OtfJobStatus", await s.handlers.status(request(), jobId))).validation).toMatchObject({ state: "queued" });
+      s.advance(1);
+      expect((await parsedResponse("OtfJobStatus", await s.handlers.status(request(), jobId))).validation)
+        .toMatchObject({ validation_id: first.validation_id, state: "error" });
+      const next = await s.handlers.validate(request(), jobId);
+      expect(next.status).toBe(201); expect((await parsedResponse("OtfValidation", next)).validation_id).not.toBe(first.validation_id);
+    });
+    it("refuses a validation while its host is unavailable", async () => {
+      const s = setup(); const jobId = await delivered(s); s.deps.config.hosts["task-report"].enabled = false;
+      const response = await s.handlers.validate(request(), jobId);
+      expect((await parsedResponse("OtfErrorBody", response)).error.code).toBe("host_unavailable"); expect(s.store.validations.size).toBe(0);
+    });
+  });
+
+  describe("test reset", () => {
+    const resetRequest = (value: unknown) => new Request("https://synthetic.invalid/api/factory/otf/test/reset", { method: "POST", body: JSON.stringify(value) });
+    it("answers 404 outside test mode and when no reset is bound", async () => {
+      const reset = vi.fn(() => true);
+      setOtfTestReset(reset);
+      try {
+        expect((await handleOtfTestReset(resetRequest({ scenario: "delivered" }), {})).status).toBe(404);
+        expect((await handleOtfTestReset(resetRequest({ scenario: "delivered" }), { RBW_FACTORY_TEST_MODE: "1", VERCEL_ENV: "preview" })).status).toBe(404);
+        expect((await testResetRoute(resetRequest({ scenario: "delivered" }))).status).toBe(process.env.RBW_FACTORY_TEST_MODE === "1" ? 200 : 404);
+      } finally { setOtfTestReset(null); }
+      expect((await handleOtfTestReset(resetRequest({ scenario: "delivered" }), { RBW_FACTORY_TEST_MODE: "1" })).status).toBe(404);
+    });
+    it("resets the bound test world in test mode and refuses an unknown scenario", async () => {
+      const reset = vi.fn((scenario: string) => scenario === "delivered");
+      setOtfTestReset(reset);
+      try {
+        const env = { RBW_FACTORY_TEST_MODE: "1" };
+        const good = await handleOtfTestReset(resetRequest({ scenario: "delivered" }), env);
+        expect(good.status).toBe(200); expect(await good.json()).toEqual({ scenario: "delivered" });
+        expect((await handleOtfTestReset(resetRequest({ scenario: "unknown" }), env)).status).toBe(400);
+        expect((await handleOtfTestReset(resetRequest({ scenario: "delivered", extra: 1 }), env)).status).toBe(400);
+        expect(reset).toHaveBeenCalledTimes(2);
+      } finally { setOtfTestReset(null); }
+    });
+  });
 });
