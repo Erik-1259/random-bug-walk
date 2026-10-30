@@ -356,7 +356,7 @@ Global caps: queued jobs 4, jobs per UTC day 30, total OTF model spend set by th
 - Route directories are disjoint.
 - If an interface must change, it changes in W0 first.
 
-The open-behavior branches are listed in section 8.10.
+The open-behavior branches are listed in section 8.11.
 
 **Merge order:** W0, then W1, W2, W4 and W5 (in any order), then W3. Only W5 edits `package.json`, `pnpm-lock.yaml`, `next.config.ts` and `vercel.json`. Integration follows on a preview deployment, with the builder pointed at that preview.
 
@@ -502,7 +502,26 @@ The classifier's answer is advisory. The customer may edit the rule before submi
 - The builder routes, their auth and `OTF_CONTRACT_VERSION`.
 - Every existing UI label.
 
-### 8.10 Branches
+### 8.10 Why open behaviors are built only on the task-report service
+
+The two apps offer different scope:
+- **Task-report service:** the two proven concurrency behaviors, plus open behaviors. An open behavior is any other non-security behavior. The classifier routes it there (section 8.5), and a rule the customer can edit grades it (section 8.3). Open behaviors are labeled "not measured yet" (section 8.7).
+- **Umami:** the proven time-zone grouping behavior only. Umami has no open criterion (section 8.1).
+
+**An Umami card about anything else.** Such a card is never built on Umami.
+- When the behavior could plausibly exist in a task-and-report service, the classifier translates the card into the closest equivalent failure there. It offers that failure as a task-report open behavior with a rule, and the build runs and qualifies in the task-report service.
+- Otherwise the card is refused as out of scope (section 8.6).
+- The translated rule names task-report routes, and the custom-build panel says "Builds in the task-report service, not Umami", so before accepting, the customer can see where the build runs.
+
+**Why Umami stays time-zone only.**
+- **The builder's Umami path is purpose-built.** Its lane instructions, its admission sequence and its qualification run are all designed around Umami's date-grouped reports and the time-zone behavior. They assume the bug lands in one of those reports and that the added checks detect it there. That path has no place for an arbitrary rule.
+- **The task-report qualification is generic.** Its six cells check two things. The original suite must pass on the clean, buggy and fixed copies. The added checks must fail only on the buggy copy, with the expected failure code. A confirmation round then repeats the whole check. No step depends on which behavior was planted, so the failure code can come from a customer's rule as easily as from a proven criterion.
+- **Umami qualification is heavier and specific.** Umami's original suite is much larger and slower than the task-report suite. In development, a qualified attempt took a median of 21.0 minutes on Umami and 15.5 minutes on the task-report service ([development timing evidence](evidence/build-time-2026-10-29.json)). Umami's qualification is also tied to the admission steps for the date-grouped reports.
+- **Umami's excluded areas must stay excluded.** Sign-in, identity, permission and race behavior are out of scope on Umami (`HOST_SCOPE_EXCLUDED`). A general Umami path would have to keep them out.
+
+Building open behaviors on Umami is planned work for after the hackathon. It needs a general Umami lane runner, a qualification sequence for any Umami behavior, and paid measurement runs. See [Open behaviors on Umami](../ROADMAP.md#open-behaviors-on-umami) in the roadmap.
+
+### 8.11 Branches
 
 The contract, server and UI implementations are merged on main. This table records their branch ownership; the server and UI branches did not edit `contract.ts`, `schemas.ts` or `canonical.ts`. The builder remains in a separate repository.
 
