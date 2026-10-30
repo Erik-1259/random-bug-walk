@@ -4,14 +4,15 @@
 // analysis's to the rows), or is computed from their counts (the off-minus-on solve rate when the
 // futility rule stopped the solve test, the observed off-arm rate, the tool-use share), or is one of
 // the report's constants (the pre-registration's detectable-difference table and its arm size, the
-// rerun limit, and the report's own low tool-use share of one half). The staging layout is the
-// publisher's (inputs/, logs/, results/, report.md), with no local path in any staged file.
+// rerun limit, the report's own low tool-use share of one half, and the dated deviations from the
+// pre-registration). The staging layout is the publisher's (inputs/, logs/, results/, report.md),
+// with no local path in any staged file.
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { TOOL_NAMES, decimal } from "@rbw/solver";
 import type { Arm, AttemptRow, BugAnalysis, ResultsRecord, Verdict } from "@rbw/solver";
 import type { LedgerView } from "./allowance.ts";
-import { MAX_INFRASTRUCTURE_RERUNS } from "./plan.ts";
+import { MAX_INFRASTRUCTURE_RERUNS, PREREGISTRATION_DEVIATIONS } from "./plan.ts";
 import { attemptDirName, grade2Executions, isInfrastructure, ledgerSettled, settledTotals, writeJson } from "./records.ts";
 import type { AttemptRecord, GradeTry, RunRecord, SeededRecord, StopRecord } from "./records.ts";
 
@@ -414,6 +415,12 @@ function madeWorseSentence(bug: BugAnalysis): string {
   return `Made worse: off-minus-on solve rate ${rate}; ${tokenRatio(bug.tokens)}. On solves, ${solveClause(bug)}. On tokens, ${VERDICT_CLAUSES.tokens[bug.made_worse.tokens]}.`;
 }
 
+/** The changes made outside the pre-registration's amendment window, each with its date and reason. */
+function deviationLines(): string[] {
+  if (PREREGISTRATION_DEVIATIONS.length === 0) return [];
+  return ["## Deviations from the pre-registration", "", ...PREREGISTRATION_DEVIATIONS.map((item) => `- ${item.date}: ${item.change} Reason: ${item.reason}`), ""];
+}
+
 /** The run's report: the label, the plan, every attempt, both grades, spend and the analysis statements. */
 export function reportMarkdown(summary: RunSummary, analysis: ResultsRecord | null): string {
   const lines: string[] = [];
@@ -423,6 +430,7 @@ export function reportMarkdown(summary: RunSummary, analysis: ResultsRecord | nu
     `Root execution \`${summary.root_execution_id}\`, model \`${summary.model_id}\` (runtime profile \`${summary.runtime_profile_sha256}\`, rate sheet \`${summary.rate_sheet_sha256}\`). Attempt indexes follow ABBA blocks fixed in advance; each index's seed is the index. The arms differ only in the \`server_logs\` tool.`,
     "",
   );
+  lines.push(...deviationLines());
   lines.push("## Attempts", "");
   lines.push("| Index | Arm | Seed | Status | Runs | Outcome | Cap | Turns | Tokens (in + out) | server_logs calls | Scope | Grade 1 | Grade 2 | Model spend |");
   lines.push("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|");

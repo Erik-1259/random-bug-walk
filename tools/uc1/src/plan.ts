@@ -39,6 +39,27 @@ export function attemptPlan(mode: RunMode, model: SolverModelName = "super"): Pl
  */
 export const SPEND_CAPS_MICROUSD: Readonly<Record<SolverModelName, bigint>> = Object.freeze({ super: 40_000_000n, kimi: 75_000_000n });
 
+/** One change made outside the pre-registration's amendment window, with its date and reason. */
+export interface PreregistrationDeviation {
+  /** The date of the change, YYYY-MM-DD. */
+  date: string;
+  change: string;
+  reason: string;
+}
+
+/**
+ * The deviations from the pre-registration, which every report prints next to the result
+ * ("Status and changes": a change outside the amendment window is reported with its date and reason).
+ */
+export const PREREGISTRATION_DEVIATIONS: readonly PreregistrationDeviation[] = Object.freeze([
+  Object.freeze({
+    date: "2026-10-30",
+    change:
+      "The solver models changed before the harness pilot: Nemotron 3 Super (`nvidia/nemotron-3-super-120b-a12b`) became Nemotron 3.5 Super VL (`nvidia/Nemotron-3.5-Super-VL`), and the Kimi-K2.7-Code fallback (`moonshotai/Kimi-K2.7-Code`) became Kimi-K3 (`moonshotai/Kimi-K3`), with the same settings and spending caps.",
+    reason: "The provider retires Nemotron 3 Super and Kimi-K2.7-Code in November 2026.",
+  }),
+]);
+
 /** Up to 3 sessions run at once on local Docker. */
 export const MAX_CONCURRENCY = 3;
 /** An attempt that hits an infrastructure error is rerun from scratch at the same index, up to 2 times. */

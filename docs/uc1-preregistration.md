@@ -9,6 +9,7 @@ Nothing in this document reports a result. No counted attempt has run when it is
 - **Committed:** Oct 13, 2026, before any counted attempt.
 - **One amendment window:** after the harness pilot (below) and before the first counted attempt of the main run, the per-attempt caps and the solver model may be changed once, in a committed amendment to this file that states the measured reason. The same amendment, or an earlier one, records the confirmed scope of the spending cap (see "Caps"), with the date it was settled. Nothing else changes after this commit. Nothing changes after the first counted attempt.
 - A change made outside that window is reported as a deviation next to the result, with its date and reason.
+- **Deviation, 2026-10-30:** before the harness pilot, the solver models changed from Nemotron 3 Super (`nvidia/nemotron-3-super-120b-a12b`) to Nemotron 3.5 Super VL (`nvidia/Nemotron-3.5-Super-VL`), and the Kimi-K2.7-Code fallback (`moonshotai/Kimi-K2.7-Code`) to Kimi-K3 (`moonshotai/Kimi-K3`), with the same settings and spending caps. Reason: the provider retires Nemotron 3 Super and Kimi-K2.7-Code in November 2026. The text below still names the pre-registered models; every UC1 report prints this deviation next to the result.
 
 ## Decisions fixed on Oct 13, 2026
 
