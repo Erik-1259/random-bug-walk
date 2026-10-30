@@ -1,11 +1,11 @@
 {
   "format_version": 1,
   "provenance": "synthetic",
-  "model_id": "nvidia/nemotron-3-super-120b-a12b",
+  "model_id": "nvidia/Nemotron-3.5-Super-VL",
   "recorded_at": "2026-10-07T00:00:00.000Z",
   "request": {
     "body": {
-      "model": "nvidia/nemotron-3-super-120b-a12b",
+      "model": "nvidia/Nemotron-3.5-Super-VL",
       "max_tokens": 1024,
       "response_format": {
         "type": "json_schema",
@@ -70,10 +70,10 @@
       }
     }
   },
-  "request_sha256": "304a66bd88d365f94104d5f87495f89e6096580d3a4451ace70fcfc291967ba2",
+  "request_sha256": "a4dc4d5f2ff76aae4e900bd7b74931208371bbddd9050ac4ddcc60d632c29fc0",
   "response": {
     "status": 200,
-    "body": "{\"id\":\"synthetic-completion\",\"object\":\"chat.completion\",\"created\":1767225600,\"model\":\"nvidia/nemotron-3-super-120b-a12b\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"{\\\"verdict\\\":\\\"not_fix\\\",\\\"zone_is_selected\\\":\\\"no\\\",\\\"same_call\\\":\\\"no\\\",\\\"reason\\\":\\\"Synthetic answer: not_fix, zone no, same call no.\\\"}\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":900,\"completion_tokens\":60,\"total_tokens\":960}}"
+    "body": "{\"id\":\"synthetic-completion\",\"object\":\"chat.completion\",\"created\":1767225600,\"model\":\"nvidia/Nemotron-3.5-Super-VL\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"{\\\"verdict\\\":\\\"not_fix\\\",\\\"zone_is_selected\\\":\\\"no\\\",\\\"same_call\\\":\\\"no\\\",\\\"reason\\\":\\\"Synthetic answer: not_fix, zone no, same call no.\\\"}\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":900,\"completion_tokens\":60,\"total_tokens\":960}}"
   },
   "usage": {
     "prompt_tokens": 900,

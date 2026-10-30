@@ -33,16 +33,18 @@ A profile reuses the writer's `ModelProfile` shape (`packages/writer/src/profile
 
 | | Super (pre-registered) | Kimi (fallback only) |
 | --- | --- | --- |
-| Model | `nvidia/nemotron-3-super-120b-a12b` | `moonshotai/Kimi-K2.7-Code` |
-| Service label | `token-factory.nemotron-3-super` | `token-factory.kimi-k2.7-code` |
+| Model | `nvidia/Nemotron-3.5-Super-VL` | `moonshotai/Kimi-K3` |
+| Service label | `token-factory.nemotron-3.5-super-vl` | `token-factory.kimi-k3` |
 | Thinking | off: `chat_template_kwargs: { enable_thinking: false }`, as harvest-review sends it | always on; no field sent |
 | Input tokens per call (counted bound) | 131,072 | 131,072 |
 | Output tokens per call | 8,192 | 16,384 |
 | Request timeout | 300,000 ms | 600,000 ms |
 | Temperature | 0.6 | 0.6 |
-| `runtime_profile_sha256` | `572e4f48907ccf7e905b00f24e7141dcad03c6a4e70b3f7b5544de8f5b6ed271` | `17386e61aed8cb33864c836b1e7efa269f3e1091cd5104e07cf7bcc7778d0ceb` |
+| `runtime_profile_sha256` | `92cee96745b93f285715b4a9a640cdf071fcc5a340fc46cce3d945bb7435ffeb` | `df27a3c390305a99375d89a851a13f7187a251924170b131dc0aafce6c3c0122` |
 
 Both: provider `token-factory`, base URL `https://api.tokenfactory.nebius.com/v1/`, 0 retries, kind `solver.turn`, role `solver`, key variable `TOKEN_FACTORY_SOLVER_KEY`, seed = the attempt index.
+
+The pre-registered models were Nemotron 3 Super and Kimi-K2.7-Code. The provider retires both in November 2026, so the profiles now name their successors, Nemotron 3.5 Super VL and Kimi-K3, with the same settings. Kimi-K3 is treated as always thinking, as Kimi-K2.7-Code was.
 
 The per-call limits, the timeouts and the temperature are predictions. The pilot measures them, and the profile is frozen after it. The fallback is used only if the pilot shows Super's tool calling broken.
 
@@ -70,12 +72,12 @@ The limit stays at 131,072 counted bytes: a byte count at or under it cannot be 
 
 ## Envelope and cost limits
 
-`rate-sheets/solver-v1.json` uses the writer's rate-file format and holds the same four entries as `packages/harvest-review/rates.json` (Token Factory price list, Oct 7, 2026): Super $0.30 input and $0.90 output per million tokens, Kimi $0.95 and $4.00. `solverEnvelope` prices a turn with the writer's `buildEnvelope(entries, profile)`. It does not use `@rbw/envelope`, whose reservations carry the judge path's fixed runtime profile, and nothing here touches `packages/envelope` or the controller's frozen files.
+`rate-sheets/solver-v1.json` uses the writer's rate-file format and holds the same four entries as `packages/harvest-review/rates.json` (Token Factory's `/v1/models` listing, Oct 30, 2026): Super $0.30 input and $0.90 output per million tokens, Kimi $3.00 and $15.00. `solverEnvelope` prices a turn with the writer's `buildEnvelope(entries, profile)`. It does not use `@rbw/envelope`, whose reservations carry the judge path's fixed runtime profile, and nothing here touches `packages/envelope` or the controller's frozen files.
 
-- Reservation per turn, each line rounded up to a whole micro-USD: Super 39,322 + 7,373 = 46,695 micro-USD; Kimi 124,519 + 65,536 = 190,055 micro-USD. One turn is open at a time.
+- Reservation per turn, each line rounded up to a whole micro-USD: Super 39,322 + 7,373 = 46,695 micro-USD; Kimi 393,216 + 245,760 = 638,976 micro-USD. One turn is open at a time.
 - Settlement charges the reported usage and releases the rest. A call with no reported usage retains its worst case.
 - Most one Super attempt can settle, by the caps: 1,500,000 input tokens ($0.45) plus 50 × 8,192 output tokens ($0.37), about $0.82, assuming reported input does not pass the counted bound. 40 attempts: about $33, under the $40 UC1 cap.
-- The same bound for Kimi is about $1.43 + $3.28 = $4.70 per attempt, so 40 attempts could pass the $75 fallback cap. The spend pool's cap is what stops a run there.
+- The same bound for Kimi is about $4.50 + $12.29 = $16.79 per attempt, so 5 attempts could pass the $75 fallback cap. The spend pool's cap is what stops a run there.
 
 The prompt bound is the UTF-8 byte length of the exact request body, plus 16 tokens per message and 256 per request. The body holds every message, tool call, tool result and tool definition the model reads, so with a byte-level tokenizer it bounds the text tokens.
 

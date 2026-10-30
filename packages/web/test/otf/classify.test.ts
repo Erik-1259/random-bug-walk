@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { RateLimiter } from "../../src/assist/limits.ts";
+import { INSTANCE_LIMIT, RateLimiter } from "../../src/assist/limits.ts";
 import { CHAT_COMPLETIONS_URL } from "../../src/assist/providers.ts";
 import { factorySessionCookie } from "../../src/factory-server/session.ts";
 import { CLASSIFY_SYSTEM_PROMPT } from "../../src/otf/classify-prompt.ts";
@@ -321,7 +321,7 @@ describe("OTF classifier", () => {
   });
   it("uses the existing designer call budget for both attempts", async () => {
     const s = setup(OPEN);
-    for (let i = 0; i < 600; i++) s.deps.assist.limiter.take("bug-spec", `synthetic-${String(i)}`, s.deps.assist.now().getTime());
+    for (let i = 0; i < INSTANCE_LIMIT; i++) s.deps.assist.limiter.take("bug-spec", `synthetic-${String(i)}`, s.deps.assist.now().getTime());
     expect(await errorCode(await classify(request(), s.deps))).toBe("unavailable");
     expect(s.calls).toHaveLength(0);
   });

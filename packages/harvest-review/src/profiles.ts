@@ -38,8 +38,8 @@ function profile(model: string, service: string, limits: ModelLimits, extras: Re
 
 /** Thinking off as the writer sends it to Nemotron Lightning, and the strict JSON schema. */
 export const SUPER_PROFILE = profile(
-  "nvidia/nemotron-3-super-120b-a12b",
-  "token-factory.nemotron-3-super",
+  "nvidia/Nemotron-3.5-Super-VL",
+  "token-factory.nemotron-3.5-super-vl",
   { max_output_tokens: 1_024, request_timeout_ms: 60_000, structured_output: "json_schema_strict" },
   Object.freeze({ chat_template_kwargs: Object.freeze({ enable_thinking: false }) }),
 );
@@ -50,8 +50,8 @@ export const SUPER_PROFILE = profile(
  * call. Its reasoning counts against its 8,192 output tokens.
  */
 export const KIMI_PROFILE = profile(
-  "moonshotai/Kimi-K2.7-Code",
-  "token-factory.kimi-k2.7-code",
+  "moonshotai/Kimi-K3",
+  "token-factory.kimi-k3",
   { max_output_tokens: 8_192, request_timeout_ms: 600_000, structured_output: "validated_after" },
   Object.freeze({}),
 );

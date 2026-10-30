@@ -105,14 +105,14 @@ The profiles are constants in `src/profiles.ts`. Each profile's hashed part (its
 
 | Profile | Model | Input limit (tokens) | Output limit (tokens) | Request timeout (ms) | Worst case per call (micro-USD): input + output |
 | --- | --- | --- | --- | --- | --- |
-| Super | `nvidia/nemotron-3-super-120b-a12b` | 65,536 | 2,048 | 300,000 | 19,661 + 1,844 = **21,505** |
-| Kimi | `moonshotai/Kimi-K2.7-Code` | 65,536 | 8,192 | 600,000 | 62,260 + 32,768 = **95,028** |
+| Super | `nvidia/Nemotron-3.5-Super-VL` | 65,536 | 2,048 | 300,000 | 19,661 + 1,844 = **21,505** |
+| Kimi | `moonshotai/Kimi-K3` | 65,536 | 8,192 | 600,000 | 196,608 + 122,880 = **319,488** |
 
 - **Super** (default): thinking off (`chat_template_kwargs: { enable_thinking: false }`), output as a strict JSON schema (`response_format`).
-- **Kimi** (fallback): it always thinks, so no thinking field is sent, its reasoning counts against its 8,192 output tokens, and no `response_format` is sent: the reply text is parsed and validated with the same schema after the call.
+- **Kimi** (fallback): it is treated as always thinking, as its predecessor Kimi-K2.7-Code was, so no thinking field is sent, its reasoning counts against its 8,192 output tokens, and no `response_format` is sent: the reply text is parsed and validated with the same schema after the call.
 - **Sampling:** no temperature or seed is sent, so every attempt samples at the provider's default and the attempts are independent draws of the same request.
-- **Prices** (`rates.json`, from the provider's price page): Super 300,000 micro-USD per million input tokens and 900,000 per million output tokens; Kimi 950,000 and 4,000,000. The worst case of a line is `ceil(limit × microusd ÷ per_units)`.
-- **Run worst case:** at most 8 attempts per run, so a run reserves at most 8 × 21,505 = 172,040 micro-USD (about $0.17) with Super and 8 × 95,028 = 760,224 micro-USD (about $0.76) with Kimi. A run whose attempts × worst case is above `--budget-microusd` is refused before it connects to the database.
+- **Prices** (`rates.json`, from the provider's model listing on Oct 30, 2026): Super 300,000 micro-USD per million input tokens and 900,000 per million output tokens; Kimi 3,000,000 and 15,000,000. The worst case of a line is `ceil(limit × microusd ÷ per_units)`.
+- **Run worst case:** at most 8 attempts per run, so a run reserves at most 8 × 21,505 = 172,040 micro-USD (about $0.17) with Super and 8 × 319,488 = 2,555,904 micro-USD (about $2.56) with Kimi. A run whose attempts × worst case is above `--budget-microusd` is refused before it connects to the database.
 
 | Limit | Enforced by | When |
 | --- | --- | --- |

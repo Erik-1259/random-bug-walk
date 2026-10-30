@@ -8,6 +8,7 @@ import { analyze } from "@rbw/solver";
 import type { AttemptRow, BugAnalysis } from "@rbw/solver";
 import { describe, expect, it } from "vitest";
 import type { LedgerView } from "../src/allowance.ts";
+import { PREREGISTRATION_DEVIATIONS } from "../src/plan.ts";
 import { DETECTABLE_DIFFERENCE, buildSummary, detectableSentence, reportMarkdown, writeStaging } from "../src/report.ts";
 import type { RunSummary } from "../src/report.ts";
 import type { AttemptRecord, AttemptRun, RunRecord } from "../src/records.ts";
@@ -120,6 +121,26 @@ describe("the detectable-difference sentence", () => {
     const pilot = reportMarkdown(summary("pilot"), analyze([...arm("off", 2, 0), ...arm("on", 2, 1)]));
     expect(pilot).not.toContain("detectable difference");
     expect(pilot).not.toContain("percentage points at alpha");
+  });
+});
+
+describe("the deviations from the pre-registration", () => {
+  it("prints the dated solver model change, with its reason, in every report before the attempts", () => {
+    expect(PREREGISTRATION_DEVIATIONS.map((item) => item.date)).toEqual(["2026-10-30"]);
+    for (const mode of ["run", "pilot"] as const) {
+      const report = reportMarkdown(summary(mode), analyze([...arm("off", 2, 0), ...arm("on", 2, 1)]));
+      const heading = report.indexOf("## Deviations from the pre-registration");
+      expect(heading).toBeGreaterThan(-1);
+      expect(heading).toBeLessThan(report.indexOf("## Attempts"));
+      expect(report).toContain("- 2026-10-30: The solver models changed before the harness pilot: Nemotron 3 Super (`nvidia/nemotron-3-super-120b-a12b`) became Nemotron 3.5 Super VL (`nvidia/Nemotron-3.5-Super-VL`)");
+      expect(report).toContain("Kimi-K3 (`moonshotai/Kimi-K3`)");
+      expect(report).toContain("Reason: The provider retires Nemotron 3 Super and Kimi-K2.7-Code in November 2026.");
+    }
+  });
+
+  it("matches the dated deviation recorded in the pre-registration", () => {
+    const text = readFileSync(PREREGISTRATION, "utf8");
+    for (const item of PREREGISTRATION_DEVIATIONS) expect(text).toContain(`- **Deviation, ${item.date}:**`);
   });
 });
 

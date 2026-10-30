@@ -57,8 +57,8 @@ function profile(settings: ModelSettings): ModelProfile<ScreenKind> {
 
 /** The default screen model: the solver's pre-registered model, thinking off, strict JSON schema. */
 export const SUPER_SCREEN_PROFILE = profile({
-  model: "nvidia/nemotron-3-super-120b-a12b",
-  service: "token-factory.nemotron-3-super",
+  model: "nvidia/Nemotron-3.5-Super-VL",
+  service: "token-factory.nemotron-3.5-super-vl",
   max_input_tokens: 65_536,
   max_output_tokens: 2_048,
   request_timeout_ms: 300_000,
@@ -72,8 +72,8 @@ export const SUPER_SCREEN_PROFILE = profile({
  * against its output limit.
  */
 export const KIMI_SCREEN_PROFILE = profile({
-  model: "moonshotai/Kimi-K2.7-Code",
-  service: "token-factory.kimi-k2.7-code",
+  model: "moonshotai/Kimi-K3",
+  service: "token-factory.kimi-k3",
   max_input_tokens: 65_536,
   max_output_tokens: 8_192,
   request_timeout_ms: 600_000,

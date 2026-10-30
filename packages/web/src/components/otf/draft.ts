@@ -1,9 +1,12 @@
 import type { AssistClient } from "../../assist/client.ts";
+import { SHAPE_TITLE_MAX_CHARS } from "../../assist/limits.ts";
 import { canonicalJson } from "../../otf/canonical.ts";
 import { OtfClientError, type AcceptedOtfInput, type OtfClient } from "../../otf/client.ts";
-import { OTF_OPEN_CRITERION_ID, SENTENCE_MAX_CHARS, SENTENCE_MIN_CHARS, type OtfAvailability, type OtfClassification, type OtfCreateJob, type OtfCriterionId, type OtfHostId, type OtfOpenRule, type OtfSpecCard } from "../../otf/contract.ts";
+import { OTF_OPEN_CRITERION_ID, SENTENCE_MAX_CHARS, SENTENCE_MIN_CHARS, type OtfAvailability, type OtfBehaviorOption, type OtfClassification, type OtfCreateJob, type OtfCriterionId, type OtfHostId, type OtfOpenRule, type OtfSpecCard } from "../../otf/contract.ts";
 import { describeAssistFailure, type CustomBuildDesign } from "../bug-designer.tsx";
 import { ruleProblem, sentenceProblem, specFromDesigner, specProblem } from "./guided.tsx";
+import { isBuildableBadge } from "../../otf/shape-badges-contract.ts";
+import { shapeBadgeHost, visibleShapeBadges, type ShapeSearchContext } from "./shape-badge-state.ts";
 
 export interface OtfDraftView {
   criterionId: OtfCriterionId | null;
@@ -20,8 +23,9 @@ export interface OtfDraftView {
   stale: boolean;
   /** Why the last classify call gave no answer, in plain language. */
   classifyError: string | null;
+  shapeSearch: ShapeSearchContext | null;
 }
-const emptyDraft = (): OtfDraftView => ({ criterionId: null, sentence: "", spec: null, classification: null, rule: null, busy: false, classificationRequired: false, message: null, hostId: null, stale: false, classifyError: null });
+const emptyDraft = (): OtfDraftView => ({ criterionId: null, sentence: "", spec: null, classification: null, rule: null, busy: false, classificationRequired: false, message: null, hostId: null, stale: false, classifyError: null, shapeSearch: null });
 const offered = (availability: OtfAvailability, criterion: OtfCriterionId | null) => availability.behaviors.find(option => option.criterion_id === criterion && availability.hosts.some(host => host.offered && host.host_id === option.host_id));
 
 export const CLASSIFY_REVIEW_MESSAGE = "Review the card and sentence before classifying this custom design.";
@@ -45,6 +49,28 @@ export function classificationAvailable(availability: OtfAvailability | null): b
 export function designerSentence(query: string, title: string): string {
   const text = Array.from(query.trim()).length < SENTENCE_MIN_CHARS ? title.trim() : query.trim();
   return Array.from(text).slice(0, SENTENCE_MAX_CHARS).join("");
+}
+
+/**
+ * The shape title the designer receives. A proven option sends its label, as before. The open option's
+ * label names "non-security", which the designer's input check reads as a security topic, so it sends
+ * the judge's own sentence instead: the most specific title for this design.
+ */
+export function designerShapeTitle(behavior: Pick<OtfBehaviorOption, "criterion_id" | "label">, sentence: string): string {
+  if (behavior.criterion_id !== OTF_OPEN_CRITERION_ID) return behavior.label;
+  return Array.from(sentence.trim()).slice(0, SHAPE_TITLE_MAX_CHARS).join("").trim();
+}
+
+/**
+ * The card has the final say; only a difference between two buildable outcomes needs no suggestions.
+ * A refused card always offers the other buildable shapes, even when its own shape has no badge.
+ */
+export function shapeBadgeDisagrees(source: ShapeSearchContext | null | undefined, classification: OtfClassification | null | undefined): boolean {
+  if (source == null || classification == null) return false;
+  if (classification.refusal !== null) return true;
+  const index = source.shapes.findIndex(shape => shape.id === source.selectedShapeId);
+  const badge = source.badges.find(item => item.index === index);
+  return badge !== undefined && !isBuildableBadge(badge);
 }
 
 /** Editable pre-accept state only. This controller has no create, stop or validation capability. */
@@ -131,9 +157,9 @@ export class OtfDraftController {
     if (behavior === undefined) return;
     // With the open feature off, SPEC 8.2 preserves the existing proven design flow.
     const classificationRequired = classificationAvailable(availability);
-    this.update({ busy: true, message: null, spec: null, classification: null, rule: null, classificationRequired, hostId: behavior.host_id, stale: false, classifyError: null });
+    this.update({ busy: true, message: null, spec: null, classification: null, rule: null, classificationRequired, hostId: behavior.host_id, stale: false, classifyError: null, shapeSearch: null });
     try {
-      const result = await this.designer.bugSpec({ title: behavior.label, summary: this.view.sentence.trim(), sources: [] }, behavior.host_id);
+      const result = await this.designer.bugSpec({ title: designerShapeTitle(behavior, this.view.sentence), summary: this.view.sentence.trim(), sources: [] }, behavior.host_id);
       if (!result.ok) {
         // The proven-only flow shows the designer's failure only, as before the open behavior.
         if (classificationRequired && result.failure.code === "signed_out") this.onSignedOut();
@@ -147,9 +173,41 @@ export class OtfDraftController {
   async handoff(design: CustomBuildDesign, availability: OtfAvailability | null, signedIn: boolean): Promise<void> {
     if (this.view.busy || !signedIn || !availability?.enabled || !classificationAvailable(availability)) return;
     const spec = specFromDesigner(design.spec);
-    this.update({ ...emptyDraft(), busy: true, classificationRequired: true, spec, sentence: designerSentence(design.query, spec.title), hostId: design.hostId });
+    this.update({ ...emptyDraft(), busy: true, classificationRequired: true, spec, sentence: designerSentence(design.query, spec.title), hostId: design.hostId,
+      shapeSearch: design.shapeSearch === undefined ? null : structuredClone(design.shapeSearch) });
+    const source = this.view.shapeSearch;
+    if (source !== null && design.shapeBadges !== undefined) void design.shapeBadges.then(badges => {
+      // Ignore a late result after another handoff or a new draft replaced this exact search snapshot.
+      if (badges !== null && this.view.shapeSearch === source) this.update({ shapeSearch: { ...source, badges: visibleShapeBadges(source.shapes, structuredClone(badges), availability) } });
+    });
     try { await this.classifyCard(availability, design.hostId); }
     catch (error) { this.update({ classifyError: classifyFailureText(error) }); }
+    finally { this.update({ busy: false }); }
+  }
+  /** A refused card may try another buildable shape from that same search; Accept remains separate. */
+  async selectShapeAlternative(shapeId: string, availability: OtfAvailability | null, signedIn: boolean): Promise<void> {
+    const { shapeSearch, busy, classification } = this.view;
+    if (busy || !signedIn || availability === null || !classificationAvailable(availability) || shapeSearch === null || !shapeBadgeDisagrees(shapeSearch, classification)) return;
+    const index = shapeSearch.shapes.findIndex(shape => shape.id === shapeId);
+    const shape = shapeSearch.shapes[index];
+    if (shape === undefined || shapeId === shapeSearch.selectedShapeId || !isBuildableBadge(shapeSearch.badges.find(badge => badge.index === index))) return;
+    // The card is written for the host its badge was checked against.
+    const hostId = shapeBadgeHost(shape);
+    // A failed write puts back the original card, its classification and the fallback list, so the judge can try another shape.
+    const original = this.view;
+    this.update({ ...emptyDraft(), busy: true, classificationRequired: true, shapeSearch: { ...shapeSearch, selectedShapeId: shapeId }, hostId });
+    let written = false;
+    try {
+      const result = await this.designer.bugSpec(structuredClone(shape), hostId);
+      if (!result.ok) { if (result.failure.code === "signed_out") this.onSignedOut(); this.update({ ...original, message: describeAssistFailure(result.failure) }); return; }
+      const spec = specFromDesigner(result.value.spec);
+      written = true;
+      this.update({ spec, sentence: designerSentence(shapeSearch.query, spec.title) });
+      await this.classifyCard(availability, hostId);
+    } catch {
+      const message = "The spec designer could not respond. No custom build has started.";
+      this.update(written ? { message } : { ...original, message });
+    }
     finally { this.update({ busy: false }); }
   }
   /** "Try again" or "Classify again": the same card and sentence, as they are now. */

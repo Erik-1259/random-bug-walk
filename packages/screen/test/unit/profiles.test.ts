@@ -12,14 +12,14 @@ const readme = readFileSync(README, "utf8");
 describe("screen profiles and rates", () => {
   it("prices both profiles from the screen's own rate file", () => {
     expect(worstCasePerCall(rates, SUPER_SCREEN_PROFILE)).toEqual({ ok: true, input_microusd: 19_661, output_microusd: 1_844, per_call_microusd: 21_505 });
-    expect(worstCasePerCall(rates, KIMI_SCREEN_PROFILE)).toEqual({ ok: true, input_microusd: 62_260, output_microusd: 32_768, per_call_microusd: 95_028 });
+    expect(worstCasePerCall(rates, KIMI_SCREEN_PROFILE)).toEqual({ ok: true, input_microusd: 196_608, output_microusd: 122_880, per_call_microusd: 319_488 });
   });
 
   it("refuses a rate file without the profile's service", () => {
     const other = new TextEncoder().encode(
       JSON.stringify([{ service: "token-factory.other", unit: "input_token", price: { microusd: 1, per_units: 1 }, source_url: "https://example.invalid/" }]),
     );
-    expect(worstCasePerCall(other, SUPER_SCREEN_PROFILE)).toEqual({ ok: false, detail: "the rate file has no token-factory.nemotron-3-super input_token price" });
+    expect(worstCasePerCall(other, SUPER_SCREEN_PROFILE)).toEqual({ ok: false, detail: "the rate file has no token-factory.nemotron-3.5-super-vl input_token price" });
   });
 
   it("hashes distinct profiles that send no temperature and carry their kind", () => {
@@ -39,14 +39,14 @@ describe("screen profiles and rates", () => {
 describe("README", () => {
   it("states the limits, worst cases and scoring constants the code uses", () => {
     for (const fact of [
-      "| Super | `nvidia/nemotron-3-super-120b-a12b` | 65,536 | 2,048 | 300,000 | 19,661 + 1,844 = **21,505** |",
-      "| Kimi | `moonshotai/Kimi-K2.7-Code` | 65,536 | 8,192 | 600,000 | 62,260 + 32,768 = **95,028** |",
+      "| Super | `nvidia/Nemotron-3.5-Super-VL` | 65,536 | 2,048 | 300,000 | 19,661 + 1,844 = **21,505** |",
+      "| Kimi | `moonshotai/Kimi-K3` | 65,536 | 8,192 | 600,000 | 196,608 + 122,880 = **319,488** |",
       `at most ${String(MAX_ATTEMPTS)} attempts`,
       `${String(LINE_TOLERANCE)} lines`,
       `${String(MAX_CLAIM_LINES)} lines`,
       "`TOKEN_FACTORY_SCREEN_KEY`",
       "172,040",
-      "760,224",
+      "2,555,904",
     ]) {
       expect(readme).toContain(fact);
     }
