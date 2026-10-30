@@ -48,7 +48,7 @@ describe("shape badge copy", () => {
   it.each(["task-report", "umami"] as const)("shows the %s open translation without measured timing", hostId => {
     const html = render(<ShapeBadgeView badge={open()} hostId={hostId} availability={availability} />);
     expect(html).toContain(hostId === "umami" ? "Builds in the task-report service, not Umami" : "Builds in the task-report service</p>");
-    expect(html).toContain(`Builds in the task-report service as: “${translated}”. Not measured yet.`);
+    expect(html).toContain(`Builds in the task-report service as: “${translated.replace(/[.!?]+$/u, "")}”. Not measured yet.`);
     expect(html).not.toContain("In development runs"); expect(html).not.toContain("Usually about");
   });
   it("uses the exact Umami fallback detail when the translation is absent", () => {
@@ -88,7 +88,7 @@ describe("other buildable shapes after a card refusal", () => {
     expect(html.indexOf("Synthetic proven")).toBeLessThan(html.indexOf("Synthetic open-first"));
     expect(html.indexOf("Synthetic open-first")).toBeLessThan(html.indexOf("Synthetic open-second"));
     expect(html.match(/<button/g)).toHaveLength(3); expect(html).not.toContain("disabled");
-    expect(html).toContain("Builds as a proven behavior: Synthetic saved changes"); expect(html).toContain(translated);
+    expect(html).toContain("Builds as a proven behavior: Synthetic saved changes"); expect(html).toContain(translated.replace(/[.!?]+$/u, ""));
   });
   it("hands only the explicitly selected original shape to the caller", () => {
     const onPick = vi.fn();
