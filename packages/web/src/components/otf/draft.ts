@@ -5,7 +5,7 @@ import { OTF_OPEN_CRITERION_ID, SENTENCE_MAX_CHARS, SENTENCE_MIN_CHARS, type Otf
 import { describeAssistFailure, type CustomBuildDesign } from "../bug-designer.tsx";
 import { ruleProblem, sentenceProblem, specFromDesigner, specProblem } from "./guided.tsx";
 import { isBuildableBadge } from "../../otf/shape-badges-contract.ts";
-import type { ShapeSearchContext } from "./shape-badge-state.ts";
+import { shapeBadgeHost, visibleShapeBadges, type ShapeSearchContext } from "./shape-badge-state.ts";
 
 export interface OtfDraftView {
   criterionId: OtfCriterionId | null;
@@ -163,7 +163,7 @@ export class OtfDraftController {
     const source = this.view.shapeSearch;
     if (source !== null && design.shapeBadges !== undefined) void design.shapeBadges.then(badges => {
       // Ignore a late result after another handoff or a new draft replaced this exact search snapshot.
-      if (badges !== null && this.view.shapeSearch === source) this.update({ shapeSearch: { ...source, badges: structuredClone(badges) } });
+      if (badges !== null && this.view.shapeSearch === source) this.update({ shapeSearch: { ...source, badges: visibleShapeBadges(source.shapes, structuredClone(badges), availability) } });
     });
     try { await this.classifyCard(availability, design.hostId); }
     catch (error) { this.update({ classifyError: classifyFailureText(error) }); }
@@ -176,15 +176,23 @@ export class OtfDraftController {
     const index = shapeSearch.shapes.findIndex(shape => shape.id === shapeId);
     const shape = shapeSearch.shapes[index];
     if (shape === undefined || shapeId === shapeSearch.selectedShapeId || !isBuildableBadge(shapeSearch.badges.find(badge => badge.index === index))) return;
-    const nextSearch = { ...shapeSearch, selectedShapeId: shapeId };
-    this.update({ ...emptyDraft(), busy: true, classificationRequired: true, shapeSearch: nextSearch, hostId: shapeSearch.hostId });
+    // The card is written for the host its badge was checked against.
+    const hostId = shapeBadgeHost(shape);
+    // A failed write puts back the original card, its classification and the fallback list, so the judge can try another shape.
+    const original = this.view;
+    this.update({ ...emptyDraft(), busy: true, classificationRequired: true, shapeSearch: { ...shapeSearch, selectedShapeId: shapeId }, hostId });
+    let written = false;
     try {
-      const result = await this.designer.bugSpec(structuredClone(shape), shapeSearch.hostId);
-      if (!result.ok) { if (result.failure.code === "signed_out") this.onSignedOut(); this.update({ message: describeAssistFailure(result.failure) }); return; }
+      const result = await this.designer.bugSpec(structuredClone(shape), hostId);
+      if (!result.ok) { if (result.failure.code === "signed_out") this.onSignedOut(); this.update({ ...original, message: describeAssistFailure(result.failure) }); return; }
       const spec = specFromDesigner(result.value.spec);
+      written = true;
       this.update({ spec, sentence: designerSentence(shapeSearch.query, spec.title) });
-      await this.classifyCard(availability, shapeSearch.hostId);
-    } catch { this.update({ message: "The spec designer could not respond. No custom build has started." }); }
+      await this.classifyCard(availability, hostId);
+    } catch {
+      const message = "The spec designer could not respond. No custom build has started.";
+      this.update(written ? { message } : { ...original, message });
+    }
     finally { this.update({ busy: false }); }
   }
   /** "Try again" or "Classify again": the same card and sentence, as they are now. */

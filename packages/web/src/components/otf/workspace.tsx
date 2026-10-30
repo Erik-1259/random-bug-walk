@@ -100,7 +100,8 @@ export function OtfWorkspaceView(props: OtfWorkspaceViewProps) {
       </>}
       {designing && props.spec === null && <p role="status">Writing your spec card with Nemotron 3 Super. No custom build has started.</p>}
       {enabled && !pending && status === null && props.shapeBadgesEnabled === true && classificationAvailable(availability)
-        && shapeBadgeDisagrees(props.shapeSearch, props.classification) && props.shapeSearch != null && <ShapeAlternativesView {...props.shapeSearch} availability={availability}
+        && shapeBadgeDisagrees(props.shapeSearch, props.classification) && props.shapeSearch != null && <ShapeAlternativesView shapes={props.shapeSearch.shapes} badges={props.shapeSearch.badges}
+          selectedShapeId={props.shapeSearch.selectedShapeId} availability={availability}
           disabled={busy || designing || !signedIn} onPick={shape => { props.onShapeAlternative?.(shape.id); }} />}
       {hostRefused ? <section aria-label="Custom build not started">
         <p role="status">This custom build was not started. {hostRefusalLines(pendingRequest.host_id, availability, nowMs).join(" ")}</p>

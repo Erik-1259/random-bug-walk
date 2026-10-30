@@ -1,27 +1,40 @@
 import { describe, expect, it, vi } from "vitest";
-import { INITIAL_DESIGNER, type DesignerState } from "../../src/assist/designer-state.ts";
-import { badgesForRequest, shapeBadgeRequest, ShapeBadgesController } from "../../src/components/otf/shape-badge-state.ts";
-import type { ShapeBadgesClient } from "../../src/otf/client.ts";
-import { OTF_OPEN_CRITERION_ID, type OtfAvailability } from "../../src/otf/contract.ts";
-import type { OtfShapeBadges, OtfShapeBadgesRequest } from "../../src/otf/shape-badges-contract.ts";
+import type { BugShape, ShapesResult } from "../../src/assist/client.ts";
+import { designerReducer, INITIAL_DESIGNER, type DesignerAction } from "../../src/assist/designer-state.ts";
+import { shapeBadgeGroups, shapeBadgesFor, shapeBadgeStatus, ShapeBadgesController, visibleShapeBadges, type ShapeBadgeGroup, type ShapeBadgesInput } from "../../src/components/otf/shape-badge-state.ts";
+import { OtfClientError, type ShapeBadgesClient } from "../../src/otf/client.ts";
+import { OTF_OPEN_CRITERION_ID, type OtfAvailability, type OtfHostId } from "../../src/otf/contract.ts";
+import { SHAPE_BADGE_COPY, type OtfShapeBadge, type OtfShapeBadges } from "../../src/otf/shape-badges-contract.ts";
+import { validateShapeBadgesRequest } from "../../src/otf/shape-badges-schemas.ts";
 
-const request: OtfShapeBadgesRequest = { query: "Synthetic saved tasks", host_id: "task-report", shapes: [
-  { title: "Synthetic task update", summary: "An updated task loses its saved title." },
-  { title: "Synthetic task report", summary: "A report omits a completed task." },
-] };
-const answer: OtfShapeBadges = { model: "synthetic-classifier", badges: [
-  { index: 0, outcome: "open", proven_criterion_id: null, family: "data_handling", translated_failure: "A saved task returns its old title after an update.", refusal_kind: null, reason: null },
-  { index: 1, outcome: "refused", proven_criterion_id: null, family: null, translated_failure: null, refusal_kind: "out_of_scope", reason: "The synthetic report needs another application." },
-] };
+const submitted = "Synthetic saved tasks";
 const availability: OtfAvailability = { enabled: true, builder: "stopped", active_jobs: 0, queued_jobs: 0, max_queued: 4, cold_start_min: null, spend_left_microusd: 1_000_000,
-  behaviors: [{ host_id: "task-report", criterion_id: OTF_OPEN_CRITERION_ID, label: "Synthetic open behavior", measured: false, example_phrases: [] }],
+  behaviors: [{ host_id: "task-report", criterion_id: OTF_OPEN_CRITERION_ID, label: "Synthetic open behavior", measured: false, example_phrases: [] },
+    { host_id: "task-report", criterion_id: "concurrency.lost-acknowledged-change", label: "Synthetic overlapping saves", measured: true, example_phrases: [] }],
   hosts: [{ host_id: "task-report", label: "task-report service", offered: true, unavailable_reason: null, active_jobs: 0, queued_jobs: 0, max_active: 2, lanes: [], deadline_min: 45, typical: null }],
 };
-const state: DesignerState = { ...INITIAL_DESIGNER, query: "Different text typed after this search", hostId: "task-report", shapes: {
-  shapes: request.shapes.map((shape, index) => ({ ...shape, id: `synthetic-shape-${String(index)}`, sources: [], fit: null, fit_reason: "" })),
-  search: { provider: "tavily", query: request.query, at: "2026-10-30T00:00:00Z", result_count: 2 },
-  model: { provider: "nebius-token-factory", model_id: "synthetic-designer", at: "2026-10-30T00:00:00Z" },
-} };
+function shape(index: number, host: OtfHostId | null): BugShape {
+  return { id: `synthetic-shape-${String(index)}`, title: `Synthetic shape ${String(index)}`, summary: `Synthetic task behavior ${String(index)}.`, sources: [], fit_reason: "",
+    fit: host === null ? null : { host_id: host, bug_type_id: "synthetic_type", phrase: "synthetic phrase" } };
+}
+/** The search provider's string adds " bug report" to the judge's query, as the designer route does. */
+function result(query = submitted, hosts: (OtfHostId | null)[] = ["umami", null, "task-report", "umami"]): ShapesResult {
+  return { shapes: hosts.map((host, index) => shape(index, host)), search: { provider: "tavily", query: `${query} bug report`, at: "2026-10-30T00:00:00Z", result_count: hosts.length },
+    model: { provider: "nebius-token-factory", model_id: "synthetic-designer", at: "2026-10-30T00:00:00Z" } };
+}
+/** A designer that has just shown its shapes: no shape picked and no host chosen yet. */
+function searched(query = submitted, shapes = result(query.trim())) {
+  return ([{ type: "query", query }, { type: "search" }, { type: "shapes", result: shapes }] as DesignerAction[]).reduce(designerReducer, INITIAL_DESIGNER);
+}
+function groupsOf(shapes: ShapesResult, query = submitted): ShapeBadgeGroup[] {
+  const groups = shapeBadgeGroups(shapes, query, true, availability);
+  if (groups === null) throw new Error("Synthetic groups are missing.");
+  return groups;
+}
+const open = (index: number): OtfShapeBadge => ({ index, outcome: "open", proven_criterion_id: null, family: "data_handling", translated_failure: "A saved task returns its old title after an update.", refusal_kind: null, reason: null });
+const refused = (index: number): OtfShapeBadge => ({ index, outcome: "refused", proven_criterion_id: null, family: null, translated_failure: null, refusal_kind: "out_of_scope", reason: "The synthetic report needs another application." });
+const proven = (index: number): OtfShapeBadge => ({ index, outcome: "proven", proven_criterion_id: "concurrency.lost-acknowledged-change", family: "concurrency", translated_failure: null, refusal_kind: null, reason: null });
+const answer = (badges: OtfShapeBadge[]): OtfShapeBadges => ({ model: "synthetic-classifier", badges });
 
 function deferred() {
   let resolve!: (value: OtfShapeBadges) => void;
@@ -29,136 +42,242 @@ function deferred() {
   const promise = new Promise<OtfShapeBadges>((done, fail) => { resolve = done; reject = fail; });
   return { promise, resolve, reject };
 }
-
-describe("shape badge request scope", () => {
-  it("uses the query and original shape order from the displayed search, on the chosen host", () => {
-    expect(shapeBadgeRequest(state, true, availability)).toEqual(request);
-    expect(shapeBadgeRequest({ ...state, hostId: "umami" }, true, availability)).toEqual({ ...request, host_id: "umami" });
+/** A fake route that keeps each host's requests in order, so a test answers each one separately. */
+function route() {
+  const queues: Record<OtfHostId, ReturnType<typeof deferred>[]> = { "task-report": [], umami: [] };
+  const classifyShapes = vi.fn<ShapeBadgesClient["classifyShapes"]>(request => {
+    const next = deferred(); queues[request.host_id].push(next); return next.promise;
   });
-  it.each(["disabled", "unavailable", "closed", "no-open", "no-shapes", "no-host", "invalid-query"])("does not request badges with %s", kind => {
-    const input = kind === "no-shapes" ? { ...state, shapes: null } : kind === "no-host" ? { ...state, hostId: null }
-      : kind === "invalid-query" && state.shapes !== null ? { ...state, shapes: { ...state.shapes, search: { ...state.shapes.search, query: "" } } } : state;
-    const offered = kind === "unavailable" ? null : kind === "no-open" ? { ...availability, behaviors: [] }
+  const nth = (host: OtfHostId, index = -1) => {
+    const pending = queues[host].at(index); if (pending === undefined) throw new Error(`No synthetic ${host} request.`);
+    return pending;
+  };
+  return { classifyShapes, last: (host: OtfHostId) => nth(host), nth };
+}
+const flush = () => new Promise(resolve => { setTimeout(resolve, 0); });
+function input(shapes: ShapesResult, extra: Partial<ShapeBadgesInput> = {}): ShapeBadgesInput {
+  return { search: shapes, groups: groupsOf(shapes), signedIn: true, selectedShapeId: null, availability, ...extra };
+}
+
+describe("shape badge requests", () => {
+  it("groups the shapes by designer-suggested host before any pick, keeping the designer's order in each group", () => {
+    const state = searched(`  ${submitted}  `);
+    expect(state.hostId).toBeNull(); expect(state.shapeId).toBeNull(); expect(state.searchQuery).toBe(submitted);
+    const groups = shapeBadgeGroups(state.shapes, state.searchQuery, true, availability);
+    const shapes = state.shapes?.shapes ?? [];
+    const pick = (indices: number[]) => indices.map(index => ({ title: shapes[index]?.title, summary: shapes[index]?.summary }));
+    expect(groups).toEqual([
+      { hostId: "task-report", indices: [1, 2], request: { query: submitted, host_id: "task-report", shapes: pick([1, 2]) } },
+      { hostId: "umami", indices: [0, 3], request: { query: submitted, host_id: "umami", shapes: pick([0, 3]) } },
+    ]);
+  });
+  it("sends one request when every shape shares a host, and checks shapes with no suggestion against the task-report service", () => {
+    expect(groupsOf(result(submitted, [null, null, "task-report"])).map(group => [group.hostId, group.indices])).toEqual([["task-report", [0, 1, 2]]]);
+    expect(groupsOf(result(submitted, ["umami", "umami"])).map(group => [group.hostId, group.indices])).toEqual([["umami", [0, 1]]]);
+  });
+  it("sends the judge's own 300-character query without the search provider's suffix", () => {
+    const query = "q".repeat(300);
+    const state = searched(query);
+    expect(state.shapes?.search.query).toBe(`${query} bug report`);
+    const groups = shapeBadgeGroups(state.shapes, state.searchQuery, true, availability) ?? [];
+    expect(groups).toHaveLength(2);
+    for (const { request } of groups) {
+      expect(request.query).toBe(query); expect(request.query).not.toContain(" bug report");
+      expect(validateShapeBadgesRequest(request)).toEqual([]);
+    }
+  });
+  it.each(["disabled", "unavailable", "closed", "no-open", "no-shapes", "no-query", "invalid-query"])("does not request badges with %s", kind => {
+    const state = searched();
+    const shapes = kind === "no-shapes" ? null : state.shapes;
+    const query = kind === "no-query" ? null : kind === "invalid-query" ? "" : state.searchQuery;
+    const offered = kind === "unavailable" ? null : kind === "no-open" ? { ...availability, behaviors: availability.behaviors.slice(1) }
       : kind === "closed" ? { ...availability, hosts: availability.hosts.map(host => ({ ...host, offered: false })) } : availability;
-    expect(shapeBadgeRequest(input, kind !== "disabled", offered)).toBeNull();
+    expect(shapeBadgeGroups(shapes, query, kind !== "disabled", offered)).toBeNull();
   });
 });
 
-describe("shape badges before card classification", () => {
-  it("shows pending for one shared call and caches its badges across repeated effects", async () => {
-    const pending = deferred();
-    const classifyShapes = vi.fn<ShapeBadgesClient["classifyShapes"]>(() => pending.promise);
-    const controller = new ShapeBadgesController({ classifyShapes });
-    const changes = vi.fn(); const unsubscribe = controller.subscribe(changes);
-    const first = controller.load(request); const repeated = controller.load(structuredClone(request));
-    expect(controller.snapshot()).toEqual({ request, pending: true, badges: null });
-    expect(classifyShapes).toHaveBeenCalledExactlyOnceWith(request);
-    pending.resolve(structuredClone(answer)); await Promise.all([first, repeated]);
-    expect(controller.snapshot()).toEqual({ request, pending: false, badges: answer.badges });
-    expect(changes).toHaveBeenCalledTimes(2);
-    await controller.load(structuredClone(request));
-    expect(classifyShapes).toHaveBeenCalledOnce(); expect(changes).toHaveBeenCalledTimes(2);
-    unsubscribe(); await controller.load(null); expect(changes).toHaveBeenCalledTimes(2);
+describe("shape badges before the first pick", () => {
+  it("requests every group at once, shows loading per group and maps each badge back to its shape", async () => {
+    const fake = route(); const controller = new ShapeBadgesController({ classifyShapes: fake.classifyShapes });
+    const shapes = result();
+    controller.sync(input(shapes));
+    expect(fake.classifyShapes).toHaveBeenCalledTimes(2);
+    expect(fake.classifyShapes.mock.calls.map(([request]) => request.host_id)).toEqual(["task-report", "umami"]);
+    expect(controller.snapshot()).toEqual({ search: shapes, pending: [true, true, true, true], badges: [], order: null });
+    fake.last("umami").resolve(answer([refused(0), open(1)]));
+    await flush();
+    expect(controller.snapshot()).toMatchObject({ pending: [false, true, true, false], badges: [refused(0), open(3)], order: null });
+    fake.last("task-report").resolve(answer([proven(1), open(0)]));
+    await flush();
+    expect(controller.snapshot()).toEqual({ search: shapes, pending: [false, false, false, false], badges: [proven(2), open(1), refused(0), open(3)], order: [2, 1, 3, 0] });
   });
-  it("keeps request bytes stable while the caller changes its copy", async () => {
-    const pending = deferred(); const classifyShapes = vi.fn<ShapeBadgesClient["classifyShapes"]>(() => pending.promise);
-    const controller = new ShapeBadgesController({ classifyShapes });
-    const input = structuredClone(request); const work = controller.load(input);
-    input.query = "Synthetic replacement search"; input.shapes.reverse();
-    expect(classifyShapes.mock.calls[0]?.[0]).toEqual(request);
-    pending.resolve(answer); await work;
-    expect(controller.snapshot().request).toEqual(request);
+  it("never re-requests or clears badges when the judge picks shapes or changes the Step 3 host", async () => {
+    const fake = route(); const controller = new ShapeBadgesController({ classifyShapes: fake.classifyShapes });
+    const shapes = result();
+    controller.sync(input(shapes));
+    fake.last("umami").resolve(answer([open(0), open(1)])); fake.last("task-report").resolve(answer([open(0), refused(1)]));
+    await flush();
+    const before = controller.snapshot();
+    expect(before.badges).toHaveLength(4);
+    let state = searched(submitted, shapes);
+    for (const action of [{ type: "pick_shape", shapeId: "synthetic-shape-0" }, { type: "pick_shape", shapeId: "synthetic-shape-2" }, { type: "pick_host", hostId: "umami" }] as DesignerAction[]) {
+      state = designerReducer(state, action);
+      controller.sync(input(shapes, { groups: groupsOf(shapes, state.searchQuery ?? ""), selectedShapeId: state.shapeId }));
+    }
+    expect(fake.classifyShapes).toHaveBeenCalledTimes(2);
+    expect(controller.snapshot()).toBe(before);
   });
-  it.each(["network", "invalid-answer"])("hides %s failures and does not spend another call on a rerender", async kind => {
-    const classifyShapes = vi.fn<ShapeBadgesClient["classifyShapes"]>(() => kind === "network" ? Promise.reject(new Error("Synthetic unavailable.")) : Promise.resolve({ ...answer, badges: [] }));
-    const controller = new ShapeBadgesController({ classifyShapes });
-    await controller.load(request); await controller.load(structuredClone(request));
-    expect(controller.snapshot()).toEqual({ request, pending: false, badges: null });
-    expect(classifyShapes).toHaveBeenCalledOnce();
+  it("hides an old search's answer after a new search and keeps request bytes stable", async () => {
+    const fake = route(); const controller = new ShapeBadgesController({ classifyShapes: fake.classifyShapes });
+    const first = result(submitted, [null]); const second = result("Synthetic next search", [null]);
+    const sent = input(first);
+    controller.sync(sent);
+    const group = sent.groups[0]; if (group === undefined) throw new Error("Synthetic group is missing.");
+    group.request.query = "Synthetic replacement"; group.request.shapes.reverse();
+    expect(fake.classifyShapes.mock.calls[0]?.[0].query).toBe(submitted);
+    controller.sync(input(second, { groups: groupsOf(second, "Synthetic next search") }));
+    expect(shapeBadgesFor(controller.snapshot(), first)).toBeNull();
+    fake.nth("task-report", 0).resolve(answer([open(0)])); await flush();
+    expect(controller.snapshot()).toEqual({ search: second, pending: [true], badges: [], order: null });
+    expect(shapeBadgesFor(controller.snapshot(), second)).toBe(controller.snapshot());
+    expect(shapeBadgesFor(undefined, second)).toBeNull();
+    controller.sync(null);
+    expect(controller.snapshot()).toEqual({ search: null, pending: [], badges: [], order: null });
   });
-  it("revalidates the answer against the new host and suppresses a wrong-host proven badge", async () => {
-    const refused = answer.badges[1]; if (refused === undefined) throw new Error("Synthetic refused badge is missing.");
-    const classifyShapes = vi.fn<ShapeBadgesClient["classifyShapes"]>(() => Promise.resolve({ ...answer, badges: [
-      { index: 0, outcome: "proven" as const, proven_criterion_id: "concurrency.stale-success-response" as const, family: "concurrency" as const, translated_failure: null, refusal_kind: null, reason: null },
-      refused,
-    ] }));
-    const controller = new ShapeBadgesController({ classifyShapes });
-    await controller.load({ ...request, host_id: "umami" });
-    expect(controller.snapshot().badges).toBeNull();
+});
+
+describe("the badge order", () => {
+  it("is not applied when a shape is selected before the badges arrive", async () => {
+    const fake = route(); const controller = new ShapeBadgesController({ classifyShapes: fake.classifyShapes });
+    const shapes = result(submitted, [null, null, null]);
+    controller.sync(input(shapes));
+    controller.freeze(shapes);
+    fake.last("task-report").resolve(answer([refused(0), open(1), proven(2)]));
+    await flush();
+    expect(controller.snapshot()).toMatchObject({ order: null, badges: [refused(0), open(1), proven(2)] });
   });
-  it.each(["host", "search", "disabled"])("ignores an old answer after the %s changes", async change => {
-    const old = deferred(); const fresh = deferred();
-    const classifyShapes = vi.fn<ShapeBadgesClient["classifyShapes"]>().mockReturnValueOnce(old.promise).mockReturnValueOnce(fresh.promise);
-    const controller = new ShapeBadgesController({ classifyShapes });
-    const first = controller.load(request);
-    const next = change === "disabled" ? null : change === "host" ? { ...request, host_id: "umami" as const } : { ...request, query: "Synthetic new search" };
-    const second = controller.load(next);
-    old.resolve(answer); await first;
-    expect(controller.snapshot()).toEqual({ request: next, pending: next !== null, badges: null });
-    if (next !== null) fresh.resolve(answer);
-    await second;
-    expect(controller.snapshot().request).toEqual(next);
-    expect(controller.snapshot().badges).toEqual(next === null ? null : answer.badges);
+  it("freezes when a selection reaches sync between two groups' answers", async () => {
+    const fake = route(); const controller = new ShapeBadgesController({ classifyShapes: fake.classifyShapes });
+    const shapes = result();
+    controller.sync(input(shapes));
+    fake.last("umami").resolve(answer([refused(0), open(1)])); await flush();
+    controller.sync(input(shapes, { selectedShapeId: "synthetic-shape-0" }));
+    fake.last("task-report").resolve(answer([proven(0), open(1)])); await flush();
+    expect(controller.snapshot().order).toBeNull();
+    expect(controller.snapshot().badges).toHaveLength(4);
   });
-  it("hides stale loading and results before a request-change effect runs", async () => {
-    const pending = deferred(); const controller = new ShapeBadgesController({ classifyShapes: () => pending.promise });
-    const work = controller.load(request);
-    const other = { ...request, host_id: "umami" as const };
-    expect(badgesForRequest(controller.snapshot(), request)).toEqual({ pending: true, badges: null });
-    expect(badgesForRequest(controller.snapshot(), other)).toEqual({ pending: false, badges: null });
-    pending.resolve(answer); await work;
-    expect(badgesForRequest(controller.snapshot(), request)).toEqual({ pending: false, badges: answer.badges });
-    expect(badgesForRequest(controller.snapshot(), other)).toEqual({ pending: false, badges: null });
-    expect(badgesForRequest(controller.snapshot(), null)).toEqual({ pending: false, badges: null });
+  it("stays put under a selection after it was applied", async () => {
+    const fake = route(); const controller = new ShapeBadgesController({ classifyShapes: fake.classifyShapes });
+    const shapes = result(submitted, [null, null, null]);
+    controller.sync(input(shapes));
+    fake.last("task-report").resolve(answer([refused(0), open(1), proven(2)])); await flush();
+    expect(controller.snapshot().order).toEqual([2, 1, 0]);
+    controller.sync(input(shapes, { selectedShapeId: "synthetic-shape-2" }));
+    expect(controller.snapshot().order).toEqual([2, 1, 0]);
   });
-  it("reuses an in-flight result when returning to its request without starting another call", async () => {
-    const pending = deferred(); const classifyShapes = vi.fn<ShapeBadgesClient["classifyShapes"]>(() => pending.promise);
-    const controller = new ShapeBadgesController({ classifyShapes });
-    const first = controller.load(request); await controller.load(null);
-    const resumed = controller.load(request);
-    pending.resolve(answer); await Promise.all([first, resumed]);
-    expect(classifyShapes).toHaveBeenCalledOnce();
-    expect(controller.snapshot()).toEqual({ request, pending: false, badges: answer.badges });
+  it("counts a proven badge without its availability label as no badge", async () => {
+    const fake = route(); const controller = new ShapeBadgesController({ classifyShapes: fake.classifyShapes });
+    const shapes = result(submitted, [null, null, null]);
+    const labelless = { ...availability, behaviors: availability.behaviors.slice(0, 1) };
+    controller.sync(input(shapes, { availability: labelless }));
+    fake.last("task-report").resolve(answer([refused(0), proven(1), open(2)])); await flush();
+    expect(controller.snapshot().order).toEqual([2, 1, 0]);
+    expect(visibleShapeBadges(shapes.shapes, controller.snapshot().badges, labelless)).toEqual([refused(0), open(2)]);
+    expect(visibleShapeBadges(shapes.shapes, controller.snapshot().badges, availability)).toEqual([refused(0), proven(1), open(2)]);
   });
-  it.each(["host", "search"])("returns the handed-off search's late badges after the active %s changes", async change => {
-    const old = deferred(); const fresh = deferred();
-    const classifyShapes = vi.fn<ShapeBadgesClient["classifyShapes"]>().mockReturnValueOnce(old.promise).mockReturnValueOnce(fresh.promise);
-    const controller = new ShapeBadgesController({ classifyShapes });
-    const first = controller.load(request);
-    const handedOff = controller.result(request);
-    expect(classifyShapes).toHaveBeenCalledOnce();
-    const next: OtfShapeBadgesRequest = change === "host" ? { ...request, host_id: "umami" } : { ...request, query: "Synthetic next search" };
-    const second = controller.load(next);
-    old.resolve(answer); await first;
-    expect(await handedOff).toEqual(answer.badges);
-    expect(controller.snapshot()).toEqual({ request: next, pending: true, badges: null });
-    expect(classifyShapes).toHaveBeenCalledTimes(2);
-    fresh.resolve(answer); await second;
-    expect(controller.snapshot()).toEqual({ request: next, pending: false, badges: answer.badges });
+});
+
+describe("badge failures", () => {
+  it.each([["network", new Error("Synthetic network failure.")], ["unavailable", new OtfClientError("unavailable", "Synthetic 503.", 503, true)]] as const)(
+    "retries a %s failure once on the next render cycle for the same search, never twice", async (_kind, error) => {
+      const fake = route(); const controller = new ShapeBadgesController({ classifyShapes: fake.classifyShapes });
+      const shapes = result(submitted, [null, null]);
+      controller.sync(input(shapes));
+      fake.last("task-report").reject(error); await flush();
+      expect(controller.snapshot()).toMatchObject({ pending: [false, false], badges: [] });
+      controller.sync(input(shapes));
+      expect(fake.classifyShapes).toHaveBeenCalledTimes(2);
+      expect(controller.snapshot().pending).toEqual([true, true]);
+      fake.last("task-report").reject(error); await flush();
+      controller.sync(input(shapes)); controller.sync(input(shapes, { selectedShapeId: "synthetic-shape-0" }));
+      expect(fake.classifyShapes).toHaveBeenCalledTimes(2);
+      expect(controller.snapshot()).toMatchObject({ pending: [false, false], badges: [], order: null });
+    });
+  it("succeeds on the one retry after a transient failure", async () => {
+    const fake = route(); const controller = new ShapeBadgesController({ classifyShapes: fake.classifyShapes });
+    const shapes = result(submitted, [null, null]);
+    controller.sync(input(shapes));
+    fake.last("task-report").reject(new Error("Synthetic timeout.")); await flush();
+    controller.sync(input(shapes));
+    fake.last("task-report").resolve(answer([refused(0), open(1)])); await flush();
+    expect(controller.snapshot()).toMatchObject({ badges: [refused(0), open(1)], order: [1, 0] });
   });
-  it("starts an uncached handoff result once and returns copies without changing a later visible search", async () => {
-    const pending = deferred(); const classifyShapes = vi.fn<ShapeBadgesClient["classifyShapes"]>(() => pending.promise);
-    const controller = new ShapeBadgesController({ classifyShapes });
-    const first = controller.result(request); const second = controller.result(request);
-    expect(classifyShapes).toHaveBeenCalledExactlyOnceWith(request);
-    await controller.load(null);
-    pending.resolve(answer);
-    const badges = await first;
-    expect(badges).toEqual(answer.badges);
-    const badge = badges?.[0]; if (badge === undefined) throw new Error("Synthetic handoff badge is missing.");
-    badge.index = 1;
-    expect(await second).toEqual(answer.badges);
-    expect(await controller.result(request)).toEqual(answer.badges);
-    expect(classifyShapes).toHaveBeenCalledOnce();
-    expect(controller.snapshot()).toEqual({ request: null, pending: false, badges: null });
+  it("retries a signed_out answer once after the judge signs in again", async () => {
+    const fake = route(); const controller = new ShapeBadgesController({ classifyShapes: fake.classifyShapes });
+    const shapes = result(submitted, [null]);
+    controller.sync(input(shapes));
+    fake.last("task-report").reject(new OtfClientError("signed_out", "Synthetic sign-in needed.", 401, false)); await flush();
+    controller.sync(input(shapes));
+    expect(fake.classifyShapes).toHaveBeenCalledOnce();
+    controller.sync(input(shapes, { signedIn: false }));
+    expect(fake.classifyShapes).toHaveBeenCalledOnce();
+    controller.sync(input(shapes));
+    expect(fake.classifyShapes).toHaveBeenCalledTimes(2);
+    fake.last("task-report").resolve(answer([open(0)])); await flush();
+    expect(controller.snapshot().badges).toEqual([open(0)]);
   });
-  it("returns no handoff badges for invalid or failed requests without retrying failures", async () => {
-    const classifyShapes = vi.fn<ShapeBadgesClient["classifyShapes"]>().mockRejectedValue(new Error("Synthetic unavailable."));
-    const controller = new ShapeBadgesController({ classifyShapes });
-    expect(await controller.result({ ...request, shapes: [] })).toBeNull();
-    expect(classifyShapes).not.toHaveBeenCalled();
-    expect(await controller.result(request)).toBeNull();
-    expect(await controller.result(request)).toBeNull();
-    expect(classifyShapes).toHaveBeenCalledOnce();
+  it.each(["invalid_request", "invalid-answer"])("does not retry a %s result", async kind => {
+    const fake = route(); const controller = new ShapeBadgesController({ classifyShapes: fake.classifyShapes });
+    const shapes = result(submitted, [null, null]);
+    controller.sync(input(shapes));
+    if (kind === "invalid_request") fake.last("task-report").reject(new OtfClientError("invalid_request", "Synthetic invalid.", 400, false));
+    else fake.last("task-report").resolve(answer([open(0)]));
+    await flush();
+    controller.sync(input(shapes));
+    expect(fake.classifyShapes).toHaveBeenCalledOnce();
+    expect(controller.snapshot()).toMatchObject({ pending: [false, false], badges: [] });
+  });
+  it("does not request while signed out", () => {
+    const fake = route(); const controller = new ShapeBadgesController({ classifyShapes: fake.classifyShapes });
+    controller.sync(input(result(), { signedIn: false }));
+    expect(fake.classifyShapes).not.toHaveBeenCalled();
+  });
+});
+
+describe("handed-off badges", () => {
+  it("returns every group's badges once both settle, as copies", async () => {
+    const fake = route(); const controller = new ShapeBadgesController({ classifyShapes: fake.classifyShapes });
+    const shapes = result();
+    controller.sync(input(shapes));
+    const handed = controller.settled(shapes);
+    fake.last("umami").resolve(answer([open(0), refused(1)])); await flush();
+    fake.last("task-report").resolve(answer([open(0), open(1)]));
+    const badges = await handed;
+    expect(badges).toEqual([open(1), open(2), open(0), refused(3)]);
+    const first = badges?.[0]; if (first === undefined) throw new Error("Synthetic badge is missing.");
+    first.index = 9;
+    expect(await controller.settled(shapes)).toEqual([open(1), open(2), open(0), refused(3)]);
+  });
+  it("waits for a due retry, and gives up on it when the designer moves to another search", async () => {
+    const fake = route(); const controller = new ShapeBadgesController({ classifyShapes: fake.classifyShapes });
+    const shapes = result();
+    controller.sync(input(shapes));
+    fake.last("umami").resolve(answer([open(0), open(1)])); fake.last("task-report").reject(new Error("Synthetic timeout.")); await flush();
+    let done = false;
+    const handed = controller.settled(shapes).then(badges => { done = true; return badges; });
+    await flush(); expect(done).toBe(false);
+    const next = result("Synthetic next search", [null]);
+    controller.sync(input(next, { groups: groupsOf(next, "Synthetic next search") }));
+    expect(await handed).toEqual([open(0), open(3)]);
+    expect(await controller.settled(result())).toBeNull();
+  });
+});
+
+describe("the badge status line", () => {
+  it("says loading, then sums up the result, and stays silent without badges", () => {
+    expect(shapeBadgeStatus(true, [])).toBe(SHAPE_BADGE_COPY.loading);
+    expect(shapeBadgeStatus(false, [])).toBeNull();
+    expect(shapeBadgeStatus(false, [open(0), refused(1), proven(2)])).toBe("Checked 3 shapes: 2 can be built.");
+    expect(shapeBadgeStatus(false, [refused(0)])).toBe("Checked 1 shape: 0 can be built.");
   });
 });

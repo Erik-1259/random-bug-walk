@@ -2,6 +2,7 @@ import type { BugShape } from "../../assist/client.ts";
 import type { OtfAvailability, OtfHostId } from "../../otf/contract.ts";
 import { SHAPE_BADGE_COPY, isBuildableBadge, orderShapesByBadge, shapeBadgeText, type OtfShapeBadge } from "../../otf/shape-badges-contract.ts";
 import { typicalSentence } from "./host-copy.tsx";
+import { shapeBadgeHost, visibleShapeBadges } from "./shape-badge-state.ts";
 
 export function ShapeBadgeView({ badge, hostId, availability }: { badge: OtfShapeBadge; hostId: OtfHostId; availability: OtfAvailability | null }) {
   const labels = Object.fromEntries((availability?.behaviors ?? []).map(behavior => [behavior.criterion_id, behavior.label]));
@@ -17,8 +18,8 @@ export function ShapeBadgeView({ badge, hostId, availability }: { badge: OtfShap
 
 export interface ShapeAlternativesViewProps {
   shapes: readonly BugShape[];
+  /** Indices in the designer's order; each shape's badge was checked against its own badge host. */
   badges: readonly OtfShapeBadge[];
-  hostId: OtfHostId;
   selectedShapeId: string;
   availability: OtfAvailability | null;
   disabled?: boolean;
@@ -26,14 +27,15 @@ export interface ShapeAlternativesViewProps {
 }
 
 /** Suggestions stay advisory; picking one writes another card, and accepting that card is separate. */
-export function ShapeAlternativesView({ shapes, badges, hostId, selectedShapeId, availability, disabled = false, onPick }: ShapeAlternativesViewProps) {
-  const alternatives = orderShapesByBadge(shapes, badges).filter(({ shape, badge }) => shape.id !== selectedShapeId && isBuildableBadge(badge));
+export function ShapeAlternativesView({ shapes, badges, selectedShapeId, availability, disabled = false, onPick }: ShapeAlternativesViewProps) {
+  // A proven badge without its availability label counts as no badge, so it is neither sorted first nor offered here.
+  const alternatives = orderShapesByBadge(shapes, visibleShapeBadges(shapes, badges, availability)).filter(({ shape, badge }) => shape.id !== selectedShapeId && isBuildableBadge(badge));
   if (alternatives.length === 0) return null;
-  return <section>
-    <p>{SHAPE_BADGE_COPY.disagreement}</p>
+  return <section aria-labelledby="otf-shape-alternatives">
+    <p id="otf-shape-alternatives" role="status">{SHAPE_BADGE_COPY.disagreement}</p>
     <ul className="designer-list">{alternatives.map(({ shape, badge }) => <li key={shape.id} className="designer-card">
       <button type="button" disabled={disabled} onClick={() => { onPick(shape); }}>{shape.title}</button>
-      {badge !== null && <ShapeBadgeView badge={badge} hostId={hostId} availability={availability} />}
+      {badge !== null && <ShapeBadgeView badge={badge} hostId={shapeBadgeHost(shape)} availability={availability} />}
     </li>)}</ul>
   </section>;
 }

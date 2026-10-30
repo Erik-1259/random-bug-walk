@@ -82,7 +82,7 @@ describe("shape badge copy", () => {
 
 describe("other buildable shapes after a card refusal", () => {
   it("uses the exact heading and stable proven-before-open order, excluding the chosen and refused shapes", () => {
-    const html = render(<ShapeAlternativesView shapes={shapes} badges={badges} hostId="task-report" selectedShapeId="chosen" availability={availability} onPick={vi.fn()} />);
+    const html = render(<ShapeAlternativesView shapes={shapes} badges={badges} selectedShapeId="chosen" availability={availability} onPick={vi.fn()} />);
     expect(html).toContain(SHAPE_BADGE_COPY.disagreement);
     expect(html).not.toContain("Synthetic chosen"); expect(html).not.toContain("Synthetic refused");
     expect(html.indexOf("Synthetic proven")).toBeLessThan(html.indexOf("Synthetic open-first"));
@@ -92,17 +92,29 @@ describe("other buildable shapes after a card refusal", () => {
   });
   it("hands only the explicitly selected original shape to the caller", () => {
     const onPick = vi.fn();
-    const view = ShapeAlternativesView({ shapes, badges, hostId: "task-report", selectedShapeId: "chosen", availability, onPick });
+    const view = ShapeAlternativesView({ shapes, badges, selectedShapeId: "chosen", availability, onPick });
     expect(onPick).not.toHaveBeenCalled();
     const choices = buttons(view);
     choices[1]?.onClick?.();
     expect(onPick).toHaveBeenCalledExactlyOnceWith(shapes[1]);
   });
   it("disables alternative buttons only when the surrounding operation is busy", () => {
-    const html = render(<ShapeAlternativesView shapes={shapes} badges={badges} hostId="task-report" selectedShapeId="chosen" availability={availability} disabled onPick={vi.fn()} />);
+    const html = render(<ShapeAlternativesView shapes={shapes} badges={badges} selectedShapeId="chosen" availability={availability} disabled onPick={vi.fn()} />);
     expect(html.match(/disabled=""/g)).toHaveLength(3);
   });
   it.each([{ currentBadges: [] }, { currentBadges: [open(0), refused(1)] }])("shows nothing when no other shape is buildable", ({ currentBadges }) => {
-    expect(render(<ShapeAlternativesView shapes={shapes.slice(0, 2)} badges={currentBadges} hostId="task-report" selectedShapeId="chosen" availability={availability} onPick={vi.fn()} />)).toBe("");
+    expect(render(<ShapeAlternativesView shapes={shapes.slice(0, 2)} badges={currentBadges} selectedShapeId="chosen" availability={availability} onPick={vi.fn()} />)).toBe("");
+  });
+  it("neither offers nor sorts first a proven shape whose label availability does not list", () => {
+    const labelless = { ...availability, behaviors: availability.behaviors.slice(1) };
+    const html = render(<ShapeAlternativesView shapes={shapes} badges={badges} selectedShapeId="chosen" availability={labelless} onPick={vi.fn()} />);
+    expect(html).not.toContain("Synthetic proven"); expect(html).not.toContain("Builds as a proven behavior");
+    expect(html.match(/<button/g)).toHaveLength(2);
+  });
+  it("shows each alternative's badge in its own badge host's copy", () => {
+    const mixed = shapes.map(item => item.id === "open-first" ? { ...item, fit: { host_id: "umami" as const, bug_type_id: "synthetic_type", phrase: "synthetic phrase" } } : item);
+    const html = render(<ShapeAlternativesView shapes={mixed} badges={badges} selectedShapeId="chosen" availability={availability} onPick={vi.fn()} />);
+    expect(html.match(/Builds in the task-report service, not Umami/g)).toHaveLength(1);
+    expect(html.match(/Builds in the task-report service<\/p>/g)).toHaveLength(1);
   });
 });
