@@ -30,8 +30,6 @@ Use the `/factory` page with a judge-passcode session. This guide follows the [m
 
 ## Open behaviors (not available yet)
 
-<!-- TODO-SHIP: open behaviors ship only if they pass acceptance before 2026-10-30 10:00Z. There are three outcomes. If open behaviors ship, replace the availability paragraph below with the production commit. If only the bug designer's handoff for classifier-proven matches ships, with RBW_OTF_OPEN_BEHAVIORS off in production, rewrite this section to describe that handoff as available and open behaviors as not available; SPEC section 8.2 then needs its flag-off classify answer (`unavailable`) updated to match. If nothing ships, remove this section. -->
-
 Open behaviors are not available yet. Until they ship, the picker offers only the three proven behaviors above. This section describes the design in the [OTF specification](SPEC.md#8-open-behaviors).
 
 An open behavior is any other non-security behavior of the task-report service. Open behaviors are built only on the task-report service; Umami stays limited to the time-zone date/time criterion.
