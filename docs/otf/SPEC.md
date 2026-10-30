@@ -378,14 +378,15 @@ Open behaviors let a customer build a non-security behavior on the task-report h
 - `OTF_CONTRACT_VERSION` stays `otf/0`. Not every addition is optional: `OtfBehaviorOption.measured` is a new required member of availability (section 8.4). Every other addition is optional or applies to the open criterion only, and the builder-facing bodies of a proven job (claim, events, result, validation and certificate) validate exactly as before.
 - A browser tab still open on the bundle before this change does not know `measured`; its strict availability check refuses the new answer, so that tab shows OTF as unavailable until it is reloaded.
 
-### 8.2 The flag, and production at this commit
+### 8.2 The flag
 
-- `RBW_OTF_OPEN_BEHAVIORS=1` turns open behaviors on. Unset (or any other value) means off. The server branch adds the flag; it does not exist yet.
-- While it is off (and at this commit), production behaves as before, apart from the `measured` member in availability (section 8.1):
-  - availability lists only the proven behaviors (`compose.ts` builds them from `PROVEN_CRITERION_IDS`);
-  - a create naming the open criterion answers `invalid_spec` (`cardInScope` refuses it);
+- `RBW_OTF_OPEN_BEHAVIORS=1` turns open behaviors on. Unset (or any other value) means off.
+- While it is off, the deployment behaves as before open behaviors existed, apart from the `measured` member in availability (section 8.1):
+  - availability lists only the proven behaviors;
+  - a create naming the open criterion answers `invalid_spec`, after the usual safety checks on the sentence and card;
   - no claim hands out an open job, since none can be created;
-  - the classify route does not exist at this commit; once the server branch adds it, it answers `unavailable` while the flag is off.
+  - the classify route answers `unavailable` to a signed-in judge;
+  - the bug designer's card shows no "Build this as a custom bug" button, and the picker has no open option.
 - With the flag on, availability adds the open behavior on task-report (when that host is offered), with `label: OTF_OPEN_LABEL` and `measured: false`.
 - Set `RBW_OTF_OPEN_BEHAVIORS=1` in an environment only after the builder that reads `BuildJob.rule` is installed and pointed at that environment. A claim does not tell production whether the builder supports open jobs, so an earlier builder would claim an open job and build it without its rule.
 
@@ -440,7 +441,38 @@ The classifier's answer is advisory. The customer may edit the rule before submi
   - no refusal means `family` is set and `buildable` has at least one entry, so the UI always has a next step;
   - the open criterion in `buildable` means `rule` is non-null;
   - a non-null `proven_criterion_id` means `buildable` includes it.
-- **Errors** use the shared `OtfErrorBody` and the codes in `OTF_CLASSIFY_ERRORS`: `signed_out` (no session), `invalid_request` (a malformed body), `refused_topic` (a security topic or code in the sentence or card, found by the existing safety checks before any model call), and `unavailable` (OTF or the flag off, the model unreachable, or an answer that fails its schema).
+- **Errors** use the shared `OtfErrorBody` and the codes in `OTF_CLASSIFY_ERRORS`: `signed_out` (no session), `invalid_request` (a malformed body), `refused_topic` (a security topic or code in the sentence or card, found before any model call) and `unavailable`. Only `unavailable` is retryable.
+
+**What the server does** (`packages/web/src/otf/classify.ts`), in order:
+
+1. No judge session answers `signed_out`.
+2. OTF not configured or `RBW_OTF_OPEN_BEHAVIORS` off answers `unavailable`.
+3. A body that fails `OtfClassifyRequest` answers `invalid_request`.
+4. The existing safety checks run before any model call: the input security check on the sentence, the design security check on every card field (title, where, change, why the tests miss it, fix and each added check), and the code check on the sentence and every field. Any hit answers `refused_topic`.
+5. No Token Factory key answers `unavailable`.
+6. The classifier model is `CLASSIFIER_MODEL`, the bug designer's model (NVIDIA Nemotron 3 Super, `nvidia/nemotron-3-super-120b-a12b`). One structured call with the strict wire schema (`CLASSIFY_WIRE_SCHEMA`) gets the card as untrusted data, with `host_id` as the app (`unspecified` when absent). Each call, the repair included, takes one unit of the session's `bug-spec` budget, the bug designer's budget; an exhausted budget answers `unavailable`. A call that fails, runs past 20 seconds or returns no message content answers `unavailable`, with no repair.
+
+**The wire answer** is `{ decision, proven_criterion_id, family, observable_failure, failure_code, reason }`, with `decision` one of `proven`, `open`, `security` or `out_of_scope`, and `proven_criterion_id` and `family` each allowing `none`. The server maps it as follows; anything listed as a problem goes to the repair:
+
+- A truncated answer, an answer that is not one JSON object, or one that fails the wire schema is a problem.
+- `security` or `out_of_scope`: `family` and `proven_criterion_id` must be `none` and both rule fields empty. The answer is a refusal of that kind with the trimmed `reason`.
+- `proven`: `family` must be the criterion's family and both rule fields empty. On an Umami card, only `date_time.time-zone-grouping` is accepted. The answer lists that criterion alone in `buildable`, on its host, with `rule` null; the server does not add the open criterion beside it.
+- `open`: `family` must be set and `proven_criterion_id` must be `none`. An `observable_failure` that the design security check flags is a security refusal at once, with no repair. One that holds code is a problem, and so is every route problem below. The answer is `family`, `rule` `{ family, observable_failure, failure_code }` and `buildable: [{ host_id: "task-report", criterion_id: "open.task-report-behavior" }]`.
+- The mapped answer must then pass the `OtfClassification` schema, including the rule limits of section 8.3; a failure is a problem. `model` is `CLASSIFIER_MODEL`.
+
+**Route rules for `observable_failure`** (`ruleRouteProblems`). The task-report service has six routes: `GET /api/heartbeat`, `POST /api/tasks`, `GET /api/tasks/{id}`, `PATCH /api/tasks/{id}`, `POST /api/tasks/{id}/completions` and `GET /api/reports/completions/daily`.
+
+- Every token holding `/api/`, including a full URL, must name one of those paths once its query string and trailing punctuation are removed. Paths compare literally, so a task path is written `/api/tasks/{id}`. A rule must name at least one route.
+- A method attached to a path must be allowed for that route. A method is attached when it is written directly before the path (`"METHOD /path"`, or a group such as `GET|PATCH`, `GET or PATCH` or `GET, PATCH`), or when one to three filler words come between them, such as "a PATCH request to /path" (the filler words are a, an, the, request, requests, call, calls, to, on and against).
+- Quoted data is not checked: text inside double quotes (straight or curly) and inside single quotes that are not apostrophes is masked before every other rule, so a quoted title or note can neither hide nor fake a method, a path or a sentence break. Text in backticks stays visible, since routes are often written as code.
+- A path with no attached method passes when the route exists.
+- A `GET`, `POST` or `PATCH` that is not attached to a path must be allowed for at least one route named in the same sentence (sentences end at ". ", "; ", "! ", "? " or the end of the text); a sentence that names no route is not checked.
+- `PUT`, `DELETE`, `HEAD` and `OPTIONS` are allowed on no route, so each is a problem anywhere outside quoted data.
+- These rules check the classifier's answer only. A submitted rule goes through the create checks of section 8.3.
+
+**Repair.** At most one repair follows the first answer. The server sends back the model's answer and every problem, asks for JSON that matches the schema with only the six routes and their allowed methods, and says `out_of_scope` is acceptable when there is no route-level equivalent. If the repaired answer is still unusable, the route answers an `out_of_scope` refusal saying the card could not be translated into a usable check through the task-report routes; when both unusable answers had the decision `security`, it answers a `security` refusal instead.
+
+**Timing.** Each model call is abandoned after 20 seconds, and the route's `maxDuration` is 60 seconds. The classify client waits up to 65 seconds (`OTF_CLASSIFY_TIMEOUT_MS`), longer than the other OTF calls.
 
 ### 8.6 Scope rules (the server branch implements them)
 
