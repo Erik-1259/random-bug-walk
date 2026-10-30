@@ -511,3 +511,50 @@ The contract, server and UI implementations are merged on main. This table recor
 | `otf/open-server` | the classify route (section 8.5) and its scope rules (8.6); open create validation (8.3) and storage (8.8); the `rule` in the claim payload (8.4); the `RBW_OTF_OPEN_BEHAVIORS` availability flag (8.2); status projection and certificate pass-through of the rule (8.4) |
 | `otf/open-ui` | the picker's open option; the classify call and its outcomes (proven match, open rule, refusal); the bug designer's "Build this as a custom bug" handoff; the time copy (8.7); the open certificate view |
 | builder (separate repository) | reads `BuildJob.rule` on open jobs, grades the added checks by `rule.failure_code`, and issues the `open-1` certificate |
+
+### 8.11 Shape badges
+
+The bug designer shows 3 to 5 shapes after a search. With shape badges on, each shape gets a badge saying whether and how it can be built as an on-the-fly custom bug, before the judge writes a card. One model call classifies every shape. The card-level classify route (section 8.5) stays the final check. The types, limits, copy and helpers are in `packages/web/src/otf/shape-badges-contract.ts`, and the validators in `shape-badges-schemas.ts`; neither edits `contract.ts`, `schemas.ts` or `canonical.ts`.
+
+**Flag.** `RBW_OTF_SHAPE_BADGES=1` (`OTF_SHAPE_BADGES_FLAG`) turns badges on, and badges also require `RBW_OTF_OPEN_BEHAVIORS=1`. Unset (or any other value) means off: the route answers `unavailable` and the UI shows no badges, exactly as before.
+
+**Route.** `POST /api/factory/otf/classify-shapes` (`OTF_CLASSIFY_SHAPES_PATH`). Signed-in judges only, with the same session check as the bug-spec and classify routes. Each call counts as one unit of the designer's `bug-spec` budget.
+
+- **Request** `OtfShapeBadgesRequest`: `{ query, host_id, shapes }`.
+  - `query`: the designer query, 1 to 300 characters.
+  - `host_id`: `task-report` or `umami`, the app the judge chose in the designer.
+  - `shapes`: 1 to 5 `{ title, summary }` entries in the designer's order. A title is 1 to 200 characters and a summary 1 to 1200, the designer's own shape caps.
+- **Answer** `OtfShapeBadges` (200): `{ badges, model }`. Each badge is `{ index, outcome, proven_criterion_id, family, translated_failure, refusal_kind, reason }`, and every member is always present:
+  - `index`: 0-based into the request's shapes. Every index appears exactly once, so there is one badge per shape.
+  - `outcome`: `proven`, `open` or `refused`.
+  - `proven_criterion_id`: set exactly when the outcome is `proven`. On an Umami search it may only be `date_time.time-zone-grouping`; on a task-report search, only one of the two concurrency criteria (`SHAPE_PROVEN_BY_HOST`).
+  - `family`: an `OTF_OPEN_FAMILIES` value, null exactly when the outcome is `refused`. A proven badge names its criterion's own family (`provenFamily`).
+  - `translated_failure`: `open` only, otherwise null. On an open badge it is one plain-text sentence of 20 to 200 characters, or null. It is the user-visible failure as it would appear in the task-report service (for an Umami search, translated into task-report terms).
+  - `refusal_kind`: `security` or `out_of_scope`, set exactly when the outcome is `refused`.
+  - `reason`: `refused` only, otherwise null. On a refused badge it is one plain-text sentence of 1 to 160 characters.
+  - `model`: the classifier model.
+- Lengths count Unicode code points, and plain text follows `OtfOpenRule.observable_failure` (no `\p{Cc}`, `\p{Cf}`, `\p{Zl}` or `\p{Zp}` characters; section 8.3). The request's query, titles and summaries are not held to plain text. Unknown members are refused in the request and the answer.
+- `validateShapeBadges(answer, request)` checks an answer against its request, since the index range and the allowed proven criteria depend on the request's shape count and host.
+- **Errors** use the shared `OtfErrorBody` with the codes in `OTF_SHAPE_BADGES_ERRORS`: `signed_out`, `invalid_request` and `unavailable`. `unavailable` covers the flag being off, an exhausted budget, a provider failure and an answer that fails validation (no repair call; the UI then shows no badges). A shape whose title or summary holds a security topic or code is answered `refused` / `security` locally, without sending it to the model.
+
+**Classifier.** One Nemotron 3 Super call with every shape, made like the classify call (the same client, key, temperature 0.2, thinking off and a strict JSON schema). The system prompt reuses the classify prompt's rules, including the proven-match rule: `proven` only when the shape states the proven mechanism (overlapping requests for the two concurrency behaviors, results bucketed in a different time zone for time-zone grouping); otherwise the shape is decided as if no proven behavior existed. It also reuses the six-route translation guidance and asks for one badge per shape. `translated_failure` describes the failure through the task-report service's behavior (tasks, updates, completions, daily reports), never through a route or screen of the original app.
+
+**Copy** (`SHAPE_BADGE_COPY`, exact strings; `shapeBadgeText` picks and fills them):
+
+| State | Headline | Detail |
+|---|---|---|
+| Loading | "Checking what can be built…" | |
+| Proven, Umami search | "Builds in Umami as a proven behavior: {label}" | the existing typical-time line for that behavior |
+| Proven, task-report search | "Builds as a proven behavior: {label}" | the existing typical-time line |
+| Open, task-report search | "Builds in the task-report service" | "Builds in the task-report service as: “{translated_failure}”. Not measured yet." |
+| Open, Umami search | "Builds in the task-report service, not Umami" | the same detail; without `translated_failure`: "The same kind of failure is recreated in our task-report service, because Umami builds cover time-zone grouping only. Not measured yet." |
+| Refused | "Can't be built here: {reason}" | |
+| Badge call failed or flag off | no badges and no message; the designer behaves as before | |
+
+- `{label}` is the behavior's label from availability. A proven badge whose label availability does not list shows no badge.
+- `translated_failure` sits inside typographic quotes. An open task-report badge without `translated_failure` shows its headline with no detail line.
+- `fillShapeBadgeTemplate` inserts values literally and throws on a placeholder without a value, so a badge never shows a raw brace.
+
+**Order.** `orderShapesByBadge` lists buildable shapes first (proven, then open), then any shape without a badge, then refused shapes, keeping the designer's order within each group. Without badges the designer's order is unchanged. Shapes stay selectable in every state: badges inform and do not block.
+
+**Disagreement fallback** (replaces "try the next shape"). The custom-build panel shows this when the card made from the chosen shape is refused by classify, or comes out with an outcome other than the shape's badge (for example, badge open and card out of scope). It says "This card did not come out as its shape suggested. Other shapes from this search that can be built:" (`SHAPE_BADGE_COPY.disagreement`), followed by the other buildable shapes with their badges. Picking one writes its card and classifies it, using the existing designer and classify calls. A proven-versus-open difference where the card is still buildable is shown normally, with no fallback list, because the card has the final say.
