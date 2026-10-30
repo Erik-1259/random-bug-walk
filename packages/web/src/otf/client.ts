@@ -1,6 +1,8 @@
 import { canonicalJson, ruleSha256, specSha256 } from "./canonical.ts";
 import { CALENDAR_MARGIN_MS, OTF_CLASSIFY_ERRORS, OTF_CLASSIFY_PATH, OTF_CREATE_REFUSALS, OTF_ERROR_STATUS, POLL_FINISHED_MS, POLL_RUNNING_MS, START_TIMEOUT_MS, hostCalendarOpen, type OtfAvailability, type OtfClassification, type OtfClassifyRequest, type OtfCreateJob, type OtfCreateRefusal, type OtfCreateResponse, type OtfErrorCode, type OtfHostId, type OtfJobStatus, type OtfValidation } from "./contract.ts";
 import { isOtf, type OtfBodies, type OtfSchemaName } from "./schemas.ts";
+import { OTF_CLASSIFY_SHAPES_PATH, OTF_SHAPE_BADGES_ERRORS, type OtfShapeBadges, type OtfShapeBadgesRequest } from "./shape-badges-contract.ts";
+import { validateShapeBadges, validateShapeBadgesRequest } from "./shape-badges-schemas.ts";
 
 export interface OtfClient {
   availability(): Promise<OtfAvailability>;
@@ -9,6 +11,9 @@ export interface OtfClient {
   status(jobId: string, after?: number): Promise<OtfJobStatus>;
   stop(jobId: string): Promise<OtfJobStatus>;
   validate(jobId: string): Promise<OtfValidation>;
+}
+export interface ShapeBadgesClient {
+  classifyShapes(body: OtfShapeBadgesRequest): Promise<OtfShapeBadges>;
 }
 export class OtfClientError extends Error {
   readonly code: OtfErrorCode;
@@ -34,26 +39,32 @@ async function checkRequest(body: OtfCreateJob): Promise<void> {
 /** The classify route may make a model call and one repair, 20 s each, within its 60 s maxDuration; wait past that. */
 export const OTF_CLASSIFY_TIMEOUT_MS = 65_000;
 /** Customer routes only. A malformed envelope never becomes a successful job or a definite refusal. */
-export function createOtfClient(fetcher: typeof fetch = fetch, timeoutMs = 15_000, classifyTimeoutMs = OTF_CLASSIFY_TIMEOUT_MS): OtfClient {
-  async function call<N extends OtfSchemaName>(schema: N, path: string, method: "GET" | "POST", success: readonly number[], body?: OtfCreateJob | OtfClassifyRequest, limitMs = timeoutMs): Promise<OtfBodies[N]> {
+export function createOtfClient(fetcher: typeof fetch = fetch, timeoutMs = 15_000, classifyTimeoutMs = OTF_CLASSIFY_TIMEOUT_MS): OtfClient & ShapeBadgesClient {
+  async function request(path: string, method: "GET" | "POST", success: readonly number[], body?: OtfCreateJob | OtfClassifyRequest | OtfShapeBadgesRequest, limitMs = timeoutMs): Promise<unknown> {
     const abort = new AbortController();
     const timeout = setTimeout(() => { abort.abort(); }, limitMs);
     try {
-      const response = await fetcher(path === OTF_CLASSIFY_PATH ? path : `/api/factory/otf/${path}`, { method, credentials: "same-origin", cache: "no-store", signal: abort.signal,
+      const response = await fetcher(path === OTF_CLASSIFY_PATH || path === OTF_CLASSIFY_SHAPES_PATH ? path : `/api/factory/otf/${path}`, { method, credentials: "same-origin", cache: "no-store", signal: abort.signal,
         ...(body === undefined ? {} : { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }) });
       const data: unknown = await response.json();
       if (!response.ok) {
         if (!isOtf("OtfErrorBody", data) || OTF_ERROR_STATUS[data.error.code] !== response.status
           || (path === "jobs" && !(OTF_CREATE_REFUSALS as readonly string[]).includes(data.error.code))
-          || (path === OTF_CLASSIFY_PATH && !(OTF_CLASSIFY_ERRORS as readonly string[]).includes(data.error.code))) throw unavailable();
+          || (path === OTF_CLASSIFY_PATH && !(OTF_CLASSIFY_ERRORS as readonly string[]).includes(data.error.code))
+          || (path === OTF_CLASSIFY_SHAPES_PATH && !(OTF_SHAPE_BADGES_ERRORS as readonly string[]).includes(data.error.code))) throw unavailable();
         throw new OtfClientError(data.error.code, data.error.message, response.status, data.error.retryable);
       }
-      if (!success.includes(response.status) || !isOtf(schema, data)) throw unavailable();
+      if (!success.includes(response.status)) throw unavailable();
       return data;
     } catch (error) {
       if (error instanceof OtfClientError) throw error;
       throw unavailable();
     } finally { clearTimeout(timeout); }
+  }
+  async function call<N extends OtfSchemaName>(schema: N, path: string, method: "GET" | "POST", success: readonly number[], body?: OtfCreateJob | OtfClassifyRequest, limitMs = timeoutMs): Promise<OtfBodies[N]> {
+    const data = await request(path, method, success, body, limitMs);
+    if (!isOtf(schema, data)) throw unavailable();
+    return data;
   }
   const path = (id: string) => `jobs/${encodeURIComponent(id)}`;
   return {
@@ -61,6 +72,13 @@ export function createOtfClient(fetcher: typeof fetch = fetch, timeoutMs = 15_00
     classify: body => {
       if (!isOtf("OtfClassifyRequest", body)) return Promise.reject(new OtfClientError("invalid_request", "The classification request is invalid. Review the sentence and card."));
       return call("OtfClassification", OTF_CLASSIFY_PATH, "POST", [200], body, classifyTimeoutMs);
+    },
+    classifyShapes: async body => {
+      const sent = structuredClone(body);
+      if (validateShapeBadgesRequest(sent).length > 0) throw new OtfClientError("invalid_request", "The shape badge request is invalid.");
+      const data = await request(OTF_CLASSIFY_SHAPES_PATH, "POST", [200], sent, classifyTimeoutMs);
+      if (validateShapeBadges(data, sent).length > 0) throw unavailable();
+      return data as OtfShapeBadges;
     },
     create: async body => {
       await checkRequest(body);
