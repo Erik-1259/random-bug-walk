@@ -147,6 +147,9 @@ describe("SPEC 8.3 open rules across browser tabs and reloads", () => {
     // These are the same public controller calls used by "Edit custom design" in the workspace.
     await editing.jobs.newDraft();
     expect(editing.jobs.snapshot().pendingRequest).toBeNull(); expect(c.storage.getItem(OTF_JOB_KEY)).toBeNull();
+    // Change this tab's local rule after the refusal, so only restore can bring back the refused rule.
+    editing.draft.setRule({ ...editing.expected.rule, failure_code: "synthetic_edited_after_refusal" });
+    expect(editing.draft.snapshot().rule).not.toEqual(refused?.rule);
     editing.draft.restore(refused, editing.jobs.snapshot().availability);
     expect(editing.draft.snapshot()).toMatchObject({ spec: editing.expected.spec, rule: editing.expected.rule, stale: false });
     await editing.jobs.create(accepted(editing.draft));
