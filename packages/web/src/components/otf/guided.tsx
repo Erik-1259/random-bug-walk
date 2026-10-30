@@ -69,7 +69,7 @@ export function BehaviorPickerView({ behaviors, hosts, nowMs, criterionId, sente
       })}
       <label htmlFor="otf-sentence">Describe it in one sentence</label>
       <textarea id="otf-sentence" value={sentence} onChange={event => { onSentence(event.target.value); }} aria-describedby="otf-sentence-help" />
-      <p id="otf-sentence-help" className="factory-note">3 to 300 characters. Nemotron 3 Super will write a spec card for you to edit or accept.</p>
+      <p id="otf-sentence-help" className="factory-note">3 to 300 characters. Nemotron 3.5 Super will write a spec card for you to edit or accept.</p>
     </fieldset>
     {sentence !== "" && problem !== null && <p role="status">{problem}</p>}
     <button type="submit" disabled={busy || !signedIn || selected === undefined || problem !== null}>Write my spec card</button>
@@ -112,7 +112,7 @@ export function SpecAcceptView({ spec, host, busy, signedIn, onChange, onAccept,
   return <form className="factory-form designer-card" aria-label="Accept custom spec" onSubmit={event => { event.preventDefault(); if (!blocked) onAccept(); }}>
     <h3>Edit or accept your spec card</h3>
     <p className="factory-badge">Design, not a built bug</p>
-    <p>Spec card by Nemotron 3 Super. Read each field before starting the custom build.</p>
+    <p>Spec card by Nemotron 3.5 Super. Read each field before starting the custom build.</p>
     <fieldset disabled={busy || !signedIn}>
       <legend>Accepted behavior</legend>
       {FIELDS.map(([field, label]) => <label key={field} htmlFor={`otf-spec-${field}`}>{label}

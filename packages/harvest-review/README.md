@@ -152,17 +152,19 @@ A yes vote needs a `fix` verdict and both evidence fields `yes`. An answer in th
 
 | | Super | Kimi |
 | --- | --- | --- |
-| Model | `nvidia/nemotron-3-super-120b-a12b` | `moonshotai/Kimi-K2.7-Code` |
-| Service label | `token-factory.nemotron-3-super` | `token-factory.kimi-k2.7-code` |
+| Model | `nvidia/Nemotron-3.5-Super-VL` | `moonshotai/Kimi-K3` |
+| Service label | `token-factory.nemotron-3.5-super-vl` | `token-factory.kimi-k3` |
 | Thinking | off: `chat_template_kwargs: { enable_thinking: false }`, as the writer sends to Lightning | always on; no request field is added (see below) |
 | Structured output | strict JSON schema (`json_schema_strict`) | none sent; validated after the call (`validated_after`) |
 | Output tokens | 1,024 | 8,192 |
 | Request timeout | 60,000 ms | 600,000 ms |
-| `runtime_profile_sha256` | `bdc6abef90a2e86ddd1210d334350a73d833ce89e1a17c715c7e33dfaf2221bd` | `f40e98a60484b92198b77868a75e7e8ad80614e75e30c77c4e582947ece77b2f` |
+| `runtime_profile_sha256` | `83c666efceb23fdc9ac61dc071c1da97446a16be042dc710536d30567d43900a` | `a63e12d079537348a80cdee0d7f64b598e8966f41c545bdfff1e65b58177aada` |
 
 Both: provider `token-factory`, base URL `https://api.tokenfactory.nebius.com/v1/`, 65,536 counted input tokens, 0 retries, the writer's prompt-bound method and framing (16 tokens per message, 256 per request), role `harvest-review`, kind `harvest.review`, key variable `TOKEN_FACTORY_REVIEW_KEY`. The hashed part also holds each profile's request extras and its `structured_output` mode, so a change to how thinking or the output is set changes the hash.
 
-Kimi-K2.7-Code always thinks: it has no documented way to turn thinking off. Moonshot's guide says thinking is always on for it and that `thinking: { type: "disabled" }` is an error ([use thinking models](https://platform.kimi.ai/docs/guide/use-thinking-models)), and the vLLM recipe says it runs in thinking mode only ([Kimi-K2.7-Code recipe](https://recipes.vllm.ai/moonshotai/Kimi-K2.7-Code)). Its reasoning counts inside `completion_tokens` and against its 8,192 output tokens, so an answer cut off by the limit is invalid output and votes `unsure`.
+The provider retires the models these profiles first used, Nemotron 3 Super and Kimi-K2.7-Code, in November 2026, so the profiles now name their successors, Nemotron 3.5 Super VL and Kimi-K3, with the same limits and request settings. The limits were measured on the earlier models.
+
+Kimi-K3 is treated as always thinking, as Kimi-K2.7-Code was. Kimi-K2.7-Code has no documented way to turn thinking off. Moonshot's guide says thinking is always on for it and that `thinking: { type: "disabled" }` is an error ([use thinking models](https://platform.kimi.ai/docs/guide/use-thinking-models)), and the vLLM recipe says it runs in thinking mode only ([Kimi-K2.7-Code recipe](https://recipes.vllm.ai/moonshotai/Kimi-K2.7-Code)). Its reasoning counts inside `completion_tokens` and against its 8,192 output tokens, so an answer cut off by the limit is invalid output and votes `unsure`.
 
 Why Kimi has no strict schema: with the strict `json_schema` response format, Kimi returned no reasoning, so the strict schema switched its thinking off. Without `response_format` it reasons. Kimi's request therefore carries no `response_format`, the prompt states the exact JSON object, and the reply is validated with the same Zod schema after the call. The writer's `meteredStructuredCall` selects this with the hashed profile field `structured_output: "validated_after"`; the writer's own profile keeps `"json_schema_strict"`.
 
@@ -170,18 +172,18 @@ The limits are provisional. If a live run hits a timeout or a cut-off answer, th
 
 ## Cost limits
 
-`rates.json` prices, from `https://tokenfactory.nebius.com/organization/prices`, checked on Oct 7, 2026 (the rate file has no field for the date):
+`rates.json` prices, from Token Factory's `/v1/models` listing, checked on Oct 30, 2026 (the rate file has no field for the date):
 
 | Service | Input, per 1M tokens | Output, per 1M tokens |
 | --- | --- | --- |
-| `token-factory.nemotron-3-super` | $0.30 | $0.90 |
-| `token-factory.kimi-k2.7-code` | $0.95 | $4.00 |
+| `token-factory.nemotron-3.5-super-vl` | $0.30 | $0.90 |
+| `token-factory.kimi-k3` | $3.00 | $15.00 |
 
 - The reservation per call is its worst case, each line rounded up to a whole micro-USD:
   - Super: 19,661 + 922 = 20,583 micro-USD (65,536 input and 1,024 output tokens);
-  - Kimi: 62,260 + 32,768 = 95,028 micro-USD (65,536 input and 8,192 output tokens);
-  - per candidate: 115,611 micro-USD.
-- At most 8 candidates and two calls each: at most 924,888 micro-USD (about $0.92) reserved per run.
+  - Kimi: 196,608 + 122,880 = 319,488 micro-USD (65,536 input and 8,192 output tokens);
+  - per candidate: 340,071 micro-USD.
+- At most 8 candidates and two calls each: at most 2,720,568 micro-USD (about $2.72) reserved per run.
 - Settlement charges the reported usage and releases the rest.
 
 ## Recovery

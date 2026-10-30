@@ -1,11 +1,11 @@
 {
   "format_version": 1,
   "provenance": "synthetic",
-  "model_id": "moonshotai/Kimi-K2.7-Code",
+  "model_id": "moonshotai/Kimi-K3",
   "recorded_at": "2026-10-07T00:00:00.000Z",
   "request": {
     "body": {
-      "model": "moonshotai/Kimi-K2.7-Code",
+      "model": "moonshotai/Kimi-K3",
       "max_tokens": 8192,
       "messages": [
         {
@@ -19,10 +19,10 @@
       ]
     }
   },
-  "request_sha256": "f9011669010bc4bf90978012ea0341786d86d0e6ebf6f9c8663f7f061d0b347f",
+  "request_sha256": "85829a68b52cd437919fbdec74e75bb5e0fb0aa5221049b69af5026bd653769e",
   "response": {
     "status": 200,
-    "body": "{\"id\":\"synthetic-completion\",\"object\":\"chat.completion\",\"created\":1767225600,\"model\":\"moonshotai/Kimi-K2.7-Code\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"{\\\"verdict\\\":\\\"fix\\\",\\\"zone_is_selected\\\":\\\"yes\\\",\\\"same_call\\\":\\\"yes\\\",\\\"reason\\\":\\\"Synthetic answer: fix, zone yes, same call yes.\\\"}\",\"reasoning\":\"Synthetic reasoning: the shown call gains the selected zone as an argument.\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":900,\"completion_tokens\":60,\"total_tokens\":960,\"completion_tokens_details\":{\"reasoning_tokens\":40}}}"
+    "body": "{\"id\":\"synthetic-completion\",\"object\":\"chat.completion\",\"created\":1767225600,\"model\":\"moonshotai/Kimi-K3\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"{\\\"verdict\\\":\\\"fix\\\",\\\"zone_is_selected\\\":\\\"yes\\\",\\\"same_call\\\":\\\"yes\\\",\\\"reason\\\":\\\"Synthetic answer: fix, zone yes, same call yes.\\\"}\",\"reasoning\":\"Synthetic reasoning: the shown call gains the selected zone as an argument.\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":900,\"completion_tokens\":60,\"total_tokens\":960,\"completion_tokens_details\":{\"reasoning_tokens\":40}}}"
   },
   "usage": {
     "prompt_tokens": 900,

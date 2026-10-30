@@ -2,15 +2,16 @@
 // this server instance's memory, and the input and output sizes every call stays within. The limits
 // bound what the designer can spend; they are not shared across instances. Every judge signs in with
 // the same passcode and so holds the same session, so the per-session limits act as limits shared by
-// all judges, and are set high enough for several to use the designer in the same hour.
+// all judges, and are set high enough for many to use the designer in the same hour (bug-spec also
+// carries the custom-build classify calls).
 
 export type AssistRoute = "bug-shapes" | "bug-spec" | "delivery-brief";
 
 export const WINDOW_MS = 3_600_000;
 /** Accepted calls per session per hour, by route. */
-export const SESSION_LIMITS: Record<AssistRoute, number> = { "bug-shapes": 60, "bug-spec": 60, "delivery-brief": 30 };
+export const SESSION_LIMITS: Record<AssistRoute, number> = { "bug-shapes": 600, "bug-spec": 600, "delivery-brief": 300 };
 /** Accepted calls per server instance per hour, every route and session together. */
-export const INSTANCE_LIMIT = 600;
+export const INSTANCE_LIMIT = 1500;
 
 /**
  * Each provider call is abandoned after this long, and a failed call is not retried. A model answer

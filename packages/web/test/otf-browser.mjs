@@ -126,7 +126,7 @@ const UI = {
 
 const COPY = {
   // SPEC section 6. The model label is the test lane's invented one.
-  built: "Built for your request by Goose with Synthetic Model A on Nebius Token Factory. Spec card by Nemotron 3 Super.",
+  built: "Built for your request by Goose with Synthetic Model A on Nebius Token Factory. Spec card by Nemotron 3.5 Super.",
   certificate: "Qualified by the RBW harness on the RBW builder (Nebius VM): six cells, pinned task-report kit image, 4 vCPU / 8 GB per copy, then confirmed in a second round.",
   umamiCertificate: "Qualified on the RBW builder (Nebius VM) with the local runner's admission sequence (docs/admission-rules.md) on the pinned Umami kit image with this build's checks, 4 vCPU / 8 GB per copy. Development evidence, not an RBW release.",
   umamiPlacement: "The builder places the bug in one of Umami's date-grouped reports that its harness supports, chosen to match your card where it can. It may differ from the report your card describes.",

@@ -69,7 +69,7 @@ const refused = (index: number, reason = "It needs a sign-in flow the service do
   refusal_kind: "out_of_scope",
   reason,
 });
-const answer = (badges: unknown[]): OtfShapeBadges => ({ badges: badges as OtfShapeBadge[], model: "nvidia/nemotron-3-super-120b-a12b" });
+const answer = (badges: unknown[]): OtfShapeBadges => ({ badges: badges as OtfShapeBadge[], model: "nvidia/Nemotron-3.5-Super-VL" });
 /** A task-report answer for three shapes with one badge replaced by a raw object. */
 const withBadge = (badge: Record<string, unknown>): OtfShapeBadges => answer([badge, open(1), refused(2)]);
 const errorsFor = (value: unknown, req: OtfShapeBadgesRequest = request()): string[] => validateShapeBadges(value, req);

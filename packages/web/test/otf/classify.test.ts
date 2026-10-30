@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { RateLimiter } from "../../src/assist/limits.ts";
+import { INSTANCE_LIMIT, RateLimiter } from "../../src/assist/limits.ts";
 import { CHAT_COMPLETIONS_URL } from "../../src/assist/providers.ts";
 import { factorySessionCookie } from "../../src/factory-server/session.ts";
 import { CLASSIFY_SYSTEM_PROMPT } from "../../src/otf/classify-prompt.ts";
@@ -172,6 +172,14 @@ describe("OTF classifier", () => {
     expect(s.calls[0]?.body).not.toHaveProperty("tools");
     expect(s.calls[0]?.headers.get("authorization")).toBe("Bearer synthetic-token-factory-key");
   });
+  it("calls and reports the configured classifier model, including on a refusal", async () => {
+    const s = setup(OPEN, { decision: "out_of_scope", proven_criterion_id: "none", family: "none", observable_failure: "", failure_code: "", reason: "No task-report equivalent." });
+    s.deps.model = "nvidia/synthetic-classifier-1";
+    expect((await result(await classify(request(), s.deps))).model).toBe("nvidia/synthetic-classifier-1");
+    expect(s.calls[0]?.body).toMatchObject({ model: "nvidia/synthetic-classifier-1" });
+    expect((await result(await classify(request(), s.deps))).model).toBe("nvidia/synthetic-classifier-1");
+    expect(s.calls[1]?.body).toMatchObject({ model: "nvidia/synthetic-classifier-1" });
+  });
   it("chooses a proven behavior only when the card states its mechanism", async () => {
     const s = setup(OPEN);
     await classify(request(), s.deps);
@@ -313,7 +321,7 @@ describe("OTF classifier", () => {
   });
   it("uses the existing designer call budget for both attempts", async () => {
     const s = setup(OPEN);
-    for (let i = 0; i < 600; i++) s.deps.assist.limiter.take("bug-spec", `synthetic-${String(i)}`, s.deps.assist.now().getTime());
+    for (let i = 0; i < INSTANCE_LIMIT; i++) s.deps.assist.limiter.take("bug-spec", `synthetic-${String(i)}`, s.deps.assist.now().getTime());
     expect(await errorCode(await classify(request(), s.deps))).toBe("unavailable");
     expect(s.calls).toHaveLength(0);
   });

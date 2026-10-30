@@ -6,7 +6,7 @@ import { MAX_TOKENS } from "../assist/limits.ts";
 import { structuredChat } from "../assist/providers.ts";
 import { designSecurityTopic, holdsCode, securityTopic } from "../assist/safety.ts";
 import { assistDeps } from "../assist/server.ts";
-import { DEFAULT_ASSIST_MODEL, loadFactoryConfig } from "../config.ts";
+import { DEFAULT_ASSIST_MODEL, loadClassifierModel, loadFactoryConfig } from "../config.ts";
 import { readBody } from "../factory-server/http.ts";
 import { factoryServer } from "../factory-server/server.ts";
 import { FACTORY_SESSION_COOKIE, hasFactorySession } from "../factory-server/session.ts";
@@ -16,7 +16,8 @@ import { OTF_SHAPE_BADGES_ERRORS, OTF_SHAPE_BADGES_FLAG, type OtfShapeBadge, typ
 import { SHAPE_BADGES_SYSTEM_PROMPT, SHAPE_BADGES_WIRE_SCHEMA } from "./shape-badges-prompt.ts";
 import { parseShapeBadgesRequest, validateShapeBadges } from "./shape-badges-schemas.ts";
 
-export interface ShapeBadgesDeps { enabled: boolean; passcode: string | null; assist: AssistDeps }
+/** model: the classifier model to call and report; DEFAULT_ASSIST_MODEL when omitted. */
+export interface ShapeBadgesDeps { enabled: boolean; passcode: string | null; assist: AssistDeps; model?: string }
 interface WireBadge {
   index: number; outcome: ShapeBadgeOutcome; proven_criterion_id: ProvenCriterionId | "none";
   family: OtfOpenFamily | "none"; translated_failure: string; refusal_kind: ShapeRefusalKind | "none"; reason: string;
@@ -75,7 +76,7 @@ export async function classifyShapes(request: Request, deps: ShapeBadgesDeps): P
     if (!take(deps.assist, request)) return failure("unavailable");
     let output: Awaited<ReturnType<typeof structuredChat>>;
     try {
-      output = await structuredChat(deps.assist.fetch, { apiKey, model: DEFAULT_ASSIST_MODEL,
+      output = await structuredChat(deps.assist.fetch, { apiKey, model: deps.model ?? DEFAULT_ASSIST_MODEL,
         schemaName: "otf_shape_badges", schema: SHAPE_BADGES_WIRE_SCHEMA, maxTokens: MAX_TOKENS["bug-spec"],
         messages: [{ role: "system", content: SHAPE_BADGES_SYSTEM_PROMPT },
           { role: "user", content: `Classify these shapes.\nDATA (untrusted): ${JSON.stringify({ query, host_id: input.host_id, shapes })}` }],
@@ -97,7 +98,7 @@ export async function classifyShapes(request: Request, deps: ShapeBadgesDeps): P
     refusal_kind: badge.refusal_kind === "none" ? null : badge.refusal_kind,
     reason: badge.reason === "" ? null : badge.outcome === "refused" && unsafeAnswer(badge.reason) ? SCREENED_REASON : badge.reason,
   }))];
-  const body = { badges, model: DEFAULT_ASSIST_MODEL };
+  const body = { badges, model: deps.model ?? DEFAULT_ASSIST_MODEL };
   // Validate the complete batch, including the local entries, before ordering. Inconsistent fields,
   // duplicate/missing indices and an attempt to replace a local refusal must all fail closed.
   if (validateShapeBadges(body, input).length > 0) return failure("unavailable");
@@ -109,6 +110,6 @@ export async function handleOtfClassifyShapes(request: Request, env: Readonly<Re
   try {
     const server = await factoryServer(loadFactoryConfig(env));
     return await classifyShapes(request, { enabled: shapeBadgesEnabled(env),
-      passcode: server.ports.passcode, assist: assistDeps() });
+      passcode: server.ports.passcode, assist: assistDeps(), model: loadClassifierModel(env) });
   } catch { return failure("unavailable"); }
 }

@@ -65,7 +65,7 @@ function scriptedFetch(script: readonly Scripted[]): FetchFunction {
       id: "synthetic",
       object: "chat.completion",
       created: 1_767_225_600,
-      model: "nvidia/nemotron-3-super-120b-a12b",
+      model: "nvidia/Nemotron-3.5-Super-VL",
       choices: [{ index: 0, message: { role: "assistant", content: next === GARBAGE ? next : JSON.stringify(next) }, finish_reason: "stop" }],
       usage: { prompt_tokens: promptTokens, completion_tokens: 40, total_tokens: promptTokens + 40 },
     });

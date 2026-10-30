@@ -60,6 +60,12 @@ async function setup() {
 function serveStatus(api: Awaited<ReturnType<typeof setup>>["api"], value: OtfJobStatus): void {
   api.status.mockImplementation((_id, after = 0) => Promise.resolve({ ...value, events: value.events.filter(event => event.seq > after) }));
 }
+// Arms polls the way the workspace effect does: on each view change, one timer of pollAfter() while idle and polling is needed.
+function workspaceTimer(controller: OtfController) {
+  let armed: number | null = null;
+  controller.subscribe(() => { armed = !controller.snapshot().busy && controller.needsPoll() ? controller.pollAfter() : null; });
+  return { fire: () => { const delay = armed; armed = null; return delay; } };
+}
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe("OTF HTTP client", () => {
@@ -317,6 +323,13 @@ describe("OTF persisted controller", () => {
     await c.controller.poll(); expect(c.api.status).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(2000); await c.controller.poll();
     expect(c.api.status).toHaveBeenCalledWith(JOB, 1); expect(c.controller.snapshot().status?.events.map(event => event.seq)).toEqual([1, 2]);
+  });
+  it("re-arms the status timer when it fires a millisecond before the poll is due", async () => {
+    vi.useFakeTimers(); const c = await setup(); const timer = workspaceTimer(c.controller); await c.controller.create(input);
+    const delay = timer.fire(); expect(delay).not.toBeNull();
+    vi.setSystemTime(Date.now() + (delay ?? 0) - 1); await c.controller.poll(); expect(c.api.status).not.toHaveBeenCalled();
+    const next = timer.fire(); expect(next).not.toBeNull();
+    vi.setSystemTime(Date.now() + (next ?? 0)); await c.controller.poll(); expect(c.api.status).toHaveBeenCalledTimes(1);
   });
   it("rejects a gapped status page without discarding prior events", async () => {
     vi.useFakeTimers(); const c = await setup(); await c.controller.create(input);

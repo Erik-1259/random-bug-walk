@@ -4,7 +4,7 @@
 import { describe, expect, it } from "vitest";
 import { packArchive } from "@rbw/case-package/archive";
 import type { RequestStatus } from "@rbw/factory-contract";
-import { DEFAULT_ASSIST_MODEL, loadAssistConfig, type AssistConfig } from "../../src/config.ts";
+import { DEFAULT_ASSIST_MODEL, loadAssistConfig, loadClassifierModel, type AssistConfig } from "../../src/config.ts";
 import { postBugShapes, postBugSpec, postDeliveryBrief, type AssistDeps } from "../../src/assist/handlers.ts";
 import { INSTANCE_LIMIT, RateLimiter, SESSION_LIMITS, WINDOW_MS } from "../../src/assist/limits.ts";
 import { distinctivePhrases } from "../../src/assist/novelty.ts";
@@ -172,7 +172,7 @@ describe("bug shapes", () => {
     expect(search?.body).toEqual({ query: "date/time bugs bug report", search_depth: "basic", max_results: 8, include_answer: false, include_raw_content: false, include_images: false, auto_parameters: false, include_domains: ["github.com", "stackoverflow.com"] });
     const [model] = mock.modelCalls();
     expect(model?.headers.authorization).toBe(`Bearer ${TF_KEY}`);
-    expect(model?.body.model).toBe("nvidia/nemotron-3-super-120b-a12b");
+    expect(model?.body.model).toBe("nvidia/Nemotron-3.5-Super-VL");
     expect(model?.body.max_tokens).toBe(2500);
     expect(model?.body.chat_template_kwargs).toEqual({ enable_thinking: false });
     expect(model?.body.tools).toBeUndefined();
@@ -302,9 +302,9 @@ describe("bug shapes", () => {
     expect((await postBugShapes(post(path, { query: "date/time bugs" }), h.server, deps)).status).toBe(200);
   });
 
-  it("answers rate_limited after 60 calls per session in an hour", async () => {
+  it("answers rate_limited after the session's shape-search limit in an hour", async () => {
     const { h, mock, deps } = setup();
-    for (let index = 0; index < 60; index += 1) {
+    for (let index = 0; index < SESSION_LIMITS["bug-shapes"]; index += 1) {
       mock.tavily.push(tavilyReply(REPORTS));
       mock.model.push(modelReply(shapeOutput()));
       expect((await postBugShapes(post(path, { query: "date/time bugs" }), h.server, deps)).status).toBe(200);
@@ -315,7 +315,7 @@ describe("bug shapes", () => {
     expect(error.code).toBe("rate_limited");
     expect(error.retry_after_s).toBe(3600);
     expect(response.headers.get("retry-after")).toBe("3600");
-    expect(mock.tavilyCalls()).toHaveLength(60);
+    expect(mock.tavilyCalls()).toHaveLength(SESSION_LIMITS["bug-shapes"]);
   });
 });
 
@@ -454,15 +454,16 @@ describe("bug spec", () => {
     const { h, mock, deps } = setup();
     mock.model.push(modelReply({ ...SPEC, in_scope: false }), modelReply(SPEC));
     expect((await postBugSpec(post(path, { shape: SHAPE, host_id: "umami" }), h.server, deps)).status).toBe(200);
-    for (let index = 0; index < 57; index += 1) {
+    const limit = SESSION_LIMITS["bug-spec"];
+    for (let index = 0; index < limit - 3; index += 1) {
       mock.model.push(modelReply(SPEC));
       expect((await postBugSpec(post(path, { shape: SHAPE, host_id: "umami" }), h.server, deps)).status).toBe(200);
     }
-    // 59 calls taken: this request takes the 60th, and its retry finds no room.
+    // One call short of the limit taken: this request takes the last, and its retry finds no room.
     mock.model.push(modelReply({ ...SPEC, in_scope: false }), modelReply(SPEC));
     const response = await postBugSpec(post(path, { shape: SHAPE, host_id: "umami" }), h.server, deps);
     expect(response.status).toBe(422);
-    expect(mock.modelCalls()).toHaveLength(60);
+    expect(mock.modelCalls()).toHaveLength(limit);
     expect(h.logs.at(-1)).toBe("assist bug-spec: model_out_of_scope (no retry: rate limited); answered refused");
     expect((await postBugSpec(post(path, { shape: SHAPE, host_id: "umami" }), h.server, deps)).status).toBe(429);
   });
@@ -482,9 +483,9 @@ describe("bug spec", () => {
     expect(await errorCode(await postBugSpec(post(path, { shape: SHAPE, host_id: "umami" }), h.server, deps))).toBe("assist_unavailable");
   });
 
-  it("answers rate_limited after 60 calls per session", async () => {
+  it("answers rate_limited after the session's specification limit", async () => {
     const { h, mock, deps } = setup();
-    for (let index = 0; index < 60; index += 1) {
+    for (let index = 0; index < SESSION_LIMITS["bug-spec"]; index += 1) {
       mock.model.push(modelReply(SPEC));
       expect((await postBugSpec(post(path, { shape: SHAPE, host_id: "umami" }), h.server, deps)).status).toBe(200);
     }
@@ -650,10 +651,10 @@ describe("delivery brief", () => {
     expect(h.logs.join("\n")).not.toContain("synthetic database outage");
   });
 
-  it("answers rate_limited after 30 briefs per session", async () => {
+  it("answers rate_limited after the session's brief limit", async () => {
     const { h, mock, deps } = setup();
     seedDelivered(h);
-    for (let index = 0; index < 30; index += 1) {
+    for (let index = 0; index < SESSION_LIMITS["delivery-brief"]; index += 1) {
       mock.model.push(modelReply(BRIEF));
       for (let search = 0; search < 3; search += 1) mock.tavily.push(tavilyReply([]));
       expect((await postDeliveryBrief(post(path, ask), h.server, deps)).status).toBe(200);
@@ -665,19 +666,19 @@ describe("delivery brief", () => {
 describe("rate limiter", () => {
   it("counts each session and route apart, caps the instance and frees calls an hour later", () => {
     const limiter = new RateLimiter();
-    for (let index = 0; index < 30; index += 1) expect(limiter.take("delivery-brief", "a", 0).ok).toBe(true);
+    for (let index = 0; index < SESSION_LIMITS["delivery-brief"]; index += 1) expect(limiter.take("delivery-brief", "a", 0).ok).toBe(true);
     expect(limiter.take("delivery-brief", "a", 1000)).toEqual({ ok: false, retry_after_s: 3599 });
     expect(limiter.take("delivery-brief", "b", 1000).ok).toBe(true);
     expect(limiter.take("bug-spec", "a", 1000).ok).toBe(true);
     expect(limiter.take("delivery-brief", "a", WINDOW_MS + 1).ok).toBe(true);
   });
 
-  it("shares 60 shape searches, 60 specifications and 30 briefs per session, and 600 calls per instance, an hour", () => {
-    expect(SESSION_LIMITS).toEqual({ "bug-shapes": 60, "bug-spec": 60, "delivery-brief": 30 });
-    expect(INSTANCE_LIMIT).toBe(600);
+  it("shares 600 shape searches, 600 specifications and 300 briefs per session, and 1500 calls per instance, an hour", () => {
+    expect(SESSION_LIMITS).toEqual({ "bug-shapes": 600, "bug-spec": 600, "delivery-brief": 300 });
+    expect(INSTANCE_LIMIT).toBe(1500);
   });
 
-  it("refuses every session once the instance took 600 calls in the hour", () => {
+  it("refuses every session once the instance took its hourly limit", () => {
     const limiter = new RateLimiter();
     for (let index = 0; index < INSTANCE_LIMIT; index += 1) expect(limiter.take("bug-shapes", `session-${String(index)}`, index).ok).toBe(true);
     expect(limiter.take("bug-spec", "fresh", INSTANCE_LIMIT).ok).toBe(false);
@@ -691,6 +692,14 @@ describe("configuration", () => {
     expect(loadAssistConfig({ RBW_ASSIST_TOKEN_FACTORY_KEY: "", RBW_ASSIST_TAVILY_KEY: "" })).toEqual({ tokenFactoryKey: null, tavilyKey: null, model: DEFAULT_ASSIST_MODEL });
     expect(loadAssistConfig({ RBW_ASSIST_TOKEN_FACTORY_KEY: "a", RBW_ASSIST_TAVILY_KEY: "b", RBW_ASSIST_MODEL: "nvidia/other-model-1" })).toEqual({ tokenFactoryKey: "a", tavilyKey: "b", model: "nvidia/other-model-1" });
     expect(loadAssistConfig({ RBW_ASSIST_MODEL: "not a model id" }).model).toBe(DEFAULT_ASSIST_MODEL);
+  });
+  it("reads the on-the-fly classifier model apart from the designer model, defaulting to the designer default", () => {
+    expect(DEFAULT_ASSIST_MODEL).toBe("nvidia/Nemotron-3.5-Super-VL");
+    expect(loadClassifierModel({})).toBe(DEFAULT_ASSIST_MODEL);
+    expect(loadClassifierModel({ RBW_OTF_CLASSIFIER_MODEL: "" })).toBe(DEFAULT_ASSIST_MODEL);
+    expect(loadClassifierModel({ RBW_ASSIST_MODEL: "nvidia/other-model-1" })).toBe(DEFAULT_ASSIST_MODEL);
+    expect(loadClassifierModel({ RBW_OTF_CLASSIFIER_MODEL: "nvidia/Nemotron-3-Ultra-550b-a55b" })).toBe("nvidia/Nemotron-3-Ultra-550b-a55b");
+    expect(loadClassifierModel({ RBW_OTF_CLASSIFIER_MODEL: "not a model id" })).toBe(DEFAULT_ASSIST_MODEL);
   });
 });
 

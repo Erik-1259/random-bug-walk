@@ -15,7 +15,7 @@ export function LaneBoard({ status, availability, onStop, disabled, stopRequeste
     {open && <p>{OTF_OPEN_TIME_COPY}</p>}
     {lanes !== null && <p>Lanes for {host?.label ?? status.host_id}: {lanes}.</p>}
     {status.host_id === "umami" && <p>{UMAMI_PLACEMENT}</p>}
-    {ran && <p>Built for your request by Goose with {status.winner?.model ?? status.lanes.map(lane => lane.model_label).join(", ")} on Nebius Token Factory. Spec card by Nemotron 3 Super.</p>}
+    {ran && <p>Built for your request by Goose with {status.winner?.model ?? status.lanes.map(lane => lane.model_label).join(", ")} on Nebius Token Factory. Spec card by Nemotron 3.5 Super.</p>}
     {stopRequested && status.outcome === "delivered" && <p role="status">Stopped after a lane won; the bug was delivered.</p>}
     <p>Model spend so far: {formatExactUsd(status.spend.model_microusd)} (metered by the builder; an upper bound).</p>
     <p>Model spend cap: {formatExactUsd(status.spend.cap_microusd)}. Elapsed: {Math.floor(status.elapsed_ms / 1000)} seconds.</p>

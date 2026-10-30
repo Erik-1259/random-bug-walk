@@ -58,7 +58,7 @@ describe("guided custom design", () => {
   it("shows all editable fields and the explicit accept action", () => {
     const html = renderToStaticMarkup(<SpecAcceptView spec={spec} host={taskReport} busy={false} signedIn onChange={noop} onAccept={noop} />);
     for (const field of ["title", "where", "change", "why_tests_miss", "checks_to_add", "fix"]) expect(html).toContain(`id="otf-spec-${field}"`);
-    expect(html).toContain("Spec card by Nemotron 3 Super");
+    expect(html).toContain("Spec card by Nemotron 3.5 Super");
     expect(html).toContain("Accept and build this custom bug");
     expect(html).not.toContain("Qualified by");
   });

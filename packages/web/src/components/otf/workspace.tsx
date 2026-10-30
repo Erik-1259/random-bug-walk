@@ -98,7 +98,7 @@ export function OtfWorkspaceView(props: OtfWorkspaceViewProps) {
           openAvailable={availability.behaviors.some(option => option.criterion_id === OTF_OPEN_CRITERION_ID && availability.hosts.some(host => host.offered && host.host_id === option.host_id))}
           onOpen={() => { props.onBehavior(OTF_OPEN_CRITERION_ID); }} classifyPrompt={classifyPrompt} onClassify={props.onClassify} /> }
       </>}
-      {designing && props.spec === null && <p role="status">Writing your spec card with Nemotron 3 Super. No custom build has started.</p>}
+      {designing && props.spec === null && <p role="status">Writing your spec card with Nemotron 3.5 Super. No custom build has started.</p>}
       {enabled && !pending && status === null && props.shapeBadgesEnabled === true && classificationAvailable(availability)
         && shapeBadgeDisagrees(props.shapeSearch, props.classification) && props.shapeSearch != null && <ShapeAlternativesView shapes={props.shapeSearch.shapes} badges={props.shapeSearch.badges}
           selectedShapeId={props.shapeSearch.selectedShapeId} availability={availability}
