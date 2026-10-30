@@ -50,12 +50,16 @@ export function designerSentence(query: string, title: string): string {
   return Array.from(text).slice(0, SENTENCE_MAX_CHARS).join("");
 }
 
-/** The card has the final say; only a difference between two buildable outcomes needs no suggestions. */
+/**
+ * The card has the final say; only a difference between two buildable outcomes needs no suggestions.
+ * A refused card always offers the other buildable shapes, even when its own shape has no badge.
+ */
 export function shapeBadgeDisagrees(source: ShapeSearchContext | null | undefined, classification: OtfClassification | null | undefined): boolean {
   if (source == null || classification == null) return false;
+  if (classification.refusal !== null) return true;
   const index = source.shapes.findIndex(shape => shape.id === source.selectedShapeId);
   const badge = source.badges.find(item => item.index === index);
-  return badge !== undefined && (classification.refusal !== null || !isBuildableBadge(badge));
+  return badge !== undefined && !isBuildableBadge(badge);
 }
 
 /** Editable pre-accept state only. This controller has no create, stop or validation capability. */

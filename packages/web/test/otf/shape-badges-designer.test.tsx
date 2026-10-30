@@ -167,6 +167,14 @@ describe("shape badges in the designer", () => {
 });
 
 describe("card classification has the final say", () => {
+  it("offers the other buildable shapes for a refused card even when its own shape has no badge", () => {
+    // Shape 0's badge group failed (no badge); shapes 1 and 2 have buildable badges.
+    const noOwnBadge: ShapeSearchContext = { ...shapeSearch, badges: badges.filter((badge) => badge.index !== 0) };
+    const html = renderToStaticMarkup(<OtfWorkspaceView {...workspace} classification={refusal} shapeSearch={noOwnBadge} shapeBadgesEnabled onShapeAlternative={noop} />);
+    expect(html).toContain(SHAPE_BADGE_COPY.disagreement); expect(html).toContain("Synthetic shape 1"); expect(html).toContain("Synthetic shape 2");
+    // An open card with no badge on its shape still shows no list: only a refusal or a badge mismatch does.
+    expect(renderToStaticMarkup(<OtfWorkspaceView {...workspace} classification={open} shapeSearch={noOwnBadge} shapeBadgesEnabled onShapeAlternative={noop} />)).not.toContain(SHAPE_BADGE_COPY.disagreement);
+  });
   it("shows other buildable shapes only for a refusal with badge context and an enabled feature", () => {
     const props = { ...workspace, classification: refusal, shapeSearch, shapeBadgesEnabled: true, onShapeAlternative: noop };
     const html = renderToStaticMarkup(<OtfWorkspaceView {...props} />);
