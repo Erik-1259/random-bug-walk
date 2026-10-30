@@ -464,8 +464,10 @@ The classifier's answer is advisory. The customer may edit the rule before submi
 
 - Every token holding `/api/`, including a full URL, must name one of those paths once its query string and trailing punctuation are removed. Paths compare literally, so a task path is written `/api/tasks/{id}`. A rule must name at least one route.
 - A method attached to a path must be allowed for that route. A method is attached when it is written directly before the path (`"METHOD /path"`, or a group such as `GET|PATCH`, `GET or PATCH` or `GET, PATCH`), or when one to three filler words come between them, such as "a PATCH request to /path" (the filler words are a, an, the, request, requests, call, calls, to, on and against).
+- Quoted data is not checked: text inside double quotes (straight or curly) and inside single quotes that are not apostrophes is masked before every other rule, so a quoted title or note can neither hide nor fake a method, a path or a sentence break. Text in backticks stays visible, since routes are often written as code.
 - A path with no attached method passes when the route exists.
-- `PUT`, `DELETE`, `HEAD` and `OPTIONS` are allowed on no route, so each is a problem anywhere in the text.
+- A `GET`, `POST` or `PATCH` that is not attached to a path must be allowed for at least one route named in the same sentence (sentences end at ". ", "; ", "! ", "? " or the end of the text); a sentence that names no route is not checked.
+- `PUT`, `DELETE`, `HEAD` and `OPTIONS` are allowed on no route, so each is a problem anywhere outside quoted data.
 - These rules check the classifier's answer only. A submitted rule goes through the create checks of section 8.3.
 
 **Repair.** At most one repair follows the first answer. The server sends back the model's answer and every problem, asks for JSON that matches the schema with only the six routes and their allowed methods, and says `out_of_scope` is acceptable when there is no route-level equivalent. If the repaired answer is still unusable, the route answers an `out_of_scope` refusal saying the card could not be translated into a usable check through the task-report routes; when both unusable answers had the decision `security`, it answers a `security` refusal instead.
