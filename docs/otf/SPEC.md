@@ -356,7 +356,7 @@ Global caps: queued jobs 4, jobs per UTC day 30, total OTF model spend set by th
 - Route directories are disjoint.
 - If an interface must change, it changes in W0 first.
 
-The open-behavior branches are listed in section 8.10.
+The open-behavior branches are listed in section 8.11.
 
 **Merge order:** W0, then W1, W2, W4 and W5 (in any order), then W3. Only W5 edits `package.json`, `pnpm-lock.yaml`, `next.config.ts` and `vercel.json`. Integration follows on a preview deployment, with the builder pointed at that preview.
 
@@ -453,7 +453,7 @@ The classifier's answer is advisory. The customer may edit the rule before submi
 3. A body that fails `OtfClassifyRequest` answers `invalid_request`.
 4. The existing safety checks run before any model call: the input security check on the sentence, the design security check on every card field (title, where, change, why the tests miss it, fix and each added check), and the code check on the sentence and every field. Any hit answers `refused_topic`.
 5. No Token Factory key answers `unavailable`.
-6. The classifier model is `CLASSIFIER_MODEL`, fixed to the bug designer's default model (NVIDIA Nemotron 3 Super, `nvidia/nemotron-3-super-120b-a12b`). The designer's `RBW_ASSIST_MODEL` override does not change the classifier model. One structured call with the strict wire schema (`CLASSIFY_WIRE_SCHEMA`) gets the card as untrusted data, with `host_id` as the app (`unspecified` when absent). Each call, the repair included, takes one unit of the session's `bug-spec` budget, the bug designer's budget; an exhausted budget answers `unavailable`. A call that fails, runs past 20 seconds or returns no message content answers `unavailable`, with no repair.
+6. The classifier model is `CLASSIFIER_MODEL`, fixed to the bug designer's default model (NVIDIA Nemotron 3 Super, `nvidia/nemotron-3-super-120b-a12b`). The designer's `RBW_ASSIST_MODEL` override does not change the classifier model. One structured call with the strict wire schema (`CLASSIFY_WIRE_SCHEMA`) gets the card as untrusted data, with `host_id` as the app (`unspecified` when absent). The prompt (`CLASSIFY_SYSTEM_PROMPT`) allows the decision `proven` only when the card states the behavior's mechanism, not just its topic or symptom: overlapping requests for the two concurrency behaviors, and results bucketed in a different time zone from the one requested or configured for time-zone grouping. Without the stated mechanism, the model decides between `open`, `out_of_scope` and `security` as if no proven behavior existed. Each call, the repair included, takes one unit of the session's `bug-spec` budget, the bug designer's budget; an exhausted budget answers `unavailable`. A call that fails, runs past 20 seconds or returns no message content answers `unavailable`, with no repair.
 
 **The wire answer** is `{ decision, proven_criterion_id, family, observable_failure, failure_code, reason }`, with `decision` one of `proven`, `open`, `security` or `out_of_scope`, and `proven_criterion_id` and `family` each allowing `none`. The server maps it as follows; anything listed as a problem goes to the repair:
 
@@ -502,7 +502,26 @@ The classifier's answer is advisory. The customer may edit the rule before submi
 - The builder routes, their auth and `OTF_CONTRACT_VERSION`.
 - Every existing UI label.
 
-### 8.10 Branches
+### 8.10 Why open behaviors are built only on the task-report service
+
+The two apps offer different scope:
+- **Task-report service:** the two proven concurrency behaviors, plus open behaviors. An open behavior is any other non-security behavior. The classifier routes it there (section 8.5), and a rule the customer can edit grades it (section 8.3). Open behaviors are labeled "not measured yet" (section 8.7).
+- **Umami:** the proven time-zone grouping behavior only. Umami has no open criterion (section 8.1).
+
+**An Umami card about anything else.** Such a card is never built on Umami.
+- When the behavior could plausibly exist in a task-and-report service, the classifier translates the card into the closest equivalent failure there. It offers that failure as a task-report open behavior with a rule, and the build runs and qualifies in the task-report service.
+- Otherwise the card is refused as out of scope (section 8.6).
+- The translated rule names only task-report routes, and the open behavior is listed under the task-report service in the picker, so before accepting, the customer can see where the build runs.
+
+**Why Umami stays time-zone only.**
+- **The builder's Umami path is purpose-built.** Its lane instructions, its admission sequence and its qualification run are all designed around Umami's date-grouped reports and the time-zone behavior. They assume the bug lands in one of those reports and that the added checks detect it there. That path has no place for an arbitrary rule.
+- **The task-report qualification is generic.** Its six cells check two things. The original suite must pass on the clean, buggy and fixed copies. The added checks must fail only on the buggy copy, with the expected failure code. A confirmation round then repeats the whole check. No step depends on which behavior was planted, so the failure code can come from a customer's rule as easily as from a proven criterion.
+- **Umami qualification is heavier and specific.** Umami's original suite is much larger and slower than the task-report suite. In development, a qualified attempt took a median of 21.0 minutes on Umami and 15.5 minutes on the task-report service ([development timing evidence](evidence/build-time-2026-10-29.json)). Umami's qualification is also tied to the admission steps for the date-grouped reports.
+- **Umami's excluded areas must stay excluded.** Sign-in, identity, permission and race behavior are out of scope on Umami (`HOST_SCOPE_EXCLUDED`). A general Umami path would have to keep them out.
+
+Building open behaviors on Umami is planned work for after the hackathon. It needs a general Umami lane runner, a qualification sequence for any Umami behavior, and paid measurement runs. See [Open behaviors on Umami](../ROADMAP.md#open-behaviors-on-umami) in the roadmap.
+
+### 8.11 Branches
 
 The contract, server and UI implementations are merged on main. This table records their branch ownership; the server and UI branches did not edit `contract.ts`, `schemas.ts` or `canonical.ts`. The builder remains in a separate repository.
 
@@ -512,7 +531,7 @@ The contract, server and UI implementations are merged on main. This table recor
 | `otf/open-ui` | the picker's open option; the classify call and its outcomes (proven match, open rule, refusal); the bug designer's "Build this as a custom bug" handoff; the time copy (8.7); the open certificate view |
 | builder (separate repository) | reads `BuildJob.rule` on open jobs, grades the added checks by `rule.failure_code`, and issues the `open-1` certificate |
 
-### 8.11 Shape badges
+### 8.12 Shape badges
 
 The bug designer shows 3 to 5 shapes after a search. With shape badges on, each shape gets a badge saying whether and how it can be built as an on-the-fly custom bug, before the judge writes a card. One model call classifies every shape. The card-level classify route (section 8.5) stays the final check. The types, limits, copy and helpers are in `packages/web/src/otf/shape-badges-contract.ts`, and the validators in `shape-badges-schemas.ts`; neither edits `contract.ts`, `schemas.ts` or `canonical.ts`.
 

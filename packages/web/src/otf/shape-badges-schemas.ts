@@ -1,4 +1,4 @@
-// Runtime validators for the shape badge route's request and answer (docs/otf/SPEC.md section 8.11).
+// Runtime validators for the shape badge route's request and answer (docs/otf/SPEC.md section 8.12).
 // They follow schemas.ts: the same Ajv options (strict, every error, Unicode regular expressions, so
 // lengths count code points), the same plain-text rule as OtfOpenRule.observable_failure, the same
 // model token, and unknown members refused everywhere. schemas.ts keeps those helpers private, so the

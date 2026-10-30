@@ -1,7 +1,7 @@
 // Shape badges: the bug designer shows 3 to 5 shapes after a search, and with badges on each shape
 // gets a badge saying whether and how it can be built as an on-the-fly custom bug, before the judge
 // writes a card. One classifier call answers for every shape; the card-level classify route stays
-// the final check. docs/otf/SPEC.md section 8.11 explains the behavior around these types.
+// the final check. docs/otf/SPEC.md section 8.12 explains the behavior around these types.
 //
 // This module holds types, constants, the badge copy and small pure helpers (the copy formatter and
 // the display order) only, so the browser bundle can import it. The validators live in
