@@ -117,6 +117,25 @@ describe("shape badge request gates and shared budget", () => {
     expect(take).toHaveBeenCalledOnce(); expect(s.calls).toHaveLength(0);
     expect(await errorCode(await classifyShapes(request(UNSAFE), s.deps), 503)).toBe("unavailable");
   });
+  it("answers unavailable for a missing provider key without spending a unit", async () => {
+    const s = setup(); s.deps.assist.config.tokenFactoryKey = null;
+    fillBudget(s.deps.assist.limiter, SESSION_LIMITS["bug-spec"] - 1);
+    const take = vi.spyOn(s.deps.assist.limiter, "take");
+    expect(await errorCode(await classifyShapes(request(), s.deps), 503)).toBe("unavailable");
+    expect(take).not.toHaveBeenCalled(); expect(s.calls).toHaveLength(0);
+    // The session's last unit is still there for the next request once the key is back.
+    s.deps.assist.config.tokenFactoryKey = "synthetic-token-factory-key";
+    expect((await result(await classifyShapes(request(), s.deps))).badges[0]?.outcome).toBe("open");
+    expect(take).toHaveBeenCalledOnce(); expect(s.calls).toHaveLength(1);
+  });
+  it("spends exactly one unit per request, including one whose provider call fails", async () => {
+    const s = setup(new Error("Synthetic provider failure"));
+    const take = vi.spyOn(s.deps.assist.limiter, "take");
+    expect(await errorCode(await classifyShapes(request(), s.deps), 503)).toBe("unavailable");
+    expect(take).toHaveBeenCalledOnce();
+    expect(await errorCode(await classifyShapes(request(), s.deps), 503)).toBe("unavailable");
+    expect(take).toHaveBeenCalledTimes(2); expect(s.calls).toHaveLength(2);
+  });
 });
 
 describe("shape badge classifier transport and outcomes", () => {
@@ -196,6 +215,33 @@ describe("shape badge classifier transport and outcomes", () => {
   });
 });
 
+describe("screening the model's badge text", () => {
+  it.each([
+    ["a security topic", "An attacker can read the saved task note."],
+    ["code", "const note = readNote(task);"],
+  ])("replaces an open translation that holds %s with null", async (_label, text) => {
+    const s = setup({ badges: [{ ...OPEN, translated_failure: text }] });
+    expect((await result(await classifyShapes(request(), s.deps))).badges[0]).toEqual({ index: 0, outcome: "open", proven_criterion_id: null, family: "data_handling", translated_failure: null, refusal_kind: null, reason: null });
+    expect(s.calls).toHaveLength(1);
+  });
+  it.each([
+    ["a security topic", "This shape describes a vulnerability in the task service."],
+    ["code", "const reason = refuse(shape);"],
+  ])("replaces a refusal reason that holds %s with the fixed reason", async (_label, text) => {
+    const s = setup({ badges: [{ ...REFUSED, reason: text }] });
+    expect((await result(await classifyShapes(request(), s.deps))).badges[0]).toEqual({ index: 0, outcome: "refused", proven_criterion_id: null, family: null, translated_failure: null, refusal_kind: "out_of_scope", reason: "This shape is outside what custom builds cover." });
+  });
+  it("keeps design words that only the input check refuses", async () => {
+    const text = "The cached path bypasses the note's comma handling.";
+    const s = setup({ badges: [{ ...OPEN, translated_failure: text }] });
+    expect((await result(await classifyShapes(request(), s.deps))).badges[0]?.translated_failure).toBe(text);
+  });
+  it("still refuses unsafe text on an outcome that must leave it empty", async () => {
+    const s = setup({ badges: [{ ...REFUSED, translated_failure: "An attacker can read the saved task note." }] });
+    expect(await errorCode(await classifyShapes(request(), s.deps), 503)).toBe("unavailable");
+  });
+});
+
 describe("unusable shape badge responses", () => {
   it.each([
     ["unknown envelope field", { badges: [OPEN], extra: true }],
@@ -239,10 +285,5 @@ describe("unusable shape badge responses", () => {
     const s = setup(answer);
     expect(await errorCode(await classifyShapes(request(), s.deps), 503)).toBe("unavailable");
     expect(s.calls).toHaveLength(1);
-  });
-  it("answers unavailable without a provider call when a safe shape needs an absent key", async () => {
-    const s = setup(); s.deps.assist.config.tokenFactoryKey = null;
-    expect(await errorCode(await classifyShapes(request(), s.deps), 503)).toBe("unavailable");
-    expect(s.calls).toHaveLength(0);
   });
 });

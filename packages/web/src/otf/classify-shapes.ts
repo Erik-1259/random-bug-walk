@@ -4,7 +4,7 @@ import { Ajv2020 } from "ajv/dist/2020.js";
 import type { AssistDeps } from "../assist/handlers.ts";
 import { MAX_TOKENS } from "../assist/limits.ts";
 import { structuredChat } from "../assist/providers.ts";
-import { holdsCode, securityTopic } from "../assist/safety.ts";
+import { designSecurityTopic, holdsCode, securityTopic } from "../assist/safety.ts";
 import { assistDeps } from "../assist/server.ts";
 import { DEFAULT_ASSIST_MODEL, loadFactoryConfig } from "../config.ts";
 import { readBody } from "../factory-server/http.ts";
@@ -36,6 +36,9 @@ export function shapeBadgesEnabled(env: Readonly<Record<string, string | undefin
   return env[OTF_SHAPE_BADGES_FLAG] === "1" && openBehaviorsEnabled(env);
 }
 const unsafe = (text: string): boolean => securityTopic(text) || holdsCode(text);
+// The model's own text gets the output check /classify applies to a rule's observable_failure.
+const unsafeAnswer = (text: string): boolean => designSecurityTopic(text) || holdsCode(text);
+const SCREENED_REASON = "This shape is outside what custom builds cover.";
 function localRefusal(index: number): OtfShapeBadge {
   return { index, outcome: "refused", proven_criterion_id: null, family: null, translated_failure: null,
     refusal_kind: "security", reason: "This shape names a security topic or contains code; custom builds cover non-security behavior in plain words." };
@@ -53,8 +56,6 @@ export async function classifyShapes(request: Request, deps: ShapeBadgesDeps): P
   const parsed = parseShapeBadgesRequest(read.value);
   if (!parsed.ok) return failure("invalid_request");
   const input = parsed.value;
-  // All-local refusals count once too: one request never charges once per shape.
-  if (!take(deps.assist, request)) return failure("unavailable");
   const local: OtfShapeBadge[] = [];
   const shapes = input.shapes.flatMap((shape, index) => {
     if (!unsafe(shape.title) && !unsafe(shape.summary)) return [{ index, ...shape }];
@@ -62,12 +63,16 @@ export async function classifyShapes(request: Request, deps: ShapeBadgesDeps): P
     return [];
   });
   let modeled: WireBadge[] = [];
+  // Every request costs exactly one unit, taken once nothing else can refuse it: all-local refusals
+  // count once too, and one request never charges once per shape.
+  if (shapes.length === 0 && !take(deps.assist, request)) return failure("unavailable");
   if (shapes.length > 0) {
     const apiKey = deps.assist.config.tokenFactoryKey;
     if (apiKey === null) return failure("unavailable");
     // Query edits can repeat a blocked shape's text; exclude that context without changing safe
     // shapes' eligibility. The prompt decides each shape from its own title and summary.
     const query = unsafe(input.query) ? "Query omitted because it names a security topic or contains code." : input.query;
+    if (!take(deps.assist, request)) return failure("unavailable");
     let output: Awaited<ReturnType<typeof structuredChat>>;
     try {
       output = await structuredChat(deps.assist.fetch, { apiKey, model: DEFAULT_ASSIST_MODEL,
@@ -85,9 +90,12 @@ export async function classifyShapes(request: Request, deps: ShapeBadgesDeps): P
   const badges = [...local, ...modeled.map((badge) => ({ ...badge,
     proven_criterion_id: badge.proven_criterion_id === "none" ? null : badge.proven_criterion_id,
     family: badge.family === "none" ? null : badge.family,
-    translated_failure: badge.translated_failure === "" ? null : badge.translated_failure,
+    // Unsafe model text is replaced, never shown: an open badge's translation becomes null (the page
+    // then shows its fixed fallback detail) and a refusal's reason becomes a fixed one. Text on the
+    // wrong outcome is left as written so validation below still refuses it.
+    translated_failure: badge.translated_failure === "" || (badge.outcome === "open" && unsafeAnswer(badge.translated_failure)) ? null : badge.translated_failure,
     refusal_kind: badge.refusal_kind === "none" ? null : badge.refusal_kind,
-    reason: badge.reason === "" ? null : badge.reason,
+    reason: badge.reason === "" ? null : badge.outcome === "refused" && unsafeAnswer(badge.reason) ? SCREENED_REASON : badge.reason,
   }))];
   const body = { badges, model: DEFAULT_ASSIST_MODEL };
   // Validate the complete batch, including the local entries, before ordering. Inconsistent fields,
