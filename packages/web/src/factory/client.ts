@@ -317,7 +317,9 @@ export class FactoryController {
   pollAfter(): number { return Math.max(1000, this.nextPollAt - this.now()); }
   needsPoll(): boolean { return this.view.signedIn && this.view.requestId !== null && (this.moreEvents || this.refreshAfterValidation || this.view.status?.state !== "finished" || this.view.status.attention !== null || this.view.status.cases.some(item => item.validation !== null && item.validation.state !== "finished") || (this.validationIdentity !== null && this.view.validation?.state !== "finished")); }
   async poll() {
-    if (this.view.busy || this.view.stopPending || !this.view.signedIn || this.now() < this.nextPollAt) return;
+    if (this.view.busy || this.view.stopPending || !this.view.signedIn) return;
+    // A browser timer can fire a few milliseconds early. Publish the view again so the workspace arms the next timer.
+    if (this.now() < this.nextPollAt) { this.update({}); return; }
     const failures = this.failures;
     const polling = Promise.resolve().then(async () => {
       try { await this.readStatus(); if (this.validationIdentity !== null && this.view.validation?.state !== "finished") await this.readValidation(); if (this.failures === failures) this.failures = 0; }
