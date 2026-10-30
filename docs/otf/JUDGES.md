@@ -28,9 +28,9 @@ Use the `/factory` page with a judge-passcode session. This guide follows the [m
 
 7. **Optionally validate the stored bundles.** Choose “Validate stored bundles”. For task-report: “Optional validation re-runs the six cells on the RBW builder.” For Umami: “Optional validation re-runs the admission sequence on the RBW builder from the stored bundles.” `queued` and `running` are pending states. Read the completed cells and admission result: `passed`, `failed` and `error` are distinct outcomes. A validation error is not a pass. If the builder machine stops while a validation runs, that validation ends as `error`; you can validate again. A host refusal says “Validation was not started.” followed by the host's reason. With no answer to a validation request, the page says “Your validation request has no answer yet. Refresh to check it, or validate again: a validation already queued is answered, not repeated.” Use “Refresh custom build” to check its status. The unanswered request is not a successful validation.
 
-## Open behaviors (not available yet)
+## Open behaviors
 
-Open behaviors are not available yet. Until they ship, the picker offers only the three proven behaviors above. This section describes the design in the [OTF specification](SPEC.md#8-open-behaviors).
+Besides the three proven behaviors, the picker offers open behaviors on the task-report service. This section follows the design in the [OTF specification](SPEC.md#8-open-behaviors).
 
 An open behavior is any other non-security behavior of the task-report service. Open behaviors are built only on the task-report service; Umami stays limited to the time-zone date/time criterion.
 
