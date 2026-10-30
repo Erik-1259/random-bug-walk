@@ -60,6 +60,14 @@ export function handoffDesignerSpec(state: DesignerState, onBuild: (design: Cust
     ...(matching ? { shapeSearch: structuredClone(shapeSearch) } : {}) });
 }
 
+/** The designer's dispatch: the order freezes as the pick is made, before the next render, so arriving badges never move the selection. */
+export function freezeOnPick(state: DesignerState, badges: Pick<ShapeBadgesController, "freeze">, dispatch: Dispatch<DesignerAction>): Dispatch<DesignerAction> {
+  return (action) => {
+    if (action.type === "pick_shape" && state.shapes !== null) badges.freeze(state.shapes);
+    dispatch(action);
+  };
+}
+
 export interface BugDesignerProps {
   signedIn: boolean;
   capabilities: Capabilities | null;
@@ -109,11 +117,7 @@ export function BugDesigner({ client = assistClient, badgeClient = otfClient, ..
     const shown = state.shapes;
     props.onBuildCustom?.(design.shapeSearch === undefined || shown === null ? design : { ...design, shapeBadges: badges.settled(shown) });
   };
-  // The order freezes as the pick is made, before the next render, so arriving badges never move the selection.
-  const send: Dispatch<DesignerAction> = (action) => {
-    if (action.type === "pick_shape" && state.shapes !== null) badges.freeze(state.shapes);
-    dispatch(action);
-  };
+  const send = freezeOnPick(state, badges, dispatch);
   return <BugDesignerView {...props} onBuildCustom={props.onBuildCustom === undefined ? undefined : handoff} state={state} shapeBadges={badgeState} dispatch={send} onSearch={() => { void search(); }} onWrite={() => { void write(); }} />;
 }
 

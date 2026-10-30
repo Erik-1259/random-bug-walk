@@ -1,15 +1,16 @@
+import { isValidElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import type { AssistClient, BugSpec } from "../../src/assist/client.ts";
-import { INITIAL_DESIGNER, specKey, type DesignerState } from "../../src/assist/designer-state.ts";
-import { BugDesignerView, handoffDesignerSpec, type BugDesignerViewProps, type CustomBuildDesign } from "../../src/components/bug-designer.tsx";
+import { designerReducer, INITIAL_DESIGNER, specKey, type DesignerAction, type DesignerState } from "../../src/assist/designer-state.ts";
+import { BugDesignerView, freezeOnPick, handoffDesignerSpec, type BugDesignerViewProps, type CustomBuildDesign } from "../../src/components/bug-designer.tsx";
 import { OtfDraftController } from "../../src/components/otf/draft.ts";
-import type { ShapeBadgesSnapshot, ShapeSearchContext } from "../../src/components/otf/shape-badge-state.ts";
+import { shapeBadgeGroups, ShapeBadgesController, type ShapeBadgesSnapshot, type ShapeSearchContext } from "../../src/components/otf/shape-badge-state.ts";
 import { OtfWorkspaceView, type OtfWorkspaceViewProps } from "../../src/components/otf/workspace.tsx";
-import { OtfController, type OtfClient } from "../../src/otf/client.ts";
+import { OtfController, type OtfClient, type ShapeBadgesClient } from "../../src/otf/client.ts";
 import { ruleSha256 } from "../../src/otf/canonical.ts";
 import { OTF_OPEN_CRITERION_ID, type OtfAvailability, type OtfClassification, type OtfJobStatus } from "../../src/otf/contract.ts";
-import { SHAPE_BADGE_COPY, type OtfShapeBadge } from "../../src/otf/shape-badges-contract.ts";
+import { SHAPE_BADGE_COPY, type OtfShapeBadge, type OtfShapeBadges } from "../../src/otf/shape-badges-contract.ts";
 
 const ids = ["00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002", "00000000-0000-4000-8000-000000000003"] as const;
 const time = "2026-10-30T00:00:00Z";
@@ -44,6 +45,14 @@ const noop = () => undefined;
 function render(extra: Partial<BugDesignerViewProps> = {}) {
   return renderToStaticMarkup(<BugDesignerView state={written} signedIn capabilities={null} applyBlocked={null} onUsePlan={noop} dispatch={noop} onSearch={noop} onWrite={noop}
     otfEnabled customBuildOffered onBuildCustom={noop} {...extra} />);
+}
+/** Presses a button by its text in the designer's element tree, the way a click calls its handler; the designer's components use no hooks. */
+function press(node: ReactNode, label: string): boolean {
+  if (Array.isArray(node)) return node.some((child: ReactNode) => press(child, label));
+  if (!isValidElement<{ children?: ReactNode; onClick?: () => void }>(node)) return false;
+  if (typeof node.type === "function") return press((node.type as (props: unknown) => ReactNode)(node.props), label);
+  if (node.type === "button" && node.props.children === label) { node.props.onClick?.(); return true; }
+  return press(node.props.children, label);
 }
 const workspace: OtfWorkspaceViewProps = { availability, status: null, pending: false, busy: false, designing: false, signedIn: true, criterionId: OTF_OPEN_CRITERION_ID,
   sentence: "Synthetic updates", spec: card, message: null, canRetryCreate: false, canNewDraft: false, onBehavior: noop, onSentence: noop, onSpec: noop, onDesign: noop, onAccept: noop,
@@ -108,6 +117,41 @@ describe("shape badges in the designer", () => {
     expect(sent).toHaveBeenCalledExactlyOnceWith({ spec: card, query: written.query, hostId: "task-report", shapeSearch });
     expect(sent.mock.calls[0]?.[0].shapeSearch).not.toBe(shapeSearch);
     expect(sent.mock.calls[0]?.[0].shapeSearch?.badges).not.toBe(badges);
+  });
+  it("hands on the judge's submitted query, not the provider's, when \u201cBuild this as a custom bug\u201d is pressed", () => {
+    const sent = vi.fn<(design: CustomBuildDesign) => void>();
+    const view = BugDesignerView({ state: written, signedIn: true, capabilities: null, applyBlocked: null, onUsePlan: noop, dispatch: noop, onSearch: noop, onWrite: noop,
+      otfEnabled: true, customBuildOffered: true, onBuildCustom: sent, shapeBadgesEnabled: true, otfAvailability: availability, shapeBadges: snapshot({ badges }) });
+    expect(press(view, "Build this as a custom bug")).toBe(true);
+    expect(sent).toHaveBeenCalledOnce();
+    expect(sent.mock.calls[0]?.[0].shapeSearch?.query).toBe("Synthetic updates");
+    expect(search.search.query).toBe("Synthetic updates bug report");
+  });
+  it("keeps the designer's order when the badges arrive after a pick but before the next render", async () => {
+    const answers: { request: Parameters<ShapeBadgesClient["classifyShapes"]>[0]; finish: (value: OtfShapeBadges) => void }[] = [];
+    const client: ShapeBadgesClient = { classifyShapes: request => new Promise(finish => { answers.push({ request, finish }); }) };
+    const controller = new ShapeBadgesController(client);
+    let state = listed;
+    const sync = () => {
+      const groups = shapeBadgeGroups(state.shapes, state.searchQuery, true, availability);
+      if (groups === null || state.shapes === null) throw new Error("Synthetic badge groups are missing.");
+      controller.sync({ search: state.shapes, groups, signedIn: true, selectedShapeId: state.shapeId, availability });
+    };
+    sync();
+    expect(answers).toHaveLength(2);
+    freezeOnPick(state, controller, (action: DesignerAction) => { state = designerReducer(state, action); })({ type: "pick_shape", shapeId: ids[0] });
+    // Shape 0 is refused and shape 2 is proven, so an unfrozen list would move shape 2 above the picked shape.
+    for (const { request, finish } of answers) {
+      const own = badges.filter(badge => (badge.index === 1) === (request.host_id === "umami"));
+      finish({ model: "synthetic-classifier", badges: own.map((badge, index) => ({ ...badge, index })) });
+    }
+    await new Promise(resolve => { setTimeout(resolve, 0); });
+    sync();
+    expect(controller.snapshot().badges).toHaveLength(3);
+    expect(controller.snapshot().order).toBeNull();
+    const html = render({ state, shapeBadgesEnabled: true, otfAvailability: availability, shapeBadges: controller.snapshot() });
+    expect(html.indexOf("Synthetic shape 0")).toBeLessThan(html.indexOf("Synthetic shape 1"));
+    expect(html.indexOf("Synthetic shape 1")).toBeLessThan(html.indexOf("Synthetic shape 2"));
   });
   it("attaches the search after a Step 3 host change, but never another search's badges or the provider's query", () => {
     const sent = vi.fn<(design: CustomBuildDesign) => void>();
