@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { RateLimiter } from "../../src/assist/limits.ts";
 import { CHAT_COMPLETIONS_URL } from "../../src/assist/providers.ts";
 import { factorySessionCookie } from "../../src/factory-server/session.ts";
+import { CLASSIFY_SYSTEM_PROMPT } from "../../src/otf/classify-prompt.ts";
 import { classify, CLASSIFIER_MODEL, handleOtfClassify, ruleRouteProblems, type ClassifyDeps } from "../../src/otf/classify.ts";
 import { OTF_CLASSIFY_PATH, OTF_OPEN_CRITERION_ID, type OtfClassifyRequest } from "../../src/otf/contract.ts";
 import { openBehaviorsEnabled } from "../../src/otf/open.ts";
@@ -170,6 +171,18 @@ describe("OTF classifier", () => {
     expect(s.calls[0]?.body).toMatchObject({ model: CLASSIFIER_MODEL, temperature: 0.2, chat_template_kwargs: { enable_thinking: false }, response_format: { type: "json_schema", json_schema: { strict: true } } });
     expect(s.calls[0]?.body).not.toHaveProperty("tools");
     expect(s.calls[0]?.headers.get("authorization")).toBe("Bearer synthetic-token-factory-key");
+  });
+  it("chooses a proven behavior only when the card states its mechanism", async () => {
+    const s = setup(OPEN);
+    await classify(request(), s.deps);
+    expect(s.calls[0]?.body.messages).toContainEqual({ role: "system", content: CLASSIFY_SYSTEM_PROMPT });
+    for (const sentence of [
+      "- \"proven\": only when the card explicitly states the mechanism of one proven behavior, not just its topic or symptom.",
+      "The two concurrency behaviors require the card to say that two or more requests overlap (run concurrently, at the same time, in parallel or racing); a lost, stale or mismatched value with no stated overlap is \"open\".",
+      "The time-zone behavior requires the card to say that results are bucketed or grouped in a different time zone from the one requested or configured (for example UTC or the server's zone instead of the viewer's); a boundary, inclusive/exclusive, rounding or off-by-one error inside the correct time zone is \"open\".",
+      "If the card does not state the mechanism, the decision is not \"proven\"; decide between \"open\", \"out_of_scope\" and \"security\" exactly as the rules below say, as if no proven behavior existed.",
+    ]) expect(CLASSIFY_SYSTEM_PROMPT).toContain(sentence);
+    expect(CLASSIFY_SYSTEM_PROMPT).not.toContain("same mechanism, not just the same topic");
   });
   it.each([
     ["concurrency.lost-acknowledged-change", "concurrency", "task-report"],
