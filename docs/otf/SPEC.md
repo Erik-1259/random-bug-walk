@@ -511,7 +511,7 @@ The two apps offer different scope:
 **An Umami card about anything else.** Such a card is never built on Umami.
 - When the behavior could plausibly exist in a task-and-report service, the classifier translates the card into the closest equivalent failure there. It offers that failure as a task-report open behavior with a rule, and the build runs and qualifies in the task-report service.
 - Otherwise the card is refused as out of scope (section 8.6).
-- The translated rule names task-report routes, and the custom-build panel says "Builds in the task-report service, not Umami", so before accepting, the customer can see where the build runs.
+- The translated rule names only task-report routes, and the open behavior is listed under the task-report service in the picker, so before accepting, the customer can see where the build runs.
 
 **Why Umami stays time-zone only.**
 - **The builder's Umami path is purpose-built.** Its lane instructions, its admission sequence and its qualification run are all designed around Umami's date-grouped reports and the time-zone behavior. They assume the bug lands in one of those reports and that the added checks detect it there. That path has no place for an arbitrary rule.
