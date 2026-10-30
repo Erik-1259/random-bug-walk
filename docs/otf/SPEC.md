@@ -548,9 +548,9 @@ The bug designer shows 3 to 5 shapes after a search. With shape badges on, each 
   - `outcome`: `proven`, `open` or `refused`.
   - `proven_criterion_id`: set exactly when the outcome is `proven`. On an Umami search it may only be `date_time.time-zone-grouping`; on a task-report search, only one of the two concurrency criteria (`SHAPE_PROVEN_BY_HOST`).
   - `family`: an `OTF_OPEN_FAMILIES` value, null exactly when the outcome is `refused`. A proven badge names its criterion's own family (`provenFamily`).
-  - `translated_failure`: `open` only, otherwise null. On an open badge it is one plain-text sentence of 20 to 200 characters, or null. It is the user-visible failure as it would appear in the task-report service (for an Umami search, translated into task-report terms).
+  - `translated_failure`: `open` only, otherwise null. On an open badge it is short plain text of 20 to 200 characters, or null; the prompt asks for one sentence, and the validator enforces only the length and plain text, so a stray second sentence never blanks a search's badges. It is the user-visible failure as it would appear in the task-report service (for an Umami search, translated into task-report terms).
   - `refusal_kind`: `security` or `out_of_scope`, set exactly when the outcome is `refused`.
-  - `reason`: `refused` only, otherwise null. On a refused badge it is one plain-text sentence of 1 to 160 characters.
+  - `reason`: `refused` only, otherwise null. On a refused badge it is short plain text of 1 to 160 characters (one sentence requested; length and plain text enforced).
   - `model`: the classifier model.
 - Lengths count Unicode code points, and plain text follows `OtfOpenRule.observable_failure` (no `\p{Cc}`, `\p{Cf}`, `\p{Zl}` or `\p{Zp}` characters; section 8.3). The request's query, titles and summaries are not held to plain text. Unknown members are refused in the request and the answer.
 - `validateShapeBadges(answer, request)` checks an answer against its request, since the index range and the allowed proven criteria depend on the request's shape count and host.

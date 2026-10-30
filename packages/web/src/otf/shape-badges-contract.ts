@@ -36,10 +36,10 @@ export const SHAPE_BADGES_SUMMARY_MAX_CHARS = SHAPE_SUMMARY_MAX_CHARS;
 /** Shapes per request. */
 export const SHAPE_BADGES_MIN_SHAPES = 1;
 export const SHAPE_BADGES_MAX_SHAPES = 5;
-/** An open badge's translated_failure: one plain-text sentence. */
+/** An open badge's translated_failure: short plain text (one sentence requested; length and plain text enforced). */
 export const TRANSLATED_FAILURE_MIN_CHARS = 20;
 export const TRANSLATED_FAILURE_MAX_CHARS = 200;
-/** A refused badge's reason: one plain-text sentence. */
+/** A refused badge's reason: short plain text (one sentence requested; length and plain text enforced). */
 export const SHAPE_REASON_MIN_CHARS = 1;
 export const SHAPE_REASON_MAX_CHARS = 160;
 
@@ -91,7 +91,7 @@ export interface OtfShapeBadgesRequest {
  * One shape's badge. index points into the request's shapes, and every index appears exactly once.
  * Which members are set follows the outcome (the validator enforces it):
  * - proven: proven_criterion_id is one of SHAPE_PROVEN_BY_HOST[host_id] and family is its family;
- * - open: family is set; translated_failure is one plain-text sentence, or null when the server has none;
+ * - open: family is set; translated_failure is short plain text, or null when the server has none;
  * - refused: refusal_kind and reason are set; everything else is null.
  */
 export type OtfShapeBadge =
