@@ -5,6 +5,8 @@ export interface DesignerState {
   query: string;
   busy: "shapes" | "spec" | null;
   shapes: ShapesResult | null;
+  /** The trimmed query the judge submitted for the shapes shown (the search provider's own string may add words). */
+  searchQuery: string | null;
   shapeId: string | null;
   hostId: AssistHostId | null;
   spec: SpecResult | null;
@@ -27,14 +29,14 @@ export type DesignerAction =
   | { type: "applied"; appliedFor: string }
   | { type: "retry" };
 
-export const INITIAL_DESIGNER: DesignerState = { query: "", busy: null, shapes: null, shapeId: null, hostId: null, spec: null, specFor: null, failure: null, appliedFor: null };
+export const INITIAL_DESIGNER: DesignerState = { query: "", busy: null, shapes: null, searchQuery: null, shapeId: null, hostId: null, spec: null, specFor: null, failure: null, appliedFor: null };
 
 export const specKey = (shapeId: string, hostId: AssistHostId): string => `${shapeId}|${hostId}`;
 
 export function designerReducer(state: DesignerState, action: DesignerAction): DesignerState {
   switch (action.type) {
     case "query": return { ...state, query: action.query };
-    case "search": return { ...state, busy: "shapes", failure: null, shapes: null, shapeId: null, hostId: null, spec: null, specFor: null, appliedFor: null };
+    case "search": return { ...state, busy: "shapes", failure: null, shapes: null, searchQuery: state.query.trim(), shapeId: null, hostId: null, spec: null, specFor: null, appliedFor: null };
     case "shapes": return { ...state, busy: null, shapes: action.result };
     case "pick_shape": {
       const fit = state.shapes?.shapes.find((shape) => shape.id === action.shapeId)?.fit ?? null;

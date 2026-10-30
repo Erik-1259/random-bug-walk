@@ -1,11 +1,18 @@
 "use client";
 
-import { useReducer, type Dispatch } from "react";
+import { useEffect, useMemo, useReducer, useState, useSyncExternalStore, type Dispatch } from "react";
 import { ASSIST_HOSTS, assistClient, queryProblem, type AssistClient, type AssistFailure, type AssistHostId, type BugSpec } from "../assist/client.ts";
 import { currentSpec, designerReducer, INITIAL_DESIGNER, specKey, type DesignerAction, type DesignerState } from "../assist/designer-state.ts";
 import { planFromShape, type FactoryPlan } from "../assist/plan.ts";
 import type { Capabilities } from "../factory/client.ts";
 import { CALENDAR_HINT, calendarClosedHosts, calendarFallback, formatDateTime } from "../factory/format.ts";
+import { canonicalJson } from "../otf/canonical.ts";
+import { otfClient, type ShapeBadgesClient } from "../otf/client.ts";
+import type { OtfAvailability } from "../otf/contract.ts";
+import { SHAPE_BADGE_COPY, type OtfShapeBadge } from "../otf/shape-badges-contract.ts";
+import { classificationAvailable } from "./otf/draft.ts";
+import { ShapeBadgesController, shapeBadgeGroups, shapeBadgeHost, shapeBadgesFor, shapeBadgeStatus, visibleShapeBadges, type ShapeBadgesSnapshot, type ShapeSearchContext } from "./otf/shape-badge-state.ts";
+import { ShapeBadgeView } from "./otf/shape-badges.tsx";
 
 export const DESIGNER_EXAMPLES: readonly string[] = ["date/time bugs", "race conditions", "lost updates"];
 export const DESIGNER_CREDIT = "Designed by NVIDIA Nemotron 3.5 Super on Nebius Token Factory · sources found with Tavily";
@@ -38,13 +45,27 @@ export interface CustomBuildDesign {
   spec: BugSpec;
   query: string;
   hostId: AssistHostId;
+  shapeSearch?: ShapeSearchContext;
+  /** A badge call already in progress can finish after the card is handed off. */
+  shapeBadges?: Promise<OtfShapeBadge[] | null>;
 }
 
 /** Copies only the current finished card into the custom-build draft; accepting that draft is separate. */
-export function handoffDesignerSpec(state: DesignerState, onBuild: (design: CustomBuildDesign) => void): void {
+export function handoffDesignerSpec(state: DesignerState, onBuild: (design: CustomBuildDesign) => void, shapeSearch?: ShapeSearchContext | null): void {
   const result = currentSpec(state);
   if (state.busy !== null || result === null || state.hostId === null) return;
-  onBuild({ spec: { ...result.spec, checks_to_add: [...result.spec.checks_to_add] }, query: state.query, hostId: state.hostId });
+  const matching = shapeSearch?.selectedShapeId === state.shapeId && shapeSearch.query === state.searchQuery
+    && state.shapes !== null && canonicalJson(shapeSearch.shapes) === canonicalJson(state.shapes.shapes);
+  onBuild({ spec: { ...result.spec, checks_to_add: [...result.spec.checks_to_add] }, query: state.query, hostId: state.hostId,
+    ...(matching ? { shapeSearch: structuredClone(shapeSearch) } : {}) });
+}
+
+/** The designer's dispatch: the order freezes as the pick is made, before the next render, so arriving badges never move the selection. */
+export function freezeOnPick(state: DesignerState, badges: Pick<ShapeBadgesController, "freeze">, dispatch: Dispatch<DesignerAction>): Dispatch<DesignerAction> {
+  return (action) => {
+    if (action.type === "pick_shape" && state.shapes !== null) badges.freeze(state.shapes);
+    dispatch(action);
+  };
 }
 
 export interface BugDesignerProps {
@@ -58,14 +79,31 @@ export interface BugDesignerProps {
   client?: AssistClient;
   otfEnabled?: boolean;
   onBuildCustom?: (design: CustomBuildDesign) => void;
+  /** Called when a badge call answers signed_out, so the page re-checks the shared session. */
+  onSignedOut?: () => void;
   /** The open behavior is offered, so a card may be handed to the custom-build panel; false shows no handoff at all. */
   customBuildOffered?: boolean;
   /** A short reason the handoff is held for now (the panel is busy or a custom build is saved), or null. */
   customBuildBlocked?: string | null;
+  shapeBadgesEnabled?: boolean;
+  otfAvailability?: OtfAvailability | null;
+  badgeClient?: ShapeBadgesClient;
 }
 
-export function BugDesigner({ client = assistClient, ...props }: BugDesignerProps) {
+export function BugDesigner({ client = assistClient, badgeClient = otfClient, ...props }: BugDesignerProps) {
   const [state, dispatch] = useReducer(designerReducer, INITIAL_DESIGNER);
+  const [badges] = useState(() => new ShapeBadgesController(badgeClient));
+  // A signed_out badge answer re-checks the shared session, as the custom-build panel does.
+  const onSignedOut = props.onSignedOut;
+  useEffect(() => { badges.onSignedOut = () => { onSignedOut?.(); }; }, [badges, onSignedOut]);
+  const badgeState = useSyncExternalStore(badges.subscribe, badges.snapshot, badges.snapshot);
+  const availability = props.otfAvailability ?? null;
+  const groups = useMemo(() => shapeBadgeGroups(state.shapes, state.searchQuery, props.shapeBadgesEnabled === true, availability),
+    [state.shapes, state.searchQuery, props.shapeBadgesEnabled, availability]);
+  // badgeState is a dependency on purpose: a transient failure gets its one retry on the next render for the same search.
+  useEffect(() => {
+    badges.sync(groups === null || state.shapes === null ? null : { search: state.shapes, groups, signedIn: props.signedIn, selectedShapeId: state.shapeId, availability });
+  }, [badges, groups, state.shapes, state.shapeId, props.signedIn, availability, badgeState]);
   const search = async () => {
     if (state.busy !== null || queryProblem(state.query) !== null) return;
     dispatch({ type: "search" });
@@ -80,7 +118,12 @@ export function BugDesigner({ client = assistClient, ...props }: BugDesignerProp
     const outcome = await client.bugSpec(shape, hostId);
     dispatch(outcome.ok ? { type: "spec", result: outcome.value, specFor: specKey(shape.id, hostId) } : { type: "failed", failure: outcome.failure });
   };
-  return <BugDesignerView {...props} state={state} dispatch={dispatch} onSearch={() => { void search(); }} onWrite={() => { void write(); }} />;
+  const handoff = (design: CustomBuildDesign) => {
+    const shown = state.shapes;
+    props.onBuildCustom?.(design.shapeSearch === undefined || shown === null ? design : { ...design, shapeBadges: badges.settled(shown) });
+  };
+  const send = freezeOnPick(state, badges, dispatch);
+  return <BugDesignerView {...props} onBuildCustom={props.onBuildCustom === undefined ? undefined : handoff} state={state} shapeBadges={badgeState} dispatch={send} onSearch={() => { void search(); }} onWrite={() => { void write(); }} />;
 }
 
 export interface BugDesignerViewProps extends Omit<BugDesignerProps, "client"> {
@@ -88,10 +131,12 @@ export interface BugDesignerViewProps extends Omit<BugDesignerProps, "client"> {
   dispatch: Dispatch<DesignerAction>;
   onSearch: () => void;
   onWrite: () => void;
+  shapeBadges?: ShapeBadgesSnapshot;
 }
 
 /** Everything the designer shows, from its state; BugDesigner supplies the state and the calls. */
-export function BugDesignerView({ signedIn, capabilities, closedHosts = calendarClosedHosts(capabilities), applyBlocked, onUsePlan, state, dispatch, onSearch, onWrite, otfEnabled = false, onBuildCustom, customBuildOffered = false, customBuildBlocked = null }: BugDesignerViewProps) {
+export function BugDesignerView({ signedIn, capabilities, closedHosts = calendarClosedHosts(capabilities), applyBlocked, onUsePlan, state, dispatch, onSearch, onWrite, otfEnabled = false, onBuildCustom, customBuildOffered = false, customBuildBlocked = null,
+  shapeBadgesEnabled = false, otfAvailability = null, shapeBadges }: BugDesignerViewProps) {
   const header = <>
     <h2 id="designer-heading">Find a bug for your agent evaluation</h2>
     <p>Describe a kind of bug. The designer searches the public web for real bug reports of that kind, sums them up as a few bug shapes, and writes a bug specification for one of the two applications. Non-security bugs only: date and time, concurrency, data handling, state and UI logic.</p>
@@ -109,6 +154,13 @@ export function BugDesignerView({ signedIn, capabilities, closedHosts = calendar
   </section>;
   const problem = queryProblem(state.query);
   const shapes = state.shapes;
+  // Badges are requested as soon as the shapes appear, one request per designer-suggested host; they inform and never block a pick.
+  const badgeView = shapeBadgesEnabled && classificationAvailable(otfAvailability) ? shapeBadgesFor(shapeBadges, shapes) : null;
+  const shownBadges = badgeView === null || shapes === null ? [] : visibleShapeBadges(shapes.shapes, badgeView.badges, otfAvailability);
+  const badgeStatus = badgeView === null ? null : shapeBadgeStatus(badgeView.pending.includes(true), shownBadges);
+  const displayOrder = badgeView?.order ?? shapes?.shapes.map((_item, index) => index) ?? [];
+  const shapeSearch: ShapeSearchContext | null = badgeView !== null && shapes !== null && state.shapeId !== null && state.searchQuery !== null
+    ? { query: state.searchQuery, shapes: shapes.shapes, badges: shownBadges, selectedShapeId: state.shapeId } : null;
   const shape = shapes?.shapes.find((item) => item.id === state.shapeId) ?? null;
   const spec = currentSpec(state);
   // The note follows whether the handoff is offered for this card, not a brief busy state, so it stays put while a card is classified.
@@ -129,15 +181,21 @@ export function BugDesignerView({ signedIn, capabilities, closedHosts = calendar
     <div role="status" aria-live="polite" className="designer-live">
       {busyText !== null && <p>{busyText}</p>}
       {busyText === null && shapes !== null && <p>Found {shapes.shapes.length} bug {shapes.shapes.length === 1 ? "shape" : "shapes"} from {shapes.search.result_count} public {shapes.search.result_count === 1 ? "result" : "results"}.</p>}
+      {busyText === null && badgeStatus !== null && <p>{badgeStatus}</p>}
     </div>
     {failure !== null && <p className="designer-notice designer-notice-warn" role="alert">{describeAssistFailure(failure)}</p>}
     {shapes !== null && <fieldset className="designer-shapes" disabled={state.busy !== null}>
       <legend>Step 2: pick a bug shape</legend>
       <p className="factory-note">Search for “{shapes.search.query}” on <time dateTime={shapes.search.at}>{formatDateTime(shapes.search.at)}</time>. Written by <code>{shapes.model.model_id}</code>.</p>
-      <ul className="designer-list">{shapes.shapes.map((item) => <li key={item.id} className="designer-card">
+      <ul className="designer-list">{displayOrder.flatMap((index) => {
+        const item = shapes.shapes[index];
+        return item === undefined ? [] : [{ item, index, badge: shownBadges.find((entry) => entry.index === index) ?? null }];
+      }).map(({ item, index, badge }) => <li key={item.id} className="designer-card">
         <label><input type="radio" name="designer-shape" value={item.id} checked={state.shapeId === item.id}
           onChange={() => { dispatch({ type: "pick_shape", shapeId: item.id }); }} /> {item.title}</label>
         <p>{item.summary}</p>
+        {badgeView?.pending[index] === true ? <p className="factory-note">{SHAPE_BADGE_COPY.loading}</p>
+          : badge !== null && <ShapeBadgeView badge={badge} hostId={shapeBadgeHost(item)} availability={otfAvailability} />}
         <p>{item.fit === null
           ? "No proven bug in the catalog matches this shape yet."
           : <>Closest proven bug: {hostLabel(capabilities, item.fit.host_id)}, {bugTypeLabel(capabilities, item.fit.bug_type_id)} — “{item.fit.phrase}”.</>}
@@ -154,14 +212,14 @@ export function BugDesignerView({ signedIn, capabilities, closedHosts = calendar
       <button type="button" disabled={state.busy !== null || state.hostId === null} onClick={onWrite}>Write the bug specification</button>
     </fieldset>}
     {shape !== null && spec !== null && state.hostId !== null && <SpecCard state={state} capabilities={capabilities} closedHosts={closedHosts} applyBlocked={applyBlocked} onUsePlan={onUsePlan} dispatch={dispatch}
-      onBuildCustom={otfEnabled && customBuildOffered ? onBuildCustom : undefined} customBuildBlocked={customBuildBlocked} />}
+      onBuildCustom={otfEnabled && customBuildOffered ? onBuildCustom : undefined} customBuildBlocked={customBuildBlocked} shapeSearch={shapeSearch} />}
     <p className="factory-note">{handoffShown ? CUSTOM_BUILD_DESIGNER_NOTE : otfEnabled ? OTF_DESIGNER_NOTE : CATALOG_HONESTY}</p>
   </section>;
 }
 
 let planCounter = 0;
 
-function SpecCard({ state, capabilities, closedHosts = [], applyBlocked, onUsePlan, dispatch, onBuildCustom, customBuildBlocked = null }: Pick<BugDesignerViewProps, "state" | "capabilities" | "closedHosts" | "applyBlocked" | "onUsePlan" | "dispatch" | "onBuildCustom" | "customBuildBlocked">) {
+function SpecCard({ state, capabilities, closedHosts = [], applyBlocked, onUsePlan, dispatch, onBuildCustom, customBuildBlocked = null, shapeSearch }: Pick<BugDesignerViewProps, "state" | "capabilities" | "closedHosts" | "applyBlocked" | "onUsePlan" | "dispatch" | "onBuildCustom" | "customBuildBlocked"> & { shapeSearch: ShapeSearchContext | null }) {
   const result = currentSpec(state);
   const shape = state.shapes?.shapes.find((item) => item.id === state.shapeId);
   const hostId = state.hostId;
@@ -184,7 +242,7 @@ function SpecCard({ state, capabilities, closedHosts = [], applyBlocked, onUsePl
     <p className="factory-note">Written by <code>{model.model_id}</code> on <time dateTime={model.at}>{formatDateTime(model.at)}</time>.</p>
     {onBuildCustom !== undefined && <>
       <button type="button" className="factory-button" disabled={state.busy !== null || customBuildBlocked !== null} aria-describedby={customBuildBlocked === null ? undefined : "designer-custom-blocked"}
-        onClick={() => { if (customBuildBlocked === null) handoffDesignerSpec(state, onBuildCustom); }}>Build this as a custom bug</button>
+        onClick={() => { if (customBuildBlocked === null) handoffDesignerSpec(state, onBuildCustom, shapeSearch); }}>Build this as a custom bug</button>
       {customBuildBlocked !== null && <p id="designer-custom-blocked" className="factory-note">{customBuildBlocked}</p>}
     </>}
     {closedHosts.includes(hostId)

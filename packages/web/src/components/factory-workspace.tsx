@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useSyncExternalStore } from "react";
 import type { FactoryPlan } from "../assist/plan.ts";
+import type { OtfAvailability } from "../otf/contract.ts";
 import { FactoryController, factoryClient, type Capabilities, type Interpretation } from "../factory/client.ts";
 import { CALENDAR_HINT, calendarClockDelay, calendarClosedHosts, calendarClosesPair, calendarFallback, calendarReopened, describeFactoryMessage, describeServiceState, formatExactUsd, formatUsd } from "../factory/format.ts";
 import { OtfWorkspace } from "./otf/workspace.tsx";
@@ -63,7 +64,7 @@ function FactoryAlert({ message }: { message: string }) {
   </div>;
 }
 
-export function FactoryWorkspace() {
+export function FactoryWorkspace({ shapeBadgesEnabled = false }: { shapeBadgesEnabled?: boolean }) {
   const [controller, setController] = useState<FactoryController | null>(null);
   useEffect(() => {
     // Storage is accessed only in the browser. The controller refuses a start if persistence fails.
@@ -76,12 +77,13 @@ export function FactoryWorkspace() {
     void instance.initialize();
   }, []);
   if (controller === null) return <p role="status">Live requests unavailable until service availability is confirmed. No work has started.</p>;
-  return <ConnectedWorkspace controller={controller} />;
+  return <ConnectedWorkspace controller={controller} shapeBadgesEnabled={shapeBadgesEnabled} />;
 }
 
-function ConnectedWorkspace({ controller }: { controller: FactoryController }) {
+function ConnectedWorkspace({ controller, shapeBadgesEnabled }: { controller: FactoryController; shapeBadgesEnabled: boolean }) {
   const view = useSyncExternalStore(controller.subscribe, controller.snapshot, controller.snapshot);
   const [otfEnabled, setOtfEnabled] = useState(false);
+  const [otfAvailability, setOtfAvailability] = useState<OtfAvailability | null>(null);
   const [customOffered, setCustomOffered] = useState(false);
   const [customBlocked, setCustomBlocked] = useState<string | null>(null);
   const [customDesign, setCustomDesign] = useState<CustomBuildDesign | null>(null);
@@ -122,8 +124,11 @@ function ConnectedWorkspace({ controller }: { controller: FactoryController }) {
       <input id="factory-passcode" type="password" autoComplete="current-password" value={passcode} onChange={(event) => { setPasscode(event.target.value); }} />
       <button type="submit" disabled={view.busy || passcode.length === 0}>Sign in to the request service</button>
     </form>}
-    <OtfWorkspace catalogController={controller} onAvailability={setOtfEnabled} handoff={customDesign} onCustomOffered={setCustomOffered} onCustomBlocked={setCustomBlocked} />
+    <OtfWorkspace catalogController={controller} onAvailability={setOtfEnabled} handoff={customDesign} onCustomOffered={setCustomOffered} onCustomBlocked={setCustomBlocked}
+      shapeBadgesEnabled={shapeBadgesEnabled} onOtfAvailability={setOtfAvailability} />
     <BugDesigner otfEnabled={otfEnabled} signedIn={view.signedIn} capabilities={view.capabilities} closedHosts={closedHosts} onBuildCustom={setCustomDesign} customBuildOffered={customOffered} customBuildBlocked={customBlocked}
+      onSignedOut={() => { void controller.initialize(); }}
+      shapeBadgesEnabled={shapeBadgesEnabled} otfAvailability={otfAvailability}
       applyBlocked={view.requestId !== null ? "A request is in progress on this page. When it finishes, prepare another request, then use this plan." : view.capabilities === null ? "The request form is not loaded, so this plan cannot fill it." : null}
       onUsePlan={(next) => { controller.invalidateInterpretation(); setPlan(next); }} />
     <div hidden={view.requestId !== null}><FactoryRequestForm key={plan?.key ?? 0} plan={plan} capabilities={view.capabilities} closedHosts={closedHosts} disabled={view.busy || view.requestId !== null || unavailable}
