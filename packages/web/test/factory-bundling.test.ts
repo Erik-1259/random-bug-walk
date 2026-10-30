@@ -12,6 +12,7 @@ import { canonicalDigest } from "@rbw/schema";
 import { describe, expect, it } from "vitest";
 import config from "../next.config.ts";
 import { freezeTaskReport, frozenTaskReportAdapter } from "../src/factory-server/live/task-report-frozen.ts";
+import { OTF_CLASSIFY_SHAPES_PATH } from "../src/otf/shape-badges-contract.ts";
 
 const APP = fileURLToPath(new URL("../", import.meta.url));
 const require = createRequire(import.meta.url);
@@ -46,10 +47,11 @@ describe("the factory routes' traced files", () => {
   it("hold the prepared packages directory in every factory route", () => {
     const factory = routes.filter((route) => route.startsWith("/api/factory/"));
     // The factory contract's 13 routes and the bug designer's 3 under the factory session's path,
-    // and the on-the-fly builds' 15: 8 customer routes (with classify and the test-mode reset), 6 builder routes
+    // and the on-the-fly builds' 16: 9 customer routes (with both classify routes and the test-mode reset), 6 builder routes
     // and the power cron.
-    expect(factory.length).toBe(31);
-    expect(factory.filter((route) => route.startsWith("/api/factory/otf/")).length).toBe(15);
+    expect(factory.length).toBe(32);
+    expect(factory.filter((route) => route.startsWith("/api/factory/otf/")).length).toBe(16);
+    expect(factory).toContain(OTF_CLASSIFY_SHAPES_PATH);
     for (const route of factory) expect(tracedFor(route), route).toEqual(["./factory-packages/**/*"]);
   });
 
