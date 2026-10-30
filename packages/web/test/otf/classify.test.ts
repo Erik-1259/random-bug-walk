@@ -83,6 +83,15 @@ describe("task-report route check", () => {
     "A PATCH to /api/tasks/{id} returns 200, but the next read of [/api/tasks/{id}] shows the earlier title.",
     "GET /api/reports/completions/daily?date=2026-01-01&time_zone=UTC omits a completion recorded at 23:30 in that zone.",
     "Two overlapping PATCH requests to /api/tasks/{id} both return 200, but only one note is kept.",
+    "POST /api/tasks with title \"DELETE\" returns 201, and GET /api/tasks/{id} returns the title \"DELETE ME\" cut to \"DELETE\".",
+    "PATCH /api/tasks/{id} with the note 'POST' returns 200, but GET /api/tasks/{id} returns the note 'PUT' instead.",
+    "PATCH /api/tasks/{id} with the title 'HEAD' returns 200, but GET /api/tasks/{id} returns the title “OPTIONS” instead.",
+    "Read /api/tasks/{id} after a PATCH changes the note; the GET still shows the earlier note.",
+    "PATCH /api/tasks/{id} saves the note \"DELETE /api/tasks/{id}\", but GET /api/tasks/{id} returns an empty note.",
+    "POST /api/tasks with title \"DELETE\" returns 201, and GET /api/tasks/{id} returns the title cut to \"DEL\".",
+    "`PATCH /api/tasks/{id}` succeeds, but `GET /api/tasks/{id}` returns the old title.",
+    "PATCH /api/tasks/{id} sets the task's note to 'PUT it back', but GET /api/tasks/{id} returns the user's old note.",
+    "PATCH /api/tasks/{id} with the note “POST /api/reports. DELETE” returns 200, but GET /api/tasks/{id} returns an empty note.",
   ])("accepts an attached allowed method or a bare mention of an existing route: %s", (rule) => {
     expect(ruleRouteProblems(rule)).toEqual([]);
   });
@@ -92,6 +101,16 @@ describe("task-report route check", () => {
     ["A POST request to /api/reports/completions/daily returns 200, but the next daily report omits the completion.", "POST is not allowed for /api/reports/completions/daily (allowed: GET)"],
     ["Send a DELETE request and then read /api/tasks/{id}; the task is still returned afterward.", "the task-report service has no DELETE route"],
     ["Calling PUT on /api/tasks/{id} returns 200, but the title is unchanged afterward.", "PUT is not allowed for /api/tasks/{id} (allowed: GET, PATCH)"],
+    ["Send a POST request with a title to /api/tasks/{id}; it reports success but GET /api/tasks/{id} returns the old title.", "POST is not allowed for the routes named in this sentence (allowed: GET, PATCH)"],
+    ["GET /api/reports/completions/daily shows one fewer completion after a PATCH of the task.", "PATCH is not allowed for the routes named in this sentence (allowed: GET)"],
+    ["POST /api/tasks with title \"PUT\" returns 201, but the stored title is read back with a PUT from /api/tasks/{id}.", "the task-report service has no PUT route"],
+    ["Send a POST request with note \"First. Second\" to /api/tasks/{id}; the saved note is missing.", "POST is not allowed for the routes named in this sentence (allowed: GET, PATCH)"],
+    ["Send a DELETE request and then read /api/tasks/{id}", "the task-report service has no DELETE route"],
+    ["`DELETE /api/tasks/{id}` returns 200.", "DELETE is not allowed for /api/tasks/{id} (allowed: GET, PATCH)"],
+    ["PATCH /api/tasks/{id} with the title `HEAD` returns 200, but GET /api/tasks/{id} returns the old title.", "the task-report service has no HEAD route"],
+    ["The task's note is lost when a PUT is sent to /api/tasks/{id}, and the user's next read shows nothing.", "the task-report service has no PUT route"],
+    ["POST /api/tasks with a 6\" title, then DELETE /api/tasks/{id} returns 200.", "DELETE is not allowed for /api/tasks/{id} (allowed: GET, PATCH)"],
+    ["Reading \"/api/tasks/{id}\" returns the old note.", "observable_failure must name at least one task-report route"],
     ["GET /v2/api/tasks/{id} returns a title that differs from the saved title.", "/v2/api/tasks/{id} is not one of the six task-report routes"],
     ["GET https://synthetic.invalid/api/tasks/{id} returns a title that differs from the saved title.", "https://synthetic.invalid/api/tasks/{id} is not one of the six task-report routes"],
     ["GET /api/websites/x/stats returns a page view count that is one lower than the number of recorded views.", "/api/websites/x/stats is not one of the six task-report routes"],
@@ -209,6 +228,9 @@ describe("OTF classifier", () => {
     "DELETE, GET /api/tasks/{id} returns an old note after a saved change.",
     "After saving a note, the result has silently removed all commas from the text.",
     "POST /api/tasks/{id}/completions succeeds but GET /api/reports/summary shows the wrong count.",
+    "Send a POST request with a title to /api/tasks/{id}; it reports success but GET /api/tasks/{id} returns the old title.",
+    "Send a POST request with note \"First. Second\" to /api/tasks/{id}; the saved note is missing.",
+    "`DELETE /api/tasks/{id}` returns 200.",
   ])("retries an unsupported route or method: %s", async (observable_failure) => {
     const s = setup({ ...OPEN, observable_failure }, OPEN);
     expect((await result(await classify(request(), s.deps))).rule?.observable_failure).toBe(OPEN.observable_failure);
@@ -216,6 +238,12 @@ describe("OTF classifier", () => {
   });
   it("accepts all six allowed methods and routes, including report query parameters", async () => {
     const observable_failure = "GET /api/heartbeat succeeds. POST /api/tasks creates a task, then PATCH /api/tasks/{id} changes its note but GET /api/tasks/{id} returns the old note. POST /api/tasks/{id}/completions succeeds, yet GET /api/reports/completions/daily?date=2026-10-29&time_zone=UTC returns an unchanged count.";
+    const s = setup({ ...OPEN, observable_failure });
+    expect((await result(await classify(request(), s.deps))).rule?.observable_failure).toBe(observable_failure);
+    expect(s.calls).toHaveLength(1);
+  });
+  it("keeps quoted data in the stored rule while ignoring the routes and methods inside it", async () => {
+    const observable_failure = "PATCH /api/tasks/{id} saves the note \"DELETE /api/tasks/{id}\", but GET /api/tasks/{id} returns an empty note.";
     const s = setup({ ...OPEN, observable_failure });
     expect((await result(await classify(request(), s.deps))).rule?.observable_failure).toBe(observable_failure);
     expect(s.calls).toHaveLength(1);
