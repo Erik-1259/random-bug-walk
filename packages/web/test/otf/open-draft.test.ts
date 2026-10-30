@@ -1,11 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import type { AssistClient, BugSpec } from "../../src/assist/client.ts";
+import { SHAPE_TITLE_MAX_CHARS } from "../../src/assist/limits.ts";
+import { designSecurityTopic, securityTopic } from "../../src/assist/safety.ts";
 import { OtfClientError, OtfController, type OtfClient } from "../../src/otf/client.ts";
 import { ruleSha256 } from "../../src/otf/canonical.ts";
 import { CLASSIFY_REVIEW_MESSAGE, OtfDraftController, SECURITY_TOPIC_REASON, designerSentence } from "../../src/components/otf/draft.ts";
 import { specFromDesigner } from "../../src/components/otf/guided.tsx";
 import { customBuildHandoff, startHandoff } from "../../src/components/otf/workspace.tsx";
-import { OTF_ERROR_STATUS, OTF_OPEN_CRITERION_ID, type OtfAvailability, type OtfClassification, type OtfOpenRule, type OtfJobStatus } from "../../src/otf/contract.ts";
+import { OTF_ERROR_STATUS, OTF_OPEN_CRITERION_ID, OTF_OPEN_LABEL, type OtfAvailability, type OtfClassification, type OtfCriterionId, type OtfOpenRule, type OtfJobStatus } from "../../src/otf/contract.ts";
 
 const proven = "concurrency.lost-acknowledged-change";
 const spec: BugSpec = { title: "Synthetic task update", target_app: "task-report", where: "Task update route", change: "A saved synthetic change disappears.", why_tests_miss: "Tests save only one change.", checks_to_add: ["Read the saved change again."], fix: "Keep the stored change." };
@@ -48,6 +50,36 @@ async function refuseThenEdit(draft: OtfDraftController, jobs: OtfController) {
   await jobs.newDraft(); expect(jobs.snapshot().pendingRequest).toBeNull();
   draft.restore(refused, jobs.snapshot().availability);
 }
+
+describe("the shape the picker sends to the designer", () => {
+  const labeled: OtfAvailability = { ...availability, behaviors: availability.behaviors.map(option => option.criterion_id === OTF_OPEN_CRITERION_ID ? { ...option, label: OTF_OPEN_LABEL } : option) };
+  async function sent(criterionId: OtfCriterionId, sentence: string) {
+    const { draft, designer } = setup();
+    draft.pick(criterionId); draft.setSentence(sentence);
+    await draft.design(labeled, true);
+    expect(designer.bugSpec).toHaveBeenCalledOnce();
+    return vi.mocked(designer.bugSpec).mock.calls[0];
+  }
+  it("keeps the open behavior's label out of the request so the designer's input check passes", async () => {
+    // The label names "non-security", which the designer's input check reads as a security topic.
+    expect(securityTopic(OTF_OPEN_LABEL)).toBe(true);
+    const call = await sent(OTF_OPEN_CRITERION_ID, "  Synthetic task updates lose a saved value.  ");
+    expect(call).toEqual([{ title: "Synthetic task updates lose a saved value.", summary: "Synthetic task updates lose a saved value.", sources: [] }, "task-report"]);
+    const shape = call?.[0]; if (shape === undefined) throw new Error("Synthetic designer call is missing.");
+    expect(securityTopic(`${shape.title} ${shape.summary}`)).toBe(false);
+    expect(designSecurityTopic(`${shape.title} ${shape.summary}`)).toBe(false);
+  });
+  it("trims a long sentence to the shape title limit", async () => {
+    const sentence = `Synthetic task updates lose a saved value ${"after a retry ".repeat(15)}`.trim();
+    const shape = (await sent(OTF_OPEN_CRITERION_ID, sentence))?.[0];
+    expect(shape?.summary).toBe(sentence);
+    expect(Array.from(shape?.title ?? "").length).toBeLessThanOrEqual(SHAPE_TITLE_MAX_CHARS);
+    expect(sentence.startsWith(shape?.title ?? "missing")).toBe(true);
+  });
+  it("sends a proven option's label as the title, as before", async () => {
+    expect(await sent(proven, "Synthetic task updates lose a saved value.")).toEqual([{ title: "Synthetic proven match", summary: "Synthetic task updates lose a saved value.", sources: [] }, "task-report"]);
+  });
+});
 
 describe("open custom draft before Accept", () => {
   it("designs then classifies without creating a job", async () => {
