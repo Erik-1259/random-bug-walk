@@ -97,3 +97,21 @@ This file lists planned work beyond the current release. An item here is a plan,
 **How it will be checked.** Component tests with the exact new strings, a test that the quoted labels are unchanged, the test-mode browser journeys and preview checks. Builds that were already delivered are reloaded for free, so no paid runs are needed.
 
 **Status.** Planned. Phase A was deferred on Oct 30, 2026; Phases B and C follow the timing above.
+
+## Small fixes found on Oct 30, 2026
+
+**Goal.** Fix the small issues the maintainers found on Oct 30, 2026, after judging ends.
+
+**Why it is not in the current release.** Each issue is small and none blocks a judge, so all of them were left for after judging, with the code freeze close.
+
+**Fixes.**
+- **Submission wording.** The hackathon project page says the custom builds run on a "Nebius Cloud VM"; the product is Nebius AI Cloud. It also says "the first build that passes qualification is delivered", but a task-report candidate must also pass a confirmation round ([SPEC section 2.2](otf/SPEC.md#22-winner-selection)). Fix both sentences when the page can be edited.
+- **Sign-out.** Draft PR #206 adds `DELETE /api/factory/session`, which clears the session cookie and answers 204. It passes locally but is held until after judging. The /factory page still has no sign-out button (U18 above), and the route file's header comment lists only POST and GET. Merge the route, add the button and update the comment.
+- **Browser proof.** Draft PR #207 updates `packages/web/test/otf-browser.mjs` for the current UI. A local run needed five more test-script fixes: label lookups by role, a duplicate-heading match, lanes always listed, a whole-word check, and waiting for the lanes to start before Stop. Add those fixes to the PR, change the expected credit line from "Nemotron 3 Super" to "Nemotron 3.5 Super", and say in the header that localhost origins work as well as 127.0.0.1.
+- **Umami calendar refusal.** When Umami's calendar blocks a custom build, the create route answers the generic "Custom builds on this host are unavailable right now." (`packages/web/src/otf/handlers.ts`). Only the test-mode helper returns the calendar reason, and its test is titled as if production did. The page itself shows the calendar reason. Make the server message name the calendar, or align the test helper and its test title with the server.
+- **Classifier blind spot.** A single-request card in which an update clears another field is still sometimes matched to a proven concurrency behavior. A one-line prompt clause helped the previous model but hurt the current one (Nemotron 3.5 Super), so it was not adopted. Nemotron 3 Ultra scored best on the test cards and can be selected with `RBW_OTF_CLASSIFIER_MODEL`. Revisit with more test cards before changing the prompt or the model.
+- **Certificate and designer polish.** The custom-build certificate shows raw ISO timestamps and dollar amounts with up to six decimal places; show readable times and cents (U13 above). Designer cards can name technology the task-report service does not have, such as a cache; keep the designer to the parts the service has.
+
+**How it will be checked.** Component and route tests with the new strings, the test-mode browser proof from PR #207, and a classifier comparison on a larger card set. No paid builds are needed; the classifier comparison makes only model calls.
+
+**Status.** Deferred on Oct 30, 2026, until after judging.
