@@ -8,7 +8,7 @@ import { canonicalJson } from "../../otf/canonical.ts";
 import { OtfController, otfClient } from "../../otf/client.ts";
 import { OTF_CRITERION_IDS, OTF_OPEN_CRITERION_ID, type OtfClassification, type OtfOpenRule, type OtfAvailability, type OtfCreateJob, type OtfCreateRefusal, type OtfCriterionId, type OtfJobStatus, type OtfSpecCard } from "../../otf/contract.ts";
 import type { CustomBuildDesign } from "../bug-designer.tsx";
-import { classificationAvailable, OtfDraftController } from "./draft.ts";
+import { classificationAvailable, OtfDraftController, shapeBadgeDisagrees } from "./draft.ts";
 import { CatalogOffer, type CatalogOfferProps } from "./catalog-offer.tsx";
 import { CatalogStartPending, closestCatalogInput, startCatalogRequest } from "./catalog-start.tsx";
 import { CertificateView } from "./certificate.tsx";
@@ -16,6 +16,8 @@ import { FailureView } from "./failure.tsx";
 import { BehaviorPickerView, SpecAcceptView, type ClassifyPrompt } from "./guided.tsx";
 import { hostRefusalLines, validationRefusalLines } from "./host-copy.tsx";
 import { LaneBoard } from "./lane-board.tsx";
+import { ShapeAlternativesView } from "./shape-badges.tsx";
+import type { ShapeSearchContext } from "./shape-badge-state.ts";
 
 export interface OtfWorkspaceViewProps {
   availability: OtfAvailability | null;
@@ -47,6 +49,9 @@ export interface OtfWorkspaceViewProps {
   /** Why the last classify call gave no answer. */
   classifyError?: string | null;
   onClassify?: () => void;
+  shapeBadgesEnabled?: boolean;
+  shapeSearch?: ShapeSearchContext | null;
+  onShapeAlternative?: (shapeId: string) => void;
   canRetryCreate: boolean;
   canNewDraft: boolean;
   onBehavior: (criterion: OtfCriterionId) => void;
@@ -94,6 +99,9 @@ export function OtfWorkspaceView(props: OtfWorkspaceViewProps) {
           onOpen={() => { props.onBehavior(OTF_OPEN_CRITERION_ID); }} classifyPrompt={classifyPrompt} onClassify={props.onClassify} /> }
       </>}
       {designing && props.spec === null && <p role="status">Writing your spec card with Nemotron 3 Super. No custom build has started.</p>}
+      {enabled && !pending && status === null && props.shapeBadgesEnabled === true && classificationAvailable(availability)
+        && shapeBadgeDisagrees(props.shapeSearch, props.classification) && props.shapeSearch != null && <ShapeAlternativesView {...props.shapeSearch} availability={availability}
+          disabled={busy || designing || !signedIn} onPick={shape => { props.onShapeAlternative?.(shape.id); }} />}
       {hostRefused ? <section aria-label="Custom build not started">
         <p role="status">This custom build was not started. {hostRefusalLines(pendingRequest.host_id, availability, nowMs).join(" ")}</p>
         <p>Your accepted spec card and sentence are kept. Card: {pendingRequest.spec.title}. Sentence: {pendingRequest.sentence}</p>
@@ -148,8 +156,10 @@ interface OtfWorkspaceProps {
   handoff?: CustomBuildDesign | null;
   onCustomOffered?: (offered: boolean) => void;
   onCustomBlocked?: (reason: string | null) => void;
+  shapeBadgesEnabled?: boolean;
+  onOtfAvailability?: (availability: OtfAvailability | null) => void;
 }
-export function OtfWorkspace({ catalogController, onAvailability, designer = assistClient, handoff = null, onCustomOffered, onCustomBlocked }: OtfWorkspaceProps) {
+export function OtfWorkspace({ catalogController, onAvailability, designer = assistClient, handoff = null, onCustomOffered, onCustomBlocked, shapeBadgesEnabled = false, onOtfAvailability }: OtfWorkspaceProps) {
   const [controller, setController] = useState<OtfController | null>(null);
   useEffect(() => {
     const instance = new OtfController(otfClient, {
@@ -162,10 +172,11 @@ export function OtfWorkspace({ catalogController, onAvailability, designer = ass
     setController(instance);
   }, [catalogController]);
   if (controller === null) return null;
-  return <ConnectedOtf controller={controller} catalogController={catalogController} onAvailability={onAvailability} designer={designer} handoff={handoff} onCustomOffered={onCustomOffered} onCustomBlocked={onCustomBlocked} />;
+  return <ConnectedOtf controller={controller} catalogController={catalogController} onAvailability={onAvailability} designer={designer} handoff={handoff} onCustomOffered={onCustomOffered} onCustomBlocked={onCustomBlocked}
+    shapeBadgesEnabled={shapeBadgesEnabled} onOtfAvailability={onOtfAvailability} />;
 }
 
-function ConnectedOtf({ controller, catalogController, onAvailability, designer, handoff, onCustomOffered, onCustomBlocked }: OtfWorkspaceProps & { controller: OtfController; designer: AssistClient }) {
+function ConnectedOtf({ controller, catalogController, onAvailability, designer, handoff, onCustomOffered, onCustomBlocked, shapeBadgesEnabled, onOtfAvailability }: OtfWorkspaceProps & { controller: OtfController; designer: AssistClient }) {
   const view = useSyncExternalStore(controller.subscribe, controller.snapshot, controller.snapshot);
   const catalog = useSyncExternalStore(catalogController.subscribe, catalogController.snapshot, catalogController.snapshot);
   const [draft] = useState(() => new OtfDraftController(designer, otfClient, () => { void catalogController.initialize(); }));
@@ -190,6 +201,7 @@ function ConnectedOtf({ controller, catalogController, onAvailability, designer,
   const catalogLock = useRef(false);
   useEffect(() => { void controller.initialize(); }, [controller, catalog.signedIn]);
   useEffect(() => { onAvailability(view.availability?.enabled === true); }, [onAvailability, view.availability]);
+  useEffect(() => { onOtfAvailability?.(view.availability); }, [onOtfAvailability, view.availability]);
   useEffect(() => {
     if (view.busy || !catalog.signedIn || !controller.needsPoll()) return;
     const timer = setTimeout(() => { void controller.poll(); }, controller.pollAfter());
@@ -238,6 +250,9 @@ function ConnectedOtf({ controller, catalogController, onAvailability, designer,
     busy={view.busy} validationPending={view.validationPending} designing={editing.busy} signedIn={catalog.signedIn} criterionId={selected} sentence={sentence} spec={spec}
     classification={editing.classification} rule={editing.rule} classificationRequired={editing.classificationRequired} onRule={value => { draft.setRule(value); }}
     stale={editing.stale} classifyError={editing.classifyError} onClassify={() => { if (!view.busy) void draft.reclassify(view.availability, catalog.signedIn); }}
+    shapeBadgesEnabled={shapeBadgesEnabled} shapeSearch={editing.shapeSearch} onShapeAlternative={shapeId => {
+      if (shapeBadgesEnabled && canDesign) void draft.selectShapeAlternative(shapeId, view.availability, catalog.signedIn);
+    }}
     message={editing.message ?? view.message} canRetryCreate={view.canRetryCreate} canNewDraft={view.canNewDraft}
     onBehavior={value => { draft.pick(value); }} onSentence={value => { draft.setSentence(value); }} onSpec={value => { draft.setSpec(value); }}
     onDesign={() => { if (canDesign) void draft.design(view.availability, catalog.signedIn); }} onAccept={() => { void accept(); }} onRetry={() => { void controller.retryCreate(); }} onRefresh={() => { void controller.initialize(); }}
