@@ -292,6 +292,13 @@ describe("badge copy", () => {
   it("fills placeholders literally and refuses a missing value", () => {
     expect(fillShapeBadgeTemplate(SHAPE_BADGE_COPY.proven_task_report, { label: "Lost change" })).toBe("Builds as a proven behavior: Lost change");
     expect(fillShapeBadgeTemplate(SHAPE_BADGE_COPY.refused, { reason: "Costs $& and $1." })).toBe("Can't be built here: Costs $& and $1.");
+    expect(fillShapeBadgeTemplate(SHAPE_BADGE_COPY.open_detail, { translated_failure: "A saved title comes back empty." })).toBe(
+      "Builds in the task-report service as: “A saved title comes back empty”. Not measured yet.",
+    );
+    expect(fillShapeBadgeTemplate(SHAPE_BADGE_COPY.open_detail, { translated_failure: "Counts drop!?" })).toBe(
+      "Builds in the task-report service as: “Counts drop”. Not measured yet.",
+    );
+    expect(fillShapeBadgeTemplate("Can't be built here: {reason}", { reason: "Out of scope." })).toBe("Can't be built here: Out of scope.");
     expect(fillShapeBadgeTemplate(SHAPE_BADGE_COPY.open_detail, { translated_failure: "{label} stays" })).toBe(
       "Builds in the task-report service as: “{label} stays”. Not measured yet.",
     );
@@ -311,7 +318,7 @@ describe("badge copy", () => {
   });
 
   it("words an open badge per host, with the Umami fallback when the sentence is missing", () => {
-    const detail = `Builds in the task-report service as: “${TRANSLATED}”. Not measured yet.`;
+    const detail = `Builds in the task-report service as: “${TRANSLATED.replace(/[.!?]+$/u, "")}”. Not measured yet.`;
     expect(shapeBadgeText(open(0), "task-report", LABELS)).toEqual({ headline: "Builds in the task-report service", detail });
     expect(shapeBadgeText(open(0), "umami", LABELS)).toEqual({ headline: "Builds in the task-report service, not Umami", detail });
     expect(shapeBadgeText(open(0, null), "umami", LABELS)).toEqual({ headline: "Builds in the task-report service, not Umami", detail: SHAPE_BADGE_COPY.open_umami_fallback_detail });
