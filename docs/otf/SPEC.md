@@ -21,7 +21,8 @@ OTF builds on two hosts in v0. Each host offers its own criteria (`CRITERION_HOS
    - A behavior picker lists the offered criteria from `GET /availability` (`behaviors`), grouped by host. Each option shows its label and example phrases.
    - The customer adds one sentence in their own words (3 to 300 characters).
 2. **Spec card, then accept.**
-   - The UI calls the existing bug designer route `POST /api/factory/assist/bug-spec` with `{ shape: { title: <picker label>, summary: <sentence>, sources: [] }, host_id: <the behavior's host_id> }`. Nemotron 3.5 Super writes the card.
+   - The UI calls the existing bug designer route `POST /api/factory/assist/bug-spec` with `{ shape: { title: <title>, summary: <sentence>, sources: [] }, host_id: <the behavior's host_id> }`. Nemotron 3.5 Super writes the card.
+   - For a proven behavior, the title is the picker label. For the open behavior, it is the customer's trimmed sentence, cut to 200 characters (`SHAPE_TITLE_MAX_CHARS`). The open label, `OTF_OPEN_LABEL`, contains "non-security", and the designer's input check refuses it as a security topic (`designerShapeTitle` in `packages/web/src/components/otf/draft.ts`).
    - The customer reads the card, may edit it, and accepts it. The UI computes `spec_sha256` with `specSha256` from `canonical.ts` and creates the job with `host_id` and `criterion_id`.
    - **Umami placement.** The builder places the bug in one of Umami's date-grouped reports that its harness supports. It uses the card to choose among them, and it may choose a different report from the one the card describes. The agent works from the harness's own task description for that report.
 3. **Catalog bug offered at once.**
@@ -375,7 +376,7 @@ Open behaviors let a customer build a non-security behavior on the task-report h
 | `concurrency.stale-success-response` | task-report | `stale_success_response` |
 | `date_time.time-zone-grouping` | Umami | `local_day_counts_mismatch` |
 
-- The open behavior's picker label is `OTF_OPEN_LABEL`: "Another non-security behavior (not measured yet)".
+- The open behavior's picker label is `OTF_OPEN_LABEL`: "Another non-security behavior (not measured yet)". The UI never sends it to the bug designer as the shape title, because the designer's input check refuses "non-security" as a security topic; the open behavior's title is the customer's sentence (section 1, step 2).
 - `OTF_CONTRACT_VERSION` stays `otf/0`. Not every addition is optional: `OtfBehaviorOption.measured` is a new required member of availability (section 8.4). Every other addition is optional or applies to the open criterion only, and the builder-facing bodies of a proven job (claim, events, result, validation and certificate) validate exactly as before.
 - A browser tab still open on the bundle before this change does not know `measured`; its strict availability check refuses the new answer, so that tab shows OTF as unavailable until it is reloaded.
 
