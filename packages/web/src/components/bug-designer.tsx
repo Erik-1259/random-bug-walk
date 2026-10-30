@@ -8,7 +8,7 @@ import type { Capabilities } from "../factory/client.ts";
 import { CALENDAR_HINT, calendarClosedHosts, calendarFallback, formatDateTime } from "../factory/format.ts";
 
 export const DESIGNER_EXAMPLES: readonly string[] = ["date/time bugs", "race conditions", "lost updates"];
-export const DESIGNER_CREDIT = "Designed by NVIDIA Nemotron 3 Super on Nebius Token Factory · sources found with Tavily";
+export const DESIGNER_CREDIT = "Designed by NVIDIA Nemotron 3.5 Super on Nebius Token Factory · sources found with Tavily";
 export const CATALOG_HONESTY = "Today Random Bug Walk delivers the closest proven bug from its catalog, re-verified live on fresh clean, buggy and fixed copies.";
 /** Where custom builds are enabled: this design is a starting point, and "Build a custom bug" writes the card that is built. */
 export const OTF_DESIGNER_NOTE = "A catalog request delivers the closest proven bug from the catalog, re-verified live on fresh clean, buggy and fixed copies. This design is not built as written. To have a new bug built, use \u201cBuild a custom bug\u201d above: it writes its own spec card from one sentence, and you can edit that card before you accept it.";

@@ -93,7 +93,7 @@ export function OtfWorkspaceView(props: OtfWorkspaceViewProps) {
           openAvailable={availability.behaviors.some(option => option.criterion_id === OTF_OPEN_CRITERION_ID && availability.hosts.some(host => host.offered && host.host_id === option.host_id))}
           onOpen={() => { props.onBehavior(OTF_OPEN_CRITERION_ID); }} classifyPrompt={classifyPrompt} onClassify={props.onClassify} /> }
       </>}
-      {designing && props.spec === null && <p role="status">Writing your spec card with Nemotron 3 Super. No custom build has started.</p>}
+      {designing && props.spec === null && <p role="status">Writing your spec card with Nemotron 3.5 Super. No custom build has started.</p>}
       {hostRefused ? <section aria-label="Custom build not started">
         <p role="status">This custom build was not started. {hostRefusalLines(pendingRequest.host_id, availability, nowMs).join(" ")}</p>
         <p>Your accepted spec card and sentence are kept. Card: {pendingRequest.spec.title}. Sentence: {pendingRequest.sentence}</p>

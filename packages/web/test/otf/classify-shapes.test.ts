@@ -148,6 +148,11 @@ describe("shape badge classifier transport and outcomes", () => {
     expect(s.calls[0]?.body).not.toHaveProperty("tools");
     expect(s.calls[0]?.headers.get("authorization")).toBe("Bearer synthetic-token-factory-key");
   });
+  it("calls and reports the configured classifier model", async () => {
+    const s = setup(); const deps = { ...s.deps, model: "nvidia/synthetic-classifier-1" };
+    expect((await result(await classifyShapes(request(), deps))).model).toBe("nvidia/synthetic-classifier-1");
+    expect(s.calls[0]?.body).toMatchObject({ model: "nvidia/synthetic-classifier-1" });
+  });
   it.each([
     ["task-report", "concurrency.lost-acknowledged-change", "concurrency"],
     ["task-report", "concurrency.stale-success-response", "concurrency"],
