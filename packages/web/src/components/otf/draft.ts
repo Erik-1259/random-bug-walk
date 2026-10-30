@@ -1,7 +1,8 @@
 import type { AssistClient } from "../../assist/client.ts";
+import { SHAPE_TITLE_MAX_CHARS } from "../../assist/limits.ts";
 import { canonicalJson } from "../../otf/canonical.ts";
 import { OtfClientError, type AcceptedOtfInput, type OtfClient } from "../../otf/client.ts";
-import { OTF_OPEN_CRITERION_ID, SENTENCE_MAX_CHARS, SENTENCE_MIN_CHARS, type OtfAvailability, type OtfClassification, type OtfCreateJob, type OtfCriterionId, type OtfHostId, type OtfOpenRule, type OtfSpecCard } from "../../otf/contract.ts";
+import { OTF_OPEN_CRITERION_ID, SENTENCE_MAX_CHARS, SENTENCE_MIN_CHARS, type OtfAvailability, type OtfBehaviorOption, type OtfClassification, type OtfCreateJob, type OtfCriterionId, type OtfHostId, type OtfOpenRule, type OtfSpecCard } from "../../otf/contract.ts";
 import { describeAssistFailure, type CustomBuildDesign } from "../bug-designer.tsx";
 import { ruleProblem, sentenceProblem, specFromDesigner, specProblem } from "./guided.tsx";
 
@@ -45,6 +46,16 @@ export function classificationAvailable(availability: OtfAvailability | null): b
 export function designerSentence(query: string, title: string): string {
   const text = Array.from(query.trim()).length < SENTENCE_MIN_CHARS ? title.trim() : query.trim();
   return Array.from(text).slice(0, SENTENCE_MAX_CHARS).join("");
+}
+
+/**
+ * The shape title the designer receives. A proven option sends its label, as before. The open option's
+ * label names "non-security", which the designer's input check reads as a security topic, so it sends
+ * the judge's own sentence instead: the most specific title for this design.
+ */
+export function designerShapeTitle(behavior: Pick<OtfBehaviorOption, "criterion_id" | "label">, sentence: string): string {
+  if (behavior.criterion_id !== OTF_OPEN_CRITERION_ID) return behavior.label;
+  return Array.from(sentence.trim()).slice(0, SHAPE_TITLE_MAX_CHARS).join("").trim();
 }
 
 /** Editable pre-accept state only. This controller has no create, stop or validation capability. */
@@ -133,7 +144,7 @@ export class OtfDraftController {
     const classificationRequired = classificationAvailable(availability);
     this.update({ busy: true, message: null, spec: null, classification: null, rule: null, classificationRequired, hostId: behavior.host_id, stale: false, classifyError: null });
     try {
-      const result = await this.designer.bugSpec({ title: behavior.label, summary: this.view.sentence.trim(), sources: [] }, behavior.host_id);
+      const result = await this.designer.bugSpec({ title: designerShapeTitle(behavior, this.view.sentence), summary: this.view.sentence.trim(), sources: [] }, behavior.host_id);
       if (!result.ok) {
         // The proven-only flow shows the designer's failure only, as before the open behavior.
         if (classificationRequired && result.failure.code === "signed_out") this.onSignedOut();
