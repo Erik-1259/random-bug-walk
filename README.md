@@ -89,6 +89,7 @@ NVIDIA Nemotron 3.5 Lightning (`nvidia/Nemotron-3_5-Lightning`) on Nebius Token 
 | [`docs/product/factory-ui-integration.md`](docs/product/factory-ui-integration.md) | Integration status of the `/factory` page |
 | [`docs/product/fixtures/bug-request-v1/`](docs/product/fixtures/bug-request-v1/README.md) | Synthetic example bodies for the contract: shapes and states, not measured results |
 | [`docs/bug-discovery-and-evaluation.md`](docs/bug-discovery-and-evaluation.md) | Research note separating candidate discovery, test-suite blind spots and developer-tool evaluation; existing rules remain unchanged |
+| [`docs/ROADMAP.md`](docs/ROADMAP.md) | Planned work beyond the current release, starting with open behaviors on Umami |
 | [`docs/uc1-preregistration.md`](docs/uc1-preregistration.md) | Pre-registration of the UC1 paired comparison (server logs on versus off), fixed before any counted run; it reports no result. Screen records are in `docs/uc1-screen/` |
 | `container/` | The development container for coding agents (`Dockerfile`, `entrypoint.sh`, `run-agent.sh`, `check-isolation.sh`) |
 | `scripts/checks/` | Repository checks: prose, admission rule IDs, test-count floors, dependency audit, docs-only classification, the publication scan for CI and a runtime check of the check scripts |
