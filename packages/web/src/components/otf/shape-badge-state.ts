@@ -121,6 +121,8 @@ export class ShapeBadgesController {
   private readonly client: ShapeBadgesClient;
   private current: SearchEntry | null = null;
   private availability: OtfAvailability | null = null;
+  /** Called when a badge call answers signed_out, so the page re-checks the shared session and shows its sign-in form. */
+  onSignedOut: () => void = () => undefined;
   constructor(client: ShapeBadgesClient) { this.client = client; }
   snapshot = (): ShapeBadgesSnapshot => this.view;
   subscribe = (listener: () => void): (() => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
@@ -181,7 +183,10 @@ export class ShapeBadgesController {
   private start(entry: SearchEntry, group: GroupEntry): void {
     group.state = "pending"; group.failure = null; group.badges = [];
     void this.read(structuredClone(group.group.request)).then(outcome => {
-      if (typeof outcome === "string") { group.state = "failed"; group.failure = outcome; }
+      if (typeof outcome === "string") {
+        group.state = "failed"; group.failure = outcome;
+        if (outcome === "signed_out") this.onSignedOut();
+      }
       else {
         group.state = "done";
         // Each badge maps back to its shape by its index within this group's request.

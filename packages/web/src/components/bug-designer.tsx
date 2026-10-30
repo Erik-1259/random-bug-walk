@@ -79,6 +79,8 @@ export interface BugDesignerProps {
   client?: AssistClient;
   otfEnabled?: boolean;
   onBuildCustom?: (design: CustomBuildDesign) => void;
+  /** Called when a badge call answers signed_out, so the page re-checks the shared session. */
+  onSignedOut?: () => void;
   /** The open behavior is offered, so a card may be handed to the custom-build panel; false shows no handoff at all. */
   customBuildOffered?: boolean;
   /** A short reason the handoff is held for now (the panel is busy or a custom build is saved), or null. */
@@ -91,6 +93,9 @@ export interface BugDesignerProps {
 export function BugDesigner({ client = assistClient, badgeClient = otfClient, ...props }: BugDesignerProps) {
   const [state, dispatch] = useReducer(designerReducer, INITIAL_DESIGNER);
   const [badges] = useState(() => new ShapeBadgesController(badgeClient));
+  // A signed_out badge answer re-checks the shared session, as the custom-build panel does.
+  const onSignedOut = props.onSignedOut;
+  useEffect(() => { badges.onSignedOut = () => { onSignedOut?.(); }; }, [badges, onSignedOut]);
   const badgeState = useSyncExternalStore(badges.subscribe, badges.snapshot, badges.snapshot);
   const availability = props.otfAvailability ?? null;
   const groups = useMemo(() => shapeBadgeGroups(state.shapes, state.searchQuery, props.shapeBadgesEnabled === true, availability),

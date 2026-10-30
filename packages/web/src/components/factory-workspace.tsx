@@ -127,6 +127,7 @@ function ConnectedWorkspace({ controller, shapeBadgesEnabled }: { controller: Fa
     <OtfWorkspace catalogController={controller} onAvailability={setOtfEnabled} handoff={customDesign} onCustomOffered={setCustomOffered} onCustomBlocked={setCustomBlocked}
       shapeBadgesEnabled={shapeBadgesEnabled} onOtfAvailability={setOtfAvailability} />
     <BugDesigner otfEnabled={otfEnabled} signedIn={view.signedIn} capabilities={view.capabilities} closedHosts={closedHosts} onBuildCustom={setCustomDesign} customBuildOffered={customOffered} customBuildBlocked={customBlocked}
+      onSignedOut={() => { void controller.initialize(); }}
       shapeBadgesEnabled={shapeBadgesEnabled} otfAvailability={otfAvailability}
       applyBlocked={view.requestId !== null ? "A request is in progress on this page. When it finishes, prepare another request, then use this plan." : view.capabilities === null ? "The request form is not loaded, so this plan cannot fill it." : null}
       onUsePlan={(next) => { controller.invalidateInterpretation(); setPlan(next); }} />

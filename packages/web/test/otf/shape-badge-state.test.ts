@@ -216,7 +216,10 @@ describe("badge failures", () => {
     const fake = route(); const controller = new ShapeBadgesController({ classifyShapes: fake.classifyShapes });
     const shapes = result(submitted, [null]);
     controller.sync(input(shapes));
+    const onSignedOut = vi.fn(); controller.onSignedOut = onSignedOut;
     fake.last("task-report").reject(new OtfClientError("signed_out", "Synthetic sign-in needed.", 401, false)); await flush();
+    // The page re-checks the shared session, which brings back its sign-in form.
+    expect(onSignedOut).toHaveBeenCalledOnce();
     controller.sync(input(shapes));
     expect(fake.classifyShapes).toHaveBeenCalledOnce();
     controller.sync(input(shapes, { signedIn: false }));
