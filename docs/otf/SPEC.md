@@ -93,11 +93,12 @@ In this order:
 
 1. Validate the body (`validateOtf("OtfCreateJob", …)`). A failure answers `invalid_spec`.
 2. Run the existing safety checks:
-   - `securityTopic` on the sentence;
+   - `securityTopic` and `holdsCode` on the sentence;
    - `designSecurityTopic` and `holdsCode` on every spec field, because the customer may edit the card.
    - Any hit answers `refused_topic`.
-3. Recompute `spec_sha256` with `specSha256`. A mismatch answers `invalid_spec`.
-4. Check that `host_id` equals `CRITERION_HOST[criterion_id]` and that no card field matches the host's `HOST_SCOPE_EXCLUDED`. Otherwise answer `invalid_spec`. Whether the host is offered right now is step 6a. Until `RBW_OTF_OPEN_BEHAVIORS` exists, a create naming the open criterion answers `invalid_spec` here; section 8.3 has the checks that replace this.
+   - For the open criterion, reject a disabled open-behavior flag with `invalid_spec` next; with the flag on, screen the rule text as described in section 8.3 before proceeding.
+3. Recompute `spec_sha256` with `specSha256` and, for an open job, `rule_sha256` with `ruleSha256`. A mismatch answers `invalid_spec`.
+4. Check that `host_id` equals `CRITERION_HOST[criterion_id]`, the criterion is configured, and no card field or open rule text matches the host's `HOST_SCOPE_EXCLUDED`. Otherwise answer `invalid_spec`. Whether the host is offered right now is step 6a.
 5. Idempotency. The same `client_key` with the same `createSha256` replays the stored job (200). The same key with a different body answers `idempotency_conflict`.
 6. Check the caps, in this order: `unavailable` (OTF disabled or unconfigured, operator hold, or the VM-hours day cap), `busy` (active plus queued jobs at the limit), `daily_cap`, `spend_cap`.
 
@@ -384,7 +385,7 @@ Open behaviors let a customer build a non-security behavior on the task-report h
 - While it is off, the deployment behaves as before open behaviors existed, apart from the `measured` member in availability (section 8.1):
   - availability lists only the proven behaviors;
   - a create naming the open criterion answers `invalid_spec`, after the usual safety checks on the sentence and card;
-  - no claim hands out an open job, since none can be created;
+  - no new open job can be admitted; previously admitted open jobs may still be claimed and completed, since the flag does not cancel or drain them;
   - the classify route answers `unavailable` to a signed-in judge;
   - the bug designer's card shows no "Build this as a custom bug" button, and the picker has no open option.
 - With the flag on, availability adds the open behavior on task-report (when that host is offered), with `label: OTF_OPEN_LABEL` and `measured: false`.
@@ -405,12 +406,14 @@ Open behaviors let a customer build a non-security behavior on the task-report h
 - `spec_sha256` stays over the spec only.
 - `createSha256` (the idempotency hash) includes `rule` (as `ruleCanonical`) and `rule_sha256` when set. A body without a rule hashes byte-identically to the hash before open behaviors existed, so stored `create_sha256` values and replays are unchanged.
 
-**Server checks for an open create** (the server branch; added to section 2.1 with the flag on):
-1. The schema check (step 1) covers the rule's shape and its presence.
-2. The safety checks (step 2) also run on `rule.observable_failure`: a security topic or code answers `refused_topic`.
-3. Production recomputes `rule_sha256` with `ruleSha256` next to the spec hash (step 3). A mismatch answers `invalid_spec`.
-4. The scope check (step 4) runs over the card fields and the rule text. The open criterion must be offered (flag on); otherwise `invalid_spec`.
-5. The job stores the rule (section 8.8), and every other step is unchanged.
+**Server checks for an open create**, in order (see section 2.1):
+1. Validate the body, including the rule's shape and presence. A failure answers `invalid_spec`.
+2. Screen the sentence and card fields for security topics and code. A hit answers `refused_topic`.
+3. If the open-behavior flag is off, answer `invalid_spec` without screening the rule text.
+4. Screen `rule.observable_failure` for security topics and code. A hit answers `refused_topic`.
+5. Recompute `spec_sha256`, then `rule_sha256` with `ruleSha256`. A mismatch answers `invalid_spec`.
+6. Check the host/criterion pairing, configured criterion and host scope over the card fields and rule text. A failure answers `invalid_spec`.
+7. Compute the create hash, then check idempotency under the power lock before caps and host admission. The admitted job stores the rule (section 8.8).
 
 The classifier's answer is advisory. The customer may edit the rule before submitting, and production validates what is submitted, never the classifier's answer.
 
@@ -446,11 +449,11 @@ The classifier's answer is advisory. The customer may edit the rule before submi
 **What the server does** (`packages/web/src/otf/classify.ts`), in order:
 
 1. No judge session answers `signed_out`.
-2. OTF not configured or `RBW_OTF_OPEN_BEHAVIORS` off answers `unavailable`.
+2. `RBW_OTF_OPEN_BEHAVIORS` off answers `unavailable`. Outside local factory test mode, OTF must also be configured. Local test mode supplies its own hosts and store, so it does not need live OTF configuration; it still requires the open flag, judge session and designer key. A Vercel deployment refuses factory test mode and cannot sign in through it.
 3. A body that fails `OtfClassifyRequest` answers `invalid_request`.
 4. The existing safety checks run before any model call: the input security check on the sentence, the design security check on every card field (title, where, change, why the tests miss it, fix and each added check), and the code check on the sentence and every field. Any hit answers `refused_topic`.
 5. No Token Factory key answers `unavailable`.
-6. The classifier model is `CLASSIFIER_MODEL`, the bug designer's model (NVIDIA Nemotron 3 Super, `nvidia/nemotron-3-super-120b-a12b`). One structured call with the strict wire schema (`CLASSIFY_WIRE_SCHEMA`) gets the card as untrusted data, with `host_id` as the app (`unspecified` when absent). The prompt (`CLASSIFY_SYSTEM_PROMPT`) allows the decision `proven` only when the card states the behavior's mechanism, not just its topic or symptom: overlapping requests for the two concurrency behaviors, and results bucketed in a different time zone from the one requested or configured for time-zone grouping. Without the stated mechanism, the model decides between `open`, `out_of_scope` and `security` as if no proven behavior existed. Each call, the repair included, takes one unit of the session's `bug-spec` budget, the bug designer's budget; an exhausted budget answers `unavailable`. A call that fails, runs past 20 seconds or returns no message content answers `unavailable`, with no repair.
+6. The classifier model is `CLASSIFIER_MODEL`, fixed to the bug designer's default model (NVIDIA Nemotron 3 Super, `nvidia/nemotron-3-super-120b-a12b`). The designer's `RBW_ASSIST_MODEL` override does not change the classifier model. One structured call with the strict wire schema (`CLASSIFY_WIRE_SCHEMA`) gets the card as untrusted data, with `host_id` as the app (`unspecified` when absent). The prompt (`CLASSIFY_SYSTEM_PROMPT`) allows the decision `proven` only when the card states the behavior's mechanism, not just its topic or symptom: overlapping requests for the two concurrency behaviors, and results bucketed in a different time zone from the one requested or configured for time-zone grouping. Without the stated mechanism, the model decides between `open`, `out_of_scope` and `security` as if no proven behavior existed. Each call, the repair included, takes one unit of the session's `bug-spec` budget, the bug designer's budget; an exhausted budget answers `unavailable`. A call that fails, runs past 20 seconds or returns no message content answers `unavailable`, with no repair.
 
 **The wire answer** is `{ decision, proven_criterion_id, family, observable_failure, failure_code, reason }`, with `decision` one of `proven`, `open`, `security` or `out_of_scope`, and `proven_criterion_id` and `family` each allowing `none`. The server maps it as follows; anything listed as a problem goes to the repair:
 
@@ -476,9 +479,9 @@ The classifier's answer is advisory. The customer may edit the rule before submi
 
 ### 8.6 Scope rules (the server branch implements them)
 
-- A security topic answers `refusal.kind = "security"` with `buildable` empty.
+- A security topic or code found by the pre-call sentence/card checks answers the `refused_topic` error. A model security decision, or a security topic found in its proposed rule, answers `refusal.kind = "security"` with `buildable` empty.
 - Umami stays time-zone grouping only. An Umami card about anything else answers `buildable: [{ host_id: "task-report", criterion_id: "open.task-report-behavior" }]` only when the behavior could plausibly exist in a task-and-report service; otherwise `refusal.kind = "out_of_scope"`.
-- A card that matches a proven criterion names it in `proven_criterion_id` and lists it in `buildable`; the open criterion may be listed beside it.
+- A card that matches a proven criterion names it in `proven_criterion_id` and lists that criterion alone in `buildable`. The UI can separately offer the open-behavior override when availability permits it.
 - The answer is advisory: the customer may edit the rule, and production validates what is submitted, including the existing scope check over the rule text (section 8.3).
 
 ### 8.7 Copy
@@ -490,7 +493,7 @@ The classifier's answer is advisory. The customer may edit the rule before submi
 
 ### 8.8 Storage
 
-`packages/web/otf-migrations/0002_otf_open.sql` adds a nullable `rule jsonb` column to `otf.jobs` (`ADD COLUMN IF NOT EXISTS`). It is additive and idempotent, and apply it after `0001_otf.sql`. Every proven job, including all existing rows, keeps `rule` null. `OtfNewJob` and `OtfJobRecord` carry an optional `rule`; the store reads and writes it in the server branch, and this commit leaves the store unchanged.
+`packages/web/otf-migrations/0002_otf_open.sql` adds a nullable `rule jsonb` column to `otf.jobs` (`ADD COLUMN IF NOT EXISTS`). It is additive and idempotent, and apply it after `0001_otf.sql`. Proven jobs keep `rule` null. `OtfNewJob` and `OtfJobRecord` carry an optional `rule`; the Postgres store reads and writes it, and the in-memory store preserves it too.
 
 ### 8.9 What stays the same
 
@@ -501,7 +504,7 @@ The classifier's answer is advisory. The customer may edit the rule before submi
 
 ### 8.10 Branches
 
-The contract above is on `otf/open-contract`. The two later branches do not edit `contract.ts`, `schemas.ts` or `canonical.ts`.
+The contract, server and UI implementations are merged on main. This table records their branch ownership; the server and UI branches did not edit `contract.ts`, `schemas.ts` or `canonical.ts`. The builder remains in a separate repository.
 
 | Branch | Owns |
 |---|---|
