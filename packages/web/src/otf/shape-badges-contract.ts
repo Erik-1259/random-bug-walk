@@ -171,7 +171,9 @@ export function fillShapeBadgeTemplate(template: string, values: ShapeBadgeTempl
   return template.replace(/\{(label|translated_failure|reason)\}/gu, (_match, key: keyof ShapeBadgeTemplateValues) => {
     const value = values[key];
     if (value === undefined) throw new Error(`shape badge template needs ${key}`);
-    return value;
+    // The open detail quotes the sentence and then ends its own sentence, so a closing mark inside the
+    // quotes would read twice ("….”. Not measured yet.").
+    return key === "translated_failure" ? value.replace(/[.!?]+$/u, "") : value;
   });
 }
 

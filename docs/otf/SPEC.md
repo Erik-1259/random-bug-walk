@@ -571,7 +571,7 @@ The bug designer shows 3 to 5 shapes after a search. With shape badges on, each 
 | Badge call failed or flag off | no badges and no message; the designer behaves as before | |
 
 - `{label}` is the behavior's label from availability. A proven badge whose label availability does not list shows no badge.
-- `translated_failure` sits inside typographic quotes. An open task-report badge without `translated_failure` shows its headline with no detail line.
+- `translated_failure` sits inside typographic quotes, without its trailing period, question mark or exclamation point, because the detail line ends its own sentence. An open task-report badge without `translated_failure` shows its headline with no detail line.
 - `fillShapeBadgeTemplate` inserts values literally and throws on a placeholder without a value, so a badge never shows a raw brace.
 
 **Order.** `orderShapesByBadge` lists buildable shapes first (proven, then open), then any shape without a badge, then refused shapes, keeping the designer's order within each group. Without badges the designer's order is unchanged. Shapes stay selectable in every state: badges inform and do not block.
