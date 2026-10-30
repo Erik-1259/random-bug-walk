@@ -105,23 +105,23 @@ describe("review, end to end on PGlite with the replay fetch", () => {
     expect(superReserve?.runtime_profile_sha256).toBe(profileSha256(SUPER_PROFILE));
     expect(kimiReserve?.runtime_profile_sha256).toBe(profileSha256(KIMI_PROFILE));
     expect(superReserve?.envelope.map((line) => [line.service, line.unit, line.limit])).toEqual([
-      ["token-factory.nemotron-3-super", "input_token", 65_536],
-      ["token-factory.nemotron-3-super", "output_token", 1_024],
+      ["token-factory.nemotron-3.5-super-vl", "input_token", 65_536],
+      ["token-factory.nemotron-3.5-super-vl", "output_token", 1_024],
     ]);
     expect(kimiReserve?.envelope.map((line) => [line.service, line.unit, line.limit])).toEqual([
-      ["token-factory.kimi-k2.7-code", "input_token", 65_536],
-      ["token-factory.kimi-k2.7-code", "output_token", 8_192],
+      ["token-factory.kimi-k3", "input_token", 65_536],
+      ["token-factory.kimi-k3", "output_token", 8_192],
     ]);
 
     expect(fetchSpy.bodies).toHaveLength(16);
     const [superBody, kimiBody] = fetchSpy.bodies;
     expect(superBody).toMatchObject({
-      model: "nvidia/nemotron-3-super-120b-a12b",
+      model: "nvidia/Nemotron-3.5-Super-VL",
       max_tokens: 1_024,
       chat_template_kwargs: { enable_thinking: false },
       response_format: { type: "json_schema", json_schema: { strict: true } },
     });
-    expect(kimiBody).toMatchObject({ model: "moonshotai/Kimi-K2.7-Code", max_tokens: 8_192 });
+    expect(kimiBody).toMatchObject({ model: "moonshotai/Kimi-K3", max_tokens: 8_192 });
     expect(kimiBody).not.toHaveProperty("response_format");
     expect(kimiBody).not.toHaveProperty("chat_template_kwargs");
     expect(kimiBody).not.toHaveProperty("thinking");

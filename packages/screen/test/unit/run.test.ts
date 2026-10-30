@@ -75,11 +75,11 @@ describe("screen run, end to end on PGlite with the fake model", () => {
     expect(spy.reserves.every((r) => r.kind === "screen.static" && r.attempt_ordinal === 1 && r.pool_key === POOL)).toBe(true);
     expect(spy.reserves[0]?.runtime_profile_sha256).toBe(profileSha256(SUPER_SCREEN_PROFILE));
     expect(spy.reserves[0]?.envelope.map((line) => [line.service, line.unit, line.limit, line.enforced_by])).toEqual([
-      ["token-factory.nemotron-3-super", "input_token", 65_536, "client_counter"],
-      ["token-factory.nemotron-3-super", "output_token", 2_048, "request_parameter"],
+      ["token-factory.nemotron-3.5-super-vl", "input_token", 65_536, "client_counter"],
+      ["token-factory.nemotron-3.5-super-vl", "output_token", 2_048, "request_parameter"],
     ]);
     expect(fake.bodies).toHaveLength(4);
-    expect(fake.bodies[0]).toMatchObject({ model: "nvidia/nemotron-3-super-120b-a12b", max_tokens: 2_048, chat_template_kwargs: { enable_thinking: false } });
+    expect(fake.bodies[0]).toMatchObject({ model: "nvidia/Nemotron-3.5-Super-VL", max_tokens: 2_048, chat_template_kwargs: { enable_thinking: false } });
     expect(fake.bodies[0]).toHaveProperty("response_format");
     expect(fake.bodies[0]).not.toHaveProperty("temperature");
 
@@ -188,11 +188,11 @@ describe("screen run, end to end on PGlite with the fake model", () => {
   it("uses the fallback model without a provider schema and validates its reply after the call", async () => {
     const { code, out, spy, fake } = await run([LOCATED_ONLY], 1, ["--model", "kimi"]);
     expect(code).toBe(0);
-    expect(fake.bodies[0]).toMatchObject({ model: "moonshotai/Kimi-K2.7-Code", max_tokens: 8_192 });
+    expect(fake.bodies[0]).toMatchObject({ model: "moonshotai/Kimi-K3", max_tokens: 8_192 });
     expect(fake.bodies[0]).not.toHaveProperty("response_format");
     expect(fake.bodies[0]).not.toHaveProperty("chat_template_kwargs");
     expect(spy.reserves[0]?.runtime_profile_sha256).toBe(profileSha256(KIMI_SCREEN_PROFILE));
-    expect(readRecord(out)).toMatchObject({ verdict: "fail", optional_static_probe: { model: "moonshotai/Kimi-K2.7-Code", service: "token-factory.kimi-k2.7-code" } });
+    expect(readRecord(out)).toMatchObject({ verdict: "fail", optional_static_probe: { model: "moonshotai/Kimi-K3", service: "token-factory.kimi-k3" } });
   });
 
   it("marks the record binding only when asked", async () => {

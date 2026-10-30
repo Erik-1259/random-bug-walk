@@ -126,10 +126,13 @@ function profile(settings: ModelSettings): SolverProfile {
   });
 }
 
-/** The pre-registered solver model: Nemotron 3 Super, thinking off as harvest-review sends it. */
+/**
+ * The solver model: Nemotron 3.5 Super VL, the successor of the pre-registered Nemotron 3 Super,
+ * which the provider retires in November 2026. Thinking is off as harvest-review sends it.
+ */
 export const SUPER_SOLVER_PROFILE = profile({
-  model: "nvidia/nemotron-3-super-120b-a12b",
-  service: "token-factory.nemotron-3-super",
+  model: "nvidia/Nemotron-3.5-Super-VL",
+  service: "token-factory.nemotron-3.5-super-vl",
   max_input_tokens: 131_072,
   max_output_tokens: 8_192,
   request_timeout_ms: 300_000,
@@ -138,12 +141,13 @@ export const SUPER_SOLVER_PROFILE = profile({
 });
 
 /**
- * The single fallback, used only if the pilot shows Super's tool calling broken. Kimi-K2.7-Code
- * always thinks, so no thinking field is sent, and its reasoning counts against its output limit.
+ * The single fallback, used only if the pilot shows Super's tool calling broken: Kimi-K3, the
+ * successor of the pre-registered Kimi-K2.7-Code. It is treated as always thinking, as K2.7-Code
+ * was, so no thinking field is sent, and its reasoning counts against its output limit.
  */
 export const KIMI_SOLVER_PROFILE = profile({
-  model: "moonshotai/Kimi-K2.7-Code",
-  service: "token-factory.kimi-k2.7-code",
+  model: "moonshotai/Kimi-K3",
+  service: "token-factory.kimi-k3",
   max_input_tokens: 131_072,
   max_output_tokens: 16_384,
   request_timeout_ms: 600_000,
