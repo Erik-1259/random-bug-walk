@@ -1,5 +1,6 @@
 // Local synthetic configuration is injected through the existing loaders. No process variables,
 // network service or real provider are used; the route and factory session check remain real.
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { POST } from "../../app/api/factory/otf/classify/route.ts";
 import { RateLimiter } from "../../src/assist/limits.ts";
@@ -17,6 +18,8 @@ const PASSCODE = "synthetic-classify-mode-passcode";
 const LOCAL = {
   VERCEL_ENV: "development", RBW_FACTORY_TEST_MODE: "1", RBW_JUDGE_PASSCODE: PASSCODE,
   RBW_OTF_BUILDER_SECRET: "synthetic-otf-test-mode-builder-secret-only", RBW_OTF_OPEN_BEHAVIORS: "1",
+  // Absolute, so the test does not depend on the directory vitest runs from (CI runs from the repository root).
+  RBW_FACTORY_TEST_FIXTURES: fileURLToPath(new URL("../../../../docs/product/fixtures/bug-request-v1/", import.meta.url)),
 };
 const INPUT: OtfClassifyRequest = {
   sentence: "A saved note comes back altered.", host_id: "task-report",
