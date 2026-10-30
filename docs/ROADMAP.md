@@ -69,7 +69,7 @@ This file lists planned work beyond the current release. An item here is a plan,
 - U29 · A picker intro sentence that explains the flow and says security bugs are not built; the refresh placement goes with U08. [A, B]
 - U30 · Difficulty control: remove it, or keep it with a line saying only "Any difficulty" can be delivered today. [B]
 - U31 · Use one name for the three copies (clean, buggy, fixed) across the site, including the released case and home pages after judging. [C]
-- U32 · Bug designer: an intro line now saying it designs a bug but does not build one; rename the heading after judging. [B, C]
+- U32 · Bug designer: an intro line under the unchanged heading saying it designs a bug but does not build one; rename the heading after judging. [B, C]
 
 ### Phases
 
@@ -80,6 +80,7 @@ This file lists planned work beyond the current release. An item here is a plan,
 ### Open decisions
 
 - Whether Phase A ships with Phase B on the separate branch or on its own after judging.
+- Whether Phase B is built on a separate branch with preview-only deploys and merged after judging (recommended), merged to main without deploying, or treated as allowed now.
 - The nav label for the request page: keep "Request bug cases", or use "Request a bug" or "Get a bug".
 - The run archive's new name: "Run records" or "Run archive".
 - Whether to show remaining budget balances (judging and custom-build) to judges.
