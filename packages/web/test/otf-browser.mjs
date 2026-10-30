@@ -3,23 +3,36 @@
 // (src/otf/test-mode/fake-builder.ts) plays a SYNTHETIC timeline, and a loopback stub answers the
 // bug designer's model call. No machine starts, no model is called and nothing is spent.
 //
-// The OTF UI is built on another branch (W3, otf/ui). Every selector and button name below is written
-// against the component names and copy in docs/otf/SPEC.md and is marked TO CONFIRM; adjust them to
-// the components once that branch lands. The scenario reset route is a proposal too (TO CONFIRM).
-//
-// In test mode the world (otfTestWorld()) supplies the store, the power port, the clock (now()) and
-// the per-host config (hosts: both hosts enabled, invented lanes, typical null), so no lane or host
-// variable is set below (TO CONFIRM against W2's test-mode wiring).
-//
-// Server (a dedicated, single-process local server; the stub port must match the last argument). The
-// builder secret is an invented, test-only value of the required length; no builder calls in:
+// Run from the repository root after pnpm install --frozen-lockfile. Use two dedicated local
+// Next servers in separate checkouts, because they write separate .next directories. The first has
+// open behaviors enabled; the second has RBW_OTF_OPEN_BEHAVIORS absent. Both use only invented keys:
 //   VERCEL_ENV=development RBW_FACTORY_TEST_MODE=1 RBW_JUDGE_PASSCODE=synthetic-factory-passcode \
 //   RBW_ASSIST_TOKEN_FACTORY_KEY=synthetic-key RBW_ASSIST_TAVILY_KEY=synthetic-key \
-//   RBW_ASSIST_TEST_PROVIDER_ORIGIN=http://127.0.0.1:4010 \
+//   RBW_ASSIST_TEST_PROVIDER_ORIGIN=http://127.0.0.1:4010 RBW_OTF_OPEN_BEHAVIORS=1 \
 //   RBW_OTF_BUILDER_SECRET=synthetic-otf-test-mode-builder-secret-only \
-//   pnpm --filter @rbw/web dev --port 3033
-// Proof, from packages/web:
-//   node test/otf-browser.mjs <playwright-index.mjs> <chromium> http://localhost:3033 <output-dir> [stub-port]
+//   pnpm --filter @rbw/web exec next dev --hostname 127.0.0.1 --port 3033
+// Repeat in the second checkout on port 3034, omitting RBW_OTF_OPEN_BEHAVIORS entirely. Do not
+// configure any live provider or database.
+//
+// Use Chromium and its system dependencies from mcr.microsoft.com/playwright:v1.63.0-noble,
+// a matching Playwright 1.63.0 module, and Node 24.21 or later (this proof imports repository .ts).
+// The browser image supplies its own browser path when the Chromium argument is auto. With a
+// separately provisioned Playwright 1.63.0 tool directory (no repository dependency changes), run:
+//   docker run --rm --network host --ipc=host \
+//     --mount type=bind,src="$PWD",dst=/repo,readonly \
+//     --mount type=bind,src="$(command -v node)",dst=/usr/local/bin/node,readonly \
+//     --mount type=bind,src=<playwright-tool-directory>,dst=/playwright,readonly \
+//     --mount type=bind,src=<output-directory>,dst=/proof \
+//     mcr.microsoft.com/playwright:v1.63.0-noble \
+//     node /repo/packages/web/test/otf-browser.mjs /playwright/node_modules/playwright/index.mjs \
+//     auto http://127.0.0.1:3033 /proof 4010 http://127.0.0.1:3034
+// Host networking is only for the local servers and stub; no external provider request is needed.
+// The script itself starts/stops the stub on port 4010 after both Next servers are ready. The same
+// invocation outside a container, when matching browser dependencies are already installed, is:
+//   node packages/web/test/otf-browser.mjs <playwright-index.mjs> <chromium> \
+//     http://127.0.0.1:3033 <output-dir> 4010 http://127.0.0.1:3034
+// The final JSON and printed summary distinguish synthetic browser proof from real builds. Stop
+// both owned Next servers after the proof; the finally block closes the browser and loopback stub.
 import assert from "node:assert/strict";
 import { Buffer } from "node:buffer";
 import console from "node:console";
@@ -29,20 +42,25 @@ import { join } from "node:path";
 import process from "node:process";
 import { pathToFileURL, URL } from "node:url";
 import { gunzipSync } from "node:zlib";
-import { specSha256 } from "../src/otf/canonical.ts";
+import { createHash } from "node:crypto";
+import { specSha256, ruleSha256 } from "../src/otf/canonical.ts";
+import { OTF_OPEN_CRITERION_ID, OTF_OPEN_LABEL, OTF_OPEN_TIME_COPY } from "../src/otf/contract.ts";
 import { validateOtf } from "../src/otf/schemas.ts";
 import { OTF_TEST_GRADER_SENTINEL } from "../src/otf/test-mode/fake-builder.ts";
 import { REASON_TEXT, UMAMI_CALENDAR_REASON } from "../src/otf/test-mode/timeline.ts";
 import { factoryJson, signInToFactory } from "./factory-browser-journey.mjs";
 
-const [modulePath, executablePath, origin, outputDir, stubPortArg = "4010"] = process.argv.slice(2);
-if (!modulePath || !executablePath || !origin || !outputDir) {
-  throw new Error("Provide Playwright module, Chromium, local test-mode origin, output directory and optionally the stub port.");
+const [modulePath, executablePath, origin, outputDir, stubPortArg = "4010", offOrigin] = process.argv.slice(2);
+if (!modulePath || !executablePath || !origin || !outputDir || !offOrigin) {
+  throw new Error("Provide Playwright module, Chromium, local test-mode origin, output directory, the stub port and a second local origin with open behaviors unset.");
 }
-const address = new URL(origin);
-if (address.protocol !== "http:" || !["localhost", "127.0.0.1"].includes(address.hostname) || address.pathname !== "/") {
-  throw new Error("The OTF browser proof requires a dedicated local HTTP server in test mode.");
+for (const local of [origin, offOrigin]) {
+  const address = new URL(local);
+  if (address.protocol !== "http:" || !["localhost", "127.0.0.1"].includes(address.hostname) || address.pathname !== "/" || address.username || address.password) {
+    throw new Error("The OTF browser proof requires dedicated local HTTP servers in test mode.");
+  }
 }
+assert.notEqual(origin, offOrigin, "feature-on and feature-off servers must be separate processes");
 const stubPort = Number(stubPortArg);
 assert(Number.isInteger(stubPort) && stubPort > 0 && stubPort < 65536, "the stub port is a TCP port");
 
@@ -53,7 +71,7 @@ const STUB_CARDS = {
     in_scope: true,
     title: "Synthetic: a saved value can go missing",
     where: "An invented list component that saves values in the task-and-report service.",
-    change: "Two quick saves can drop one value.",
+    change: "Two overlapping saves both succeed but drop one stored value.",
     why_tests_miss: "The invented suite saves one value at a time.",
     checks_to_add: ["Two overlapping saves both appear in the list."],
     fix: "Apply the saves in order.",
@@ -62,7 +80,7 @@ const STUB_CARDS = {
     in_scope: true,
     title: "Synthetic: a late visit lands on the next day",
     where: "An invented daily report that groups visits by day.",
-    change: "A visit just after midnight in a far time zone is counted on the wrong day.",
+    change: "Visits are grouped in UTC instead of the viewer's requested time zone.",
     why_tests_miss: "The invented suite only uses visits at noon UTC.",
     checks_to_add: ["A visit at 00:30 in a far time zone appears on its own local day."],
     fix: "Group the visits by the viewer's time zone.",
@@ -71,62 +89,72 @@ const STUB_CARDS = {
 const SENTENCES = { "task-report": "Two quick saves in a row lose one of them.", umami: "A late visit lands on the next day in the daily report." };
 /** The card the stub answers with; each journey sets it for its host. */
 let STUB_CARD = STUB_CARDS["task-report"];
+let STUB_CLASSIFICATION = "proven";
+let STUB_HOST = "task-report";
+const OPEN_RULE = { family: "data_handling", observable_failure: "GET /api/tasks/{id} returns the previous title after a successful PATCH /api/tasks/{id}.", failure_code: "synthetic_title_missing" };
+const SECURITY_REASON = "This synthetic card asks for security behavior, which is outside custom builds.";
+const OPEN_CARD = { ...STUB_CARDS["task-report"], title: "Synthetic: a task title stays stale", change: "Reading a task after a sequential update returns the earlier title.",
+  checks_to_add: ["Read a task after changing its title."], fix: "Return the saved title after an update." };
+const SHAPES = ["Synthetic stale task title", "Synthetic omitted completion", "Synthetic report boundary"].map(title => ({
+  title, summary: "A sequential task update leaves an earlier value in later reads.", source_numbers: [1], fit_host_id: "none", fit_bug_type_id: "none", fit_phrase: "", fit_reason: "No proven behavior matches this sequential update.",
+}));
 const stubCalls = [];
 const stub = http.createServer((request, response) => {
-  stubCalls.push(request.url);
-  request.resume();
+  const chunks = [];
+  request.on("data", chunk => chunks.push(chunk));
   request.on("end", () => {
     response.setHeader("content-type", "application/json");
-    if (request.url === "/v1/chat/completions") {
-      response.end(JSON.stringify({ choices: [{ finish_reason: "stop", message: { role: "assistant", content: JSON.stringify(STUB_CARD) } }] }));
-    } else if (request.url === "/search") {
-      response.end(JSON.stringify({ results: [] }));
-    } else {
-      response.statusCode = 404;
-      response.end("{}");
-    }
+    try {
+      const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      const schema = body.response_format?.json_schema?.name;
+      stubCalls.push({ path: request.url, schema });
+      if (request.url === "/v1/chat/completions") {
+        let content;
+        if (schema === "bug_spec") content = STUB_CARD;
+        else if (schema === "bug_shapes") content = { in_scope: true, shapes: SHAPES };
+        else if (schema === "otf_classification") content = STUB_CLASSIFICATION === "open"
+          ? { decision: "open", proven_criterion_id: "none", ...OPEN_RULE, reason: "A synthetic sequential update is an open behavior." }
+          : STUB_CLASSIFICATION === "security"
+            ? { decision: "security", proven_criterion_id: "none", family: "none", observable_failure: "", failure_code: "", reason: SECURITY_REASON }
+            : { decision: "proven", proven_criterion_id: STUB_HOST === "umami" ? "date_time.time-zone-grouping" : "concurrency.lost-acknowledged-change",
+              family: STUB_HOST === "umami" ? "date_time" : "concurrency", observable_failure: "", failure_code: "", reason: "This synthetic card states the proven mechanism." };
+        else throw new Error("Unexpected synthetic model schema.");
+        response.end(JSON.stringify({ choices: [{ finish_reason: "stop", message: { role: "assistant", content: JSON.stringify(content) } }] }));
+      } else if (request.url === "/search") response.end(JSON.stringify({ results: [{ title: "Synthetic task update report", url: "https://example.invalid/synthetic-task-report", content: "A task read returns an old title after a saved update." }] }));
+      else { response.statusCode = 404; response.end("{}"); }
+    } catch { response.statusCode = 400; response.end(JSON.stringify({ error: "Unexpected synthetic stub request." })); }
   });
 });
-await new Promise(resolve => stub.listen(stubPort, "127.0.0.1", resolve));
-// The stub never keeps the process alive on its own (for example when the browser fails to launch).
+await new Promise((resolve, reject) => { stub.once("error", reject); stub.listen(stubPort, "127.0.0.1", resolve); });
 stub.unref();
 
-// ---- selectors and copy, TO CONFIRM against W3's components (docs/otf/SPEC.md sections 1 and 6)
+// ---- accessible names and copy from the merged UI
 
 const UI = {
-  // TO CONFIRM: the behavior picker (one option per availability behavior, with its label).
-  behaviorPicker: page => page.locator(".otf-behavior-picker"),
-  behaviorOption: (page, label) => page.locator(".otf-behavior-picker").getByRole("radio", { name: label }),
-  // TO CONFIRM: the customer's own sentence (3 to 300 characters).
-  sentence: page => page.getByLabel("Describe the bug in one sentence", { exact: true }),
-  // TO CONFIRM: the button that asks the bug designer for the card.
-  writeCard: page => page.getByRole("button", { name: "Write the spec card", exact: true }),
-  // TO CONFIRM: the spec accept view and its accept button.
-  specAccept: page => page.locator(".otf-spec-accept"),
-  accept: page => page.getByRole("button", { name: "Accept and build", exact: true }),
-  // TO CONFIRM: the catalog offer card shown at accept time and on failure.
-  catalogOffer: page => page.locator(".otf-catalog-offer"),
-  // TO CONFIRM: the lane board, its lane cards and each card's six-cell grid.
-  laneBoard: page => page.locator(".otf-lane-board"),
-  laneCard: page => page.locator(".otf-lane-card"),
-  sixCellGrid: page => page.locator(".otf-six-cell-grid"),
-  // TO CONFIRM: the Umami admission strip beside a round's grid, and the certificate's confirmation row.
-  admissionStrip: page => page.locator(".otf-admission-strip"),
-  confirmationRow: page => page.locator(".otf-certificate .otf-confirmation"),
-  // TO CONFIRM: an unavailable host's reason line in the picker.
-  hostReason: (page, label) => page.locator(".otf-behavior-picker .otf-host-unavailable").filter({ hasText: label }),
-  // TO CONFIRM: the certificate and the failure view.
-  certificate: page => page.locator(".otf-certificate"),
-  failure: page => page.locator(".otf-failure"),
-  // TO CONFIRM: the stop button and the two bundle download links.
-  stop: page => page.getByRole("button", { name: "Stop the build", exact: true }),
-  downloadAgent: page => page.getByRole("link", { name: "Download agent bundle", exact: true }),
-  downloadGrader: page => page.getByRole("link", { name: "Download grader bundle", exact: true }),
+  behaviorPicker: page => page.getByRole("form", { name: "Custom bug behavior", exact: true }),
+  behaviorOption: (page, label) => UI.behaviorPicker(page).getByRole("radio", { name: label }),
+  sentence: page => page.getByLabel("Describe it in one sentence", { exact: true }),
+  writeCard: page => page.getByRole("button", { name: "Write my spec card", exact: true }),
+  specAccept: page => page.getByRole("form", { name: "Accept custom spec", exact: true }),
+  accept: page => page.getByRole("button", { name: "Accept and build this custom bug", exact: true }),
+  catalogOffer: page => page.getByRole("region", { name: "Catalog alternative", exact: true }),
+  laneBoard: page => page.getByRole("region", { name: "Custom build progress", exact: true }),
+  laneCard: page => UI.laneBoard(page).locator("article.designer-card"),
+  sixCellGrid: page => UI.laneBoard(page).getByRole("table"),
+  admissionStrip: page => UI.laneBoard(page).getByRole("list", { name: / admission$/ }),
+  confirmationRow: page => UI.certificate(page).getByRole("table", { name: "Confirmation cells", exact: true }),
+  hostReason: (page, label) => UI.behaviorPicker(page).getByRole("status").filter({ hasText: label }),
+  certificate: page => page.getByRole("region", { name: "Custom build certificate", exact: true }),
+  failure: page => page.getByRole("region", { name: "Custom build outcome", exact: true }),
+  stop: page => page.getByRole("button", { name: "Stop custom build", exact: true }),
+  downloadAgent: page => UI.certificate(page).getByRole("link", { name: "Agent bundle", exact: true }),
+  downloadGrader: page => UI.certificate(page).getByRole("link", { name: "Grader bundle", exact: true }),
+  downloadCertificate: page => UI.certificate(page).getByRole("link", { name: "Certificate", exact: true }),
 };
 
 const COPY = {
   // SPEC section 6. The model label is the test lane's invented one.
-  built: "Built for your request by Goose with Synthetic Model A on Nebius Token Factory. Spec card by Nemotron 3 Super.",
+  built: "Built for your request by Goose with synthetic/lane-model-a on Nebius Token Factory. Spec card by Nemotron 3 Super.",
   certificate: "Qualified by the RBW harness on the RBW builder (Nebius VM): six cells, pinned task-report kit image, 4 vCPU / 8 GB per copy, then confirmed in a second round.",
   umamiCertificate: "Qualified on the RBW builder (Nebius VM) with the local runner's admission sequence (docs/admission-rules.md) on the pinned Umami kit image with this build's checks, 4 vCPU / 8 GB per copy. Development evidence, not an RBW release.",
   umamiPlacement: "The builder places the bug in one of Umami's date-grouped reports that its harness supports, chosen to match your card where it can. It may differ from the report your card describes.",
@@ -151,28 +179,30 @@ const COPY = {
 
 const { chromium } = await import(pathToFileURL(modulePath).href);
 fs.mkdirSync(outputDir, { recursive: true });
-const browser = await chromium.launch({ executablePath, headless: true, args: ["--no-sandbox"] });
+let browser;
 const results = [];
 const json = (context, method, path, data, expected = 200) => factoryJson(context, origin, method, path, data, expected);
 
 /** Every OTF JSON body the page receives: each must match its schema and none may carry grader material. */
-function watchOtf(page, bodies) {
-  page.on("response", async response => {
+function watchOtf(page, bodies, reads) {
+  page.on("response", response => {
     const path = new URL(response.url()).pathname;
     if (!path.startsWith("/api/factory/otf/") || path.includes("/artifacts/")) return;
-    const text = await response.text().catch(() => "");
-    bodies.push({ path, status: response.status(), text });
+    reads.push(response.text().then(text => { bodies.push({ path, status: response.status(), text }); }, error => { bodies.push({ path, error: error.message }); }));
   });
 }
 
 function checkBodies(bodies) {
-  for (const { path, status, text } of bodies) {
+  for (const { path, status, text, error } of bodies) {
+    assert.equal(error, undefined, `${path} response body was collected`);
     assert(!text.includes(OTF_TEST_GRADER_SENTINEL), `${path} carries grader material`);
     if (text === "") continue;
     const body = JSON.parse(text);
     const name = status >= 400 ? "OtfErrorBody"
       : path === "/api/factory/otf/availability" ? "OtfAvailability"
         : path === "/api/factory/otf/jobs" ? "OtfCreateResponse"
+          : path === "/api/factory/otf/classify" ? "OtfClassification"
+            : /\/validations$/.test(path) ? "OtfValidation"
           : /^\/api\/factory\/otf\/jobs\/[^/]+(\/stop)?$/.test(path) ? "OtfJobStatus"
             : null;
     if (name !== null) assert.deepEqual(validateOtf(name, body), [], `${path} matches ${name}`);
@@ -192,19 +222,22 @@ async function acceptCard(page, hostId = "task-report") {
   checkHosts(availability);
   const behavior = availability.behaviors.find(option => option.host_id === hostId);
   assert(behavior, `availability offers a ${hostId} behavior`);
-  STUB_CARD = STUB_CARDS[hostId];
+  STUB_CARD = STUB_CARDS[hostId]; STUB_HOST = hostId; STUB_CLASSIFICATION = "proven";
   await UI.behaviorPicker(page).waitFor();
   const label = availability.hosts.find(entry => entry.host_id === hostId).label;
   await UI.behaviorOption(page, behavior.label).check();
-  // TO CONFIRM: where W3 shows the time copy (picker or spec accept); typical is null in test mode.
-  await page.getByText(COPY.notMeasured(label), { exact: true }).first().waitFor();
   await UI.sentence(page).fill(SENTENCES[hostId]);
-  const [designed] = await Promise.all([
+  const [designed, classified] = await Promise.all([
     page.waitForResponse(response => response.request().method() === "POST" && new URL(response.url()).pathname === "/api/factory/assist/bug-spec"),
+    page.waitForResponse(response => response.request().method() === "POST" && new URL(response.url()).pathname === "/api/factory/otf/classify"),
     UI.writeCard(page).click(),
   ]);
   assert.equal(designed.status(), 200);
-  await UI.specAccept(page).getByText(STUB_CARD.title).waitFor();
+  assert.equal(classified.status(), 200);
+  assert.equal((await classified.json()).proven_criterion_id, behavior.criterion_id);
+  assert.equal(await UI.specAccept(page).getByLabel("Title", { exact: true }).inputValue(), STUB_CARD.title);
+  await UI.specAccept(page).getByText(`This matches the proven behavior “${behavior.label}”.`, { exact: true }).waitFor();
+  await UI.specAccept(page).getByText(COPY.notMeasured(label), { exact: true }).waitFor();
   if (hostId === "umami") await UI.specAccept(page).getByText(COPY.umamiPlacement, { exact: true }).waitFor();
   const [created] = await Promise.all([
     page.waitForResponse(response => response.request().method() === "POST" && new URL(response.url()).pathname === "/api/factory/otf/jobs"),
@@ -222,20 +255,103 @@ async function status(context, id) {
   return json(context, "get", `/api/factory/otf/jobs/${id}?after=0`);
 }
 
-async function scenario(name, width, run, label = name) {
+/** Downloads through the displayed links; the certificate receipt is added only to status. */
+async function checkDownloads(page, done) {
+  for (const [part, link] of [["agent", UI.downloadAgent(page)], ["grader", UI.downloadGrader(page)], ["certificate", UI.downloadCertificate(page)]]) {
+    const artifact = done.artifacts.find(item => item.part === part);
+    assert(artifact, `${part} is advertised`);
+    assert.equal(await link.getAttribute("href"), `/api/factory/otf/jobs/${done.job_id}/artifacts/${part}`);
+    const [download] = await Promise.all([page.waitForEvent("download"), link.click()]);
+    assert.equal(await download.failure(), null);
+    const bytes = fs.readFileSync(await download.path());
+    assert.equal(bytes.length, artifact.size);
+    assert.equal(createHash("sha256").update(bytes).digest("hex"), artifact.sha256);
+    if (part === "certificate") {
+      const certificate = JSON.parse(bytes.toString("utf8"));
+      assert.deepEqual(validateOtf("OtfCertificate", certificate), []);
+      assert.equal(certificate.job_id, done.job_id);
+      assert.deepEqual(certificate.rule, done.rule);
+      assert(!bytes.toString("utf8").includes(OTF_TEST_GRADER_SENTINEL));
+    } else {
+      assert.deepEqual([bytes[0], bytes[1]], [0x1f, 0x8b]);
+      assert.equal(gunzipSync(bytes).toString("latin1").includes(OTF_TEST_GRADER_SENTINEL), part === "grader");
+    }
+  }
+}
+
+async function checkValidation(page, id) {
+  const [response] = await Promise.all([
+    page.waitForResponse(response => response.request().method() === "POST" && new URL(response.url()).pathname === `/api/factory/otf/jobs/${id}/validations`),
+    UI.certificate(page).getByRole("button", { name: "Validate stored bundles", exact: true }).click(),
+  ]);
+  assert.equal(response.status(), 201);
+  assert.deepEqual(validateOtf("OtfValidation", await response.json()), []);
+  const validation = UI.certificate(page).getByRole("region", { name: "Bundle validation", exact: true });
+  await validation.waitFor();
+  for (let attempt = 0; attempt < 30 && await validation.getByText("Validation: passed", { exact: true }).count() === 0; attempt++) {
+    await page.waitForTimeout(1000);
+    const [read] = await Promise.all([
+      page.waitForResponse(response => response.request().method() === "GET" && new URL(response.url()).pathname === `/api/factory/otf/jobs/${id}`),
+      page.getByRole("button", { name: "Refresh custom build", exact: true }).click(),
+    ]);
+    assert.equal(read.status(), 200);
+  }
+  await validation.getByText("Validation: passed", { exact: true }).waitFor();
+  const done = await status(page.context(), id);
+  assert.equal(done.validation?.state, "passed");
+  assert.deepEqual(validateOtf("OtfJobStatus", done), []);
+}
+
+async function writeDesignerCard(page) {
+  STUB_CARD = OPEN_CARD; STUB_HOST = "task-report";
+  const designer = page.getByRole("region", { name: "Find a bug for your agent evaluation", exact: true });
+  await designer.getByLabel("Step 1: the kind of bug you want", { exact: true }).fill("Synthetic sequential task updates");
+  const [searched] = await Promise.all([
+    page.waitForResponse(response => response.request().method() === "POST" && new URL(response.url()).pathname === "/api/factory/assist/bug-shapes"),
+    designer.getByRole("button", { name: "Find bug shapes", exact: true }).click(),
+  ]);
+  assert.equal(searched.status(), 200);
+  await designer.getByRole("radio", { name: SHAPES[0].title, exact: true }).check();
+  await designer.locator('input[name="designer-host"][value="task-report"]').check();
+  const [written] = await Promise.all([
+    page.waitForResponse(response => response.request().method() === "POST" && new URL(response.url()).pathname === "/api/factory/assist/bug-spec"),
+    designer.getByRole("button", { name: "Write the bug specification", exact: true }).click(),
+  ]);
+  assert.equal(written.status(), 200);
+  await designer.getByRole("heading", { name: OPEN_CARD.title, exact: true }).waitFor();
+  return designer;
+}
+
+async function handoff(page, posts, outcome) {
+  STUB_CLASSIFICATION = outcome;
+  const designer = await writeDesignerCard(page);
+  assert.deepEqual(posts.filter(path => path === "/api/factory/otf/jobs"), []);
+  const [classified] = await Promise.all([
+    page.waitForResponse(response => response.request().method() === "POST" && new URL(response.url()).pathname === "/api/factory/otf/classify"),
+    designer.getByRole("button", { name: "Build this as a custom bug", exact: true }).click(),
+  ]);
+  assert.equal(classified.status(), 200);
+  assert.deepEqual(validateOtf("OtfClassification", await classified.json()), []);
+  await UI.specAccept(page).waitFor();
+  assert.deepEqual(posts.filter(path => path === "/api/factory/otf/jobs"), [], "handoff and classification do not create a job");
+  return classified;
+}
+
+async function scenario(name, width, run, label = name, target = origin) {
   const context = await browser.newContext({ viewport: { width, height: 1000 } });
   const page = await context.newPage();
   page.setDefaultTimeout(120_000);
-  const errors = [], bodies = [];
+  const errors = [], bodies = [], reads = [], posts = [];
+  page.on("request", request => { if (request.method() === "POST") posts.push(new URL(request.url()).pathname); });
   page.on("pageerror", error => errors.push(error.message));
-  watchOtf(page, bodies);
+  watchOtf(page, bodies, reads);
   try {
-    // TO CONFIRM: a test-mode-only reset route (404 outside test mode), proposed for W2 to mount on
-    // OtfTestWorld.reset; never substitute live routes if it is absent.
-    const reset = await json(context, "post", "/api/factory/otf/test/reset", { scenario: name });
+    const reset = await factoryJson(context, target, "post", "/api/factory/otf/test/reset", { scenario: name });
     assert.equal(reset.scenario, name);
-    await signInToFactory(page, origin);
-    await run({ context, page });
+    await signInToFactory(page, target);
+    await run({ context, page, posts });
+    await Promise.all(reads);
+    assert.deepEqual(posts.filter(path => path === "/api/factory/requests"), [], "the catalog never starts automatically");
     assert.deepEqual(errors, []);
     checkBodies(bodies);
     assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "no horizontal page scroll");
@@ -248,10 +364,16 @@ async function scenario(name, width, run, label = name) {
 }
 
 try {
+  browser = await chromium.launch({ ...(executablePath === "auto" ? {} : { executablePath }), headless: true, args: ["--no-sandbox"] });
   for (const width of [1440, 390]) await scenario("delivered", width, async ({ context, page }) => {
-    const { job_id: id } = await acceptCard(page);
+    const accepted = await acceptCard(page);
+    const id = accepted.job_id;
+    assert.equal(accepted.status.state, "starting_builder");
+    assert.equal(accepted.status.queue_position, 1);
+    assert(accepted.status.events.some(event => event.type === "job_queued"));
     // The machine starts first, then three lanes race.
-    await UI.laneBoard(page).waitFor();
+    await UI.laneBoard(page).getByText("Starting the Nebius machine.", { exact: false }).waitFor();
+    assert.match(await UI.laneBoard(page).innerText(), /Queue position: 1\./);
     await page.screenshot({ path: join(outputDir, `otf-delivered-${width}-starting.png`), fullPage: true });
     await UI.laneCard(page).nth(2).waitFor();
     assert.equal(await UI.laneCard(page).count(), 3);
@@ -265,16 +387,8 @@ try {
     assert.equal(done.winner?.lane_id, "lane-1");
     assert.deepEqual(done.lanes.map(lane => lane.outcome), ["won", "lost_race", "lost_race"]);
     assert.equal(done.artifacts.length, 3);
-    // The two bundles download as gzip; only the grader bundle holds grader material.
-    for (const [part, link] of [["agent", UI.downloadAgent(page)], ["grader", UI.downloadGrader(page)]]) {
-      const href = await link.getAttribute("href");
-      assert.equal(href, `/api/factory/otf/jobs/${id}/artifacts/${part}`);
-      const response = await context.request.get(origin + href);
-      assert.equal(response.status(), 200);
-      const bytes = Buffer.from(await response.body());
-      assert.deepEqual([bytes[0], bytes[1]], [0x1f, 0x8b]);
-      assert.equal(gunzipSync(bytes).toString("latin1").includes(OTF_TEST_GRADER_SENTINEL), part === "grader");
-    }
+    await checkDownloads(page, done);
+    await checkValidation(page, id);
     // A reload resumes the same job from the client's own saved key.
     await page.reload();
     await UI.certificate(page).waitFor();
@@ -320,7 +434,7 @@ try {
     await UI.laneBoard(page).waitFor();
     await UI.laneCard(page).nth(1).waitFor();
     await UI.admissionStrip(page).first().waitFor();
-    for (const label of COPY.admissionLabels) await UI.admissionStrip(page).first().getByText(label, { exact: true }).waitFor();
+    for (const label of COPY.admissionLabels) await UI.admissionStrip(page).first().getByRole("listitem").filter({ hasText: label }).waitFor();
     await page.screenshot({ path: join(outputDir, `otf-umami-${width}-racing.png`), fullPage: true });
     await UI.certificate(page).waitFor();
     await page.getByText(COPY.umamiCertificate, { exact: true }).waitFor();
@@ -374,9 +488,62 @@ try {
     assert(done.lanes.every(lane => lane.outcome === "cancelled"));
   }, "delivered-stopped");
 
-  assert(stubCalls.includes("/v1/chat/completions"), "the designer called the loopback stub, not a provider");
+  await scenario("delivered", 390, async ({ context, page, posts }) => {
+    const classified = await handoff(page, posts, "open");
+    assert.deepEqual((await classified.json()).rule, OPEN_RULE);
+    const form = UI.specAccept(page);
+    const edited = { family: "state_ui", observable_failure: "GET /api/tasks/{id} returns the old title after PATCH /api/tasks/{id} saves a replacement title.", failure_code: "synthetic_edited_title" };
+    await form.getByLabel("Observable failure", { exact: true }).waitFor();
+    assert.equal(await form.getByLabel("Observable failure", { exact: true }).inputValue(), OPEN_RULE.observable_failure);
+    await form.getByLabel("Family", { exact: true }).selectOption(edited.family);
+    await form.getByLabel("Observable failure", { exact: true }).fill(edited.observable_failure);
+    await form.getByLabel("Failure code", { exact: true }).fill(edited.failure_code);
+    await form.getByText(OTF_OPEN_TIME_COPY, { exact: true }).waitFor();
+    await form.getByLabel("Failure code", { exact: true }).press("Enter");
+    assert.deepEqual(posts.filter(path => path === "/api/factory/otf/jobs"), [], "editing or Enter never accepts");
+    const [created] = await Promise.all([
+      page.waitForResponse(response => response.request().method() === "POST" && new URL(response.url()).pathname === "/api/factory/otf/jobs"), UI.accept(page).click(),
+    ]);
+    assert.equal(created.status(), 201);
+    const sent = created.request().postDataJSON();
+    assert.equal(sent.criterion_id, OTF_OPEN_CRITERION_ID);
+    assert.deepEqual(sent.rule, edited); assert.equal(sent.rule_sha256, await ruleSha256(edited));
+    const expectedSpec = { ...OPEN_CARD }; delete expectedSpec.in_scope;
+    assert.deepEqual(sent.spec, expectedSpec); assert.equal(sent.spec_sha256, await specSha256(expectedSpec));
+    const { job_id: id } = await created.json();
+    await UI.certificate(page).waitFor();
+    const rule = UI.certificate(page).getByRole("region", { name: "Open behavior rule", exact: true });
+    await rule.getByRole("heading", { name: "Open behavior (not measured yet)", exact: true }).waitFor();
+    for (const value of Object.values(edited)) await rule.getByText(value, { exact: true }).waitFor();
+    const done = await status(context, id);
+    assert.equal(done.outcome, "delivered"); assert.deepEqual(done.rule, edited); assert.deepEqual(done.certificate.rule, edited);
+    await checkDownloads(page, done);
+  }, "open-designer-rule-edit");
+
+  await scenario("delivered", 390, async ({ page, posts }) => {
+    const classified = await handoff(page, posts, "security");
+    assert.deepEqual((await classified.json()).refusal, { kind: "security", reason: SECURITY_REASON });
+    await UI.specAccept(page).getByText(SECURITY_REASON, { exact: true }).waitFor();
+    assert.equal(await UI.accept(page).isDisabled(), true);
+    await UI.catalogOffer(page).getByRole("button", { name: COPY.startCatalog, exact: true }).waitFor();
+    assert.deepEqual(posts.filter(path => path === "/api/factory/otf/jobs" || path === "/api/factory/requests"), []);
+  }, "security-refusal");
+
+  await scenario("delivered", 390, async ({ context, page, posts }) => {
+    const availability = await factoryJson(context, offOrigin, "get", "/api/factory/otf/availability");
+    assert.equal(availability.enabled, true);
+    assert(availability.behaviors.every(behavior => behavior.criterion_id !== OTF_OPEN_CRITERION_ID));
+    await UI.behaviorPicker(page).waitFor();
+    assert.equal(await UI.behaviorOption(page, OTF_OPEN_LABEL).count(), 0);
+    await writeDesignerCard(page);
+    assert.equal(await page.getByRole("button", { name: "Build this as a custom bug", exact: true }).count(), 0);
+    assert.deepEqual(posts.filter(path => path === "/api/factory/otf/classify" || path === "/api/factory/otf/jobs"), []);
+  }, "open-behaviors-unset", offOrigin);
+
+  for (const schema of ["bug_shapes", "bug_spec", "otf_classification"]) assert(stubCalls.some(call => call.schema === schema), `${schema} used the loopback stub`);
+  console.log(`SUMMARY: ${results.length} passed; 0 failed; synthetic OTF HTTP/browser only.`);
   fs.writeFileSync(join(outputDir, "otf-results.json"), JSON.stringify({ proof: "Local HTTP/UI with the synthetic OTF test-mode builder only; no machine, model or production call", results }, null, 2) + "\n");
 } finally {
-  await browser.close();
-  stub.close();
+  try { await browser?.close(); }
+  finally { await new Promise(resolve => stub.close(resolve)); }
 }
