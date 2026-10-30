@@ -461,7 +461,7 @@ The classifier's answer is advisory. The customer may edit the rule before submi
 - `security` or `out_of_scope`: `family` and `proven_criterion_id` must be `none` and both rule fields empty. The answer is a refusal of that kind with the trimmed `reason`.
 - `proven`: `family` must be the criterion's family and both rule fields empty. On an Umami card, only `date_time.time-zone-grouping` is accepted. The answer lists that criterion alone in `buildable`, on its host, with `rule` null; the server does not add the open criterion beside it.
 - `open`: `family` must be set and `proven_criterion_id` must be `none`. An `observable_failure` that the design security check flags is a security refusal at once, with no repair. One that holds code is a problem, and so is every route problem below. The answer is `family`, `rule` `{ family, observable_failure, failure_code }` and `buildable: [{ host_id: "task-report", criterion_id: "open.task-report-behavior" }]`.
-- The mapped answer must then pass the `OtfClassification` schema, including the rule limits of section 8.3; a failure is a problem. `model` is `CLASSIFIER_MODEL`.
+- The mapped answer must then pass the `OtfClassification` schema, including the rule limits of section 8.3; a failure is a problem. `model` is the model actually called (`RBW_OTF_CLASSIFIER_MODEL` or `CLASSIFIER_MODEL`).
 
 **Route rules for `observable_failure`** (`ruleRouteProblems`). The task-report service has six routes: `GET /api/heartbeat`, `POST /api/tasks`, `GET /api/tasks/{id}`, `PATCH /api/tasks/{id}`, `POST /api/tasks/{id}/completions` and `GET /api/reports/completions/daily`.
 
