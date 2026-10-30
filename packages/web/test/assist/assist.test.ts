@@ -4,7 +4,7 @@
 import { describe, expect, it } from "vitest";
 import { packArchive } from "@rbw/case-package/archive";
 import type { RequestStatus } from "@rbw/factory-contract";
-import { DEFAULT_ASSIST_MODEL, loadAssistConfig, type AssistConfig } from "../../src/config.ts";
+import { DEFAULT_ASSIST_MODEL, loadAssistConfig, loadClassifierModel, type AssistConfig } from "../../src/config.ts";
 import { postBugShapes, postBugSpec, postDeliveryBrief, type AssistDeps } from "../../src/assist/handlers.ts";
 import { INSTANCE_LIMIT, RateLimiter, SESSION_LIMITS, WINDOW_MS } from "../../src/assist/limits.ts";
 import { distinctivePhrases } from "../../src/assist/novelty.ts";
@@ -172,7 +172,7 @@ describe("bug shapes", () => {
     expect(search?.body).toEqual({ query: "date/time bugs bug report", search_depth: "basic", max_results: 8, include_answer: false, include_raw_content: false, include_images: false, auto_parameters: false, include_domains: ["github.com", "stackoverflow.com"] });
     const [model] = mock.modelCalls();
     expect(model?.headers.authorization).toBe(`Bearer ${TF_KEY}`);
-    expect(model?.body.model).toBe("nvidia/nemotron-3-super-120b-a12b");
+    expect(model?.body.model).toBe("nvidia/Nemotron-3.5-Super-VL");
     expect(model?.body.max_tokens).toBe(2500);
     expect(model?.body.chat_template_kwargs).toEqual({ enable_thinking: false });
     expect(model?.body.tools).toBeUndefined();
@@ -692,6 +692,14 @@ describe("configuration", () => {
     expect(loadAssistConfig({ RBW_ASSIST_TOKEN_FACTORY_KEY: "", RBW_ASSIST_TAVILY_KEY: "" })).toEqual({ tokenFactoryKey: null, tavilyKey: null, model: DEFAULT_ASSIST_MODEL });
     expect(loadAssistConfig({ RBW_ASSIST_TOKEN_FACTORY_KEY: "a", RBW_ASSIST_TAVILY_KEY: "b", RBW_ASSIST_MODEL: "nvidia/other-model-1" })).toEqual({ tokenFactoryKey: "a", tavilyKey: "b", model: "nvidia/other-model-1" });
     expect(loadAssistConfig({ RBW_ASSIST_MODEL: "not a model id" }).model).toBe(DEFAULT_ASSIST_MODEL);
+  });
+  it("reads the on-the-fly classifier model apart from the designer model, defaulting to the designer default", () => {
+    expect(DEFAULT_ASSIST_MODEL).toBe("nvidia/Nemotron-3.5-Super-VL");
+    expect(loadClassifierModel({})).toBe(DEFAULT_ASSIST_MODEL);
+    expect(loadClassifierModel({ RBW_OTF_CLASSIFIER_MODEL: "" })).toBe(DEFAULT_ASSIST_MODEL);
+    expect(loadClassifierModel({ RBW_ASSIST_MODEL: "nvidia/other-model-1" })).toBe(DEFAULT_ASSIST_MODEL);
+    expect(loadClassifierModel({ RBW_OTF_CLASSIFIER_MODEL: "nvidia/Nemotron-3-Ultra-550b-a55b" })).toBe("nvidia/Nemotron-3-Ultra-550b-a55b");
+    expect(loadClassifierModel({ RBW_OTF_CLASSIFIER_MODEL: "not a model id" })).toBe(DEFAULT_ASSIST_MODEL);
   });
 });
 

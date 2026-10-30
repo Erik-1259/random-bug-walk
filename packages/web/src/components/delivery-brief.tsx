@@ -6,7 +6,7 @@ import type { FactoryCase } from "../factory/client.ts";
 import { formatDateTime } from "../factory/format.ts";
 import { describeAssistFailure } from "./bug-designer.tsx";
 
-export const BRIEF_CREDIT = "Written by NVIDIA Nemotron 3 Super on Nebius Token Factory from the bug case’s public material · novelty check with Tavily";
+export const BRIEF_CREDIT = "Written by NVIDIA Nemotron 3.5 Super on Nebius Token Factory from the bug case’s public material · novelty check with Tavily";
 
 export const NOVELTY_CAVEAT = "The planted change and its fix come from Random Bug Walk’s public catalog; this check covers only the report’s wording.";
 

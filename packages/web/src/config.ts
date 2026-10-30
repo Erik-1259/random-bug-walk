@@ -165,8 +165,8 @@ export function loadFactoryConfig(env: Env = process.env, cwd: string = process.
   };
 }
 
-/** The bug designer's default model: NVIDIA Nemotron 3 Super on Nebius Token Factory. */
-export const DEFAULT_ASSIST_MODEL = "nvidia/nemotron-3-super-120b-a12b";
+/** The bug designer's default model: NVIDIA Nemotron 3.5 Super on Nebius Token Factory (successor of the retired Nemotron 3 Super). */
+export const DEFAULT_ASSIST_MODEL = "nvidia/Nemotron-3.5-Super-VL";
 /** A model ID as Token Factory names them: provider/model, plain characters only. */
 const MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
@@ -187,6 +187,12 @@ export function loadAssistConfig(env: Env = process.env): AssistConfig {
     tavilyKey: value(env, "RBW_ASSIST_TAVILY_KEY"),
     model: model !== null && MODEL_ID.test(model) ? model : DEFAULT_ASSIST_MODEL,
   };
+}
+
+/** RBW_OTF_CLASSIFIER_MODEL: the on-the-fly classifier's model ID (card classify and shape badges); DEFAULT_ASSIST_MODEL when unset or not a plain provider/model ID. */
+export function loadClassifierModel(env: Env = process.env): string {
+  const model = value(env, "RBW_OTF_CLASSIFIER_MODEL");
+  return model !== null && MODEL_ID.test(model) ? model : DEFAULT_ASSIST_MODEL;
 }
 
 /** A loopback origin with no path: http://localhost, 127.0.0.1 or [::1], with an optional port. */
