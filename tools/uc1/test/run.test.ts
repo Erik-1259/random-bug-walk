@@ -154,7 +154,7 @@ describe("refusals before anything starts", () => {
   it("puts the Kimi run under the $75 cap, with its 2 pilot attempts", async () => {
     const w = await world();
     const outcome = await runSessions(pilot(w, { model: "kimi" }), w.deps);
-    expect(json(join(outcome.runDir, "run.json"))).toMatchObject({ model: "kimi", model_id: "moonshotai/Kimi-K2.7-Code", cap_microusd: "75000000" });
+    expect(json(join(outcome.runDir, "run.json"))).toMatchObject({ model: "kimi", model_id: "moonshotai/Kimi-K3", cap_microusd: "75000000" });
     expect(w.sessions.map((session) => session.request.serverLogs)).toEqual([false, true]);
     await w.close();
   });

@@ -6,13 +6,13 @@ import { countSolverPromptBound, readSolverRateSheet, solverEnvelope } from "../
 import { KIMI_SOLVER_PROFILE, SUPER_SOLVER_PROFILE } from "../../src/profile.ts";
 
 describe("the solver rate file", () => {
-  it("prices Super at $0.30/$0.90 and Kimi at $0.95/$4.00 per million tokens", () => {
+  it("prices Super at $0.30/$0.90 and Kimi at $3.00/$15.00 per million tokens", () => {
     const entries = JSON.parse(new TextDecoder().decode(readSolverRateSheet())) as { service: string; unit: string; price: { microusd: number; per_units: number } }[];
     const price = (service: string, unit: string) => entries.find((e) => e.service === service && e.unit === unit)?.price;
-    expect(price("token-factory.nemotron-3-super", "input_token")).toEqual({ microusd: 300_000, per_units: 1_000_000 });
-    expect(price("token-factory.nemotron-3-super", "output_token")).toEqual({ microusd: 900_000, per_units: 1_000_000 });
-    expect(price("token-factory.kimi-k2.7-code", "input_token")).toEqual({ microusd: 950_000, per_units: 1_000_000 });
-    expect(price("token-factory.kimi-k2.7-code", "output_token")).toEqual({ microusd: 4_000_000, per_units: 1_000_000 });
+    expect(price("token-factory.nemotron-3.5-super-vl", "input_token")).toEqual({ microusd: 300_000, per_units: 1_000_000 });
+    expect(price("token-factory.nemotron-3.5-super-vl", "output_token")).toEqual({ microusd: 900_000, per_units: 1_000_000 });
+    expect(price("token-factory.kimi-k3", "input_token")).toEqual({ microusd: 3_000_000, per_units: 1_000_000 });
+    expect(price("token-factory.kimi-k3", "output_token")).toEqual({ microusd: 15_000_000, per_units: 1_000_000 });
   });
 
   it("matches harvest-review's committed prices for the same services", () => {
@@ -28,8 +28,8 @@ describe("the envelope", () => {
       throw new Error(priced.detail);
     }
     expect(priced.envelope.map((line) => [line.service, line.unit, line.limit])).toEqual([
-      ["token-factory.nemotron-3-super", "input_token", 131_072],
-      ["token-factory.nemotron-3-super", "output_token", 8_192],
+      ["token-factory.nemotron-3.5-super-vl", "input_token", 131_072],
+      ["token-factory.nemotron-3.5-super-vl", "output_token", 8_192],
     ]);
     // ceil(131072 × 0.3) + ceil(8192 × 0.9)
     expect(priced.turn_worst_case_microusd).toBe(39_322 + 7_373);
@@ -41,13 +41,13 @@ describe("the envelope", () => {
     if (!priced.ok) {
       throw new Error(priced.detail);
     }
-    // ceil(131072 × 0.95) + ceil(16384 × 4)
-    expect(priced.turn_worst_case_microusd).toBe(124_519 + 65_536);
+    // ceil(131072 × 3) + ceil(16384 × 15)
+    expect(priced.turn_worst_case_microusd).toBe(393_216 + 245_760);
   });
 
   it("refuses a rate file without the profile's service", () => {
     const sheet = new TextEncoder().encode(JSON.stringify([]));
-    expect(solverEnvelope(sheet, SUPER_SOLVER_PROFILE)).toEqual({ ok: false, detail: "the rate file has no token-factory.nemotron-3-super input_token price" });
+    expect(solverEnvelope(sheet, SUPER_SOLVER_PROFILE)).toEqual({ ok: false, detail: "the rate file has no token-factory.nemotron-3.5-super-vl input_token price" });
   });
 });
 
@@ -58,8 +58,8 @@ describe("the profiles", () => {
   });
 
   it("have the digests the README lists", () => {
-    expect(profileSha256(SUPER_SOLVER_PROFILE)).toBe("572e4f48907ccf7e905b00f24e7141dcad03c6a4e70b3f7b5544de8f5b6ed271");
-    expect(profileSha256(KIMI_SOLVER_PROFILE)).toBe("17386e61aed8cb33864c836b1e7efa269f3e1091cd5104e07cf7bcc7778d0ceb");
+    expect(profileSha256(SUPER_SOLVER_PROFILE)).toBe("92cee96745b93f285715b4a9a640cdf071fcc5a340fc46cce3d945bb7435ffeb");
+    expect(profileSha256(KIMI_SOLVER_PROFILE)).toBe("df27a3c390305a99375d89a851a13f7187a251924170b131dc0aafce6c3c0122");
   });
 
   it("hash the attempt caps, so a changed cap changes runtime_profile_sha256", () => {

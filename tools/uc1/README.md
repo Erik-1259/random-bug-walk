@@ -122,21 +122,23 @@ The development pool's own cap still applies underneath; it does not enforce the
 
 ## Costs
 
-From the committed rate sheets: `packages/solver/rate-sheets/solver-v1.json` (Super $0.30 and $0.90 per million input and output tokens, Kimi $0.95 and $4.00) and the controller's Sandbox copy envelope over `packages/envelope/rate-sheets/v1.json`. These are worst cases from the caps, not measurements; the pilot measures the real cost per attempt.
+From the committed rate sheets: `packages/solver/rate-sheets/solver-v1.json` (Super $0.30 and $0.90 per million input and output tokens, Kimi $3.00 and $15.00) and the controller's Sandbox copy envelope over `packages/envelope/rate-sheets/v1.json`. These are worst cases from the caps, not measurements; the pilot measures the real cost per attempt.
 
 | Item | Worst case |
 |---|---|
 | One Super turn's reservation | 46,695 micro-USD |
 | One Super attempt at its caps (1.5 million input tokens and 50 turns of 8,192 output tokens) | 818,640 micro-USD, about $0.82 |
-| One Kimi turn's reservation | 190,055 micro-USD |
-| One Kimi attempt at its caps | 4,701,800 micro-USD, about $4.70 |
+| One Kimi turn's reservation | 638,976 micro-USD |
+| One Kimi attempt at its caps (1.5 million input tokens and 50 turns of 16,384 output tokens) | 16,788,000 micro-USD, about $16.79 |
 | Grade 1 (local Docker) | $0 |
 | One grade 2 job (one Sandbox copy: 3,120 vCPU-seconds, 6,240 GB-seconds and one creation) | 147,682 micro-USD, about $0.15 |
 | The Super pilot: 4 attempts and 6 grade 2 jobs (4 attempts, 2 round trips) | 4,160,652 micro-USD, about $4.16 |
-| The Kimi pilot: 2 attempts and 4 grade 2 jobs | 9,994,328 micro-USD, about $9.99 |
+| The Kimi pilot: 2 attempts and 4 grade 2 jobs | 34,166,728 micro-USD, about $34.17 |
 | The counted run on Super: 40 attempts and 40 grade 2 jobs | 38,652,880 micro-USD, about $38.65 |
 
 The Super pilot and the counted run together can reach about $42.81 at their caps, more than $40; the guard stops the run before the cap if spend comes near it. A grade 2 retry adds one job's worst case. Near the cap the guard refuses on reservations (one turn's whole worst case), so it stops before settled spend reaches the cap.
+
+At Kimi-K3's prices, the Kimi pilot alone can reach about $34.17 of the $75 fallback cap, so a counted run on Kimi would be stopped by the guard after a few attempts at their caps.
 
 ## The run directory
 

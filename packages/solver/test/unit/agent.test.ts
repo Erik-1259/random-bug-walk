@@ -71,7 +71,7 @@ describe("the request each arm sends", () => {
     await runAttempt(run.options);
     const body = parse(script.bodies[0] ?? "");
     expect(script.urls).toEqual([CHAT_COMPLETIONS_URL]);
-    expect(body.model).toBe("nvidia/nemotron-3-super-120b-a12b");
+    expect(body.model).toBe("nvidia/Nemotron-3.5-Super-VL");
     expect(body.temperature).toBe(0.6);
     expect(body.seed).toBe(17);
     expect(body.max_tokens).toBe(8_192);

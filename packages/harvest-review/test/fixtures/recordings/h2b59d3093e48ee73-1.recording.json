@@ -1,11 +1,11 @@
 {
   "format_version": 1,
   "provenance": "synthetic",
-  "model_id": "nvidia/nemotron-3-super-120b-a12b",
+  "model_id": "nvidia/Nemotron-3.5-Super-VL",
   "recorded_at": "2026-10-07T00:00:00.000Z",
   "request": {
     "body": {
-      "model": "nvidia/nemotron-3-super-120b-a12b",
+      "model": "nvidia/Nemotron-3.5-Super-VL",
       "max_tokens": 1024,
       "response_format": {
         "type": "json_schema",
@@ -70,7 +70,7 @@
       }
     }
   },
-  "request_sha256": "a51cd87076f94a71a3a3ac47dd7296e6ec2baffc4ebf69495da288e1bbb96689",
+  "request_sha256": "78fac960e971ac8104d65adafa93ce2f1aa36a1024c9f1f9c06f24ac48ab7058",
   "response": {
     "status": 500,
     "body": "{\"error\":{\"message\":\"synthetic server error\"}}"

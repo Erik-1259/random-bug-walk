@@ -33,7 +33,10 @@ export function attemptPlan(mode: RunMode, model: SolverModelName = "super"): Pl
   });
 }
 
-/** The total UC1 spending cap (decision 5): $40 on Nemotron 3 Super, $75 if the Kimi fallback is adopted. */
+/**
+ * The total UC1 spending cap (decision 5): $40 on Super, $75 if the Kimi fallback is adopted. The
+ * caps were set for Nemotron 3 Super and Kimi-K2.7-Code and are unchanged for their successors.
+ */
 export const SPEND_CAPS_MICROUSD: Readonly<Record<SolverModelName, bigint>> = Object.freeze({ super: 40_000_000n, kimi: 75_000_000n });
 
 /** Up to 3 sessions run at once on local Docker. */

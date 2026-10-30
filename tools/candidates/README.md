@@ -61,7 +61,7 @@ A real `static-screen/v1` run (no `--dry-run`) reads `DATABASE_URL` and `TOKEN_F
 | `--model` | `super` | The screen model profile (`super` or `kimi`). |
 | `--max-candidates` | 10 | Most candidates planted and screened. |
 | `--max-spend-usd` | 2.00 | Cap on the total the screens may spend. |
-| `--screen-budget-usd` | 0.25 | Budget given to each screen. |
+| `--screen-budget-usd` | 0.25 | Budget given to each screen. One Kimi-K3 call's worst case is 319,488 micro-USD, so `--model kimi` needs a larger budget or the run is refused before it starts. |
 | `--screen-attempts` | 3 | Attempts allowed to each screen, from 1 to 8. |
 | `--slot-key`, `--pool` | `development` | The spend ledger slot each run acquires and the pool each call reserves from. |
 | `--rate-sheet` | `packages/screen/rates.json` | The price file hashed into every reservation. |
