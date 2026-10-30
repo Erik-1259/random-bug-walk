@@ -30,3 +30,8 @@ export function hasFactorySession(request: Request, passcode: string | null): bo
 export function factorySessionCookie(passcode: string): string {
   return `${FACTORY_SESSION_COOKIE}=${factorySessionToken(passcode)}; Path=/api/factory; Max-Age=${String(FACTORY_SESSION_SECONDS)}; HttpOnly; Secure; SameSite=Strict`;
 }
+
+/** Remove the browser's cookie without a passcode or a factory server. */
+export function clearFactorySessionCookie(): string {
+  return `${FACTORY_SESSION_COOKIE}=; Path=/api/factory; Max-Age=0; HttpOnly; Secure; SameSite=Strict`;
+}
