@@ -30,6 +30,12 @@ function setup() {
   const controller = new FactoryController(api, storage, uuid, () => time, lock);
   return { memory, storage, api, uuid, controller, advance, lock };
 }
+// Arms polls the way the workspace effect does: on each view change, one timer of pollAfter() while idle and polling is needed.
+function workspaceTimer(controller: FactoryController) {
+  let armed: number | null = null;
+  controller.subscribe(() => { armed = !controller.snapshot().busy && controller.needsPoll() ? controller.pollAfter() : null; });
+  return { fire: () => { const delay = armed; armed = null; return delay; } };
+}
 async function prepared() { const context = setup(); await context.controller.initialize(); await context.controller.interpret(input.input); return context; }
 
 describe("draft revision 2 transport, synthetic contract fixtures only", () => {
@@ -272,6 +278,16 @@ describe("browser request lifecycle with synthetic service responses", () => {
     expect(c.api.capabilities).toHaveBeenCalledTimes(2);
     expect(c.api.status).not.toHaveBeenCalled(); c.advance(); await c.controller.poll();
     expect(c.api.status).toHaveBeenCalledTimes(1);
+  });
+  it("re-arms the status timer when it fires a millisecond before the poll is due", async () => {
+    const c = setup(); let time = 0;
+    const controller = new FactoryController(c.api, c.storage, c.uuid, () => time, c.lock);
+    await controller.initialize(); await controller.interpret(input.input);
+    const timer = workspaceTimer(controller); await controller.start();
+    const delay = timer.fire(); expect(delay).not.toBeNull();
+    time += (delay ?? 0) - 1; await controller.poll(); expect(c.api.status).not.toHaveBeenCalled();
+    const next = timer.fire(); expect(next).not.toBeNull();
+    time += next ?? 0; await controller.poll(); expect(c.api.status).toHaveBeenCalledTimes(1);
   });
   it("merges event pages once, uses next_after and honors status polling interval", async () => {
     const c = await prepared(); await c.controller.start(); const queued = c.controller.snapshot().status;

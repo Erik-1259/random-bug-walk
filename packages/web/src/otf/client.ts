@@ -292,7 +292,9 @@ export class OtfController {
   pollAfter(): number { return Math.max(1000, this.nextPollAt - Date.now()); }
   /** Polls without the shared busy flag, so Stop, Refresh and Validate stay usable; the identity lock still orders the reads. */
   async poll(): Promise<void> {
-    if (this.view.busy || this.stopping || this.activePoll !== null || !this.needsPoll() || Date.now() < this.nextPollAt) return;
+    if (this.view.busy || this.stopping || this.activePoll !== null || !this.needsPoll()) return;
+    // A browser timer can fire a few milliseconds early. Publish the view again so the workspace arms the next timer.
+    if (Date.now() < this.nextPollAt) { this.update({}); return; }
     this.update({ polling: true });
     const pending = this.locked(async () => { await this.restore(); await this.readStatus(); });
     this.activePoll = pending;
