@@ -4,6 +4,7 @@ import { FactoryWorkspace } from "../../src/components/factory-workspace.tsx";
 import { RELEASED_TIME_ZONE_CASE } from "../../src/components/historical-replays.tsx";
 import { loadSiteConfig } from "../../src/config.ts";
 import { loadResults } from "../../src/release.ts";
+import { OTF_SHAPE_BADGES_FLAG } from "../../src/otf/shape-badges-contract.ts";
 import "./factory.css";
 
 export const dynamic = "force-static";
@@ -27,7 +28,7 @@ export default async function FactoryPage() {
         </ol>
       </div>
       <FactoryExample availableLocally={results.releases.some(({ release }) => release.record.release_id === RELEASED_TIME_ZONE_CASE)} />
-      <FactoryWorkspace />
+      <FactoryWorkspace {...(process.env[OTF_SHAPE_BADGES_FLAG] === "1" ? { shapeBadgesEnabled: true } : {})} />
       <details className="factory-panel factory-details" aria-labelledby="factory-qualification">
         <summary><h2 id="factory-qualification">What makes a case qualified?</h2></summary>
         <p>The service must confirm that unchanged original tests pass on clean, buggy and reference-fixed copies.
