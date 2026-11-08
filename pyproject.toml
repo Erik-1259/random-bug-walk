@@ -7,10 +7,10 @@ dependencies = []
 [dependency-groups]
 dev = [
   "pyright==1.1.414",
-  "pytest==9.1.1",
+  "pytest==9.2.0",
   "pytest-reportlog==1.0.0",
   "rbw-schema",
-  "ruff==0.17.1",
+  "ruff==0.17.3",
 ]
 
 [tool.uv]
